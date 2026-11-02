@@ -33,6 +33,9 @@ pub(crate) struct AllowanceState {
     read_failures: u8,
     #[serde(default)]
     read_incidents: u8,
+    /// When the last failed read was counted.
+    #[serde(default)]
+    counted_failure_ms: Option<u64>,
     #[serde(default)]
     external_wait: Option<tl3_store::ExternalWait>,
     #[serde(default)]
@@ -56,6 +59,7 @@ impl AllowanceState {
             failure: None,
             read_failures: 0,
             read_incidents: 0,
+            counted_failure_ms: None,
             external_wait: None,
             wait_ended: false,
         }
@@ -106,6 +110,8 @@ impl Cause {
                 Cause::Upstream
             }
             Upstream::Worktrees => Cause::Tl3,
+            // The trusted check harness is TL3's code, running inside a PrismaBuild action.
+            Upstream::PrismaBuild if class == crate::adapters::prismabuild::HARNESS => Cause::Tl3,
             Upstream::GitHub | Upstream::Mergify | Upstream::PrismaBuild => Cause::Upstream,
         }
     }
@@ -643,7 +649,8 @@ impl Controller {
             }
             result => result,
         };
-        if matches!(&result, Ok(look) if !matches!(look, Look::Waiting { .. } | Look::Pending)) {
+        if matches!(&result, Ok(look) if !matches!(look, Look::Waiting { .. } | Look::Pending | Look::Alive { .. }))
+        {
             state.read_failures = 0;
         }
         if !matches!(result, Ok(Look::Waiting { .. })) && state.external_wait.is_some() {
@@ -759,6 +766,16 @@ impl Controller {
             }
             Ok(Look::Alive { progress }) => {
                 let changed = state.progress.as_ref() != Some(&progress);
+                // An unacknowledged effect that stopped moving keeps its failure
+                // count, so a stall past the allowance can escalate (#356).
+                if changed
+                    || !self
+                        .store
+                        .effect(&state.delivery.key)?
+                        .is_some_and(|effect| effect.state.is_pending())
+                {
+                    state.read_failures = 0;
+                }
                 state.progress = Some(progress);
                 if self.look_alive(state, changed)? {
                     return Ok(());
@@ -935,6 +952,22 @@ impl Controller {
                             fact: Fact::UpstreamStalled,
                         }),
                     )?;
+                    // The kernel acts on a stall only in Queued. An effect still
+                    // unacknowledged past its allowance is a failed look, so it
+                    // raises the read incident at the allowances' pace (#356).
+                    if self
+                        .store
+                        .effect(&state.delivery.key)?
+                        .is_some_and(|effect| effect.state.is_pending())
+                    {
+                        self.look_failed(
+                            state,
+                            crate::Error::Permanent {
+                                class: "queue_unfinished",
+                                source: "the upstream never acknowledged the request".into(),
+                            },
+                        )?;
+                    }
                 }
                 // PrismaBuild owns progress. Worktrees has no progress contract.
                 Upstream::PrismaBuild | Upstream::Worktrees => {}
@@ -1012,6 +1045,17 @@ impl Controller {
         ) {
             return Ok(());
         }
+        // #356: looks woken by webhooks can land seconds apart. Failed reads
+        // within one allowance count once, so escalation keeps the allowance's pace.
+        let now = self.now_ms();
+        let period = u64::from(self.allowance(&state.delivery).silence_secs) * 1000;
+        if state
+            .counted_failure_ms
+            .is_some_and(|last| now.saturating_sub(last) < period)
+        {
+            return Ok(());
+        }
+        state.counted_failure_ms = Some(now);
         state.read_failures += 1;
         if state.read_failures < 2 {
             return Ok(());
@@ -1544,6 +1588,7 @@ pub(crate) fn incident_summary(
     app_login: Option<&str>,
 ) -> String {
     let source = match signature.upstream {
+        _ if signature.class == crate::adapters::prismabuild::HARNESS => "TL3's check harness",
         Upstream::Workers => "the agent worker",
         Upstream::Worktrees => "the Git worktree",
         Upstream::PrismaBuild => "PrismaBuild",
@@ -1589,6 +1634,7 @@ pub(crate) fn incident_summary(
         "setup" => "could not complete its setup",
         "environment_blocked" => "reported that TL3's environment blocked the work",
         "git_remote" => "could not reach the Git remote",
+        "harness" => "rejected TL3's own check input inside the PrismaBuild action",
         _ => "could not finish the operation",
     };
     let next = if needs_rob {
@@ -1751,6 +1797,18 @@ mod incident_tests {
         );
         assert_eq!(Cause::of(Upstream::Workers, "transport"), Cause::Tl3);
         assert_eq!(Cause::of(Upstream::PrismaBuild, "setup"), Cause::Upstream);
+        // #326: TL3's trusted harness rejecting TL3's own check input is TL3-side.
+        assert_eq!(Cause::of(Upstream::PrismaBuild, "harness"), Cause::Tl3);
+        let summary = incident_summary(
+            "request",
+            &IncidentSignature {
+                upstream: Upstream::PrismaBuild,
+                class: "harness".into(),
+            },
+            false,
+            None,
+        );
+        assert!(summary.contains("TL3's check harness"), "{summary}");
     }
 
     #[test]

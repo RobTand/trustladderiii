@@ -101,7 +101,8 @@ def test_review_replies_through_protocol(tmp_path, review_request, reply):
 def test_invalid_review_never_leaves_worker(tmp_path, review_request, reply):
     result = start_worker(tmp_path, review_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
-    assert result.events == [{"event": "progress", "unit": "model_turn"}]
+    # The invalid reply gets one repair turn, which the fake answers the same way.
+    assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
     assert result.stderr.strip() == "tl3_workers: run failed"
 
 
@@ -346,6 +347,28 @@ def test_reviewer_stops_before_context_exhaustion(review_request, session_model,
         runtime.run(review_request, events.append)
         assert events[-1] == events[0]
         assert len(observed) == 1, "retry must not repeat an exhausted model turn"
+
+
+@pytest.mark.parametrize("with_session", [False, True])
+def test_reviewer_continues_past_a_turn_that_only_reasoned_long(review_request, session_model, tmp_path,
+                                                                with_session):
+    observed, responses = session_model
+    review_request["inputs"]["context_size"] = 1_000
+    if with_session:
+        review_request["session_file"] = str(tmp_path / "reviewer.json")
+    responses[:] = [
+        AIMessage(content="", tool_calls=[{"name": "read", "args": {"path": "greeting.py"},
+                                           "id": "inspect", "type": "tool_call"}],
+                  usage_metadata={"input_tokens": 700, "output_tokens": 400, "total_tokens": 1_100,
+                                  "output_token_details": {"reasoning": 390}}),
+        AIMessage(content=json.dumps(APPROVE),
+                  usage_metadata={"input_tokens": 720, "output_tokens": 300, "total_tokens": 1_020,
+                                  "output_token_details": {"reasoning": 250}}),
+    ]
+    events = []
+    runtime.run(review_request, events.append)
+    assert events[-1] == {"event": "reply", "role": "reviewer", "reply": APPROVE}
+    assert len(observed) == 2
 
 
 @pytest.mark.parametrize("field,value", [("diff", "different fix"), ("checks", [])])

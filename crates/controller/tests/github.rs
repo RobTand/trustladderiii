@@ -1228,24 +1228,37 @@ fn writer_checks() {
     .with_repositories(&repositories())
     .unwrap();
     let posted = api.state.lock().unwrap().posts;
-    for notice in [
-        Notice::Ask { question: 9 },
-        Notice::Summary(Outcome::Stopped),
-    ] {
-        calls.lock().unwrap().clear();
-        draft.output = Out::Notice {
-            node: NodeId(0),
-            notice,
-        };
-        assert_eq!(
-            rejecting.execute(&draft).unwrap().ack,
-            tl3_kernel::Ack::Permanent
-        );
-        assert_eq!(calls.lock().unwrap().len(), 3);
+    // #322: a question whose drafts are all rejected still posts its fixed text.
+    calls.lock().unwrap().clear();
+    draft.output = Out::Notice {
+        node: NodeId(0),
+        notice: Notice::Ask { question: 9 },
+    };
+    assert_eq!(
+        rejecting.execute(&draft).unwrap().ack,
+        tl3_kernel::Ack::Confirmed
+    );
+    assert_eq!(calls.lock().unwrap().len(), 3);
+    {
         let state = api.state.lock().unwrap();
-        assert_eq!(state.posts, posted);
-        assert!(!state.closed, "a rejected summary must not close the issue");
+        assert_eq!(state.posts, posted + 1);
+        let comment = state.comments.last().unwrap()["body"].as_str().unwrap();
+        assert!(comment.contains("I recommend option 1"), "{comment}");
     }
+    calls.lock().unwrap().clear();
+    draft.key = "notice:rejected:1".into();
+    draft.output = Out::Notice {
+        node: NodeId(0),
+        notice: Notice::Summary(Outcome::Stopped),
+    };
+    assert_eq!(
+        rejecting.execute(&draft).unwrap().ack,
+        tl3_kernel::Ack::Permanent
+    );
+    assert_eq!(calls.lock().unwrap().len(), 3);
+    let state = api.state.lock().unwrap();
+    assert_eq!(state.posts, posted + 1);
+    assert!(!state.closed, "a rejected summary must not close the issue");
 }
 
 fn raw_http(address: SocketAddr, request: &[u8]) -> String {

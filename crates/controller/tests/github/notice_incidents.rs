@@ -248,11 +248,17 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
         "filing_403" => "filing",
         _ => "summary",
     };
+    // #322: a writer-rejected question still posts its fixed text, so questions
+    // exercise the failed-post path through GitHub refusing the post.
+    let is_ask = matches!(kind, "question" | "cleanup");
     let faults = Arc::new(Mutex::new(Faults {
-        reject: !name.starts_with("question_4"),
+        reject: !is_ask,
         incident: name == "incident_no_loop",
         kind: kind.into(),
     }));
+    if is_ask && !name.starts_with("question_4") && name != "question_retry_rejected" {
+        api.state.lock().unwrap().forbidden_question = true;
+    }
     if name == "question_retry_rejected" {
         api.state.lock().unwrap().question_status = Some(403);
         faults.lock().unwrap().reject = false;
@@ -285,7 +291,6 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
     if name != "dropped_change" {
         c.intake(labelled()).unwrap();
     }
-    let is_ask = matches!(kind, "question" | "cleanup");
     let question_world = if is_ask {
         for _ in 0..100 {
             if c.world().unwrap().nodes[0].question.is_some() {
@@ -360,6 +365,7 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
         "question_401" | "question_403" | "question_retry_rejected" | "filing_403" => "permission",
         "question_404" | "question_410" => "not_found",
         "question_422" => "invalid_request",
+        _ if is_ask => "permission",
         _ => "message_rejected",
     }));
     if is_ask {

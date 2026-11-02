@@ -13,11 +13,11 @@ The scripts suppress child output on failure because it can contain credentials.
 ## Prepare and start
 
 Build and validate from a clean commit through PrismaBuild, tagged `dl380g10`.
-`verify.sh` runs config tests, builds the three binaries, tests the installer,
+`verify.sh` runs config tests, builds the four binaries, tests the installer,
 and runs `systemd-analyze --user verify` with temporary executable fixtures.
 Reserve 2 CPUs and 6 GiB, with `CARGO_BUILD_JOBS=2` and native threads bounded
 to one. Set `TL3_DEPLOY_ARTIFACTS` to a new absolute directory outside the repo
-to export `tl3`, `tl3d`, and `tl3-deploy` on dl380g10. No credentials enter PB's snapshot.
+to export `tl3`, `tl3d`, `tl3-console` and `tl3-deploy` on dl380g10. No credentials enter PB's snapshot.
 
 Then run on dl380g10, replacing `ARTIFACTS` and `IMAGE` with the admitted build
 directory and the installed harness's immutable image ID:
@@ -181,6 +181,47 @@ are printed. After production setup, restart each service and rerun the check
 through PrismaBuild to finish #19's acceptance criteria.
 
 Reserve 192.168.1.107 in Rob's router DHCP settings if desired, so the status address stays stable.
+
+## Operator console
+
+The console (PRD #327) is a separate service, `tl3-console.service`. It shows
+the live board at `http://192.168.1.107:8034`. It connects as its own Postgres
+login, `tl3_console`, which may read every table, including ones later
+migrations add, and may write none. It never writes the world snapshot or the
+event log, so it can restart at any time without touching `tl3d`.
+
+The installer creates the login's password at
+`~/.config/tl3/secrets/console-postgres-password` (0600, once, never
+replaced). `deploy.py install` creates or updates the login and its grants
+when Postgres is running (`tl3-deploy console-role`), and fails if it can't.
+Each start of `tl3-postgres.service` does the same as a best effort
+(`tl3-deploy database`): it reads the file in place, and a missing file or a
+failed grant is logged as "console login not granted", never a failed start,
+because tl3d and the status page require Postgres. Both are safe to repeat.
+Only the console's unit loads that credential, and it never loads the store
+owner's. The login's sessions default to read-only transactions as well. If any of the console's threads stops, the process exits and
+systemd restarts it. It updates when Postgres
+reports a commit (`LISTEN tl3_changes`), never on a timer, and reconnects by
+itself after Postgres or `tl3d` restarts.
+
+`deploy.py install` first builds the web app with `npm ci` and `npm run build`
+in `web/`, so an npm failure leaves the existing installation untouched. After
+the binaries and config, it swaps `web/dist` into `~/.local/share/tl3/console`. Node 22 or
+newer and npm must be on the PATH. Cargo builds never need Node. The installer
+adds a `[console]` section to an existing `tl3.toml` with `listen` on the status
+address at port 8034, `assets` at the installed directory, and the console's
+`user` and `password_file`. Existing values win. Pass `--console-listen ADDRESS:PORT` when the installer writes a new config to
+choose another LAN address. Start or restart it with:
+
+```sh
+systemctl --user enable --now tl3-console.service
+systemctl --user restart tl3-console.service
+```
+
+`deploy.py start` enables it with the other services, and `deploy.py check`
+reports the unit and `GET /api/board` on the console address. The console
+needs the schema from the same release as `tl3d`; it refuses an older or newer
+schema until `tl3d` has migrated the store.
 
 ## MLflow tracking server
 

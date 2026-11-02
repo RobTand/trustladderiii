@@ -1,6 +1,6 @@
-use crate::{Result, request, snapshot};
+use crate::{Result, board, board::plain};
 use std::{collections::BTreeMap, fmt::Write};
-use tl3_kernel::{EffectKind, NodeId, Outcome, Phase, Role, Wait};
+use tl3_kernel::NodeId;
 use tl3_store::{Reader, Transaction};
 
 const COLUMNS: [&str; 6] = [
@@ -68,147 +68,45 @@ pub fn load_request_details(
     tx: &mut Transaction<'_>,
     nodes: &[NodeId],
 ) -> Result<BTreeMap<NodeId, RequestDetails>> {
-    let ids: Vec<_> = nodes.iter().map(|node| node.0.to_string()).collect();
-    let rows = tx
-        .query(
-            "SELECT active.unit, CASE WHEN active.unit IS NOT NULL THEN active.last_progress_ms
-                   ELSE summary.last_progress_ms END, summary.unit
-         FROM unnest($1::text[]) WITH ORDINALITY AS n(node_id, position)
-         LEFT JOIN LATERAL (
-             SELECT unit, last_progress_ms FROM tl3_worker_progress
-             WHERE node_id = n.node_id ORDER BY started_ms DESC, run_key LIMIT 1
-         ) active ON true
-         LEFT JOIN tl3_worker_summary summary ON summary.node_id = n.node_id
-         ORDER BY n.position",
-            &[&ids],
-        )
-        .map_err(tl3_store::Error::from)?;
-    let mut details = BTreeMap::new();
-    for (node, row) in nodes.iter().zip(rows) {
-        let time: Option<i64> = row.get(1);
-        let unit: Option<String> = row.get::<_, Option<String>>(0).or_else(|| row.get(2));
-        let last_progress = time
-            .and_then(chrono::DateTime::from_timestamp_millis)
-            .map(|time| {
-                let action = match unit.as_deref() {
-                    Some("model_turn") => "Model turn completed",
-                    _ => "Tool result received",
-                };
-                format!("{action} at {}", time.format("%Y-%m-%d %H:%M:%S UTC"))
-            });
-        details.insert(
-            *node,
-            RequestDetails {
-                last_progress,
-                ..RequestDetails::default()
-            },
-        );
-    }
-    for row in tx.query("SELECT failure.row_id, failure.value, node.value->'generation'
-        FROM tl3_world failure JOIN tl3_world node ON node.table_name = 'nodes' AND node.row_id = failure.row_id
-        WHERE failure.table_name = 'worker_failures' AND failure.row_id = ANY($1)", &[&ids]).map_err(tl3_store::Error::from)? {
-        let id: String = row.get(0);
-        let failure: serde_json::Value = row.get(1);
-        let generation: serde_json::Value = row.get(2);
-        // RunFailed advances the generation before status reads the outcome.
-        if failure["generation"].as_u64().and_then(|n| n.checked_add(1)) != generation.as_u64() {
-            continue;
-        }
-        if let Ok(id) = id.parse::<u64>() {
-            let details = details.entry(NodeId(id)).or_default();
-            let progress = details.last_progress.get_or_insert_with(|| NONE_RECORDED.into());
-            write!(progress, "; last worker failure: {}: {}",
-                failure["failure_class"].as_str().unwrap_or("unknown"),
-                failure["failure_message"].as_str().unwrap_or("worker run failed")).expect("write to string");
-        }
-    }
-    for row in tx.query("SELECT row_id, value FROM tl3_world WHERE table_name = 'incidents' AND value->>'node' = ANY($1) AND value->>'open' = 'true' ORDER BY row_id", &[&ids]).map_err(tl3_store::Error::from)? {
-        let id: String = row.get(0);
-        let incident: crate::looks::Incident = crate::decode_stored(row.get(1))?;
-        if let Some(node) = incident.node {
-            details.entry(node).or_default().open_incidents.push(format!("{} (clear: clear incident {id})", incident.summary));
-        }
-    }
-    Ok(details)
+    Ok(board::details(tx, nodes)?
+        .into_iter()
+        .map(|(node, details)| {
+            let last_progress =
+                board::last_progress(details.progress.as_ref(), details.worker_failure.as_ref());
+            let open_incidents = details
+                .incidents
+                .into_iter()
+                .map(|incident| clearable(&incident.into()))
+                .collect();
+            (
+                node,
+                RequestDetails {
+                    last_progress,
+                    open_incidents,
+                },
+            )
+        })
+        .collect())
 }
 
+fn details_of(card: &board::Card) -> RequestDetails {
+    RequestDetails {
+        last_progress: card.last_progress.clone(),
+        open_incidents: card.incidents.iter().map(clearable).collect(),
+    }
+}
+
+fn clearable(incident: &board::CardIncident) -> String {
+    format!(
+        "{} (clear: clear incident {})",
+        incident.summary, incident.id
+    )
+}
+
+/// The status page is a plain view of the console's board.
 pub fn load(reader: &mut Reader) -> Result<Status> {
     let mut tx = reader.transaction()?;
-    let snapshot = tl3_store::load_snapshot(&mut tx)?;
-    let mut requests = Vec::new();
-    if !snapshot.rows.is_empty() {
-        let world = snapshot::decode(&snapshot)?;
-        let ids: Vec<_> = (0..world.nodes.len())
-            .map(|index| NodeId(index as u64))
-            .collect();
-        let mut details = load_request_details(&mut tx, &ids)?;
-        let failed_notices = snapshot
-            .rows
-            .iter()
-            .filter(|r| r.table == "notice_failures")
-            .map(|r| crate::decode_stored::<crate::notices::FailedNotice>(r.value.clone()))
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        for (index, node) in world.nodes.iter().enumerate() {
-            let id = NodeId(index as u64);
-            let request = request(&snapshot, id)?;
-            if crate::latest_request(&snapshot, &request.repo, request.issue)
-                .is_some_and(|r| r.id != index.to_string())
-            {
-                continue;
-            }
-            let title = plain(&request.title);
-            let title = if title.is_empty() {
-                "title not recorded"
-            } else {
-                &title
-            };
-            let failed_question = failed_notices.iter().any(|f| matches!(f.delivery.output,
-                    crate::executor::Output::Notice { node: n, notice: tl3_kernel::Notice::Ask { question } }
-                    if n == id && node.question.is_some_and(|q| q.id == question)));
-            let waiting_on = if failed_question {
-                "the question post that failed; the question was never posted"
-            } else {
-                match node.waiting_on() {
-                    Wait::Incident => "incident resolution",
-                    Wait::Answer => "Rob's answer",
-                    Wait::Resume => "resume",
-                    Wait::Effect(kind) => effect_wait(kind),
-                    Wait::WorkerReply => "the current task to finish",
-                    Wait::CheckResults => "check results",
-                    Wait::MergeQueue => "merge queue",
-                    Wait::SlotOrFiles => "another change to finish using these files",
-                    Wait::AgentPool => "a planner to become available",
-                    Wait::None => "none",
-                    Wait::UpstreamEvent => match node.phase {
-                        Phase::Ingesting => "the request to be read",
-                        Phase::Auditing => "the goals to be checked",
-                        Phase::Unplanned => "planning to begin",
-                        Phase::Planning { .. } => "a planner to become available",
-                        Phase::Ready(_) => "another change to finish using these files",
-                        Phase::Making => "the change to be written",
-                        Phase::Checking => "checks to finish",
-                        Phase::Reviewing => "the review to finish",
-                        Phase::Publishing => "the pull request to be published",
-                        Phase::Queued => "merge queue",
-                        Phase::Rebasing => "the branch update to finish",
-                        Phase::AwaitingRob => "Rob's answer",
-                        Phase::Stopping(_) => "cleanup to finish",
-                        Phase::Closed(_) => "none",
-                    },
-                }
-            };
-            requests.push(RequestStatus {
-                issue: format!(
-                    "{}/{}#{}: {}",
-                    request.repo.owner, request.repo.name, request.issue, title
-                ),
-                phase: phase(node.phase),
-                waiting_on: waiting_on.into(),
-                credit: node.credit.balance(),
-                details: details.remove(&id).unwrap_or_default(),
-            });
-        }
-    }
+    let board = board::read(&mut tx, chrono::Utc::now().timestamp_millis(), None)?;
     let counts = tx.query_one("SELECT count(*) FILTER (WHERE parked_reason IS NULL), count(*) FILTER (WHERE parked_reason IS NOT NULL), count(*) FILTER (WHERE parked_reason = 'http') FROM tl3_memory_outbox", &[]).map_err(tl3_store::Error::from)?;
     let health = tx
         .query_opt(
@@ -222,43 +120,42 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
         http_parked: counts.get(2),
         rejected_status: health.map(|row| row.get(0)),
     };
-    let unassigned_incidents = snapshot
-        .rows
-        .iter()
-        .filter(|row| row.table == "incidents")
-        .map(|row| crate::decode_stored::<crate::looks::Incident>(row.value.clone()))
-        .collect::<Result<Vec<_>>>()?
-        .into_iter()
-        .filter(|incident| incident.open && incident.node.is_none())
-        .map(|incident| {
-            format!(
-                "{} (clear: clear incident {})",
-                incident.summary, incident.id
-            )
-        })
-        .collect();
+    // Q53: models out of quota until their announced reset.
     let now = chrono::Utc::now().timestamp_millis();
-    let quota_models = snapshot
-        .rows
-        .iter()
-        .filter(|row| row.table == "model_quotas")
+    let quota_models = tx
+        .query(
+            "SELECT row_id, value FROM tl3_world WHERE table_name = 'model_quotas' ORDER BY row_id",
+            &[],
+        )
+        .map_err(tl3_store::Error::from)?
+        .into_iter()
         .filter_map(|row| {
-            let reset = row.value["reset_ms"]
-                .as_i64()
-                .filter(|reset| *reset > now)?;
+            let model: String = row.get(0);
+            let value: serde_json::Value = row.get(1);
+            let reset = value["reset_ms"].as_i64().filter(|reset| *reset > now)?;
             let reset = chrono::DateTime::from_timestamp_millis(reset)?;
             Some(format!(
-                "{} is out of quota until {}. Its steps use the next model in their ladder.",
-                row.id,
+                "{model} is out of quota until {}. Its steps use the next model in their ladder.",
                 reset.format("%Y-%m-%d %H:%M:%S UTC")
             ))
         })
         .collect();
     tx.commit().map_err(tl3_store::Error::from)?;
     Ok(Status {
-        requests,
+        requests: board
+            .cards
+            .iter()
+            .map(|card| RequestStatus {
+                issue: format!("{}#{}: {}", card.repo, card.issue, card.title),
+                phase: card.phase.clone(),
+                waiting_on: card.waiting_on.clone(),
+                // Credit is zero until ingest sets it up.
+                credit: card.credit.unwrap_or(0),
+                details: details_of(card),
+            })
+            .collect(),
         memory,
-        unassigned_incidents,
+        unassigned_incidents: board.unassigned_incidents.iter().map(clearable).collect(),
         quota_models,
     })
 }
@@ -345,17 +242,6 @@ pub fn render_html(status: &Status) -> String {
     output
 }
 
-fn plain(value: &str) -> String {
-    value
-        .chars()
-        .filter(|c| (!c.is_control() || c.is_whitespace())
-            && !matches!(*c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200b}'..='\u{200f}' | '\u{feff}'))
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 fn escape_html(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -363,61 +249,6 @@ fn escape_html(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
-}
-
-fn phase(phase: Phase) -> String {
-    match phase {
-        Phase::Ingesting => "Understanding the request",
-        Phase::Auditing => "Auditing the goals",
-        Phase::Unplanned => "Waiting for a plan",
-        Phase::Planning { .. } => "Planning",
-        Phase::Ready(_) => "Ready",
-        Phase::Making => "Making the change",
-        Phase::Checking => "Running checks",
-        Phase::Reviewing => "Reviewing",
-        Phase::Publishing => "Publishing",
-        Phase::Queued => "In the merge queue",
-        Phase::Rebasing => "Updating the branch",
-        Phase::AwaitingRob => "Awaiting Rob",
-        Phase::Stopping(_) => "Cleaning up",
-        Phase::Closed(outcome) => {
-            return format!(
-                "Closed: {}",
-                match outcome {
-                    Outcome::Merged => "merged",
-                    Outcome::Stopped => "stopped",
-                    Outcome::Replaced => "replaced",
-                    Outcome::Duplicate => "duplicate",
-                    Outcome::AlreadyDone => "already done",
-                    Outcome::NotActionable => "not actionable",
-                }
-            );
-        }
-    }
-    .into()
-}
-
-fn effect_wait(kind: EffectKind) -> &'static str {
-    match kind {
-        EffectKind::StartRun(role) => match role {
-            Role::Ingest => "request reader to start",
-            Role::Audit => "goals auditor to start",
-            Role::Plan => "planner to start",
-            Role::Make => "writer to start",
-            Role::Review => "reviewer to start",
-        },
-        EffectKind::SubmitChecks => "checks to be submitted",
-        EffectKind::StartRebase => "branch update to start",
-        EffectKind::PrepareWorktree => "preparing the change files",
-        EffectKind::Push => "branch push",
-        EffectKind::PostApproval => "approval to be posted",
-        EffectKind::OpenPr => "pull request to open",
-        EffectKind::Enqueue => "merge queue admission",
-        EffectKind::StopRun => "the current task to stop",
-        EffectKind::WithdrawJob => "checks to stop",
-        EffectKind::ClosePr => "pull request to close",
-        EffectKind::RemoveWorktree => "removing temporary change files",
-    }
 }
 
 #[cfg(test)]

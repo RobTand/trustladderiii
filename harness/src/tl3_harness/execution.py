@@ -9,9 +9,10 @@ import tempfile
 import time
 
 from .limits import MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, validate_check_plan
-from .model import Check, Kind, Outcome, Result, Verdict, judge
+from .model import Check, HarnessInputError, Kind, Outcome, Result, TestResult, Verdict, judge
 from .report import InvalidReport, decode, parse
-from .trees import added_names, changed_existing_tests, commit, configuration, export, is_test, test_edits, validate_configuration
+from .trees import (UnsupportedEntry, added_names, changed_configuration, changed_existing_tests, commit,
+                    configuration, export, is_test, own_base, test_edits)
 
 
 TMPFS_MIB = 512
@@ -27,9 +28,9 @@ class Container:
 
     def __post_init__(self):
         if type(self.exec_scratch) is not bool:
-            raise ValueError("exec_scratch must be a boolean")
+            raise HarnessInputError("exec_scratch must be a boolean")
         if not re.fullmatch(r"(?:[\w./:-]+@)?sha256:[0-9a-f]{64}", self.image):
-            raise ValueError("use an immutable image ID or manifest digest")
+            raise HarnessInputError("use an immutable image ID or manifest digest")
 
 
 def container_command(tree: Path, container: Container, tests: tuple[str, ...]) -> list[str]:
@@ -135,21 +136,60 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
         return dict.fromkeys(tests, Outcome.NO_REPORT)
 
 
+def refused(plan: tuple[Check, ...], message: str) -> tuple[Result, ...]:
+    """A failing round that tells the maker what to undo; nothing ran."""
+    return tuple(Result(check.name, check.kind, Verdict.FAIL, tuple(
+        TestResult(test, Outcome.UNCOLLECTED, Outcome.UNCOLLECTED, False, False, message[:MAX_MESSAGE_CHARS])
+        for test in check.tests)) for check in plan)
+
+
+def changed_configuration_message(changed: list[str]) -> str:
+    """The instruction first, then as many files as fit; clipping never hides what to do."""
+    instruction = "Restore the changed test configuration: checks never run a changed test configuration. Changed: "
+    for shown in range(len(changed), 0, -1):
+        rest = len(changed) - shown
+        message = instruction + ", ".join(changed[:shown]) + (f" and {rest} more." if rest else ".")
+        if len(message) <= MAX_MESSAGE_CHARS:
+            return message
+    return f"{instruction}{len(changed)} files."
+
+
+def unsupported_entry_message(entry: UnsupportedEntry) -> str:
+    return ("Replace this entry with a regular file or remove it: checks run only regular files and "
+            f"directories, never symlinks or submodules. Entry: {entry.name}")
+
+
+def configuration_changes(repo: Path, root: Path, base: str, base_tree: Path, head: str,
+                          head_tree: Path) -> list[str]:
+    """Judge only what the head changed, against the commit it descends from. A head
+    built on an older main than the check base must not answer for main's changes."""
+    fork = own_base(repo, base, head)
+    if fork != base:
+        base_tree = root / f"fork-{fork}"
+        if not base_tree.exists():
+            export(repo, fork, base_tree)
+    return changed_configuration(base_tree, head_tree)
+
+
 def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                container: Container, reviewed: str | None = None) -> tuple[Result, ...]:
     """Run one round inside one admitted PB action, from trusted installed code."""
     require_admission()
     if not plan or len({check.name for check in plan}) != len(plan):
-        raise ValueError("a plan needs uniquely named checks")
+        raise HarnessInputError("a plan needs uniquely named checks")
     tests = tuple(dict.fromkeys(test for check in plan for test in check.tests))
-    validate_check_plan(plan)
+    try:
+        validate_check_plan(plan)
+    except ValueError as error:
+        # limits.py loads standalone inside the container, so it raises plain ValueError.
+        raise HarnessInputError(str(error)) from error
     reproducing = tuple(dict.fromkeys(test for check in plan if check.kind == Kind.REPRODUCING
                                       for test in check.tests))
     if reproducing and reviewed is None:
-        raise ValueError("a reproducing check needs the exact reviewed commit")
+        raise HarnessInputError("a reproducing check needs the exact reviewed commit")
     repo = repo.resolve()
     if Path(__file__).resolve().is_relative_to(repo):
-        raise ValueError("the installed harness must be outside the served checkout")
+        raise HarnessInputError("the installed harness must be outside the served checkout")
     base, head = commit(repo, base), commit(repo, head)
     if reviewed is not None:
         reviewed = commit(repo, reviewed)
@@ -157,10 +197,15 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         root = Path(directory)
         root.chmod(0o755)
         old, new, demo = [root / name for name in ("base", "head", "demonstrating")]
+        # The base is the repository's: its errors stay upstream. The head is the maker's.
         export(repo, base, old)
-        export(repo, head, new)
+        try:
+            export(repo, head, new)
+        except UnsupportedEntry as entry:
+            return refused(plan, unsupported_entry_message(entry))
         config = configuration(old)
-        validate_configuration(old, new)
+        if configs := configuration_changes(repo, root, base, old, head, new):
+            return refused(plan, changed_configuration_message(configs))
         invalid = {test for test in tests if not is_test(test.split("::")[0], config["test-files"])}
         if invalid:
             outcomes = dict.fromkeys(tests, Outcome.UNCOLLECTED)
@@ -189,8 +234,13 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         reproduced = {}
         if reproducing:
             reviewed_tree, round_tree = root / "reviewed", root / "reproducing"
-            export(repo, reviewed, reviewed_tree)
-            validate_configuration(old, reviewed_tree)
+            try:
+                export(repo, reviewed, reviewed_tree)
+            except UnsupportedEntry as entry:
+                return refused(plan, unsupported_entry_message(entry))
+            # `changed` holds the edited existing tests; keep it for the guard below.
+            if configs := configuration_changes(repo, root, base, old, reviewed, reviewed_tree):
+                return refused(plan, changed_configuration_message(configs))
             shutil.copytree(reviewed_tree, round_tree)
             test_edits(reviewed_tree, new, round_tree, config["test-files"])
             additions = added_names(reviewed_tree, new, config["test-files"])

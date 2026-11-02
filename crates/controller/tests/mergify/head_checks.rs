@@ -296,7 +296,10 @@ pub(super) fn label_present(settings: &tl3_config::Store, lag: bool) {
             Phase::Publishing,
             "a label write alone never confirms queue acceptance"
         );
-        for _ in 0..2 {
+        // #356: the first look finds the enqueue alive and waiting. Past the
+        // no-progress allowance, each look at the allowances' pace counts as a
+        // failed look, and the second raises the usual incident.
+        for _ in 0..3 {
             clock.0.set(clock.0.get() + Duration::from_secs(100_000));
             controller.look_now().unwrap();
             drain(&mut controller);

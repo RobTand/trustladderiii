@@ -341,8 +341,9 @@ goals and forecast settings:
   The planner uses these findings when choosing its next plan.
 - `protected_paths`: repo-relative glob patterns for files a leaf or split may
   not declare. Code rejects matching declarations. The controller's defaults
-  include `.github/**`, `.mergify.yml`, `**/conftest.py`, `pytest.ini`, `tox.ini`,
-  `noxfile.py`, `setup.cfg` and `pyproject.toml`. `**` matches zero or more path
+  include `.github/**`, `.mergify.yml`, `**/conftest.py`, `pytest.ini`, `.pytest.ini`,
+  `tox.ini`, `noxfile.py`, `setup.cfg` and `pyproject.toml`, matching the files the
+  check harness refuses to run changed. `**` matches zero or more path
   segments, including a root `conftest.py`.
 
 | Event | Condition | Next | Effects |
@@ -698,6 +699,8 @@ What the look finds enters the kernel as replies, acknowledgements and facts.
 - **Mergify and GitHub:** the stall raises an incident.
 
 A look ends work only when the upstream's own record shows no progress.
+
+A record that doesn't yet show an acknowledgement, such as an enqueue Mergify hasn't acknowledged, is a live operation waiting, not a failed read. A failed look is a read that errors, or an operation still unacknowledged when its no-progress allowance runs out. That second case is how a never-acknowledged enqueue still ends in a read incident. Webhooks can bring several looks within seconds, so failed looks within one silence allowance count as one failure (#356).
 
 After a restart or a gap in webhooks, every pending operation gets a look.
 

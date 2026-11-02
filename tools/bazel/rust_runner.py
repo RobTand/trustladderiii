@@ -11,6 +11,8 @@ import rust_gate  # noqa: E402
 
 # Must match WORKSPACE in tools/bazel/rust.bzl.
 WORKSPACE = Path('/tmp/tl3-workspace')
+# Must match BUDGET_MARKER in tools/ci/bazel_gate.py: every test passed, only a budget overran.
+BUDGET_MARKER = 'budget-overrun.txt'
 
 
 def link_workspace():
@@ -36,6 +38,16 @@ def use_worker_python(launcher):
     os.environ['TL3_TEST_UV'] = str(uv)
 
 
+def enforce_budget(results, config, runner, outputs, baseline=None):
+    try:
+        rust_gate.check_budget(results, config, baseline or config, runner_class=runner)
+    except RuntimeError as error:
+        if str(error).startswith('Per-test time budget exceeded'):
+            # The gate reruns budget-only failures once; an executor can be contended.
+            Path(outputs, BUDGET_MARKER).write_text(str(error) + '\n')
+        raise
+
+
 def main():
     prepare()
     link_workspace()
@@ -57,7 +69,7 @@ def main():
         # Uncalibrated executors (arm64) keep the seconds in the receipt only.
         return
     config = json.loads(Path('tools/ci/rust-test-budget.json').read_text())
-    rust_gate.check_budget(results, config, config, runner_class=runner)
+    enforce_budget(results, config, runner, os.environ['TEST_UNDECLARED_OUTPUTS_DIR'])
 
 
 if __name__ == '__main__':

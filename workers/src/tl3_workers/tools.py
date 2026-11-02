@@ -18,6 +18,8 @@ from tl3_workers.memory import current
 
 
 READ_TOOLS = frozenset({"list", "read", "glob", "grep"})
+# Files larger than this are read by range and changed with edit (#321).
+LARGE_FILE_BYTES = 65_536
 WRITE_TOOLS = frozenset({"write", "edit"})
 # Payload budgets leave room for pagination metadata and truncation notices.
 OUTPUT_LIMITS = {
@@ -118,6 +120,19 @@ def environment_class(error):
     return name if name in ENVIRONMENT_ERRNOS else None
 
 
+def _selectors_json(selectors):
+    return None if selectors is None else [selectors[0], list(selectors[1])]
+
+
+def _selectors(value):
+    if value is None:
+        return None
+    base, tests = value
+    if type(base) is not bool or not all(isinstance(test, str) for test in tests):
+        raise ValueError("invalid evidence selectors")
+    return (base, tuple(tests))
+
+
 class Evidence:
     """Environment failures this run's tools recorded. A blocked reply must cite one (Q50)."""
 
@@ -152,6 +167,24 @@ class Evidence:
                 self.infrastructure_keys[key] = selectors
         else:
             result["tool_error"] = self.tool_error("run_tests", "test_submission", selectors)
+
+    # A resumed maker visit keeps its evidence. JSON turns selector tuples into lists.
+    def state(self):
+        with self._lock:
+            return {"infrastructure_keys": [[key, _selectors_json(s)] for key, s in self.infrastructure_keys.items()],
+                    "tool_errors": {name: {**error, "selectors": _selectors_json(error["selectors"])}
+                                    for name, error in self.tool_errors.items()}}
+
+    def restore(self, state):
+        keys = {key: _selectors(value) for key, value in state["infrastructure_keys"]}
+        errors = {name: {**error, "selectors": _selectors(error["selectors"])}
+                  for name, error in state["tool_errors"].items()}
+        if not all(isinstance(key, str) for key in keys) or not all(
+                isinstance(name, str) and isinstance(error.get("tool"), str) and isinstance(error.get("class"), str)
+                for name, error in errors.items()):
+            raise ValueError("invalid evidence state")
+        with self._lock:
+            self.infrastructure_keys, self.tool_errors = keys, errors
 
     def detail(self, evidence):
         """The worker-recorded facts behind cited evidence, or None if this run has none."""
@@ -354,6 +387,10 @@ class Worktree:
         """Write UTF-8 text, creating parent directories as needed."""
         content.encode("utf-8")
         with self._file(path, write=True, create=True) as stream:
+            size = os.fstat(stream.fileno()).st_size
+            if size > LARGE_FILE_BYTES:
+                # A page read from a large file must not replace the whole file.
+                raise ValueError(f"{path} is {size} bytes; change part of it with edit instead of write")
             stream.write(content)
             stream.truncate()
         return "File written."

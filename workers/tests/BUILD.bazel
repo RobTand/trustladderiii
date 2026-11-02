@@ -290,3 +290,36 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_large_files",
+    srcs = ["test_large_files.py"],
+    deps = [
+        ":conftest",
+        ":test_maker",
+        ":test_planner",
+        ":test_workers",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_turns",
+    srcs = ["test_turns.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        ":test_maker",
+        ":test_prompt_cache",
+        ":test_reviewer",
+        ":test_workers",
+        "//workers/src",
+        "@tl3_pip//httpx",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//openai",
+        "@tl3_pip//pytest",
+    ],
+)

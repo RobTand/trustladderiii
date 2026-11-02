@@ -1017,6 +1017,34 @@ fn repository_exec_scratch_is_an_optional_boolean() {
     assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
 }
 
+#[test]
+fn console_is_optional_and_needs_a_fixed_unicast_port_and_absolute_assets() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    let console = config.console.as_ref().unwrap();
+    assert_eq!(console.listen, "127.0.0.1:8034".parse().unwrap());
+    assert_eq!(console.assets, Path::new("/srv/tl3/console"));
+    let start = EXAMPLE.find("[console]").unwrap();
+    let end = start + EXAMPLE[start..].find("\n\n").unwrap();
+    assert!(
+        Config::parse(&format!("{}{}", &EXAMPLE[..start], &EXAMPLE[end..]))
+            .unwrap()
+            .console
+            .is_none()
+    );
+    for (field, from, to) in [
+        ("console.listen", "127.0.0.1:8034", "127.0.0.1:0"),
+        ("console.listen", "127.0.0.1:8034", "0.0.0.0:8034"),
+        ("console.listen", "127.0.0.1:8034", "224.0.0.1:8034"),
+        ("console.assets", "/srv/tl3/console", "relative/console"),
+    ] {
+        let error = Config::parse(&EXAMPLE.replace(from, to))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains(field), "{to}: {error}");
+    }
+}
+
 // `deploy.py model-defaults` writes these ladders into the live config, so a
 // default that breaks the Q22 rules must fail here, not on dl380g10.
 #[test]
@@ -1047,5 +1075,48 @@ fn deployment_model_defaults_pass_validation() {
     for maker in &config.models.maker {
         let reviewer = config.models.reviewer_for(&maker.family).unwrap();
         assert_ne!(reviewer.name, maker.name, "Q22: a different model reviews");
+    }
+}
+
+#[test]
+fn console_connects_as_its_own_reader_when_configured() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    let console = config.console.clone().unwrap();
+    assert_eq!(console.store(&config.store).user, config.store.user);
+    let with_reader = EXAMPLE.replace(
+        "assets = \"/srv/tl3/console\"",
+        "assets = \"/srv/tl3/console\"\nuser = \"tl3_console\"\npassword_file = \"/run/tl3/console-password\"",
+    );
+    let config = Config::parse(&with_reader).unwrap();
+    let store = config.console.as_ref().unwrap().store(&config.store);
+    assert_eq!(store.user, "tl3_console");
+    assert_eq!(
+        store.password_file.as_deref(),
+        Some(Path::new("/run/tl3/console-password"))
+    );
+    assert_eq!(store.database, config.store.database);
+    for (field, fields) in [
+        ("console.password_file", "user = \"tl3_console\""),
+        (
+            "console.user",
+            "password_file = \"/run/tl3/console-password\"",
+        ),
+        (
+            "console.user",
+            "user = \"tl3 console\"\npassword_file = \"/run/tl3/console-password\"",
+        ),
+        (
+            "console.password_file",
+            "user = \"tl3_console\"\npassword_file = \"console-password\"",
+        ),
+    ] {
+        let error = Config::parse(&EXAMPLE.replace(
+            "assets = \"/srv/tl3/console\"",
+            &format!("assets = \"/srv/tl3/console\"\n{fields}"),
+        ))
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_default();
+        assert!(error.contains(field), "{fields}: {error}");
     }
 }

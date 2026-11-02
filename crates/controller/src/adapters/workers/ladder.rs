@@ -4,7 +4,7 @@ use tl3_config::{Model, Models};
 
 /// The step's models in fallback order, its configured model first. A reviewer
 /// only gets models from a different family than the maker that made the head.
-pub(super) fn candidates<'a>(
+pub(crate) fn candidates<'a>(
     models: &'a Models,
     role: &str,
     rung: usize,
@@ -60,6 +60,18 @@ pub(super) fn choose<'a>(candidates: &[&'a Model], limited: impl Fn(&str) -> boo
         .iter()
         .find(|model| !limited(&model.name))
         .unwrap_or(&candidates[0])
+}
+
+/// The model a step runs now: its first candidate whose announced quota
+/// reset hasn't passed. The worker adapter and the console's board share it.
+pub(crate) fn running<'a>(
+    candidates: &[&'a Model],
+    resets: &std::collections::BTreeMap<String, u64>,
+    now_ms: u64,
+) -> &'a Model {
+    choose(candidates, |name| {
+        resets.get(name).is_some_and(|reset| *reset > now_ms)
+    })
 }
 
 /// Models that reported quota, by name, with their announced resets.

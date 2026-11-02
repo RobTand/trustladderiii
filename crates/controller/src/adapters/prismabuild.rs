@@ -51,6 +51,7 @@ mod results;
 mod source;
 pub(crate) use checks::validate_plan_size;
 pub use checks::{Check, CheckRun, Kind};
+pub(crate) use results::HARNESS;
 pub use source::{RunningSource, Source};
 
 use serde::{Deserialize, Serialize};
@@ -447,10 +448,13 @@ impl Adapter {
         let image = self
             .images
             .for_repository(&delivery.repository, &self.settings.image);
+        let run = checks::descended_base(delivery)?;
+        let mut staged = delivery.clone();
+        staged.checks = Some(run.clone());
         let changed_paths = checks::stage(
             &input,
             &self.settings.harness,
-            delivery,
+            &staged,
             image,
             self.images.exec_scratch(&delivery.repository),
         )?;
@@ -479,10 +483,7 @@ impl Adapter {
             action: key,
             delivery: delivery.clone(),
             changed_paths,
-            run: delivery
-                .checks
-                .clone()
-                .ok_or(crate::Error::Invalid("missing check plan"))?,
+            run,
         };
         // The sealed key reaches stable storage before PB may execute anything.
         write(&record_path(&self.settings.records, delivery, "job"), &job)?;

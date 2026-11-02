@@ -98,6 +98,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (7, include_str!("../migrations/0007_hindsight.sql")),
     (8, include_str!("../migrations/0008_memory_parking.sql")),
     (9, include_str!("../migrations/0009_memory_recovery.sql")),
+    (10, include_str!("../migrations/0010_change_feed.sql")),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -935,6 +936,84 @@ impl Reader {
         let events = load_events(&mut tx, revision, limit)?;
         tx.commit()?;
         Ok(events)
+    }
+}
+
+/// Create or update a login that may only read TL3's tables, now and after
+/// later migrations, with the password in `password_file`. Connects as the
+/// store's owner. Safe to repeat.
+pub fn grant_reader(
+    settings: &tl3_config::Store,
+    role: &str,
+    password_file: &std::path::Path,
+) -> Result<()> {
+    let valid = role.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
+        && role
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+    if !valid {
+        return Err(Error::Invalid("reader role must be a lowercase identifier"));
+    }
+    let password = fs::read(password_file).map_err(Error::Password)?;
+    let password =
+        String::from_utf8(password).map_err(|_| Error::Invalid("reader password must be text"))?;
+    let password = password.trim_end_matches(['\n', '\r']);
+    if password.is_empty() {
+        return Err(Error::Invalid("reader password must not be empty"));
+    }
+    let mut client = connect(settings, false)?;
+    let mut tx = client.transaction()?;
+    // The password is in the statement text below; a failure must not log it.
+    tx.batch_execute("SET LOCAL log_min_error_statement = panic")?;
+    // Utility statements take no parameters, so Postgres quotes the password.
+    let password: String = tx
+        .query_one("SELECT quote_literal($1)", &[&password])?
+        .get(0);
+    let exists = tx
+        .query_opt("SELECT 1 FROM pg_roles WHERE rolname = $1", &[&role])?
+        .is_some();
+    let verb = if exists { "ALTER" } else { "CREATE" };
+    tx.batch_execute(&format!(
+        "{verb} ROLE {role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {password};
+         DO $grant$ BEGIN EXECUTE format('GRANT CONNECT ON DATABASE %I TO {role}', current_database()); END $grant$;
+         GRANT USAGE ON SCHEMA public TO {role};
+         REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {role};
+         GRANT SELECT ON ALL TABLES IN SCHEMA public TO {role};
+         ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO {role};
+         ALTER ROLE {role} SET default_transaction_read_only = on;"
+    ))?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// A read-only session that waits for committed changes on the change feed.
+/// It blocks on the socket, so a waiting reader never polls.
+pub struct Listener {
+    client: Client,
+}
+
+impl Listener {
+    pub fn open(settings: &tl3_config::Store) -> Result<Self> {
+        let mut client = connect(settings, true)?;
+        client.batch_execute("LISTEN tl3_changes")?;
+        Ok(Self { client })
+    }
+
+    /// Block until at least one change commits, then take every notification
+    /// already received. Returns the tables that changed. An error means the
+    /// session ended, and changes after it may be missed until a new listener opens.
+    pub fn wait(&mut self) -> Result<std::collections::BTreeSet<String>> {
+        use postgres::fallible_iterator::FallibleIterator;
+        let mut notifications = self.client.notifications();
+        let Some(first) = notifications.blocking_iter().next()? else {
+            return Err(Error::Invalid("change feed session closed"));
+        };
+        let mut tables = std::collections::BTreeSet::from([first.payload().to_string()]);
+        let mut pending = notifications.iter();
+        while let Some(next) = pending.next()? {
+            tables.insert(next.payload().to_string());
+        }
+        Ok(tables)
     }
 }
 

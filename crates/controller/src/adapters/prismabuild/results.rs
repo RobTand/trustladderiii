@@ -127,18 +127,30 @@ pub(super) async fn ending(tool: &Tool, job: &Job, withdrawal: bool) -> Result<O
     if withdrawal {
         return Ok(Some(Completion::confirmed(vec![])));
     }
-    let (report, pass, results, failed_tests) = match evidence(ending, job) {
+    let (report, pass, results, failed_tests, failure) = match evidence(ending, job) {
         Ok(verdict) => verdict,
         Err(error @ Error::Io(_)) => return Err(error),
         Err(error) => {
             eprintln!("PrismaBuild result {}: {error}", job.action);
-            (false, false, vec![], vec![])
+            (false, false, vec![], vec![], None)
         }
     };
-    Ok(Some(completion(job, report, pass, results, failed_tests)?))
+    let mut completion = completion(job, report, pass, results, failed_tests)?;
+    completion.failure_class = failure.map(Into::into);
+    Ok(Some(completion))
 }
 
-type CheckEvidence = (bool, bool, Vec<serde_json::Value>, Vec<FailedTest>);
+/// The failure class when TL3's trusted harness rejected its own check input:
+/// TL3-side under Q51, not a PrismaBuild failure.
+pub(crate) const HARNESS: &str = "harness";
+
+type CheckEvidence = (
+    bool,
+    bool,
+    Vec<serde_json::Value>,
+    Vec<FailedTest>,
+    Option<&'static str>,
+);
 
 fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
     let successful = matches!(ending.status.as_str(), "executed" | "cache_hit")
@@ -148,6 +160,7 @@ fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
     let mut pass = false;
     let mut results = vec![];
     let mut failed_tests = Vec::new();
+    let mut failure = None;
     if let Some(evidence) = ending.result {
         if !evidence.verified
             || (successful
@@ -211,6 +224,8 @@ fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
                 .iter()
                 .map(serde_json::to_value)
                 .collect::<std::result::Result<_, _>>()?;
+        } else if harness_error(&raw, job) {
+            failure = Some(HARNESS);
         }
     } else if matches!(ending.status.as_str(), "executed" | "cache_hit") {
         // A receipt-only cache hit can outlive its queue record. Missing result evidence is unknown.
@@ -218,7 +233,26 @@ fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
             "successful PrismaBuild ending has no verified result",
         ));
     }
-    Ok((report, pass, results, failed_tests))
+    Ok((report, pass, results, failed_tests, failure))
+}
+
+fn harness_error(raw: &[u8], job: &Job) -> bool {
+    #[derive(Deserialize)]
+    struct HarnessError {
+        schema: String,
+        effect_key: String,
+    }
+    let Ok(text) = std::str::from_utf8(raw) else {
+        return false;
+    };
+    let errors: Vec<_> = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("TL3_CHECKS_ERROR "))
+        .collect();
+    errors.len() == 1
+        && serde_json::from_str::<HarnessError>(errors[0]).is_ok_and(|error| {
+            error.schema == "tl3.checks.error.v1" && error.effect_key == job.delivery.key
+        })
 }
 
 fn completion(
@@ -228,22 +262,33 @@ fn completion(
     results: Vec<serde_json::Value>,
     failed_tests: Vec<FailedTest>,
 ) -> Result<Completion> {
-    Ok(Completion::confirmed(vec![Observation::Checks {
+    let head = job
+        .delivery
+        .head_sha
+        .clone()
+        .ok_or(Error::Invalid("missing check head"))?;
+    let mut observations = vec![];
+    if job.delivery.checks.as_ref() != Some(&job.run) {
+        // Staging moved the plan to the base the head descends from; keep it.
+        observations.push(Observation::CheckPlan {
+            node: job.delivery.node(),
+            sha: head.clone(),
+            run: job.run.clone(),
+        });
+    }
+    observations.push(Observation::Checks {
         node: job.delivery.node(),
         generation: job.delivery.generation,
         action_key: job.action.to_string(),
         base_sha: job.run.base_sha.as_str().to_owned(),
-        sha: job
-            .delivery
-            .head_sha
-            .clone()
-            .ok_or(Error::Invalid("missing check head"))?,
+        sha: head,
         changed_paths: job.changed_paths.clone(),
         failed_tests,
         report,
         pass,
         results,
-    }]))
+    });
+    Ok(Completion::confirmed(observations))
 }
 
 fn parse(raw: &[u8], job: &Job) -> Option<Report> {

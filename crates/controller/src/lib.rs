@@ -11,6 +11,7 @@ pub mod findings;
 
 pub mod adapters;
 mod blocked;
+pub mod board;
 mod branches;
 pub mod cli;
 pub mod clock;
@@ -26,6 +27,7 @@ mod loom_tests;
 pub mod memory;
 mod notices;
 pub mod production;
+mod question_findings;
 pub mod release;
 mod scope;
 mod snapshot;
@@ -1247,9 +1249,9 @@ impl Controller {
             json!(&completion),
             &snapshot,
         );
-        if completion.ack == Ack::Permanent
-            && let Some(class) = completion.failure_class.as_deref()
-        {
+        // A confirmed completion may still name its failure, such as a check
+        // action whose trusted harness rejected TL3's own input.
+        if let Some(class) = completion.failure_class.as_deref() {
             self.failure_allowance(&snapshot, key, class, &mut commit)?;
         }
         if effect.state == EffectState::Uncertain && completion.ack != Ack::Confirmed {
@@ -1564,7 +1566,54 @@ impl Controller {
                             .find(|r| r.table == "plans" && r.id == node.0.to_string())
                             .map(|r| r.value.clone())
                     });
-                let context = json!({"node": node, "question": question, "generation": n.generation, "pieces": plan.as_ref().and_then(|p| p.get("pieces")).cloned().unwrap_or(json!([])), "plan": plan});
+                let mut context = json!({"node": node, "question": question, "generation": n.generation, "pieces": plan.as_ref().and_then(|p| p.get("pieces")).cloned().unwrap_or(json!([])), "plan": plan});
+                // #322: Rob sees the deciding worker's findings, not only the question kind.
+                let written = |table: &str| {
+                    commit.rows.iter().rev().find_map(|row| match row {
+                        RowChange::Put {
+                            table: t,
+                            id,
+                            value,
+                        } if t == table && id == &node.0.to_string() => Some(value.clone()),
+                        _ => None,
+                    })
+                };
+                let before = |table: &str| {
+                    snapshot
+                        .rows
+                        .iter()
+                        .find(|r| r.table == table && r.id == node.0.to_string())
+                        .map(|r| r.value.clone())
+                };
+                let incidents: Vec<_> = commit
+                    .rows
+                    .iter()
+                    .filter_map(|row| match row {
+                        RowChange::Put { table, value, .. }
+                            if table == "incidents" && value["node"] == json!(node) =>
+                        {
+                            Some(value.clone())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let prior = snapshot::decode(snapshot)?
+                    .nodes
+                    .get(node.0 as usize)
+                    .map_or(tl3_kernel::Phase::Ingesting, |previous| previous.phase);
+                if let Some(binding) = n.question.as_ref().filter(|binding| binding.id == question)
+                    && let Some(findings) = question_findings::findings(
+                        binding,
+                        &question_findings::Sources {
+                            fresh: &written,
+                            previous: &before,
+                            incidents: &incidents,
+                            prior,
+                        },
+                    )
+                {
+                    context["findings"] = findings;
+                }
                 commit.rows.push(put(
                     "question_context",
                     question.to_string(),
