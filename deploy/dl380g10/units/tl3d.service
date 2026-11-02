@@ -19,7 +19,8 @@ RuntimeDirectoryMode=0700
 Environment=TIKTOKEN_CACHE_DIR=%h/.local/share/tl3/tiktoken
 Environment=OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 ExecStart=/usr/bin/python3 %h/.local/share/tl3/deploy/deploy.py service --service controller
-# Stop all local children before recovery reconciles their durable run records.
+# Stop tl3d's own children, such as Git helpers and PB clients, before recovery
+# reconciles their records. Worker runs live in tl3-workers.slice and survive (#372).
 KillMode=control-group
 Restart=on-failure
 RestartSec=5

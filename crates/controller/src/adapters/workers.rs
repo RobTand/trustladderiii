@@ -652,8 +652,13 @@ impl Supervisor {
 
 fn stop_attempt(root: &Path) -> Result<()> {
     if let Some((_, attempt)) = latest(root)? {
+        // #372: the supervisor's own scope also holds every process the worker started.
+        let scope = process::own_scope(&attempt.join("claim.json"))?;
         cancel(&attempt.join("claim.json"))?;
         cancel(&attempt.join("process.json"))?;
+        if let Some(scope) = &scope {
+            process::kill_scope(scope)?;
+        }
         process::kill_and_wait(&attempt.join("process.json"))?;
         process::kill_and_wait(&attempt.join("claim.json"))?;
     }
@@ -738,10 +743,23 @@ impl Supervisor {
             "repo": format!("{}/{}", delivery.repository.owner, delivery.repository.name),
             "issue": delivery.issue, "request": delivery.node().0.to_string(), "epoch": delivery.epoch,
         });
-        let mut command = Command::new(&self.settings.python);
+        let python = release_python(&self.settings.python)?;
+        // #372: the launcher moves the supervisor out of tl3d's cgroup, so a
+        // restart or deploy leaves the run alive. A launcher failure fails the
+        // launch; it never falls back to a supervisor tl3d's stop would kill.
+        let mut command = match self.settings.launcher.split_first() {
+            Some((launcher, args)) => {
+                let mut command = Command::new(launcher);
+                command.args(args).arg(&python);
+                command
+            }
+            None => Command::new(&python),
+        };
         isolate_credentials(&attempt, &mut request, &mut command)?;
         write(&attempt.join("request.json"), &request)?;
         write(&attempt.join("command.json"), &self.settings.command)?;
+        // Deploy keeps every release a live attempt still runs from.
+        write(&attempt.join("launch.json"), &json!({"python": python}))?;
         let mut script = File::create(attempt.join("supervisor.py"))?;
         script.write_all(include_bytes!("../../tools/worker_supervisor.py"))?;
         script.sync_all()?;
@@ -947,6 +965,16 @@ impl Supervisor {
     }
 }
 
+/// Pin a run to the release its Python path names at launch. The path's
+/// directories may pass through a release link that a later deploy switches;
+/// the interpreter itself stays a link, because a venv is found from its path.
+fn release_python(python: &Path) -> Result<PathBuf> {
+    match (python.parent(), python.file_name()) {
+        (Some(directory), Some(name)) => Ok(fs::canonicalize(directory)?.join(name)),
+        _ => Err(Error::Invalid("workers.python must name a file")),
+    }
+}
+
 fn reap(mut child: Child) {
     std::thread::spawn(move || {
         let _ = child.wait();
@@ -1143,3 +1171,37 @@ mod materialize_tests;
 #[cfg(test)]
 #[path = "workers/active_tests.rs"]
 mod active_tests;
+
+#[cfg(test)]
+mod release_tests {
+    use super::release_python;
+    use std::fs;
+
+    #[test]
+    fn launch_pins_the_release_a_switched_link_names() {
+        let root = tempfile::tempdir().unwrap();
+        for release in ["one", "two"] {
+            let bin = root
+                .path()
+                .join("releases")
+                .join(release)
+                .join("workers/.venv/bin");
+            fs::create_dir_all(&bin).unwrap();
+            std::os::unix::fs::symlink("/usr/bin/python3", bin.join("python")).unwrap();
+        }
+        let current = root.path().join("current");
+        std::os::unix::fs::symlink(root.path().join("releases/one"), &current).unwrap();
+        let python = current.join("workers/.venv/bin/python");
+        let pinned = release_python(&python).unwrap();
+        let releases = fs::canonicalize(root.path().join("releases")).unwrap();
+        assert_eq!(pinned, releases.join("one/workers/.venv/bin/python"));
+        // A deploy switches the link; the pinned path still names release one.
+        fs::remove_file(&current).unwrap();
+        std::os::unix::fs::symlink(root.path().join("releases/two"), &current).unwrap();
+        assert_eq!(pinned, releases.join("one/workers/.venv/bin/python"));
+        assert_eq!(
+            release_python(&python).unwrap(),
+            releases.join("two/workers/.venv/bin/python")
+        );
+    }
+}
