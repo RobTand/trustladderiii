@@ -16,6 +16,7 @@ fn publishing(settings: &tl3_config::Store, api: &Server, root: &Path) -> Contro
             title: "change".into(),
             actor: 42,
             label: "tl3".into(),
+            labels: Vec::new(),
         })
         .unwrap();
     for _ in 0..300 {
