@@ -12,7 +12,7 @@ from typing import Protocol
 from .limits import MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, validate_check_plan
 from .model import (Check, FailureNotes, Forcing, HarnessInputError, Kind, Outcome, Result, TestResult, Verdict,
                     judge)
-from .node_ids import selects
+from .node_ids import selects, validate_always_tests
 from .report import InvalidReport, decode, parse
 from . import selection
 from .trees import (UnsupportedEntry, added_names, changed_configuration, changed_existing_tests,
@@ -21,9 +21,10 @@ from .trees import (UnsupportedEntry, added_names, changed_configuration, change
 
 
 TMPFS_MIB = 512
-# The one check the harness adds to a plan: existing tests that import the change (#359).
+# Existing tests that import the change (#359), and configured repo-wide rules (#498).
 SELECTED_CHECK = "Existing tests that import the change"
 MAX_SELECTED_TESTS = 1000
+ALWAYS_CHECK = "Repository always tests"
 
 
 _BASE_RESULTS: dict[tuple, dict[str, Outcome]] = {}
@@ -323,7 +324,8 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
     """Run one round inside one admitted PB action, from trusted installed code. `protected`
     holds the repository's protected path patterns; a change to any of them is refused.
     With `selected_tests`, up to that many existing tests whose imports reach the change,
-    and that pass on the base, run as one more regression check, `SELECTED_CHECK`."""
+    and that pass on the base, run as one more regression check, `SELECTED_CHECK`.
+    `always_tests` runs the configured files or node IDs as regression checks every round."""
     require_admission()
     if not plan or len({check.name for check in plan}) != len(plan):
         raise HarnessInputError("a plan needs uniquely named checks")
@@ -332,6 +334,14 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
     if selected_tests is not None and (type(selected_tests) is not int
                                        or not 1 <= selected_tests <= MAX_SELECTED_TESTS):
         raise HarnessInputError(f"selected_tests must be 1 to {MAX_SELECTED_TESTS}")
+    if any(check.name == ALWAYS_CHECK for check in plan):
+        raise HarnessInputError("a planned check may not use the harness's always-check name")
+    try:
+        validate_always_tests(always_tests)
+    except ValueError as error:
+        raise HarnessInputError(str(error)) from error
+    if always_tests:
+        plan += (Check(ALWAYS_CHECK, Kind.REGRESSION, tuple(dict.fromkeys(always_tests))),)
     tests = tuple(dict.fromkeys(test for check in plan for test in check.tests))
     try:
         validate_check_plan(plan)

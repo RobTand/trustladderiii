@@ -732,6 +732,22 @@ impl Config {
                     format!("must be 1 to {MAX_SELECTED_TESTS}, the harness's limit"),
                 ));
             }
+            for (entry, test) in repo.always_tests.iter().enumerate() {
+                let mut parts = test.split("::");
+                let path = parts.next().unwrap_or_default();
+                if !path.ends_with(".py")
+                    || path.starts_with(['/', '-'])
+                    || path.contains(['\\', ':', '*', '?', '[', ']'])
+                    || path.split('/').any(|part| matches!(part, "" | "." | ".."))
+                    || parts.any(str::is_empty)
+                    || test.chars().any(char::is_control)
+                {
+                    return Err(invalid(
+                        format!("{field}.always_tests[{entry}]"),
+                        "use a repo-relative pytest file or node ID without globs or parent traversal",
+                    ));
+                }
+            }
             if repo.installation_id == 0 {
                 return Err(invalid(
                     format!("{field}.installation_id"),

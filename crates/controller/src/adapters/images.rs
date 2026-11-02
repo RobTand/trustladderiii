@@ -6,7 +6,13 @@ use std::collections::BTreeMap;
 struct Settings {
     image: Option<String>,
     exec_scratch: bool,
-    selected_tests: Option<u32>,
+    tests: AdditionalTests,
+}
+
+#[derive(Clone, Default)]
+pub(super) struct AdditionalTests {
+    pub selected: Option<u32>,
+    pub always: Vec<String>,
 }
 
 #[derive(Clone, Default)]
@@ -27,7 +33,10 @@ impl Images {
                         Settings {
                             image: repo.container_image.clone(),
                             exec_scratch: repo.exec_scratch,
-                            selected_tests: repo.selected_tests,
+                            tests: AdditionalTests {
+                                selected: repo.selected_tests,
+                                always: repo.always_tests.clone(),
+                            },
                         },
                     )
                 })
@@ -48,9 +57,10 @@ impl Images {
             .is_some_and(|settings| settings.exec_scratch)
     }
 
-    pub(super) fn selected_tests(&self, repo: &Repository) -> Option<u32> {
+    pub(super) fn additional_tests(&self, repo: &Repository) -> AdditionalTests {
         self.settings(repo)
-            .and_then(|settings| settings.selected_tests)
+            .map(|settings| settings.tests.clone())
+            .unwrap_or_default()
     }
 
     pub(super) fn for_repository<'a>(&'a self, repo: &Repository, fallback: &'a str) -> &'a str {

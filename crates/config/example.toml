@@ -57,6 +57,8 @@ installation_id = 1
 # protected_paths = ["CHANGELOG.md", "release/**"]
 # Optional: also run up to this many existing tests that import the change as a regression check.
 # selected_tests = 200
+# Optional repo-wide rules, run as regression checks on every leaf and round.
+# always_tests = ["tests/test_rules.py"]
 # PrismaBuild: branch_template = "prismabuild-{issue}-tl3-{node}"
 
 [models]

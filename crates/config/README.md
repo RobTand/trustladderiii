@@ -186,3 +186,25 @@ is false. It allows compiled libraries and executables on the harness's private
 the other container restrictions still apply. Tmpfs is RAM charged to the
 PrismaBuild action's declared memory demand. See the
 [design note](../../docs/design/executable-scratch.md) for containment and risk.
+
+## Repository rule tests
+
+Each `[[github.repos]]` entry accepts `always_tests`, a list of pytest file
+paths or node IDs. The default is an empty list. Paths are relative to the
+repository root. Absolute paths, parent traversal, and globs are rejected.
+Parameter labels in node IDs remain literal pytest selectors.
+
+```toml
+always_tests = ["tests/test_rules.py", "tests/test_limits.py::test_limit"]
+```
+
+The planner receives the list. Every check run of every leaf in this repository
+runs these tests as regression checks, in round 0 and in fix rounds, alongside
+the plan's checks and any `selected_tests`. A file entry selects every collected
+test in that file. An assertion or error that also occurs on the base is
+pre-existing under the regression rules. Missing, skipped, or uncollected
+entries fail. An empty list adds no check.
+
+A new failure returns the test selector and assertion to the maker before
+publication. See [the harness guide](../../harness/README.md#repository-rule-tests)
+for execution and result details.

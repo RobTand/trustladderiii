@@ -155,10 +155,10 @@ class Check:
             raise HarnessInputError("a check repeats a test")
         for test in self.tests:
             path, *names = test.split("::")
-            if (not names or not all(names) or not path.endswith(".py")
+            if (not names and self.kind != Kind.REGRESSION or not all(names) or not path.endswith(".py")
                     or path.startswith(("/", "-")) or ".." in path.split("/")
                     or "\\" in path or "\x00" in test):
-                raise HarnessInputError(f"not an exact pytest node id: {test!r}")
+                raise HarnessInputError(f"not a pytest selector: {test!r}")
 
 
 @dataclass(frozen=True)

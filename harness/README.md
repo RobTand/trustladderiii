@@ -88,6 +88,31 @@ The harness collects the named files and selects the named items itself. It
 disables automatic third-party plugin loading. Dependencies and any plugins
 explicitly required by repository settings belong in the trusted image.
 
+## Repository rule tests
+
+`run_checks(..., always_tests=("tests/test_rules.py",))` adds a regression
+check named `Repository always tests`. The controller supplies this list from
+`[[github.repos]] always_tests` and exposes it to the planner. Every leaf runs
+it in round 0 and in each fix round, alongside the planned checks. The default
+empty list adds nothing. Repeated entries run once.
+
+Entries are repo-relative pytest files or node IDs, without globs, absolute
+paths, or parent traversal. A file selects all its collected tests, including
+parametrized cases. Its result passes only when every case passes; otherwise
+it carries the first failing case's outcome and assertion in collection order.
+No collected cases means uncollected. Named functions still select only their
+own cases.
+
+These entries use the existing regression rules. An assertion or error on both
+the base and head is pre-existing. A new failure returns the selector and the
+assertion to the maker. Missing, skipped, or uncollected entries fail. Existing
+rule tests cannot be edited to satisfy the check; a file selector guards the
+whole file's contents.
+
+A plan may not use this check's name. The controller records the additional
+check in the durable job and rejects a report that omits it. `selected_tests`
+continues to add its own trailing check independently.
+
 ## Selected regression check
 
 With `selected_tests`, `run_checks` adds one more regression check, named
