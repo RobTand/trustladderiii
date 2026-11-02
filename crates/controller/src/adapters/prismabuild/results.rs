@@ -322,12 +322,21 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
     {
         return None;
     }
+    let mut plan = job.run.plan.clone();
+    if !job.always_tests.is_empty() {
+        plan.push(super::Check {
+            name: "Repository always tests".into(),
+            kind: Kind::Regression,
+            tests: job.always_tests.clone(),
+            forcing: None,
+        });
+    }
     // Only a job staged with selection may carry one trailing selected check (#359).
-    let extra = report.results.len().checked_sub(job.run.plan.len())?;
+    let extra = report.results.len().checked_sub(plan.len())?;
     if extra > usize::from(job.selected_tests.is_some()) {
         return None;
     }
-    if let Some(selected) = report.results.get(job.run.plan.len()) {
+    if let Some(selected) = report.results.get(plan.len()) {
         let Custody::InProcess = selected.custody;
         if selected.name != SELECTED_CHECK
             || selected.kind != Kind::Regression
@@ -338,7 +347,7 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             return None;
         }
     }
-    for (result, check) in report.results.iter().zip(&job.run.plan) {
+    for (result, check) in report.results.iter().zip(&plan) {
         if result.name != check.name
             || result.kind != check.kind
             || result.tests.len() != check.tests.len()

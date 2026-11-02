@@ -123,7 +123,7 @@ pub(super) fn stage(
     image: &str,
     exec_scratch: bool,
     protected_paths: &[String],
-    selected_tests: Option<u32>,
+    tests: &super::super::images::AdditionalTests,
 ) -> Result<Vec<String>> {
     let run = delivery
         .checks
@@ -193,7 +193,8 @@ pub(super) fn stage(
         "plan": run.plan, "image": image, "exec_scratch": exec_scratch,
         "protected_paths": protected_paths,
     });
-    if let Some(limit) = selected_tests {
+    request["always_tests"] = serde_json::json!(tests.always);
+    if let Some(limit) = tests.selected {
         request["selected_tests"] = limit.into();
     }
     fs::write(root.join("request.json"), serde_json::to_vec(&request)?)?;
@@ -249,7 +250,7 @@ mod tests {
                     "sha256:fixture",
                     false,
                     &[],
-                    None,
+                    &Default::default(),
                 )
                 .unwrap();
                 assert_eq!(changed, ["README.md"]);
