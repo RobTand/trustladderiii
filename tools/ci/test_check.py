@@ -41,10 +41,11 @@ class DiscoveryTests(unittest.TestCase):
         source = {'PATH': '/usr/bin', 'HOME': '/tmp/fixture',
                   'TEST_TMPDIR': '/tmp/test', 'TEST_FIXTURE_TOKEN': 'synthetic-fixture',
                   'RUNFILES_API_KEY': 'synthetic-fixture', 'UNKNOWN_SETTING': 'discard',
-                  'RUSTC_BOOTSTRAP': '1'}
+                  'RUSTC_BOOTSTRAP': '1', 'BUILDBUDDY_ARTIFACTS_DIRECTORY': '/tmp/artifacts'}
         env = check.child_env(source)
-        for name in ['PATH', 'HOME', 'TEST_TMPDIR', 'RUSTC_BOOTSTRAP']:
-            self.assertEqual(env[name], source[name])
+        for name in ['PATH', 'HOME', 'TEST_TMPDIR', 'RUSTC_BOOTSTRAP',
+                     'BUILDBUDDY_ARTIFACTS_DIRECTORY']:
+            self.assertEqual(env.get(name), source[name])
         for name in ['TEST_FIXTURE_TOKEN', 'RUNFILES_API_KEY', 'UNKNOWN_SETTING']:
             self.assertFalse(name in env, name)
 
