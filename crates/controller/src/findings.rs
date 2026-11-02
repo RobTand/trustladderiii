@@ -128,6 +128,14 @@ pub(crate) fn current_review<'a>(
 
 const TITLE_CHARS: usize = 120;
 
+fn reviewed(item: &Value) -> Option<&str> {
+    if item["kind"] == "review_finding" {
+        item["reviewed_sha"].as_str()
+    } else {
+        None
+    }
+}
+
 /// What a maker fix round is sent of the accumulated feedback (#316). Findings that a
 /// later review or check superseded shrink to a one-line record: kind, id, title and the
 /// round that resolved them. The latest review, the reviewed head's findings and the
@@ -135,11 +143,6 @@ const TITLE_CHARS: usize = 120;
 ///
 /// A round is one feedback event: a review (all its findings) or a check failure.
 pub(crate) fn bounded_feedback(feedback: Vec<Value>, head: Option<&str>) -> Vec<Value> {
-    let reviewed = |item: &Value| {
-        (item["kind"] == "review_finding")
-            .then(|| item["reviewed_sha"].as_str())
-            .flatten()
-    };
     let last_review = feedback.iter().rposition(|item| reviewed(item).is_some());
     let last_sha = last_review.and_then(|index| reviewed(&feedback[index]));
     let last_check = feedback
