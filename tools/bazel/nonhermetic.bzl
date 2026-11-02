@@ -10,6 +10,10 @@ NONHERMETIC = {
         tags = ["requires-network"],
         reason = "Its session fixture downloads tiktoken's o200k_base into an empty cache on purpose.",
     ),
+    "//workers/tests:test_large_files": struct(
+        tags = ["requires-network"],
+        reason = "It reuses test_planner's session fixture, which downloads tiktoken's o200k_base into an empty cache on purpose.",
+    ),
     "//workers/tests:test_sizing": struct(
         tags = ["requires-network"],
         reason = "Its session fixture downloads tiktoken's o200k_base into an empty cache on purpose.",

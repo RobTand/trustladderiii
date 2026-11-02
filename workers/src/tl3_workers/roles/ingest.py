@@ -1,7 +1,14 @@
 """Turn supplied issue material into a brief or an early end."""
 
 from tl3_workers.roles.base import Role
+from tl3_workers.contracts import schema
 from tl3_workers.exploration import ExplorationBudget
+
+# The brief's maxLength, which the controller validates.
+BRIEF_CHARACTERS = next(
+    variant for variant in schema("ingest-reply")["oneOf"]
+    if variant["properties"]["kind"].get("const") == "brief"
+)["properties"]["brief"]["maxLength"]
 
 
 def check_memory_ids(inputs, reply):
@@ -16,7 +23,16 @@ def check_memory_ids(inputs, reply):
             from tl3_workers.forecast import Forecaster
             if "files" not in reply:
                 raise ValueError("sized briefs must declare their root files")
-            reply["forecast"] = Forecaster(inputs["forecast"]).measure(reply["brief"], reply["files"])
+            forecaster = Forecaster(inputs["forecast"])
+            file_tokens = forecaster.files(reply["files"])
+            # Unusable files are named in the brief rather than failing the run
+            # (#321): planning reports them as violations if they're still declared.
+            for note in forecaster.notes():
+                # The controller validates the brief against the schema's limit.
+                if len(reply["brief"]) + 2 + len(note) > BRIEF_CHARACTERS:
+                    break
+                reply["brief"] += "\n\n" + note
+            reply["forecast"] = forecaster.forecast(reply["brief"], file_tokens)
 
 
 ROLE = Role(
