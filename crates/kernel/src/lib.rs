@@ -2739,12 +2739,15 @@ fn slot_free(w: &World, i: usize) -> bool {
 }
 
 /// Tickets issued after a pool waiter's own that raise it one level (Q39).
-pub const POOL_AGING_TICKETS: u64 = 8;
+pub const POOL_AGING_TICKETS: u64 = 1 << POOL_AGING_SHIFT;
+/// A power of two, so aging is a shift: Kani encodes a 64-bit division as a
+/// full divider at every pool comparison, which the reply proofs can't afford.
+const POOL_AGING_SHIFT: u32 = 3;
 
 /// A pool waiter's place in line (Q39): its priority's rank, raised one level
 /// per POOL_AGING_TICKETS tickets issued after its own, down to P0.
 pub fn pool_level(next_ticket: u64, priority: Priority, ticket: u64) -> u8 {
-    let aged = next_ticket.saturating_sub(ticket).saturating_sub(1) / POOL_AGING_TICKETS;
+    let aged = next_ticket.saturating_sub(ticket).saturating_sub(1) >> POOL_AGING_SHIFT;
     priority.rank().saturating_sub(aged.min(4) as u8)
 }
 
