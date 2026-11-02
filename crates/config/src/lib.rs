@@ -231,6 +231,9 @@ pub struct Repository {
     pub container_image: Option<String>,
     #[serde(default)]
     pub exec_scratch: bool,
+    /// Red scaffold for #359: parsed, not yet validated or used.
+    #[serde(default)]
+    pub selected_tests: Option<u32>,
     pub owner: String,
     pub name: String,
     pub installation_id: u64,
