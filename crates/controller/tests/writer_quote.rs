@@ -24,6 +24,7 @@ fn input(quote: &str) -> WriteRequest {
         facts: json!({"issue_title": "Add a blue button", "request": "Add a blue button",
             "change": NOTE, "change_quote": quote}),
         violations: vec![],
+        request: None,
     }
 }
 
@@ -148,7 +149,7 @@ fn request_title_quotes_and_vocabulary_work_in_notes_and_summaries() {
 fn scope_removals_are_appended_to_checked_summary() {
     let removed = "Changes not part of this request were removed: `extra.txt`, `pyproject.toml`.";
     let result = checked_draft(&mut Draft("Your change was merged.".into()), "scope",
-        WriteRequest { kind: MessageKind::Summary, facts: json!({"issue_title":"Add a blue button", "request":"Add a blue button", "outcome":"Your change was merged.", "unmet_goals":[], "removed_changes":removed}), violations:vec![] }, &Policy::default()).unwrap();
+        WriteRequest { kind: MessageKind::Summary, facts: json!({"issue_title":"Add a blue button", "request":"Add a blue button", "outcome":"Your change was merged.", "unmet_goals":[], "removed_changes":removed}), violations:vec![] , request: None,}, &Policy::default()).unwrap();
     assert_eq!(result, format!("Your change was merged.\n\n{removed}"));
 }
 
@@ -162,6 +163,7 @@ fn scope_removals_preserve_request_vocabulary_and_known_path_checks() {
         facts: json!({"issue_title": title, "request": title,
             "outcome": "Your change was merged.", "unmet_goals": [], "removed_changes": removed}),
         violations: vec![],
+        request: None,
     };
     let policy = Policy {
         known_paths: ["workers/src".into()].into(),
