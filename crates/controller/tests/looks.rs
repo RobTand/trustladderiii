@@ -552,6 +552,76 @@ impl Executor for Outage {
         Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied).into())
     }
 }
+/// #356: webhook-triggered looks inside one allowance count as one failed read.
+fn failure_burst_counts_once(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let state = Rc::new(RefCell::new(OutageState::default()));
+    let mut c = open(
+        settings,
+        root.path(),
+        &clock,
+        Upstream::GitHub,
+        Outage {
+            state: state.clone(),
+            fake: adapters::github::Fake::new(root.path()),
+        },
+    );
+    let open_incidents = |c: &mut Controller| -> Vec<serde_json::Value> {
+        c.snapshot()
+            .unwrap()
+            .rows
+            .into_iter()
+            .filter(|r| r.table == "incidents" && r.value["open"] == true)
+            .map(|r| r.value)
+            .collect()
+    };
+    let reads = state.borrow().reads;
+    for _ in 0..4 {
+        c.look_now().unwrap();
+    }
+    assert!(
+        state.borrow().reads >= reads + 4,
+        "every look reads the upstream"
+    );
+    assert!(
+        open_incidents(&mut c).is_empty(),
+        "failed reads seconds apart are one failure, not an outage"
+    );
+    clock.advance(1);
+    c.look_due().unwrap();
+    let first = open_incidents(&mut c);
+    assert_eq!(
+        first.len(),
+        1,
+        "a read error persisting past the allowance raises one"
+    );
+    assert_eq!(first[0]["needs_rob"], false);
+    state.borrow_mut().recovered = true;
+    clock.advance(1);
+    c.look_due().unwrap();
+    assert!(
+        open_incidents(&mut c).is_empty(),
+        "the probe clears the first incident"
+    );
+    state.borrow_mut().recovered = false;
+    for _ in 0..4 {
+        c.look_now().unwrap();
+    }
+    assert!(
+        open_incidents(&mut c).is_empty(),
+        "a second incident also needs failures spaced by the allowance"
+    );
+    clock.advance(1);
+    c.look_due().unwrap();
+    let second = open_incidents(&mut c);
+    assert_eq!(second.len(), 1);
+    assert_eq!(
+        second[0]["needs_rob"], true,
+        "the second read incident needs Rob"
+    );
+}
+
 fn read_outages_keep_looking(settings: &tl3_config::Store, fail_probe: bool) {
     let root = tempfile::tempdir().unwrap();
     let clock = FakeClock::new();
@@ -1996,6 +2066,8 @@ fn main() {
     println!("test permanent_incident_clear ... ok");
     progress_releases_nothing(&db.create("progress_holds"));
     println!("test progress_releases_nothing ... ok");
+    failure_burst_counts_once(&db.create("failure_burst"));
+    println!("test failure_burst_counts_once_per_allowance ... ok");
     read_outages_keep_looking(&db.create("read_outage"), false);
     println!("test read_outages_keep_looking ... ok");
     read_outages_keep_looking(&db.create("probe_outage"), true);
@@ -2009,7 +2081,7 @@ fn main() {
     token_only_queue_progress(&db.create("token_only_queue"));
     println!("test token_only_queue_progress ... ok");
     db.stop();
-    println!("46 allowance and incident scenarios passed; no skips");
+    println!("47 allowance and incident scenarios passed; no skips");
 }
 
 struct WaitingMaker {
@@ -2621,6 +2693,8 @@ fn successful_look_breaks_failure_streak(settings: &tl3_config::Store) {
     );
     for success in [false, true, false] {
         healthy.set(success);
+        // #356: failures count once per allowance, so space the looks by one.
+        clock.advance(1);
         c.look_now().unwrap();
         assert!(
             !c.snapshot()
@@ -2631,6 +2705,7 @@ fn successful_look_breaks_failure_streak(settings: &tl3_config::Store) {
             "nonconsecutive read failures must not open an incident"
         );
     }
+    clock.advance(1);
     c.look_now().unwrap();
     assert_eq!(
         c.snapshot()
