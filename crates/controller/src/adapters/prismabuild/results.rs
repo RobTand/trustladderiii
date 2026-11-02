@@ -144,6 +144,9 @@ pub(super) async fn ending(tool: &Tool, job: &Job, withdrawal: bool) -> Result<O
 /// TL3-side under Q51, not a PrismaBuild failure.
 pub(crate) const HARNESS: &str = "harness";
 
+/// The harness's `SELECTED_CHECK`: existing tests that import the change (#359).
+const SELECTED_CHECK: &str = "Existing tests that import the change";
+
 type CheckEvidence = (
     bool,
     bool,
@@ -311,9 +314,24 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
                 .reviewed_sha
                 .as_ref()
                 .map(tl3_worktrees::CommitId::as_str)
-        || report.results.len() != job.run.plan.len()
     {
         return None;
+    }
+    // Only a job staged with selection may carry one trailing selected check (#359).
+    let extra = report.results.len().checked_sub(job.run.plan.len())?;
+    if extra > usize::from(job.selected_tests.is_some()) {
+        return None;
+    }
+    if let Some(selected) = report.results.get(job.run.plan.len()) {
+        let Custody::InProcess = selected.custody;
+        if selected.name != SELECTED_CHECK
+            || selected.kind != Kind::Regression
+            || selected.tests.is_empty()
+            || selected.tests.len() > job.selected_tests.unwrap_or(0) as usize
+            || matches!(selected.verdict, Verdict::Pass) != selected.tests.iter().all(|t| t.passed)
+        {
+            return None;
+        }
     }
     for (result, check) in report.results.iter().zip(&job.run.plan) {
         if result.name != check.name
@@ -333,4 +351,55 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
         }
     }
     Some(report)
+}
+
+/// Tests that failed a selected check in this round or an earlier one: once a maker edits
+/// such a test it is no longer selected, so review is told about it.
+pub(crate) fn selected_failures<'a>(
+    previous: impl IntoIterator<Item = &'a serde_json::Value>,
+    results: &[serde_json::Value],
+) -> Vec<String> {
+    let mut failures = std::collections::BTreeSet::new();
+    for report in previous {
+        failures.extend(
+            report["selected_failures"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|test| test.as_str().map(str::to_owned)),
+        );
+    }
+    for result in results.iter().filter(|r| r["name"] == SELECTED_CHECK) {
+        failures.extend(
+            result["tests"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|test| test["passed"] == false)
+                .filter_map(|test| test["test"].as_str().map(str::to_owned)),
+        );
+    }
+    failures.into_iter().collect()
+}
+
+#[cfg(test)]
+mod selected_failure_tests {
+    use serde_json::json;
+
+    #[test]
+    fn selected_failures_accumulate_across_rounds() {
+        let earlier = json!({"base_sha": "b", "results": [], "selected_failures": ["tests/test_a.py::test_a"]});
+        let results = [
+            json!({"name": "planned", "kind": "regression", "tests": [
+                {"test": "tests/test_p.py::test_p", "passed": false}]}),
+            json!({"name": super::SELECTED_CHECK, "kind": "regression", "tests": [
+                {"test": "tests/test_b.py::test_b", "passed": false},
+                {"test": "tests/test_c.py::test_c", "passed": true}]}),
+        ];
+        assert_eq!(
+            super::selected_failures([&earlier], &results),
+            ["tests/test_a.py::test_a", "tests/test_b.py::test_b"],
+            "keep earlier failures and add this round's selected failures, not planned ones"
+        );
+    }
 }
