@@ -110,6 +110,7 @@ pub(super) fn stage(
     image: &str,
     exec_scratch: bool,
     protected_paths: &[String],
+    selected_tests: Option<u32>,
 ) -> Result<Vec<String>> {
     let run = delivery
         .checks
@@ -173,15 +174,16 @@ pub(super) fn stage(
         }
     }
     fs::write(root.join("action.py"), include_str!("action.py"))?;
-    fs::write(
-        root.join("request.json"),
-        serde_json::to_vec(&serde_json::json!({
-            "effect_key": delivery.key, "base": run.base_sha, "head": head.as_str(),
-            "reviewed": run.reviewed_sha,
-            "plan": run.plan, "image": image, "exec_scratch": exec_scratch,
-            "protected_paths": protected_paths,
-        }))?,
-    )?;
+    let mut request = serde_json::json!({
+        "effect_key": delivery.key, "base": run.base_sha, "head": head.as_str(),
+        "reviewed": run.reviewed_sha,
+        "plan": run.plan, "image": image, "exec_scratch": exec_scratch,
+        "protected_paths": protected_paths,
+    });
+    if let Some(limit) = selected_tests {
+        request["selected_tests"] = limit.into();
+    }
+    fs::write(root.join("request.json"), serde_json::to_vec(&request)?)?;
     Worktrees::commit_check_input(root)?;
     Ok(changed)
 }
@@ -234,6 +236,7 @@ mod tests {
                     "sha256:fixture",
                     false,
                     &[],
+                    None,
                 )
                 .unwrap();
                 assert_eq!(changed, ["README.md"]);

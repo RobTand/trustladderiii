@@ -813,6 +813,9 @@ impl Executor for Real {
             )? {
                 Some(completion) => Reconciliation::Found(completion),
                 None if !writable => Reconciliation::Absent,
+                // Not a quiet live operation (#369): under the repository mutex
+                // this read runs the recorded operation to completion, so
+                // Pending means it can't finish, and a look counts it as failed.
                 None => Reconciliation::Pending,
             },
         )

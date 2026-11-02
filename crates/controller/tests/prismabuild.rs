@@ -407,6 +407,81 @@ fn staged_request_carries_the_repository_protected_paths() {
     }
 }
 
+/// #359: a repository with `selected_tests` stages the limit, and the harness's one
+/// trailing regression check of selected existing tests is accepted, failing the round
+/// when it fails. Without the limit, the same trailing result is an invalid report.
+fn selected_tests_are_staged_and_their_check_accepted() {
+    const SELECTED: &str = "Existing tests that import the change";
+    let ended = |selected_tests: Option<u32>| {
+        let root = tempfile::tempdir().unwrap();
+        let delivery = run(root.path(), false);
+        let mut config =
+            tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+        config.github.repos[0].selected_tests = selected_tests;
+        let mut adapter = fixture(root.path(), "done").with_repositories(&config.github.repos);
+        let planned = &delivery.checks.as_ref().unwrap().plan[0];
+        fs::write(
+            root.path().join("queue/recorded_results.json"),
+            serde_json::to_vec(&serde_json::json!([
+                {"name": planned.name, "kind": "demonstrating", "custody": "in-process",
+                 "verdict": "pass", "tests": [{"test": planned.tests[0], "base": "assertion",
+                 "head": "passed", "pre_existing": false, "passed": true}]},
+                {"name": SELECTED, "kind": "regression", "custody": "in-process",
+                 "verdict": "fail", "tests": [{"test": "test_other.py::test_other", "base": "passed",
+                 "head": "assertion", "pre_existing": false, "passed": false,
+                 "message": "assert 2 == 1"}]},
+            ]))
+            .unwrap(),
+        )
+        .unwrap();
+        adapter.execute(&delivery).unwrap();
+        let staged: Vec<_> = fs::read_dir(root.path().join("queue"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|e| e == "request"))
+            .collect();
+        let request: serde_json::Value =
+            serde_json::from_slice(&fs::read(&staged[0]).unwrap()).unwrap();
+        (request, completion(&mut adapter, &delivery))
+    };
+
+    let (request, ended_with) = ended(Some(25));
+    assert_eq!(request["selected_tests"], 25);
+    match &ended_with.observations[..] {
+        [
+            Observation::Checks {
+                report,
+                pass,
+                failed_tests,
+                results,
+                ..
+            },
+        ] => {
+            assert!(
+                *report && !*pass,
+                "a failing selected check fails the round"
+            );
+            assert_eq!(results.len(), 2);
+            assert_eq!(failed_tests[0].test, "test_other.py::test_other");
+        }
+        other => panic!("expected one check observation, got {other:?}"),
+    }
+
+    let (request, ended_without) = ended(None);
+    assert!(request.get("selected_tests").is_none());
+    assert!(
+        matches!(
+            &ended_without.observations[..],
+            [Observation::Checks {
+                report: false,
+                pass: false,
+                ..
+            }]
+        ),
+        "an unrequested extra check is an invalid report"
+    );
+}
+
 fn bounded_failure_details() {
     let root = tempfile::tempdir().unwrap();
     let mut delivery = run(root.path(), false);
@@ -1484,6 +1559,121 @@ fn workers(fake: impl Executor + 'static, head: String) -> impl Executor {
     })
 }
 
+#[derive(Clone)]
+struct FakeClock(std::rc::Rc<std::cell::Cell<u64>>);
+impl tl3_controller::clock::Clock for FakeClock {
+    fn now(&self) -> std::time::SystemTime {
+        std::time::UNIX_EPOCH + Duration::from_millis(self.0.get())
+    }
+}
+
+/// #369: a checks job its own record shows queued is alive, however long it
+/// stays quiet. PrismaBuild ends a quiet job itself. An unreadable record is
+/// still a failed read, at the allowances' pace.
+fn quiet_alive_job_is_not_a_failed_read(settings: &tl3_config::Store, unreadable: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let adapter = fixture(root.path(), "pending");
+    let fakes = root.path().join("fakes");
+    let mut registry = adapters::simulation(&fakes).unwrap();
+    registry.register(Upstream::PrismaBuild, adapter);
+    registry.register(
+        Upstream::Workers,
+        workers(
+            adapters::workers::Fake::new(&fakes),
+            delivery.head_sha.clone().unwrap(),
+        ),
+    );
+    let clock = FakeClock(std::rc::Rc::new(std::cell::Cell::new(1_000_000)));
+    let mut controller = Controller::open_with_clock(
+        tl3_store::Store::open(settings).unwrap(),
+        registry,
+        Bootstrap {
+            operations: None,
+            repos: vec![repository()],
+            rob: 1,
+            slots: 1,
+            pool: 1,
+        },
+        clock.clone(),
+    )
+    .unwrap();
+    let mut allowances = tl3_config::Allowances::default();
+    allowances.prismabuild.silence_secs = 1;
+    allowances.prismabuild.no_progress_secs = 3;
+    controller.set_allowances(allowances);
+    controller
+        .intake(LabelledIssue {
+            delivery: "pb-quiet".into(),
+            owner: "RobTand".into(),
+            repo: "tl3-sandbox".into(),
+            installation: 1,
+            number: 42,
+            title: "PrismaBuild fixture".into(),
+            actor: 1,
+            label: "tl3".into(),
+            labels: Vec::new(),
+        })
+        .unwrap();
+    while controller.drive_once().unwrap() {}
+    controller
+        .observe(
+            "check-plan",
+            Observation::CheckPlan {
+                node: NodeId(0),
+                sha: delivery.head_sha.clone().unwrap(),
+                run: delivery.checks.clone().unwrap(),
+            },
+        )
+        .unwrap();
+    for _ in 0..100 {
+        if !controller.drive_once().unwrap() {
+            break;
+        }
+    }
+    let ready: Vec<_> = fs::read_dir(root.path().join("queue/ready"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(ready.len(), 1, "the checks job is queued and quiet");
+    if unreadable {
+        fs::write(&ready[0], "not a record").unwrap();
+    }
+    let prismabuild_incidents = |controller: &mut Controller| {
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .into_iter()
+            .filter(|r| r.table == "incidents" && r.value["signature"]["upstream"] == "PrismaBuild")
+            .map(|r| r.value)
+            .collect::<Vec<_>>()
+    };
+    // Well past the silence and no-progress allowances, with no test completing.
+    for look in 1..=6 {
+        clock.0.set(clock.0.get() + 2_000);
+        controller.look_due().unwrap();
+        let incidents = prismabuild_incidents(&mut controller);
+        if !unreadable {
+            assert!(
+                incidents.is_empty(),
+                "look {look}: a quiet job its record shows alive is not a failed read: {incidents:?}"
+            );
+        } else if look < 2 {
+            assert!(
+                incidents.is_empty(),
+                "look {look}: one failure is not an incident"
+            );
+        }
+    }
+    if unreadable {
+        let incidents = prismabuild_incidents(&mut controller);
+        assert_eq!(incidents.len(), 1, "an unreadable record still raises one");
+        assert_eq!(incidents[0]["open"], true);
+    }
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Checking);
+}
+
 fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool, recover: bool) {
     let root = tempfile::tempdir().unwrap();
     let delivery = run(root.path(), outside);
@@ -1916,6 +2106,13 @@ fn main() {
             std::thread::park();
         }
     }
+    if args.get(1).is_some_and(|arg| arg == "--quiet-looks") {
+        let mut database = support::Database::start();
+        quiet_alive_job_is_not_a_failed_read(&database.create("pb_quiet_alive"), false);
+        quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
+        database.stop();
+        return;
+    }
     if args
         .get(1)
         .is_some_and(|arg| arg == "--retirement-regression")
@@ -1943,6 +2140,7 @@ fn main() {
             "moving_job_reconcile_is_pending",
             moving_job_reconcile_is_pending,
         ),
+        ("job_look_states", job_look_states as fn()),
         (
             "reproducing_check_plan_and_verdict",
             reproducing_check_plan_and_verdict,
@@ -1959,6 +2157,10 @@ fn main() {
             retirement_refuses_active_or_unreadable_jobs,
         ),
         ("bounded_failure_details", bounded_failure_details),
+        (
+            "selected_tests_are_staged_and_their_check_accepted",
+            selected_tests_are_staged_and_their_check_accepted,
+        ),
         (
             "staged_request_carries_the_repository_protected_paths",
             staged_request_carries_the_repository_protected_paths,
@@ -2037,8 +2239,12 @@ fn main() {
         &database.create("pb_observation_keys_legacy"),
     );
     println!("test base_moved_completion_keys_each_observation ... ok");
+    quiet_alive_job_is_not_a_failed_read(&database.create("pb_quiet_alive"), false);
+    println!("test quiet_alive_job_is_not_a_failed_read ... ok");
+    quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
+    println!("test unreadable_job_record_is_a_failed_read ... ok");
     database.stop();
-    println!("40 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("44 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
@@ -2284,6 +2490,53 @@ fn moving_wait_bell_is_quiet() {
     assert_eq!(count, 1, "retained wait receives its ending");
     assert!(
         matches!(rx.try_recv().unwrap(), tl3_controller::cli::Input::Look {key} if key == delivery.key)
+    );
+}
+
+/// #369, #410 review: the look reads the job's own record. Queued, claimed
+/// and moving are alive; an ended job, lease lost included, is found; a job
+/// never submitted is absent.
+fn job_look_states() {
+    use tl3_controller::executor::Look;
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture(root.path(), "pending");
+    assert!(matches!(adapter.look(&delivery).unwrap(), Look::Absent));
+    adapter.execute(&delivery).unwrap();
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
+    let queue = root.path().join("queue");
+    let alive = |adapter: &mut Adapter, state: &str| {
+        let look = adapter.look(&delivery).unwrap();
+        assert!(
+            matches!(&look, Look::Alive { progress } if *progress == format!("prismabuild:{state}")),
+            "{state}"
+        );
+    };
+    alive(&mut adapter, "queued");
+    fs::rename(
+        queue.join(format!("ready/{key}.json")),
+        queue.join(format!("claimed/{key}.json")),
+    )
+    .unwrap();
+    alive(&mut adapter, "claimed");
+    fs::rename(
+        queue.join(format!("claimed/{key}.json")),
+        queue.join(format!("claimed/{key}.100.host.1.abc.tombstone")),
+    )
+    .unwrap();
+    alive(&mut adapter, "moving");
+    fs::remove_file(queue.join(format!("claimed/{key}.100.host.1.abc.tombstone"))).unwrap();
+    finish(root.path(), key.as_str(), "failed");
+    let record = queue.join(format!("failed/{key}.json"));
+    let lost = fs::read_to_string(&record).unwrap().replace(
+        "\"termination_reason\": \"failed\"",
+        "\"termination_reason\": \"lease_lost\"",
+    );
+    assert!(lost.contains("lease_lost"));
+    fs::write(&record, lost).unwrap();
+    assert!(
+        matches!(adapter.look(&delivery).unwrap(), Look::Found(_)),
+        "a job whose lease was lost has ended"
     );
 }
 
