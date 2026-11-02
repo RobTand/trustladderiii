@@ -421,7 +421,11 @@ mod reply_defects {
 
     #[test]
     fn registry_resolves_a_new_cross_schema_reference() {
-        let schemas = vec![
+        let mut schemas = PACKAGED_SCHEMAS
+            .iter()
+            .map(|(name, source)| ((*name).to_owned(), serde_json::from_str(source).unwrap()))
+            .collect::<Vec<_>>();
+        schemas.extend([
             (
                 "new-input.json".into(),
                 json!({"$id":"https://trustladderiii.invalid/workers/protocol-1/new-input.json", "$ref":"maker-input.json#/properties/goals/items"}),
@@ -430,22 +434,7 @@ mod reply_defects {
                 "new-forecast.json".into(),
                 json!({"$id":"https://trustladderiii.invalid/workers/protocol-1/new-forecast.json", "$ref":"maker-input.json#/properties/forecast"}),
             ),
-            (
-                "maker-input.json".into(),
-                serde_json::from_str(include_str!(
-                    "../../../../../workers/src/tl3_workers/schemas/maker-input.json"
-                ))
-                .unwrap(),
-            ),
-            (
-                // maker-input.json takes a forced check's forcing from here (#393).
-                "planner-reply.json".into(),
-                serde_json::from_str(include_str!(
-                    "../../../../../workers/src/tl3_workers/schemas/planner-reply.json"
-                ))
-                .unwrap(),
-            ),
-        ];
+        ]);
         let validators = schemas_from(schemas).unwrap();
         assert!(
             validators["new-input.json"]
