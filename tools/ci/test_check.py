@@ -1,5 +1,6 @@
 import contextlib
 import hashlib
+import gzip
 import io
 import json
 import os
@@ -16,7 +17,7 @@ import check
 
 class DiscoveryTests(unittest.TestCase):
     def test_shared_checker_matches_the_coordinator_pin(self):
-        expected = '69c01d79c50edd90a15e0b85e21917eefccc38dbddae5695b1d5e1eeebfcb526'
+        expected = 'a7c88079f0b2558d24d68f7eef2d0824a9b32def42db49c733dc7a905f136eb2'
         pin = Path(__file__).with_name('check_no_secret_leak.sha256')
         scanner = pin.with_suffix('.py')
         self.assertTrue(pin.is_file(), 'shared checker hash receipt is missing')
@@ -198,6 +199,74 @@ class DiscoveryTests(unittest.TestCase):
         with patch.object(check, "run", side_effect=subprocess.CalledProcessError(1, "ruff")):
             with self.assertRaises(subprocess.CalledProcessError):
                 check.python([Path("tools/board.py")])
+
+
+class ScannerCompressionTests(unittest.TestCase):
+    SECRET = 'synthetic-scanner-regression-value'
+
+    def scan(self, payload):
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory, 'execution_log.binpb.zst')
+            artifact.write_bytes(payload)
+            output = io.StringIO()
+            with patch.dict(os.environ, {'SCAN_FIXTURE': self.SECRET}), \
+                 contextlib.redirect_stdout(output):
+                status = before_upload.main(['--env', 'SCAN_FIXTURE', str(artifact)])
+        self.assertNotIn(self.SECRET, output.getvalue())
+        return status, output.getvalue()
+
+    @staticmethod
+    def zstd_frame(payload):
+        assert len(payload) < 256
+        return (bytes.fromhex('28b52ffd20') + bytes([len(payload)])
+                + ((len(payload) << 3) | 1).to_bytes(3, 'little') + payload)
+
+    def test_real_bazel_execution_log_is_clean(self):
+        # Full Bazel 9.3.1 execution log from TL3 checkout t3-b997de7d,
+        # captured 2026-11-02. SHA256 is recorded with the fixture.
+        artifact = Path(__file__).with_name('fixtures') / 'execution_log.binpb.zst'
+        payload = artifact.read_bytes()
+        expected = artifact.with_name('execution_log.sha256').read_text().split()[0]
+        self.assertEqual(hashlib.sha256(payload).hexdigest(), expected)
+        status, output = self.scan(payload)
+        self.assertEqual(status, 0, output)
+        self.assertNotIn('not scanned', output)
+
+    def test_zstd_log_with_incidental_gzip_magic_is_clean(self):
+        record = b'\x0a\x0a/bin/clang\x12\x04\x1f\x8b\x00\xff'
+        status, output = self.scan(self.zstd_frame(bytes([len(record)]) + record))
+        self.assertEqual(status, 0, output)
+        self.assertNotIn('not scanned', output)
+
+    def test_unknown_binary_still_scans_raw_values(self):
+        for planted in (False, True):
+            with self.subTest(planted=planted):
+                payload = b'\x00binary\x1f\x8b\x00\xff\x28\xb5\x2f\xfd\xff'
+                payload += self.SECRET.encode() if planted else b'clean'
+                status, output = self.scan(payload)
+                self.assertEqual(status, int(planted), output)
+
+    def test_corrupt_claimed_gzip_and_concatenated_member_fail_closed(self):
+        broken = b'\x1f\x8b\x08broken'
+        for payload in (broken, gzip.compress(b'clean') + broken):
+            with self.subTest(concatenated=payload != broken):
+                status, output = self.scan(payload)
+                self.assertEqual(status, 75, output)
+                self.assertIn('gzip member unreadable', output)
+
+    def test_corrupt_claimed_zstd_fails_closed(self):
+        status, output = self.scan(bytes.fromhex('28b52ffdff'))
+        self.assertEqual(status, 75, output)
+        self.assertIn('zstd member unreadable', output)
+
+    def test_embedded_and_nested_compressed_values_are_detected(self):
+        secret = gzip.compress(self.SECRET.encode())
+        for payload in (b'prefix' + secret, gzip.compress(secret),
+                        self.zstd_frame(secret),
+                        self.zstd_frame(b'clean') + self.zstd_frame(secret)):
+            with self.subTest(size=len(payload)):
+                status, output = self.scan(payload)
+                self.assertEqual(status, 1, output)
 
 
 if __name__ == "__main__":
