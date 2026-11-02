@@ -3216,3 +3216,37 @@ mod git_tests;
 #[allow(dead_code)]
 #[path = "../../store/tests/support/mod.rs"]
 mod store_support;
+
+#[cfg(test)]
+mod stored_shape_tests {
+    use super::*;
+
+    // #375: persisted rows replay across releases. #416's new fields appear only
+    // when set, so a request or input written today matches the old shape.
+    #[test]
+    fn old_request_rows_decode_and_new_fields_serialize_only_when_set() {
+        let old = json!({
+            "repo": {"owner": "owner", "name": "sandbox", "installation": 3},
+            "issue": 12, "title": "Fix", "issue_id": 99, "source": null, "proposed": null,
+        });
+        let request: Request = decode_stored(old.clone()).unwrap();
+        assert_eq!(request.priority, None);
+        assert_eq!(json!(request), old);
+        let ranked = Request {
+            priority: Some(1),
+            ..request
+        };
+        assert_eq!(json!(ranked)["priority"], 1);
+    }
+
+    #[test]
+    fn labelled_issues_serialize_labels_only_when_present() {
+        let old = json!({
+            "delivery": "label", "owner": "owner", "repo": "sandbox", "installation": 3,
+            "number": 12, "title": "Fix", "actor": 42, "label": "tl3",
+        });
+        let issue: LabelledIssue = serde_json::from_value(old.clone()).unwrap();
+        assert!(issue.labels.is_empty());
+        assert_eq!(json!(issue), old);
+    }
+}

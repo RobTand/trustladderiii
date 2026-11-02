@@ -98,3 +98,95 @@ fn priority_reserve_applies_when_configured_and_changes_nothing_otherwise() {
     }
     db.stop();
 }
+
+#[test]
+fn an_early_ended_request_keeps_the_kernel_reserve() {
+    // The kernel starts an early end's credit at 1 + its reserve of 3, and its
+    // IngestEarlyEnd reply carries no size the controller could raise. Applying
+    // the priority reserve there needs a kernel change, which #416 excludes; a
+    // P0 early end that the audit then turns into a brief keeps the base reserve.
+    let mut db = support::Database::start();
+    let settings = db.create("early_end");
+    let root = tempfile::tempdir().unwrap();
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        tl3_controller::executor::Upstream::Workers,
+        EarlyEnd(adapters::workers::Fake::new(root.path())),
+    );
+    let mut c = Controller::open(
+        Store::open(&settings).unwrap(),
+        registry,
+        Bootstrap {
+            repos: vec![Repository {
+                owner: "owner".into(),
+                name: "sandbox".into(),
+                installation: 3,
+            }],
+            rob: 42,
+            slots: 1,
+            pool: 1,
+            operations: None,
+        },
+    )
+    .unwrap();
+    let mut limits = tl3_config::Config::parse(include_str!("../../config/example.toml"))
+        .unwrap()
+        .limits;
+    limits.priority_credit_reserve = [("P0".to_owned(), 5)].into();
+    c.set_priority_credit_reserve(&limits);
+    c.intake(LabelledIssue {
+        delivery: "label".into(),
+        owner: "owner".into(),
+        repo: "sandbox".into(),
+        installation: 3,
+        number: 12,
+        title: "[P0] Already fixed".into(),
+        actor: 42,
+        label: "tl3".into(),
+        labels: Vec::new(),
+    })
+    .unwrap();
+    for _ in 0..300 {
+        if !c.drive_once().unwrap() {
+            break;
+        }
+    }
+    let node = c.world().unwrap().nodes[0];
+    assert!(node.credit.ready);
+    assert_eq!(node.credit.start, 1 + tl3_kernel::RESERVE);
+    db.stop();
+}
+
+/// Ingest proposes an early end instead of a brief.
+struct EarlyEnd(adapters::workers::Fake);
+impl tl3_controller::executor::Executor for EarlyEnd {
+    fn execute(
+        &mut self,
+        d: &tl3_controller::executor::Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+        use tl3_controller::executor::{Completion, Observation, Output};
+        use tl3_kernel::{EarlyEnd, EffectKind, Event, Reply, Role};
+        if matches!(
+            d.output,
+            Output::Effect {
+                kind: EffectKind::StartRun(Role::Ingest),
+                ..
+            }
+        ) {
+            return Ok(Completion::confirmed(vec![Observation::Kernel(
+                Event::Reply {
+                    node: d.node(),
+                    generation: d.generation,
+                    reply: Reply::IngestEarlyEnd(EarlyEnd::AlreadyDone),
+                },
+            )]));
+        }
+        self.0.execute(d)
+    }
+    fn reconcile(
+        &mut self,
+        d: &tl3_controller::executor::Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Reconciliation> {
+        self.0.reconcile(d)
+    }
+}
