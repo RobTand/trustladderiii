@@ -623,6 +623,9 @@ impl Config {
         for arg in &self.workers.command {
             nonempty("workers.command", arg)?;
         }
+        for arg in &self.workers.launcher {
+            nonempty("workers.launcher", arg)?;
+        }
         endpoint("models.base_url", &self.models.base_url)?;
         endpoint("hindsight.endpoint", &self.hindsight.endpoint)?;
         if let Some(path) = &self.hindsight.api_key_file {
