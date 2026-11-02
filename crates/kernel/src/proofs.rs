@@ -6,6 +6,9 @@
 //! bounds, so the rules hold for every step by induction:
 //!
 //! - `apply` and `advance` keep `consistent(world)` and the per-transition rules.
+//!   The apply proofs start from worlds settled except for a free pool slot,
+//!   a superset of settled worlds, because `apply` never reads the pool's
+//!   order; that order has its own proofs (Q39).
 //! - Every `advance` that changes something lowers its node's `settle_rank`
 //!   and leaves the other nodes alone, so settle ends for any number of requests.
 //! - Since `settle_rank` is 4 × distance + at most 3, no `advance` raises the
@@ -79,6 +82,19 @@ fn any_world(phase: Option<Phase>) -> World {
 fn any_settled_world(phase: Option<Phase>) -> World {
     let world = any_world(phase);
     kani::assume(world.is_settled());
+    world
+}
+
+/// Any world at rest, except that a free agent-pool slot may still have
+/// waiters. `apply` never reads the pool's order (Q39), which its own
+/// harnesses prove, so the apply proofs start from this superset of settled
+/// worlds. The probe has no pool slots, so settle's pool grant, and the order
+/// behind it, never enters these proofs' formulas.
+fn any_world_settled_but_pool(phase: Option<Phase>) -> World {
+    let world = any_world(phase);
+    let mut probe = world.clone();
+    probe.pool_capacity = 0;
+    kani::assume(probe.is_settled());
     world
 }
 
@@ -207,7 +223,7 @@ fn rebase_progress_applies(node: &Node, generation: u64) -> bool {
 
 /// Applying one event keeps the world consistent and keeps every rule.
 fn check_apply(event: Event) -> World {
-    let before = any_settled_world(None);
+    let before = any_world_settled_but_pool(None);
     let mut after = before.clone();
     let mut out = Outbox::new();
     apply(&mut after, event.clone(), &mut out);
