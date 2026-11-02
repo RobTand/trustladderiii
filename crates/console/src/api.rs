@@ -15,21 +15,30 @@ pub struct DatabaseStatus {
 
 /// The generated `web/src/api/types.gen.ts`.
 pub fn typescript() -> String {
-    let _ = (
-        std::marker::PhantomData::<(
-            Badge,
-            Board,
-            BoardPatch,
-            Card,
-            CardIncident,
-            Column,
-            ColumnCount,
-            Ending,
-            Flow,
-            Retries,
-        )>,
+    let config = ts_rs::Config::new().with_large_int("number");
+    let mut output = String::from(
+        "// Generated from the console's Rust types by crates/console/src/api.rs. Do not edit.\n",
     );
-    todo!()
+    for (docs, decl) in [
+        (Board::docs(), Board::decl(&config)),
+        (BoardPatch::docs(), BoardPatch::decl(&config)),
+        (Card::docs(), Card::decl(&config)),
+        (CardIncident::docs(), CardIncident::decl(&config)),
+        (Column::docs(), Column::decl(&config)),
+        (ColumnCount::docs(), ColumnCount::decl(&config)),
+        (Badge::docs(), Badge::decl(&config)),
+        (Ending::docs(), Ending::decl(&config)),
+        (Flow::docs(), Flow::decl(&config)),
+        (Retries::docs(), Retries::decl(&config)),
+        (DatabaseStatus::docs(), DatabaseStatus::decl(&config)),
+    ] {
+        output.push('\n');
+        output.push_str(&docs.unwrap_or_default());
+        output.push_str("export ");
+        output.push_str(&decl);
+        output.push('\n');
+    }
+    output
 }
 
 #[cfg(test)]

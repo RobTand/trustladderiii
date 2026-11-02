@@ -640,7 +640,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .iter()
             .map(|row| row.get::<_, i32>(0))
             .collect::<Vec<_>>(),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     );
     for table in ["tl3_events", "tl3_credit"] {
         for sql in [
@@ -1168,7 +1168,11 @@ fn phase_entry_times(settings: &tl3_config::Store) {
         store.commit(&change).unwrap();
     };
     commit("same-phase", json!({"phase": "Making", "attempt": 2}));
-    assert_eq!(since(&mut client), (json!("Making"), true, 1), "same phase keeps its entry time");
+    assert_eq!(
+        since(&mut client),
+        (json!("Making"), true, 1),
+        "same phase keeps its entry time"
+    );
     commit("next-phase", json!({"phase": {"Closed": "Merged"}}));
     assert_eq!(since(&mut client), (json!({"Closed": "Merged"}), true, 3));
     let snapshot = store.load().unwrap();
@@ -1180,7 +1184,10 @@ fn phase_entry_times(settings: &tl3_config::Store) {
     store.commit(&change).unwrap();
     assert_eq!(
         client
-            .query_one("SELECT count(*) FROM tl3_node_phases WHERE node_id = '1'", &[])
+            .query_one(
+                "SELECT count(*) FROM tl3_node_phases WHERE node_id = '1'",
+                &[]
+            )
             .unwrap()
             .get::<_, i64>(0),
         0

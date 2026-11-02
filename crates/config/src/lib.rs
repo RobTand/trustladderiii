@@ -713,6 +713,18 @@ impl Config {
                 "use a unicast listen address with a fixed port from 1 to 65535 (Q24)",
             ));
         }
+        if let Some(console) = &self.console {
+            if console.listen.port() == 0
+                || console.listen.ip().is_multicast()
+                || console.listen.ip().is_unspecified()
+            {
+                return Err(invalid(
+                    "console.listen",
+                    "use a unicast listen address with a fixed port from 1 to 65535",
+                ));
+            }
+            absolute("console.assets", &console.assets)?;
+        }
         if let Some(operations) = &self.github.operations {
             github_name("github.operations.owner", &operations.owner, false)?;
             github_name("github.operations.name", &operations.name, true)?;

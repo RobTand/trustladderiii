@@ -51,7 +51,11 @@ const OUTCOMES: [(Outcome, Ending, &str); 6] = [
 #[test]
 fn every_phase_maps_to_its_column_and_label() {
     let cases = [
-        (Phase::Ingesting, Column::Intake, "Understanding the request"),
+        (
+            Phase::Ingesting,
+            Column::Intake,
+            "Understanding the request",
+        ),
         (Phase::Auditing, Column::Intake, "Auditing the goals"),
         (Phase::Unplanned, Column::Planning, "Waiting for a plan"),
         (
@@ -198,6 +202,7 @@ fn card_carries_counters_progress_and_incidents() {
     making.node.audit_rounds = 2;
     making.node.run_failures = 1;
     making.node.fx_failures = 4;
+    making.node.credit.ready = true;
     making.node.credit.start = 6;
     making.node.credit.spent = 2;
     making.node.run = Some(5);
@@ -253,7 +258,7 @@ fn card_carries_counters_progress_and_incidents() {
                 run_failures: 1,
                 effect_failures: 4,
             },
-            credit: 4,
+            credit: Some(4),
             phase_since_ms: Some(NOW - 5 * MINUTE),
             last_progress: Some(
                 "Model turn completed at 2023-11-14 22:13:20 UTC; last worker failure: ValueError: bad reply"
@@ -282,6 +287,10 @@ fn card_carries_counters_progress_and_incidents() {
         ]
     );
     assert_eq!(cards[4].title, "title not recorded");
+    assert_eq!(
+        cards[4].credit, None,
+        "credit is set up when ingest finishes"
+    );
     assert_eq!(cards[4].phase_since_ms, None);
     assert_eq!(
         card(request(0, Phase::Making)).last_progress,
@@ -416,7 +425,11 @@ fn patch_carries_only_changed_cards() {
     ]);
     let mut moved = request(1, Phase::Reviewing);
     moved.phase_since_ms = Some(NOW);
-    let mut after = board(vec![request(0, Phase::Making), moved, request(3, Phase::Ingesting)]);
+    let mut after = board(vec![
+        request(0, Phase::Making),
+        moved,
+        request(3, Phase::Ingesting),
+    ]);
     after.revision = 8;
     let patch = after.patch_since(&before);
     assert_eq!(patch.revision, 8);

@@ -11,6 +11,7 @@ use std::{
     thread,
     time::Duration,
 };
+use tl3_store::Listener;
 
 /// Reconnect delays: doubling from the first, never above the cap.
 pub(crate) struct Backoff {
@@ -26,11 +27,13 @@ impl Backoff {
     }
 
     pub(crate) fn delay(&mut self) -> Duration {
-        todo!()
+        let delay = self.next;
+        self.next = (delay * 2).min(Self::CAP);
+        delay
     }
 
     pub(crate) fn reset(&mut self) {
-        todo!()
+        self.next = Self::FIRST;
     }
 }
 
@@ -38,9 +41,35 @@ pub(crate) fn spawn(
     settings: tl3_config::Store,
     rebuilds: Arc<Rebuilds>,
     connected: Arc<AtomicBool>,
-) -> thread::JoinHandle<()> {
-    let _ = (settings, rebuilds, connected, Ordering::SeqCst);
-    todo!()
+) -> std::io::Result<thread::JoinHandle<()>> {
+    thread::Builder::new()
+        .name("tl3-console-feed".into())
+        .spawn(move || {
+            let mut backoff = Backoff::new();
+            let mut reported = false;
+            loop {
+                match Listener::open(&settings) {
+                    Ok(mut listener) => {
+                        backoff.reset();
+                        reported = false;
+                        connected.store(true, Ordering::SeqCst);
+                        rebuilds.request();
+                        while listener.wait().is_ok() {
+                            rebuilds.request();
+                        }
+                        connected.store(false, Ordering::SeqCst);
+                        eprintln!("console change feed lost; reconnecting");
+                        rebuilds.request();
+                    }
+                    Err(error) if !reported => {
+                        reported = true;
+                        eprintln!("console change feed unavailable: {error}; retrying");
+                    }
+                    Err(_) => {}
+                }
+                thread::sleep(backoff.delay());
+            }
+        })
 }
 
 #[cfg(test)]

@@ -98,6 +98,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (7, include_str!("../migrations/0007_hindsight.sql")),
     (8, include_str!("../migrations/0008_memory_parking.sql")),
     (9, include_str!("../migrations/0009_memory_recovery.sql")),
+    (10, include_str!("../migrations/0010_change_feed.sql")),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -946,16 +947,21 @@ pub struct Listener {
 
 impl Listener {
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
-        let _ = settings;
-        todo!()
+        let mut client = connect(settings, true)?;
+        client.batch_execute("LISTEN tl3_changes")?;
+        Ok(Self { client })
     }
 
     /// Block until at least one change commits, then take every notification
     /// already received. Returns how many arrived. An error means the session
     /// ended, and changes after it may be missed until a new listener opens.
     pub fn wait(&mut self) -> Result<usize> {
-        let _ = &mut self.client;
-        todo!()
+        use postgres::fallible_iterator::FallibleIterator;
+        let mut notifications = self.client.notifications();
+        if notifications.blocking_iter().next()?.is_none() {
+            return Err(Error::Invalid("change feed session closed"));
+        }
+        Ok(1 + notifications.iter().count()?)
     }
 }
 

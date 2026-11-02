@@ -17,16 +17,29 @@ struct State {
 
 impl Rebuilds {
     pub(crate) fn request(&self) {
-        todo!()
+        self.state.lock().expect("rebuild state").stale = true;
+        self.wake.notify_one();
     }
 
+    #[cfg(test)]
     pub(crate) fn stop(&self) {
-        todo!()
+        self.state.lock().expect("rebuild state").stopped = true;
+        self.wake.notify_all();
     }
 
     /// Block until the board is stale, and claim it. False once stopped.
     pub(crate) fn next(&self) -> bool {
-        todo!()
+        let mut state = self.state.lock().expect("rebuild state");
+        loop {
+            if state.stopped {
+                return false;
+            }
+            if state.stale {
+                state.stale = false;
+                return true;
+            }
+            state = self.wake.wait(state).expect("rebuild state");
+        }
     }
 }
 

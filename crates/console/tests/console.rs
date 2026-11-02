@@ -116,7 +116,12 @@ fn read_only_role(settings: &tl3_config::Store) -> tl3_config::Store {
 }
 
 fn revision(settings: &tl3_config::Store) -> i64 {
-    Reader::open(settings).unwrap().load().unwrap().revision.get()
+    Reader::open(settings)
+        .unwrap()
+        .load()
+        .unwrap()
+        .revision
+        .get()
 }
 
 fn now_ms() -> i64 {
@@ -159,7 +164,11 @@ fn commit_reaches_open_stream(
         while seen < committed {
             let event = stream.board_event();
             assert_eq!(event.name, "patch", "{event:?}");
-            assert!(event.id.starts_with(&format!("{}.", event.data["revision"])));
+            assert!(
+                event
+                    .id
+                    .starts_with(&format!("{}.", event.data["revision"]))
+            );
             seen = event.data["revision"].as_i64().unwrap();
             if let Some(moved) = card_column(&event.data["upserts"], 42) {
                 column = moved;
@@ -231,7 +240,10 @@ fn console_reads_through_a_role_that_cannot_write(settings: &tl3_config::Store) 
         )
         .unwrap()
         .get(0);
-    assert!(sessions >= 1, "the console's sessions use the read-only role");
+    assert!(
+        sessions >= 1,
+        "the console's sessions use the read-only role"
+    );
 }
 
 fn streams_again_after_postgres_restarts(
@@ -258,7 +270,9 @@ fn streams_again_after_postgres_restarts(
             break;
         }
     }
-    let status = stream.last_database.expect("the stream reports database state");
+    let status = stream
+        .last_database
+        .expect("the stream reports database state");
     assert_eq!(status["connected"], true);
 }
 

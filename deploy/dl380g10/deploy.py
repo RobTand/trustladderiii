@@ -158,11 +158,25 @@ def initdb(home):
         sync_directory(data.parent)
 
 
-def render_config(home, listen, installation=1, issue=None, image=None, primary=None, alternate=None):
+def lan_address(listen, service):
     address, port = listen.rsplit(":", 1)
     socket.inet_pton(socket.AF_INET, address)
     if address.startswith("127.") or address == "0.0.0.0" or not 0 < int(port) < 65536:
-        raise RuntimeError("status must use the LAN interface address and a fixed port")
+        raise RuntimeError(f"{service} must use the LAN interface address and a fixed port")
+    return address
+
+
+def console_fields(home, listen, console_listen=None):
+    """The console listens beside the status page unless told otherwise."""
+    console_listen = console_listen or lan_address(listen, "status") + ":8034"
+    lan_address(console_listen, "console")
+    return {"listen": console_listen, "assets": str(paths(home)[0] / "console")}
+
+
+def render_config(home, listen, installation=1, issue=None, image=None, primary=None, alternate=None,
+                  console_listen=None):
+    lan_address(listen, "status")
+    console = console_fields(home, listen, console_listen)
     root, config, _ = paths(home)
     text = (SOURCE / "crates/config/example.toml").read_text()
     start = text.index('# Names below are deployment placeholders')
@@ -179,6 +193,8 @@ def render_config(home, listen, installation=1, issue=None, image=None, primary=
         '"/run/tl3/model-key"': json.dumps(str(config / "secrets/model-key")),
         'installation_id = 1': f'installation_id = {installation}',
         'listen = "127.0.0.1:8033"': f'listen = {json.dumps(listen)}',
+        'listen = "127.0.0.1:8034"': f'listen = {json.dumps(console["listen"])}',
+        '"/srv/tl3/console"': json.dumps(console["assets"]),
         '"/srv/tl3/workers/.venv/bin/python"': json.dumps(str(root / "app/workers/.venv/bin/python")),
         '"/srv/tl3/worker-runs"': json.dumps(str(root / "worker-runs")),
         '# tiktoken_cache_dir = "/srv/tl3/tiktoken"': "tiktoken_cache_dir = " + json.dumps(str(root / "tiktoken")),
@@ -208,7 +224,7 @@ def add_fields(text, table, fields):
     return text + "\n" + table + "\n" + additions
 
 
-def configure(home, listen, state, image=None, primary=None, alternate=None):
+def configure(home, listen, state, image=None, primary=None, alternate=None, console_listen=None):
     _, config, _ = paths(home)
     destination = config / "tl3.toml"
     defaults = render_config(home, listen, state.get("installation_id", 1),
@@ -233,6 +249,7 @@ def configure(home, listen, state, image=None, primary=None, alternate=None):
         ("hindsight", {"bank": tomllib.loads(defaults)["hindsight"]["bank"]}),
         ("models", {"writer": tomllib.loads(defaults)["models"]["writer"]}),
         ("hindsight", {"api_key_file": str(config / "secrets/hindsight-key")}),
+        ("console", console_fields(home, listen, console_listen)),
     ):
         missing = {key: toml_value(value) for key, value in fields.items()
                    if key not in data.get(table, {})}
@@ -310,15 +327,17 @@ def install(args):
     run([uv, "sync", "--locked", "--no-dev", "--project", app / "workers", "--python", "3.14+gil"])
     print("Workers: locked Python 3.14 venv synced; launches use Python directly")
     private_dir(root / "bin")
-    for binary in ("tl3", "tl3d", "tl3-deploy"):
+    for binary in ("tl3", "tl3d", "tl3-deploy", "tl3-console"):
         write_file(root / "bin" / binary, (args.binaries / binary).read_bytes(), 0o700)
     private_dir(root / "deploy")
     write_file(root / "deploy/deploy.py", (HERE / "deploy.py").read_bytes())
     state_path = root / "app-state.json"
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
     destination = config / "tl3.toml"
-    configure(home, args.status_listen, state, args.image, args.primary, args.alternate)
+    configure(home, args.status_listen, state, args.image, args.primary, args.alternate, args.console_listen)
     run([root / "bin/tl3-deploy", "parse", destination])
+    install_console_assets(home)
+    print("Console: web app built with npm and installed")
     units = home / ".config/systemd/user"
     units.mkdir(parents=True, exist_ok=True)
     for unit in (HERE / "units").glob("*.service"):
@@ -331,6 +350,24 @@ def install(args):
         managed.unlink(missing_ok=True)
     run(["systemctl", "--user", "daemon-reload"])
     print("Units installed; config parses. Run `deploy.py check` for Config::load and the credential checks.")
+
+
+def install_console_assets(home, source=SOURCE):
+    """Build the console's web app and swap it in whole. Rust builds never need Node."""
+    web = source / "web"
+    run(["npm", "ci", "--no-audit", "--no-fund"], cwd=web)
+    run(["npm", "run", "build"], cwd=web)
+    root = paths(home)[0]
+    target = root / "console"
+    staging = root / "console.new"
+    shutil.rmtree(staging, ignore_errors=True)
+    shutil.copytree(web / "dist", staging)
+    previous = root / "console.old"
+    shutil.rmtree(previous, ignore_errors=True)
+    if target.exists():
+        os.rename(target, previous)
+    os.rename(staging, target)
+    shutil.rmtree(previous, ignore_errors=True)
 
 
 def service(home, name):
@@ -350,16 +387,20 @@ def service(home, name):
     write_file(target, text.encode())
     if name == "database":
         os.execv(root / "bin/tl3-deploy", ["tl3-deploy", "database", str(target)])
-    if name == "status":
+    elif name == "status":
         os.execv(root / "bin/tl3", ["tl3", "status-serve", "--config", str(target)])
-    os.execv(root / "bin/tl3d", ["tl3d", "--config", str(target)])
+    elif name == "console":
+        os.execv(root / "bin/tl3-console", ["tl3-console", "--config", str(target)])
+    else:
+        os.execv(root / "bin/tl3d", ["tl3d", "--config", str(target)])
 
 
 def start(home):
     run(["systemctl", "--user", "enable", "--now", "tl3-postgres.service"])
     run(["systemctl", "--user", "enable", "--now", "tl3-status.service"])
+    run(["systemctl", "--user", "enable", "--now", "tl3-console.service"])
     run(["systemctl", "--user", "enable", "--now", "tl3d.service"])
-    print("Postgres and status enabled. tl3d is gated until production startup and model setup are ready.")
+    print("Postgres, status and console enabled. tl3d is gated until production startup and model setup are ready.")
 
 
 def mlflow_health(home):
@@ -403,7 +444,7 @@ def check(home):
     root, config, _ = paths(home)
     missing = int(not mlflow_health(home))
     managed = (root / "deploy/managed-tunnel").exists()
-    units = ["tl3-postgres", "tl3d", "tl3-status", "tl3-mlflow"]
+    units = ["tl3-postgres", "tl3d", "tl3-status", "tl3-console", "tl3-mlflow"]
     if managed:
         units.append("tl3-cloudflared")
     else:
@@ -433,8 +474,13 @@ def check(home):
         missing += not ok
     for label, address, path, expected in (
         ("LAN status HTTP", data["status"]["listen"], "/", 200),
+        ("LAN console HTTP", data.get("console", {}).get("listen", ""), "/api/board", 200),
         ("loopback webhook HTTP", data["github"]["webhook_listen"], "/github/events", 405),
     ):
+        if not address:
+            print(f"MISSING {label}")
+            missing += 1
+            continue
         host, port = address.rsplit(":", 1)
         connection = http.client.HTTPConnection(host, int(port), timeout=3)
         try:
@@ -471,11 +517,12 @@ def main():
     parser.add_argument("--home", type=Path, default=Path.home())
     parser.add_argument("--binaries", type=Path, default=SOURCE / "target/release")
     parser.add_argument("--status-listen", default="192.168.1.107:8033")
+    parser.add_argument("--console-listen", help="default: the status address on port 8034")
     parser.add_argument("--managed-tunnel", action="store_true", help="install and require TL3's own Cloudflare connector; default uses the external route")
     parser.add_argument("--image")
     parser.add_argument("--primary")
     parser.add_argument("--alternate")
-    parser.add_argument("--service", choices=["database", "status", "controller"])
+    parser.add_argument("--service", choices=["database", "status", "console", "controller"])
     args = parser.parse_args()
     if args.command == "check":
         return check(args.home)
