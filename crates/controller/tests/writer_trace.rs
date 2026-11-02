@@ -20,6 +20,10 @@ print(json.dumps({"event": "reply", "role": "writer", "reply": {"text": "The cha
     .unwrap();
     let seen = root.join("seen.json");
     let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+    // The writer copies the model key into its run; a fixture key stands in.
+    let key = root.join("model-key");
+    fs::write(&key, "fixture-key").unwrap();
+    config.models.key_file = key;
     config.workers.python = "/usr/bin/env".into();
     config.workers.command = vec![
         "python3".into(),
