@@ -695,8 +695,8 @@ What the look finds enters the kernel as replies, acknowledgements and facts.
 **A stall** is an operation that is alive, but whose progress hasn't moved since the previous look. What happens next depends on the upstream:
 
 - **Agent runs:** TL3 stops the run and counts it as an infrastructure failure.
-- **PrismaBuild jobs:** TL3 sets no deadline on them. Under PrismaBuild's progress contract, PrismaBuild ends a quiet job itself, and the ending arrives as a failed run.
-- **Mergify and GitHub:** the stall raises an incident.
+- **PrismaBuild jobs:** TL3 sets no deadline on them. A job its own record shows queued or running is alive, however quiet (#369). Under PrismaBuild's progress contract, PrismaBuild ends a quiet job itself, and the ending arrives as a failed run.
+- **Mergify and GitHub:** the stall raises an incident. A reachable upstream doesn't end a stall, so the incident stays open until the operation moves or Rob clears it (#373).
 
 A look ends work only when the upstream's own record shows no progress.
 
