@@ -926,8 +926,16 @@ clipped to 6,000 characters, and pieces, files and items to 600 and to eight.
 The writer worker redacts findings with the MLflow redactor (#302), including
 the run's loaded model key, before the model turn. A question with findings must
 state its decision as one question. The obstacle is capped at 600 characters and
-the decision at 400. If every draft is rejected, the question still posts, with
-the fixed obstacle, the options and the kind's fixed decision.
+the decision at 400. Explicit planner and maker refusals carry
+`outcome: "cant_meet"`. Their questions must name at least one reported path or
+rule in the obstacle. Those exact paths are allowed in that question, while
+other paths and internal vocabulary remain subject to the usual checks. The
+writer explains the worker's proposed decisions within the three standard
+answers, including any required permission and a smaller request.
+
+If every draft is rejected, a fixed question can still post when its obstacle
+names the blocker, or when the source names no path or rule. A generic fallback
+cannot replace a named blocker. It fails with `message_rejected` instead.
 
 Run `bash crates/controller/tools/verify-planning.sh` through PrismaBuild once
 with each host tag, `dl380g10`, `sparky` and `sparklina`. It runs controller and

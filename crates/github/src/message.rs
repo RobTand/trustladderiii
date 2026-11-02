@@ -39,6 +39,8 @@ pub struct Policy {
     pub internal_terms: Vec<String>,
     /// Repo-relative files and directories from the request delivery.
     pub known_paths: BTreeSet<String>,
+    /// Exact paths from a can't-meet report that the question needs to explain.
+    pub blocker_paths: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -112,7 +114,10 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
     if is_blank(&draft.obstacle) {
         errors.push(Violation::MissingObstacle);
     }
-    let obstacle = normalize(&without_title_quotes(&draft.obstacle, &policy));
+    let obstacle = without_blocker_paths(
+        &normalize(&without_title_quotes(&draft.obstacle, &policy)),
+        &policy,
+    );
     let sentences = obstacle
         .split_terminator(['.', '!', '?'])
         .filter(|s| !s.trim().is_empty())
@@ -214,7 +219,7 @@ pub fn check_prose(text: &str, policy: &Policy) -> Result<CheckedMessage, Vec<Vi
 }
 
 fn content_errors(text: &str, policy: &Policy) -> Vec<Violation> {
-    let normalized = normalize(&without_title_quotes(text, policy));
+    let normalized = without_blocker_paths(&normalize(&without_title_quotes(text, policy)), policy);
     let request_words: BTreeSet<_> = policy
         .request_title
         .iter()
@@ -272,6 +277,35 @@ fn content_errors(text: &str, policy: &Policy) -> Vec<Violation> {
         errors.push(Violation::Log);
     }
     errors
+}
+
+// Match a whole path token: allowing one file never allows a child or sibling.
+static PATH_TOKEN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[\p{L}\p{N}_.*-]+(?:/[\p{L}\p{N}_.*-]+)+").unwrap());
+
+/// Repo-relative path tokens, including glob rules, mentioned in a report.
+pub fn paths_in(text: &str) -> BTreeSet<String> {
+    PATH_TOKEN
+        .find_iter(text)
+        .map(|token| token.as_str().trim_end_matches('.').to_owned())
+        .collect()
+}
+
+fn without_blocker_paths(text: &str, policy: &Policy) -> String {
+    if policy.blocker_paths.is_empty() {
+        return text.to_owned();
+    }
+    PATH_TOKEN
+        .replace_all(text, |capture: &regex::Captures<'_>| {
+            let token = &capture[0];
+            let path = token.trim_end_matches('.');
+            if policy.blocker_paths.contains(path) {
+                format!("the file{}", &token[path.len()..])
+            } else {
+                token.to_owned()
+            }
+        })
+        .into_owned()
 }
 
 fn without_title_quotes<'a>(text: &'a str, policy: &Policy) -> Cow<'a, str> {

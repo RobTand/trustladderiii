@@ -180,14 +180,20 @@ fn planner(plan: &Value) -> Option<Value> {
         }
         _ => return None,
     };
-    reported("planner", &report, CANT_MEET)
+    let mut found = reported("planner", &report, CANT_MEET)?;
+    if plan["kind"] == "cant_meet" {
+        found["outcome"] = json!("cant_meet");
+    }
+    Some(found)
 }
 
 /// Evidence from a failed run: the maker's own report, or the failures it just got.
 fn rung(sources: &Sources, decision: &str) -> Option<Value> {
     match (sources.fresh)("maker_replies") {
         Some(reply) if reply["kind"] == "cant_meet" => {
-            reported("maker", reply["report"].as_str()?, decision)
+            let mut found = reported("maker", reply["report"].as_str()?, decision)?;
+            found["outcome"] = json!("cant_meet");
+            Some(found)
         }
         _ => failures(sources, decision),
     }

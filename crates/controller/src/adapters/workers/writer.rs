@@ -1,6 +1,7 @@
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::{collections::BTreeSet, sync::LazyLock};
 use tl3_github::message::{self, Draft, OptionDraft, Policy, Violation};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -276,8 +277,14 @@ pub fn checked_draft(
         .as_str()
         .ok_or(Error::Invalid("writer needs the original issue title"))?
         .to_owned();
+    let blocker = blocker_anchors(&input);
     let policy = Policy {
         request_title: Some(title.clone()),
+        blocker_paths: blocker
+            .iter()
+            .filter(|anchor| anchor.contains('/'))
+            .cloned()
+            .collect(),
         ..policy.clone()
     };
     let removed_changes = (input.kind == MessageKind::Summary)
@@ -294,6 +301,14 @@ pub fn checked_draft(
             .is_some_and(serde_json::Value::is_object);
     for attempt in 0..3 {
         let reply = writer.draft(&format!("{key}:writer:{attempt}"), &input)?;
+        if let WriterReply::Question(question) = &reply
+            && !names_blocker(&question.obstacle, &blocker)
+        {
+            input.violations = vec![
+                "The obstacle must name the reported blocker: include at least one full file path or named rule from facts.findings.report in one or two plain sentences. Preserve the worker's proposed decisions in the options' outcomes.".into(),
+            ];
+            continue;
+        }
         if input.kind == MessageKind::Clarification
             && !matches!(&reply, WriterReply::Text(text) if short_question(&text.text)
                 && text.text.contains(&format!("\"{}\"", input.facts["comment_excerpt"].as_str().unwrap())))
@@ -376,6 +391,9 @@ pub fn fixed_question(
             .to_owned())
     };
     let title = text("issue_title")?;
+    if !names_blocker(&text("obstacle")?, &blocker_anchors(input)) {
+        return Err(Error::MessageRejected);
+    }
     let draft = Draft {
         issue_title: title.clone(),
         request_quote: title.clone(),
@@ -395,6 +413,65 @@ pub fn fixed_question(
     message::check(&draft, &policy)
         .map(|checked| checked.as_str().to_owned())
         .map_err(|_| Error::MessageRejected)
+}
+
+fn blocker_anchors(input: &WriteRequest) -> BTreeSet<String> {
+    let findings = &input.facts["findings"];
+    if input.kind != MessageKind::Question
+        || findings["outcome"] != "cant_meet"
+        || !matches!(findings["source"].as_str(), Some("planner" | "maker"))
+    {
+        return BTreeSet::new();
+    }
+    let report = findings["report"].as_str().unwrap_or_default();
+    let mut anchors = message::paths_in(report);
+    static RULE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r#"\b[Rr]ule\s+(?:[`'"]([A-Za-z0-9_-]+)[`'"]|([A-Z][A-Z0-9_]+)\b)"#)
+            .unwrap()
+    });
+    for capture in RULE.captures_iter(report) {
+        anchors.insert(
+            capture
+                .get(1)
+                .or_else(|| capture.get(2))
+                .unwrap()
+                .as_str()
+                .to_owned(),
+        );
+    }
+    if report
+        .to_lowercase()
+        .replace('-', " ")
+        .contains("protected path")
+    {
+        anchors.insert("protected-path".into());
+    }
+    anchors
+}
+
+fn names_blocker(obstacle: &str, anchors: &BTreeSet<String>) -> bool {
+    if anchors.is_empty() {
+        return true;
+    }
+    let paths = message::paths_in(obstacle);
+    let words = obstacle.to_lowercase().replace('-', " ");
+    anchors.iter().any(|anchor| {
+        if anchor.contains('/') {
+            paths.contains(anchor)
+        } else {
+            let anchor = anchor.to_lowercase().replace('-', " ");
+            words.match_indices(&anchor).any(|(start, _)| {
+                !words[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(char::is_alphanumeric)
+                    && !words[start + anchor.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(char::is_alphanumeric)
+            })
+        }
+    })
 }
 
 fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> Vec<String> {
