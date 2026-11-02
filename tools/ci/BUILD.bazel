@@ -228,3 +228,10 @@ py_binary(
     srcs = ["check_no_secret_leak.py"],
     visibility = ["//visibility:public"],
 )
+
+py_binary(
+    name = "fail_fast_proof",
+    srcs = ["fail_fast_proof.py"],
+    visibility = ["//visibility:public"],
+    deps = [":bazel_gate"],
+)
