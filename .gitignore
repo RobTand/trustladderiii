@@ -1,5 +1,5 @@
 target/
 bazel-*
-/bazel-remote-grpc.log
-/execution_log.binpb.zst
+/*bazel-remote-grpc.log
+/*execution_log.binpb.zst
 __pycache__/

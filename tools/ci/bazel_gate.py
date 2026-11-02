@@ -44,6 +44,8 @@ IRRELEVANT = [
     '.github/*.md', '.github/ISSUE_TEMPLATE/*', '.github/CODEOWNERS',
 ]
 CONFIGS = {'amd64': 'remote', 'arm64': 'remote-arm64'}
+# .bazelrc's default names; test and build runs prefix their own.
+DIAGNOSTICS = ['bazel-remote-grpc.log', 'execution_log.binpb.zst']
 TESTS = 'tests(//...)'
 
 
@@ -212,6 +214,7 @@ class Workspace:
         bep.unlink(missing_ok=True)
         self.run(self.bazel, 'test', f'--config={config}', '--config=ci', '--keep_going',
                  f'--target_pattern_file={patterns}', f'--build_event_json_file={bep}',
+                 *diagnostic_logs(log_name),
                  *[f'--build_metadata={key}={value}' for key, value in metadata.items()],
                  capture=False, check=False)
         return test_statuses(bep)
@@ -223,7 +226,7 @@ class Workspace:
         patterns = Path(tempfile.gettempdir(), f'{log_name}-build-targets.txt')
         patterns.write_text('\n'.join(targets) + '\n')
         return not self.run(self.bazel, 'build', f'--config={config}', '--config=ci', '--keep_going',
-                            f'--target_pattern_file={patterns}',
+                            f'--target_pattern_file={patterns}', *diagnostic_logs(f'{log_name}-build'),
                             *[f'--build_metadata={key}={value}' for key, value in metadata.items()],
                             capture=False, check=False)
 
@@ -255,12 +258,18 @@ class Workspace:
         return problems
 
 
-def write_result(result, directory):
+def diagnostic_logs(prefix):
+    """Per-invocation names, so later helper invocations can't overwrite these logs."""
+    return [f'--remote_grpc_log={prefix}-{DIAGNOSTICS[0]}',
+            f'--execution_log_compact_file={prefix}-{DIAGNOSTICS[1]}']
+
+
+def write_result(result, directory, root=ROOT):
     directory.mkdir(parents=True, exist_ok=True)
     (directory / RESULT).write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
-    for name in ['bazel-remote-grpc.log', 'execution_log.binpb.zst']:
-        if (ROOT / name).exists():
-            (ROOT / name).replace(directory / name)
+    for suffix in DIAGNOSTICS:
+        for log in root.glob(f'*{suffix}'):
+            log.replace(directory / log.name)
 
 
 def gate_pr(workspace, base, head, metadata):

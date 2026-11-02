@@ -1,4 +1,10 @@
 common --enable_bzlmod
+# Every invocation streams to BuildBuddy from a Remote Bazel runner, including
+# bazel-diff's queries, Gazelle and the cargo wrapper: apply these to all of them.
+common --remote_cache_compression
+common --experimental_remote_cache_chunking
+common --remote_grpc_log=bazel-remote-grpc.log
+common --execution_log_compact_file=execution_log.binpb.zst
 build --enable_platform_specific_config
 build --incompatible_strict_action_env
 build --color=no
@@ -19,8 +25,6 @@ test --test_env=TOKIO_WORKER_THREADS=1
 build:remote --remote_cache=grpcs://remote.buildbuddy.io
 build:remote --remote_download_minimal
 build:remote --jobs=80
-build:remote --remote_cache_compression
-build:remote --experimental_remote_cache_chunking
 build:remote --remote_executor=grpcs://remote.buildbuddy.io
 build:remote --bes_backend=grpcs://remote.buildbuddy.io
 build:remote --bes_results_url=https://app.buildbuddy.io/invocation/
@@ -35,8 +39,6 @@ test:remote --test_env=TL3_RUNNER_CLASS=buildbuddy-amd64
 build:remote-arm64 --remote_cache=grpcs://remote.buildbuddy.io
 build:remote-arm64 --remote_download_minimal
 build:remote-arm64 --jobs=80
-build:remote-arm64 --remote_cache_compression
-build:remote-arm64 --experimental_remote_cache_chunking
 build:remote-arm64 --remote_executor=grpcs://remote.buildbuddy.io
 build:remote-arm64 --bes_backend=grpcs://remote.buildbuddy.io
 build:remote-arm64 --bes_results_url=https://app.buildbuddy.io/invocation/
@@ -51,8 +53,6 @@ test:remote-arm64 --test_env=TL3_BUDGETS=record
 
 # Commit and branch metadata are supplied by the CI entrypoint.
 common:ci --lockfile_mode=error
-build:ci --remote_grpc_log=bazel-remote-grpc.log
-build:ci --execution_log_compact_file=execution_log.binpb.zst
 build:ci --build_metadata=ROLE=CI
 build:ci --build_metadata=REPO_URL=https://github.com/RobTand/trustladderiii
 # Parity reads each test's inventory receipt.
