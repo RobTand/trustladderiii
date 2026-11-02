@@ -277,19 +277,8 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
                 .unwrap()
                 .catch_up(&config.repos[0], &changes, &snapshot)
                 .unwrap();
-            let mut delivery: Delivery = serde_json::from_value(
-                snapshot
-                    .rows
-                    .iter()
-                    .find(|row| {
-                        row.table == "allowances"
-                            && row.value["delivery"]["output"]["Effect"]["kind"] == "Enqueue"
-                    })
-                    .unwrap()
-                    .value["delivery"]
-                    .clone(),
-            )
-            .unwrap();
+            let mut delivery = delivery();
+            delivery.repository = config.repos[0].clone();
             delivery.pull_request = Some(100);
             delivery.head_sha = Some(
                 api.state.lock().unwrap().pull["head"]["sha"]
