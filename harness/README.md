@@ -96,9 +96,16 @@ With `selected_tests`, `run_checks` adds one more regression check, named
 1,000 tests. Selection is static: `ast` reads the base tree, and no repository
 code runs.
 
-The changed files come from the commit the head descends from. A file that
-imports a changed Python file is affected, and so is any file importing an
-affected one, through production modules and test helpers alike. Every test
+The changed files come from the commit the head descends from. A changed
+Python file is affected, and so is any file that names a changed file of any
+type by a path literal: a string constant equal to its repository path or
+ending in `/` plus that path, or a suffix of the path with at least two
+components, including the joined string operands of a `/` chain or a call
+such as `os.path.join`. A bare file name doesn't count: it can't say which
+of several same-named files it means. For prismaquant#3213's changes, no
+PrismaQuant test file named a changed file only by its bare name. A file that
+imports an affected one is affected too, through production modules and test
+helpers alike. Every test
 file in that closure contributes its test functions and methods. Tests are
 ordered by import distance, then path, then source order, and the first
 `limit` are candidates. Tests that a planned check names, and tests that the
