@@ -475,6 +475,7 @@ fn main() {
         ] {
             planning::planning(&database.create(&mode.replace('-', "_")), mode);
         }
+        planning::memories(&database.create("plan_memories"));
         database.stop();
         return;
     }
@@ -711,6 +712,8 @@ fn main() {
         planning::planning(&database.create(&mode.replace('-', "_")), mode);
     }
     println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
+    planning::memories(&database.create("plan_memories"));
+    println!("test planner_memories_recall_and_flag ... ok");
     planning::stop(&database.create("planner_stop"));
     println!("test planner_stop ... ok");
     quota_scenarios(&mut database);
@@ -718,7 +721,7 @@ fn main() {
     let mut database = Database::start();
     maker::run(&mut database);
     finish_fixture(database, "maker");
-    println!("87 worker supervisor, planning and maker scenarios passed; no skips");
+    println!("88 worker supervisor, planning and maker scenarios passed; no skips");
 }
 
 /// PRD #327, C5: the writer drafts with the writer's active prompt version and

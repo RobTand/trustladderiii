@@ -878,6 +878,11 @@ def record_chunk_usage(chunk):
 def record_reply(reply):
     if capture := active.get():
         try:
+            if isinstance(reply, dict):
+                if cited := reply.get('memory_ids'):
+                    capture.tags['memory_cited'] = ','.join(cited)
+                if flagged := [flag['id'] for flag in reply.get('memory_flags', [])]:
+                    capture.tags['memory_flagged'] = ','.join(flagged)
             capture.root.set_outputs(reply)
         except Exception:
             failure()
@@ -960,6 +965,9 @@ class Capture:
                          role=request['role'], model=request['model']['name'],
                          effort=request['model']['effort'] or 'default',
                          prompt_version=str(request.get('prompt', {}).get('version', 'packaged')))
+        # #422: recalled and cited memory ids let judges score whether memories helped.
+        if recalled := [memory['id'] for memory in request['inputs'].get('memories', [])]:
+            self.tags['memory_recalled'] = ','.join(recalled)
         self.settings = request['mlflow']
         # #430: live spans are redacted when they end, by their own redactor so
         # the final trace's truncation flag is unchanged. Secrets are shared.
@@ -1221,6 +1229,7 @@ def failure_tags(error):
         "done requires code changes", "could not inspect staged changes",
         "maker requires the worktree root", "missing final maker reply",
         "missing final model reply", "reply cites a memory it was not given",
+        "reply flags a memory it did not cite", "a flag's claim is not in the memory it flags",
         "only code may supply a forecast", "sized briefs must declare their root files",
         "duplicate JSON key", "non-finite JSON number",
         "reply is not one JSON object", "reply has more than one JSON object",

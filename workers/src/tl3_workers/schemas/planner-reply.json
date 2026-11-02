@@ -198,6 +198,130 @@
             "minLength": 1
           },
           "description": "Code-owned rule violations. The model must omit this field."
+        },
+        "memory_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "description": "IDs of supplied memories this reply relied on."
+        },
+        "memory_flags": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "claim": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 1000,
+                "description": "The memory's own words that the evidence contradicts, quoted verbatim from its content."
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "evidence": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "start_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "end_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "quote": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "path",
+                  "start_line",
+                  "end_line",
+                  "quote"
+                ],
+                "additionalProperties": false,
+                "description": "A verbatim quote of at most 40 lines from the read-only checkout, at these 1-based lines of this repo-relative file."
+              }
+            },
+            "required": [
+              "id",
+              "claim",
+              "reason",
+              "evidence"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Cited memories the checkout shows to be wrong, each with the evidence that contradicts it. Code checks the quote before the memory is retired."
+        },
+        "conventions": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "evidence": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "start_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "end_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "quote": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "path",
+                  "start_line",
+                  "end_line",
+                  "quote"
+                ],
+                "additionalProperties": false,
+                "description": "A verbatim quote of at most 40 lines from the read-only checkout, at these 1-based lines of this repo-relative file."
+              }
+            },
+            "required": [
+              "text",
+              "evidence"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Repository conventions the checkout shows, each with evidence, kept for later requests. Code checks the quote."
         }
       },
       "required": [
@@ -270,6 +394,130 @@
             "minLength": 1
           },
           "description": "Code-owned rule violations. The model must omit this field."
+        },
+        "memory_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "description": "IDs of supplied memories this reply relied on."
+        },
+        "memory_flags": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "claim": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 1000,
+                "description": "The memory's own words that the evidence contradicts, quoted verbatim from its content."
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "evidence": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "start_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "end_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "quote": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "path",
+                  "start_line",
+                  "end_line",
+                  "quote"
+                ],
+                "additionalProperties": false,
+                "description": "A verbatim quote of at most 40 lines from the read-only checkout, at these 1-based lines of this repo-relative file."
+              }
+            },
+            "required": [
+              "id",
+              "claim",
+              "reason",
+              "evidence"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Cited memories the checkout shows to be wrong, each with the evidence that contradicts it. Code checks the quote before the memory is retired."
+        },
+        "conventions": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "evidence": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "start_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "end_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "quote": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "path",
+                  "start_line",
+                  "end_line",
+                  "quote"
+                ],
+                "additionalProperties": false,
+                "description": "A verbatim quote of at most 40 lines from the read-only checkout, at these 1-based lines of this repo-relative file."
+              }
+            },
+            "required": [
+              "text",
+              "evidence"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Repository conventions the checkout shows, each with evidence, kept for later requests. Code checks the quote."
         }
       },
       "required": [
@@ -318,6 +566,130 @@
           "minItems": 1,
           "uniqueItems": true,
           "description": "Concrete repository-relative paths that MUST change to meet the request's goals. Report only when the whole request cannot land usefully without these edits; never for inspected files, excluded edits, or an optional part. The controller verifies the effective protected-path list."
+        },
+        "memory_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "description": "IDs of supplied memories this reply relied on."
+        },
+        "memory_flags": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "claim": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 1000,
+                "description": "The memory's own words that the evidence contradicts, quoted verbatim from its content."
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "evidence": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "start_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "end_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "quote": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "path",
+                  "start_line",
+                  "end_line",
+                  "quote"
+                ],
+                "additionalProperties": false,
+                "description": "A verbatim quote of at most 40 lines from the read-only checkout, at these 1-based lines of this repo-relative file."
+              }
+            },
+            "required": [
+              "id",
+              "claim",
+              "reason",
+              "evidence"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Cited memories the checkout shows to be wrong, each with the evidence that contradicts it. Code checks the quote before the memory is retired."
+        },
+        "conventions": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "evidence": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "start_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "end_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "quote": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "path",
+                  "start_line",
+                  "end_line",
+                  "quote"
+                ],
+                "additionalProperties": false,
+                "description": "A verbatim quote of at most 40 lines from the read-only checkout, at these 1-based lines of this repo-relative file."
+              }
+            },
+            "required": [
+              "text",
+              "evidence"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Repository conventions the checkout shows, each with evidence, kept for later requests. Code checks the quote."
         }
       },
       "required": [
