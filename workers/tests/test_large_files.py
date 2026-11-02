@@ -2,11 +2,13 @@
 
 import copy
 import json
+from pathlib import Path
 
 import pytest
 
 from test_planner import LEAF, SPLIT, cache_tokenizer, planner_request, run_reply, tool_capable_fake  # noqa: F401
 from test_workers import BRIEF, request_doc  # noqa: F401
+from test_maker import maker_request, turn  # noqa: F401
 from tl3_workers.forecast import RANGED_FILE_TOKENS
 from tl3_workers.tools import Worktree
 from worker_process import start_worker
@@ -215,3 +217,24 @@ def test_write_refuses_to_replace_a_large_file(tmp_path):
         assert write.invoke({"path": "small.py", "content": "x = 2\n"}) == "File written."
         assert write.invoke({"path": "new.py", "content": "y = 1\n" * LARGE_FILE_BYTES}) == "File written."
     assert (tmp_path / "pool.py").read_bytes() == POOL
+
+
+def test_maker_needs_files_fit_counts_a_large_plan_file_as_a_ranged_edit(maker_request, monkeypatch):  # noqa: F811
+    # The live requests' plans hold a large file. Asking for one more small file must
+    # still fit, or every needs_files reply sends the request back to planning to split.
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+    from tl3_workers import runtime
+
+    root = Path(maker_request["worktree"])
+    (root / "pool.py").write_bytes(POOL)
+    (root / "helper.py").write_text("def helper():\n    return 1\n")
+    inputs = maker_request["inputs"]
+    inputs["plan"]["files"].append("pool.py")
+    inputs["fit_tokens"] = 100_000
+    reply = {"kind": "needs_files", "files": [{"path": "helper.py", "why": "The pool calls it."}]}
+    model = FakeMessagesListChatModel(responses=[AIMessage(**turn(reply))])
+    monkeypatch.setattr(runtime, "create_model", lambda request: model)
+    events = []
+    runtime.run(maker_request, events.append)
+    assert events[-1]["reply"] == {**reply, "fits": True}
