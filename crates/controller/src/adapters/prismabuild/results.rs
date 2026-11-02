@@ -144,6 +144,9 @@ pub(super) async fn ending(tool: &Tool, job: &Job, withdrawal: bool) -> Result<O
 /// TL3-side under Q51, not a PrismaBuild failure.
 pub(crate) const HARNESS: &str = "harness";
 
+/// The harness's `SELECTED_CHECK`: existing tests that import the change (#359).
+const SELECTED_CHECK: &str = "Existing tests that import the change";
+
 type CheckEvidence = (
     bool,
     bool,
@@ -311,9 +314,24 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
                 .reviewed_sha
                 .as_ref()
                 .map(tl3_worktrees::CommitId::as_str)
-        || report.results.len() != job.run.plan.len()
     {
         return None;
+    }
+    // Only a job staged with selection may carry one trailing selected check (#359).
+    let extra = report.results.len().checked_sub(job.run.plan.len())?;
+    if extra > usize::from(job.selected_tests.is_some()) {
+        return None;
+    }
+    if let Some(selected) = report.results.get(job.run.plan.len()) {
+        let Custody::InProcess = selected.custody;
+        if selected.name != SELECTED_CHECK
+            || selected.kind != Kind::Regression
+            || selected.tests.is_empty()
+            || selected.tests.len() > job.selected_tests.unwrap_or(0) as usize
+            || matches!(selected.verdict, Verdict::Pass) != selected.tests.iter().all(|t| t.passed)
+        {
+            return None;
+        }
     }
     for (result, check) in report.results.iter().zip(&job.run.plan) {
         if result.name != check.name

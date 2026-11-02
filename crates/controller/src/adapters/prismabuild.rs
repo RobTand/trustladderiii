@@ -87,6 +87,9 @@ struct Job {
     delivery: Delivery,
     run: CheckRun,
     changed_paths: Vec<String>,
+    /// The harness may report one trailing selected regression check (#359).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    selected_tests: Option<u32>,
 }
 
 pub struct Adapter {
@@ -471,6 +474,7 @@ impl Adapter {
             .images
             .for_repository(&delivery.repository, &self.settings.image);
         let run = checks::descended_base(delivery)?;
+        let selected_tests = self.images.selected_tests(&delivery.repository);
         let mut staged = delivery.clone();
         staged.checks = Some(run.clone());
         let changed_paths = checks::stage(
@@ -480,6 +484,7 @@ impl Adapter {
             image,
             self.images.exec_scratch(&delivery.repository),
             &self.protected_paths(&delivery.repository),
+            selected_tests,
         )?;
         let mut command = self.settings.python.clone();
         command.extend(["-I".into(), "-B".into(), "action.py".into()]);
@@ -507,6 +512,7 @@ impl Adapter {
             delivery: delivery.clone(),
             changed_paths,
             run,
+            selected_tests,
         };
         // The sealed key reaches stable storage before PB may execute anything.
         write(&record_path(&self.settings.records, delivery, "job"), &job)?;

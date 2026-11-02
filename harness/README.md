@@ -88,6 +88,29 @@ The harness collects the named files and selects the named items itself. It
 disables automatic third-party plugin loading. Dependencies and any plugins
 explicitly required by repository settings belong in the trusted image.
 
+## Selected regression check
+
+With `selected_tests`, `run_checks` adds one more regression check, named
+`Existing tests that import the change`. The repository opts in with
+`[[github.repos]] selected_tests = <limit>` in TL3's config; the limit is 1 to
+1,000 tests. Selection is static: `ast` reads the base tree, and no repository
+code runs.
+
+The changed files come from the commit the head descends from. A file that
+imports a changed Python file is affected, and so is any file importing an
+affected one, through production modules and test helpers alike. Every test
+file in that closure contributes its test functions and methods. Tests are
+ordered by import distance, then path, then source order, and the first
+`limit` are candidates. Tests that a planned check names, and tests that the
+head edits or lacks, are not candidates.
+
+The candidates run on the base with the round's other base tests, sharing its
+cache. Only those that pass there are kept: a test that fails, errors or
+skips on the base says nothing about the change. The kept tests run on the
+head and are judged by the regression rules. If none are kept, no check is
+added. A plan may not use the selected check's name. The controller accepts
+the trailing check only from an action it staged with a limit.
+
 ## Verdict rules
 
 Demonstrating checks run the head's test edits against the base production
