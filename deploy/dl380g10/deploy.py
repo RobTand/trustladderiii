@@ -336,8 +336,6 @@ def run(command, **kwargs):
 
 def install(args):
     home = args.home
-    # An npm failure stops here, before any binary, config or service changes.
-    build_console_assets()
     root, config, _ = paths(home)
     private_dir(config)
     private_dir(root)
@@ -346,7 +344,7 @@ def install(args):
     print("Tokenizer: pinned o200k_base installed and hash verified")
     introduced = install_release(home)
     private_dir(root / "bin")
-    for binary in ("tl3", "tl3d", "tl3-deploy", "tl3-console"):
+    for binary in ("tl3", "tl3d", "tl3-deploy"):
         write_file(root / "bin" / binary, (args.binaries / binary).read_bytes(), 0o700)
     private_dir(root / "deploy")
     write_file(root / "deploy/deploy.py", (HERE / "deploy.py").read_bytes())
@@ -355,8 +353,6 @@ def install(args):
     destination = config / "tl3.toml"
     configure(home, args.status_listen, state, args.image, args.primary, args.alternate, args.console_listen)
     run([root / "bin/tl3-deploy", "parse", destination])
-    install_console_assets(home)
-    print("Console: web app built with npm and installed")
     grant_console_reader(home)
     units = home / ".config/systemd/user"
     units.mkdir(parents=True, exist_ok=True)
@@ -533,29 +529,6 @@ def stop_runs(home):
           "usual retry rules.")
 
 
-def build_console_assets(source=SOURCE):
-    """Build the console's web app with npm. Rust builds never need Node."""
-    web = source / "web"
-    run(["npm", "ci", "--no-audit", "--no-fund"], cwd=web)
-    run(["npm", "run", "build"], cwd=web)
-
-
-def install_console_assets(home, source=SOURCE):
-    """Swap the built web app in whole."""
-    web = source / "web"
-    root = paths(home)[0]
-    target = root / "console"
-    staging = root / "console.new"
-    shutil.rmtree(staging, ignore_errors=True)
-    shutil.copytree(web / "dist", staging)
-    previous = root / "console.old"
-    shutil.rmtree(previous, ignore_errors=True)
-    if target.exists():
-        os.rename(target, previous)
-    os.rename(staging, target)
-    shutil.rmtree(previous, ignore_errors=True)
-
-
 def grant_console_reader(home):
     """Create or update the console's read-only login. Postgres also does this each time it starts."""
     root, config, _ = paths(home)
@@ -575,10 +548,12 @@ def service(home, name):
     cache = tomllib.loads(text)["workers"].get("tiktoken_cache_dir")
     if name == "controller" and cache:
         os.environ["TIKTOKEN_CACHE_DIR"] = cache
-    # Only the console's unit loads its credential. The database service reads it
-    # in place, so a missing file can't fail tl3-postgres.
-    console = ((config / "secrets/console-postgres-password", "console-postgres-password"),) if name == "console" else ()
-    for source, filename in ((config / "secrets/postgres-password", "postgres-password"), *console,
+    # RobTand/tl3-console runs the console from its own unit and config (PRD #327).
+    if name not in ("database", "status", "controller"):
+        raise RuntimeError(f"unknown service {name}")
+    # The database service reads the console's credential in place, so a missing
+    # file can't fail tl3-postgres.
+    for source, filename in ((config / "secrets/postgres-password", "postgres-password"),
                              (config / "github-app.json", "github-app.json"),
                              (config / "secrets/model-key", "model-key"),
                              (config / "secrets/hindsight-key", "hindsight-key")):
@@ -589,8 +564,6 @@ def service(home, name):
         os.execv(root / "bin/tl3-deploy", ["tl3-deploy", "database", str(target)])
     elif name == "status":
         os.execv(root / "bin/tl3", ["tl3", "status-serve", "--config", str(target)])
-    elif name == "console":
-        os.execv(root / "bin/tl3-console", ["tl3-console", "--config", str(target)])
     else:
         os.execv(root / "bin/tl3d", ["tl3d", "--config", str(target)])
 
@@ -598,9 +571,8 @@ def service(home, name):
 def start(home):
     run(["systemctl", "--user", "enable", "--now", "tl3-postgres.service"])
     run(["systemctl", "--user", "enable", "--now", "tl3-status.service"])
-    run(["systemctl", "--user", "enable", "--now", "tl3-console.service"])
     run(["systemctl", "--user", "enable", "--now", "tl3d.service"])
-    print("Postgres, status and console enabled. tl3d is gated until production startup and model setup are ready.")
+    print("Postgres and status enabled. tl3d is gated until production startup and model setup are ready.")
 
 
 def mlflow_health(home):
@@ -644,7 +616,7 @@ def check(home):
     root, config, _ = paths(home)
     missing = int(not mlflow_health(home))
     managed = (root / "deploy/managed-tunnel").exists()
-    units = ["tl3-postgres", "tl3d", "tl3-status", "tl3-console", "tl3-mlflow"]
+    units = ["tl3-postgres", "tl3d", "tl3-status", "tl3-mlflow"]
     if managed:
         units.append("tl3-cloudflared")
     else:
@@ -674,7 +646,6 @@ def check(home):
         missing += not ok
     for label, address, path, expected in (
         ("LAN status HTTP", data["status"]["listen"], "/", 200),
-        ("LAN console HTTP", data.get("console", {}).get("listen", ""), "/api/board", 200),
         ("loopback webhook HTTP", data["github"]["webhook_listen"], "/github/events", 405),
     ):
         if not address:
@@ -726,7 +697,7 @@ def main():
     parser.add_argument("--image")
     parser.add_argument("--primary")
     parser.add_argument("--alternate")
-    parser.add_argument("--service", choices=["database", "status", "console", "controller"])
+    parser.add_argument("--service", choices=["database", "status", "controller"])
     args = parser.parse_args()
     if args.command == "check":
         return check(args.home)
