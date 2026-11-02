@@ -35,14 +35,6 @@ def runner_class():
 
 
 WALL_BACKSTOP_MULTIPLIER = 10
-# These binaries use the shared embedded-Postgres fixture. Missing server
-# counters must be explicit; otherwise a missing PID silently undercounts SQL.
-POSTGRES_BINARIES = {f'tl3-controller/{name}' for name in (
-    'publishing', 'workers', 'github-flow', 'github-notices', 'mergify', 'looks',
-    'hindsight', 'simulation', 'crash_safety', 'prismabuild', 'input_error_followups',
-    'production', 'upgrade_replay', 'priority_credit', 'fixture_contracts', 'scope',
-    'environment_incidents', 'console_commands', 'core_defects', 'loom',
-)} | {'tl3-store/postgres', 'tl3-store/fixture_lifecycle'}
 
 
 def validate_limits(config, baseline):
@@ -119,6 +111,13 @@ class PostgresCpu:
     def __init__(self):
         self.root = Path(os.environ.get('TMPDIR') or tempfile.gettempdir())
         self.previous = {}
+        self.started = False
+
+    def observe(self, line):
+        # The shared fixture emits this before starting its server. A cluster
+        # can disappear before the next marker, leaving no PID file to discover.
+        if line.startswith('embedded Postgres cached setup'):
+            self.started = True
 
     def sample(self, owner):
         delta, seen, errors = 0.0, set(), []
@@ -140,12 +139,13 @@ class PostgresCpu:
                 seen.add(identity)
             except (OSError, ValueError, IndexError, RuntimeError) as error:
                 errors.append(f'{fixture.name}: {error}')
-        if not seen:
+        if not seen and self.started:
             errors.append('No postmaster PID found for this test at the marker')
         if self.previous.keys() - seen:
             errors.append('A previously sampled postmaster exited before the marker')
         # Retain counters only while the server lives. A restart has its own identity.
         self.previous = {identity: self.previous[identity] for identity in seen}
+        self.started = False
         return delta, '; '.join(errors)
 
 
@@ -166,7 +166,7 @@ def execute_binary(binary, custom, arguments=(), cpu_seconds=None, cpu_details=N
     cpu_details = {} if cpu_details is None else cpu_details
     postgres_seconds = cpu_details.setdefault('postgres_cpu_seconds', {})
     fallbacks = cpu_details.setdefault('cpu_fallbacks', {})
-    postgres = PostgresCpu() if sample_cpu and name in POSTGRES_BINARIES else None
+    postgres = PostgresCpu() if sample_cpu else None
 
     def sample(key):
         current = process_cpu_seconds(process.pid) if sample_cpu else 0.0
@@ -189,6 +189,8 @@ def execute_binary(binary, custom, arguments=(), cpu_seconds=None, cpu_details=N
         for line in process.stdout:
             now = time.monotonic()
             print(f'[{name}] {line.rstrip()}', flush=True)
+            if postgres is not None:
+                postgres.observe(line)
             if custom:
                 match = MARKER.fullmatch(line.rstrip())
                 if match:

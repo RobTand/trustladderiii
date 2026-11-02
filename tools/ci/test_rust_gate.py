@@ -24,6 +24,19 @@ class GateTests(unittest.TestCase):
                                          True, cpu_details=details)
             self.assertEqual(details['cpu_fallbacks'], {})
 
+    def test_server_that_disappears_before_a_marker_falls_back_only_for_that_scenario(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = Path(temporary, 'fixture.py')
+            executable.write_text('print("embedded Postgres cached setup (fsync=true): 0.01s", flush=True)\n'
+                                  'print("test database ... ok", flush=True)\n'
+                                  'print("test pure_logic ... ok", flush=True)\n'
+                                  'print("2 fixture scenarios passed", flush=True)\n')
+            details = {}
+            with patch.dict(os.environ, {'TMPDIR': temporary}):
+                rust_gate.execute_binary({'name': 'fixture', 'command': [sys.executable, str(executable)]},
+                                         True, cpu_details=details)
+            self.assertEqual(set(details['cpu_fallbacks']), {'fixture::database'})
+
     def test_receipt_counts_a_live_postmaster_and_its_reaped_backend_cpu(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

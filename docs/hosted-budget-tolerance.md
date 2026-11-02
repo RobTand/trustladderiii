@@ -25,9 +25,10 @@ scenario must meet both its CPU limit and a wall backstop of 10 times its
 existing effective wall limit, including the fixed runner multiplier below.
 Bazel's target timeout still stops binaries that never finish.
 
-For binaries using the embedded Postgres fixture, an unavailable postmaster
-PID, an unreadable sample, or a server disappearing between markers makes
-that scenario wall-only. `cpu_fallbacks` records the reason for every such
+The fixture startup diagnostic tells the runner that a server is expected.
+An unavailable postmaster PID after startup, an unreadable fixture sample,
+or a previously sampled server disappearing makes that scenario wall-only.
+Scenarios that never start a server retain CPU enforcement. `cpu_fallbacks` records the reason for every such
 scenario, including setup or cleanup markers without a live server. Its
 original effective wall limit applies. Calibration excludes these partial
 CPU samples. The policy's static `wall_only` scenario list is empty. Darwin
@@ -43,13 +44,22 @@ Wall limits, CPU limits, their slow lists, and static wall-only exception
 lists may only shrink against the target branch. Removing CPU enforcement
 also fails. CPU seconds can exceed wall seconds when children run in parallel.
 CPU calibration takes per-scenario maxima from complete receipts, excluding
-fallbacks. Observed explicit CPU caps use twice the measured maximum, rounded
-up to a whole second with a one second floor, capped by the previous limit.
+fallbacks. Measured CPU caps use twice the measured maximum, rounded up to a whole
+second with a one second floor. After bootstrap, updates are capped by the
+previous limit.
 The default uses twice the nearest-rank p95 of measured scenario maxima,
 excluding tails, with the same rounding, floor and shrink-only rule.
 Unmeasured explicit caps retain their previous numerical limits and are
 listed as uncalibrated. An empirical p95 from this small sample does not
 establish a population percentile.
+
+The coordinator explicitly authorized one reset of measured caps inside
+unmerged PR #466 because adding postmaster CPU changed the measured work.
+Main had no CPU policy yet. `--bootstrap-postmaster` records this bootstrap
+and requires receipts with full Postgres accounting. It is not a precedent
+for growing merged CPU caps. The target-branch growth guard still rejects
+all CPU growth once that policy is merged. Unmeasured explicit caps are
+retained; fallback samples are never used to reset a cap.
 
 These CPU caps are calibrated on BuildBuddy amd64 only. GitHub-hosted x64
 and arm64 need their own CPU receipts before these caps can be trusted for

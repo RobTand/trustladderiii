@@ -10,6 +10,9 @@ For CPU migration, --cpu-receipts FILE FILE [...] tightens observed CPU caps
 to ceil(2 * maximum CPU), with a one second floor. The default uses twice
 the nearest-rank measured p95. Fallback samples are excluded. It requires
 two receipts and does not claim a population percentile.
+--bootstrap-postmaster performs the coordinator-authorized, one-time reset
+inside unmerged #466. It requires proc-postmaster-v1 receipts; it cannot
+bypass the Gate's target-branch growth guard after merge.
 """
 import argparse
 from collections import defaultdict
@@ -72,6 +75,8 @@ def calibrate_cpu(paths, policy, bootstrap_postmaster=False):
     for path in paths:
         raw = path.read_bytes()
         receipt = json.loads(raw)
+        if bootstrap_postmaster and receipt.get('cpu_sampling') != 'proc-postmaster-v1':
+            raise ValueError(f'{path}: bootstrap needs test-process plus postmaster CPU')
         wall, cpu = receipt['seconds'], receipt.get('cpu_seconds', {})
         if set(cpu) != set(wall) or not cpu:
             raise ValueError(f'{path}: missing CPU samples')
@@ -97,13 +102,17 @@ def calibrate_cpu(paths, policy, bootstrap_postmaster=False):
         default = max(default, math.ceil(2 * p95))
     else:
         default = min(default, max(1, math.ceil(2 * p95)))
-    for name in limits.keys() & maxima.keys():
+    for name in maxima if bootstrap_postmaster else limits.keys() & maxima.keys():
         # Two runs cannot establish a percentile. Allow 2x observed CPU, rounded to seconds.
         measured = max(1, math.ceil(maxima[name] * 2))
-        limits[name] = min(limits[name], measured) if 'cpu' in policy else measured
+        limits[name] = (min(limits[name], measured)
+                        if 'cpu' in policy and not bootstrap_postmaster else measured)
     return {'cpu': {'seconds': default, 'slow': limits},
-            'method': 'ceil(2 * measured max CPU), default ceil(2 * measured p95), floor 1s; existing CPU caps only shrink',
+            'method': ('one-time #466 full-CPU bootstrap: ceil(2 * measured max CPU), floor 1s; unmeasured caps retained'
+                       if bootstrap_postmaster else 'ceil(2 * measured max CPU), floor 1s; existing CPU caps only shrink'),
+            'default_method': 'min(previous default, ceil(2 * measured p95)), floor 1s',
             'measured_scenario_p95_cpu_seconds': p95,
+            'bootstrap_postmaster': bootstrap_postmaster,
             'uncalibrated_slow': sorted(limits.keys() - maxima.keys()),
             'receipts': records, 'max_cpu_seconds': dict(sorted(maxima.items()))}
 
@@ -112,12 +121,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('testlogs', type=Path, nargs='?')
     parser.add_argument('--cpu-receipts', type=Path, nargs='+')
+    parser.add_argument('--bootstrap-postmaster', action='store_true',
+                        help='One-time #466 bootstrap for full Postgres CPU; target-branch growth guard still applies')
     parser.add_argument('--runner-class')
     parser.add_argument('--policy', type=Path, default=Path('tools/ci/rust-test-budget.json'))
     args = parser.parse_args()
     policy = json.loads(args.policy.read_text())
     if args.cpu_receipts:
-        summary = calibrate_cpu(args.cpu_receipts, policy)
+        summary = calibrate_cpu(args.cpu_receipts, policy, bootstrap_postmaster=args.bootstrap_postmaster)
     else:
         if args.testlogs is None or args.runner_class is None:
             parser.error('wall calibration needs testlogs and --runner-class')
