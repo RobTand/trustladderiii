@@ -33,6 +33,8 @@ def test_receipts(response, label):
         yield {
             'action_digest': action.get('actionDigest'),
             'execution_id': action.get('executionId'),
+            'shard': (Path(action['primaryOutputPath']).parent.name
+                      if Path(action['primaryOutputPath']).parent.name.startswith('shard_') else None),
             'stage': action.get('stage'),
             'status': action.get('status', {}),
             'exit_code': result.get('exitCode', 0),
@@ -50,9 +52,12 @@ def test_receipts(response, label):
         }
 
 
-def check(receipts, cpu, memory):
+def check(receipts, cpu, memory, shards=1):
     if not receipts:
         raise ValueError('no executed test receipts; cached tests do not prove allocation')
+    expected = {f'shard_{index}_of_{shards}' for index in range(1, shards + 1)} if shards > 1 else {None}
+    if {receipt['shard'] for receipt in receipts} != expected:
+        raise ValueError('execution receipts do not cover the expected shards')
     for receipt in receipts:
         if (receipt['stage'] != 'COMPLETED' or receipt['status'].get('code', 0)
                 or receipt['exit_code'] or not receipt['started'] or not receipt['completed']):
@@ -69,8 +74,11 @@ def main():
     parser.add_argument('invocation')
     parser.add_argument('label')
     parser.add_argument('--cpu', type=int, required=True)
+    parser.add_argument('--shards', type=int, default=1)
     parser.add_argument('--memory-bytes', type=int, required=True)
     args = parser.parse_args()
+    if args.cpu <= 0 or args.memory_bytes <= 0 or args.shards <= 0:
+        parser.error("CPU, memory and shard count must be positive")
     key = os.environ.get('BUILDBUDDY_API_KEY', '').strip()
     try:
         if not key:
@@ -85,7 +93,7 @@ def main():
             receipts = list(test_receipts(json.load(response), args.label))
         print(json.dumps({'invocation': args.invocation, 'label': args.label,
                           'receipts': receipts}, indent=2).replace(key, '[key]'))
-        check(receipts, args.cpu, args.memory_bytes)
+        check(receipts, args.cpu, args.memory_bytes, args.shards)
     except (OSError, ValueError, urllib.error.URLError) as error:
         message = str(error).replace(key, '[key]') if key else str(error)
         sys.exit(message)
