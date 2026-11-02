@@ -134,5 +134,6 @@ filegroup(
 tl3_py_test(
     name = "test_rust_builds",
     srcs = ["test_rust_builds.py"],
+    data = [":sources", ":workspace_build_files", "//crates/controller:sources", "//crates/store:sources"],  # keep
     deps = [":rust_builds"],
 )
