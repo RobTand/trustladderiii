@@ -110,7 +110,8 @@ def scripted_reply(request, mode, marker):
             if mode == "plan-bad-split": reply["pieces"] = reply["pieces"][:1]
         elif mode == "plan-memories":
             reply["memory_ids"] = lesson
-            reply["memory_flags"] = [{"id": lesson[0], "reason": "greet() returns 'hello', not 'hi'.",
+            reply["memory_flags"] = [{"id": lesson[0], "claim": "greet() returns 'hi'",
+                                      "reason": "greet() returns 'hello', not 'hi'.",
                                       "evidence": {"path": "greeting.py", "start_line": 1, "end_line": 1,
                                                    "quote": "def greet(): return 'hello'"}}]
         elif mode in {"plan-cant-meet", "steering-guidance"}:

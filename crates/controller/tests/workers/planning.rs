@@ -236,7 +236,7 @@ pub(super) fn stop(settings: &tl3_config::Store) {
 }
 
 /// #422: a seeded bank reaches ingest and the planner, and a planner's verified
-/// flag retires a wrong memory in Hindsight.
+/// flag hides a wrong memory from later recall.
 pub(super) fn memories(settings: &tl3_config::Store) {
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
@@ -256,7 +256,7 @@ pub(super) fn memories(settings: &tl3_config::Store) {
                 let body: Value = request.body_json().unwrap();
                 recalled.send(body.clone()).unwrap();
                 let results = if body.get("tags").is_some() {
-                    json!([{"id": "lesson-greeting", "text": "greet() returns 'hi'.", "tags": ["kind:lesson"]}])
+                    json!([{"id": "lesson-greeting", "text": "greet() returns 'hi'.", "tags": ["kind:lesson", "repo:RobTand/tl3-sandbox"]}])
                 } else {
                     json!([{"id": "run-earlier", "text": "An earlier run read greeting.py.", "tags": ["role:maker"]}])
                 };
@@ -264,7 +264,7 @@ pub(super) fn memories(settings: &tl3_config::Store) {
             })
             .mount(&server),
     );
-    let (curated, curations) = std::sync::mpsc::channel();
+    let (curated, sent) = std::sync::mpsc::channel();
     runtime.block_on(
         Mock::given(method("PATCH"))
             .and(path_regex("^/v1/default/banks/tl3/memories/[^/]+$"))
@@ -315,7 +315,7 @@ pub(super) fn memories(settings: &tl3_config::Store) {
             .clone()
     };
     let expected = json!([
-        {"id": "lesson-greeting", "kind": "lesson", "content": "greet() returns 'hi'."},
+        {"id": "lesson-greeting", "kind": "lesson", "repo": "RobTand/tl3-sandbox", "content": "greet() returns 'hi'."},
         {"id": "run-earlier", "kind": "run", "content": "An earlier run read greeting.py."},
     ]);
     let ingest = role("ingest");
@@ -356,13 +356,16 @@ pub(super) fn memories(settings: &tl3_config::Store) {
     }
 
     assert_retired(&config, &mut store);
-    let (path, body) = curations
-        .recv_timeout(Duration::from_secs(30))
-        .expect("the retired planner's verified flag reaches Hindsight");
-    assert_eq!(path, "/v1/default/banks/tl3/memories/lesson-greeting");
-    assert_eq!(body["state"], "invalidated");
+    // One verified flag hides the memory from TL3 at once; retiring it in
+    // Hindsight waits for a second, independent signal.
     let curations = store.memory_curations().unwrap();
     assert_eq!(curations.len(), 1);
+    assert_eq!(curations[0]["memory_id"], "lesson-greeting");
     assert_eq!(curations[0]["source"], "planner");
     assert_eq!(curations[0]["verdict"], "accepted");
+    assert_eq!(curations[0]["state"], "hidden");
+    assert!(
+        sent.try_recv().is_err(),
+        "one signal never retires the memory"
+    );
 }

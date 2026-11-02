@@ -121,8 +121,8 @@ pub fn memory() -> Result<()> {
     let action = args.next().ok_or(Error::Invalid(USAGE))?;
     let state = match action.as_str() {
         "list" => None,
-        "invalidate" => Some(crate::memory::CurationState::Invalidated),
-        "revert" => Some(crate::memory::CurationState::Valid),
+        "invalidate" => Some(crate::memory::RobCuration::Invalidate),
+        "revert" => Some(crate::memory::RobCuration::Revert),
         _ => return Err(Error::Invalid(USAGE)),
     };
     let id = match state {

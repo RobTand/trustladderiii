@@ -1164,7 +1164,8 @@ def test_trace_tags_recalled_cited_and_flagged_memories(request_doc, monkeypatch
         {'id': 'b7e1c2d4-0000-4000-8000-000000000001', 'kind': 'lesson', 'content': 'Keep greet().'},
         {'id': 'b7e1c2d4-0000-4000-8000-000000000002', 'kind': 'run', 'content': 'Earlier run.'}]
     (Path(request_doc['worktree']) / 'greeting.py').write_text("def greet(): return 'hello'\n")
-    flag = {'id': 'b7e1c2d4-0000-4000-8000-000000000001', 'reason': 'greet() returns hello.',
+    flag = {'id': 'b7e1c2d4-0000-4000-8000-000000000001', 'claim': 'Keep greet().',
+            'reason': 'greet() returns hello.',
             'evidence': {'path': 'greeting.py', 'start_line': 1, 'end_line': 1,
                          'quote': "def greet(): return 'hello'"}}
     reply = {**BRIEF, 'memory_ids': ['b7e1c2d4-0000-4000-8000-000000000001'], 'memory_flags': [flag]}

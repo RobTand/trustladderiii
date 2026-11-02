@@ -628,7 +628,7 @@ pub(super) fn answer_recovery(settings: &tl3_config::Store) {
             .any(|t| t.as_str().unwrap().starts_with("repo:"))
     );
     let content = decisions[0]["content"].as_str().unwrap();
-    assert!(content.contains("Rob's answer: continue"), "{content}");
+    assert!(content.contains("Rob chose: continue"), "{content}");
     assert!(content.contains("Answer the old question"), "{content}");
     d.wait(|s| s.node()["phase"].get("Closed").is_some());
     assert_eq!(d.node()["phase"], json!({"Closed": "Merged"}));

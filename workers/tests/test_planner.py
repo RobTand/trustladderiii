@@ -583,9 +583,10 @@ def test_existing_test_in_a_large_file_is_defined_at_the_base(planner_request, m
 
 
 # #422: memories recalled upfront for planning.
-MEMORIES = [{"id": "lesson-1", "kind": "lesson", "content": "greet() returns 'hi'."},
+MEMORIES = [{"id": "lesson-1", "kind": "lesson", "repo": "RobTand/tl3-sandbox",
+             "content": "greet() returns 'hi'."},
             {"id": "run-1", "kind": "run", "content": "An earlier run read greeting.py."}]
-FLAG = {"id": "lesson-1", "reason": "greeting.py says hello world.",
+FLAG = {"id": "lesson-1", "claim": "greet() returns 'hi'", "reason": "greeting.py says hello world.",
         "evidence": {"path": "greeting.py", "start_line": 1, "end_line": 1, "quote": "hello world"}}
 
 
@@ -610,6 +611,8 @@ def test_planner_inputs_may_note_a_recall_outage(tmp_path, planner_request):
 @pytest.mark.parametrize("reply,message", [
     ({**CANT_MEET, "memory_ids": ["unknown"]}, "reply cites a memory it was not given"),
     ({**CANT_MEET, "memory_ids": [], "memory_flags": [FLAG]}, "reply flags a memory it did not cite"),
+    ({**CANT_MEET, "memory_ids": ["lesson-1"], "memory_flags": [{**FLAG, "claim": "greet() raises errors"}]},
+     "a flag's claim is not in the memory it flags"),
 ])
 def test_planner_memory_citations_are_checked(planner_request, monkeypatch, reply, message):
     from tl3_workers.roles.planner import check_reply
@@ -619,7 +622,8 @@ def test_planner_memory_citations_are_checked(planner_request, monkeypatch, repl
         check_reply(planner_request["inputs"], copy.deepcopy(reply))
 
 
-def test_planner_flags_are_bounded_by_schema():
-    reply = {**CANT_MEET, "memory_ids": ["lesson-1"], "memory_flags": [FLAG] * 4}
+@pytest.mark.parametrize("flags", [[FLAG] * 4, [{key: FLAG[key] for key in FLAG if key != "claim"}]])
+def test_planner_flags_are_bounded_by_schema(flags):
+    reply = {**CANT_MEET, "memory_ids": ["lesson-1"], "memory_flags": flags}
     with pytest.raises(ValidationError):
         validate("planner-reply", reply)

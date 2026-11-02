@@ -8,7 +8,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tl3_controller::memory::{self, CurationState, Recall};
+use tl3_controller::memory::{self, Breaker, Recall, RobCuration};
 use tl3_store::Store;
 use wiremock::{
     Mock, MockServer, Request, Respond, ResponseTemplate,
@@ -26,12 +26,15 @@ struct Bank {
     general: Arc<Mutex<Vec<Value>>>,
     recalls: Arc<Mutex<Vec<Value>>>,
     curations: Arc<Mutex<Vec<(String, Value)>>>,
+    /// Every request that reached the bank, including hung ones.
+    hits: Arc<Mutex<usize>>,
     /// 0 answers normally; any other status is returned as is; 1 sends a malformed body.
     status: Arc<Mutex<u16>>,
     hung: Arc<Mutex<bool>>,
 }
 impl Respond for Bank {
     fn respond(&self, request: &Request) -> ResponseTemplate {
+        *self.hits.lock().unwrap() += 1;
         if *self.hung.lock().unwrap() {
             return ResponseTemplate::new(200).set_delay(Duration::from_secs(60));
         }
@@ -128,17 +131,25 @@ impl Fixture {
             api_key_file: Some(self.scratch.path().join("hindsight-key")),
         }
     }
+    /// Each call gets a fresh breaker, as after a successful delivery.
     fn recall(&self, recall: Recall<'_>) -> Value {
-        memory::recall(&mut self.store(), &self.hindsight(), recall).unwrap()
+        memory::recall(
+            &mut self.store(),
+            &self.hindsight(),
+            &Breaker::default(),
+            recall,
+        )
+        .unwrap()
     }
     /// A finished run laid out as the supervisor leaves it: attempt beside its base worktree.
     fn attempt(&self, role: &str, memories: Value, reply: Value) -> std::path::PathBuf {
-        self.attempt_in(role, role, memories, reply)
+        self.attempt_in(role, role, "3", memories, reply)
     }
     fn attempt_in(
         &self,
         directory: &str,
         role: &str,
+        request: &str,
         memories: Value,
         reply: Value,
     ) -> std::path::PathBuf {
@@ -158,7 +169,7 @@ impl Fixture {
                 "role": role, "model": {"name": "fixture-model"},
                 "operation": {"node": 3, "generation": 1},
                 "inputs": {"memories": memories},
-                "memory": {"repo": "RobTand/tl3-sandbox", "issue": 42, "request": "3", "epoch": 0},
+                "memory": {"repo": "RobTand/tl3-sandbox", "issue": 42, "request": request, "epoch": 0},
             }))
             .unwrap(),
         )
@@ -185,16 +196,40 @@ fn result(id: &str, text: &str, tags: &[&str]) -> Value {
     json!({"id": id, "text": text, "type": "world", "tags": tags})
 }
 
-fn supplied(id: &str, kind: &str) -> Value {
-    json!([{"id": id, "kind": kind, "content": "greet() returns 'hi'."}])
+const CLAIM: &str = "greet() returns 'hi'";
+const REPO: &str = "RobTand/tl3-sandbox";
+
+/// A supplied memory as recall leaves it in the run's inputs, with its repo tag.
+fn supplied(id: &str, kind: &str, repo: Option<&str>) -> Value {
+    let mut memory =
+        json!({"id": id, "kind": kind, "content": "Earlier: greet() returns 'hi' to callers."});
+    if let Some(repo) = repo {
+        memory["repo"] = json!(repo);
+    }
+    json!([memory])
 }
 
 fn evidence() -> Value {
     json!({"path": "greeting.py", "start_line": 1, "end_line": 1, "quote": QUOTE})
 }
 
-fn flag(id: &str, evidence: Value) -> Value {
-    json!({"id": id, "reason": "greet() returns 'hello', not 'hi'.", "evidence": evidence})
+fn flag(id: &str, claim: &str, evidence: Value) -> Value {
+    json!({"id": id, "claim": claim, "reason": "greet() returns 'hello', not 'hi'.", "evidence": evidence})
+}
+
+fn planner_flag(id: &str, claim: &str, evidence: Value) -> Value {
+    json!({"kind": "cant_meet", "report": "x", "files": [], "memory_ids": [id],
+           "memory_flags": [flag(id, claim, evidence)]})
+}
+
+/// Collects operations-issue notes instead of posting them.
+#[derive(Default)]
+struct Notes(Mutex<Vec<(String, String)>>);
+impl memory::Announce for Notes {
+    fn post(&self, key: &str, body: &str) -> tl3_controller::Result<()> {
+        self.0.lock().unwrap().push((key.into(), body.into()));
+        Ok(())
+    }
 }
 
 fn context<'a>() -> Recall<'a> {
@@ -260,10 +295,16 @@ fn recall_supplies_lessons_first_bounded_and_redacted() {
     assert_eq!(memories[1]["kind"], "convention");
     assert_eq!(memories[2]["kind"], "run");
     assert_eq!(memories[3]["kind"], "other");
+    assert_eq!(memories[0]["repo"], REPO, "recall keeps the repo tag");
+    assert!(
+        memories[3].get("repo").is_none(),
+        "an untagged memory has no repo"
+    );
     for memory in memories {
-        assert_eq!(
-            memory.as_object().unwrap().keys().collect::<Vec<_>>(),
-            ["content", "id", "kind"]
+        let keys: Vec<_> = memory.as_object().unwrap().keys().collect();
+        assert!(
+            keys == ["content", "id", "kind"] || keys == ["content", "id", "kind", "repo"],
+            "{keys:?}"
         );
         assert!(memory["content"].as_str().unwrap().chars().count() <= memory::MEMORY_CHARS);
     }
@@ -310,7 +351,7 @@ fn reviewer_recall_asks_only_for_the_repos_conventions() {
     });
     assert_eq!(
         value["memories"],
-        json!([{"id": "convention-1", "kind": "convention", "content": "Tests live in tests/."}])
+        json!([{"id": "convention-1", "kind": "convention", "repo": REPO, "content": "Tests live in tests/."}])
     );
     let recalls = f.bank.recalls.lock().unwrap();
     assert_eq!(recalls.len(), 1, "reviewers get conventions only");
@@ -329,7 +370,7 @@ fn recall_outage_degrades_to_no_memories_with_a_note() {
     *f.bank.general.lock().unwrap() = vec![result("run-1", "text", &[])];
     let mut down = f.hindsight();
     down.endpoint = "http://127.0.0.1:9".parse().unwrap();
-    let value = memory::recall(&mut f.store(), &down, context()).unwrap();
+    let value = memory::recall(&mut f.store(), &down, &Breaker::default(), context()).unwrap();
     assert_eq!(value["memories"], json!([]));
     assert!(
         value["memory_note"]
@@ -348,129 +389,278 @@ fn recall_outage_degrades_to_no_memories_with_a_note() {
 
     let mut missing_key = f.hindsight();
     missing_key.api_key_file = Some(f.scratch.path().join("absent-key"));
-    let value = memory::recall(&mut f.store(), &missing_key, context()).unwrap();
+    let value =
+        memory::recall(&mut f.store(), &missing_key, &Breaker::default(), context()).unwrap();
     assert_eq!(value["memories"], json!([]));
     assert!(value["memory_note"].is_string());
-
-    *f.bank.hung.lock().unwrap() = true;
-    let started = Instant::now();
-    let value = f.recall(context());
-    assert_eq!(value["memories"], json!([]));
-    assert!(value["memory_note"].is_string());
-    assert!(
-        started.elapsed() < Duration::from_secs(20),
-        "a hung Hindsight must not hold the controller: {:?}",
-        started.elapsed()
-    );
 }
 
 #[test]
-fn verified_flag_invalidates_the_memory_in_hindsight() {
+fn a_hung_hindsight_costs_one_launch_until_a_delivery_succeeds() {
     let f = Fixture::new();
-    let attempt = f.attempt(
-        "planner",
-        supplied("wrong-1", "lesson"),
-        json!({"kind": "cant_meet", "report": "x", "files": [], "memory_ids": ["wrong-1"],
-               "memory_flags": [flag("wrong-1", evidence())]}),
+    *f.bank.general.lock().unwrap() = vec![result("run-1", "text", &[])];
+    let breaker = Breaker::default();
+    *f.bank.hung.lock().unwrap() = true;
+    let started = Instant::now();
+    let value = memory::recall(&mut f.store(), &f.hindsight(), &breaker, context()).unwrap();
+    assert_eq!(value["memories"], json!([]));
+    assert!(value["memory_note"].is_string());
+    assert!(
+        started.elapsed() < Duration::from_secs(12),
+        "{:?}",
+        started.elapsed()
     );
-    memory::queue_attempt(&mut f.store(), "run:planner", &attempt).unwrap();
+    let hits = *f.bank.hits.lock().unwrap();
+    assert_eq!(hits, 1, "one failed call stops the launch's second call");
+
+    // Later launches skip recall at once, without touching Hindsight.
+    for _ in 0..3 {
+        let started = Instant::now();
+        let value = memory::recall(&mut f.store(), &f.hindsight(), &breaker, context()).unwrap();
+        assert_eq!(value["memories"], json!([]));
+        assert!(value["memory_note"].is_string());
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+    assert_eq!(*f.bank.hits.lock().unwrap(), hits);
+
+    // Hindsight answers again, but nothing has shown it: recall stays off.
+    *f.bank.hung.lock().unwrap() = false;
+    memory::deliver(&mut f.store(), &f.hindsight(), &breaker).unwrap();
+    let value = memory::recall(&mut f.store(), &f.hindsight(), &breaker, context()).unwrap();
+    assert_eq!(
+        value["memories"],
+        json!([]),
+        "an empty delivery is not evidence"
+    );
+
+    // A successful retain is the event that lets the next launch try again.
+    let attempt = f.attempt("audit", json!([]), json!({"verdict": "agree"}));
+    memory::queue_attempt(&mut f.store(), "run:audit", &attempt).unwrap();
+    assert_eq!(
+        memory::deliver(&mut f.store(), &f.hindsight(), &breaker).unwrap(),
+        1
+    );
+    let value = memory::recall(&mut f.store(), &f.hindsight(), &breaker, context()).unwrap();
+    assert!(value.get("memory_note").is_none(), "{value}");
+    assert_eq!(value["memories"][0]["id"], "run-1");
+}
+
+#[test]
+fn one_verified_flag_hides_and_a_second_run_retires() {
+    let f = Fixture::new();
+    let notes = Notes::default();
+    let first = f.attempt_in(
+        "first",
+        "planner",
+        "3",
+        supplied("wrong-1", "lesson", Some(REPO)),
+        planner_flag("wrong-1", CLAIM, evidence()),
+    );
+    memory::queue_attempt(&mut f.store(), "run:first", &first).unwrap();
     let curations = f.curations();
     assert_eq!(curations.len(), 1);
     assert_eq!(curations[0]["memory_id"], "wrong-1");
     assert_eq!(curations[0]["verdict"], "accepted");
-    assert_eq!(curations[0]["state"], "invalidated");
+    assert_eq!(curations[0]["state"], "hidden");
     assert_eq!(curations[0]["source"], "planner");
     assert_eq!(curations[0]["request"], "3");
+    assert_eq!(curations[0]["claim"], CLAIM);
     assert_eq!(curations[0]["evidence"]["quote"], QUOTE);
-    assert!(curations[0]["delivered_at"].is_null());
 
-    // Until Hindsight has it, recall drops the memory itself.
-    *f.bank.general.lock().unwrap() = vec![result("wrong-1", "greet() returns 'hi'.", &[])];
+    // Hidden at once from TL3's recall; Hindsight is not told yet.
+    *f.bank.general.lock().unwrap() =
+        vec![result("wrong-1", "Earlier: greet() returns 'hi'.", &[])];
     assert_eq!(f.recall(context())["memories"], json!([]));
+    memory::flush(&mut f.store(), &f.hindsight()).unwrap();
+    assert!(
+        f.bank.curations.lock().unwrap().is_empty(),
+        "one signal never retires"
+    );
 
+    // A second run of the same request is not independent.
+    let again = f.attempt_in(
+        "again",
+        "ingest",
+        "3",
+        supplied("wrong-1", "lesson", Some(REPO)),
+        json!({"kind": "brief", "brief": "b", "goals": [], "memory_ids": ["wrong-1"],
+               "memory_flags": [flag("wrong-1", CLAIM, evidence())]}),
+    );
+    memory::queue_attempt(&mut f.store(), "run:again", &again).unwrap();
+    memory::flush(&mut f.store(), &f.hindsight()).unwrap();
+    assert!(f.bank.curations.lock().unwrap().is_empty());
+    assert!(f.curations().iter().all(|c| c["state"] == "hidden"));
+
+    // Another request's run is the second signal.
+    let second = f.attempt_in(
+        "second",
+        "planner",
+        "9",
+        supplied("wrong-1", "lesson", Some(REPO)),
+        planner_flag("wrong-1", CLAIM, evidence()),
+    );
+    memory::queue_attempt(&mut f.store(), "run:second", &second).unwrap();
+    assert_eq!(f.curations().last().unwrap()["state"], "invalidated");
     memory::flush(&mut f.store(), &f.hindsight()).unwrap();
     let sent = f.bank.curations.lock().unwrap().clone();
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].0, "wrong-1");
     assert_eq!(sent[0].1["state"], "invalidated");
     let reason = sent[0].1["reason"].as_str().unwrap();
-    assert!(reason.contains("greet() returns 'hello', not 'hi'."));
-    assert!(reason.contains("greeting.py:1-1"));
-    assert!(reason.contains(QUOTE));
-    assert!(!f.curations()[0]["delivered_at"].is_null());
+    assert!(reason.contains(CLAIM) && reason.contains("greeting.py:1-1") && reason.contains(QUOTE));
     memory::flush(&mut f.store(), &f.hindsight()).unwrap();
     assert_eq!(f.bank.curations.lock().unwrap().len(), 1, "delivered once");
 
-    // Replaying the retirement does not record or send it again.
-    memory::queue_attempt(&mut f.store(), "run:planner", &attempt).unwrap();
+    // Replays record and send nothing new.
+    for (key, attempt) in [("run:first", &first), ("run:second", &second)] {
+        memory::queue_attempt(&mut f.store(), key, attempt).unwrap();
+    }
     memory::flush(&mut f.store(), &f.hindsight()).unwrap();
-    assert_eq!(f.curations().len(), 1);
+    assert_eq!(f.curations().len(), 3);
     assert_eq!(f.bank.curations.lock().unwrap().len(), 1);
+
+    // Every hide and retire is one line on the operations issue, once.
+    assert_eq!(memory::announce(&mut f.store(), &notes).unwrap(), 3);
+    assert_eq!(memory::announce(&mut f.store(), &notes).unwrap(), 0);
+    let notes = notes.0.lock().unwrap();
+    assert_eq!(notes.len(), 3);
+    for (key, body) in notes.iter() {
+        assert!(!key.is_empty());
+        assert_eq!(body.lines().count(), 1, "{body}");
+        for part in ["wrong-1", CLAIM, "greeting.py:1-1", "run "] {
+            assert!(body.contains(part), "{part} missing from {body}");
+        }
+        assert!(!body.contains('@'));
+    }
+    assert!(notes[0].1.contains("hidden") && notes[2].1.contains("retired"));
+    assert!(f.curations().iter().all(|c| !c["announced_at"].is_null()));
 }
 
 #[test]
-fn unverified_flags_are_recorded_as_rejected_and_never_sent() {
+fn unverified_flags_are_recorded_as_rejected_and_never_hide() {
     let f = Fixture::new();
+    let lines = |start: u64, end: u64, quote: &str| json!({"path": "greeting.py", "start_line": start, "end_line": end, "quote": quote});
+    let at = |path: &str| json!({"path": path, "start_line": 1, "end_line": 1, "quote": QUOTE});
     let cases = [
         (
             "not-supplied",
             "lesson",
+            Some(REPO),
             json!(["wrong-1"]),
             "other-id",
+            CLAIM,
             evidence(),
         ),
-        ("not-cited", "lesson", json!([]), "wrong-1", evidence()),
+        (
+            "not-cited",
+            "lesson",
+            Some(REPO),
+            json!([]),
+            "wrong-1",
+            CLAIM,
+            evidence(),
+        ),
         (
             "quote-absent",
             "lesson",
+            Some(REPO),
             json!(["wrong-1"]),
             "wrong-1",
-            json!({"path": "greeting.py", "start_line": 1, "end_line": 2, "quote": "def greet(): return 'hi'"}),
+            CLAIM,
+            lines(1, 2, "def greet(): return 'hi'"),
         ),
         (
             "wrong-lines",
             "lesson",
+            Some(REPO),
             json!(["wrong-1"]),
             "wrong-1",
-            json!({"path": "greeting.py", "start_line": 4, "end_line": 5, "quote": QUOTE}),
+            CLAIM,
+            lines(4, 5, QUOTE),
+        ),
+        // A real line of the repo, but not about the memory's claim.
+        (
+            "unrelated-line",
+            "lesson",
+            Some(REPO),
+            json!(["wrong-1"]),
+            "wrong-1",
+            CLAIM,
+            lines(4, 5, "def wave(): return 'bye'"),
+        ),
+        (
+            "claim-not-in-memory",
+            "lesson",
+            Some(REPO),
+            json!(["wrong-1"]),
+            "wrong-1",
+            "greet() raises an error",
+            evidence(),
+        ),
+        (
+            "cross-repo",
+            "lesson",
+            Some("RobTand/prismaquant"),
+            json!(["wrong-1"]),
+            "wrong-1",
+            CLAIM,
+            evidence(),
+        ),
+        (
+            "no-repo-tag",
+            "lesson",
+            None,
+            json!(["wrong-1"]),
+            "wrong-1",
+            CLAIM,
+            evidence(),
         ),
         (
             "escape",
             "lesson",
+            Some(REPO),
             json!(["wrong-1"]),
             "wrong-1",
-            json!({"path": "../not-supplied/worktree/greeting.py", "start_line": 1, "end_line": 1, "quote": QUOTE}),
+            CLAIM,
+            at("../not-supplied/worktree/greeting.py"),
         ),
         (
             "git-metadata",
             "lesson",
+            Some(REPO),
             json!(["wrong-1"]),
             "wrong-1",
-            json!({"path": ".git/greeting.py", "start_line": 1, "end_line": 1, "quote": QUOTE}),
+            CLAIM,
+            at(".git/greeting.py"),
         ),
         (
             "symlink",
             "lesson",
+            Some(REPO),
             json!(["wrong-1"]),
             "wrong-1",
-            json!({"path": "src/link.py", "start_line": 1, "end_line": 1, "quote": QUOTE}),
+            CLAIM,
+            at("src/link.py"),
         ),
         (
             "robs-decision",
             "decision",
+            Some(REPO),
             json!(["wrong-1"]),
             "wrong-1",
+            CLAIM,
             evidence(),
         ),
     ];
     let count = cases.len();
-    for (case, kind, cited, flagged, evidence) in cases {
+    for (case, kind, repo, cited, flagged, claim, evidence) in cases {
         let attempt = f.attempt_in(
             case,
             "planner",
-            supplied("wrong-1", kind),
-            json!({"kind": "brief", "brief": "b", "goals": [], "memory_ids": cited,
-                   "memory_flags": [flag(flagged, evidence)]}),
+            case,
+            supplied("wrong-1", kind, repo),
+            json!({"kind": "cant_meet", "report": "x", "files": [], "memory_ids": cited,
+                   "memory_flags": [flag(flagged, claim, evidence)]}),
         );
         let worktree = attempt.parent().unwrap().join("worktree");
         std::os::unix::fs::symlink(worktree.join("greeting.py"), worktree.join("src/link.py"))
@@ -492,23 +682,30 @@ fn unverified_flags_are_recorded_as_rejected_and_never_sent() {
     memory::flush(&mut f.store(), &f.hindsight()).unwrap();
     assert!(f.bank.curations.lock().unwrap().is_empty());
     *f.bank.general.lock().unwrap() = vec![result("wrong-1", "kept", &[])];
-    assert_eq!(f.recall(context())["memories"][0]["id"], "wrong-1");
+    assert_eq!(
+        f.recall(context())["memories"][0]["id"],
+        "wrong-1",
+        "nothing was hidden"
+    );
+    let notes = Notes::default();
+    assert_eq!(
+        memory::announce(&mut f.store(), &notes).unwrap(),
+        0,
+        "rejections are not posted"
+    );
 }
 
 #[test]
 fn failed_runs_and_other_roles_never_flag() {
     let f = Fixture::new();
-    let attempt = f.attempt(
-        "maker",
-        supplied("wrong-1", "lesson"),
-        json!({"kind": "done", "memory_ids": ["wrong-1"], "memory_flags": [flag("wrong-1", evidence())]}),
-    );
+    let attempt = f.attempt("maker", supplied("wrong-1", "lesson", Some(REPO)),
+        json!({"kind": "done", "memory_ids": ["wrong-1"], "memory_flags": [flag("wrong-1", CLAIM, evidence())]}));
     memory::queue_attempt(&mut f.store(), "run:maker", &attempt).unwrap();
     let attempt = f.attempt(
         "ingest",
-        supplied("wrong-1", "lesson"),
+        supplied("wrong-1", "lesson", Some(REPO)),
         json!({"kind": "brief", "brief": "b", "goals": [], "memory_ids": ["wrong-1"],
-               "memory_flags": [flag("wrong-1", evidence())]}),
+               "memory_flags": [flag("wrong-1", CLAIM, evidence())]}),
     );
     fs::write(attempt.join("exit.json"), r#"{"code":1}"#).unwrap();
     memory::queue_attempt(&mut f.store(), "run:ingest", &attempt).unwrap();
@@ -516,42 +713,66 @@ fn failed_runs_and_other_roles_never_flag() {
 }
 
 #[test]
-fn rob_can_invalidate_and_revert() {
+fn rob_confirms_invalidates_and_reverts() {
     let f = Fixture::new();
+    assert!(
+        memory::rob_curation(&mut f.store(), "wrong-1", RobCuration::Confirm, "Yes.").is_err(),
+        "nothing hidden to confirm"
+    );
+    let attempt = f.attempt(
+        "planner",
+        supplied("wrong-1", "lesson", Some(REPO)),
+        planner_flag("wrong-1", CLAIM, evidence()),
+    );
+    memory::queue_attempt(&mut f.store(), "run:planner", &attempt).unwrap();
+    memory::rob_curation(
+        &mut f.store(),
+        "wrong-1",
+        RobCuration::Confirm,
+        "Confirmed wrong.",
+    )
+    .unwrap();
     memory::rob_curation(
         &mut f.store(),
         "rob-1",
-        CurationState::Invalidated,
+        RobCuration::Invalidate,
         "Wrong since #2638.",
     )
     .unwrap();
     memory::rob_curation(
         &mut f.store(),
         "rob-1",
-        CurationState::Valid,
+        RobCuration::Revert,
         "It was right after all.",
     )
     .unwrap();
-    let curations = f.curations();
-    assert_eq!(curations.len(), 2);
-    assert!(
-        curations
-            .iter()
-            .all(|c| c["source"] == "rob" && c["verdict"] == "accepted")
-    );
+    let rob: Vec<Value> = f
+        .curations()
+        .into_iter()
+        .filter(|c| c["source"] == "rob")
+        .collect();
+    assert_eq!(rob.len(), 3);
+    assert!(rob.iter().all(|c| c["verdict"] == "accepted"));
     // The latest decision wins locally before delivery.
-    *f.bank.general.lock().unwrap() = vec![result("rob-1", "kept", &[])];
-    assert_eq!(f.recall(context())["memories"][0]["id"], "rob-1");
+    *f.bank.general.lock().unwrap() =
+        vec![result("rob-1", "kept", &[]), result("wrong-1", "gone", &[])];
+    let memories = f.recall(context())["memories"].clone();
+    assert_eq!(memories.as_array().unwrap().len(), 1);
+    assert_eq!(memories[0]["id"], "rob-1");
     memory::flush(&mut f.store(), &f.hindsight()).unwrap();
     let sent = f.bank.curations.lock().unwrap().clone();
     assert_eq!(
         sent.iter()
             .map(|(id, body)| (id.as_str(), body["state"].as_str().unwrap()))
             .collect::<Vec<_>>(),
-        [("rob-1", "invalidated"), ("rob-1", "valid")]
+        [
+            ("wrong-1", "invalidated"),
+            ("rob-1", "invalidated"),
+            ("rob-1", "valid")
+        ]
     );
     assert!(
-        sent[1].1["reason"]
+        sent[2].1["reason"]
             .as_str()
             .unwrap()
             .contains("right after all")
@@ -561,13 +782,7 @@ fn rob_can_invalidate_and_revert() {
 #[test]
 fn missing_memory_parks_its_curation() {
     let f = Fixture::new();
-    memory::rob_curation(
-        &mut f.store(),
-        "gone-1",
-        CurationState::Invalidated,
-        "Wrong.",
-    )
-    .unwrap();
+    memory::rob_curation(&mut f.store(), "gone-1", RobCuration::Invalidate, "Wrong.").unwrap();
     *f.bank.status.lock().unwrap() = 404;
     memory::flush(&mut f.store(), &f.hindsight()).unwrap();
     assert_eq!(f.curations()[0]["http_status"], 404);
@@ -635,7 +850,7 @@ fn lessons_queue_once_with_agreed_tags() {
     let lesson = memory::Lesson {
         kind: memory::LessonKind::Decision,
         source: "rob",
-        repo: "RobTand/tl3-sandbox",
+        repo: REPO,
         topic: Some("narrowing"),
         text: "Question: split or narrow?\nAnswer: narrow.\nReason: keep it small.",
         identity: "comment:42:7",
@@ -645,14 +860,40 @@ fn lessons_queue_once_with_agreed_tags() {
     memory::queue_lesson(&mut store, &lesson).unwrap();
     let items = store.pending_memories(0).unwrap();
     assert_eq!(items.len(), 1, "a replayed lesson keeps its identity");
-    let tags = items[0].2["tags"].as_array().unwrap().clone();
     assert_eq!(
-        tags,
-        [
-            json!("repo:RobTand/tl3-sandbox"),
-            json!("kind:decision"),
-            json!("source:rob"),
-            json!("topic:narrowing"),
-        ]
+        items[0].2["tags"],
+        json!([
+            "repo:RobTand/tl3-sandbox",
+            "kind:decision",
+            "source:rob",
+            "topic:narrowing"
+        ])
+    );
+}
+
+#[test]
+fn a_decision_keeps_the_question_the_choice_and_robs_words_for_it() {
+    let comment = format!(
+        "Continue with the first reading; the second one breaks the API.\n\nAlso, unrelated: {}",
+        "please tidy the README later. ".repeat(40)
+    );
+    let text = memory::decision(
+        "Which reading should TL3 follow?",
+        &json!({"answer": "continue"}),
+        &comment,
+    );
+    assert!(text.contains("Which reading should TL3 follow?"));
+    assert!(text.contains("continue"));
+    assert!(text.contains("Continue with the first reading; the second one breaks the API."));
+    assert!(!text.contains("tidy the README"), "{text}");
+    let guided = memory::decision(
+        "How should TL3 retry?",
+        &json!({"answer": "try_again", "guidance": "Use the public API."}),
+        &comment,
+    );
+    assert!(guided.contains("Use the public API."));
+    assert!(
+        !guided.contains("first reading"),
+        "the answer's own words replace the comment"
     );
 }

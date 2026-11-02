@@ -486,6 +486,7 @@ fn memory_id(value: &Value) -> Option<&str> {
 pub fn recall(
     store: &mut Store,
     settings: &tl3_config::Hindsight,
+    _breaker: &Breaker,
     recall: Recall<'_>,
 ) -> Result<Value> {
     let (repo, query) = match recall {
@@ -555,7 +556,46 @@ pub fn recall(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CurationState {
+pub enum RobCuration {
+    /// Retire a memory in Hindsight on Rob's word.
+    Invalidate,
+    /// Second signal for a memory a run hid: retire it in Hindsight.
+    Confirm,
+    /// Make a hidden or retired memory valid again.
+    Revert,
+}
+
+/// Recall stays off after a failure until a delivery to Hindsight succeeds.
+#[derive(Clone, Default)]
+pub struct Breaker(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+/// Flush, then let recall try again if Hindsight acknowledged anything.
+pub fn deliver(
+    _store: &mut Store,
+    _settings: &tl3_config::Hindsight,
+    _breaker: &Breaker,
+) -> Result<usize> {
+    todo!("#439 review")
+}
+
+/// Posts one line about a curation on the TL3 operations issue.
+pub trait Announce: Send + Sync {
+    /// `key` is stable per curation, so a retried post can't duplicate.
+    fn post(&self, key: &str, body: &str) -> Result<()>;
+}
+
+/// Post every hide and retire not yet announced.
+pub fn announce(_store: &mut Store, _announcer: &dyn Announce) -> Result<usize> {
+    todo!("#439 review")
+}
+
+/// A decision memory: the question, Rob's choice and his words for it.
+pub fn decision(_asked: &str, _reply: &Value, _comment: &str) -> String {
+    todo!("#439 review")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CurationState {
     Invalidated,
     Valid,
 }
@@ -573,9 +613,14 @@ impl CurationState {
 pub fn rob_curation(
     store: &mut Store,
     memory_id: &str,
-    state: CurationState,
+    action: RobCuration,
     reason: &str,
 ) -> Result<()> {
+    let state = match action {
+        RobCuration::Invalidate => CurationState::Invalidated,
+        RobCuration::Revert => CurationState::Valid,
+        RobCuration::Confirm => todo!("#439 review"),
+    };
     if !valid_id(memory_id) {
         return Err(Error::Invalid("invalid memory id"));
     }

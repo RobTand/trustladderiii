@@ -403,7 +403,12 @@ impl Supervisor {
             } else {
                 crate::memory::Recall::Context { repo: &repo, query }
             };
-            let recalled = crate::memory::recall(store, &self.hindsight, recall)?;
+            let recalled = crate::memory::recall(
+                store,
+                &self.hindsight,
+                &crate::memory::Breaker::default(),
+                recall,
+            )?;
             for (field, value) in recalled.as_object().into_iter().flatten() {
                 inputs[field] = value.clone();
             }
