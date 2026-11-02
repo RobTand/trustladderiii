@@ -724,7 +724,7 @@ def test_grep_says_when_a_regex_found_nothing_that_the_text_might_be_literal(cod
     (r"\w+.*x", "adjacent repeats"),
     ("a{1,500}", "repeat count"),
     ("a+b+c+d+e+f", "too many repeats"),
-    ("x" * 501, "too long"),
+    ("a|" * 251, "too long"),
 ])
 def test_grep_refuses_patterns_that_can_backtrack_catastrophically(code_tree, pattern, reason):
     with Worktree(code_tree) as worktree:
