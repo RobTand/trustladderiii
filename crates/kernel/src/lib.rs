@@ -715,6 +715,11 @@ pub enum Command {
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+// A plain tag. Without it, Q39's Priority field let rustc hide the event's
+// discriminant in that field's spare values, and decoding it at every match
+// took the reply proofs from 15,166 VCCs to 19,549 and past 44 GB. With the
+// tag, apply_maker_done has 4,612.
+#[repr(u8)]
 pub enum Event {
     NewRequest {
         repo: RepoId,
