@@ -165,10 +165,8 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
         exec_properties = exec_properties,
         size = "large",
         shard_count = 8 if controller and name == "test_test_workers" else 0,
-
-        # Stopgap (2026-11-02): under shared BuildBuddy load test_test_workers needs
-        # 500-580 s alone and hit the 900 s "large" timeout in the queue (#452, #454).
-        timeout = "eternal",
+        # Keep #472 while worker shards need CPU calibration and wall_only entries remain.
+        timeout = "eternal" if binary_id == "tl3-controller/workers" else "long",
     )
 
 def tl3_crate(package, crate, local_deps = [], features = [], build_script = False,
