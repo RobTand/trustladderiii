@@ -435,6 +435,8 @@ impl Respond for Api {
             ("GET", "/repos/owner/sandbox/issues/100/events") => ResponseTemplate::new(200).set_body_json(json!(state.events)),
             ("GET", "/repos/owner/sandbox/issues/events") => ResponseTemplate::new(200).set_body_json(json!(state.events)),
             ("GET", "/repos/owner/sandbox/issues" | "/repos/owner/sandbox/issues/comments") => ResponseTemplate::new(200).set_body_json(json!([])),
+            ("GET", path) if path.starts_with("/repos/owner/sandbox/actions/jobs/")
+                && path.ends_with("/logs") => ResponseTemplate::new(404),
             ("GET", path) if path.starts_with("/repos/owner/sandbox/pulls/")
                 && path != "/repos/owner/sandbox/pulls/100" => ResponseTemplate::new(404),
             _ => panic!("unexpected API request {method} {path}"),
