@@ -538,3 +538,17 @@ def test_prompt_judges_the_forcing_against_the_symptom():
     prompt = " ".join(files("tl3_workers").joinpath("prompts", "reviewer.md").read_text().split())
     assert "forcing" in prompt
     assert "models the symptom the issue describes" in prompt
+    # The PB #2625 fix replaces the forced target in the test itself; the reviewer must say why it passes.
+    assert ("the code or test handles the forced condition, or only because the new test replaces "
+            "the forced target with its own patch") in prompt
+
+
+def test_review_input_carries_the_issue_for_a_forcing(review_request):
+    from jsonschema import ValidationError
+    from tl3_workers.contracts import validate
+
+    review_request["inputs"]["issue"] = {"title": "Stop depending on PID 4242", "body": "PID 4242 may be live."}
+    validate("reviewer-input", review_request["inputs"])
+    review_request["inputs"]["issue"]["body"] = "x" * 16_001
+    with pytest.raises(ValidationError):
+        validate("reviewer-input", review_request["inputs"])

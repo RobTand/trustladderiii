@@ -121,7 +121,10 @@ def forcing_owner(target):
     return owner, parts[-1]
 
 
-def forced_value(owner, name, mode, argument, sleep=time.sleep):
+MAX_TOTAL_DELAY_SECONDS = 10
+
+
+def forced_value(owner, name, mode, argument, sleep=time.sleep, budget=None):
     if mode == "value":
         return argument
     if mode == "returns":

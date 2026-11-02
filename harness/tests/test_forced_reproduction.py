@@ -239,3 +239,82 @@ def test_forcing_round_trips_through_its_json():
                              'patches': PID_REUSE['patches'] + [{'target': 'sampler.LIMIT', 'value': {'n': [1]}}]})
     assert Forcing.parse(forcing.as_json()) == forcing
     assert list(forcing.as_json()['environment']) == ['A', 'B']
+
+
+CLOCK = '''\
+class Clock:
+    def now(self):
+        return 0
+
+
+LIMIT = 3
+
+
+def late():
+    return Clock().now() > LIMIT
+'''
+ON_TIME = '''\
+import clock
+
+
+def test_on_time():
+    assert not clock.late()
+'''
+ON_TIME_FIXED = '''\
+import clock
+
+
+def test_on_time(monkeypatch):
+    # The premise is stated: the clock reads 0 against a limit of 3.
+    monkeypatch.setattr(clock, "LIMIT", 3)
+    monkeypatch.setattr(clock.Clock, "now", lambda self: 0)
+    assert not clock.late()
+'''
+
+
+@pytest.mark.parametrize('patch', [
+    {'target': 'clock.LIMIT', 'value': -1},
+    {'target': 'clock.Clock.now', 'returns': 10},
+])
+def test_value_and_returns_forcings_including_a_class_owner(pid_repo, patch):
+    repo, _ = pid_repo
+    (repo / 'clock.py').write_text(CLOCK)
+    (repo / 'tests/test_clock.py').write_text(ON_TIME)
+    base = save(repo, 'base with a clock')
+    (repo / 'tests/test_clock.py').write_text(ON_TIME_FIXED)
+    head = save(repo, 'head')
+    forcing = {'symptom': 'The sampler reads the clock late.', 'environment': {}, 'patches': [patch]}
+    result, = execution.run_checks(repo, base, head, (forced(forcing, ('tests/test_clock.py::test_on_time',)),),
+                                   container=CONTAINER)
+    assert result.verdict == Verdict.PASS, result.tests[0].message
+    assert (result.tests[0].base, result.tests[0].head_forced) == (Outcome.ASSERTION, Outcome.PASSED)
+
+
+def test_forcing_reaches_the_runner_through_stdin(pid_repo, tmp_path, monkeypatch):
+    # The real wire path: run_tree writes {tests, forcing} to the runner's stdin.
+    repo, _ = pid_repo
+    monkeypatch.undo()
+    monkeypatch.setattr(execution, 'container_command',
+                        lambda tree, container, tests: [sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)])
+    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_PATH', str(tmp_path / 'progress.json'))
+    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_TOKEN', 'token')
+    outcomes = execution.run_tree(repo, CONTAINER, (TEST,), tmp_path / 'report.jsonl', execution.Progress(),
+                                  forcing=Forcing.parse(PID_REUSE))
+    assert outcomes == {TEST: Outcome.ASSERTION}
+
+
+def test_delays_are_capped_per_test():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('tl3_runner_under_test', RUNNER)
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+
+    class Owner:
+        @staticmethod
+        def call():
+            return 'called'
+    slept, budget = [], [runner.MAX_TOTAL_DELAY_SECONDS]
+    delayed = runner.forced_value(Owner, 'call', 'delay_seconds', 4, sleep=slept.append, budget=budget)
+    assert [delayed() for _ in range(5)] == ['called'] * 5
+    assert sum(slept) == runner.MAX_TOTAL_DELAY_SECONDS == 10
+    assert slept[:3] == [4, 4, 2]

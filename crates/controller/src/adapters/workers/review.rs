@@ -331,6 +331,63 @@ mod hostile_tests {
     }
 
     #[test]
+    fn forced_check_review_sees_the_issue() {
+        // #393 review: the reviewer judges a forcing against the issue's own symptom,
+        // not only the planner's description of it.
+        let f = Repo::new();
+        let mut db = Database::start();
+        let mut store = Store::open(&db.create("forced_issue")).unwrap();
+        let body = format!("PID 4242 may be live. {}", "x".repeat(20_000));
+        store
+            .put_worker_materials(
+                "0",
+                &json!({"issue": {"number": 2625, "title": "Stop depending on PID 4242",
+                    "body": body, "author": "unknown", "comments": []}}),
+            )
+            .unwrap();
+        let review = |store: &mut Store, forcing: Option<Value>| {
+            let mut snapshot = documents(
+                store,
+                &[
+                    (
+                        "goals",
+                        json!([{"description":"Update the readme", "verification":"test"}]),
+                    ),
+                    ("check_reports", json!({})),
+                ],
+            );
+            let report = snapshot
+                .rows
+                .iter_mut()
+                .find(|r| r.table == "check_reports")
+                .unwrap();
+            report.id = format!("0:{}", f.head);
+            let mut check = json!({"name": "check-1", "kind": "demonstrating", "verdict": "pass",
+                "custody": "in-process", "tests": [{"test": "tests/test_a.py::test_a",
+                "base": "assertion", "head": "passed", "pre_existing": false, "passed": true}]});
+            if let Some(forcing) = forcing {
+                check["forcing"] = forcing;
+                check["tests"][0]["head_forced"] = json!("passed");
+            }
+            report.value = json!({"base_sha": f.base, "results": [check]});
+            inputs(&f.delivery(), store, &snapshot, None).unwrap()
+        };
+        let forced = review(
+            &mut store,
+            Some(json!({"symptom": "PID 4242 is live.", "environment": {},
+                "patches": [{"target": "sampler.process_in_scope", "raises": "ValueError"}]})),
+        );
+        assert_eq!(forced["issue"]["title"], "Stop depending on PID 4242");
+        let shown = forced["issue"]["body"].as_str().unwrap();
+        assert!(shown.starts_with("PID 4242 may be live."));
+        assert!(shown.chars().count() <= 16_000, "the issue body is bounded");
+        assert!(
+            review(&mut store, None).get("issue").is_none(),
+            "only a forced check needs the issue"
+        );
+    }
+
+    #[test]
     fn adopted_scope_evidence_excludes_main_only_progress() {
         use crate::git_tests::git;
         let f = Repo::new();
