@@ -41,14 +41,32 @@ class GraphImpactTests(unittest.TestCase):
         self.assertIn(['//tests:new', '//pkg:hub'], result['added_edges'])
         self.assertIn('new tests 1', result['summary'])
 
-    def test_changed_broad_test_fails_but_unchanged_legacy_test_does_not(self):
+    def test_changed_test_can_keep_its_own_base_reach_above_global_budget(self):
         current = graph({'//tests:small': ['//pkg:a.py', '//pkg:b.py'],
                          '//tests:other': ['//pkg:b.py']})
         policy = impact.baseline(current)
         policy['reach_budget'] = 1
         self.assertFalse(impact.check(current, current, set(), policy)['errors'])
-        self.assertTrue(any('reach 2 exceeds budget 1' in error for error in
-                            impact.check(current, current, {'//tests:small'}, policy)['errors']))
+        self.assertFalse(impact.check(current, current, {'//tests:small'}, policy)['errors'])
+
+    def test_new_test_can_inherit_its_package_above_the_global_budget(self):
+        deps = {'//hub:old': ['//pkg:a.py', '//pkg:b.py'], '//small:test': ['//pkg:a.py']}
+        base = graph(deps, tests=('//hub:old', '//small:test'))
+        head = graph({**deps, '//hub:new': deps['//hub:old']},
+                     tests=('//hub:old', '//hub:new', '//small:test'))
+        policy = impact.baseline(base)
+        policy['reach_budget'] = 1
+        self.assertFalse(impact.check(base, head, {'//hub:new'}, policy)['errors'])
+
+    def test_new_hub_sources_may_raise_u_without_structural_regression(self):
+        deps = {'//hub:test': ['//hub:lib'], '//hub:lib': ['//pkg:a.py'],
+                '//other:test': ['//hub:lib'], '//small:test': ['//pkg:b.py']}
+        base = graph(deps, tests=('//hub:test', '//other:test', '//small:test'))
+        sources = ('//pkg:a.py', '//pkg:b.py', '//pkg:new1.py', '//pkg:new2.py', '//pkg:new3.py')
+        head = graph({**deps, '//hub:lib': [source for source in sources if source != '//pkg:b.py']},
+                     tests=('//hub:test', '//other:test', '//small:test'), sources=sources)
+        self.assertGreater(head['u_pct'], base['u_pct'])
+        self.assertFalse(impact.check(base, head, set(), impact.baseline(base))['errors'])
 
     def test_new_test_to_test_and_conftest_edges_fail(self):
         base = graph()
@@ -78,12 +96,12 @@ class GraphImpactTests(unittest.TestCase):
         result = impact.check(base, head, set(), impact.baseline(base))
         self.assertFalse(any(('new test_to_test edge' in error or 'new conftest_source edge' in error) for error in result['errors']), result)
 
-    def test_uniform_regression_reports_added_edge_and_fanout_growth(self):
+    def test_existing_source_expansion_reports_added_edge_and_fanout_growth(self):
         base = graph()
         head = graph({'//tests:small': ['//pkg:a.py', '//pkg:b.py'],
                       '//tests:other': ['//pkg:b.py']})
         result = impact.check(base, head, set(), impact.baseline(base))
-        self.assertTrue(any('u_pct rose' in error for error in result['errors']))
+        self.assertTrue(any('existing source fanout grew' in error for error in result['errors']))
         self.assertEqual(result['fanout_growth'][0], ['//pkg:b.py', 1])
         self.assertIn(['//tests:small', '//pkg:b.py'], result['added_edges'])
 
@@ -97,18 +115,35 @@ class GraphImpactTests(unittest.TestCase):
         head = graph({**deps, '//a:x': ['//a:y', '//b:x'], '//b:y': ['//b:x', '//a:y']})
         result = impact.check(base, head, set(), impact.baseline(base))
         self.assertTrue(any('SCC grew or merged' in error for error in result['errors']))
+        diagnostic = '\n'.join(result['errors'])
+        for member in ('//a:x', '//a:y', '//b:x', '//b:y'):
+            self.assertIn(member, diagnostic)
+        self.assertIn('//a:x -> //b:x', diagnostic)
+        grown = graph({**deps, '//a:y': ['//a:z'], '//a:z': ['//a:x']})
+        result = impact.check(base, grown, set(), impact.baseline(base))
+        self.assertTrue(any('SCC grew or merged' in error for error in result['errors']))
+        for harmless in ({**deps, '//a:y': []},
+                         {**deps, '//a:x': ['//a:y', '//a:z'], '//a:z': []}):
+            with self.subTest(deps=harmless):
+                result = impact.check(base, graph(harmless), set(), impact.baseline(base))
+                self.assertFalse(result['errors'])
 
-    def test_missing_recorded_gain_and_baseline_writer_refuses_losses(self):
+    def test_u_gains_are_informational_and_baseline_keeps_the_minimum(self):
         base = graph()
         head = graph({'//tests:small': [], '//tests:other': ['//pkg:b.py']})
         policy = impact.baseline(base)
-        self.assertTrue(any('record the gain' in error for error in
-                            impact.check(base, head, set(), policy)['errors']))
+        self.assertFalse(impact.check(base, head, set(), policy)['errors'])
         improved = impact.write_baseline(head, policy)
         self.assertEqual(improved['figures']['u_pct'], 25)
-        with self.assertRaisesRegex(ValueError, 'refuses losses'):
-            impact.write_baseline(base, improved)
+        self.assertEqual(impact.write_baseline(base, improved)['figures']['u_pct'], 25)
         self.assertFalse(impact.check(base, head, set(), improved)['errors'])
+
+    def test_baseline_writer_still_refuses_a_new_cycle(self):
+        base = graph()
+        head = graph({'//tests:small': ['//pkg:a.py'], '//tests:other': ['//pkg:b.py'],
+                      '//cycle:a': ['//cycle:b'], '//cycle:b': ['//cycle:a']})
+        with self.assertRaisesRegex(ValueError, 'refuses losses'):
+            impact.write_baseline(head, impact.baseline(base))
 
     def test_allowlist_requires_reasons_and_only_shrinks(self):
         base = graph()
