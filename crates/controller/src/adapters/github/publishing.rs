@@ -165,7 +165,10 @@ impl Adapter {
                 let branch = self.branches.branch(delivery)?;
                 let rules = self.body_lines(&delivery.repository);
                 // Policy lines follow `Refs #N.`, where a self-heal also puts them.
-                let lines = crate::pr_body::lines(rules, None, &delivery.paths);
+                // The issue's own instruction, such as PrismaBuild's `## PR rules`,
+                // comes before the files.
+                let request = delivery.request_text.as_deref().or(issue.body.as_deref());
+                let lines = crate::pr_body::lines(rules, request, &delivery.paths);
                 let body = format!(
                     "Refs #{}.{}{}\n\n{}",
                     delivery.issue,

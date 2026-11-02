@@ -418,18 +418,27 @@ impl Adapter {
         self
     }
     /// #447: one idempotent update brings an open TL3 PR's body into its
-    /// repository's policy. A body that complies is left alone.
-    fn heal_body(&self, delivery: &Delivery, pull: &tl3_github::PullRequest) -> Result<()> {
+    /// repository's policy. A body that complies is left alone, and so is a PR
+    /// on another branch or a node outside Publishing and Queued. Returns
+    /// whether it edited the body.
+    fn heal_body(&self, delivery: &Delivery, pull: &tl3_github::PullRequest) -> Result<bool> {
         let Some((_, policy)) = self
             .policies
             .iter()
             .find(|(repo, _)| *repo == delivery.repository)
         else {
-            return Ok(());
+            return Ok(false);
         };
         let rules = &policy.rules;
         if pull.state != "open" || pull.merged_at.is_some() {
-            return Ok(());
+            return Ok(false);
+        }
+        let ours = match &self.branches {
+            Some(branches) => branches.matches(delivery, &pull.head.branch)?,
+            None => false,
+        };
+        if !ours {
+            return Ok(false);
         }
         let github = &self.clients[&delivery.repository.installation];
         let repo = full_name(&delivery.repository);
@@ -446,7 +455,31 @@ impl Adapter {
             Err(error) => return Err(error.into()),
         };
         let body = pull.body.as_deref().unwrap_or_default();
-        if let Some(healed) = crate::pr_body::healed(body, rules, None, &delivery.paths) {
+        let gaps = crate::pr_body::gaps(body, rules);
+        let pending = heal
+            .as_ref()
+            .is_some_and(|heal| heal.head == *head && !heal.reran);
+        // Read the world only when there is something to do.
+        if (gaps.is_empty() && !pending) || !heal_phase(self.phase(delivery)?) {
+            return Ok(false);
+        }
+        let mut edited = false;
+        let request = if gaps.is_empty() {
+            None
+        } else {
+            // The issue's own instruction names the value; read it only to heal.
+            match &delivery.request_text {
+                Some(text) => Some(text.clone()),
+                None => {
+                    self.runtime
+                        .block_on(github.issue(&repo, delivery.issue))?
+                        .body
+                }
+            }
+        };
+        if let Some(healed) =
+            crate::pr_body::healed(body, rules, request.as_deref(), &delivery.paths)
+        {
             // Record the intent first, so a crash after the PATCH still reruns.
             let intent = BodyHeal {
                 head: head.clone(),
@@ -456,27 +489,30 @@ impl Adapter {
             self.runtime
                 .block_on(github.update_pull_request_body(&repo, pull.number, &healed))?;
             eprintln!(
-                "PR-body policy: added {:?} to {repo}#{} (#447)",
-                crate::pr_body::gaps(body, rules),
+                "PR-body policy: added {gaps:?} to {repo}#{} (#447)",
                 pull.number
             );
             heal = Some(intent);
+            edited = true;
         }
         // The edit's completion triggers the reruns, once per head. Closing and
         // reopening the PR would also rerun them, but TL3 would read it as a
         // person closing its PR.
         let Some(heal) = heal.filter(|heal| heal.head == *head && !heal.reran) else {
-            return Ok(());
+            return Ok(edited);
         };
-        let runs = self
-            .runtime
-            .block_on(github.workflow_runs(&repo, head))
-            .map_err(Error::from)?;
+        let runs = if policy.reruns.is_empty() {
+            Vec::new()
+        } else {
+            self.runtime
+                .block_on(github.workflow_runs(&repo, head))
+                .map_err(Error::from)?
+        };
         for run in body_edit_reruns(&runs, head, &policy.reruns) {
             if let Err(error) = self.runtime.block_on(github.rerun_failed_jobs(&repo, run)) {
                 // The next read of this PR retries; the heal stays pending.
                 eprintln!("PR-body policy: rerun of {repo} run {run} failed: {error}");
-                return Ok(());
+                return Ok(edited);
             }
             eprintln!("PR-body policy: reran the failed jobs of {repo} run {run} (#447)");
         }
@@ -487,7 +523,18 @@ impl Adapter {
                 reran: true,
             })?,
         )?;
-        Ok(())
+        Ok(edited)
+    }
+    /// The delivery's node phase, from the world; `None` without a store.
+    fn phase(&self, delivery: &Delivery) -> Result<Option<tl3_kernel::Phase>> {
+        let Some(store) = &self.store else {
+            return Ok(None);
+        };
+        let world = crate::snapshot::decode(&tl3_store::Store::open(store)?.load()?)?;
+        Ok(world
+            .nodes
+            .get(delivery.node().0 as usize)
+            .map(|node| node.phase))
     }
     fn fence(&mut self, delivery: &Delivery) -> Result<()> {
         if delivery.epoch < self.epoch {
@@ -510,7 +557,10 @@ impl Adapter {
         if is_merge_queue_pr(&state.pull_request) {
             return Err(Error::Invalid("cannot queue a Mergify draft PR"));
         }
-        self.heal_body(delivery, &state.pull_request)?;
+        if self.heal_body(delivery, &state.pull_request)? {
+            // The checks read before the edit are stale; the next read decides.
+            return Ok((state, Vec::new()));
+        }
         let facts = self
             .runtime
             .block_on(queue_facts(github, &delivery.repository, &state, head, &[]))?
@@ -974,12 +1024,16 @@ fn full_name(repo: &Repository) -> String {
 pub(crate) fn body_edit_reruns(
     runs: &[tl3_github::WorkflowRun],
     head: &str,
-    _workflows: &[String],
+    workflows: &[String],
 ) -> Vec<u64> {
+    let listed = |path: &str| {
+        let file = path.rsplit('/').next().unwrap_or(path);
+        workflows.iter().any(|listed| listed == file)
+    };
     let mut latest: BTreeMap<&str, &tl3_github::WorkflowRun> = BTreeMap::new();
     for run in runs
         .iter()
-        .filter(|run| run.head_sha == head && run.event == "pull_request")
+        .filter(|run| run.head_sha == head && run.event == "pull_request" && listed(&run.path))
     {
         let entry = latest.entry(run.path.as_str()).or_insert(run);
         if run.id > entry.id {
@@ -1000,14 +1054,22 @@ pub(crate) fn body_edit_reruns(
 }
 
 /// #447 review: a heal touches only a node in Publishing or Queued.
-pub(crate) fn heal_phase(_phase: Option<tl3_kernel::Phase>) -> bool {
-    true
+pub(crate) fn heal_phase(phase: Option<tl3_kernel::Phase>) -> bool {
+    matches!(
+        phase,
+        Some(tl3_kernel::Phase::Publishing | tl3_kernel::Phase::Queued)
+    )
 }
 
 /// #447 review: whether every check on the head, other than Mergify's own,
 /// has completed. Until then a check suite read can't show a blocked queue.
-pub(crate) fn checks_settled(_state: &tl3_mergify::Observation) -> bool {
-    true
+pub(crate) fn checks_settled(state: &tl3_mergify::Observation) -> bool {
+    state
+        .check_runs
+        .iter()
+        .filter(|check| check.head_sha == state.pull_request.head.sha)
+        .filter(|check| !check.app.as_ref().is_some_and(|app| app.slug == "mergify"))
+        .all(|check| check.status == "completed")
 }
 
 /// A PR-body heal on one head: whether its stale runs have been rerun (#447).
@@ -1135,6 +1197,7 @@ async fn queue_facts(
         // #447: Mergify waits on a condition nothing still running can meet,
         // such as PrismaBuild's scopes after its pr-gate failed.
         if state.state == QueueState::Waiting
+            && checks_settled(state)
             && state
                 .check
                 .as_ref()

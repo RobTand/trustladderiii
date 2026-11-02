@@ -15,8 +15,55 @@ fn is_doc(path: &str) -> bool {
 
 /// The value a request's own text instructs for a rule, such as PrismaBuild's
 /// "exactly one `Change type: feature` line" under `## PR rules`.
-pub fn instructed(_rule: &BodyLine, _request: &str) -> Option<String> {
-    None
+/// Without such a section the whole text counts. Exactly one allowed value
+/// must be named; none, an unknown one or several leave it to the files.
+pub fn instructed(rule: &BodyLine, request: &str) -> Option<String> {
+    let text = pr_rules(request).unwrap_or(request).to_lowercase();
+    let label = format!("{}:", rule.label.to_lowercase());
+    let mut named: Vec<&String> = Vec::new();
+    for (at, _) in text.match_indices(&label) {
+        let token: String = text[at + label.len()..]
+            .trim_start_matches([' ', '\t'])
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+            .collect();
+        if let Some(value) = rule
+            .values
+            .iter()
+            .find(|value| !token.is_empty() && value.eq_ignore_ascii_case(&token))
+            && !named.contains(&value)
+        {
+            named.push(value);
+        }
+    }
+    match named[..] {
+        [value] => Some(value.clone()),
+        _ => None,
+    }
+}
+
+/// The text of a Markdown section headed `PR rules`, up to the next heading.
+fn pr_rules(text: &str) -> Option<&str> {
+    let heading = |line: &str| line.trim_start().starts_with('#');
+    let mut offset = 0;
+    let mut start = None;
+    for line in text.split_inclusive('\n') {
+        if heading(line) {
+            if let Some(start) = start {
+                return Some(&text[start..offset]);
+            }
+            if line
+                .trim()
+                .trim_start_matches('#')
+                .trim()
+                .eq_ignore_ascii_case("PR rules")
+            {
+                start = Some(offset + line.len());
+            }
+        }
+        offset += line.len();
+    }
+    start.map(|start| &text[start..])
 }
 
 /// The value TL3 declares for a rule. The request's own instruction comes
@@ -24,7 +71,10 @@ pub fn instructed(_rule: &BodyLine, _request: &str) -> Option<String> {
 /// only docs is `docs`, and a change with its own test is `fix`, since TL3's
 /// demonstrating test is the regression test such policies ask for. A value
 /// the repository doesn't allow falls back to its default.
-pub fn value(rule: &BodyLine, _request: Option<&str>, paths: &[String]) -> String {
+pub fn value(rule: &BodyLine, request: Option<&str>, paths: &[String]) -> String {
+    if let Some(value) = request.and_then(|request| instructed(rule, request)) {
+        return value;
+    }
     let candidate = if paths.is_empty() {
         None
     } else if paths.iter().all(|path| is_test(path)) {

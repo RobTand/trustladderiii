@@ -679,6 +679,19 @@ impl Config {
                     ));
                 }
             }
+            let mut workflows = BTreeSet::new();
+            for (entry, file) in repo.heal_rerun_workflows.iter().enumerate() {
+                if file.is_empty()
+                    || file.contains(['/', '\\'])
+                    || file.chars().any(char::is_whitespace)
+                    || !workflows.insert(file)
+                {
+                    return Err(invalid(
+                        format!("{field}.heal_rerun_workflows[{entry}]"),
+                        "needs a distinct workflow file name, such as gate.yml, without a directory",
+                    ));
+                }
+            }
             tl3_worktrees::branch_template::BranchTemplate::new(&repo.branch_template)
                 .map_err(|error| invalid(format!("{field}.branch_template"), error.to_string()))?;
             tl3_worktrees::BranchName::new(&repo.base_branch)
