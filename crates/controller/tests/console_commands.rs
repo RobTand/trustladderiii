@@ -1046,3 +1046,83 @@ fn wakes_again_after_postgres_restarts() {
     wake("after Postgres restarts");
     db.stop();
 }
+
+#[test]
+fn a_changed_request_answers_a_needs_splitting_question() {
+    detail_matches_comment(
+        "needs_splitting",
+        QKind::NeedsSplitting,
+        json!({"answer": "change_request", "text": "Only rename the greeting"}),
+        json!({"answer": "change_request", "new_text": "Only rename the greeting"}),
+        "Change the request:\n\n    Only rename the greeting",
+    );
+}
+
+/// The drain answers the doorbell before it reads ingress. A command filed
+/// while a drain is under way, after its read, must ring again; answering
+/// after the read would swallow that wake and leave the command waiting.
+#[test]
+fn a_command_filed_during_a_drain_wakes_tl3d_again() {
+    use std::{
+        sync::{Arc, Mutex, mpsc},
+        time::Duration,
+    };
+    use tl3_controller::ingress::Source;
+    let mut db = support::Database::start();
+    let world = World::new(&mut db, "drain_order", &[12], false);
+    let (sender, wakes) = mpsc::channel();
+    std::thread::spawn({
+        let source = tl3_controller::console::Wakes::new(world.settings.clone());
+        move || source.run(sender)
+    });
+    let wake = |what: &str| {
+        wakes
+            .recv_timeout(Duration::from_secs(30))
+            .unwrap_or_else(|_| panic!("no wake {what}"))
+    };
+    wake("when the session opens");
+    let first = uuid(9000);
+    let second = uuid(9001);
+    assert!(
+        ConsoleCommands::open(&world.settings)
+            .unwrap()
+            .submit(&first, 0, &json!({"kind": "pause"}))
+            .unwrap()
+    );
+    // The open session's wake covers the first command, so it rings nothing more.
+    while wakes.try_recv().is_ok() {}
+    // tl3d files the second command from inside the drain, after reading the first.
+    let mut store = Store::open(&world.settings).unwrap();
+    let filer = Arc::new(Mutex::new(Some(
+        ConsoleCommands::open(&world.settings).unwrap(),
+    )));
+    let consumed = format!("consume-ingress:console:{first}");
+    let (resume, resumed) = (filer.clone(), second.clone());
+    store.set_boundary_hook(move |point, key, _| {
+        if point == SavePoint::ConsumeIngressBeforeCommit
+            && key == consumed
+            && let Some(mut commands) = resume.lock().unwrap().take()
+        {
+            assert!(
+                commands
+                    .submit(&resumed, 0, &json!({"kind": "resume"}))
+                    .unwrap()
+            );
+        }
+    });
+    let World {
+        controller,
+        settings,
+        root,
+        workers,
+    } = world;
+    drop(controller);
+    let mut draining = open(&settings, root.path(), &workers, store);
+    tl3_controller::ingress::drain(&mut draining).unwrap();
+    assert!(
+        filer.lock().unwrap().is_none(),
+        "the drain filed the second command"
+    );
+    wake("for the command filed during the drain");
+    db.stop();
+}
