@@ -308,3 +308,52 @@ pub const PB2632_PULL_REQUEST: &str = r####"{
  },
  "updated_at": "2026-11-02T15:59:07Z"
 }"####;
+/// prismabuild#2632's workflow runs, from `GET /repos/RobTand/prismabuild/actions/runs?head_sha=4309359…`.
+/// `gate.yml` triggers on `opened`, `synchronize` and `reopened` only; `regression-test.yml`
+/// (`pull_request_target`) also on `edited`, so only the gate needs a rerun after a body edit.
+pub const PB2632_WORKFLOW_RUNS: &str = r####"[
+ {
+  "id": 41476965585,
+  "name": "Regression test",
+  "path": ".github/workflows/regression-test.yml",
+  "event": "pull_request_target",
+  "head_sha": "4309359678fc08ddfb44f12439e3a3744ee3eb11",
+  "run_attempt": 1,
+  "status": "completed",
+  "conclusion": "failure",
+  "check_suite_id": 112398939323
+ },
+ {
+  "id": 41476603984,
+  "name": "Regression test",
+  "path": ".github/workflows/regression-test.yml",
+  "event": "pull_request_target",
+  "head_sha": "4309359678fc08ddfb44f12439e3a3744ee3eb11",
+  "run_attempt": 1,
+  "status": "completed",
+  "conclusion": "failure",
+  "check_suite_id": 112397950184
+ },
+ {
+  "id": 41476603917,
+  "name": "Issue link",
+  "path": ".github/workflows/issue-link.yml",
+  "event": "pull_request",
+  "head_sha": "4309359678fc08ddfb44f12439e3a3744ee3eb11",
+  "run_attempt": 1,
+  "status": "completed",
+  "conclusion": "success",
+  "check_suite_id": 112397949989
+ },
+ {
+  "id": 41476603888,
+  "name": "Merge gate",
+  "path": ".github/workflows/gate.yml",
+  "event": "pull_request",
+  "head_sha": "4309359678fc08ddfb44f12439e3a3744ee3eb11",
+  "run_attempt": 1,
+  "status": "completed",
+  "conclusion": "failure",
+  "check_suite_id": 112397949893
+ }
+]"####;

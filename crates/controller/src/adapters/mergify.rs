@@ -904,6 +904,14 @@ fn full_name(repo: &Repository) -> String {
     format!("{}/{}", repo.owner, repo.name)
 }
 
+/// #447: the failed runs a PR-body edit leaves stale. A `pull_request` workflow
+/// reruns on `opened`, `synchronize` and `reopened`; an edit doesn't rerun it, so
+/// its failed run stays failed. `pull_request_target` workflows, like
+/// PrismaBuild's regression-test, can listen for `edited` and rerun themselves.
+pub(crate) fn body_edit_reruns(_runs: &[tl3_github::WorkflowRun], _head: &str) -> Vec<u64> {
+    Vec::new()
+}
+
 /// #447: Mergify waits on queue conditions while every check suite on the head
 /// has completed, so nothing still running can meet them. Returns the unmet
 /// conditions and the failed checks outside TL3's required set.
@@ -1697,6 +1705,23 @@ mod queue_blocked_tests {
             failed,
             ["Bazel", "Hosted lane", "pr-gate", "regression-test"]
         );
+    }
+
+    #[test]
+    fn a_body_edit_reruns_only_prismabuilds_gate() {
+        // gate.yml (pull_request) has no `edited` trigger; regression-test.yml
+        // (pull_request_target) has one and reruns itself; issue-link passed.
+        let runs: Vec<tl3_github::WorkflowRun> =
+            serde_json::from_str(tl3_mergify::pb2632_fixture::PB2632_WORKFLOW_RUNS).unwrap();
+        let head = "4309359678fc08ddfb44f12439e3a3744ee3eb11";
+        assert_eq!(body_edit_reruns(&runs, head), [41476603888]);
+        assert!(body_edit_reruns(&runs, "another-head").is_empty());
+        // A rerun that already succeeded needs nothing more.
+        let mut passed = runs.clone();
+        for run in &mut passed {
+            run.conclusion = Some("success".into());
+        }
+        assert!(body_edit_reruns(&passed, head).is_empty());
     }
 
     #[test]
