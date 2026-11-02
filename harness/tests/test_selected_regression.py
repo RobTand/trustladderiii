@@ -260,3 +260,62 @@ def test_an_unparseable_file_is_skipped(tmp_path):
         'tests/test_broken.py': 'import pkg.core\ndef broken(:\n',
         'tests/test_core.py': 'import pkg.core\ndef test_core():\n    pass\n',
     }, ['pkg/core.py']) == ['tests/test_core.py::test_core']
+
+
+def test_a_changed_fixture_selects_the_test_that_reads_it_by_path(tmp_path):
+    # #424: PQ's pin tests read a fixture by path and hash it; the change edited only the JSON.
+    files = {
+        'pkg/__init__.py': '', 'pkg/core.py': 'X = 1\n',
+        'tests/fixtures/baseline.json': '{"scopes": 4}\n',
+        'tests/test_pin.py': ('from pathlib import Path\nREPO = Path(__file__).resolve().parents[1]\n'
+                              'def test_pin():\n    assert (REPO / "tests/fixtures/baseline.json").read_bytes()\n'),
+        'tests/test_core.py': 'import pkg.core\ndef test_core():\n    pass\n',
+    }
+    assert selected(tmp_path, files, ['tests/fixtures/baseline.json']) == ['tests/test_pin.py::test_pin']
+
+
+def test_a_path_chain_names_the_changed_file(tmp_path):
+    assert selected(tmp_path, {
+        'tests/fixtures/baseline.json': '{}\n',
+        'tests/test_chain.py': ('from pathlib import Path\ndef test_chain():\n'
+                                '    assert (Path(__file__).parent / "fixtures" / "baseline.json").exists()\n'),
+    }, ['tests/fixtures/baseline.json']) == ['tests/test_chain.py::test_chain']
+
+
+def test_a_literal_naming_another_file_selects_nothing(tmp_path):
+    assert selected(tmp_path, {
+        'tests/fixtures/baseline.json': '{}\n', 'tests/fixtures/other.json': '{}\n',
+        'tests/test_other.py': ('from pathlib import Path\ndef test_other():\n'
+                                '    assert Path("tests/fixtures/other.json").exists()\n'
+                                '    assert Path("other/tests/fixtures/baseline.json.bak")\n'),
+    }, ['tests/fixtures/baseline.json']) == []
+
+
+def test_a_python_file_read_by_path_is_selected_like_any_file(tmp_path):
+    assert selected(tmp_path, {
+        'tools/generate.py': 'print("generated")\n',
+        'tests/test_generate.py': ('import runpy\ndef test_generate():\n'
+                                   '    runpy.run_path("tools/generate.py")\n'),
+    }, ['tools/generate.py']) == ['tests/test_generate.py::test_generate']
+
+
+def test_path_literal_hits_rank_with_direct_changes(tmp_path):
+    # A test naming the changed file by path ranks at distance 0, before any importer.
+    assert selected(tmp_path, {
+        'pkg/__init__.py': '', 'pkg/core.py': 'X = 1\n',
+        'tests/test_importer.py': 'import pkg.core\ndef test_importer():\n    pass\n',
+        'tests/test_reader.py': 'def test_reader():\n    assert open("pkg/core.py").read()\n',
+    }, ['pkg/core.py']) == ['tests/test_reader.py::test_reader', 'tests/test_importer.py::test_importer']
+
+
+def test_a_fixture_only_change_adds_the_selected_check(repo):
+    repo, base, runs, outcomes = repo
+    write(repo, {'tests/fixtures/baseline.json': '{"scopes": 4}\n',
+                 'tests/test_pin.py': ('from pathlib import Path\ndef test_pin():\n'
+                                       '    assert Path("tests/fixtures/baseline.json").read_bytes()\n')})
+    base = save(repo, 'base with a pin test')
+    write(repo, {'tests/fixtures/baseline.json': '{"scopes": 3}\n'})
+    head = save(repo, 'leaf edits only the fixture')
+    results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER, selected_tests=50)
+    assert [result.name for result in results] == ['other', SELECTED]
+    assert [test.test for test in results[1].tests] == ['tests/test_pin.py::test_pin']
