@@ -101,7 +101,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (8, include_str!("../migrations/0008_memory_parking.sql")),
     (9, include_str!("../migrations/0009_memory_recovery.sql")),
     (10, include_str!("../migrations/0010_change_feed.sql")),
-    (11, include_str!("../migrations/0011_prompts.sql")),
+    (12, include_str!("../migrations/0012_prompts.sql")),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
