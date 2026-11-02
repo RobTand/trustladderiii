@@ -258,7 +258,7 @@ fn assert_delivery_methods(
 
 #[test]
 fn scenario_shards_cover_every_group_once_and_balance_the_worker_fixture_groups() {
-    let mut groups = vec![2, 6, 4, 4, 2, 9, 8, 3, 4, 5, 7];
+    let mut groups = vec![2, 6, 4, 4, 2, 9, 8, 3, 4, 5, 1, 1, 4, 1];
     groups.extend([1; 29]);
     let mut owners = vec![0; groups.len()];
     let mut loads = Vec::new();
