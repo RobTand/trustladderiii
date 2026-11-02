@@ -451,3 +451,30 @@ def test_question_body_has_a_hard_cap(tmp_path, writer_request, field, limit):
     reply[field] = "x" * limit + " exceeds the cap" + ("?" if field == "decision" else ".")
     result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}] * 2)
     assert result.exit_code != 0, "an oversized draft must not leave the worker"
+
+
+def test_cant_meet_prompt_preserves_blocker_and_proposed_decisions():
+    prompt = " ".join(files("tl3_workers").joinpath("prompts", "writer.md").read_text().split())
+    assert "facts.findings.outcome" in prompt
+    assert "full file path or named rule" in prompt
+    assert "worker's proposed decisions" in prompt
+    assert "protected-path exception" in prompt
+    assert "runner-only" in prompt
+    assert "outside this service" in prompt
+
+
+def test_2636_cant_meet_report_reaches_writer_redacted(tmp_path, writer_request):
+    report = json.loads((FIXTURES / "prismabuild-2636-planner-cant-meet.json").read_text())["report"]
+    writer_request["inputs"]["facts"]["findings"] = {
+        "source": "planner", "outcome": "cant_meet",
+        "report": report + "\npassword=Zq8vLm2pRt6wXy4nB9kD",
+        "decision": "May I edit the protected file?",
+    }
+    seen, _ = run_with_findings(tmp_path, writer_request, {**QUESTION, "decision": DECISION})
+    shown = seen["facts"]["findings"]
+    assert shown["outcome"] == "cant_meet"
+    assert "tools/ci/bazel_gate.py" in shown["report"]
+    assert "tools/ci/**" in shown["report"]
+    assert "Grant a protected-path exception" in shown["report"]
+    assert "runner-marker-only" in shown["report"]
+    assert "Zq8vLm2pRt6wXy4nB9kD" not in json.dumps(seen)

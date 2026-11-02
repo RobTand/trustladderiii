@@ -22,6 +22,38 @@ fn draft() -> Draft {
     }
 }
 
+#[test]
+fn report_paths_exclude_prose_and_repository_references() {
+    assert_eq!(
+        paths_in(
+            "and/or I/O RobTand/trustladderiii owner/repo.py#42 tools/ci/bazel_gate.py tools/ci/** src/module_name"
+        ),
+        [
+            "tools/ci/bazel_gate.py".into(),
+            "tools/ci/**".into(),
+            "src/module_name".into()
+        ]
+        .into()
+    );
+}
+
+#[test]
+fn blocker_path_exemption_preserves_foreign_reference_checks() {
+    let policy = Policy {
+        blocker_paths: ["owner/repo.py".into()].into(),
+        own_issue: Some(42),
+        ..Policy::default()
+    };
+    let mut question = draft();
+    question.obstacle =
+        "The file owner/repo.py needs a change described by owner/repo.py#42.".into();
+    let errors = check(&question, &policy).unwrap_err();
+    assert!(
+        errors.contains(&Violation::ForeignReference("owner/repo.py#42".into())),
+        "{errors:?}"
+    );
+}
+
 fn rejects(mut change: impl FnMut(&mut Draft), expected: Violation) {
     let mut draft = draft();
     change(&mut draft);
