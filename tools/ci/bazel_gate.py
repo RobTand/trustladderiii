@@ -189,7 +189,7 @@ class FailFast:
         if result and status in ('FAILED', 'TIMEOUT'):
             label, reason = canonical(result['label']), status
         completed = identity.get('targetCompleted')
-        if completed and event.get('completed', {}).get('success') is False:
+        if completed and 'completed' in event and not event['completed'].get('success', False):
             label, reason = canonical(completed['label']), 'BUILD_FAILURE'
         if not label or label in self.quarantine or self.mode == 'main':
             return
@@ -340,14 +340,14 @@ class Workspace:
                         found.add(label)
         return found
 
-    def build(self, targets, config, metadata, log_name):
+    def build(self, targets, config, metadata, log_name, extra=()):
         """Build targets; True when every one built."""
         if not targets:
             return True
         patterns = Path(tempfile.gettempdir(), f'{log_name}-build-targets.txt')
         patterns.write_text('\n'.join(targets) + '\n')
         command = [self.bazel, 'build', f'--config={config}', '--config=ci', '--keep_going',
-                   f'--target_pattern_file={patterns}', *diagnostic_logs(f'{log_name}-build'),
+                   f'--target_pattern_file={patterns}', *diagnostic_logs(f'{log_name}-build'), *extra,
                    *[f'--build_metadata={key}={value}' for key, value in metadata.items()]]
         if self.mode == 'main':
             return not self.run(*command, capture=False, check=False)

@@ -73,6 +73,10 @@ def main():
                            *[(f't{index:04}', 'fail' if index == 0 else 'slow') for index in range(count)]]:
             rules.append(f'py_test(name={name!r}, srcs=["planted.py"], main="planted.py", '
                          f'args=[{mode!r}], size="small")')
+        rules.extend([
+            'genrule(name="broken", outs=["broken.txt"], cmd="echo planted build failure >&2; exit 1")',
+            'genrule(name="slow_build", outs=["slow.txt"], cmd="sleep 10; touch $@")',
+        ])
         (package / 'BUILD.bazel').write_text('\n'.join(rules) + '\n')
         guards = run([prefix + name for name in ['budget', 'timeout', 'quarantine']],
                      'batch-draft', 'fail-fast-guards', quarantine={prefix + 'quarantine', prefix + 'timeout'},
@@ -80,8 +84,18 @@ def main():
         assert guards['aborted_early'] is None, guards
         assert guards['statuses'] == {prefix + 'budget': 'PASSED', prefix + 'timeout': 'TIMEOUT',
                                      prefix + 'quarantine': 'FAILED'}, guards
+        build_workspace = bazel_gate.Workspace(mode='batch-draft')
+        build_start = time.monotonic()
+        built = build_workspace.build([prefix + 'broken', prefix + 'slow_build'], 'remote',
+                                      {'ROLE': 'FAIL_FAST_PROOF'}, 'fail-fast-build', extra=['--jobs=16'])
+        build = metrics('fail-fast-build-build', time.monotonic() - build_start, build_workspace, {})
+        assert not built, build
+        assert build['aborted_early'] == {'label': prefix + 'broken', 'reason': 'BUILD_FAILURE'}, build
         if args.guards_only:
-            print(json.dumps({'guards': guards}), flush=True)
+            report = {'guards': guards, 'build': build}
+            print(json.dumps(report, sort_keys=True), flush=True)
+            output = Path(os.environ['BUILDBUDDY_ARTIFACTS_DIRECTORY'], 'fail-fast-build-proof.json')
+            output.write_text(json.dumps(report, indent=2, sort_keys=True) + '\n')
             return
         targets = [prefix + f't{index:04}' for index in range(count)]
         timeout = run([prefix + 'timeout', *targets[1:JOBS + 1]], 'batch-draft',
@@ -99,7 +113,7 @@ def main():
         # all slots for its entire wall time overestimates its executor usage.
         lower_bound = ((count - 1) * SLEEP - JOBS * cancelled['wall_seconds']) / 60
         report = {'fallback_targets': count, 'jobs': JOBS, 'sleep_seconds': SLEEP,
-                  'guards': guards, 'timeout': timeout, 'baseline': baseline, 'cancelled': cancelled,
+                  'guards': guards, 'build': build, 'timeout': timeout, 'baseline': baseline, 'cancelled': cancelled,
                   'wall_minutes_saved': round((baseline['wall_seconds'] - cancelled['wall_seconds']) / 60, 3),
                   'executor_minutes_saved_lower_bound': round(lower_bound, 3)}
         print(json.dumps(report, sort_keys=True), flush=True)
