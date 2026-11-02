@@ -82,10 +82,21 @@ jobs:
             exit 1
           fi
           echo scopes_uploaded=true >> "$GITHUB_OUTPUT"
+      - name: Python with zstd support for artifact scanning
+        if: always()
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
       - id: secret-check
         name: Check artifacts before upload
         if: always()
-        run: python3 tools/ci/child_env.py python3 tools/ci/before_upload.py gate-output/
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          MERGIFY_TOKEN: ${{ secrets.MERGIFY_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 tools/ci/before_upload.py
+          --env BUILDBUDDY_API_KEY --env MERGIFY_TOKEN --env GITHUB_TOKEN gate-output/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always() && steps.secret-check.outcome == 'success'
         with:
@@ -238,10 +249,21 @@ jobs:
         run: >-
           python3 tools/ci/remote_gate.py main --base "$BEFORE" --head "$AFTER"
           --branch main --prs "$PRS" --timeout 130
+      - name: Python with zstd support for artifact scanning
+        if: always()
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
       - id: secret-check
         name: Check artifacts before upload
         if: always()
-        run: python3 tools/ci/child_env.py python3 tools/ci/before_upload.py gate-output/
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          MERGIFY_TOKEN: ${{ secrets.MERGIFY_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 tools/ci/before_upload.py
+          --env BUILDBUDDY_API_KEY --env MERGIFY_TOKEN --env GITHUB_TOKEN gate-output/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always() && steps.secret-check.outcome == 'success'
         with:

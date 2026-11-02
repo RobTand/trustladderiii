@@ -112,7 +112,10 @@ tl3_py_test(
 tl3_py_test(
     name = "test_check",
     srcs = ["test_check.py"],
-    deps = [":check"],
+    deps = [
+        ":before_upload",
+        ":check",
+    ],
 )
 
 tl3_py_test(
@@ -213,6 +216,15 @@ py_binary(
 py_binary(
     name = "before_upload",
     srcs = ["before_upload.py"],
+    data = [
+        "check_no_secret_leak.py",
+        "check_no_secret_leak.sha256",
+    ],  # keep
     visibility = ["//visibility:public"],
-    deps = ["//tools/ci:child_env"],
+)
+
+py_binary(
+    name = "check_no_secret_leak",
+    srcs = ["check_no_secret_leak.py"],
+    visibility = ["//visibility:public"],
 )

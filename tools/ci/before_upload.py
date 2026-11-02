@@ -1,25 +1,20 @@
-"""Shared upload hook. The coordinator will pin PrismaQuant's checker here."""
+"""Verify and run the shared secret scanner before every artifact upload."""
 import hashlib
 from pathlib import Path
-import subprocess
+import runpy
 import sys
 
-from child_env import child_env
-
-# SECRET-LEAK-CHECKER HOOK: vendor check_no_secret_leak.py byte-identical here
-# and replace None with its coordinator-supplied sha256 in the follow-up commit.
 CHECKER = Path(__file__).with_name('check_no_secret_leak.py')
-CHECKER_SHA256 = None
+PIN = CHECKER.with_suffix('.sha256')
 
 
-def main():
-    if CHECKER_SHA256 is None:
-        print('::warning::Shared secret-leak checker is awaiting its published SHA.')
-        return 0
-    if hashlib.sha256(CHECKER.read_bytes()).hexdigest() != CHECKER_SHA256:
+def main(argv=None):
+    expected = PIN.read_text().split()[0]
+    if hashlib.sha256(CHECKER.read_bytes()).hexdigest() != expected:
         raise RuntimeError('Vendored secret-leak checker does not match its pinned SHA256')
-    return subprocess.run([sys.executable, str(CHECKER), *sys.argv[1:]],
-                          env=child_env(), check=False).returncode
+    # Only this trusted scanner reads the named secrets. Executing it in-process
+    # avoids handing those credentials to any child environment.
+    return runpy.run_path(str(CHECKER))['main'](argv)
 
 
 if __name__ == '__main__':
