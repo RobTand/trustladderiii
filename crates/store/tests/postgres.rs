@@ -47,6 +47,31 @@ fn main() {
         ("phase_backfill_from_schema_9", phase_backfill_from_schema_9),
         ("reader_role", reader_role),
         ("console_commands", console_commands),
+        ("prompt_seeding", prompt_seeding),
+        ("prompt_builtin_updates", prompt_builtin_updates),
+        ("prompt_edits_and_revert", prompt_edits_and_revert),
+        (
+            "prompt_activation_needs_the_active_version",
+            prompt_activation_needs_the_active_version,
+        ),
+        ("prompt_history_and_limits", prompt_history_and_limits),
+        ("prompt_session_liveness", prompt_session_liveness),
+        (
+            "prompts_open_on_a_store_ahead",
+            prompts_open_on_a_store_ahead,
+        ),
+        (
+            "prompt_version_recorded_for_a_run",
+            prompt_version_recorded_for_a_run,
+        ),
+        (
+            "console_login_writes_only_prompts",
+            console_login_writes_only_prompts,
+        ),
+        (
+            "console_login_granted_before_migration",
+            console_login_granted_before_migration,
+        ),
     ];
     let selected: Vec<_> = cases
         .iter()
@@ -664,7 +689,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .iter()
             .map(|row| row.get::<_, i32>(0))
             .collect::<Vec<_>>(),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     );
     for table in ["tl3_events", "tl3_credit"] {
         for sql in [
@@ -1558,4 +1583,489 @@ fn console_command_caps(
         .batch_execute("UPDATE tl3_console_commands SET status = 'applied' WHERE id = 'backlog-1'")
         .unwrap();
     assert!(commands.submit(late, 1, &json!({"kind": "pause"})).unwrap());
+}
+
+const BUILTIN: &[(&str, &str)] = &[
+    ("ingest", "Ingest, as shipped."),
+    ("reviewer", "Review, as shipped."),
+];
+
+fn prompt_seeding(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    store.seed_prompts(BUILTIN).unwrap();
+    store.seed_prompts(BUILTIN).unwrap();
+    let mut prompts = Prompts::open(settings).unwrap();
+    let roles = prompts.roles().unwrap();
+    assert_eq!(
+        roles.iter().map(|r| r.role.as_str()).collect::<Vec<_>>(),
+        ["ingest", "reviewer"]
+    );
+    for (role, (name, body)) in roles.iter().zip(BUILTIN) {
+        assert_eq!(&role.role, name);
+        assert_eq!(role.versions.len(), 1, "a repeated seed adds nothing");
+        let version = &role.versions[0];
+        assert_eq!(
+            (
+                version.id,
+                version.number,
+                version.builtin,
+                version.author.as_str()
+            ),
+            (role.active.id, 1, true, BUILTIN_AUTHOR)
+        );
+        assert_eq!(&role.active.body, body);
+        assert!(!version.note.is_empty());
+        assert_eq!(role.builtin_update, None);
+    }
+    assert_eq!(prompts.role("planner").unwrap(), None);
+}
+
+/// A deploy's changed built-in becomes active only where the previous built-in
+/// was; elsewhere it waits as an update until Rob decides.
+fn prompt_builtin_updates(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    store.seed_prompts(BUILTIN).unwrap();
+    let mut prompts = Prompts::open(settings).unwrap();
+    let base = prompts.role("ingest").unwrap().unwrap().active.id;
+    let edited = prompts
+        .save(
+            "ingest",
+            "Rob's ingest.",
+            "Ask for smaller briefs.",
+            "Rob",
+            base,
+        )
+        .unwrap()
+        .unwrap()
+        .active
+        .id;
+    let shipped = [
+        ("ingest", "Ingest, second release."),
+        ("reviewer", "Review, second release."),
+    ];
+    store.seed_prompts(&shipped).unwrap();
+    store.seed_prompts(&shipped).unwrap();
+    let reviewer = prompts.role("reviewer").unwrap().unwrap();
+    assert_eq!(reviewer.active.body, "Review, second release.");
+    assert_eq!(reviewer.versions.len(), 2);
+    assert_eq!(reviewer.builtin_update, None);
+    let ingest = prompts.role("ingest").unwrap().unwrap();
+    assert_eq!(ingest.active.id, edited, "Rob's version stays active");
+    assert_eq!(ingest.versions.len(), 3);
+    let update = ingest.builtin_update.expect("the console flags the update");
+    assert_eq!(
+        (update.body.as_str(), update.builtin, update.number),
+        ("Ingest, second release.", true, 3)
+    );
+    // Keeping Rob's version settles this update, not the next one.
+    assert_eq!(
+        prompts.keep("ingest", update.id + 100).unwrap(),
+        Err(Refusal::NoUpdate)
+    );
+    let kept = prompts.keep("ingest", update.id).unwrap().unwrap();
+    assert_eq!((kept.active.id, kept.builtin_update), (edited, None));
+    store
+        .seed_prompts(&[("ingest", "Ingest, third release.")])
+        .unwrap();
+    let ingest = prompts.role("ingest").unwrap().unwrap();
+    assert_eq!(ingest.active.id, edited);
+    let third = ingest.builtin_update.unwrap().id;
+    // Choosing the built-in again lets later deploys update it.
+    let chosen = prompts
+        .activate("ingest", third, "Rob", edited)
+        .unwrap()
+        .unwrap();
+    assert_eq!((chosen.active.id, chosen.builtin_update), (third, None));
+    store
+        .seed_prompts(&[("ingest", "Ingest, fourth release.")])
+        .unwrap();
+    let ingest = prompts.role("ingest").unwrap().unwrap();
+    assert_eq!(ingest.active.body, "Ingest, fourth release.");
+    assert_eq!(ingest.builtin_update, None);
+    assert_eq!(ingest.activated_by, BUILTIN_AUTHOR);
+    // Reverting to an older built-in is Rob's choice: no update to flag, and
+    // the next deploy leaves it active.
+    let reverted = prompts
+        .activate("ingest", third, "Rob", ingest.active.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!((reverted.active.id, reverted.builtin_update), (third, None));
+    store
+        .seed_prompts(&[("ingest", "Ingest, fifth release.")])
+        .unwrap();
+    let ingest = prompts.role("ingest").unwrap().unwrap();
+    assert_eq!(ingest.active.id, third);
+    assert_eq!(
+        ingest.builtin_update.unwrap().body,
+        "Ingest, fifth release."
+    );
+}
+
+fn prompt_edits_and_revert(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    store.seed_prompts(BUILTIN).unwrap();
+    let mut prompts = Prompts::open(settings).unwrap();
+    let first = prompts.role("reviewer").unwrap().unwrap().active.id;
+    assert_eq!(
+        prompts
+            .save("reviewer", "Text", "  ", "Rob", first)
+            .unwrap(),
+        Err(Refusal::EmptyNote)
+    );
+    assert_eq!(
+        prompts
+            .save("reviewer", " \n", "Note", "Rob", first)
+            .unwrap(),
+        Err(Refusal::EmptyText)
+    );
+    assert_eq!(
+        prompts
+            .save("planner", "Text", "Note", "Rob", first)
+            .unwrap(),
+        Err(Refusal::UnknownRole)
+    );
+    let saved = prompts
+        .save(
+            "reviewer",
+            "Review v2.",
+            " Check the tests first. ",
+            "Rob",
+            first,
+        )
+        .unwrap()
+        .unwrap();
+    let second = &saved.active;
+    assert_eq!(saved.versions[0].id, second.id);
+    assert_eq!(
+        (
+            second.number,
+            second.body.as_str(),
+            second.note.as_str(),
+            second.author.as_str(),
+            second.builtin
+        ),
+        (2, "Review v2.", "Check the tests first.", "Rob", false)
+    );
+    assert_eq!(saved.activated_by, "Rob");
+    assert!(saved.versions[0].created_ms >= saved.versions[1].created_ms);
+    // An editor still showing the first version can't overwrite the second.
+    assert_eq!(
+        prompts
+            .save("reviewer", "Review v2b.", "Note", "Rob", first)
+            .unwrap(),
+        Err(Refusal::Stale { active: second.id })
+    );
+    let reverted = prompts
+        .activate("reviewer", first, "Rob", second.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(reverted.active.id, first);
+    assert_eq!(reverted.active.body, "Review, as shipped.");
+    assert_eq!(reverted.versions.len(), 2, "a revert adds no version");
+    assert_eq!(reverted.builtin_update, None);
+    let ingest_version = prompts.role("ingest").unwrap().unwrap().active.id;
+    assert_eq!(
+        prompts
+            .activate("reviewer", ingest_version, "Rob", first)
+            .unwrap(),
+        Err(Refusal::UnknownVersion),
+        "a version of another role"
+    );
+    assert_eq!(
+        prompts.activate("reviewer", 9_999, "Rob", first).unwrap(),
+        Err(Refusal::UnknownVersion)
+    );
+}
+
+/// A revert from a page that missed a newer save changes nothing.
+fn prompt_activation_needs_the_active_version(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    store.seed_prompts(BUILTIN).unwrap();
+    let mut prompts = Prompts::open(settings).unwrap();
+    let first = prompts.role("reviewer").unwrap().unwrap().active.id;
+    let second = prompts
+        .save("reviewer", "Review v2.", "Second.", "Rob", first)
+        .unwrap()
+        .unwrap()
+        .active
+        .id;
+    let third = prompts
+        .save("reviewer", "Review v3.", "Third.", "Rob", second)
+        .unwrap()
+        .unwrap()
+        .active
+        .id;
+    // A page that loaded while v2 was active tries to revert to v1.
+    assert_eq!(
+        prompts.activate("reviewer", first, "Rob", second).unwrap(),
+        Err(Refusal::Stale { active: third })
+    );
+    assert_eq!(
+        prompts.role("reviewer").unwrap().unwrap().active.id,
+        third,
+        "the newer save stays active"
+    );
+}
+
+/// History rows carry no text; one version's text comes on request; text and
+/// notes have limits.
+fn prompt_history_and_limits(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    store.seed_prompts(BUILTIN).unwrap();
+    let mut prompts = Prompts::open(settings).unwrap();
+    let first = prompts.role("reviewer").unwrap().unwrap().active.id;
+    let long_note = "n".repeat(NOTE_LIMIT + 1);
+    assert_eq!(
+        prompts
+            .save("reviewer", "Text", &long_note, "Rob", first)
+            .unwrap(),
+        Err(Refusal::NoteTooLong)
+    );
+    let long_text = "t".repeat(TEXT_LIMIT + 1);
+    assert_eq!(
+        prompts
+            .save("reviewer", &long_text, "Note", "Rob", first)
+            .unwrap(),
+        Err(Refusal::TextTooLong)
+    );
+    let largest = "é".repeat(TEXT_LIMIT / 2);
+    let saved = prompts
+        .save("reviewer", &largest, &"n".repeat(NOTE_LIMIT), "Rob", first)
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.active.body, largest, "the limits are inclusive");
+    assert_eq!(
+        saved.versions.iter().map(|v| v.number).collect::<Vec<_>>(),
+        [2, 1]
+    );
+    let shipped = prompts.version("reviewer", first).unwrap().unwrap();
+    assert_eq!(
+        (shipped.body.as_str(), shipped.number, shipped.builtin),
+        ("Review, as shipped.", 1, true)
+    );
+    assert_eq!(prompts.version("ingest", first).unwrap(), None);
+    assert_eq!(prompts.version("reviewer", 9_999).unwrap(), None);
+    // The table holds the same limits for any other writer.
+    let mut owner = raw(settings);
+    for (body, note) in [(long_text.as_str(), "Note"), ("Text", long_note.as_str())] {
+        assert!(
+            owner
+                .execute(
+                    "INSERT INTO tl3_prompt_versions (role, body, author, note) VALUES ('reviewer', $1, 'Rob', $2)",
+                    &[&body, &note],
+                )
+                .is_err()
+        );
+    }
+}
+
+/// A session Postgres has dropped reports itself dead before an edit is sent.
+fn prompt_session_liveness(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    store.seed_prompts(BUILTIN).unwrap();
+    let (login, _) = console_login(settings, "tl3_console_liveness");
+    let mut prompts = Prompts::open(&login).unwrap();
+    assert!(prompts.is_live());
+    raw(settings)
+        .execute(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = 'tl3_console_liveness'",
+            &[],
+        )
+        .unwrap();
+    assert!(!prompts.is_live());
+    assert!(Prompts::open(&login).unwrap().is_live());
+}
+
+/// The console judges migrations itself and serves a store ahead of the TL3 it
+/// pins, so the prompt session needs only the prompt tables.
+fn prompts_open_on_a_store_ahead(settings: &tl3_config::Store) {
+    assert!(
+        Prompts::open(settings).is_err(),
+        "a store without the prompt tables"
+    );
+    let mut store = Store::open(settings).unwrap();
+    store.seed_prompts(BUILTIN).unwrap();
+    raw(settings)
+        .execute(
+            "INSERT INTO tl3_schema_migrations VALUES (999, 'SELECT 1')",
+            &[],
+        )
+        .unwrap();
+    assert!(matches!(
+        Reader::open(settings),
+        Err(Error::SchemaVersion { .. })
+    ));
+    let mut prompts = Prompts::open(settings).unwrap();
+    let base = prompts.role("ingest").unwrap().unwrap().active.id;
+    prompts
+        .save("ingest", "Ingest v2.", "Ahead.", "Rob", base)
+        .unwrap()
+        .unwrap();
+}
+
+/// A run keeps the version it started with; later runs take the active one.
+fn prompt_version_recorded_for_a_run(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    assert_eq!(store.run_prompt("effect:0:1", "ingest").unwrap(), None);
+    store.seed_prompts(BUILTIN).unwrap();
+    let first = store.run_prompt("effect:0:1", "ingest").unwrap().unwrap();
+    assert_eq!(
+        (first.body.as_str(), first.role.as_str()),
+        ("Ingest, as shipped.", "ingest")
+    );
+    let mut prompts = Prompts::open(settings).unwrap();
+    let saved = prompts
+        .save("ingest", "Ingest v2.", "Shorter.", "Rob", first.id)
+        .unwrap()
+        .unwrap()
+        .active
+        .id;
+    assert_eq!(
+        store.run_prompt("effect:0:1", "ingest").unwrap().unwrap(),
+        first,
+        "a retry of the same run keeps its version"
+    );
+    assert_eq!(
+        store
+            .run_prompt("effect:0:2", "ingest")
+            .unwrap()
+            .unwrap()
+            .id,
+        saved
+    );
+    let recorded: Vec<(String, String, i64)> = raw(settings)
+        .query(
+            "SELECT run_key, role, version FROM tl3_prompt_runs ORDER BY run_key",
+            &[],
+        )
+        .unwrap()
+        .iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2)))
+        .collect();
+    assert_eq!(
+        recorded,
+        [
+            ("effect:0:1".into(), "ingest".into(), first.id),
+            ("effect:0:2".into(), "ingest".into(), saved),
+        ]
+    );
+}
+
+fn console_login(settings: &tl3_config::Store, role: &str) -> (tl3_config::Store, Client) {
+    grant_reader(settings, role, settings.password_file.as_deref().unwrap()).unwrap();
+    let login = tl3_config::Store {
+        user: role.into(),
+        ..settings.clone()
+    };
+    let client = raw(&login);
+    (login, client)
+}
+
+/// The console's login edits prompts through `Prompts` and can write nothing else.
+fn console_login_writes_only_prompts(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let change = seed(&mut store);
+    store.commit(&change).unwrap();
+    store.seed_prompts(BUILTIN).unwrap();
+    let run = store.run_prompt("effect:0:1", "ingest").unwrap().unwrap();
+    let (login, mut client) = console_login(settings, "tl3_console_prompts");
+    let mut prompts = Prompts::open(&login).unwrap();
+    let base = prompts.role("ingest").unwrap().unwrap().active.id;
+    let saved = prompts
+        .save("ingest", "Rob's ingest.", "Edited.", "Rob", base)
+        .unwrap()
+        .unwrap()
+        .active
+        .id;
+    // Reverting leaves the saved version referenced by nothing.
+    prompts
+        .activate("ingest", base, "Rob", saved)
+        .unwrap()
+        .unwrap();
+    let reviewer = prompts.role("reviewer").unwrap().unwrap().active.id;
+    prompts
+        .save("reviewer", "Rob's review.", "Edited.", "Rob", reviewer)
+        .unwrap()
+        .unwrap();
+    store
+        .seed_prompts(&[("reviewer", "Review, changed.")])
+        .unwrap();
+    let update = prompts
+        .role("reviewer")
+        .unwrap()
+        .unwrap()
+        .builtin_update
+        .unwrap()
+        .id;
+    let kept = prompts.keep("reviewer", update).unwrap().unwrap();
+    assert_eq!(kept.builtin_update, None);
+    // A role with versions and no pointer, so a forged pointer breaks no constraint.
+    let mut owner = raw(settings);
+    let planner: i64 = owner
+        .query_one(
+            "INSERT INTO tl3_prompt_versions (role, body, author, note) VALUES ('planner', 'Plan.', 'TL3', 'Fixture.') RETURNING id",
+            &[],
+        )
+        .unwrap()
+        .get(0);
+    // Each statement would succeed for an owner; only the login's grants refuse it.
+    let statements = [
+        "INSERT INTO tl3_world VALUES ('forbidden', '1', '{}', (SELECT max(revision) FROM tl3_events))".to_string(),
+        "UPDATE tl3_meta SET revision = revision".into(),
+        "INSERT INTO tl3_worker_materials VALUES ('9', '{}')".into(),
+        "INSERT INTO tl3_prompt_versions (role, body, builtin, author, note) VALUES ('ingest', 'x', true, 'TL3 deploy', 'forged')".into(),
+        format!("UPDATE tl3_prompt_versions SET body = 'rewritten' WHERE id = {saved}"),
+        format!("DELETE FROM tl3_prompt_versions WHERE id = {saved}"),
+        "DELETE FROM tl3_prompt_active WHERE role = 'reviewer'".into(),
+        format!("INSERT INTO tl3_prompt_active (role, version, builtin_seen, activated_by) VALUES ('planner', {planner}, {planner}, 'Rob')"),
+        format!("UPDATE tl3_prompt_active SET role = 'planner', version = {planner}, builtin_seen = {planner} WHERE role = 'ingest'"),
+        format!("INSERT INTO tl3_prompt_runs (run_key, role, version) VALUES ('forged', 'ingest', {})", run.id),
+        "UPDATE tl3_prompt_runs SET version = version".into(),
+        "DELETE FROM tl3_prompt_runs".into(),
+    ];
+    for sql in &statements {
+        let mut tx = owner.transaction().unwrap();
+        tx.batch_execute(sql)
+            .unwrap_or_else(|error| panic!("the owner can run {sql}: {error}"));
+        tx.rollback().unwrap();
+        let error = client
+            .batch_execute(&format!("BEGIN READ WRITE; {sql}; COMMIT"))
+            .expect_err(sql);
+        assert_eq!(
+            error.code(),
+            Some(&postgres::error::SqlState::INSUFFICIENT_PRIVILEGE),
+            "{sql}: {error}"
+        );
+        client.batch_execute("ROLLBACK").unwrap();
+    }
+    assert_eq!(
+        owner
+            .query_one("SELECT count(*) FROM tl3_prompt_runs", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        1
+    );
+    assert!(
+        owner
+            .query_one(
+                "SELECT body FROM tl3_prompt_versions WHERE id = $1",
+                &[&saved]
+            )
+            .unwrap()
+            .get::<_, String>(0)
+            == "Rob's ingest."
+    );
+}
+
+/// Deploy may grant the console's login before tl3d migrates the store.
+fn console_login_granted_before_migration(settings: &tl3_config::Store) {
+    let (login, _) = console_login(settings, "tl3_console_early");
+    let mut store = Store::open(settings).unwrap();
+    store.seed_prompts(BUILTIN).unwrap();
+    let mut prompts = Prompts::open(&login).unwrap();
+    let base = prompts.role("reviewer").unwrap().unwrap().active.id;
+    prompts
+        .save("reviewer", "Review v2.", "Edited.", "Rob", base)
+        .unwrap()
+        .unwrap();
 }

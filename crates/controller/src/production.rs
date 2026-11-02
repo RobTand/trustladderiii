@@ -115,7 +115,8 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
         .with_repositories(&config.github.repos)
         .with_protected_paths(&config.planning.protected_paths);
     let bell = pb.source();
-    let writer = adapters::workers::writer::ProcessWriter::new(config, &records.join("writer"))?;
+    let writer = adapters::workers::writer::ProcessWriter::new(config, &records.join("writer"))?
+        .with_prompts();
     adapters.register(
         Upstream::GitHub,
         adapters::github::Adapter::new(

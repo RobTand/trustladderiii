@@ -504,6 +504,10 @@ fn main() {
     println!("test fake_clock_stops_real_stalled_worker_before_retry ... ok");
     external_wait_survives_restart(&database.create("workers_external_wait"));
     println!("test external_wait_persists_across_source_and_controller_restart ... ok");
+    writer_prompt(&database.create("writer_prompt"));
+    println!("test process_writer_sends_the_active_writer_prompt ... ok");
+    missing_prompt_holds_launch(&database.create("missing_prompt"));
+    println!("test missing_prompt_holds_the_launch_without_claiming_a_worker ... ok");
     finish_fixture(database, "worker_waits");
     let mut database = Database::start();
     for wrapped in [false, true] {
@@ -606,7 +610,152 @@ fn main() {
     let mut database = Database::start();
     maker::run(&mut database);
     finish_fixture(database, "maker");
-    println!("81 worker supervisor, planning and maker scenarios passed; no skips");
+    println!("83 worker supervisor, planning and maker scenarios passed; no skips");
+}
+
+/// PRD #327, C5: the writer drafts with the writer's active prompt version and
+/// records it, like every other worker run.
+fn writer_prompt(settings: &tl3_config::Store) {
+    use tl3_controller::adapters::workers::writer::{
+        MessageKind, ProcessWriter, WriteRequest, Writer,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let mut config = config(settings, root.path(), "normal");
+    let script = root.path().join("writer.py");
+    fs::write(
+        &script,
+        r#"import json, pathlib, sys
+request = json.load(sys.stdin)
+pathlib.Path(sys.argv[1]).write_text(json.dumps(request))
+print(json.dumps({"event": "reply", "role": "writer", "reply": {"text": "The change is delivered."}}), flush=True)
+"#,
+    )
+    .unwrap();
+    let seen = root.path().join("seen.json");
+    config.workers.command = vec![
+        script.to_str().unwrap().into(),
+        seen.to_str().unwrap().into(),
+    ];
+    let mut store = Store::open(settings).unwrap();
+    tl3_controller::prompts::seed(&mut store).unwrap();
+    let mut prompts = tl3_store::Prompts::open(settings).unwrap();
+    let base = prompts.role("writer").unwrap().unwrap().active.id;
+    let robs = prompts
+        .save("writer", "Rob's writer prompt.", "Shorter.", "Rob", base)
+        .unwrap()
+        .unwrap()
+        .active
+        .id;
+    let input = WriteRequest {
+        kind: MessageKind::Summary,
+        facts: json!({"issue_title": "A change", "request": "Make a change", "outcome": "Delivered"}),
+        violations: vec![],
+    };
+    let mut writer = ProcessWriter::new(&config, &root.path().join("writer"))
+        .unwrap()
+        .with_prompts();
+    for key in ["notice:7", "notice:8"] {
+        writer.draft(key, &input).unwrap();
+        let request: Value = serde_json::from_slice(&fs::read(&seen).unwrap()).unwrap();
+        assert_eq!(
+            request["prompt"],
+            json!({"version": robs, "text": "Rob's writer prompt."}),
+            "{key}"
+        );
+        assert_eq!(
+            store.run_prompt(key, "writer").unwrap().unwrap().id,
+            robs,
+            "the draft's version is recorded"
+        );
+    }
+    // Postgres drops every session but the owner's: the writer's next draft
+    // fails, drops its session, and the draft after it reconnects.
+    owner(settings)
+        .execute(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()",
+            &[],
+        )
+        .unwrap();
+    assert!(writer.draft("notice:9", &input).is_err());
+    fs::remove_file(&seen).unwrap();
+    writer.draft("notice:10", &input).unwrap();
+    let request: Value = serde_json::from_slice(&fs::read(&seen).unwrap()).unwrap();
+    assert_eq!(request["prompt"]["version"], robs);
+    let mut store = Store::open(settings).unwrap();
+    assert_eq!(
+        store.run_prompt("notice:10", "writer").unwrap().unwrap().id,
+        robs
+    );
+}
+
+fn owner(settings: &tl3_config::Store) -> postgres::Client {
+    postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .user(&settings.user)
+        .dbname(&settings.database)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap()
+}
+
+/// A role without an active prompt version is a TL3 fault: its launch is held,
+/// no worker is claimed, and the request spends no run retry.
+fn missing_prompt_holds_launch(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "normal");
+    let mut store = Store::open(settings).unwrap();
+    materials(&mut store);
+    let (registry, _source) = ingest_audit_simulation(&root.path().join("fakes"), &config).unwrap();
+    owner(settings)
+        .execute("DELETE FROM tl3_prompt_active WHERE role = 'ingest'", &[])
+        .unwrap();
+    let mut controller = Controller::open(
+        Store::open(settings).unwrap(),
+        registry,
+        Bootstrap::from_config(&config).unwrap(),
+    )
+    .unwrap();
+    controller.intake(labelled()).unwrap();
+    for _ in 0..50 {
+        if !controller.drive_once().unwrap() {
+            break;
+        }
+    }
+    let node = controller.world().unwrap().nodes[0];
+    assert_eq!(node.phase, Phase::Ingesting);
+    assert_eq!(node.run_failures, 0, "a TL3 fault spends no run retry");
+    let start = store
+        .effects()
+        .unwrap()
+        .into_iter()
+        .find(|effect| effect.kind == "Workers")
+        .expect("the ingest launch");
+    // Held, not settled: the launch never reported a result.
+    assert!(
+        matches!(
+            start.state,
+            tl3_store::EffectState::Sent | tl3_store::EffectState::Uncertain
+        ),
+        "{start:?}"
+    );
+    assert!(
+        store.worker_progress(None).unwrap().is_empty(),
+        "no worker was claimed"
+    );
+    assert!(!root.path().join("entered").exists(), "no worker ran");
+    assert_eq!(
+        fs::read_dir(&config.workers.runs).unwrap().count(),
+        1,
+        "only the notification inbox exists"
+    );
+    let events = store.events_after(tl3_store::Revision::ZERO, 1000).unwrap();
+    assert!(
+        events
+            .iter()
+            .all(|e| e.receipt.result["kernel_event"]["Reply"]["reply"] != "RunFailed"),
+        "no failed run was reported"
+    );
 }
 
 fn quota_scenarios(database: &mut Database) {
@@ -730,6 +879,23 @@ fn simulation(settings: &tl3_config::Store) {
     materials(&mut store);
     let (registry, mut source) =
         ingest_audit_simulation(&root.path().join("fakes"), &config).unwrap();
+    // PRD #327, C5: Rob's prompt edit applies to the next run, while a
+    // running one keeps the version it started with.
+    let mut prompts = tl3_store::Prompts::open(settings).unwrap();
+    let shipped_audit = prompts.role("audit").unwrap().unwrap().active.id;
+    let base = prompts.role("ingest").unwrap().unwrap().active.id;
+    let robs_ingest = prompts
+        .save(
+            "ingest",
+            "Rob's ingest prompt.",
+            "Before the run.",
+            "Rob",
+            base,
+        )
+        .unwrap()
+        .unwrap()
+        .active
+        .id;
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
         registry,
@@ -741,6 +907,22 @@ fn simulation(settings: &tl3_config::Store) {
         drive(&mut controller, &mut source, &mut store);
         controller.world().unwrap().nodes[0].phase == Phase::Auditing
     });
+    wait(|| {
+        fs::read_to_string(root.path().join("entered.requests"))
+            .is_ok_and(|requests| requests.lines().count() == 2)
+    });
+    let robs_audit = prompts
+        .save(
+            "audit",
+            "Rob's audit prompt.",
+            "During the run.",
+            "Rob",
+            shipped_audit,
+        )
+        .unwrap()
+        .unwrap()
+        .active
+        .id;
     // Pause lets the in-flight audit finish and exposes Unplanned before admission.
     controller
         .observe(
@@ -808,6 +990,55 @@ fn simulation(settings: &tl3_config::Store) {
             .any(|e| e.receipt.result["kernel_event"]["Reply"]["reply"] == "AuditAgrees")
     );
     assert_recorded_runs(root.path(), 2);
+    let runs = recorded_runs(root.path());
+    let prompt = |role: &str| {
+        runs.iter()
+            .find(|run| run["request"]["role"] == role)
+            .unwrap()["request"]["prompt"]
+            .clone()
+    };
+    assert_eq!(
+        prompt("ingest"),
+        json!({"version": robs_ingest, "text": "Rob's ingest prompt."})
+    );
+    let shipped = tl3_controller::prompts::BUILTIN
+        .iter()
+        .find(|(role, _)| *role == "audit")
+        .unwrap()
+        .1;
+    assert_eq!(
+        prompt("audit"),
+        json!({"version": shipped_audit, "text": shipped}),
+        "the running audit kept its version"
+    );
+    let recorded: Vec<(String, i64)> = postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .user(&settings.user)
+        .dbname(&settings.database)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap()
+        .query(
+            "SELECT role, version FROM tl3_prompt_runs ORDER BY role",
+            &[],
+        )
+        .unwrap()
+        .iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect();
+    assert_eq!(
+        recorded,
+        [
+            ("audit".into(), shipped_audit),
+            ("ingest".into(), robs_ingest)
+        ]
+    );
+    assert_eq!(
+        store.run_prompt("next-audit", "audit").unwrap().unwrap().id,
+        robs_audit,
+        "the next run takes Rob's edit"
+    );
     assert_retired(&config, &mut store);
     let memory = store.pending_memories(0).unwrap();
     assert_eq!(memory.len(), 2, "both real workers survive a memory outage");

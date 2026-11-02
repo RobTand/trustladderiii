@@ -114,7 +114,7 @@ def test_run_produces_tagged_trace(request_doc, monkeypatch, exporters, receiver
     attrs = {attr.key: attr.value.string_value for attr in root.attributes}
     expected = {'repo': 'RobTand/tl3-sandbox', 'issue': '101', 'request': '7', 'node': '1',
                 'role': 'ingest', 'model': 'fixture-model', 'effort': 'high', 'attempt': '2',
-                'round': '1', 'generation': '0', 'outcome': 'succeeded',
+                'round': '1', 'generation': '0', 'outcome': 'succeeded', 'prompt_version': 'packaged',
                 'input_tokens': '11', 'output_tokens': '7', 'total_tokens': '18'}
     for key, value in expected.items():
         assert attrs['mlflow.traceTag.' + key] == value
@@ -129,6 +129,15 @@ def test_run_produces_tagged_trace(request_doc, monkeypatch, exporters, receiver
     assert InMemoryTraceManager.get_instance().get_mlflow_trace_id_from_otel_id(
         int.from_bytes(root.trace_id, 'big')) is None, 'raw spans must leave the SDK cache after export'
 
+
+
+def test_trace_names_the_prompt_version_the_run_used(request_doc, monkeypatch, exporters, receiver):
+    uri, packets = receiver
+    request_doc['prompt'] = {'version': 12, 'text': 'Version 12 of the ingest prompt.'}
+    run_fake(request_doc, monkeypatch, exporters, uri)
+    root = next(span for span in decode(packets) if not span.parent_span_id)
+    attrs = {attr.key: attr.value.string_value for attr in root.attributes}
+    assert attrs['mlflow.traceTag.prompt_version'] == '12'
 
 
 def test_run_succeeds_with_mlflow_down(request_doc, monkeypatch, exporters, capfd):

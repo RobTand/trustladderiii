@@ -530,14 +530,16 @@ def stop_runs(home):
 
 
 def grant_console_reader(home):
-    """Create or update the console's read-only login. Postgres also does this each time it starts."""
+    """Create or update the console's login: it reads, files commands and edits prompts.
+
+    Postgres also does this each time it starts."""
     root, config, _ = paths(home)
     active = subprocess.run(["systemctl", "--user", "is-active", "--quiet", "tl3-postgres.service"]).returncode == 0
     if active:
         run([root / "bin/tl3-deploy", "console-role", config / "tl3.toml"])
-        print("Console: read-only Postgres login granted")
+        print("Console: Postgres login granted (reads, files commands, edits prompts)")
     else:
-        print("Console: the read-only Postgres login is granted when tl3-postgres starts")
+        print("Console: the Postgres login is granted when tl3-postgres starts")
 
 
 def service(home, name):

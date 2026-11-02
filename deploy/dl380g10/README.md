@@ -230,10 +230,16 @@ Reserve 192.168.1.107 in Rob's router DHCP settings if desired, so the status ad
 The console (PRD #327) lives in RobTand/tl3-console, which builds, deploys and
 runs `tl3-console.service` with its own config file. TL3 keeps what the console
 reads through: the board projection (`crates/controller/src/board.rs`), the
-change feed (`LISTEN tl3_changes`) and the console's read-only Postgres login.
+change feed (`LISTEN tl3_changes`), the prompt store and the console's
+Postgres login.
 
-That login is `tl3_console`, which may read every table, including ones later
-migrations add, and may write none. The installer creates its password at
+That login is `tl3_console`. It may read every table, including ones later
+migrations add. It writes nothing directly. It may file console commands
+through the `tl3_console_command` function (decision C3). It may also add
+prompt versions and move each role's active prompt pointer (decision C5),
+through the `tl3_prompt_editor` role that the grant adds it to.
+
+The installer creates the login's password at
 `~/.config/tl3/secrets/console-postgres-password` (0600, once, never
 replaced). `deploy.py install` creates or updates the login and its grants
 when Postgres is running (`tl3-deploy console-role`), and fails if it can't.
@@ -248,6 +254,11 @@ The installer still adds a `[console]` section to an existing `tl3.toml`, with
 once to write its own config, and `tl3-deploy console-role` reads the login
 from it. A TL3 release that changes the store schema needs a tl3-console
 release pinned to it; until then the console refuses the store.
+
+`tl3d` adds the prompts in `workers/src/tl3_workers/prompts/` as built-in
+versions each time it starts. A deploy that changes one makes it active only
+if the previous built-in version was active, so a deploy never replaces Rob's
+edit. Each worker run uses the version active when it starts.
 
 ## MLflow tracking server
 

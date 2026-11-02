@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from contextlib import nullcontext
+from contextvars import ContextVar
 from copy import deepcopy
 from importlib.resources import files
 import json
@@ -106,6 +107,15 @@ def create_model(request) -> BaseChatModel:
 
 
 ONLY_JSON = "Reply with one JSON object only: no prose, no code fences."
+# The run's prompt version from the controller (PRD #327, C5), if it sent one.
+run_prompt = ContextVar("run_prompt", default=None)
+
+
+def role_prompt(role):
+    supplied = run_prompt.get()
+    if supplied is not None:
+        return supplied
+    return files("tl3_workers").joinpath("prompts", role.prompt).read_text()
 
 
 def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None, context_size=150_000,
@@ -129,7 +139,7 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None,
     register_harness_profile(provider, profile)
     if identifier:
         register_harness_profile(f"{provider}:{identifier}", profile)
-    prompt = files("tl3_workers").joinpath("prompts", role.prompt).read_text()
+    prompt = role_prompt(role)
     prompt += "\n\n" + ONLY_JSON + " It must match this schema:\n"
     proposal = deepcopy(schema(role.reply_schema)) if reply_schema is None else reply_schema
     for variant in proposal.get("oneOf", [proposal]):
@@ -166,6 +176,7 @@ def run(request, emit: Callable[[dict], None]):
     with observe(request):
         summary = Summary(request)
         token = current.set(summary)
+        prompt = run_prompt.set(request.get("prompt", {}).get("text"))
         summary.save()
         reply, error = None, None
         try:
@@ -176,6 +187,7 @@ def run(request, emit: Callable[[dict], None]):
             raise
         finally:
             summary.finish(reply, error)
+            run_prompt.reset(prompt)
             current.reset(token)
 
 

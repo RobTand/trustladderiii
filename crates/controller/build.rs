@@ -1,35 +1,61 @@
-use std::{env, error::Error, fs, path::PathBuf, process::Command};
+use std::{
+    env,
+    error::Error,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo::rustc-check-cfg=cfg(loom)");
     if env::var_os("CARGO_FEATURE_LOOM").is_some() {
         println!("cargo::rustc-cfg=loom");
     }
-    let directory = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?)
-        .join("../../workers/src/tl3_workers/schemas");
-    println!("cargo:rerun-if-changed={}", directory.display());
-    let mut paths = fs::read_dir(&directory)?
-        .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<Result<Vec<_>, _>>()?;
-    paths.sort();
+    let workers =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR")?).join("../../workers/src/tl3_workers");
+    let schemas = workers.join("schemas");
+    println!("cargo:rerun-if-changed={}", schemas.display());
     let mut source = String::from("const PACKAGED_SCHEMAS: &[(&str, &str)] = &[\n");
-    for path in paths {
-        if path.extension().is_some_and(|ext| ext == "json") {
-            let name = path.file_name().ok_or("schema needs a filename")?;
-            source.push_str(&format!(
-                "({:?}, include_str!({:?})),\n",
-                name.to_str().ok_or("schema filename must be UTF-8")?,
-                path.to_str().ok_or("schema path must be UTF-8")?,
-            ));
-        }
+    for path in files(&schemas, "json")? {
+        let name = path.file_name().ok_or("schema needs a filename")?;
+        source.push_str(&format!(
+            "({:?}, include_str!({:?})),\n",
+            name.to_str().ok_or("schema filename must be UTF-8")?,
+            path.to_str().ok_or("schema path must be UTF-8")?,
+        ));
     }
     source.push_str("];\n");
-    fs::write(
-        PathBuf::from(env::var("OUT_DIR")?).join("worker_schemas.rs"),
-        source,
-    )?;
+    let out = PathBuf::from(env::var("OUT_DIR")?);
+    fs::write(out.join("worker_schemas.rs"), source)?;
+    // Built-in role prompts (PRD #327, C5), by role. Their text goes into the
+    // generated file, so a build that fetches this crate alone, such as
+    // tl3-console's Bazel build, needs the files only while this script runs.
+    let prompts = workers.join("prompts");
+    println!("cargo:rerun-if-changed={}", prompts.display());
+    let mut source = String::from("const PACKAGED_PROMPTS: &[(&str, &str)] = &[\n");
+    for path in files(&prompts, "md")? {
+        println!("cargo:rerun-if-changed={}", path.display());
+        let role = path.file_stem().ok_or("prompt needs a filename")?;
+        source.push_str(&format!(
+            "({:?}, {:?}),\n",
+            role.to_str().ok_or("prompt filename must be UTF-8")?,
+            fs::read_to_string(&path)?,
+        ));
+    }
+    source.push_str("];\n");
+    fs::write(out.join("worker_prompts.rs"), source)?;
     release_tree()?;
     Ok(())
+}
+
+/// A directory's files with one extension, sorted.
+fn files(directory: &Path, extension: &str) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+    let mut paths = fs::read_dir(directory)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()?;
+    paths.retain(|path| path.extension().is_some_and(|ext| ext == extension));
+    paths.sort();
+    Ok(paths)
 }
 
 /// Build the source tree's Git hash into tl3d as its release identity (Q51).

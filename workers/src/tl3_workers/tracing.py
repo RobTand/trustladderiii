@@ -952,7 +952,8 @@ class Capture:
         self.tags.update(node=str(request['operation']['node']),
                          generation=str(request['operation']['generation']),
                          role=request['role'], model=request['model']['name'],
-                         effort=request['model']['effort'] or 'default')
+                         effort=request['model']['effort'] or 'default',
+                         prompt_version=str(request.get('prompt', {}).get('version', 'packaged')))
         self.settings = request['mlflow']
 
     def add(self, entry):

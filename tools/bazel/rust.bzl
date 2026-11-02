@@ -37,7 +37,7 @@ _COMPILE_DATA = {
     "crates/mergify": ["//crates/github:sources"],
 }
 _BUILD_SCRIPT_DATA = {
-    "crates/controller": ["//harness:project_files", "//workers:schemas", "//workers/tests:fixtures"],
+    "crates/controller": ["//harness:project_files", "//workers:runtime_files", "//workers:schemas", "//workers/tests:fixtures"],
 }
 _EXAMPLE_DATA = {
     "//deploy/dl380g10:helper.rs": ["//deploy/github-app:manifest.json"],
