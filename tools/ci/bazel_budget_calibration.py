@@ -6,9 +6,10 @@ testlogs directory. The method matches docs/hosted-budget-tolerance.md: take
 each complete run's largest elapsed / base-budget ratio, use the nearest-rank
 p99 of those maxima, add 10% and round up to the next 0.05, floor 1.0.
 
-For CPU migration, --cpu-receipts FILE FILE [...] initializes CPU caps
-and tightens existing CPU caps to ceil(2 * maximum CPU), with a one second
-floor. It requires two receipts and does not claim a population percentile.
+For CPU migration, --cpu-receipts FILE FILE [...] tightens observed CPU caps
+to ceil(2 * maximum CPU), with a one second floor. The default uses twice
+the nearest-rank measured p95. Fallback samples are excluded. It requires
+two receipts and does not claim a population percentile.
 """
 import argparse
 from collections import defaultdict
@@ -77,24 +78,33 @@ def calibrate_cpu(paths, policy):
         for name, seconds in cpu.items():
             if not math.isfinite(seconds) or seconds < 0:
                 raise ValueError(f'{path}: invalid CPU sample {name}')
-            maxima[name] = max(maxima.get(name, 0), seconds)
+            if name not in receipt.get('cpu_fallbacks', {}):
+                maxima[name] = max(maxima.get(name, 0), seconds)
         records.append({'file': path.name, 'sha256': hashlib.sha256(raw).hexdigest(),
                         'scenarios': len(wall), 'wall_seconds': sum(wall.values()),
                         'cpu_seconds': sum(cpu.values()),
+                        'fallbacks': receipt.get('cpu_fallbacks', {}),
                         'max_wall_base_ratio': max(wall[name] / policy['slow'].get(name, policy['seconds'])
                                                    for name in wall)})
     previous = policy.get('cpu') or policy
     limits = dict(previous['slow'])
     default = previous['seconds']
+    measured_scenarios = sorted(seconds for name, seconds in maxima.items() if not name.endswith('::__tail__'))
+    if not measured_scenarios:
+        raise ValueError('no measured CPU scenarios after excluding fallbacks')
+    p95 = measured_scenarios[math.ceil(len(measured_scenarios) * .95) - 1]
     if 'cpu' not in policy:
-        default = max(default, math.ceil(2 * max(
-            (seconds for name, seconds in maxima.items() if name not in limits), default=0)))
+        default = max(default, math.ceil(2 * p95))
+    else:
+        default = min(default, max(1, math.ceil(2 * p95)))
     for name in limits.keys() & maxima.keys():
         # Two runs cannot establish a percentile. Allow 2x observed CPU, rounded to seconds.
         measured = max(1, math.ceil(maxima[name] * 2))
         limits[name] = min(limits[name], measured) if 'cpu' in policy else measured
     return {'cpu': {'seconds': default, 'slow': limits},
-            'method': 'bootstrap CPU units from ceil(2 * max CPU), floor 1s; existing CPU caps only shrink',
+            'method': 'ceil(2 * measured max CPU), default ceil(2 * measured p95), floor 1s; existing CPU caps only shrink',
+            'measured_scenario_p95_cpu_seconds': p95,
+            'uncalibrated_slow': sorted(limits.keys() - maxima.keys()),
             'receipts': records, 'max_cpu_seconds': dict(sorted(maxima.items()))}
 
 

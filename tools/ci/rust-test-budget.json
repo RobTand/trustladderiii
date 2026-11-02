@@ -173,10 +173,7 @@
       "tl3-store/postgres::reader_restart": 50
     }
   },
-  "wall_only": {
-    "tl3-store/postgres::*": "Scenarios execute SQL in a persistent, daemonized Postgres server outside the test process tree.",
-    "tl3-store/fixture_lifecycle::*": "Fixture checks exercise daemonized Postgres startup, shutdown and recovery outside the test process tree."
-  },
+  "wall_only": {},
   "wall_only_platforms": {
     "darwin": "Linux procfs task CPU counters are unavailable.",
     "win32": "Linux procfs task CPU counters are unavailable."

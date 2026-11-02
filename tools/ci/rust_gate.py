@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 from fnmatch import fnmatchcase
 import time
 import tomllib
@@ -34,6 +35,14 @@ def runner_class():
 
 
 WALL_BACKSTOP_MULTIPLIER = 10
+# These binaries use the shared embedded-Postgres fixture. Missing server
+# counters must be explicit; otherwise a missing PID silently undercounts SQL.
+POSTGRES_BINARIES = {f'tl3-controller/{name}' for name in (
+    'publishing', 'workers', 'github-flow', 'github-notices', 'mergify', 'looks',
+    'hindsight', 'simulation', 'crash_safety', 'prismabuild', 'input_error_followups',
+    'production', 'upgrade_replay', 'priority_credit', 'fixture_contracts', 'scope',
+    'environment_incidents', 'console_commands', 'core_defects', 'loom',
+)} | {'tl3-store/postgres', 'tl3-store/fixture_lifecycle'}
 
 
 def validate_limits(config, baseline):
@@ -46,7 +55,7 @@ def validate_limits(config, baseline):
         raise RuntimeError('Test budgets and the explicit slow list may not grow')
 
 
-def check_budget(results, config, baseline, runner_class='baseline', cpu_seconds=None):
+def check_budget(results, config, baseline, runner_class='baseline', cpu_seconds=None, cpu_fallbacks=None):
     validate_limits(config, baseline)
     cpu = config.get('cpu')
     if baseline.get('cpu') and not cpu:
@@ -62,10 +71,11 @@ def check_budget(results, config, baseline, runner_class='baseline', cpu_seconds
     if runner_class not in BUDGET_MULTIPLIERS:
         raise ValueError(f'Unknown runner class: {runner_class}')
     multiplier = BUDGET_MULTIPLIERS[runner_class]
-    failures = []
+    failures, backstops = [], []
     for name, elapsed in sorted(results.items()):
         wall_limit = config['slow'].get(name, config['seconds']) * multiplier
         wall_only = (cpu is None or sys.platform in config.get('wall_only_platforms', {})
+                     or name in (cpu_fallbacks or {})
                      or any(fnmatchcase(name, pattern) for pattern in config.get('wall_only', {})))
         if wall_only:
             if elapsed > wall_limit:
@@ -80,22 +90,66 @@ def check_budget(results, config, baseline, runner_class='baseline', cpu_seconds
             failures.append(f'{name}: CPU {measured:.3f}s > {cpu_limit:.3f}s')
         backstop = wall_limit * WALL_BACKSTOP_MULTIPLIER
         if elapsed > backstop:
-            failures.append(f'{name}: wall backstop {elapsed:.3f}s > {backstop:.3f}s')
+            backstops.append(f'{name}: wall backstop {elapsed:.3f}s > {backstop:.3f}s')
+    if backstops:
+        # A possible hang must never receive the Gate's budget-only rerun.
+        raise RuntimeError('Per-test wall backstop exceeded:\n' + '\n'.join(backstops + failures))
     if failures:
         raise RuntimeError('Per-test time budget exceeded:\n' + '\n'.join(failures))
 
 
-def process_cpu_seconds(pid):
-    """Linux task time plus waited-for children, in seconds, while the PID is owned."""
+def process_cpu_sample(pid):
+    """Return task plus reaped-child CPU and start ticks, to distinguish reused PIDs."""
     try:
         # comm can contain spaces and closing parentheses; fields after its last ')' are stable.
         fields = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
-        return sum(int(fields[index]) for index in (11, 12, 13, 14)) / os.sysconf('SC_CLK_TCK')
+        return (sum(int(fields[index]) for index in (11, 12, 13, 14)) / os.sysconf('SC_CLK_TCK'),
+                int(fields[19]))
     except (OSError, ValueError, IndexError) as error:
         raise RuntimeError(f'CPU sampling failed for test PID {pid}: {error}') from error
 
 
-def execute_binary(binary, custom, arguments=(), cpu_seconds=None):
+def process_cpu_seconds(pid):
+    return process_cpu_sample(pid)[0]
+
+
+class PostgresCpu:
+    """Sample only fixtures owned by this binary, never unrelated server processes."""
+
+    def __init__(self):
+        self.root = Path(os.environ.get('TMPDIR') or tempfile.gettempdir())
+        self.previous = {}
+
+    def sample(self, owner):
+        delta, seen, errors = 0.0, set(), []
+        for fixture in self.root.glob('tl3-store-pg-*'):
+            try:
+                fixture_owner = (fixture / 'fixture.pid').read_text().strip()
+            except OSError:
+                continue
+            if fixture_owner != str(owner):
+                continue
+            try:
+                pid = int((fixture / 'data/postmaster.pid').read_text().splitlines()[0])
+                if pid <= 0:
+                    raise ValueError('nonpositive postmaster PID')
+                cpu, start = process_cpu_sample(pid)
+                identity = (pid, start)
+                delta += cpu - self.previous.get(identity, 0)
+                self.previous[identity] = cpu
+                seen.add(identity)
+            except (OSError, ValueError, IndexError, RuntimeError) as error:
+                errors.append(f'{fixture.name}: {error}')
+        if not seen:
+            errors.append('No postmaster PID found for this test at the marker')
+        if self.previous.keys() - seen:
+            errors.append('A previously sampled postmaster exited before the marker')
+        # Retain counters only while the server lives. A restart has its own identity.
+        self.previous = {identity: self.previous[identity] for identity in seen}
+        return delta, '; '.join(errors)
+
+
+def execute_binary(binary, custom, arguments=(), cpu_seconds=None, cpu_details=None):
     name = binary['name']
     command = list(binary['command'])
     if not custom:
@@ -109,6 +163,22 @@ def execute_binary(binary, custom, arguments=(), cpu_seconds=None):
     cpu_seconds = {} if cpu_seconds is None else cpu_seconds
     previous_cpu = 0.0
     sample_cpu = sys.platform == 'linux'
+    cpu_details = {} if cpu_details is None else cpu_details
+    postgres_seconds = cpu_details.setdefault('postgres_cpu_seconds', {})
+    fallbacks = cpu_details.setdefault('cpu_fallbacks', {})
+    postgres = PostgresCpu() if sample_cpu and name in POSTGRES_BINARIES else None
+
+    def sample(key):
+        current = process_cpu_seconds(process.pid) if sample_cpu else 0.0
+        if sample_cpu:
+            cpu_seconds[key] = current - previous_cpu
+            if postgres is not None:
+                delta, reason = postgres.sample(process.pid)
+                postgres_seconds[key] = delta
+                cpu_seconds[key] += delta
+                if reason:
+                    fallbacks[key] = reason
+        return current
     suite = False
     passed = 0
     failures = []
@@ -122,15 +192,13 @@ def execute_binary(binary, custom, arguments=(), cpu_seconds=None):
             if custom:
                 match = MARKER.fullmatch(line.rstrip())
                 if match:
-                    current_cpu = process_cpu_seconds(process.pid) if sample_cpu else 0.0
                     markers += 1
                     key = f'{name}::{match[1]}'
+                    current_cpu = sample(key)
                     if key in results:
                         failures.append(f'{name}: duplicate timing marker {match[1]}')
                     else:
                         results[key] = now - previous
-                        if sample_cpu:
-                            cpu_seconds[key] = current_cpu - previous_cpu
                     previous = now
                     previous_cpu = current_cpu
                 count = SCENARIO_COUNT.fullmatch(line.rstrip())
@@ -146,13 +214,11 @@ def execute_binary(binary, custom, arguments=(), cpu_seconds=None):
                 if event['event'] in {'ignored', 'failed'}:
                     failures.append(f'{key}: failed or skipped')
                 if event['event'] == 'ok':
-                    current_cpu = process_cpu_seconds(process.pid) if sample_cpu else 0.0
+                    current_cpu = sample(key)
                     if key in results or 'exec_time' not in event:
                         failures.append(f'{key}: duplicate or missing timing')
                     else:
                         results[key] = event['exec_time']
-                        if sample_cpu:
-                            cpu_seconds[key] = current_cpu - previous_cpu
                     previous_cpu = current_cpu
             if event.get('type') == 'suite' and event.get('event') in {'ok', 'failed'}:
                 suite = True
@@ -163,7 +229,15 @@ def execute_binary(binary, custom, arguments=(), cpu_seconds=None):
             # Keep the exited child as a zombie until its final counters are sampled.
             # Popen.wait/poll would reap it and remove /proc/<pid>/stat.
             os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT)
-            final_cpu = process_cpu_seconds(process.pid)
+            final_key = f'{name}::__tail__' if custom else next(reversed(results), None)
+            if final_key is not None:
+                # Preserve the marker's CPU for libtest, whose teardown shares its last key.
+                marker_cpu = cpu_seconds.get(final_key, 0) if not custom else 0
+                marker_postgres = postgres_seconds.get(final_key, 0) if not custom else 0
+                sample(final_key)
+                cpu_seconds[final_key] += marker_cpu
+                if final_key in postgres_seconds:
+                    postgres_seconds[final_key] += marker_postgres
         returncode = process.wait()
     elapsed = time.monotonic() - started
     print(json.dumps({'binary': name, 'seconds': elapsed, 'tests': len(results),
@@ -177,28 +251,27 @@ def execute_binary(binary, custom, arguments=(), cpu_seconds=None):
             failures.append(f'{name}: declared {scenario_counts[0]} scenarios; received {markers} timing markers')
         # This also budgets setup-only binaries and work after the last named scenario.
         results[f'{name}::__tail__'] = time.monotonic() - previous
-        if sample_cpu:
-            cpu_seconds[f'{name}::__tail__'] = final_cpu - previous_cpu
     elif not suite or len(results) != passed:
         failures.append(f'{name}: missing suite or test result')
-    if not custom and cpu_seconds:
-        # Charge libtest teardown to the final scenario instead of losing it after EOF.
-        cpu_seconds[next(reversed(cpu_seconds))] += final_cpu - previous_cpu
     if failures:
         raise RuntimeError('\n'.join(failures))
     return results
 
 
-def execute_binaries(binaries, jobs, cpu_seconds=None):
+def execute_binaries(binaries, jobs, cpu_seconds=None, cpu_details=None):
     results = {}
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         samples = [{} for _ in binaries]
-        futures = [pool.submit(execute_binary, binary, binary['custom'], cpu_seconds=sample)
-                   for binary, sample in zip(binaries, samples)]
-        for future, sample in zip(futures, samples):
+        details = [{} for _ in binaries]
+        futures = [pool.submit(execute_binary, binary, binary['custom'], cpu_seconds=sample, cpu_details=detail)
+                   for binary, sample, detail in zip(binaries, samples, details)]
+        for future, sample, detail in zip(futures, samples, details):
             results.update(future.result())
             if cpu_seconds is not None:
                 cpu_seconds.update(sample)
+            if cpu_details is not None:
+                for key, values in detail.items():
+                    cpu_details.setdefault(key, {}).update(values)
     return results
 
 
@@ -293,11 +366,11 @@ def test_workspace(manifest, jobs=None, report=None, enforce=True, shard=None):
         print(json.dumps({'rust_shard': index, 'total': total,
                           'binaries': [binary['name'] for binary in binaries]}), flush=True)
     started = time.monotonic()
-    cpu_seconds = {}
-    results = execute_binaries(binaries, jobs, cpu_seconds=cpu_seconds)
+    cpu_seconds, cpu_details = {}, {}
+    results = execute_binaries(binaries, jobs, cpu_seconds=cpu_seconds, cpu_details=cpu_details)
     output = {'seconds': time.monotonic() - started, 'setup_seconds': setup_seconds,
               'jobs': jobs, 'shard': shard, 'tests': results, 'cpu_seconds': cpu_seconds,
-              'runner_class': current_class, 'budget_multiplier': BUDGET_MULTIPLIERS[current_class]}
+              'runner_class': current_class, 'budget_multiplier': BUDGET_MULTIPLIERS[current_class], **cpu_details}
     for name, seconds in sorted(results.items()):
         print(json.dumps({'test': name, 'seconds': seconds}), flush=True)
     path = report or ROOT / 'target/ci-test-times.json'
@@ -306,7 +379,8 @@ def test_workspace(manifest, jobs=None, report=None, enforce=True, shard=None):
     print(json.dumps({'test_wall_seconds': output['seconds'], 'jobs': jobs,
                       'timings': str(path)}), flush=True)
     if enforce:
-        check_budget(results, config, baseline, runner_class=current_class, cpu_seconds=cpu_seconds)
+        check_budget(results, config, baseline, runner_class=current_class, cpu_seconds=cpu_seconds,
+                     cpu_fallbacks=cpu_details['cpu_fallbacks'])
     return output
 
 

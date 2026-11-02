@@ -32,15 +32,37 @@ class GateTests(unittest.TestCase):
                                           + f'Path({str(fixture / "fixture.pid")!r}).write_text(str(os.getpid()))\n'
                                           + 'print("test query ... ok", flush=True)\n'
                                           + 'print("1 fixture scenarios passed", flush=True)\n')
-                    cpu = {}
+                    cpu, details = {}, {}
                     with patch.dict(os.environ, {'TMPDIR': temporary}):
                         rust_gate.execute_binary({'name': 'tl3-controller/publishing',
                                                   'command': [sys.executable, str(executable)]},
-                                                 True, cpu_seconds=cpu)
+                                                 True, cpu_seconds=cpu, cpu_details=details)
                     self.assertGreaterEqual(sum(cpu.values()), .3)
+                    self.assertGreaterEqual(sum(details['postgres_cpu_seconds'].values()), .3)
+                    self.assertFalse(details['cpu_fallbacks'])
                     self.assertIsNone(postmaster.poll(), 'server must still be alive and unreaped')
                 finally:
                     postmaster.communicate('\n')
+
+    def test_missing_postmaster_is_noted_and_uses_the_original_wall_budget(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Path(temporary, 'tl3-store-pg-missing')
+            fixture.mkdir()
+            executable = Path(temporary, 'fixture.py')
+            executable.write_text('import os\nfrom pathlib import Path\n'
+                                  + f'Path({str(fixture / "fixture.pid")!r}).write_text(str(os.getpid()))\n'
+                                  + 'print("test query ... ok", flush=True)\n'
+                                  + 'print("1 fixture scenarios passed", flush=True)\n')
+            details = {}
+            with patch.dict(os.environ, {'TMPDIR': temporary}):
+                rust_gate.execute_binary({'name': 'tl3-controller/publishing',
+                                          'command': [sys.executable, str(executable)]},
+                                         True, cpu_details=details)
+            key = 'tl3-controller/publishing::query'
+            self.assertIn('postmaster.pid', details['cpu_fallbacks'][key])
+            with self.assertRaisesRegex(RuntimeError, 'wall 30.000s > 10.000s'):
+                rust_gate.check_budget({key: 30}, self.cpu_policy(), self.cpu_policy(),
+                                       cpu_seconds={key: .1}, cpu_fallbacks=details['cpu_fallbacks'])
 
     def cpu_policy(self):
         return {'seconds': 10, 'slow': {'slow': 20},
@@ -318,7 +340,7 @@ class GateTests(unittest.TestCase):
         peak = 0
         lock = threading.Lock()
 
-        def execute(binary, custom, cpu_seconds=None):
+        def execute(binary, custom, cpu_seconds=None, cpu_details=None):
             nonlocal active, peak
             with lock:
                 active += 1
