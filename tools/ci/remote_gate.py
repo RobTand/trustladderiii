@@ -8,11 +8,13 @@ import argparse
 import json
 import os
 import shlex
+import signal
 import subprocess
 from pathlib import Path
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from child_env import child_env
@@ -50,8 +52,11 @@ class BuildBuddy:
 
     def call(self, method, body, timeout=120, raw=False):
         """JSON in; JSON out, or the raw body for GetFile."""
+        # CancelExecutions belongs to the service RPC, not the public v1 API.
+        url = (urllib.parse.urljoin(self.api, '/rpc/BuildBuddyService/CancelExecutions')
+               if method == 'CancelExecutions' else self.api + method)
         request = urllib.request.Request(
-            self.api + method, data=json.dumps(body).encode(),
+            url, data=json.dumps(body).encode(),
             headers={'x-buildbuddy-api-key': self.key, 'Content-Type': 'application/json'})
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -86,31 +91,61 @@ def run_request(args):
     }
 
 
+def invocation_path():
+    return Path(os.environ.get('RUNNER_TEMP', '.')) / 'tl3-buildbuddy-invocation'
+
+
+def cancel_recorded():
+    path = invocation_path()
+    if not path.exists():
+        return
+    invocation_id = path.read_text().strip()
+    if invocation_id:
+        BuildBuddy(os.environ['BUILDBUDDY_API_KEY']).call(
+            'CancelExecutions', {'invocation_id': invocation_id}, timeout=5)
+
+
 def wait(client, invocation_id, deadline, interval=15, clock=time.monotonic, sleep=time.sleep,
          retries=3):
     """Wait for the run's own terminal status. Returns the invocation record."""
-    errors = 0
-    while True:
+    def interrupted(signum, _frame):
+        # GitHub sends SIGINT, then SIGTERM after 7.5 s, then kills after 2.5 s.
+        # Leave time for the cancelled() cleanup step to retry a failed request.
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            signal.signal(sig, signal.SIG_IGN)
         try:
-            found = client.call('GetInvocation', {'selector': {'invocation_id': invocation_id},
-                                                  'include_artifacts': True}).get('invocation', [])
-            errors = 0
-        except RemoteError:
-            # One API blip must not fail a whole merge-queue batch.
-            errors += 1
-            if errors > retries or clock() > deadline:
-                raise
+            client.call('CancelExecutions', {'invocation_id': invocation_id}, timeout=2)
+        except RemoteError as error:
+            print(f'::warning::Remote cancellation failed: {error}', flush=True)
+        raise SystemExit(128 + signum)
+
+    previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        errors = 0
+        while True:
+            try:
+                found = client.call('GetInvocation', {'selector': {'invocation_id': invocation_id},
+                                                      'include_artifacts': True}).get('invocation', [])
+                errors = 0
+            except RemoteError:
+                # One API blip must not fail a whole merge-queue batch.
+                errors += 1
+                if errors > retries or clock() > deadline:
+                    raise
+                sleep(interval)
+                continue
+            invocation = found[0] if found else {}
+            status = invocation.get('invocationStatus')
+            if status == DONE:
+                return invocation
+            if status == LOST:
+                raise RemoteError(f'remote run {invocation_id} disconnected')
+            if clock() > deadline:
+                raise RemoteError(f'remote run {invocation_id} did not finish in time')
             sleep(interval)
-            continue
-        invocation = found[0] if found else {}
-        status = invocation.get('invocationStatus')
-        if status == DONE:
-            return invocation
-        if status == LOST:
-            raise RemoteError(f'remote run {invocation_id} disconnected')
-        if clock() > deadline:
-            raise RemoteError(f'remote run {invocation_id} did not finish in time')
-        sleep(interval)
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
 def diagnostics(client, invocation):
@@ -240,6 +275,13 @@ def merged_prs():
 
 
 def main():
+    if sys.argv[1:] == ['cancel']:
+        try:
+            cancel_recorded()
+        except RemoteError as error:
+            print(f'::error::{error}', flush=True)
+            return 1
+        return 0
     if sys.argv[1:2] == ['merged-prs']:
         merged_prs()
         return 0
@@ -269,6 +311,7 @@ def main():
         invocation_id = client.call('Run', run_request(args), timeout=600).get('invocationId')
         if not invocation_id:
             raise RemoteError('BuildBuddy Run returned no invocation id')
+        invocation_path().write_text(invocation_id + '\n')
         print(f'Remote Bazel run: https://app.buildbuddy.io/invocation/{invocation_id}', flush=True)
         invocation = wait(client, invocation_id, started + (args.timeout + 10) * 60)
         for name, data in diagnostics(client, invocation):
