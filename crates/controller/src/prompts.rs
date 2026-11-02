@@ -4,22 +4,11 @@
 use serde_json::{Value, json};
 use tl3_store::Store;
 
-macro_rules! builtin {
-    ($($role:literal),* $(,)?) => {
-        &[$(($role, include_str!(concat!("../../../workers/src/tl3_workers/prompts/", $role, ".md")))),*]
-    };
-}
+include!(concat!(env!("OUT_DIR"), "/worker_prompts.rs"));
 
-/// Each worker role and the prompt this build ships for it.
-pub const BUILTIN: &[(&str, &str)] = builtin!(
-    "audit",
-    "classifier",
-    "ingest",
-    "maker",
-    "planner",
-    "reviewer",
-    "writer"
-);
+/// Each worker role and the prompt this build ships for it, from
+/// `workers/src/tl3_workers/prompts/<role>.md`.
+pub const BUILTIN: &[(&str, &str)] = PACKAGED_PROMPTS;
 
 pub fn seed(store: &mut Store) -> crate::Result<()> {
     Ok(store.seed_prompts(BUILTIN)?)

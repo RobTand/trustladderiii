@@ -5,30 +5,60 @@ fn main() -> Result<(), Box<dyn Error>> {
     if env::var_os("CARGO_FEATURE_LOOM").is_some() {
         println!("cargo::rustc-cfg=loom");
     }
+    packaged(
+        "schemas",
+        "json",
+        "PACKAGED_SCHEMAS",
+        "worker_schemas.rs",
+        true,
+    )?;
+    // Built-in role prompts (PRD #327, C5), named by role.
+    packaged(
+        "prompts",
+        "md",
+        "PACKAGED_PROMPTS",
+        "worker_prompts.rs",
+        false,
+    )?;
+    release_tree()?;
+    Ok(())
+}
+
+/// Embed each file of a workers package directory by absolute path, so builds
+/// that fetch the controller crate alone can supply the files beside it.
+fn packaged(
+    folder: &str,
+    extension: &str,
+    constant: &str,
+    output: &str,
+    with_extension: bool,
+) -> Result<(), Box<dyn Error>> {
     let directory = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?)
-        .join("../../workers/src/tl3_workers/schemas");
+        .join("../../workers/src/tl3_workers")
+        .join(folder);
     println!("cargo:rerun-if-changed={}", directory.display());
     let mut paths = fs::read_dir(&directory)?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<Result<Vec<_>, _>>()?;
     paths.sort();
-    let mut source = String::from("const PACKAGED_SCHEMAS: &[(&str, &str)] = &[\n");
+    let mut source = format!("const {constant}: &[(&str, &str)] = &[\n");
     for path in paths {
-        if path.extension().is_some_and(|ext| ext == "json") {
-            let name = path.file_name().ok_or("schema needs a filename")?;
+        if path.extension().is_some_and(|ext| ext == extension) {
+            let name = if with_extension {
+                path.file_name()
+            } else {
+                path.file_stem()
+            }
+            .ok_or("packaged file needs a name")?;
             source.push_str(&format!(
                 "({:?}, include_str!({:?})),\n",
-                name.to_str().ok_or("schema filename must be UTF-8")?,
-                path.to_str().ok_or("schema path must be UTF-8")?,
+                name.to_str().ok_or("packaged filename must be UTF-8")?,
+                path.to_str().ok_or("packaged path must be UTF-8")?,
             ));
         }
     }
     source.push_str("];\n");
-    fs::write(
-        PathBuf::from(env::var("OUT_DIR")?).join("worker_schemas.rs"),
-        source,
-    )?;
-    release_tree()?;
+    fs::write(PathBuf::from(env::var("OUT_DIR")?).join(output), source)?;
     Ok(())
 }
 
