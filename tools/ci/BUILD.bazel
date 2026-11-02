@@ -183,7 +183,7 @@ tl3_py_test(
         ":bazel_gate",
         ":remote_gate",
         "//tools/ci:child_env",
-        requirement("pyyaml"),
+        "@tl3_pip//pyyaml",
     ],
 )
 
