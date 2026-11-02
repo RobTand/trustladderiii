@@ -111,16 +111,17 @@ class PostgresCpu:
     def __init__(self):
         self.root = Path(os.environ.get('TMPDIR') or tempfile.gettempdir())
         self.previous = {}
-        self.started = False
+        self.startups = 0
 
     def observe(self, line):
         # The shared fixture emits this before starting its server. A cluster
         # can disappear before the next marker, leaving no PID file to discover.
         if line.startswith('embedded Postgres cached setup'):
-            self.started = True
+            self.startups += 1
 
     def sample(self, owner):
         delta, seen, errors = 0.0, set(), []
+        previous = set(self.previous)
         for fixture in self.root.glob('tl3-store-pg-*'):
             try:
                 fixture_owner = (fixture / 'fixture.pid').read_text().strip()
@@ -139,13 +140,13 @@ class PostgresCpu:
                 seen.add(identity)
             except (OSError, ValueError, IndexError, RuntimeError) as error:
                 errors.append(f'{fixture.name}: {error}')
-        if not seen and self.started:
-            errors.append('No postmaster PID found for this test at the marker')
-        if self.previous.keys() - seen:
+        if self.startups > len(seen - previous):
+            errors.append('Postmaster PID unavailable for a fixture started since the previous marker')
+        if previous - seen:
             errors.append('A previously sampled postmaster exited before the marker')
         # Retain counters only while the server lives. A restart has its own identity.
         self.previous = {identity: self.previous[identity] for identity in seen}
-        self.started = False
+        self.startups = 0
         return delta, '; '.join(errors)
 
 

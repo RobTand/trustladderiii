@@ -13,7 +13,7 @@
       "tl3-controller/github-flow::__tail__": 40,
       "tl3-controller/github-flow::catch_up_missing_head_check-runs_422": 24,
       "tl3-controller/github-flow::daemon_webhooks_worker_replies_and_source_failure": 32,
-      "tl3-controller/github-flow::delivery_reconnects": 2,
+      "tl3-controller/github-flow::delivery_reconnects": 15,
       "tl3-controller/github-flow::post_crash_recovers": 2,
       "tl3-controller/github-flow::real_worker_contract_writer": 15,
       "tl3-controller/github-flow::startup_loop_reconnect": 30,
@@ -392,7 +392,6 @@
     "tl3-controller/github-flow::catch_up_preserves_evidence": 0.7499999999999991,
     "tl3-controller/github-flow::console_note_posts_once": 0.010000000000001563,
     "tl3-controller/github-flow::daemon_webhooks_worker_replies_and_source_failure": 15.840000000000002,
-    "tl3-controller/github-flow::delivery_reconnects": 0.680000000000001,
     "tl3-controller/github-flow::gap_catch_up": 0.9999999999999996,
     "tl3-controller/github-flow::message_reconciliation": 0.049999999999998934,
     "tl3-controller/github-flow::parsed_deliveries_and_translators": 0.2999999999999994,
@@ -699,6 +698,7 @@
     "tl3-controller/core_defects::completion_and_look_deduplicate_old_inbox_formats",
     "tl3-controller/crash_safety::__tail__",
     "tl3-controller/github-flow::__tail__",
+    "tl3-controller/github-flow::delivery_reconnects",
     "tl3-controller/github-flow::startup_loop_reconnect",
     "tl3-controller/github-notices::__tail__",
     "tl3-controller/hindsight::review2_hung_endpoint_costs_one_timeout_per_pass_and_resumes",
@@ -749,6 +749,7 @@
     "tl3-controller/core_defects::completion_and_look_deduplicate_old_inbox_formats": 15,
     "tl3-controller/crash_safety::__tail__": 185,
     "tl3-controller/github-flow::__tail__": 40,
+    "tl3-controller/github-flow::delivery_reconnects": 15,
     "tl3-controller/github-flow::startup_loop_reconnect": 30,
     "tl3-controller/github-notices::__tail__": 50,
     "tl3-controller/hindsight::review2_hung_endpoint_costs_one_timeout_per_pass_and_resumes": 20,
@@ -1073,14 +1074,15 @@
     },
     {
       "file": "t452-review-github-flow.inventory.json",
-      "sha256": "efcaa21e06b7f4210df3a25c5c4e72cc439488ea6495cf14f35aa30bc169682c",
+      "sha256": "a9de6dca857d6beeffc0bdd2e42fa575479061da4fdbec978ad60901424bfa6d",
       "scenarios": 83,
       "wall_seconds": 196.55819343500025,
       "cpu_seconds": 180.0,
       "fallbacks": {
         "tl3-controller/github-flow::startup_loop_reconnect": "A previously sampled postmaster exited before the marker",
         "tl3-controller/github-flow::source_failures": "tl3-store-pg-8SoIos: [Errno 2] No such file or directory: '/buildbuddy-execroot/_tmp/57e12c17a8d8334e2f6f6231ce47f14f/tl3-store-pg-8SoIos/data/postmaster.pid'",
-        "tl3-controller/github-flow::__tail__": "A previously sampled postmaster exited before the marker"
+        "tl3-controller/github-flow::__tail__": "A previously sampled postmaster exited before the marker",
+        "tl3-controller/github-flow::delivery_reconnects": "Audited secondary fixture started and stopped before the marker while the main postmaster remained alive; original runner missed this unavailable PID."
       },
       "max_wall_base_ratio": 1.1109722398000181
     },
@@ -3073,5 +3075,116 @@
     "target": "//crates/controller:test_test_publishing",
     "wall_backstop_multiplier": 10,
     "wall_backstop_reason": "Retain the proposed 10x effective wall cap. The two complete samples peak at 2.555x the base wall cap, below the 16.5x effective BuildBuddy backstop. No increase is justified."
+  },
+  "raw_receipts": [
+    {
+      "file": "t452-review-publishing.inventory.json",
+      "sha256": "321ceaea2b31df485074d0ed661cb0f9b57aa3eebb7b5db49a2378f5d84a2f61",
+      "scenarios": 36,
+      "wall_seconds": 397.4320939309837,
+      "cpu_seconds": 473.26,
+      "fallbacks": {
+        "tl3-controller/publishing::router_retire_delivery": "No postmaster PID found for this test at the marker",
+        "tl3-controller/publishing::publication_open_conflict": "No postmaster PID found for this test at the marker",
+        "tl3-controller/publishing::publication_requires_conventions": "No postmaster PID found for this test at the marker",
+        "tl3-controller/publishing::publication_lost_response_recovery": "No postmaster PID found for this test at the marker",
+        "tl3-controller/publishing::__tail__": "No postmaster PID found for this test at the marker; A previously sampled postmaster exited before the marker"
+      },
+      "max_wall_base_ratio": 2.2933412854006745
+    },
+    {
+      "file": "t452-review-simulation.inventory.json",
+      "sha256": "18065a567bf0c6d89af28683ec60b905bfdc8f6656a609293e574237e0ee0fa9",
+      "scenarios": 72,
+      "wall_seconds": 82.61662868200801,
+      "cpu_seconds": 52.75,
+      "fallbacks": {
+        "tl3-controller/simulation::status_page_and_command": "A previously sampled postmaster exited before the marker",
+        "tl3-controller/simulation::__tail__": "No postmaster PID found for this test at the marker; A previously sampled postmaster exited before the marker"
+      },
+      "max_wall_base_ratio": 0.47536418980162126
+    },
+    {
+      "file": "t452-review-prismabuild.inventory.json",
+      "sha256": "f5451278b5f53e36fa362f161322cea987f437e9b66ee3e4d0bacaefbee20b8d",
+      "scenarios": 45,
+      "wall_seconds": 75.6240852359997,
+      "cpu_seconds": 23.19,
+      "fallbacks": {
+        "tl3-controller/prismabuild::router_retire_delivery": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::oversized_plan_is_refused_before_submission": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::repository_image_is_sealed_and_staged_with_global_fallback": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::moving_wait_bell_is_quiet": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::moving_job_reconcile_is_pending": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::job_look_states": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::reproducing_check_plan_and_verdict": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::source_skips_bad_waits": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::live_waits_do_not_look_on_bell_reset": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::declared_wait_uses_bell": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::recorded_endings": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::retirement_refuses_active_or_unreadable_jobs": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::bounded_failure_details": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::selected_tests_are_staged_and_their_check_accepted": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::staged_request_carries_the_repository_protected_paths": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::harness_error_is_named_tl3_side": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::checks_use_the_base_the_head_descends_from": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::pending_and_withdrawal": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::unknown_outcomes": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::SIGKILL_reuses_seal": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::source_thread_and_restart": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::invalid_evidence_once": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::tool_errors_wait_for_news": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::bell_outage_does_not_retry_result_tools": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::absent_withdrawal_retires_source_watch": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::source_skips_bad_jobs_and_surfaces_failure": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::completed_records_retire_only_when_superseded": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::abandoned_inputs_are_removed": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::endings_outlive_queue_rows": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::cancellation_keeps_inflight_ending_marker": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::retirement_forgets_an_active_source": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::reconcile_never_submits": "No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::footprint_paths_and_merge_base": "tl3-store-pg-KnaB6B: [Errno 2] No such file or directory: '/buildbuddy-execroot/_tmp/4ca11ed649d27d94615a71588d47ff57/tl3-store-pg-KnaB6B/data/postmaster.pid'; No postmaster PID found for this test at the marker",
+        "tl3-controller/prismabuild::__tail__": "No postmaster PID found for this test at the marker; A previously sampled postmaster exited before the marker"
+      },
+      "max_wall_base_ratio": 0.6121100366222082
+    },
+    {
+      "file": "t452-review-github-flow.inventory.json",
+      "sha256": "efcaa21e06b7f4210df3a25c5c4e72cc439488ea6495cf14f35aa30bc169682c",
+      "scenarios": 83,
+      "wall_seconds": 196.55819343500025,
+      "cpu_seconds": 180.0,
+      "fallbacks": {
+        "tl3-controller/github-flow::startup_loop_reconnect": "A previously sampled postmaster exited before the marker",
+        "tl3-controller/github-flow::source_failures": "tl3-store-pg-8SoIos: [Errno 2] No such file or directory: '/buildbuddy-execroot/_tmp/57e12c17a8d8334e2f6f6231ce47f14f/tl3-store-pg-8SoIos/data/postmaster.pid'",
+        "tl3-controller/github-flow::__tail__": "A previously sampled postmaster exited before the marker"
+      },
+      "max_wall_base_ratio": 1.1109722398000181
+    },
+    {
+      "file": "t452-review-github-notices.inventory.json",
+      "sha256": "773b74dce511d6eac62e943324b3888f269b79716498fbea292e7bebfcaa048f",
+      "scenarios": 125,
+      "wall_seconds": 184.53244942499987,
+      "cpu_seconds": 163.0,
+      "fallbacks": {
+        "tl3-controller/github-notices::__tail__": "A previously sampled postmaster exited before the marker"
+      },
+      "max_wall_base_ratio": 0.5645404176666489
+    }
+  ],
+  "receipt_adjustments": {
+    "tl3-controller/github-flow::delivery_reconnects": "Audited secondary fixture started and stopped before the marker while the main postmaster remained alive; original runner missed this unavailable PID."
+  },
+  "adjustment_evidence": {
+    "invocation": "https://app.buildbuddy.io/invocation/3ad30824-a7df-4270-8fd1-726ddcd094b8",
+    "test_log": {
+      "name": "test.log",
+      "uri": "bytestream://remote.buildbuddy.io/blobs/8db272859e8637643af2164e30aad1177d738d9fcc73ccc393fbd58f1bb70a93/58745",
+      "hash": "8db272859e8637643af2164e30aad1177d738d9fcc73ccc393fbd58f1bb70a93",
+      "sizeBytes": "58745"
+    },
+    "source": "crates/controller/tests/github.rs:702-708",
+    "explanation": "The second fixture is scoped around delivery_reconnects and stopped before its marker. Preserve the original receipt and digest; calibration inputs add the documented fallback note and retain the prior 15-second CPU cap."
   }
 }

@@ -93,7 +93,7 @@
       "tl3-controller/github-flow::__tail__": 40,
       "tl3-controller/github-flow::catch_up_missing_head_check-runs_422": 24,
       "tl3-controller/github-flow::daemon_webhooks_worker_replies_and_source_failure": 32,
-      "tl3-controller/github-flow::delivery_reconnects": 2,
+      "tl3-controller/github-flow::delivery_reconnects": 15,
       "tl3-controller/github-flow::post_crash_recovers": 2,
       "tl3-controller/github-flow::real_worker_contract_writer": 15,
       "tl3-controller/github-flow::startup_loop_reconnect": 30,
