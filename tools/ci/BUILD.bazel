@@ -181,6 +181,7 @@ tl3_py_test(
     srcs = ["test_secret_scans.py"],
     deps = [
         ":bazel_gate",
+        ":remote_gate",
         "//tools/ci:child_env",
         requirement("pyyaml"),
     ],

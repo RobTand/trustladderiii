@@ -13,6 +13,7 @@ from unittest.mock import patch
 import yaml
 
 import bazel_gate
+import remote_gate
 from child_env import child_env
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -112,6 +113,35 @@ class WorkflowScanTests(unittest.TestCase):
 
 
 class RunnerScanTests(unittest.TestCase):
+    def test_scan_supervisor_scrubs_the_gate_child_and_scans_after_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifacts = Path(directory, 'artifacts')
+            script = Path(directory, 'fake_gate.py')
+            script.write_text(
+                'import os, pathlib, sys\n'
+                'assert sys.argv[1] == "--runner-child"\n'
+                'assert "BUILDBUDDY_API_KEY" not in os.environ\n'
+                'assert "MERGIFY_TOKEN" not in os.environ\n'
+                'p = pathlib.Path(os.environ["BUILDBUDDY_ARTIFACTS_DIRECTORY"])\n'
+                'p.mkdir()\n'
+                '(p / "failed-child.log").write_text("clean failure")\n'
+                'sys.exit(7)\n')
+            env = {'PATH': os.defpath, 'BUILDBUDDY_ARTIFACTS_DIRECTORY': str(artifacts),
+                   'BUILDBUDDY_API_KEY': 'fake-runner-key', 'MERGIFY_TOKEN': 'fake-token'}
+            with patch.dict(os.environ, env, clear=True), \
+                 patch.object(sys, 'argv', [str(script)]):
+                self.assertEqual(bazel_gate.runner_entrypoint(lambda: self.fail('parent ran gate')), 7)
+            self.assertEqual((artifacts / 'failed-child.log').read_text(), 'clean failure')
+
+    def test_runner_request_preserves_auth_for_the_scan_supervisor(self):
+        class Args:
+            mode, base, head, branch = 'pr', 'a' * 40, 'b' * 40, 'feature'
+            repo, cpu, memory, timeout = 'https://github.com/RobTand/trustladderiii', 8, '16GB', 60
+        command = remote_gate.run_request(Args)['steps'][-1]['run']
+        self.assertIn('child_env.py uv python find 3.14', command)
+        self.assertIn('"$scanner_python" tools/ci/bazel_gate.py', command)
+        self.assertNotIn('child_env.py python3 tools/ci/bazel_gate.py', command)
+
     def test_final_scan_marker_defers_without_starting_a_scanner(self):
         output = io.StringIO()
         with patch.dict(os.environ, {'BBRUN_FINAL_SCAN': '1'}, clear=True), \
@@ -151,6 +181,16 @@ class RunnerScanTests(unittest.TestCase):
                 self.assertEqual(status, 75 if missing else int(planted))
                 self.assertEqual(len(calls), 1)
                 self.assertEqual(list(artifacts.iterdir()) == [], planted or missing)
+
+    def test_runner_deletes_existing_artifacts_if_scanner_cannot_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifacts = Path(directory)
+            (artifacts / 'old.log').write_text('old artifact')
+            with patch.dict(os.environ, {}, clear=True), \
+                 patch.object(bazel_gate.subprocess, 'run', side_effect=OSError):
+                with self.assertRaises(OSError):
+                    bazel_gate.scan_artifacts(artifacts)
+            self.assertEqual(list(artifacts.iterdir()), [])
 
 
 if __name__ == '__main__':
