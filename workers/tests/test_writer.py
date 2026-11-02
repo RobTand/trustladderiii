@@ -430,6 +430,31 @@ def test_question_findings_are_redacted_before_the_model(tmp_path, writer_reques
     assert reply == {"event": "reply", "role": "writer", "reply": {**QUESTION, "decision": DECISION}}
 
 
+def test_summary_findings_for_a_tl3_review_stop_are_redacted_before_the_model(tmp_path, writer_request):
+    # Q54 (#440): a stop for TL3 review carries the failing step's evidence.
+    planted = ("ghp_aB3dE5fG7hJ9kL1mN3pQ5rS7tV9wX1yZ3aB5", MODEL_KEY)
+    writer_request["inputs"] = inputs_for("summary")
+    writer_request["inputs"]["facts"].update({
+        "outcome": "Work on this request stopped so that TL3's maintainers can review a failure "
+                   "before anything is retried: the review asked for changes again after one fix.",
+        "unmet_goals": ["The original request was not completed by this work."],
+        "findings": {"source": "checks_and_review",
+                     "report": "The receipt omits the order total. Token " + " and ".join(planted)},
+    })
+    seen, reply = run_with_findings(tmp_path, writer_request, PARTIAL_SUMMARY)
+    shown = seen["facts"]["findings"]
+    assert "order total" in shown["report"], "the evidence reaches the writer"
+    assert "[REDACTED]" in shown["report"]
+    for secret in planted:
+        assert secret not in json.dumps(seen), secret
+    assert reply == {"event": "reply", "role": "writer", "reply": PARTIAL_SUMMARY}
+
+
+def test_prompt_tells_a_summary_how_to_use_findings():
+    prompt = " ".join(files("tl3_workers").joinpath("prompts", "writer.md").read_text().split())
+    assert "For a summary, facts.findings" in prompt
+
+
 def test_question_reply_may_state_its_decision(tmp_path, writer_request):
     reply = {**QUESTION, "decision": DECISION}
     result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
