@@ -28,7 +28,8 @@ echo "{UV_SHA256}  uv.tar.gz" | sha256sum -c -
 tar -xzf uv.tar.gz
 install -D -m 755 uv-x86_64-unknown-linux-gnu/uv "$HOME/.local/bin/uv"'''
 SCHEMA = 'tl3.bazel-gate.v1'
-ARTIFACTS = ['bazel-remote-grpc.log', 'execution_log.binpb.zst']
+# Diagnostic logs, by suffix: each test or build run names its own.
+DIAGNOSTICS = ('bazel-remote-grpc.log', 'execution_log.binpb.zst')
 DONE = 'COMPLETE_INVOCATION_STATUS'
 LOST = 'DISCONNECTED_INVOCATION_STATUS'
 
@@ -104,6 +105,13 @@ def wait(client, invocation_id, deadline, interval=15, clock=time.monotonic, sle
         if clock() > deadline:
             raise RemoteError(f'remote run {invocation_id} did not finish in time')
         sleep(interval)
+
+
+def diagnostics(client, invocation):
+    for artifact in invocation.get('artifacts', []):
+        name = artifact.get('name', '')
+        if name.endswith(DIAGNOSTICS):
+            yield Path(name).name, client.call('GetFile', {'uri': artifact['uri']}, timeout=300, raw=True)
 
 
 def fetch(client, invocation, name):
@@ -236,10 +244,8 @@ def main():
             raise RemoteError('BuildBuddy Run returned no invocation id')
         print(f'Remote Bazel run: https://app.buildbuddy.io/invocation/{invocation_id}', flush=True)
         invocation = wait(client, invocation_id, started + (args.timeout + 10) * 60)
-        for name in ARTIFACTS:
-            data = fetch(client, invocation, name)
-            if data is not None:
-                (args.output_dir / name).write_bytes(data)
+        for name, data in diagnostics(client, invocation):
+            (args.output_dir / name).write_bytes(data)
         result = parse_result(fetch(client, invocation, RESULT), args.head)
     except RemoteError as error:
         print(f'::error::{error}', flush=True)
