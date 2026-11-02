@@ -3,9 +3,18 @@
 mod support;
 
 use serde_json::{Value, json};
-use tl3_controller::{Bootstrap, Controller, Repository, adapters, executor::Observation};
+use std::{fs, path::Path, sync::mpsc};
+use tl3_controller::{
+    Bootstrap, Controller, Repository,
+    adapters::{self, workers::Supervisor},
+    cli::Input,
+    executor::{Delivery, Observation},
+    ingress,
+};
 use tl3_kernel::NodeId;
-use tl3_store::{Commit, Store};
+use tl3_store::{Commit, NewEffect, RowChange, Store};
+
+const MODEL: &str = "claude-opus-5-5";
 
 fn bootstrap() -> Bootstrap {
     Bootstrap {
@@ -21,48 +30,144 @@ fn bootstrap() -> Bootstrap {
     }
 }
 
-/// What the older release stored under `observe:<key>`.
-fn store_old_event(settings: &tl3_config::Store, key: &str, payload: Value) {
+fn commit(settings: &tl3_config::Store, key: &str, payload: Value, rows: Vec<RowChange>) {
     let mut store = Store::open(settings).unwrap();
     let snapshot = store.load().unwrap();
-    store
-        .commit(&Commit::new(format!("observe:{key}"), payload, &snapshot))
-        .unwrap();
+    let mut change = Commit::new(key, payload, &snapshot);
+    change.rows = rows;
+    store.commit(&change).unwrap();
 }
 
-fn reply(generation: u64, model: Option<&str>) -> Observation {
-    Observation::WorkerReply {
-        node: NodeId(0),
-        generation,
-        role: "maker".into(),
-        reply: json!({"kind": "done", "head": "abc"}),
-        model: model.map(str::to_owned),
-    }
+fn ingest_run() -> Delivery {
+    serde_json::from_value(json!({
+        "key": "effect:0:3", "epoch": 1,
+        "output": {"Effect": {"node": 0, "seq": 3, "kind": {"StartRun": "Ingest"}, "head": null}},
+        "generation": 2, "head_sha": null,
+        "repository": {"owner": "owner", "name": "sandbox", "installation": 3},
+        "issue": 12, "pull_request": null, "paths": [], "attempt": 1, "round": 0
+    }))
+    .unwrap()
+}
+
+/// A run the older release had finished and observed: its records stay on disk.
+fn finished_attempt(runs: &Path, run: &Delivery, reply: &Value) {
+    let root = runs.join(
+        run.key
+            .bytes()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>(),
+    );
+    let attempt = root.join("attempt-00000000");
+    fs::create_dir_all(&attempt).unwrap();
+    // This machine, an earlier boot: the process is gone.
+    let claim = json!({"pid": 1, "machine": fs::read_to_string("/etc/machine-id").unwrap().trim(),
+        "start": 0, "boot": "an-earlier-boot"});
+    fs::write(attempt.join("claim.json"), claim.to_string()).unwrap();
+    fs::write(attempt.join("exit.json"), json!({"code": 0}).to_string()).unwrap();
+    fs::write(
+        attempt.join("request.json"),
+        json!({"role": "ingest", "model": {"name": MODEL}, "inputs": {}}).to_string(),
+    )
+    .unwrap();
+    fs::write(
+        attempt.join("stdout.jsonl"),
+        format!(
+            "{}\n",
+            json!({"event": "reply", "role": "ingest", "reply": reply})
+        ),
+    )
+    .unwrap();
 }
 
 #[test]
-fn upgrade_replays_keep_the_stored_receipt_and_conflicts_name_the_key() {
+fn startup_rereads_a_finished_run_in_the_newer_shape_and_the_loop_survives() {
     let mut database = support::Database::start();
     let settings = database.create("upgrade_replay");
     let root = tempfile::tempdir().unwrap();
-    // Shapes the release before #351 committed, without the model field.
-    store_old_event(
+    let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+    config.store = settings.clone();
+    config.workers.runs = root.path().join("runs");
+    config.hindsight.endpoint = "http://127.0.0.1:9".parse().unwrap();
+    let run = ingest_run();
+    let reply =
+        json!({"kind": "early_end", "outcome": "duplicate", "reason": "Already requested."});
+    let key = format!("{}:worker:0:0", run.key);
+    // The release before #351 observed this reply without a model, and still watches the run.
+    commit(
         &settings,
-        "effect:0:7:worker:0:0",
-        json!({"WorkerReply": {"node": 0, "generation": 3, "role": "maker",
-            "reply": {"kind": "done", "head": "abc"}}}),
+        &format!("observe:{key}"),
+        json!({"WorkerReply": {"node": 0, "generation": 2, "role": "ingest", "reply": reply}}),
+        vec![],
     );
-    store_old_event(
+    {
+        let mut store = Store::open(&settings).unwrap();
+        let snapshot = store.load().unwrap();
+        let mut change = Commit::new("watch-run", json!({"watch": run.key}), &snapshot);
+        change.rows = vec![RowChange::Put {
+            table: "watches".into(),
+            id: run.key.clone(),
+            value: json!(run),
+        }];
+        change.effects = vec![NewEffect {
+            key: run.key.clone(),
+            kind: "Workers".into(),
+            payload: json!(run),
+        }];
+        store.commit(&change).unwrap();
+    }
+    finished_attempt(&config.workers.runs, &run, &reply);
+    let mut controller = Controller::open(
+        Store::open(&settings).unwrap(),
+        adapters::simulation(root.path()).unwrap(),
+        bootstrap(),
+    )
+    .unwrap();
+    let before = controller.snapshot().unwrap().revision;
+    // Start-up: the new release's worker source rescans watched runs.
+    let supervisor = Supervisor::new(&config, &root.path().join("records")).unwrap();
+    let mut source = supervisor.source();
+    let (sender, receiver) = mpsc::channel();
+    source
+        .poll_once(&mut Store::open(&settings).unwrap(), &sender)
+        .unwrap();
+    let inputs: Vec<Input> = receiver.try_iter().collect();
+    let replay = inputs
+        .into_iter()
+        .find(|input| matches!(input, Input::Observation { key: k, .. } if *k == key))
+        .expect("the source re-reads the finished run under the stored key");
+    let Input::Observation { observation, .. } = &replay else {
+        unreachable!()
+    };
+    assert!(
+        matches!(observation, Observation::WorkerReply { model: Some(m), .. } if m == MODEL),
+        "the replay names the model the stored event lacks"
+    );
+    ingress::apply(&mut controller, replay).expect("the main loop survives the replay");
+    let after = controller.snapshot().unwrap();
+    assert_eq!(after.revision, before, "the stored receipt stands");
+    assert!(!after.rows.iter().any(|r| r.table == "inbox"));
+    database.stop();
+}
+
+#[test]
+fn replays_of_other_shapes_keep_the_receipt_and_conflicts_name_the_key() {
+    let mut database = support::Database::start();
+    let settings = database.create("upgrade_shapes");
+    let root = tempfile::tempdir().unwrap();
+    // The release before #351 stored quota endings without a model.
+    commit(
         &settings,
-        "effect:0:5:worker:1:0",
+        "observe:effect:0:5:worker:1:0",
         json!({"Quota": {"key": "effect:0:5", "reset_ms": 1_793_774_125_705_u64}}),
+        vec![],
     );
-    // The shape 43f6506d committed when a model was unknown.
-    store_old_event(
+    // 43f6506d stored an absent model as null.
+    commit(
         &settings,
-        "effect:0:9:worker:0:0",
+        "observe:effect:0:9:worker:0:0",
         json!({"WorkerReply": {"node": 0, "generation": 4, "role": "maker",
-            "reply": {"kind": "done", "head": "abc"}, "model": null}}),
+            "reply": {"kind": "done"}, "model": null}}),
+        vec![],
     );
     let mut controller = Controller::open(
         Store::open(&settings).unwrap(),
@@ -70,11 +175,7 @@ fn upgrade_replays_keep_the_stored_receipt_and_conflicts_name_the_key() {
         bootstrap(),
     )
     .unwrap();
-    let before = controller.snapshot().unwrap();
-    // The worker source re-reads finished runs at start-up, now naming the model.
-    controller
-        .observe("effect:0:7:worker:0:0", reply(3, Some("claude-opus-5-5")))
-        .expect("a newer shape of the same reply keeps the stored receipt");
+    let before = controller.snapshot().unwrap().revision;
     controller
         .observe(
             "effect:0:5:worker:1:0",
@@ -85,23 +186,24 @@ fn upgrade_replays_keep_the_stored_receipt_and_conflicts_name_the_key() {
             },
         )
         .expect("a newer shape of the same quota ending keeps the stored receipt");
+    let reply = |generation| Observation::WorkerReply {
+        node: NodeId(0),
+        generation,
+        role: "maker".into(),
+        reply: json!({"kind": "done"}),
+        model: None,
+    };
     controller
-        .observe("effect:0:9:worker:0:0", reply(4, None))
+        .observe("effect:0:9:worker:0:0", reply(4))
         .expect("an absent model matches a stored null");
-    let after = controller.snapshot().unwrap();
-    assert_eq!(
-        after.revision, before.revision,
-        "replays commit nothing new"
-    );
-    assert!(!after.rows.iter().any(|r| r.table == "inbox"));
-    // A different fact under the same key still stops, and the error names the key.
+    assert_eq!(controller.snapshot().unwrap().revision, before);
     let error = controller
-        .observe("effect:0:7:worker:0:0", reply(8, Some("claude-opus-5-5")))
+        .observe("effect:0:9:worker:0:0", reply(8))
         .unwrap_err();
     assert!(
-        error.to_string().contains("observe:effect:0:7:worker:0:0"),
+        error.to_string().contains("observe:effect:0:9:worker:0:0"),
         "{error}"
     );
-    assert_eq!(controller.snapshot().unwrap().revision, before.revision);
+    assert_eq!(controller.snapshot().unwrap().revision, before);
     database.stop();
 }

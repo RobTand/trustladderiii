@@ -537,7 +537,7 @@ mod observation_shapes {
     }
 
     #[test]
-    fn every_defaulted_observation_field_skips_its_default() {
+    fn every_optional_observation_field_skips_its_default() {
         let body = include_str!("executor.rs")
             .split_once("pub enum Observation {")
             .unwrap()
@@ -545,21 +545,46 @@ mod observation_shapes {
             .split_once("\n}\n")
             .unwrap()
             .0;
-        // Shipped serialized before the rule; skipping it now would itself change stored shapes.
-        let grandfathered = ["results"];
-        let lines: Vec<&str> = body.lines().map(str::trim).collect();
-        for (index, line) in lines.iter().enumerate() {
-            if line.starts_with("#[serde(default") && !line.contains("skip_serializing_if") {
-                let field = lines[index + 1..]
-                    .iter()
-                    .find(|l| !l.starts_with("#[") && !l.starts_with("///"))
-                    .and_then(|l| l.split(':').next())
+        // Shipped serialized before the rule; skipping now would change stored shapes.
+        let grandfathered = [("Classified", "reply"), ("Checks", "results")];
+        let mut variant = "";
+        let mut attributes: Vec<&str> = Vec::new();
+        let mut checked = 0;
+        for line in body.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("#[") {
+                attributes.push(trimmed);
+                continue;
+            }
+            if trimmed.is_empty() || trimmed.starts_with("//") {
+                continue;
+            }
+            if !line.starts_with("        ") {
+                variant = trimmed
+                    .split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .next()
                     .unwrap();
+                attributes.clear();
+                continue;
+            }
+            let Some((field, kind)) = trimmed.split_once(':') else {
+                attributes.clear();
+                continue;
+            };
+            let defaulted = attributes
+                .iter()
+                .any(|a| a.starts_with("#[serde(") && a.contains("default"));
+            if (defaulted || kind.trim_start().starts_with("Option<"))
+                && !attributes.iter().any(|a| a.contains("skip_serializing_if"))
+            {
                 assert!(
-                    grandfathered.contains(&field),
-                    "observation field `{field}` needs skip_serializing_if with its serde default"
+                    grandfathered.contains(&(variant, field)),
+                    "observation field {variant}.{field} needs skip_serializing_if, so its absence serializes like the older shape"
                 );
             }
+            checked += 1;
+            attributes.clear();
         }
+        assert!(checked > 20, "the guard must see the Observation fields");
     }
 }
