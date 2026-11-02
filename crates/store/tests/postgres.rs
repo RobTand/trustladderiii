@@ -46,6 +46,7 @@ fn main() {
         ("phase_entry_times", phase_entry_times),
         ("phase_backfill_from_schema_9", phase_backfill_from_schema_9),
         ("reader_role", reader_role),
+        ("postmortem_records", postmortem_records),
         ("console_commands", console_commands),
         ("prompt_seeding", prompt_seeding),
         ("prompt_builtin_updates", prompt_builtin_updates),
@@ -2072,4 +2073,117 @@ fn console_login_granted_before_migration(settings: &tl3_config::Store) {
         .save("reviewer", "Review v2.", "Edited.", "Rob", base)
         .unwrap()
         .unwrap();
+}
+
+/// #403: owed postmortems and code grades commit with the fact that makes them.
+fn postmortem_records(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let mut listener = Listener::open(settings).unwrap();
+    assert_eq!(store.postmortem_sample_share().unwrap(), 0.1);
+    let owed = |trigger: &str, reason: &str| OwedPostmortem {
+        node: "1".into(),
+        trigger: trigger.into(),
+        reason: reason.into(),
+        sample_share: None,
+        repo: "owner/sandbox".into(),
+        issue: 12,
+        title: "Fix greeting".into(),
+    };
+    let grade = |dimension: &str, grade: Option<i16>| CodeGrade {
+        node: "1".into(),
+        trigger: "close".into(),
+        rubric_version: 1,
+        dimension: dimension.into(),
+        grade,
+        fact: json!({"attempts": 1}),
+    };
+    let mut change = seed(&mut store);
+    change.postmortems = vec![owed("close", "needed_fix")];
+    change.grades = vec![grade("reliability", Some(4)), grade("credit", None)];
+    store.commit(&change).unwrap();
+    store.commit(&change).unwrap();
+    let tables = listener.wait().unwrap();
+    assert!(tables.contains("tl3_postmortems"), "{tables:?}");
+    let snapshot = store.load().unwrap();
+    let mut again = Commit::new("again", json!("again"), &snapshot);
+    again.postmortems = vec![owed("close", "retry"), owed("question:3", "escalation")];
+    again.grades = vec![grade("reliability", Some(1))];
+    store.commit(&again).unwrap();
+    let records = store.postmortems("1").unwrap();
+    assert_eq!(
+        records
+            .iter()
+            .map(|r| (r.trigger.as_str(), r.reason.as_str(), r.status.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("close", "needed_fix", "owed"),
+            ("question:3", "escalation", "owed")
+        ],
+        "each trigger is owed once, whatever replays or later commits say"
+    );
+    let grades = store.code_grades("1").unwrap();
+    assert_eq!(
+        grades,
+        vec![grade("reliability", Some(4)), grade("credit", None)]
+    );
+    let mut client = raw(settings);
+    assert!(
+        client
+            .query_one(
+                "SELECT owed_at = committed_at FROM tl3_postmortems p JOIN tl3_events e ON e.event_key = 'event-1' WHERE p.trigger = 'close'",
+                &[],
+            )
+            .unwrap()
+            .get::<_, bool>(0),
+        "owed with the commit that made it owed"
+    );
+    // Phase changes are kept as history from now on, for time per phase.
+    let mut phase = |key: &str, value: serde_json::Value| {
+        let snapshot = store.load().unwrap();
+        let mut change = Commit::new(key, json!(key), &snapshot);
+        change.rows = vec![put("1", value)];
+        store.commit(&change).unwrap();
+    };
+    phase("same-phase", json!({"phase": "Making", "attempt": 2}));
+    phase("closed", json!({"phase": {"Closed": "Merged"}}));
+    let history: Vec<serde_json::Value> = client
+        .query(
+            "SELECT phase FROM tl3_phase_history WHERE node_id = '1' ORDER BY since, id",
+            &[],
+        )
+        .unwrap()
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(history, [json!("Making"), json!({"Closed": "Merged"})]);
+    let password = settings.password_file.as_deref().unwrap();
+    grant_reader(settings, "tl3_postmortem_reader", password).unwrap();
+    let mut reader = postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .user("tl3_postmortem_reader")
+        .dbname(&settings.database)
+        .password("tl3-disposable-test-password")
+        .connect(NoTls)
+        .unwrap();
+    for table in [
+        "tl3_postmortems",
+        "tl3_postmortem_recommendations",
+        "tl3_code_grades",
+        "tl3_phase_history",
+        "tl3_settings",
+    ] {
+        reader
+            .query(&format!("SELECT * FROM {table}"), &[])
+            .unwrap_or_else(|error| panic!("the console reads {table}: {error}"));
+    }
+    assert!(
+        client
+            .execute(
+                "UPDATE tl3_settings SET value = '1.5' WHERE key = 'postmortem_sample_share'",
+                &[],
+            )
+            .is_err(),
+        "the share stays between 0 and 1"
+    );
 }

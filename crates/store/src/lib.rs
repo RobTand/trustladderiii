@@ -723,6 +723,23 @@ impl Store {
             .map(|r| r.get(0)))
     }
 
+    /// The share of clean merges sampled for a postmortem: a stored setting (#403).
+    pub fn postmortem_sample_share(&mut self) -> Result<f64> {
+        todo!()
+    }
+
+    /// A node's postmortems, oldest first.
+    pub fn postmortems(&mut self, node: &str) -> Result<Vec<PostmortemRecord>> {
+        let _ = node;
+        todo!()
+    }
+
+    /// A node's code grades, oldest first.
+    pub fn code_grades(&mut self, node: &str) -> Result<Vec<CodeGrade>> {
+        let _ = node;
+        todo!()
+    }
+
     /// Context committed with the kernel question and its notice delivery.
     pub fn question_context(&mut self, question: u64) -> Result<Option<serde_json::Value>> {
         Ok(self

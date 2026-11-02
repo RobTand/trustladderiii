@@ -81,6 +81,7 @@ fn main() {
     let mut database = Database::start();
     type Scenario = (&'static str, fn(&tl3_config::Store));
     let cases: &[Scenario] = &[
+        ("postmortem_records", postmortem_records),
         ("repository_count_mismatch", |s| {
             repository_followups::corrupt_index(s, "count")
         }),
@@ -2658,5 +2659,92 @@ fn status_nodeless_incidents(settings: &tl3_config::Store) {
         c.snapshot().unwrap(),
         before,
         "status must remain read only"
+    );
+}
+
+/// #403: a clean merge at a stored share of 1 owes one sampled postmortem and
+/// records its code grades at close; replays and restarts add nothing.
+fn postmortem_records(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let records = root.path().join("upstreams");
+    raw(settings)
+        .execute(
+            "UPDATE tl3_settings SET value = '1' WHERE key = 'postmortem_sample_share'",
+            &[],
+        )
+        .unwrap();
+    let mut controller = open(settings, &records);
+    controller.intake(labelled()).unwrap();
+    for _ in 0..200 {
+        if !controller.drive_once().unwrap() {
+            break;
+        }
+    }
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(Outcome::Merged)
+    );
+    let mut store = Store::open(settings).unwrap();
+    let owed = store.postmortems("0").unwrap();
+    assert_eq!(owed.len(), 1, "{owed:?}");
+    assert_eq!(
+        (
+            owed[0].trigger.as_str(),
+            owed[0].reason.as_str(),
+            owed[0].sample_share,
+            owed[0].status.as_str()
+        ),
+        ("close", "sampled", Some(1.0), "owed")
+    );
+    let grades = store.code_grades("0").unwrap();
+    for (dimension, grade) in [
+        ("reliability", Some(5)),
+        ("escalation", Some(5)),
+        ("queue", Some(5)),
+    ] {
+        assert!(
+            grades
+                .iter()
+                .any(|g| g.dimension == dimension && g.grade == grade && g.rubric_version == 1),
+            "{dimension}: {grades:?}"
+        );
+    }
+    let phases = &grades
+        .iter()
+        .find(|g| g.dimension == "phase_time")
+        .unwrap()
+        .fact;
+    for phase in ["Making", "Checking", "Reviewing", "Publishing", "Queued"] {
+        assert!(phases.get(phase).is_some(), "{phase}: {phases}");
+    }
+    let row = raw(settings)
+        .query_one(
+            "SELECT repo, issue, title FROM tl3_postmortems WHERE node_id = '0'",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            row.get::<_, String>(0),
+            row.get::<_, i64>(1),
+            row.get::<_, String>(2)
+        ),
+        (
+            "RobTand/tl3-sandbox".into(),
+            42,
+            "Fix the sandbox build".into()
+        )
+    );
+    drop(controller);
+    controller_lock_barrier(settings);
+    let mut restored = open(settings, &records);
+    assert!(!restored.drive_once().unwrap());
+    assert_eq!(
+        Store::open(settings).unwrap().postmortems("0").unwrap(),
+        owed
+    );
+    assert_eq!(
+        Store::open(settings).unwrap().code_grades("0").unwrap(),
+        grades
     );
 }
