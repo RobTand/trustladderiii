@@ -1,6 +1,5 @@
 mod maker;
-#[path = "support/scenario_shard.rs"]
-mod scenario_shard;
+use support::scenario_shard;
 use tl3_controller::executor::Output as Out;
 #[path = "workers/planning.rs"]
 mod planning;

@@ -1,8 +1,6 @@
 mod prismabuild_fixture;
 #[path = "publishing/adoption.rs"]
 mod publishing_adoption;
-#[path = "support/scenario_shard.rs"]
-mod scenario_shard;
 mod support;
 mod worktree_fixture;
 
@@ -16,6 +14,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use support::scenario_shard;
 use tl3_controller::executor::Output as Out;
 use tl3_controller::{
     Bootstrap, Boundary, Controller, LabelledIssue, Repository,
