@@ -3,6 +3,7 @@ use std::{
     collections::HashMap,
     fs,
     path::PathBuf,
+    process::Command,
     time::{Duration, Instant},
 };
 use tempfile::TempDir;
@@ -70,6 +71,7 @@ impl Database {
             .build()
             .unwrap();
         cache::install(&settings, &runtime);
+        initialize(&settings);
         let mut postgres = PostgreSQL::new(settings);
         runtime
             .block_on(postgres.setup())
@@ -133,4 +135,30 @@ impl Database {
         self.runtime.block_on(self.postgres.stop()).unwrap();
         assert!(self.scratch.path().exists());
     }
+}
+
+/// Run initdb as postgresql_embedded's setup would, but with `--no-sync`. The
+/// cluster is disposable, and initdb's flush fsyncs every file it created: on a
+/// contended disk that alone took tens of seconds (#362). The server still runs
+/// with fsync on, as the store requires.
+fn initialize(settings: &Settings) {
+    if settings.data_dir.join("postgresql.conf").exists() {
+        // cache::install's first download initialized this cluster already.
+        return;
+    }
+    fs::write(&settings.password_file, &settings.password).unwrap();
+    let output = Command::new(settings.binary_dir().join("initdb"))
+        .arg("--pgdata")
+        .arg(&settings.data_dir)
+        .args(["--username", "postgres", "--auth", "password"])
+        .arg("--pwfile")
+        .arg(&settings.password_file)
+        .args(["--encoding", "UTF8", "--no-sync"])
+        .output()
+        .expect("run initdb");
+    assert!(
+        output.status.success(),
+        "initdb: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
