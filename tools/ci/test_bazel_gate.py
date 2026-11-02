@@ -191,6 +191,101 @@ class ClassifyTests(unittest.TestCase):
             self.assertEqual(bazel_gate.test_statuses(Path(directory, 'missing.json')), {})
 
 
+class FailFastTests(unittest.TestCase):
+    def result(self, label='//a:failed', status='FAILED'):
+        return {'id': {'testResult': {'label': label}}, 'testResult': {'status': status}}
+
+    def test_batch_assertion_failure_cancels_immediately(self):
+        watcher = bazel_gate.FailFast('batch-draft')
+        watcher.event(self.result(), 10, lambda labels: set())
+        self.assertEqual(watcher.failure, {'label': '//a:failed', 'reason': 'FAILED'})
+        self.assertTrue(watcher.should_cancel(10))
+
+    def test_timeout_budget_and_quarantine_do_not_cancel(self):
+        for status, budget, quarantine in [('TIMEOUT', set(), set()),
+                                            ('FAILED', {'//a:failed'}, set()),
+                                            ('FAILED', set(), {'//a:failed'})]:
+            with self.subTest(status=status, budget=budget, quarantine=quarantine):
+                watcher = bazel_gate.FailFast('batch-draft', quarantine=quarantine)
+                watcher.event(self.result(status=status), 10, lambda labels: budget)
+                self.assertFalse(watcher.should_cancel(1000))
+                self.assertIsNone(watcher.failure)
+
+    def test_pr_collects_failures_for_at_most_sixty_seconds(self):
+        watcher = bazel_gate.FailFast('pr')
+        watcher.event(self.result(), 10, lambda labels: set())
+        self.assertFalse(watcher.should_cancel(69.9))
+        watcher.event(self.result('//a:another'), 69, lambda labels: set())
+        self.assertEqual(watcher.failures, {'//a:failed', '//a:another'})
+        self.assertTrue(watcher.should_cancel(70))
+        self.assertEqual(watcher.failure['label'], '//a:failed')
+
+    def test_main_never_cancels(self):
+        watcher = bazel_gate.FailFast('main')
+        watcher.event(self.result(), 0, lambda labels: set())
+        watcher.event({'id': {'targetCompleted': {'label': '//a:broken'}},
+                       'completed': {'success': False}}, 1, lambda labels: set())
+        self.assertFalse(watcher.should_cancel(1000))
+
+    def test_build_failure_cancels_but_failed_test_completion_is_not_a_build_failure(self):
+        watcher = bazel_gate.FailFast('batch-draft')
+        watcher.event({'id': {'targetCompleted': {'label': '//a:test'}},
+                       'completed': {'success': True}}, 1, lambda labels: set())
+        self.assertFalse(watcher.should_cancel(1))
+        watcher.event({'id': {'targetCompleted': {'label': '//a:broken'}},
+                       'completed': {'success': False}}, 2, lambda labels: set())
+        self.assertEqual(watcher.failure, {'label': '//a:broken', 'reason': 'BUILD_FAILURE'})
+        self.assertTrue(watcher.should_cancel(2))
+
+    def test_stream_reads_only_complete_new_lines(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, 'bep.json')
+            stream = bazel_gate.BepStream(path)
+            self.assertEqual(stream.read(), [])
+            line = json.dumps(self.result())
+            path.write_text(line[:20])
+            self.assertEqual(stream.read(), [])
+            with path.open('a') as output:
+                output.write(line[20:] + '\n')
+            self.assertEqual(stream.read(), [self.result()])
+            self.assertEqual(stream.read(), [])
+
+    def test_abort_fails_gate_even_if_all_summaries_passed(self):
+        self.assertFalse(bazel_gate.passed({'mode': 'batch-draft', 'verdicts': {'rust': 'pass'},
+                                          'aborted_early': {'label': '//a:broken',
+                                                            'reason': 'BUILD_FAILURE'}}))
+
+    def test_abort_skips_budget_rerun_inputs_and_build_and_records_missing(self):
+        label = '//crates/kernel:lib_test_tl3_kernel'
+        workspace = FakeWorkspace(['MODULE.bazel'], [], {label: 'FAILED'}, budget={label: 'PASSED'})
+        workspace.aborted_early = {'label': label, 'reason': 'FAILED'}
+        workspace.test = lambda *args, **kwargs: {label: 'FAILED'}
+        workspace.budget_only = lambda labels: self.fail('reran a definitively aborted run')
+        workspace.inputs_check = lambda: self.fail('checked inputs after abort')
+        result = bazel_gate.gate_pr(workspace, 'a' * 40, 'b' * 40, {}, mode='batch-draft')
+        self.assertEqual(result['aborted_early'], workspace.aborted_early)
+        self.assertEqual(result['not_run'], sorted(TESTS - {label}))
+        self.assertEqual(result['budget_reruns'], {})
+        self.assertEqual(workspace.built, [])
+
+    def test_workspace_interrupts_bazel_and_reaps_it(self):
+        import signal
+        from unittest.mock import patch
+        workspace = bazel_gate.Workspace(mode='batch-draft')
+        events = [self.result()]
+        with patch.object(bazel_gate, 'BepStream') as stream, \
+                patch.object(bazel_gate.subprocess, 'Popen') as popen:
+            stream.return_value.read.side_effect = lambda: events.copy() if events else []
+            process = popen.return_value.__enter__.return_value
+            process.poll.return_value = None
+            process.wait.return_value = 8
+            workspace.budget_only = lambda labels: set()
+            workspace.test(['//a:failed', '//a:pending'], 'remote', {}, 'pr')
+            process.send_signal.assert_called_once_with(signal.SIGINT)
+            process.wait.assert_called()
+        self.assertEqual(workspace.aborted_early, {'label': '//a:failed', 'reason': 'FAILED'})
+
+
 class GateTests(unittest.TestCase):
     def test_pr_gate_runs_selection_on_amd64_and_reports_failures(self):
         workspace = FakeWorkspace(['crates/kernel/src/lib.rs'], ['//crates/kernel:lib_test_tl3_kernel'],
