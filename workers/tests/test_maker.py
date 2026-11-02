@@ -1457,3 +1457,20 @@ def test_test_evidence_is_bounded():
     assert kept[-1]["tests"][0].startswith("test_9_"), "the newest run is kept"
     assert kept[-1]["tests_omitted"] == 256 - len(kept[-1]["tests"]) > 0
     validate("maker-reply", {**done, "test_evidence": kept})
+
+
+def test_maker_input_carries_a_forced_check(maker_request):
+    # #393: the maker sees the forcing its deflake must survive.
+    check = maker_request['inputs']['plan']['checks'][0]
+    check['forcing'] = {"symptom": "A real, unrelated process holds PID 4242.", "environment": {},
+                        "patches": [{"target": "sampler.process_in_scope", "raises": "ValueError"}]}
+    validate('maker-input', maker_request['inputs'])
+    check['forcing']['code'] = 'print(1)'
+    with pytest.raises(ValidationError):
+        validate('maker-input', maker_request['inputs'])
+
+
+def test_maker_prompt_explains_forced_checks():
+    prompt = " ".join((Path(__file__).parents[1] / "src/tl3_workers/prompts/maker.md").read_text().split())
+    assert "forcing" in prompt
+    assert "both with and without the forcing" in prompt
