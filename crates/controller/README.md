@@ -943,6 +943,31 @@ Stop proves the process has ended and stores no plan. The leaf, split, rejected
 leaf, invalid split and cannot-meet scenarios also check persistence, narrowing
 context and retry findings.
 
+## Postmortems
+
+Q32's postmortems are pulled forward (#403). `postmortems.rs` records them
+outside the kernel, in the commit that makes them owed, so a crash can't lose
+one and no delivery work waits on one.
+
+- **At close**, every node gets code grades under TL3's rubric
+  (`src/rubric.json`, version 1): reliability, escalation and queue outcome are
+  graded 1 to 5, and credit, questions, incidents and time per phase are recorded
+  as facts. A postmortem is owed when the node asked Rob or raised an incident
+  that needed him (`escalation`), had a fix round, later attempt or replan
+  (`needed_fix`), had a run, effect or plan retry (`retry`), or closed without
+  merging (`closed_without_merge`). Otherwise a clean merge is `sampled` when it
+  falls in the stored share `postmortem_sample_share` (default 0.1); the record
+  keeps the share in force. Sampling hashes the request and node, so the same
+  node is always sampled the same way.
+- **Every question to Rob** owes one (`question:<id>`), and so does every kernel
+  incident that needs him (`incident:<id>`).
+- **Rob's console button**, `{"kind": "postmortem"}`, owes one (`rob:<command
+  id>`, `rob_asked`) on a closed request or one awaiting Rob. It's refused while
+  one is owed or running, and posts nothing on the issue.
+
+The judge that writes postmortems arrives separately; until then they stay owed.
+The store tables are described in `crates/store/README.md`.
+
 ## Hindsight write-back
 
 Store migration 6 remains `0006_worker_wait.sql`, as deployed by the MVP.
