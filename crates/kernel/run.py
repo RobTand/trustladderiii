@@ -46,7 +46,8 @@ if mode == "manifest":
     for name in selected:
         if name in {"gate_leaf_progress_w2", "gate_leaf_progress_w3"}:
             # Four arbitrary nodes; Q39's priority field took them past 10 GB.
-            memory = 24
+            # Measured at 99aec9a8: 13.3 GB peak, about 35 minutes each.
+            memory = 16
         elif name.startswith("gate_"):
             memory = 10
         elif name in {"apply_rebase_clean", "apply_rebase_needs_changes"}:
