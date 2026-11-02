@@ -12,6 +12,20 @@ import rust_gate
 
 
 class GateTests(unittest.TestCase):
+    def test_captured_libtest_output_reports_a_missing_postgres_server(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = Path(temporary, 'fixture.py')
+            event = {'type': 'test', 'event': 'ok', 'name': 'database', 'exec_time': .1,
+                     'stdout': 'embedded Postgres cached setup (fsync=true): 0.01s\n'}
+            summary = {'type': 'suite', 'event': 'ok', 'passed': 1}
+            executable.write_text(f'print({json.dumps(event)!r}, flush=True)\n'
+                                  f'print({json.dumps(summary)!r}, flush=True)\n')
+            details = {}
+            with patch.dict(os.environ, {'TMPDIR': temporary}):
+                rust_gate.execute_binary({'name': 'fixture', 'command': [sys.executable, str(executable)]},
+                                         False, cpu_details=details)
+            self.assertEqual(set(details['cpu_fallbacks']), {'fixture::database'})
+
     def test_scenario_without_a_postgres_fixture_keeps_cpu_enforcement(self):
         with tempfile.TemporaryDirectory() as temporary:
             executable = Path(temporary, 'fixture.py')
