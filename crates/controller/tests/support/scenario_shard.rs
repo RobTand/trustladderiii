@@ -4,8 +4,7 @@ use std::env;
 /// Groups keep their original fixture lifetime and scenario timing markers.
 pub struct Shard {
     index: usize,
-    total: usize,
-    next: usize,
+    loads: Vec<usize>,
     planned: usize,
     selected: usize,
 }
@@ -17,38 +16,37 @@ impl Shard {
         };
         let index = parse("TEST_SHARD_INDEX", 0);
         let total = parse("TEST_TOTAL_SHARDS", 1);
-        assert!(
-            total > 0 && index < total,
-            "invalid Bazel shard index/count"
-        );
         Self::new(index, total)
     }
 
     pub fn new(index: usize, total: usize) -> Self {
+        assert!(
+            total > 0 && index < total,
+            "invalid Bazel shard index/count"
+        );
         Self {
             index,
-            total,
-            next: 0,
+            loads: vec![0; total],
             planned: 0,
             selected: 0,
         }
     }
 
     pub fn unsharded() -> Self {
-        Self {
-            index: 0,
-            total: 1,
-            next: 0,
-            planned: 0,
-            selected: 0,
-        }
+        Self::new(0, 1)
     }
 
     pub fn run(&mut self, markers: usize, scenario: impl FnOnce()) {
-        let selected = self.next % self.total == self.index;
-        self.next += 1;
+        let owner = self
+            .loads
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, load)| *load)
+            .unwrap()
+            .0;
+        self.loads[owner] += markers;
         self.planned += markers;
-        if selected {
+        if owner == self.index {
             scenario();
             self.selected += markers;
         }

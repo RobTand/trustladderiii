@@ -1,5 +1,3 @@
-#[path = "support/scenario_shard.rs"]
-mod scenario_shard;
 mod support;
 
 use std::{
@@ -265,7 +263,7 @@ fn scenario_shards_cover_every_group_once_and_balance_the_worker_fixture_groups(
     let mut owners = vec![0; groups.len()];
     let mut loads = Vec::new();
     for index in 0..4 {
-        let mut shard = scenario_shard::Shard::new(index, 4);
+        let mut shard = support::scenario_shard::Shard::new(index, 4);
         let mut load = 0;
         for (group, markers) in groups.iter().copied().enumerate() {
             shard.run(markers, || {
