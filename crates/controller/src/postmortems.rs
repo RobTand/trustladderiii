@@ -636,7 +636,7 @@ impl crate::Controller {
     pub(crate) fn recover_postmortems(&mut self) -> Result<()> {
         let snapshot = self.store.load()?;
         // Runs that failed before this start never pause the runner.
-        self.postmortem_since = snapshot.revision.get() as i64;
+        self.postmortem_since = snapshot.revision.get();
         let has = |table: &str, key: &str| {
             snapshot
                 .rows

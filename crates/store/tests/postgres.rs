@@ -2610,7 +2610,7 @@ fn postmortem_retries_and_pace(settings: &tl3_config::Store) {
     let mut change = seed(&mut store);
     change.postmortems = vec![owed("close")];
     store.commit(&change).unwrap();
-    let start = store.load().unwrap().revision.get() as i64;
+    let start = store.load().unwrap().revision.get();
     let update = |store: &mut Store, key: &str, update: PostmortemUpdate| {
         let snapshot = store.load().unwrap();
         let mut change = Commit::new(key, json!(key), &snapshot);
@@ -2687,7 +2687,7 @@ fn postmortem_retries_and_pace(settings: &tl3_config::Store) {
         2,
         "a deadline is retried"
     );
-    let middle = store.load().unwrap().revision.get() as i64;
+    let middle = store.load().unwrap().revision.get();
     run(
         &mut store,
         first.id,
