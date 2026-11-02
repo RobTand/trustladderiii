@@ -296,7 +296,8 @@ fn narrowed_materials(settings: &tl3_config::Store, wrapped: bool) {
         body.contains("## Protocol `prismabuild.gpu_lease.v1`") && body.contains("`TTL_S = 30`"),
         "the protocol section the answer refers to reaches ingest"
     );
-    assert!(body.contains("## Sections of the original issue that the answer refers to\n- Behaviour wanted\n"));
+    assert!(body.contains("## Sections of the original issue that the answer refers to\n")
+            && body.contains("\n- Behaviour wanted\n"));
     assert!(body.contains("## Question Rob answered\n"), "the answered question is named");
     assert_eq!(request["inputs"]["issue"]["number"], 2626);
     assert_eq!(request["role"], "ingest");

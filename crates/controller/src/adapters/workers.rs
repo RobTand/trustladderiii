@@ -497,6 +497,7 @@ impl Supervisor {
     ) -> Result<Value> {
         let mut ancestor = delivery.node();
         let mut linked_issue: Option<tl3_github::Issue> = None;
+        let mut narrowing: Option<Value> = None;
         loop {
             if let Some(mut materials) = store.worker_materials(&ancestor.0.to_string())? {
                 if ancestor != delivery.node()
@@ -507,8 +508,26 @@ impl Supervisor {
                     materials.remove("check_run");
                 }
                 if let Some(issue) = linked_issue {
+                    let answer = issue.body.unwrap_or_default();
+                    let body = if let Some(narrowing) = &narrowing {
+                        // #449: the answer is the scope; the original issue is context it may
+                        // refer to. Later roles read the same text, so keep it for this request.
+                        let (title, original) = self.original_issue(delivery, &materials);
+                        let body = crate::narrowing::issue_body(
+                            &answer,
+                            &title,
+                            &original,
+                            narrowing.get("question").filter(|question| !question.is_null()),
+                        );
+                        Some(body)
+                    } else {
+                        None
+                    };
                     materials["issue"] = json!({"number": issue.number, "title": issue.title,
-                        "body": issue.body.unwrap_or_default(), "author": "TL3", "comments": []});
+                        "body": body.clone().unwrap_or(answer), "author": "TL3", "comments": []});
+                    if body.is_some() {
+                        store.put_worker_materials(&delivery.node().0.to_string(), &materials)?;
+                    }
                 }
                 return Ok(materials);
             }
@@ -530,6 +549,7 @@ impl Supervisor {
                 .ok_or(Error::Invalid("worker materials are missing"))?;
             if linked_issue.is_none() {
                 linked_issue = Some(serde_json::from_value(link.value["issue"].clone())?);
+                narrowing = link.value.get("narrowing").cloned();
             }
             let original: tl3_kernel::NodeId =
                 serde_json::from_value(link.value["original"].clone())?;
@@ -540,6 +560,23 @@ impl Supervisor {
             }
             ancestor = original;
         }
+    }
+
+    /// The original issue's title and body for a narrowed request: as GitHub has them now, or
+    /// failing that as the first ingest read them.
+    fn original_issue(&self, delivery: &Delivery, root: &Value) -> (String, String) {
+        if let Some(provider) = &self.materials_provider {
+            match provider.current_issue(delivery) {
+                Ok(issue) => return (issue.title, issue.body.unwrap_or_default()),
+                Err(error) => eprintln!(
+                    "narrowed request {}: using the issue as first read; GitHub read failed: {error}",
+                    delivery.node().0
+                ),
+            }
+        }
+        let issue = root.get("issue").or_else(|| root["ingest"].get("issue"));
+        let text = |field: &str| issue.and_then(|issue| issue[field].as_str()).unwrap_or_default();
+        (text("title").into(), text("body").into())
     }
 
     /// Stop and prove termination before acknowledging teardown or a stall.

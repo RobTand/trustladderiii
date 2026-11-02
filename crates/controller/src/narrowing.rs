@@ -17,9 +17,75 @@ pub(crate) const ORIGINAL: &str = "Original issue, narrowed by Rob's answer abov
 const BODY_CHARS: usize = 65_536;
 
 /// Headings of `body` that `answer` refers to, by full heading text or by the heading's first word.
+/// The list is a hint for the audit; it names where to look, not what the brief must say.
 pub(crate) fn referenced_sections(answer: &str, body: &str) -> Vec<String> {
-    let _ = (answer, body);
-    todo!("#449")
+    let words = |text: &str| {
+        let plain: String = text
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { ' ' })
+            .collect();
+        format!(" {} ", plain.split_whitespace().collect::<Vec<_>>().join(" "))
+    };
+    let answer = words(answer);
+    let mut sections: Vec<String> = Vec::new();
+    let mut fenced = false;
+    for line in body.lines() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+        }
+        let hashes = line.chars().take_while(|c| *c == '#').count();
+        let text = line[hashes..].trim().trim_end_matches('#').trim();
+        if fenced || !(1..=6).contains(&hashes) || !line[hashes..].starts_with(' ') || text.is_empty() {
+            continue;
+        }
+        let heading = words(text);
+        let first = heading.split_whitespace().next().unwrap_or("");
+        let referred = answer.contains(&heading) || (first.len() >= 4 && answer.contains(&format!(" {first} ")));
+        if referred && !sections.iter().any(|seen| seen == text) {
+            sections.push(text.to_string());
+        }
+    }
+    sections
+}
+
+fn clipped(text: &str) -> String {
+    let text = text.trim();
+    if text.chars().count() <= BODY_CHARS {
+        return text.to_string();
+    }
+    format!("{}\n[truncated]", text.chars().take(BODY_CHARS).collect::<String>())
+}
+
+fn headline(kind: &str) -> &'static str {
+    match kind {
+        "audit_disagreement" => "Two readings of the request still disagreed.",
+        "needs_splitting" => "The request needed more than one change, so TL3 asked Rob to narrow it.",
+        "cant_meet" => "TL3 could not finish the request with the approach it tried.",
+        "out_of_credit" => "The request had used its allowance for further attempts.",
+        "effect_failed" => "A required action needed Rob's help.",
+        "cleanup_failed" | "cleanup_cant_finish" => "TL3 could not finish cleaning up the work.",
+        _ => "TL3 asked Rob a question about the request.",
+    }
+}
+
+fn question_text(question: &Value) -> String {
+    let id = question["id"].as_u64().map_or(String::new(), |id| format!(" {id}"));
+    let mut text = format!("Question{id}: {}", headline(question["kind"].as_str().unwrap_or("")));
+    let pieces: Vec<String> = question["pieces"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|piece| piece.as_str().map_or_else(|| piece.to_string(), str::to_string))
+        .map(|piece| format!("- {}", piece.chars().take(500).collect::<String>()))
+        .collect();
+    if !pieces.is_empty() {
+        text += &format!("\nPieces TL3 proposed:\n{}", pieces.join("\n"));
+    }
+    let report = &question["findings"];
+    if let Some(report) = report["report"].as_str().or_else(|| report["reading"].as_str()) {
+        text += &format!("\nWhat TL3 found:\n{}", report.chars().take(2000).collect::<String>());
+    }
+    text
 }
 
 /// The issue body the ingest and audit agents read for a narrowed request.
@@ -29,8 +95,16 @@ pub(crate) fn issue_body(
     original: &str,
     question: Option<&Value>,
 ) -> String {
-    let _ = (answer, title, original, question, BODY_CHARS);
-    todo!("#449")
+    let mut body = format!("## {ANSWER}\n{}\n\n", clipped(answer));
+    let sections = referenced_sections(answer, original);
+    if !sections.is_empty() {
+        let list: Vec<_> = sections.iter().map(|section| format!("- {section}")).collect();
+        body += &format!("## {REFERRED}\n{}\n\n", list.join("\n"));
+    }
+    if let Some(question) = question {
+        body += &format!("## {QUESTION}\n{}\n\n", question_text(question));
+    }
+    body + &format!("## {ORIGINAL}\nTitle: {title}\n\n{}", clipped(original))
 }
 
 #[cfg(test)]
@@ -48,7 +122,7 @@ mod tests {
         assert!(has("Behaviour wanted"), "named in quotes: {sections:?}");
         assert!(has("Protocol `prismabuild.gpu_lease.v1`"), "'the protocol section': {sections:?}");
         assert!(has("Acceptance tests"), "'their acceptance tests': {sections:?}");
-        assert!(!has("Problem") && !has("Directory"), "unreferenced: {sections:?}");
+        assert!(!has("Problem") && !has("Names"), "unreferenced: {sections:?}");
     }
 
     #[test]

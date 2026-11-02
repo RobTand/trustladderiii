@@ -642,6 +642,7 @@ pub(super) fn linked_reconciliation() {
         revert: false,
         since: "2026-10-30T01:00:00Z".into(),
         comment_issue: 25,
+        question: None,
     });
     api.state.lock().unwrap().lose_issue_reply = true;
     assert!(adapter.execute(&correction).is_err());

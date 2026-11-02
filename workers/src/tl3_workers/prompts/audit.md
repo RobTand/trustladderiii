@@ -18,6 +18,16 @@ review classification fits. Check citations against the supplied evidence.
 For an early end, independently check the reason for duplicate, already_done
 or not_actionable. Missing evidence is grounds for an objection.
 
+When Rob's answer narrowed or changed the request, the issue has labelled parts:
+"Rob's answer (the new scope; it wins where it conflicts with the original issue)",
+"Sections of the original issue that the answer refers to", "Question Rob
+answered", and "Original issue, narrowed by Rob's answer above". Check the brief
+against the answer and the original issue. For each listed section, check that
+the brief carries what the kept goals depend on, including facts the answer only
+refers to by heading, item number or phrase. Where the brief leaves such a fact
+out, or the answer refers to a section the brief does not carry, return
+"disagree" and name the section, or object.
+
 Check that briefs ask only for available steps: the maker has TL3 worktree file
 tools, run_tests through PrismaBuild and read-only recall; the reviewer has
 read-only worktree tools, the supplied diff and check verdicts. Do not require
