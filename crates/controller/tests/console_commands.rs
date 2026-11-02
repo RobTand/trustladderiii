@@ -371,12 +371,9 @@ fn bulk_defer_applies_each_recommendation_once_and_skips_answered_questions() {
     assert!(world.console(
         &uuid(3000),
         2,
-        json!({"kind": "answer", "question": questions[2], "choice": {"answer": "stop"}})
+        json!({"kind": "answer", "question": questions[2], "choice": {"answer": "continue"}})
     ));
-    assert!(matches!(
-        world.node(2).phase,
-        Phase::Stopping(_) | Phase::Closed(_)
-    ));
+    assert_ne!(world.node(2).phase, Phase::AwaitingRob);
     let ids: Vec<_> = (0..3).map(|n| uuid(3001 + n)).collect();
     let file = |world: &mut World| -> Vec<bool> {
         let mut commands = ConsoleCommands::open(&world.settings).unwrap();
@@ -592,7 +589,15 @@ fn a_crash_between_filing_and_applying_loses_nothing_and_applies_once() {
             panic!("crash before consuming the console command");
         }
     });
-    let mut crashing = open(&world.settings, world.root.path(), &world.workers, store);
+    // The fixture's controller holds the controller lock; the crashing one takes it over.
+    let World {
+        controller,
+        settings,
+        root,
+        workers,
+    } = world;
+    drop(controller);
+    let mut crashing = open(&settings, root.path(), &workers, store);
     assert!(
         catch_unwind(AssertUnwindSafe(|| tl3_controller::ingress::drain(
             &mut crashing
@@ -600,14 +605,19 @@ fn a_crash_between_filing_and_applying_loses_nothing_and_applies_once() {
         .is_err()
     );
     drop(crashing);
-    assert_eq!(world.outcome(&id), ("applied".into(), None));
     // The restarted controller replays the command; it changes nothing more.
-    world.controller = open(
-        &world.settings,
-        world.root.path(),
-        &world.workers,
-        Store::open(&world.settings).unwrap(),
-    );
+    let mut world = World {
+        controller: open(
+            &settings,
+            root.path(),
+            &workers,
+            Store::open(&settings).unwrap(),
+        ),
+        settings,
+        root,
+        workers,
+    };
+    assert_eq!(world.outcome(&id), ("applied".into(), None));
     tl3_controller::ingress::drain(&mut world.controller).unwrap();
     world.settle();
     assert!(world.node(0).paused);

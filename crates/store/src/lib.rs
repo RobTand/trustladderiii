@@ -99,6 +99,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (8, include_str!("../migrations/0008_memory_parking.sql")),
     (9, include_str!("../migrations/0009_memory_recovery.sql")),
     (10, include_str!("../migrations/0010_change_feed.sql")),
+    (11, include_str!("../migrations/0011_console_commands.sql")),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -940,7 +941,8 @@ impl Reader {
 }
 
 /// Create or update a login that may only read TL3's tables, now and after
-/// later migrations, with the password in `password_file`. Connects as the
+/// later migrations, with the password in `password_file`. Its one write is
+/// filing console commands through `tl3_console_command`. Connects as the
 /// store's owner. Safe to repeat.
 pub fn grant_reader(
     settings: &tl3_config::Store,
@@ -980,7 +982,12 @@ pub fn grant_reader(
          REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {role};
          GRANT SELECT ON ALL TABLES IN SCHEMA public TO {role};
          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO {role};
-         ALTER ROLE {role} SET default_transaction_read_only = on;"
+         ALTER ROLE {role} SET default_transaction_read_only = on;
+         DO $grant$ BEGIN
+             IF to_regprocedure('tl3_console_command(text, bigint, jsonb)') IS NOT NULL THEN
+                 GRANT EXECUTE ON FUNCTION tl3_console_command(text, bigint, jsonb) TO {role};
+             END IF;
+         END $grant$;"
     ))?;
     tx.commit()?;
     Ok(())
@@ -994,14 +1001,18 @@ pub struct Listener {
 
 impl Listener {
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
-        let mut client = connect(settings, true)?;
-        client.batch_execute("LISTEN tl3_changes")?;
-        Ok(Self { client })
+        Self::listen(settings, "LISTEN tl3_changes")
     }
 
     /// tl3d's wake for ingress filed outside its own process, such as console commands.
-    pub fn ingress(_settings: &tl3_config::Store) -> Result<Self> {
-        todo!()
+    pub fn ingress(settings: &tl3_config::Store) -> Result<Self> {
+        Self::listen(settings, "LISTEN tl3_ingress")
+    }
+
+    fn listen(settings: &tl3_config::Store, statement: &str) -> Result<Self> {
+        let mut client = connect(settings, true)?;
+        client.batch_execute(statement)?;
+        Ok(Self { client })
     }
 
     /// Block until at least one change commits, then take every notification
@@ -1022,17 +1033,32 @@ impl Listener {
     }
 }
 
-/// The console's session for filing commands.
-pub struct ConsoleCommands;
+/// The console's session for filing commands. Its login may only read, so the
+/// one write goes through `tl3_console_command` in an explicit read-write
+/// transaction.
+pub struct ConsoleCommands {
+    client: Client,
+}
 
 impl ConsoleCommands {
-    pub fn open(_settings: &tl3_config::Store) -> Result<Self> {
-        todo!()
+    pub fn open(settings: &tl3_config::Store) -> Result<Self> {
+        Ok(Self {
+            client: connect(settings, false)?,
+        })
     }
 
     /// File a command for tl3d. False when this id was already filed.
-    pub fn submit(&mut self, _id: &str, _node: u64, _action: &serde_json::Value) -> Result<bool> {
-        todo!()
+    pub fn submit(&mut self, id: &str, node: u64, action: &serde_json::Value) -> Result<bool> {
+        let node = i64::try_from(node).map_err(|_| Error::Invalid("node id out of range"))?;
+        let mut tx = self.client.build_transaction().read_only(false).start()?;
+        let filed = tx
+            .query_one(
+                "SELECT tl3_console_command($1, $2, $3)",
+                &[&id, &node, action],
+            )?
+            .get(0);
+        tx.commit()?;
+        Ok(filed)
     }
 }
 

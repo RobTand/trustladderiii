@@ -8,15 +8,22 @@
 //! issue. Replaying the command after a crash finds that commit and changes
 //! nothing.
 
-use crate::{Controller, Result};
+use crate::{
+    Controller, Error, Result,
+    executor::{CommentKind, Delivery, Observation, Output},
+    looks::Incident,
+    snapshot,
+    steering::{Origin, Task},
+};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::sync::mpsc::Sender;
-use tl3_kernel::Question;
-use tl3_store::Transaction;
+use serde_json::{Value, json};
+use std::{
+    sync::mpsc::Sender,
+    time::{Duration, Instant},
+};
+use tl3_kernel::{NodeId, Phase, QKind, Question};
+use tl3_store::{Commit, Snapshot, Transaction};
 use ts_rs::TS;
-#[cfg(test)]
-use {serde_json::json, tl3_kernel::QKind};
 
 /// The ingress source for console commands.
 pub const SOURCE: &str = "console";
@@ -35,10 +42,12 @@ pub struct Command {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Action {
-    Pause,
-    Resume,
-    Stop,
-    Restart,
+    // Empty structs, not unit variants: serde ignores deny_unknown_fields on
+    // an internally tagged unit variant.
+    Pause {},
+    Resume {},
+    Stop {},
+    Restart {},
     ClearIncident {
         incident: String,
     },
@@ -60,10 +69,10 @@ pub enum Action {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "answer", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Choice {
-    Continue,
-    Stop,
-    Retry,
-    MarkHandled,
+    Continue {},
+    Stop {},
+    Retry {},
+    MarkHandled {},
     TryAgain { guidance: String },
     AddCredit { amount: u8 },
     ChangeRequest { text: String },
@@ -137,44 +146,643 @@ pub struct CommandRecord {
 }
 
 /// The newest filed commands, newest first, inside the caller's snapshot.
-pub fn recent(_tx: &mut Transaction<'_>, _limit: i64) -> Result<Vec<CommandRecord>> {
-    todo!()
+pub fn recent(tx: &mut Transaction<'_>, limit: i64) -> Result<Vec<CommandRecord>> {
+    Ok(tx
+        .query(
+            "SELECT id, node_id, action, status, reason,
+                    (extract(epoch FROM received_at) * 1000)::bigint,
+                    (extract(epoch FROM settled_at) * 1000)::bigint
+             FROM tl3_console_commands ORDER BY received_at DESC, id LIMIT $1",
+            &[&limit],
+        )
+        .map_err(tl3_store::Error::from)?
+        .into_iter()
+        .map(|row| CommandRecord {
+            id: row.get(0),
+            node: row.get::<_, i64>(1) as u64,
+            action: serde_json::from_value(row.get(2)).ok(),
+            status: match row.get::<_, &str>(3) {
+                "applied" => CommandStatus::Applied,
+                "refused" => CommandStatus::Refused,
+                _ => CommandStatus::Pending,
+            },
+            reason: row.get(4),
+            received_ms: row.get(5),
+            settled_ms: row.get(6),
+        })
+        .collect())
 }
 
-/// The open question with its options, for the board.
-pub fn card_question(_question: Question) -> CardQuestion {
-    todo!()
-}
+/// Recommendations are fixed today: the first option, with the reason the
+/// GitHub question gives.
+const RECOMMENDED: usize = 0;
+const RECOMMENDATION_REASON: &str = "This option gives your request a clear next step.";
 
-impl Choice {
-    /// The classifier reply Rob's comment choosing this option would get.
-    #[cfg(test)]
-    fn reply(&self, _question: u64) -> Value {
-        todo!()
+/// A question's prompt and options, in the order and words the GitHub
+/// question uses (`adapters::github::writer_input`).
+fn options(kind: QKind) -> (&'static str, Vec<QuestionOption>) {
+    use AnswerKind::*;
+    let option = |answer, label: &str, outcome: &str, detail| QuestionOption {
+        answer,
+        label: label.into(),
+        outcome: outcome.into(),
+        detail,
+    };
+    let change = |outcome| {
+        option(
+            ChangeRequest,
+            "Change the request",
+            outcome,
+            Some(Detail::Text),
+        )
+    };
+    let stop = || option(Stop, "Stop", "I will stop this work.", None);
+    match kind {
+        QKind::AuditDisagreement => (
+            "Two readings of your request still disagree.",
+            vec![
+                option(
+                    Continue,
+                    "Continue with the original reading",
+                    "I will continue with the original understanding of your request.",
+                    None,
+                ),
+                change("I will stop this work and start from your new request."),
+                stop(),
+            ],
+        ),
+        QKind::NeedsSplitting => (
+            "This request needs more than one change, so I need you to narrow it.",
+            vec![
+                change("I will start again from the smaller request you provide."),
+                stop(),
+            ],
+        ),
+        QKind::CantMeet => (
+            "I could not finish your request with the approach I tried.",
+            vec![
+                option(
+                    TryAgain,
+                    "Try again with guidance",
+                    "I will try again using the guidance you provide.",
+                    Some(Detail::Guidance),
+                ),
+                change("I will stop this work and start from your new request."),
+                stop(),
+            ],
+        ),
+        QKind::OutOfCredit => (
+            "This request has used its agreed allowance for further attempts.",
+            vec![
+                option(
+                    AddCredit,
+                    "Add credit",
+                    "I will continue with the extra allowance you provide.",
+                    Some(Detail::Amount),
+                ),
+                change("I will stop this work and start from your new request."),
+                stop(),
+            ],
+        ),
+        QKind::EffectFailed => (
+            "A required action needs your help before work can continue.",
+            vec![
+                option(
+                    Continue,
+                    "Continue after fixing the cause",
+                    "I will continue once you confirm the cause is fixed.",
+                    None,
+                ),
+                stop(),
+            ],
+        ),
+        QKind::CleanupFailed => (
+            "I need your help to finish cleaning up this work.",
+            vec![
+                option(
+                    Retry,
+                    "Retry after fixing the cause",
+                    "I will try the cleanup again.",
+                    None,
+                ),
+                option(
+                    MarkHandled,
+                    "Mark the step handled",
+                    "I will accept that you have handled this cleanup step.",
+                    None,
+                ),
+            ],
+        ),
     }
 }
 
-/// Apply one console command from ingress. Called on the controller thread.
-pub(crate) fn apply(_controller: &mut Controller, _stored: &tl3_store::Ingress) -> Result<()> {
-    todo!()
+fn detail_words(detail: Detail) -> &'static str {
+    match detail {
+        Detail::Text => "your new request",
+        Detail::Guidance => "your guidance",
+        Detail::Amount => "a credit amount",
+    }
 }
 
-/// Wakes tl3d when the console files a command.
-pub struct Wakes {
-    _settings: tl3_config::Store,
+/// The open question with its options, for the board.
+pub fn card_question(question: Question) -> CardQuestion {
+    let (prompt, options) = options(question.kind);
+    let recommended = &options[RECOMMENDED];
+    CardQuestion {
+        id: question.id,
+        prompt: if question.clarified {
+            "I could not tell which option you chose. Could you clarify your answer?"
+        } else {
+            prompt
+        }
+        .into(),
+        defer_blocked: recommended.detail.map(|detail| {
+            format!(
+                "TL3's recommended option, \"{}\", needs {} from you.",
+                recommended.label,
+                detail_words(detail)
+            )
+        }),
+        recommended: RECOMMENDED as u32,
+        reason: RECOMMENDATION_REASON.into(),
+        options,
+    }
 }
 
-impl Wakes {
-    pub fn new(settings: tl3_config::Store) -> Self {
-        Self {
-            _settings: settings,
+impl Choice {
+    fn kind(&self) -> AnswerKind {
+        match self {
+            Choice::Continue {} => AnswerKind::Continue,
+            Choice::Stop {} => AnswerKind::Stop,
+            Choice::Retry {} => AnswerKind::Retry,
+            Choice::MarkHandled {} => AnswerKind::MarkHandled,
+            Choice::TryAgain { .. } => AnswerKind::TryAgain,
+            Choice::AddCredit { .. } => AnswerKind::AddCredit,
+            Choice::ChangeRequest { .. } => AnswerKind::ChangeRequest,
+        }
+    }
+
+    /// The classifier reply Rob's comment choosing this option would get.
+    fn reply(&self, question: u64) -> Value {
+        let mut reply = json!({"kind": "answer", "question_id": question.to_string()});
+        let fields = serde_json::to_value(self).expect("choices serialize");
+        for (key, value) in fields.as_object().expect("choices are objects") {
+            let key = match key.as_str() {
+                "text" => "new_text",
+                key => key,
+            };
+            reply[key] = value.clone();
+        }
+        reply
+    }
+
+    fn default_for(kind: AnswerKind) -> Option<Choice> {
+        Some(match kind {
+            AnswerKind::Continue => Choice::Continue {},
+            AnswerKind::Stop => Choice::Stop {},
+            AnswerKind::Retry => Choice::Retry {},
+            AnswerKind::MarkHandled => Choice::MarkHandled {},
+            AnswerKind::TryAgain | AnswerKind::AddCredit | AnswerKind::ChangeRequest => {
+                return None;
+            }
+        })
+    }
+
+    /// The option as the audit note names it.
+    fn described(&self, label: &str) -> String {
+        match self {
+            Choice::AddCredit { amount } => format!("{label} ({amount})"),
+            Choice::TryAgain { guidance } => format!("{label}{}", quoted(guidance)),
+            Choice::ChangeRequest { text } => format!("{label}{}", quoted(text)),
+            _ => label.into(),
         }
     }
 }
 
+/// Rob's words, indented so Markdown and mentions stay inert, as the writer
+/// quotes a changed request.
+fn quoted(text: &str) -> String {
+    let text = text
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replace("<!-- tl3:", "< !-- tl3:");
+    let mut quoted = String::from(":\n");
+    for line in text.split('\n') {
+        quoted.push_str("\n    ");
+        quoted.push_str(line);
+    }
+    quoted
+}
+
+const MAX_TEXT_CHARS: usize = 20_000;
+
+/// A command that changes nothing, and why, in Rob's words.
+struct Refused(String);
+
+fn refuse<T>(reason: impl Into<String>) -> std::result::Result<T, Refused> {
+    Err(Refused(reason.into()))
+}
+
+/// Apply one console command from ingress. Called on the controller thread.
+pub(crate) fn apply(controller: &mut Controller, stored: &tl3_store::Ingress) -> Result<()> {
+    let snapshot = controller.store.load()?;
+    let key = format!("console:{}", stored.delivery_key);
+    let event: Value = serde_json::from_slice(&stored.payload).unwrap_or(Value::Null);
+    let mut commit = Commit::new(key.clone(), event.clone(), &snapshot);
+    let verdict = match serde_json::from_value::<Command>(event.clone()) {
+        Ok(command) if command.id == stored.delivery_key => {
+            match translate(
+                controller,
+                &snapshot,
+                &command,
+                stored.sequence,
+                &mut commit,
+            ) {
+                Ok(verdict) => verdict,
+                Err(Error::Store(error)) => return Err(Error::Store(error)),
+                Err(error) => refuse(format!("TL3 couldn't apply this command: {error}")),
+            }
+        }
+        _ => refuse("TL3 couldn't read this command."),
+    };
+    let outcome = match verdict {
+        Ok(()) => json!({"status": "applied"}),
+        Err(Refused(reason)) => {
+            commit = Commit::new(key, event, &snapshot);
+            json!({"status": "refused", "reason": reason})
+        }
+    };
+    let mut result = std::mem::take(&mut commit.result);
+    if !result.is_object() {
+        result = json!({});
+    }
+    result["console"] = outcome;
+    commit.result = result;
+    controller.store.commit(&commit)?;
+    Ok(())
+}
+
+fn translate(
+    controller: &mut Controller,
+    snapshot: &Snapshot,
+    command: &Command,
+    sequence: i64,
+    commit: &mut Commit,
+) -> Result<std::result::Result<(), Refused>> {
+    let world = snapshot::decode(snapshot)?;
+    let node = NodeId(command.node);
+    let Some(n) = usize::try_from(command.node)
+        .ok()
+        .and_then(|index| world.nodes.get(index))
+        .copied()
+    else {
+        return Ok(refuse(format!("There is no request {}.", command.node)));
+    };
+    let binding = crate::request(snapshot, node)?;
+    if crate::latest_request(snapshot, &binding.repo, binding.issue)
+        .is_none_or(|row| row.id != node.0.to_string())
+    {
+        return Ok(refuse("A newer request replaced this one."));
+    }
+    let note = match &command.action {
+        Action::ClearIncident { incident } => {
+            match clear_incident(controller, snapshot, command, &binding, incident, commit)? {
+                Ok(()) => format!("Rob cleared incident {incident} from the TL3 console."),
+                Err(refused) => return Ok(Err(refused)),
+            }
+        }
+        Action::Comment { text } => {
+            if text.trim().is_empty() {
+                return Ok(refuse("Write an answer first."));
+            }
+            if text.chars().count() > MAX_TEXT_CHARS {
+                return Ok(refuse("Answers can be at most 20,000 characters."));
+            }
+            // GitHub's comment ids fit in 53 bits, so these never collide with one.
+            let id = (1u64 << 62) | sequence as u64;
+            let now = chrono::DateTime::<chrono::Utc>::from(controller.clock.now());
+            let observation = Observation::GitHubComment {
+                repository: binding.repo.clone(),
+                issue: binding.issue,
+                comment: tl3_github::Comment {
+                    id,
+                    body: text.clone(),
+                    user: tl3_github::Actor {
+                        id: controller.bootstrap.rob,
+                        login: "console".into(),
+                    },
+                    created_at: now,
+                    updated_at: now,
+                    issue_url: format!(
+                        "https://api.github.com/repos/{}/{}/issues/{}",
+                        binding.repo.owner, binding.repo.name, binding.issue
+                    ),
+                },
+            };
+            commit.rows.push(crate::put(
+                "inbox",
+                format!("external:console-comment:{}", command.id),
+                json!(observation),
+            ));
+            format!(
+                "Rob answered from the TL3 console. TL3 reads it as a comment{}",
+                quoted(text)
+            )
+        }
+        action => {
+            let (reply, note) = match steering_reply(&n, action) {
+                Ok(steering) => steering,
+                Err(refused) => return Ok(Err(refused)),
+            };
+            let inputs = json!({"comment": {"author": "console", "body": ""}, "state": crate::steering::state(&n)});
+            if crate::adapters::workers::protocol::validate_classification(&inputs, &reply).is_err()
+            {
+                return Ok(refuse("TL3's rules don't allow that right now."));
+            }
+            let since = chrono::DateTime::<chrono::Utc>::from(controller.clock.now()).to_rfc3339();
+            let key = format!("console-{}", command.id);
+            let origin = Origin {
+                key: &key,
+                text: &note,
+                comment: 0,
+                since,
+                issue: binding.issue,
+            };
+            let before = commit.rows.len();
+            match controller.steer(snapshot, &world, node, &reply, &origin, commit)? {
+                Some(event) => {
+                    controller.apply(snapshot, world.clone(), event, commit)?;
+                    let id = node.0.to_string();
+                    let changed = commit.rows.iter().any(|row| {
+                        matches!(row, tl3_store::RowChange::Put { table, id: row_id, .. }
+                            if table == "nodes" && *row_id == id)
+                    });
+                    if !changed {
+                        return Ok(refuse("TL3's rules don't allow that right now."));
+                    }
+                }
+                None if commit.rows.len() == before => {
+                    return Ok(refuse("TL3's rules don't allow that right now."));
+                }
+                None => {}
+            }
+            note
+        }
+    };
+    let delivery = Delivery {
+        key: format!("console-note:{}", command.id),
+        epoch: snapshot.epoch.get(),
+        output: Output::Comment {
+            node,
+            kind: CommentKind::ConsoleNote,
+        },
+        generation: n.generation,
+        head_sha: None,
+        repository: binding.repo,
+        issue: binding.issue,
+        pull_request: None,
+        paths: vec![],
+        attempt: 1,
+        round: 0,
+        replanned: n.replanned,
+        checks: None,
+        job_generation: None,
+        question: None,
+        marker_key: None,
+        note: Some(note.clone()),
+        scope_removals: None,
+        question_context: None,
+        request_text: binding.source,
+        proposed: None,
+        steering: Some(Task::ConsoleNote { text: note }),
+    };
+    commit.rows.push(controller.allowance_row(delivery.clone()));
+    commit.effects.push(delivery.into_effect());
+    Ok(Ok(()))
+}
+
+/// The classifier reply Rob's equivalent comment would get, and the audit note.
+fn steering_reply(
+    n: &tl3_kernel::Node,
+    action: &Action,
+) -> std::result::Result<(Value, String), Refused> {
+    let closed = || {
+        if n.phase.is_closed() {
+            refuse("The request is closed.")
+        } else {
+            Ok(())
+        }
+    };
+    Ok(match action {
+        Action::Pause {} => {
+            closed()?;
+            if n.paused {
+                return refuse("The request is already paused.");
+            }
+            (
+                json!({"kind": "pause"}),
+                "Rob paused this request from the TL3 console.".into(),
+            )
+        }
+        Action::Resume {} => {
+            closed()?;
+            if !n.paused {
+                return refuse("The request isn't paused.");
+            }
+            (
+                json!({"kind": "resume"}),
+                "Rob resumed this request from the TL3 console.".into(),
+            )
+        }
+        Action::Stop {} => {
+            closed()?;
+            if matches!(n.phase, Phase::Stopping(_)) {
+                return refuse("The request is already stopping.");
+            }
+            (
+                json!({"kind": "stop"}),
+                "Rob stopped this request from the TL3 console.".into(),
+            )
+        }
+        Action::Restart {} => {
+            if crate::steering::state(n)["restartable"] != true {
+                return refuse(
+                    "The request merged or is already being replaced, so it can't restart.",
+                );
+            }
+            (
+                json!({"kind": "restart"}),
+                "Rob restarted this request from the TL3 console. Work starts again from the issue as it is now.".into(),
+            )
+        }
+        Action::Answer { question, choice } => {
+            let (label, _) = open_option(n, *question, choice.kind())?;
+            match choice {
+                Choice::AddCredit { amount } if !(1..=100).contains(amount) => {
+                    return refuse("Credit must be from 1 to 100.");
+                }
+                Choice::TryAgain { guidance: text } | Choice::ChangeRequest { text }
+                    if text.trim().is_empty() =>
+                {
+                    return refuse("This option needs your words.");
+                }
+                Choice::TryAgain { guidance: text } | Choice::ChangeRequest { text }
+                    if text.chars().count() > MAX_TEXT_CHARS =>
+                {
+                    return refuse("Answers can be at most 20,000 characters.");
+                }
+                _ => {}
+            }
+            (
+                choice.reply(*question),
+                format!(
+                    "Rob answered question {question} from the TL3 console: {}.",
+                    choice.described(&label)
+                ),
+            )
+        }
+        Action::Defer { question } => {
+            let current = open_question(n, *question)?;
+            let card = card_question(current);
+            if let Some(reason) = card.defer_blocked {
+                return refuse(reason);
+            }
+            let recommended = &card.options[card.recommended as usize];
+            let choice = Choice::default_for(recommended.answer)
+                .expect("a recommendation without details has a default choice");
+            (
+                choice.reply(*question),
+                format!(
+                    "Rob deferred to TL3 on question {question}. TL3 applied its recommended option: {}.",
+                    recommended.label
+                ),
+            )
+        }
+        Action::ClearIncident { .. } | Action::Comment { .. } => {
+            unreachable!("handled before steering")
+        }
+    })
+}
+
+fn open_question(n: &tl3_kernel::Node, question: u64) -> std::result::Result<Question, Refused> {
+    if n.phase.is_closed() {
+        return refuse("The request is closed.");
+    }
+    match n.question {
+        Some(current) if current.id == question => Ok(current),
+        Some(current) => refuse(format!(
+            "Question {question} was answered meanwhile; question {} is open now.",
+            current.id
+        )),
+        None => refuse(format!("Question {question} was answered meanwhile.")),
+    }
+}
+
+fn open_option(
+    n: &tl3_kernel::Node,
+    question: u64,
+    answer: AnswerKind,
+) -> std::result::Result<(String, Question), Refused> {
+    let current = open_question(n, question)?;
+    let (_, offered) = options(current.kind);
+    match offered.into_iter().find(|option| option.answer == answer) {
+        Some(option) => Ok((option.label, current)),
+        None => refuse(format!("Question {question} doesn't offer that option.")),
+    }
+}
+
+/// Rob's `clear incident <id>` on the request's issue.
+fn clear_incident(
+    controller: &mut Controller,
+    snapshot: &Snapshot,
+    command: &Command,
+    binding: &crate::Request,
+    id: &str,
+    commit: &mut Commit,
+) -> Result<std::result::Result<(), Refused>> {
+    let Some(row) = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "incidents" && row.id == id)
+    else {
+        return Ok(refuse(format!("There is no incident {id}.")));
+    };
+    let incident: Incident = crate::decode_stored(row.value.clone())?;
+    let on_issue = match incident.node {
+        Some(node) => {
+            let request = crate::request(snapshot, node)?;
+            request.issue == binding.issue && request.repo == binding.repo
+        }
+        None => incident
+            .input_failure
+            .as_ref()
+            .and_then(|failure| failure.target.as_ref())
+            .is_some_and(|target| {
+                target.issue == binding.issue && target.repository == binding.repo
+            }),
+    };
+    if !on_issue {
+        return Ok(refuse(format!("Incident {id} isn't on this request.")));
+    }
+    if !incident.open {
+        return Ok(refuse(format!("Incident {id} is already cleared.")));
+    }
+    controller.clear_incident(
+        snapshot,
+        incident,
+        format!("incident-clear:console-{}:{id}", command.id),
+        commit,
+    )?;
+    Ok(Ok(()))
+}
+
+/// Wakes tl3d when the console files a command. Commands filed while no
+/// listener was open are drained on the wake each new session sends first.
+pub struct Wakes {
+    settings: tl3_config::Store,
+}
+
+impl Wakes {
+    const FIRST: Duration = Duration::from_millis(100);
+    const CAP: Duration = Duration::from_secs(5);
+    /// A session open this long was healthy, so the next drop retries fast.
+    const HEALTHY: Duration = Duration::from_secs(30);
+
+    pub fn new(settings: tl3_config::Store) -> Self {
+        Self { settings }
+    }
+}
+
 impl crate::ingress::Source for Wakes {
-    fn run(self, _sender: Sender<crate::cli::Input>) -> Result<()> {
-        todo!()
+    fn run(self, sender: Sender<crate::cli::Input>) -> Result<()> {
+        let mut delay = Self::FIRST;
+        loop {
+            let opened = Instant::now();
+            match tl3_store::Listener::ingress(&self.settings) {
+                Ok(mut listener) => {
+                    if sender.send(crate::cli::Input::Wake).is_err() {
+                        return Ok(());
+                    }
+                    let error = loop {
+                        match listener.wait() {
+                            Ok(_) => {
+                                if sender.send(crate::cli::Input::Wake).is_err() {
+                                    return Ok(());
+                                }
+                            }
+                            Err(error) => break error,
+                        }
+                    };
+                    eprintln!("console command wake lost: {error}; reconnecting");
+                    if opened.elapsed() >= Self::HEALTHY {
+                        delay = Self::FIRST;
+                    }
+                }
+                Err(error) => eprintln!("console command wake unavailable: {error}; retrying"),
+            }
+            std::thread::sleep(delay);
+            delay = (delay * 2).min(Self::CAP);
+        }
     }
 }
 

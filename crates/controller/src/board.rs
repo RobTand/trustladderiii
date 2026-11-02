@@ -439,7 +439,7 @@ fn card(
             .map(CardIncident::from)
             .collect(),
         badges: badges.into_iter().collect(),
-        question: None,
+        question: node.question.map(crate::console::card_question),
     }
 }
 

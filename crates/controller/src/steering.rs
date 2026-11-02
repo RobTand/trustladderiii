@@ -37,6 +37,22 @@ pub enum Task {
     RestartDropped {
         text: String,
     },
+    /// PRD #327, C3: the audit note for a console command, posted as written.
+    ConsoleNote {
+        text: String,
+    },
+}
+
+/// Where a steering instruction came from: Rob's issue comment, or a console
+/// command acting as one.
+pub(crate) struct Origin<'a> {
+    /// Unique per instruction; keys the restart and its effects.
+    pub key: &'a str,
+    pub text: &'a str,
+    /// The GitHub comment, or 0 for a console command.
+    pub comment: u64,
+    pub since: String,
+    pub issue: u64,
 }
 
 impl Delivery {
@@ -192,13 +208,8 @@ impl Controller {
             return Ok(false);
         };
         let n = &world.nodes[node.0 as usize];
-        let open_question = n.question.map(|q| {
-            let (kind, answers) = question(q.kind);
-            json!({"id": q.id.to_string(), "kind": if q.clarified { "unclear_answer" } else { kind }, "answers": answers})
-        });
         let mut inputs = json!({"comment": {"author": row.value["comment"]["user"]["login"], "body": row.value["comment"]["body"]},
-                "state": {"phase": format!("{:?}", n.phase), "closed": n.phase.is_closed(), "open_question": open_question,
-                    "restartable": restartable(n.phase)}});
+                "state": state(n)});
         if let Some(pending) = snapshot
             .rows
             .iter()
@@ -408,33 +419,6 @@ impl Controller {
             queue_comment(self, commit, clarification);
             return Ok(None);
         }
-        if kind == "restart" {
-            // The phase can change while the classifier runs, for example by a merge.
-            if !restartable(n.phase) {
-                return Ok(None);
-            }
-            let restart = Task::Restart {
-                comment_key: comment_key.clone(),
-                text: inputs["comment"]["body"].as_str().unwrap().into(),
-                issue: None,
-            };
-            commit
-                .rows
-                .push(put("replacement", node.0.to_string(), json!(restart)));
-            return Ok(match n.phase {
-                Phase::Closed(_) => {
-                    self.queue_restart(snapshot, world, node, restart, commit)?;
-                    None
-                }
-                // Stopping already tears the work down; close_replacement starts it again.
-                Phase::Stopping(_) => None,
-                _ => Some(Event::Command {
-                    node,
-                    id: n.last_cmd + 1,
-                    command: Command::ChangeRequest,
-                }),
-            });
-        }
         if kind == "complaint" && n.phase.is_closed() {
             let mut correction = delivery.clone();
             correction.key = format!("correction:{comment_key}");
@@ -460,6 +444,58 @@ impl Controller {
             queue_comment(self, commit, correction);
             return Ok(None);
         }
+        let origin = Origin {
+            key: comment_key,
+            text: inputs["comment"]["body"].as_str().unwrap(),
+            comment: comment.value["comment"]["id"].as_u64().unwrap(),
+            since: comment.value["comment"]["created_at"]
+                .as_str()
+                .unwrap()
+                .into(),
+            issue: comment.value["issue"].as_u64().unwrap(),
+        };
+        self.steer(snapshot, world, node, &reply, &origin, commit)
+    }
+
+    /// Apply one classified instruction, from a comment or the console, as Rob.
+    pub(crate) fn steer(
+        &mut self,
+        snapshot: &Snapshot,
+        world: &World,
+        node: NodeId,
+        reply: &Value,
+        origin: &Origin<'_>,
+        commit: &mut Commit,
+    ) -> Result<Option<Event>> {
+        let n = &world.nodes[node.0 as usize];
+        let kind: String = crate::adapters::workers::protocol::reply_field(reply, "kind")?;
+        if kind == "restart" {
+            // The phase can change while the classifier runs, for example by a merge.
+            if !restartable(n.phase) {
+                return Ok(None);
+            }
+            let restart = Task::Restart {
+                comment_key: origin.key.into(),
+                text: origin.text.into(),
+                issue: None,
+            };
+            commit
+                .rows
+                .push(put("replacement", node.0.to_string(), json!(restart)));
+            return Ok(match n.phase {
+                Phase::Closed(_) => {
+                    self.queue_restart(snapshot, world, node, restart, commit)?;
+                    None
+                }
+                // Stopping already tears the work down; close_replacement starts it again.
+                Phase::Stopping(_) => None,
+                _ => Some(Event::Command {
+                    node,
+                    id: n.last_cmd + 1,
+                    command: Command::ChangeRequest,
+                }),
+            });
+        }
         if n.phase.is_closed() {
             return Ok(None);
         }
@@ -471,13 +507,13 @@ impl Controller {
             "remark" => return Ok(None),
             "answer" => Command::Answer {
                 question: crate::adapters::workers::protocol::reply_field::<String>(
-                    &reply,
+                    reply,
                     "question_id",
                 )?
                 .parse()
                 .map_err(|_| Error::Invalid("invalid question id"))?,
                 answer: match crate::adapters::workers::protocol::reply_field::<String>(
-                    &reply, "answer",
+                    reply, "answer",
                 )?
                 .as_str()
                 {
@@ -486,7 +522,7 @@ impl Controller {
                     "change_request" => Answer::ChangeRequest,
                     "stop" => Answer::Stop,
                     "try_again" => Answer::TryAgain,
-                    "add_credit" => Answer::AddCredit(credit_amount(&reply)?),
+                    "add_credit" => Answer::AddCredit(credit_amount(reply)?),
                     "retry" => Answer::Retry,
                     "mark_handled" => Answer::MarkHandled,
                     _ => return Err(Error::Invalid("invalid classifier answer")),
@@ -509,14 +545,11 @@ impl Controller {
                 node.0.to_string(),
                 json!(Task::FileRequest {
                     text: text.into(),
-                    comment: comment.value["comment"]["id"].as_u64().unwrap(),
+                    comment: origin.comment,
                     correction: false,
                     revert: false,
-                    since: comment.value["comment"]["created_at"]
-                        .as_str()
-                        .unwrap()
-                        .into(),
-                    comment_issue: comment.value["issue"].as_u64().unwrap(),
+                    since: origin.since.clone(),
+                    comment_issue: origin.issue,
                 }),
             ));
         }
@@ -826,6 +859,16 @@ pub(crate) fn replacement_issue(
         labels: vec![],
         pull_request: None,
     })
+}
+
+/// The request state the classifier reads, and that console commands are checked against.
+pub(crate) fn state(n: &tl3_kernel::Node) -> Value {
+    let open_question = n.question.map(|q| {
+        let (kind, answers) = question(q.kind);
+        json!({"id": q.id.to_string(), "kind": if q.clarified { "unclear_answer" } else { kind }, "answers": answers})
+    });
+    json!({"phase": format!("{:?}", n.phase), "closed": n.phase.is_closed(), "open_question": open_question,
+        "restartable": restartable(n.phase)})
 }
 
 /// Q49: restart is offered until the work merges or is already being replaced.

@@ -68,7 +68,7 @@ fn deferring_needs_a_recommendation_tl3_can_apply_alone() {
 #[test]
 fn choices_become_the_classifier_reply_for_the_same_answer() {
     assert_eq!(
-        Choice::Continue.reply(9),
+        Choice::Continue {}.reply(9),
         json!({"kind": "answer", "question_id": "9", "answer": "continue"})
     );
     assert_eq!(
