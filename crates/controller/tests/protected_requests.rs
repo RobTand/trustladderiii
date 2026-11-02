@@ -108,8 +108,8 @@ fn run(body: &str, mode: &'static str, should_close: bool, expected_planners: us
     c.set_request_protection(&config);
     c.intake(LabelledIssue {
         delivery: "protected".into(),
-        owner: repo.owner.clone(),
-        repo: repo.name.clone(),
+        owner: repo.owner.to_ascii_uppercase(),
+        repo: repo.name.to_ascii_uppercase(),
         installation: repo.installation_id,
         number: 2636,
         title: "Retry budget-only gate failures".into(),
