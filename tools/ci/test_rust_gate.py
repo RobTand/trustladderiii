@@ -71,7 +71,7 @@ class GateTests(unittest.TestCase):
             root = Path(temporary)
             fixture = root / 'tl3-store-pg-budget'
             (fixture / 'data').mkdir(parents=True)
-            child = 'import time; start=time.process_time(); exec("while time.process_time()-start < .3: pass")'
+            child = 'import time; start=time.process_time(); exec("while time.process_time()-start < 6: pass")'
             server = ('import subprocess, sys\n'
                       + f'subprocess.run([sys.executable, "-c", {child!r}], check=True)\n'
                       + 'print("ready", flush=True)\n'
@@ -91,8 +91,8 @@ class GateTests(unittest.TestCase):
                         wall = rust_gate.execute_binary({'name': 'tl3-controller/publishing',
                                                          'command': [sys.executable, str(executable)]},
                                                         True, cpu_seconds=cpu, cpu_details=details)
-                    self.assertGreaterEqual(sum(cpu.values()), .3)
-                    self.assertGreaterEqual(sum(details['postgres_cpu_seconds'].values()), .3)
+                    self.assertGreaterEqual(sum(cpu.values()), 6)
+                    self.assertGreaterEqual(sum(details['postgres_cpu_seconds'].values()), 6)
                     self.assertFalse(details['cpu_fallbacks'])
                     self.assertIsNone(postmaster.poll(), 'server must still be alive and unreaped')
                     key = 'tl3-controller/publishing::query'
@@ -149,14 +149,35 @@ class GateTests(unittest.TestCase):
 
     def test_buildbuddy_stopgap_preserves_cpu_caps_and_tenfold_wall_backstop(self):
         policy = self.cpu_policy()
-        with self.assertRaisesRegex(RuntimeError, 'CPU 2.001s > 2.000s'):
+        policy['cpu']['seconds'] = 8
+        with self.assertRaisesRegex(RuntimeError, 'CPU 8.001s > 8.000s'):
             rust_gate.check_budget({'scenario': 25}, policy, policy,
-                                   runner_class='buildbuddy-amd64', cpu_seconds={'scenario': 2.001})
+                                   runner_class='buildbuddy-amd64', cpu_seconds={'scenario': 8.001})
         rust_gate.check_budget({'scenario': 300}, policy, policy,
                                runner_class='buildbuddy-amd64', cpu_seconds={'scenario': 0})
         with self.assertRaisesRegex(RuntimeError, 'wall backstop 300.001s > 300.000s'):
             rust_gate.check_budget({'scenario': 300.001}, policy, policy,
                                    runner_class='buildbuddy-amd64', cpu_seconds={'scenario': 0})
+
+    def test_cpu_floor_covers_recorded_short_scenario_noise(self):
+        policy = {'seconds': 10, 'slow': {}, 'cpu': {'seconds': 1, 'slow': {}}}
+        name = 'tl3-controller/prismabuild::recorded_records_reach_kernel'
+        for measured in [1.08, 1.14, 1.5, 1.56, 5]:
+            with self.subTest(measured=measured):
+                rust_gate.check_budget({name: 2}, policy, policy, cpu_seconds={name: measured})
+        with self.assertRaisesRegex(RuntimeError, 'CPU 5.001s > 5.000s'):
+            rust_gate.check_budget({name: 2}, policy, policy, cpu_seconds={name: 5.001})
+
+    def test_cpu_floor_keeps_regressions_and_larger_calibrated_caps_enforced(self):
+        for calibrated, effective in [(1, 5), (8, 8)]:
+            policy = {'seconds': 10, 'slow': {},
+                      'cpu': {'seconds': 1, 'slow': {'scenario': calibrated}}}
+            with self.subTest(calibrated=calibrated):
+                rust_gate.check_budget({'scenario': 2}, policy, policy,
+                                       cpu_seconds={'scenario': effective})
+                with self.assertRaisesRegex(RuntimeError, 'CPU'):
+                    rust_gate.check_budget({'scenario': 2}, policy, policy,
+                                           cpu_seconds={'scenario': 3 * effective})
 
     def test_waiting_three_wall_budgets_passes_with_low_cpu(self):
         policy = self.cpu_policy()
