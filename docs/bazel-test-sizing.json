@@ -775,6 +775,56 @@
             "sampled_peak_cpu": 0.998
           }
         ]
+      },
+      "after": {
+        "invocation": "7bec24ad-7944-4e73-8e65-ae09a25babb2",
+        "label": "//workers/tests:test_pb_tests",
+        "receipts": [
+          {
+            "action_digest": {
+              "hash": "2eb4daa365680980b05c2ae1c6ae62b9296662940f634b3b521e2d722b7210e1",
+              "sizeBytes": "433"
+            },
+            "execution_id": "/uploads/eeeb7fcf-141d-4f9a-97a4-5ed62e1135a5/blobs/2eb4daa365680980b05c2ae1c6ae62b9296662940f634b3b521e2d722b7210e1/433",
+            "shard": null,
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {
+              "estimatedMemoryBytes": "536870912",
+              "estimatedMilliCpu": "2000"
+            },
+            "effective": {
+              "estimatedMemoryBytes": "536870912",
+              "estimatedMilliCpu": "2000",
+              "estimatedFreeDiskBytes": "100000000"
+            },
+            "predicted": null,
+            "measured": null,
+            "cgroup": {
+              "cpuWeight": "79",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "12288",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                2,
+                18,
+                20,
+                21
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T22:36:36.608031083Z",
+            "completed": "2026-11-02T22:37:23.045903006Z",
+            "cpu_seconds": 43.40551,
+            "peak_memory_bytes": "433860608",
+            "sampled_peak_cpu": 1.0200400801603207
+          }
+        ],
+        "url": "https://app.buildbuddy.io/invocation/7bec24ad-7944-4e73-8e65-ae09a25babb2",
+        "verified": true
       }
     }
   },

@@ -138,6 +138,10 @@ cannot prove a new reservation; check the target's verdict and shard count in
 the run as well. Save its JSON output with the invocation URL as evidence.
 For workers use `--cpu=3 --memory-bytes=1073741824`; for Postgres use CPU 2
 with the same memory; for harness use CPU 2 and 536870912 bytes.
+For `//workers/tests:test_pb_tests`, use CPU 2 and 536870912 bytes. Its
+[7bec24ad receipt](https://app.buildbuddy.io/invocation/7bec24ad-7944-4e73-8e65-ae09a25babb2)
+shows both requested and effective allocations of 2000m and 536870912 bytes;
+the target and checker passed.
 
 The old publishing receipt from [cf925036](https://app.buildbuddy.io/invocation/cf925036-43e2-41c6-be27-3d3276560385)
 requested 4000m and 8 GiB but received 1000m and 491,680,192 bytes. Worker
