@@ -832,7 +832,12 @@ class Redactor:
         return self.clean(self.shape(value), min(PAYLOAD_BYTES, limit))
 
 
+# The run's loaded model key, for redaction outside tracing too (#322).
+model_key = ContextVar('tl3_model_key', default=None)
+
+
 def record_model_key(key):
+    model_key.set(key)
     if capture := active.get():
         capture.redactor.secrets.add(key)
 

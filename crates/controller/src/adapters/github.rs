@@ -55,7 +55,7 @@ impl Executor for Fake {
     }
 }
 
-use super::workers::writer::{MessageKind, WriteRequest, Writer, checked_draft};
+use super::workers::writer::{MessageKind, WriteRequest, Writer, checked_draft, fixed_question};
 use crate::Error;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -463,7 +463,10 @@ impl Executor for Adapter {
     }
 }
 
-fn writer_input(
+/// The facts a notice's text is written from. Public so the operator console
+/// (RobTand/tl3-console) shows a question's options and a closing summary from
+/// the same facts, without calling GitHub or the writer.
+pub fn writer_input(
     delivery: &Delivery,
     notice: Option<Notice>,
     title: &str,
@@ -516,7 +519,7 @@ fn writer_input(
                     &[
                         (
                             "Continue with the original reading",
-                            "I will continue with the original understanding of your request.",
+                            "I will continue with the original understanding of your request and set the check's open objections aside.",
                         ),
                         (
                             "Change the request",
@@ -587,20 +590,31 @@ fn writer_input(
                     ],
                 ),
             };
+            // #322: the deciding worker's findings, redacted by the worker process.
+            let findings = delivery
+                .question_context
+                .as_ref()
+                .and_then(|context| context.get("findings"))
+                .filter(|findings| findings.is_object());
             let options: Vec<_> = actions
                 .iter()
                 .map(|(action, outcome)| OptionDraft {
                     action: (*action).into(),
-                    outcome: (*outcome).into(),
+                    outcome: if findings.is_some() && *action == "Try again with guidance" {
+                        "I will try again using your answer to the question above and any guidance you provide.".into()
+                    } else {
+                        (*outcome).into()
+                    },
                 })
                 .collect();
-            (
-                MessageKind::Question,
-                json!({"issue_title": title, "request": request, "obstacle": if binding.clarified { "I could not tell which option you chose. Could you clarify your answer?" } else { obstacle },
+            let mut facts = json!({"issue_title": title, "request": request, "obstacle": if binding.clarified { "I could not tell which option you chose. Could you clarify your answer?" } else { obstacle },
                 "options": options, "recommended_option": 0,
                 "recommendation_reason": "This option gives your request a clear next step.",
-                "how_to_answer": format!("Reply on the issue, naming question {question}, with your chosen option and any requested details.")}),
-            )
+                "how_to_answer": format!("Reply on the issue, naming question {question}, with your chosen option and any requested details.")});
+            if let Some(findings) = findings {
+                facts["findings"] = findings.clone();
+            }
+            (MessageKind::Question, facts)
         }
         Notice::Incident { .. } => (
             MessageKind::Note,
@@ -741,8 +755,7 @@ impl Adapter {
                     .filter(|path| path.contains('/'))
                     .cloned(),
             );
-            let mut draft = match checked_draft(self.writer.as_mut(), &delivery.key, input, &policy)
-            {
+            let mut draft = match question_draft(self.writer.as_mut(), delivery, input, &policy) {
                 Ok(draft) => draft,
                 Err(Error::MessageRejected)
                     if matches!(
@@ -781,6 +794,30 @@ impl Adapter {
         }
         self.close_original(delivery)?;
         Ok(Completion::confirmed(vec![]))
+    }
+}
+
+/// Draft a message for Rob. A question always posts (#322): when every draft
+/// is rejected, Rob gets the fixed obstacle, options and the kind's decision.
+pub(crate) fn question_draft(
+    writer: &mut dyn Writer,
+    delivery: &Delivery,
+    input: WriteRequest,
+    policy: &Policy,
+) -> Result<String> {
+    let fallback = (input.kind == MessageKind::Question).then(|| input.clone());
+    match (
+        checked_draft(writer, &delivery.key, input, policy),
+        fallback,
+    ) {
+        (Err(Error::MessageRejected), Some(input)) => fixed_question(
+            &input,
+            delivery
+                .question
+                .and_then(|question| crate::question_findings::fixed_decision(question.kind)),
+            policy,
+        ),
+        (result, _) => result,
     }
 }
 
@@ -905,5 +942,178 @@ mod scope_summary_tests {
         assert_eq!(rendered.matches(removed).count(), 1);
         assert_eq!(rendered.matches(saved).count(), 1);
         assert!(rendered.ends_with(saved));
+    }
+}
+
+#[cfg(test)]
+mod question_findings_tests {
+    use super::super::workers::writer::{QuestionDraft, WriterReply};
+    use super::*;
+    use serde_json::Value;
+    use tl3_kernel::{Cont, NodeId, Question, Resume};
+
+    fn ask(kind: QKind, cont: Cont, findings: Value) -> Delivery {
+        let question = Question {
+            id: 10,
+            kind,
+            cont,
+            cost: 1,
+            clarified: false,
+        };
+        serde_json::from_value(json!({
+            "key":"ask:10", "epoch":1,
+            "output":Out::Notice {node:NodeId(0), notice:Notice::Ask {question:10}},
+            "generation":1, "repository":{"owner":"RobTand","name":"sandbox","installation":1},
+            "issue":42, "paths":[], "attempt":1, "round":0, "question":question,
+            "question_context":{"node":0, "question":10, "findings":findings}
+        }))
+        .unwrap()
+    }
+
+    fn input(delivery: &Delivery) -> WriteRequest {
+        writer_input(
+            delivery,
+            Some(Notice::Ask { question: 10 }),
+            "Add a blue button",
+            "Add a blue button",
+        )
+        .unwrap()
+    }
+
+    fn outcome(request: &WriteRequest, action: &str) -> String {
+        request.facts["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|option| option["action"] == action)
+            .unwrap_or_else(|| panic!("missing option {action}"))["outcome"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    #[test]
+    fn every_question_kind_passes_the_deciding_worker_findings_to_the_writer() {
+        for (kind, cont) in [
+            (QKind::AuditDisagreement, Cont::Unplanned),
+            (QKind::NeedsSplitting, Cont::Nowhere),
+            (QKind::CantMeet, Cont::Planning { must_split: false }),
+            (QKind::OutOfCredit, Cont::Ready(Resume::Making)),
+            (QKind::EffectFailed, Cont::Ready(Resume::Making)),
+        ] {
+            let findings = json!({"source":"planner",
+                "report":"The digest test pins the current file, so any edit fails six tests.",
+                "decision":"May this change also update the pinned digest entry?"});
+            let request = input(&ask(kind, cont, findings.clone()));
+            assert_eq!(request.facts["findings"], findings, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn options_say_what_they_do_with_the_decision() {
+        let request = input(&ask(
+            QKind::AuditDisagreement,
+            Cont::Unplanned,
+            json!({"source":"audit", "reading":"Add a JSON export.",
+                "objections":["The brief never says where the file is written."],
+                "decision":"Should I build this reading even though the check still has objections?"}),
+        ));
+        assert_eq!(
+            outcome(&request, "Continue with the original reading"),
+            "I will continue with the original understanding of your request and set the check's open objections aside.",
+            "continue must say what happens to the open objections"
+        );
+        let request = input(&ask(
+            QKind::CantMeet,
+            Cont::Planning { must_split: false },
+            json!({"source":"planner", "report":"The digest test pins the file.",
+                "decision":"May this change also update the pinned digest entry?"}),
+        ));
+        assert_eq!(
+            outcome(&request, "Try again with guidance"),
+            "I will try again using your answer to the question above and any guidance you provide."
+        );
+    }
+
+    struct Scripted(Vec<Option<&'static str>>, Vec<WriteRequest>);
+    impl Writer for Scripted {
+        fn draft(&mut self, _: &str, input: &WriteRequest) -> Result<WriterReply> {
+            self.1.push(input.clone());
+            Ok(WriterReply::Question(QuestionDraft {
+                request_quote: "Add a blue button".into(),
+                obstacle: "A test records the exact contents of the file you asked me to change, so every edit breaks it.".into(),
+                options: serde_json::from_value(input.facts["options"].clone()).unwrap(),
+                recommended_option: 0,
+                recommendation_reason: "This lets the change land as you asked.".into(),
+                how_to_answer: "Reply on the issue with your chosen option.".into(),
+                decision: self.0.remove(0).map(str::to_owned),
+            }))
+        }
+    }
+
+    #[test]
+    fn a_question_with_findings_must_state_its_decision() {
+        let decision = "May I also update the recorded checksum for that file in its test?";
+        let mut writer = Scripted(vec![None, Some(decision)], vec![]);
+        let request = input(&ask(
+            QKind::CantMeet,
+            Cont::Planning { must_split: false },
+            json!({"source":"planner", "report":"The digest test pins the file.",
+                "decision":"May this change also update the pinned digest entry?"}),
+        ));
+        let message = checked_draft(&mut writer, "ask:10", request, &Policy::default()).unwrap();
+        assert_eq!(writer.1.len(), 2, "a draft without the decision is redone");
+        assert!(
+            writer.1[1]
+                .violations
+                .iter()
+                .any(|violation| violation.contains("decision")),
+            "{:?}",
+            writer.1[1].violations
+        );
+        assert!(message.contains(decision), "{message}");
+    }
+
+    #[test]
+    fn a_faithful_rewrite_of_the_2662_decision_passes_the_checker() {
+        // prismaquant#2662: the planner asked whether the change may also edit the
+        // `prismaquant/digests.py` entry in `CURRENT_SOURCE_BLOBS`.
+        let decision = "May this change also update the `digests.py` entry in `CURRENT_SOURCE_BLOBS`, in the digest retention test?";
+        let mut writer = Scripted(vec![Some(decision)], vec![]);
+        let request = input(&ask(
+            QKind::CantMeet,
+            Cont::Planning { must_split: false },
+            json!({"source":"planner", "report":"The digest test pins the file.",
+                "decision":"may this leaf also edit the `prismaquant/digests.py` entry in `CURRENT_SOURCE_BLOBS`?"}),
+        ));
+        let message = checked_draft(&mut writer, "ask:10", request, &Policy::default()).unwrap();
+        assert!(message.contains(decision), "{message}");
+    }
+
+    #[test]
+    fn a_rejected_question_still_posts_with_the_fixed_decision() {
+        // Every draft names a path the checker refuses; Rob must still get a question.
+        let bad = "May I edit prismaquant/digests.py as well?";
+        let mut writer = Scripted(vec![Some(bad); 3], vec![]);
+        let delivery = ask(
+            QKind::CantMeet,
+            Cont::Planning { must_split: false },
+            json!({"source":"planner", "report":"The digest test pins the file.",
+                "decision":"may this leaf also edit `prismaquant/digests.py`?"}),
+        );
+        let message =
+            question_draft(&mut writer, &delivery, input(&delivery), &Policy::default()).unwrap();
+        assert_eq!(
+            writer.1.len(),
+            3,
+            "the writer gets its usual three drafts first"
+        );
+        assert!(message.contains("I could not finish your request with the approach I tried."));
+        assert!(
+            message.contains("What should I change about the approach so the request can be met?"),
+            "{message}"
+        );
+        assert!(message.contains("1. Try again with guidance: "));
+        assert!(!message.contains("digests"), "{message}");
     }
 }

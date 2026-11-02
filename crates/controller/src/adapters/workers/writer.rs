@@ -29,6 +29,8 @@ pub struct QuestionDraft {
     pub recommended_option: usize,
     pub recommendation_reason: String,
     pub how_to_answer: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -178,6 +180,9 @@ impl Writer for FakeWriter {
                     .as_str()
                     .ok_or(Error::Invalid("missing answer instructions"))?
                     .into(),
+                decision: input.facts["findings"]["decision"]
+                    .as_str()
+                    .map(str::to_owned),
             })),
             MessageKind::Clarification => Ok(WriterReply::Text(TextDraft {
                 text: format!(
@@ -242,6 +247,12 @@ pub fn checked_draft(
     let change_quote = (input.kind == MessageKind::Note)
         .then(|| input.facts["change_quote"].as_str().map(str::to_owned))
         .flatten();
+    // #322: a question built on a worker's findings must name the decision it needs.
+    let needs_decision = input.kind == MessageKind::Question
+        && input
+            .facts
+            .get("findings")
+            .is_some_and(serde_json::Value::is_object);
     for attempt in 0..3 {
         let reply = writer.draft(&format!("{key}:writer:{attempt}"), &input)?;
         if input.kind == MessageKind::Clarification
@@ -252,6 +263,9 @@ pub fn checked_draft(
             continue;
         }
         let checked = match &reply {
+            WriterReply::Question(question) if needs_decision && question.decision.is_none() => {
+                Err(vec![Violation::MissingDecision])
+            }
             WriterReply::Question(question) if input.kind == MessageKind::Question => {
                 let draft = Draft {
                     issue_title: title.clone(),
@@ -261,6 +275,7 @@ pub fn checked_draft(
                     recommended_option: Some(question.recommended_option),
                     recommendation_reason: question.recommendation_reason.clone(),
                     how_to_answer: question.how_to_answer.clone(),
+                    decision: question.decision.clone(),
                 };
                 message::check(&draft, &policy).map(|checked| checked.as_str().to_owned())
             }
@@ -309,6 +324,40 @@ pub fn checked_draft(
     Err(Error::MessageRejected)
 }
 
+/// The controller's own question, without findings, for when every draft fails.
+pub fn fixed_question(
+    input: &WriteRequest,
+    decision: Option<&str>,
+    policy: &Policy,
+) -> Result<String> {
+    let text = |field: &str| -> Result<String> {
+        Ok(input.facts[field]
+            .as_str()
+            .ok_or(Error::Invalid("fixed question needs its facts"))?
+            .to_owned())
+    };
+    let title = text("issue_title")?;
+    let draft = Draft {
+        issue_title: title.clone(),
+        request_quote: title.clone(),
+        obstacle: text("obstacle")?,
+        options: serde_json::from_value(input.facts["options"].clone())?,
+        recommended_option: input.facts["recommended_option"]
+            .as_u64()
+            .map(|index| index as usize),
+        recommendation_reason: text("recommendation_reason")?,
+        how_to_answer: text("how_to_answer")?,
+        decision: decision.map(str::to_owned),
+    };
+    let policy = Policy {
+        request_title: Some(title),
+        ..policy.clone()
+    };
+    message::check(&draft, &policy)
+        .map(|checked| checked.as_str().to_owned())
+        .map_err(|_| Error::MessageRejected)
+}
+
 fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> Vec<String> {
     let fields = match reply {
         WriterReply::Text(text) => vec![("message".to_owned(), text.text.clone())],
@@ -329,6 +378,9 @@ fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> V
                 question.recommendation_reason.clone(),
             ));
             fields.push(("answer instructions".into(), question.how_to_answer.clone()));
+            if let Some(decision) = &question.decision {
+                fields.push(("decision".into(), decision.clone()));
+            }
             fields
         }
     };
@@ -357,6 +409,12 @@ fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> V
                 }
                 Violation::ForeignReference(token) => {
                     return format!("Remove the foreign reference '{token}'; refer only to this request's issue or pull request.");
+                }
+                Violation::MissingDecision => {
+                    return "Add the decision: the one decision Rob must make, as a single question ending in a question mark.".into();
+                }
+                Violation::DecisionNotOneQuestion => {
+                    return "The decision must be one plain question ending in a question mark, with no other sentence.".into();
                 }
                 Violation::HtmlEntity(entity) => {
                     return format!("Replace the HTML entity '{entity}' in '{text}'; write the character itself, not an HTML entity.");
