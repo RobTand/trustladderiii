@@ -2,6 +2,8 @@
 # Rob, 2026-11-01: the worker ladder moved off gpt-6.1-sol, which was out of
 # quota, to Anthropic models. This matches the live tl3.toml from 21:58Z.
 # Families are labelled per model line, so Q22 still forces a different model to review.
+# Rob, 2026-11-02: Fable is not used. Allowed: Opus 5.5, Sonnet 5.5 and GPT-6.1 Sol.
+# Sol is out of quota on both accounts, so these defaults use only Opus and Sonnet.
 # Budgets are per-response output limits and must not exceed limits.context_tokens.
 # Claude: 1M context, 128K output. See deploy/dl380g10/README.md for sources and
 # the proxy smoke command.
@@ -9,7 +11,7 @@ ingest = [{ name = "claude-sonnet-5-5", family = "claude-sonnet", effort = "high
 audit = [{ name = "claude-sonnet-5-5", family = "claude-sonnet", effort = "high", budget_tokens = 32000 }]
 planner = [
     { name = "claude-opus-5-5", family = "claude-opus", effort = "high", budget_tokens = 32000 },
-    { name = "claude-fable-5-1", family = "claude-fable", effort = "high", budget_tokens = 32000 },
+    { name = "claude-sonnet-5-5", family = "claude-sonnet", effort = "high", budget_tokens = 32000 },
 ]
 # Rob, 2026-11-02 (#416): Sonnet 5.5 high, then Opus 5.5 high. Attempt 3 reuses Opus.
 maker = [

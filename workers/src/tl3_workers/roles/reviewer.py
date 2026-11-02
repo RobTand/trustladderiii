@@ -160,8 +160,8 @@ ROLE = Role(
     tools={
         "list": "List reviewed worktree directories to locate evidence for a goal or rule.",
         "read": "Read reviewed head files to check goals and standing rules. Follow page continuations.",
-        "glob": "Find reviewed head paths using relative glob patterns.",
-        "grep": "Find literal text in reviewed head files to investigate a goal or rule.",
+        "glob": "Find reviewed head paths using relative glob patterns. The path must be a directory.",
+        "grep": "Find literal text in reviewed head files to investigate a goal or rule. The path may be a file or a directory, and the pattern is literal text, not a regular expression.",
     },
     check_reply=check_reply,
     run=run,
