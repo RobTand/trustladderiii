@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 from threading import Barrier, Event
 
 import httpx
@@ -1335,29 +1336,47 @@ def test_maker_budget_exhaustion_finishes_without_claiming_unmade_changes(maker_
                                   'no code change was made' if final_done else 'The work is incomplete.'}
 
 
+RECEIPT = {"action_key": "a" * 64, "status": "executed", "exit_code": 0,
+           "receipt_sha256": "b" * 64, "log_sha256": "c" * 64}
+
+
+def staged_tree(root):
+    # The tree of the worktree's current files, as pb_tests stages them for PrismaBuild.
+    with tempfile.TemporaryDirectory() as temporary:
+        env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        env.update(GIT_INDEX_FILE=str(Path(temporary) / "index"), GIT_CONFIG_NOSYSTEM="1",
+                   GIT_CONFIG_GLOBAL=os.devnull)
+        subprocess.run(["git", "add", "--all"], cwd=root, env=env, check=True, capture_output=True)
+        return subprocess.run(["git", "write-tree"], cwd=root, env=env, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+
+def receipts_factory(worktree):
+    def run_tests(tests: list[str] | None = None, base: bool = False, repeat: int = 1,
+                  parallel: int = 0, priority: int | None = None) -> dict:
+        return {"status": "completed", "totals": {"passed": 1, "failed": 0, "error": 0, "skipped": 0},
+                "tests": [], "note": "", "action_key": "a" * 64, "receipts": [RECEIPT],
+                "tree": staged_tree(worktree.test_checkout),
+                "repeat": repeat, "runs": [{"run": n + 1, "status": "completed",
+                                            "totals": {"passed": 1, "failed": 0, "error": 0, "skipped": 0},
+                                            "failed": []} for n in range(repeat)]}
+    return run_tests
+
+
+RUN_FIVE = AIMessage(**turn(calls=[{"name": "run_tests", "id": "test", "type": "tool_call",
+                                    "args": {"tests": ["test_greeting.py::test_hello"], "repeat": 5}}]))
+
+
 def test_done_reply_carries_the_run_tests_receipts(maker_request, monkeypatch):
-    # #408: the evidence the maker cites lands in its reply for the reviewer.
-    receipt = {"action_key": "a" * 64, "status": "executed", "exit_code": 0,
-               "receipt_sha256": "b" * 64, "log_sha256": "c" * 64}
-
-    def factory(worktree):
-        def run_tests(tests: list[str] | None = None, base: bool = False, repeat: int = 1,
-                      parallel: int = 0, priority: int | None = None) -> dict:
-            return {"status": "completed", "totals": {"passed": 1, "failed": 0, "error": 0, "skipped": 0},
-                    "tests": [], "note": "", "action_key": "a" * 64, "receipts": [receipt],
-                    "repeat": repeat, "runs": [{"run": n + 1, "status": "completed",
-                                                "totals": {"passed": 1, "failed": 0, "error": 0, "skipped": 0},
-                                                "failed": []} for n in range(repeat)]}
-        return run_tests
-
+    # #408: the evidence the maker cites lands in its reply for the reviewer,
+    # for the tree that run tested, which is the committed head's tree (#432).
     fake = FakeMessagesListChatModel(responses=[
-        AIMessage(**turn(calls=[{"name": "run_tests", "id": "test", "type": "tool_call",
-                                 "args": {"tests": ["test_greeting.py::test_hello"], "repeat": 5}}])),
         AIMessage(**write_turn()),
         AIMessage(**write_turn("test_greeting.py", "def test_hello(): pass\n")),
+        RUN_FIVE,
         AIMessage(**turn(DONE)),
     ])
-    monkeypatch.setitem(TOOL_FACTORIES, "run_tests", factory)
+    monkeypatch.setitem(TOOL_FACTORIES, "run_tests", receipts_factory)
     monkeypatch.setattr(runtime, "create_model", lambda request: fake)
     events = []
     runtime.run(maker_request, events.append)
@@ -1366,5 +1385,48 @@ def test_done_reply_carries_the_run_tests_receipts(maker_request, monkeypatch):
     [evidence] = reply["test_evidence"]
     assert evidence["tests"] == ["test_greeting.py::test_hello"]
     assert evidence["repeat"] == 5 and len(evidence["runs"]) == 5
-    assert evidence["receipts"] == [receipt]
+    assert evidence["receipts"] == [RECEIPT] and evidence["fresh"] is True
+    assert evidence["tree"] == git(Path(maker_request["worktree"]), "rev-parse", f"{reply['head']}^{{tree}}")
     validate("maker-reply", reply)
+
+
+def test_runs_before_a_later_edit_are_not_evidence_for_the_head(maker_request, monkeypatch):
+    # #432: run, edit, done. The run tested a tree the head no longer has.
+    fake = FakeMessagesListChatModel(responses=[
+        AIMessage(**write_turn("test_greeting.py", "def test_hello(): pass\n")),
+        RUN_FIVE,
+        AIMessage(**write_turn()),
+        AIMessage(**turn(DONE)),
+    ])
+    monkeypatch.setitem(TOOL_FACTORIES, "run_tests", receipts_factory)
+    monkeypatch.setattr(runtime, "create_model", lambda request: fake)
+    events = []
+    runtime.run(maker_request, events.append)
+    reply = events[-1]["reply"]
+    assert reply["kind"] == "done"
+    assert "test_evidence" not in reply
+
+
+def test_test_evidence_is_bounded():
+    # #432: entries, selectors and strings are capped, and the worker keeps the whole list small.
+    from tl3_workers.tools import TEST_EVIDENCE_BYTES, Evidence
+
+    entry = {"tests": ["test_greeting.py::test_hello"], "base": False, "repeat": 1, "parallel": 0,
+             "status": "completed", "tree": "e" * 40, "fresh": True,
+             "totals": {"passed": 1, "failed": 0, "error": 0, "skipped": 0}, "receipts": [RECEIPT]}
+    done = {"kind": "done", "head": "f" * 40, "self_check": DONE["self_check"]}
+    validate("maker-reply", {**done, "test_evidence": [entry]})
+    for evidence in ([entry] * 11, [{**entry, "tests": ["t" * 2049]}], [{**entry, "tests": ["t"] * 257}],
+                     [{**entry, "receipts": [RECEIPT] * 2}], [{**entry, "tree": "not a tree"}]):
+        with pytest.raises(ValidationError):
+            validate("maker-reply", {**done, "test_evidence": evidence})
+    recorder = Evidence()
+    for index in range(10):
+        tests = tuple(f"test_{index}_{n}_" + "x" * 1900 for n in range(256))
+        recorder.test_result({"status": "completed", "totals": entry["totals"], "receipts": [RECEIPT],
+                              "tree": "e" * 40}, (False, tests), {"repeat": 1, "parallel": 0})
+    kept = recorder.test_evidence()
+    assert kept and len(json.dumps(kept).encode()) <= TEST_EVIDENCE_BYTES
+    assert kept[-1]["tests"][0].startswith("test_9_"), "the newest run is kept"
+    assert kept[-1]["tests_omitted"] == 256 - len(kept[-1]["tests"]) > 0
+    validate("maker-reply", {**done, "test_evidence": kept})

@@ -384,16 +384,34 @@ mod hostile_tests {
     #[test]
     fn review_inputs_carry_the_makers_test_evidence_for_this_head() {
         // #408: receipts the maker cited reach the reviewer, for the head it made.
+        // #432: only runs whose tested tree is the head's tree, or the check base's for base runs.
         let f = Repo::new();
+        let head_tree =
+            crate::git_tests::git(&f.path, &["rev-parse", &format!("{}^{{tree}}", f.head)]);
+        let base_tree =
+            crate::git_tests::git(&f.path, &["rev-parse", &format!("{}^{{tree}}", f.base)]);
+        let run = |base: bool, tree: &str| {
+            json!({"tests": ["test_value.py::test_value"], "base": base, "repeat": 5,
+                "parallel": 0, "status": "completed", "tree": tree, "fresh": true,
+                "totals": {"passed": 1, "failed": 0, "error": 0, "skipped": 0},
+                "receipts": [{"action_key": "a".repeat(64), "status": "executed", "exit_code": 0,
+                    "receipt_sha256": "b".repeat(64), "log_sha256": "c".repeat(64)}]})
+        };
+        let all = json!([
+            run(false, &head_tree),
+            run(true, &base_tree),
+            run(false, &base_tree),
+            run(true, &head_tree)
+        ]);
         let mut db = Database::start();
-        let evidence = json!([{"tests": ["test_value.py::test_value"], "base": false, "repeat": 5,
-            "parallel": 0, "status": "completed",
-            "totals": {"passed": 1, "failed": 0, "error": 0, "skipped": 0},
-            "receipts": [{"action_key": "a".repeat(64), "status": "executed", "exit_code": 0,
-                "receipt_sha256": "b".repeat(64), "log_sha256": "c".repeat(64)}]}]);
-        for (index, (head, expected)) in [
-            (f.head.clone(), evidence.clone()),
-            ("d".repeat(40), Value::Null),
+        for (index, (head, evidence, expected)) in [
+            (
+                f.head.clone(),
+                all.clone(),
+                json!([run(false, &head_tree), run(true, &base_tree)]),
+            ),
+            ("d".repeat(40), all.clone(), Value::Null),
+            (f.head.clone(), json!([run(false, &base_tree)]), Value::Null),
         ]
         .into_iter()
         .enumerate()
@@ -427,7 +445,8 @@ mod hostile_tests {
             let value = inputs(&f.delivery(), &mut store, &snapshot, None).unwrap();
             assert_eq!(
                 value.get("test_evidence").cloned().unwrap_or(Value::Null),
-                expected
+                expected,
+                "case {index}"
             );
         }
     }

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 import stat
 import subprocess
 
@@ -35,6 +36,9 @@ assert (root / "trusted/tl3_harness/runner.py").is_file()
 assert (root / "action.py").is_file()
 assert not (root / "checkout/.git").exists()
 (here / "submitted.json").write_text(json.dumps(args))
+import subprocess
+(here / "tree.txt").write_text(subprocess.run(["git", "write-tree", "--prefix=checkout/"], cwd=root,
+                                              capture_output=True, text=True, check=True).stdout.strip())
 print(json.dumps({"schema": "prismabuild.submission.v1", "action_key": "a" * 64}))
 ''')
     (scripts / "pbwait.py").write_text('''
@@ -506,7 +510,7 @@ def test_default_submission_keeps_its_action_identity(submission):
     args = submitted(submission)
     assert "--priority" not in args
     action = args[args.index("--") + 1:]
-    assert "--repeat" not in action and "--parallel" not in action
+    assert "--repeat" not in action and "--parallel" not in action and "--fresh" not in action
 
 
 def test_repeat_parallel_and_priority_reach_the_action_and_reservation(submission):
@@ -548,11 +552,35 @@ def test_results_carry_receipts(submission):
         "receipt_sha256": "b" * 64,
         "log_sha256": hashlib.sha256(log).hexdigest(),
     }]
-    # The maker cites them and the reviewer sees them.
+    # The maker cites them and the reviewer sees them, bound to the tree PrismaBuild ran (#432).
     evidence = tree.evidence.test_evidence()
+    staged = (submission[1] / "tree.txt").read_text()
+    assert re.fullmatch("[0-9a-f]{40}|[0-9a-f]{64}", staged)
     assert evidence == [{"tests": ["tests/test_code.py::test_value"], "base": False,
-                         "repeat": 2, "parallel": 0, "status": "completed",
+                         "repeat": 2, "parallel": 0, "status": "completed", "tree": staged, "fresh": True,
                          "totals": summary.result["totals"], "receipts": result["receipts"]}]
     restored = type(tree.evidence)()
     restored.restore(tree.evidence.state())
     assert restored.test_evidence() == evidence
+
+
+def test_repeated_runs_are_never_served_from_the_cache(submission):
+    # #432: each repeat>1 call is its own action, so PrismaBuild cannot replay a stored result.
+    summary = Summary()
+    summary.add("tests/test_code.py::test_value", "passed")
+    nonces = []
+    for _ in range(2):
+        invoke(submission, summary.result, {"tests": ["tests/test_code.py::test_value"], "repeat": 2})
+        action = submitted(submission)[submitted(submission).index("--") + 1:]
+        nonces.append(action[action.index("--fresh") + 1])
+    assert nonces[0] != nonces[1] and all(re.fullmatch("[0-9a-f]{32}", nonce) for nonce in nonces)
+
+
+def test_a_cache_hit_is_marked_as_not_fresh(submission):
+    summary = Summary()
+    summary.add("tests/test_code.py::test_value", "passed")
+    (submission[1] / "override.json").write_text(json.dumps({"status": "cache_hit"}))
+    result, tree = invoke(submission, summary.result, {"tests": ["tests/test_code.py::test_value"]})
+    assert result["receipts"][0]["status"] == "cache_hit"
+    [entry] = tree.evidence.test_evidence()
+    assert entry["fresh"] is False
