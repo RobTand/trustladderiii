@@ -1123,6 +1123,7 @@ cuts, database restart, secret filtering, bounded records and cleanup. The
 worker scenarios also prove that requests close during a memory outage and
 leave their completed run records queued. Python's `test_memory.py` covers the
 shared runtime collector for every role.
+
 ## Hindsight recall and curation (#422)
 
 **Recall.** `Supervisor::request()` calls `memory::recall` before every ingest,
