@@ -3,7 +3,6 @@ import json
 import os
 from pathlib import Path
 
-from jsonschema import ValidationError
 import pytest
 from jsonschema import ValidationError
 import tiktoken
