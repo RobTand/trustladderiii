@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage, SystemMessage
 import pytest
 
 from tl3_workers import runtime
-from tl3_workers.tracing import failure_tags
+from tl3_workers.turns import InvalidReply
 import test_maker
 import test_workers
 
@@ -65,17 +65,34 @@ def test_wrapped_maker_reply_parses(maker_request, monkeypatch, shape):
     assert events[-1]["reply"]["kind"] == "done" and "head" in events[-1]["reply"]
 
 
+TWO_OBJECTS = f"First: {json.dumps(BRIEF)}\nSecond: {json.dumps(BRIEF)}"
+
+
 @pytest.mark.parametrize("text,message", [
-    (f"First: {json.dumps(BRIEF)}\nSecond: {json.dumps(BRIEF)}", "reply has more than one JSON object"),
+    (TWO_OBJECTS, "reply has more than one JSON object"),
     (f"```json\n{json.dumps(BRIEF)}\n```\n```json\n{json.dumps(BRIEF)}\n```", "reply has more than one JSON object"),
     ("I could not finish the brief.", "reply is not one JSON object"),
 ])
-def test_ambiguous_or_missing_reply_is_a_reply_failure(request_doc, monkeypatch, tmp_path, text, message):
+def test_ambiguous_or_missing_reply_gets_a_repair_turn(request_doc, monkeypatch, text, message):
+    model = answer(monkeypatch, text, json.dumps(BRIEF))
+    events = []
+    runtime.run(request_doc, events.append)
+    assert events[-1]["reply"] == BRIEF
+    assert message in model.seen[-1][-1].text, "the repair turn names the parse failure"
+
+
+@pytest.mark.parametrize("text,message", [
+    (TWO_OBJECTS, "reply has more than one JSON object"),
+    ("I could not finish the brief.", "reply is not one JSON object"),
+])
+def test_unparseable_twice_is_an_invalid_reply(request_doc, monkeypatch, tmp_path, text, message):
     request_doc["memory"] = {"summary_file": str(tmp_path / "summary.json")}
-    answer(monkeypatch, text)
-    with pytest.raises(ValueError) as raised:
+    answer(monkeypatch, text, text)
+    with pytest.raises(InvalidReply):
         runtime.run(request_doc, lambda _: None)
-    assert failure_tags(raised.value)["failure_message"] == message
+    assert json.loads((tmp_path / "summary.json").read_text())["reason"] == {
+        "failure_class": "InvalidReply",
+        "failure_message": f"invalid reply: {message}; repaired reply: {message}"}
 
 
 @pytest.mark.parametrize("inner", ['{"kind": "brief", "kind": "early_end"}', '{"n": NaN}'])

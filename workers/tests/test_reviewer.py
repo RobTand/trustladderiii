@@ -101,7 +101,8 @@ def test_review_replies_through_protocol(tmp_path, review_request, reply):
 def test_invalid_review_never_leaves_worker(tmp_path, review_request, reply):
     result = start_worker(tmp_path, review_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
-    assert result.events == [{"event": "progress", "unit": "model_turn"}]
+    # The invalid reply gets one repair turn, which the fake answers the same way.
+    assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
     assert result.stderr.strip() == "tl3_workers: run failed"
 
 
