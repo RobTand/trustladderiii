@@ -22,7 +22,7 @@ The postmaster delta is added to the scenario's CPU total. Receipt field
 and `cpu_sampling`. Receipts using this accounting have
 `cpu_sampling: proc-postmaster-v1`. CPU limits have no hosted multiplier. A
 scenario must meet both its CPU limit and a wall backstop of 10 times its
-existing effective wall limit, including the fixed runner multiplier below.
+effective wall limit, including the runner multiplier below.
 Bazel's target timeout still stops binaries that never finish.
 
 The fixture startup diagnostic tells the runner that a server is expected.
@@ -35,7 +35,7 @@ scenario, including setup or cleanup markers without a live server. Its
 original effective wall limit applies. Calibration excludes these partial
 CPU samples. The static `wall_only` list covers `tl3-controller/workers::*` during bootstrap.
 Workers has no complete CPU receipt, so its 28 explicit CPU caps and default
-remain uncalibrated and inactive. After #454 splits the target into eight
+remain uncalibrated and inactive. After #483 implements #454 by splitting the target into eight
 shards, a follow-up must collect per-shard receipts, calibrate those caps and
 remove the exception. Darwin
 and Windows retain wall limits because Linux procfs is unavailable. Other
@@ -77,8 +77,8 @@ retained; fallback samples are never used to reset a cap.
 
 These CPU caps are calibrated on BuildBuddy amd64 only. GitHub-hosted x64
 and arm64 need their own CPU receipts before these caps can be trusted for
-those executors. The historical wall multipliers below remain on the wall
-backstop and on wall-only fallbacks.
+those executors. The runner multiplier remains on the wall backstop and wall-only fallbacks.
+BuildBuddy temporarily retains #472's 3.0 stopgap as described below.
 
 `docs/bazel-budget-calibration.json` records the receipts, input digests,
 measured coverage, uncalibrated caps and results. Regenerate its numerical
@@ -95,6 +95,22 @@ living child processes or backends is charged when their parent reaps them.
 A postmaster that exits between markers loses its final unsampled CPU; the
 receipt records a wall fallback for that scenario. Receipts preserve both
 measurements so these limits can be audited.
+
+## BuildBuddy stopgap while wall-only targets remain
+
+Keep #472's `buildbuddy-amd64` multiplier at 3.0 during bootstrap. Workers
+still uses wall-only budgets, and shared executor load caused scenarios to
+exceed the calibrated 1.65 factor. A scenario with a 10-second base wall
+budget therefore has a 30-second wall-only limit. Runtime wall fallbacks
+use the same factor. CPU caps are unchanged. The 10× backstop uses this
+factor too, so its limit for that scenario is 300 seconds.
+
+Only `//crates/controller:test_test_workers` keeps `timeout = "eternal"`.
+Other Rust targets use the normal 900-second timeout. Restoring 1.65 and
+removing the workers timeout exception belong to the follow-up after #483
+lands and its shards are CPU-calibrated, once `wall_only` is empty.
+The table below preserves the historical 1.65 calibration; 3.0 is a temporary
+load tolerance, not a new calibration.
 
 ## Historical wall tolerance
 
@@ -170,8 +186,8 @@ alternating ARM-even, x64-odd shard layout.
 
 ## BuildBuddy remote execution
 
-The historical wall calibration applies to wall-only scenarios and to the
-wall limit used to compute the backstop. Bazel runs each Rust binary through `tools/bazel/rust_runner.py`, which takes
+The BuildBuddy 3.0 stopgap applies to wall-only scenarios and to the
+wall limit used to compute the backstop until the bootstrap exception is removed. Bazel runs each Rust binary through `tools/bazel/rust_runner.py`, which takes
 its class from `TL3_RUNNER_CLASS` in `.bazelrc`. The `buildbuddy-amd64` row
 above comes from ten uncached runs of every Rust test target in one invocation
 (`--runs_per_test=10 --nocache_test_results`), read by

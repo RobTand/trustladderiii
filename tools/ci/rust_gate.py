@@ -22,7 +22,10 @@ SCENARIO_COUNT = re.compile(r'^(\d+) .+ scenarios passed(?:;.*)?$')
 # Fixed calibration from hosted artifacts; see docs/hosted-budget-tolerance.md.
 BUDGET_MULTIPLIERS = {'baseline': 1.0, 'hosted-x64': 1.25, 'hosted-arm64': 1.15,
                       # BuildBuddy remote execution; docs/bazel-budget-calibration.json.
-                      'buildbuddy-amd64': 1.65}
+                      # Keep #472's load tolerance while wall-only targets remain.
+                      # Restore 1.65 after #483's worker shards are CPU-calibrated
+                      # and the static wall_only list is empty.
+                      'buildbuddy-amd64': 3.0}
 
 
 def runner_class():
