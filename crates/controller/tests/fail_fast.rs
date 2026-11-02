@@ -44,6 +44,7 @@ fn labelled() -> LabelledIssue {
         title: "Fix the sandbox build".into(),
         actor: 1,
         label: "tl3".into(),
+        labels: Vec::new(),
     }
 }
 
