@@ -28,6 +28,24 @@ def receipt(directory, target, run, total, seconds, runner='baseline', zipped=Fa
 
 
 class CalibrationTests(unittest.TestCase):
+    def test_default_uses_measured_p95_and_fallbacks_are_not_calibration_samples(self):
+        policy = {'seconds': 10, 'slow': {},
+                  'cpu': {'seconds': 29, 'slow': {'b::slow': 20, 'b::unmeasured': 30}}}
+        samples = {f'b::fast{index:02}': (index + 1) / 10 for index in range(20)}
+        samples.update({'b::slow': 3, 'b::fallback': 99})
+        with tempfile.TemporaryDirectory() as directory:
+            paths = []
+            for index in range(2):
+                path = Path(directory, f'{index}.json')
+                path.write_text(json.dumps({'seconds': samples, 'cpu_seconds': samples,
+                                            'cpu_fallbacks': {'b::fallback': 'Postmaster PID unavailable'}}))
+                paths.append(path)
+            summary = calibration.calibrate_cpu(paths, policy)
+        # Nearest-rank p95 of all 21 measured scenarios is 2.0; ceil(2 * p95) is 4.
+        self.assertEqual(summary['cpu'], {'seconds': 4,
+                                          'slow': {'b::slow': 6, 'b::unmeasured': 30}})
+        self.assertNotIn('b::fallback', summary['max_cpu_seconds'])
+
     def test_cpu_calibration_tightens_only_observed_existing_limits(self):
         policy = {'seconds': 10, 'slow': {'b::slow': 20, 'b::unmeasured': 30}}
         with tempfile.TemporaryDirectory() as directory:
