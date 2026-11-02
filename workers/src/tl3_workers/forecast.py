@@ -12,6 +12,7 @@ import sys
 import tiktoken
 
 from tl3_workers.tools import Worktree, _parts
+from tl3_workers.turns import Unrepairable
 
 
 MAX_FILE_BYTES = 1_048_576
@@ -23,7 +24,7 @@ def _fail(message):
     # The process boundary hides exception text, which may contain secrets.
     # These fixed diagnostics contain no repository or provider content.
     print(f"tl3_workers: planner: {message}", file=sys.stderr)
-    raise ValueError(message)
+    raise Unrepairable(message)
 
 
 def _encoding():

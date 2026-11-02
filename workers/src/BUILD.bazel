@@ -43,6 +43,7 @@ py_binary(
     srcs = ["tl3_workers/tracing.py"],
     visibility = ["//visibility:public"],
     deps = [
+        ":src",
         "@tl3_pip//httpx",
         "@tl3_pip//jsonschema",
         "@tl3_pip//mlflow_tracing",
@@ -78,6 +79,7 @@ py_library(
         "tl3_workers/session.py",
         "tl3_workers/tools.py",
         "tl3_workers/tracing.py",
+        "tl3_workers/turns.py",
     ],
     visibility = ["//visibility:public"],
     deps = [
@@ -91,6 +93,7 @@ py_library(
         "@tl3_pip//langgraph",
         "@tl3_pip//langgraph_prebuilt",
         "@tl3_pip//mlflow_tracing",
+        "@tl3_pip//openai",
         "@tl3_pip//opentelemetry_proto",
         "@tl3_pip//opentelemetry_sdk",
         "@tl3_pip//referencing",
