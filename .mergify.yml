@@ -1,5 +1,10 @@
 # Test batches on draft PRs, then move main to the exact tested head.
 # Explicit queue commands follow coordinator review and PrismaBuild evidence.
+# The Gate uploads each PR's impacted Bazel packages as its scopes.
+scopes:
+  source:
+    manual:
+
 merge_queue:
   mode: serial
   max_parallel_checks: 3
