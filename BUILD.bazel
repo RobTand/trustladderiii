@@ -69,3 +69,5 @@ filegroup(
 
 # gazelle:python_experimental_allow_relative_imports false
 # gazelle:map_kind py_library py_library //tools/bazel:python.bzl
+
+# gazelle:resolve py child_env //tools/ci:child_env

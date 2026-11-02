@@ -124,6 +124,11 @@ pub enum Observation {
     ScratchPruned {
         reference: String,
     },
+    /// #430: held worker span logs reached their disk cap, so the oldest
+    /// unshipped ones were dropped.
+    TraceLogsCapped {
+        evicted: u64,
+    },
     Progress {
         key: String,
         checkpoint: String,

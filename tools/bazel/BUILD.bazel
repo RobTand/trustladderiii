@@ -70,6 +70,7 @@ py_binary(
     name = "rust_builds",
     srcs = ["rust_builds.py"],
     visibility = ["//visibility:public"],
+    deps = ["//tools/ci:child_env"],
 )
 
 py_binary(
@@ -100,12 +101,14 @@ py_binary(
     name = "requirements",
     srcs = ["requirements.py"],
     visibility = ["//visibility:public"],
+    deps = ["//tools/ci:child_env"],
 )
 
 py_library(
     name = "runtime",
     srcs = ["runtime.py"],
     visibility = ["//visibility:public"],
+    deps = ["//tools/ci:child_env"],
 )
 
 tl3_py_test(

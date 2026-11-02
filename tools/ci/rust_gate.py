@@ -1,4 +1,4 @@
-"""Run Cargo test binaries concurrently and enforce per-test wall time budgets."""
+"""Run Cargo test binaries concurrently and enforce per-test CPU budgets with wall time backstops."""
 
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -7,10 +7,14 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
+import tempfile
+from fnmatch import fnmatchcase
 import time
 import tomllib
 
 import shards
+from child_env import child_env
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = Path('tools/ci/rust-test-budget.json')
@@ -19,9 +23,9 @@ SCENARIO_COUNT = re.compile(r'^(\d+) .+ scenarios passed(?:;.*)?$')
 # Fixed calibration from hosted artifacts; see docs/hosted-budget-tolerance.md.
 BUDGET_MULTIPLIERS = {'baseline': 1.0, 'hosted-x64': 1.25, 'hosted-arm64': 1.15,
                       # BuildBuddy remote execution; docs/bazel-budget-calibration.json.
-                      # Stopgap (2026-11-02): 1.65 calibrated quiet executors, but shared load
-                      # ran the same commit 3.2x slower (publishing 180 s vs 575 s at f79a3e58).
-                      # #452 replaces wall budgets with CPU budgets; restore 1.65 then.
+                      # Keep #472's load tolerance while wall-only targets remain.
+                      # Restore 1.65 after #483's worker shards are CPU-calibrated
+                      # and the static wall_only list is empty.
                       'buildbuddy-amd64': 3.0}
 
 
@@ -34,35 +38,152 @@ def runner_class():
     raise ValueError('Unmeasured hosted runner class')
 
 
-def check_budget(results, config, baseline, runner_class='baseline'):
+WALL_BACKSTOP_MULTIPLIER = 10
+
+
+def validate_limits(config, baseline):
     seconds, slow = config['seconds'], config['slow']
     if (not isinstance(seconds, (int, float)) or not math.isfinite(seconds) or seconds <= 0
             or seconds > baseline['seconds'] or not slow.keys() <= baseline['slow'].keys()
+            or any(slow.get(name, seconds) > limit for name, limit in baseline['slow'].items())
             or any(not isinstance(limit, (int, float)) or not math.isfinite(limit) or limit <= 0
                    or limit > baseline['slow'][name] for name, limit in slow.items())):
         raise RuntimeError('Test budgets and the explicit slow list may not grow')
+
+
+def check_budget(results, config, baseline, runner_class='baseline', cpu_seconds=None, cpu_fallbacks=None):
+    validate_limits(config, baseline)
+    cpu = config.get('cpu')
+    if baseline.get('cpu') and not cpu:
+        raise RuntimeError('CPU budgets may not grow or be removed')
+    if cpu is not None:
+        # CPU seconds include parallel children; initialize in CPU units, then only shrink.
+        validate_limits(cpu, baseline.get('cpu') or cpu)
+        for key in ['wall_only', 'wall_only_platforms']:
+            fallbacks = config.get(key, {})
+            if (not isinstance(fallbacks, dict) or not all(fallbacks.values())
+                    or (baseline.get('cpu') and not fallbacks.keys() <= baseline.get(key, {}).keys())):
+                raise RuntimeError('Wall-only fallback lists may not grow')
     if runner_class not in BUDGET_MULTIPLIERS:
         raise ValueError(f'Unknown runner class: {runner_class}')
     multiplier = BUDGET_MULTIPLIERS[runner_class]
-    failures = [f'{name}: {elapsed:.3f}s > {slow.get(name, seconds) * multiplier:.3f}s '
-                f'(base {slow.get(name, seconds):.3f}s, {runner_class} x{multiplier})'
-                for name, elapsed in sorted(results.items())
-                if elapsed > slow.get(name, seconds) * multiplier]
+    failures, backstops = [], []
+    for name, elapsed in sorted(results.items()):
+        wall_limit = config['slow'].get(name, config['seconds']) * multiplier
+        wall_only = (cpu is None or sys.platform in config.get('wall_only_platforms', {})
+                     or name in (cpu_fallbacks or {})
+                     or any(fnmatchcase(name, pattern) for pattern in config.get('wall_only', {})))
+        if wall_only:
+            if elapsed > wall_limit:
+                failures.append(f'{name}: wall {elapsed:.3f}s > {wall_limit:.3f}s '
+                                f'({runner_class} x{multiplier})')
+            continue
+        measured = (cpu_seconds or {}).get(name)
+        if measured is None or not math.isfinite(measured) or measured < 0:
+            raise RuntimeError(f'Missing CPU timing or invalid CPU sample: {name}')
+        cpu_limit = cpu['slow'].get(name, cpu['seconds'])
+        if measured > cpu_limit:
+            failures.append(f'{name}: CPU {measured:.3f}s > {cpu_limit:.3f}s')
+        backstop = wall_limit * WALL_BACKSTOP_MULTIPLIER
+        if elapsed > backstop:
+            backstops.append(f'{name}: wall backstop {elapsed:.3f}s > {backstop:.3f}s')
+    if backstops:
+        # A possible hang must never receive the Gate's budget-only rerun.
+        raise RuntimeError('Per-test wall backstop exceeded:\n' + '\n'.join(backstops + failures))
     if failures:
         raise RuntimeError('Per-test time budget exceeded:\n' + '\n'.join(failures))
 
 
-def execute_binary(binary, custom, arguments=()):
+def process_cpu_sample(pid):
+    """Return task plus reaped-child CPU and start ticks, to distinguish reused PIDs."""
+    try:
+        # comm can contain spaces and closing parentheses; fields after its last ')' are stable.
+        fields = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
+        return (sum(int(fields[index]) for index in (11, 12, 13, 14)) / os.sysconf('SC_CLK_TCK'),
+                int(fields[19]))
+    except (OSError, ValueError, IndexError) as error:
+        raise RuntimeError(f'CPU sampling failed for test PID {pid}: {error}') from error
+
+
+def process_cpu_seconds(pid):
+    return process_cpu_sample(pid)[0]
+
+
+class PostgresCpu:
+    """Sample only fixtures owned by this binary, never unrelated server processes."""
+
+    def __init__(self):
+        self.root = Path(os.environ.get('TMPDIR') or tempfile.gettempdir())
+        self.previous = {}
+        self.startups = 0
+
+    def observe(self, line):
+        # The shared fixture emits this before starting its server. A cluster
+        # can disappear before the next marker, leaving no PID file to discover.
+        if line.startswith('embedded Postgres cached setup'):
+            self.startups += 1
+
+    def sample(self, owner):
+        delta, seen, errors = 0.0, set(), []
+        previous = set(self.previous)
+        for fixture in self.root.glob('tl3-store-pg-*'):
+            try:
+                fixture_owner = (fixture / 'fixture.pid').read_text().strip()
+            except OSError:
+                continue
+            if fixture_owner != str(owner):
+                continue
+            try:
+                pid = int((fixture / 'data/postmaster.pid').read_text().splitlines()[0])
+                if pid <= 0:
+                    raise ValueError('nonpositive postmaster PID')
+                cpu, start = process_cpu_sample(pid)
+                identity = (pid, start)
+                delta += cpu - self.previous.get(identity, 0)
+                self.previous[identity] = cpu
+                seen.add(identity)
+            except (OSError, ValueError, IndexError, RuntimeError) as error:
+                errors.append(f'{fixture.name}: {error}')
+        if self.startups > len(seen - previous):
+            errors.append('Postmaster PID unavailable for a fixture started since the previous marker')
+        if previous - seen:
+            errors.append('A previously sampled postmaster exited before the marker')
+        # Retain counters only while the server lives. A restart has its own identity.
+        self.previous = {identity: self.previous[identity] for identity in seen}
+        self.startups = 0
+        return delta, '; '.join(errors)
+
+
+def execute_binary(binary, custom, arguments=(), cpu_seconds=None, cpu_details=None):
     name = binary['name']
     command = list(binary['command'])
     if not custom:
-        command.extend(['-Z', 'unstable-options', '--format=json', '--report-time', '--test-threads=1'])
+        command.extend(['-Z', 'unstable-options', '--format=json', '--report-time', '--test-threads=1', '--show-output'])
     command.extend(arguments)
-    env = dict(os.environ)
+    env = child_env()
     if not custom:
         env['RUSTC_BOOTSTRAP'] = '1'
     started = previous = time.monotonic()
     results = {}
+    cpu_seconds = {} if cpu_seconds is None else cpu_seconds
+    previous_cpu = 0.0
+    sample_cpu = sys.platform == 'linux'
+    cpu_details = {} if cpu_details is None else cpu_details
+    postgres_seconds = cpu_details.setdefault('postgres_cpu_seconds', {})
+    fallbacks = cpu_details.setdefault('cpu_fallbacks', {})
+    postgres = PostgresCpu() if sample_cpu else None
+
+    def sample(key):
+        current = process_cpu_seconds(process.pid) if sample_cpu else 0.0
+        if sample_cpu:
+            cpu_seconds[key] = current - previous_cpu
+            if postgres is not None:
+                delta, reason = postgres.sample(process.pid)
+                postgres_seconds[key] = delta
+                cpu_seconds[key] += delta
+                if reason:
+                    fallbacks[key] = reason
+        return current
     suite = False
     passed = 0
     failures = []
@@ -73,16 +194,20 @@ def execute_binary(binary, custom, arguments=()):
         for line in process.stdout:
             now = time.monotonic()
             print(f'[{name}] {line.rstrip()}', flush=True)
+            if postgres is not None:
+                postgres.observe(line)
             if custom:
                 match = MARKER.fullmatch(line.rstrip())
                 if match:
                     markers += 1
                     key = f'{name}::{match[1]}'
+                    current_cpu = sample(key)
                     if key in results:
                         failures.append(f'{name}: duplicate timing marker {match[1]}')
                     else:
                         results[key] = now - previous
                     previous = now
+                    previous_cpu = current_cpu
                 count = SCENARIO_COUNT.fullmatch(line.rstrip())
                 if count:
                     scenario_counts.append(int(count[1]))
@@ -91,20 +216,38 @@ def execute_binary(binary, custom, arguments=()):
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if postgres is not None:
+                for output_line in event.get('stdout', '').splitlines():
+                    postgres.observe(output_line)
             if event.get('type') == 'test':
                 key = f"{name}::{event['name']}"
                 if event['event'] in {'ignored', 'failed'}:
                     failures.append(f'{key}: failed or skipped')
                 if event['event'] == 'ok':
+                    current_cpu = sample(key)
                     if key in results or 'exec_time' not in event:
                         failures.append(f'{key}: duplicate or missing timing')
                     else:
                         results[key] = event['exec_time']
+                    previous_cpu = current_cpu
             if event.get('type') == 'suite' and event.get('event') in {'ok', 'failed'}:
                 suite = True
                 passed += event.get('passed', 0)
                 if event.get('failed', 0) or event.get('ignored', 0):
                     failures.append(f'{name}: failed or skipped suite')
+        if sample_cpu:
+            # Keep the exited child as a zombie until its final counters are sampled.
+            # Popen.wait/poll would reap it and remove /proc/<pid>/stat.
+            os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT)
+            final_key = f'{name}::__tail__' if custom else next(reversed(results), None)
+            if final_key is not None:
+                # Preserve the marker's CPU for libtest, whose teardown shares its last key.
+                marker_cpu = cpu_seconds.get(final_key, 0) if not custom else 0
+                marker_postgres = postgres_seconds.get(final_key, 0) if not custom else 0
+                sample(final_key)
+                cpu_seconds[final_key] += marker_cpu
+                if final_key in postgres_seconds:
+                    postgres_seconds[final_key] += marker_postgres
         returncode = process.wait()
     elapsed = time.monotonic() - started
     print(json.dumps({'binary': name, 'seconds': elapsed, 'tests': len(results),
@@ -125,12 +268,20 @@ def execute_binary(binary, custom, arguments=()):
     return results
 
 
-def execute_binaries(binaries, jobs):
+def execute_binaries(binaries, jobs, cpu_seconds=None, cpu_details=None):
     results = {}
     with ThreadPoolExecutor(max_workers=jobs) as pool:
-        futures = [pool.submit(execute_binary, binary, binary['custom']) for binary in binaries]
-        for future in futures:
+        samples = [{} for _ in binaries]
+        details = [{} for _ in binaries]
+        futures = [pool.submit(execute_binary, binary, binary['custom'], cpu_seconds=sample, cpu_details=detail)
+                   for binary, sample, detail in zip(binaries, samples, details)]
+        for future, sample, detail in zip(futures, samples, details):
             results.update(future.result())
+            if cpu_seconds is not None:
+                cpu_seconds.update(sample)
+            if cpu_details is not None:
+                for key, values in detail.items():
+                    cpu_details.setdefault(key, {}).update(values)
     return results
 
 
@@ -138,8 +289,8 @@ def collect_binaries(manifest):
     command = ['cargo', 'test', '--manifest-path', str(manifest), '--workspace',
                '--all-targets', '--locked', '--no-run', '--message-format=json']
     artifacts = []
-    subprocess.run(['cargo', '--version'], check=True)
-    with subprocess.Popen(command, stdout=subprocess.PIPE, text=True, cwd=ROOT) as process:
+    subprocess.run(['cargo', '--version'], check=True, env=child_env())
+    with subprocess.Popen(command, stdout=subprocess.PIPE, text=True, cwd=ROOT, env=child_env()) as process:
         for line in process.stdout:
             event = json.loads(line)
             if event.get('reason') == 'compiler-artifact' and event['profile']['test'] and event['executable']:
@@ -180,12 +331,12 @@ def baseline_policy(config):
         elif 'merge_group' in event:
             ref = event['merge_group']['base_sha']
     exists = subprocess.run(['git', 'cat-file', '-e', f'{ref}^{{commit}}'], cwd=ROOT,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=child_env())
     if exists.returncode:
         subprocess.run(['git', 'fetch', '--no-tags', '--depth=1', 'origin', ref],
-                       cwd=ROOT, check=True)
+                       cwd=ROOT, check=True, env=child_env())
     previous = subprocess.run(['git', 'show', f'{ref}:{POLICY}'], cwd=ROOT,
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, env=child_env())
     if previous.returncode:
         # Bootstrap only: the target branch predates the budget file. Future PRs
         # compare to the policy actually merged on that target branch.
@@ -199,7 +350,7 @@ def prepare_binaries(binaries):
         if binary['name'] == 'tl3-store/fixture_lifecycle':
             # Archive download is dependency setup, like the worker venv sync.
             # Real scenarios still create fresh databases and enforce their budgets.
-            subprocess.run([*binary['command'], '--prepare-cache'], check=True)
+            subprocess.run([*binary['command'], '--prepare-cache'], check=True, env=child_env())
     seconds = time.monotonic() - started
     print(json.dumps({'dependency_setup_seconds': seconds}), flush=True)
     return seconds
@@ -225,10 +376,11 @@ def test_workspace(manifest, jobs=None, report=None, enforce=True, shard=None):
         print(json.dumps({'rust_shard': index, 'total': total,
                           'binaries': [binary['name'] for binary in binaries]}), flush=True)
     started = time.monotonic()
-    results = execute_binaries(binaries, jobs)
+    cpu_seconds, cpu_details = {}, {}
+    results = execute_binaries(binaries, jobs, cpu_seconds=cpu_seconds, cpu_details=cpu_details)
     output = {'seconds': time.monotonic() - started, 'setup_seconds': setup_seconds,
-              'jobs': jobs, 'shard': shard, 'tests': results,
-              'runner_class': current_class, 'budget_multiplier': BUDGET_MULTIPLIERS[current_class]}
+              'jobs': jobs, 'shard': shard, 'tests': results, 'cpu_seconds': cpu_seconds,
+              'runner_class': current_class, 'budget_multiplier': BUDGET_MULTIPLIERS[current_class], **cpu_details}
     for name, seconds in sorted(results.items()):
         print(json.dumps({'test': name, 'seconds': seconds}), flush=True)
     path = report or ROOT / 'target/ci-test-times.json'
@@ -237,7 +389,8 @@ def test_workspace(manifest, jobs=None, report=None, enforce=True, shard=None):
     print(json.dumps({'test_wall_seconds': output['seconds'], 'jobs': jobs,
                       'timings': str(path)}), flush=True)
     if enforce:
-        check_budget(results, config, baseline, runner_class=current_class)
+        check_budget(results, config, baseline, runner_class=current_class, cpu_seconds=cpu_seconds,
+                     cpu_fallbacks=cpu_details['cpu_fallbacks'])
     return output
 
 

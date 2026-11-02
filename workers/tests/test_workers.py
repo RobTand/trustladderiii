@@ -362,3 +362,29 @@ def test_repository_inputs_reject_inlined_contents(request_doc):
             inputs["ingest"] = BRIEF
         with pytest.raises(ValidationError):
             validate(role + "-input", inputs)
+
+
+def test_supplied_memories_are_redacted_before_the_model(request_doc, monkeypatch):
+    # #422: recalled memories pass through #302's redactor, like trace content.
+    observed = []
+
+    class InspectModel(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _generate(self, messages, **kwargs):
+            observed.append(messages)
+            return super()._generate(messages, **kwargs)
+
+    secret = "ghp_fixture422secretvalue0123456789"
+    request_doc["inputs"]["memories"] = [
+        {"id": "m-1", "kind": "other", "content": f"Deploy with export GITHUB_TOKEN={secret} first."}]
+    fake = InspectModel(responses=[AIMessage(content=json.dumps({**BRIEF, "memory_ids": ["m-1"]}))])
+    monkeypatch.setattr(runtime, "create_model", lambda request: fake)
+    events = []
+    runtime.run(request_doc, events.append)
+    sent = observed[0][1].text
+    assert secret not in sent
+    assert "Deploy with export GITHUB_TOKEN=" in sent
+    assert json.loads(sent)["memories"][0]["id"] == "m-1"
+    assert events[-1]["reply"]["memory_ids"] == ["m-1"]

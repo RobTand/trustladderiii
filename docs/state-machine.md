@@ -499,6 +499,7 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
   - infrastructure retries and incidents (Q7, Q50) and quota fallback (Q53);
   - out-of-credit questions, including a footprint extension that fits but has no credit left: Rob is asked to fund it, as without the flag.
 - **Model rule:** Rob, 2026-11-02: Fable not used; allowed models are Opus, Sonnet and Sol 6.1. This applies to every ladder above (Q22, Q53). `deploy/dl380g10/models.toml` holds the shipped defaults, and a test keeps them to Opus and Sonnet while Sol 6.1 is out of quota.
+- **Q55 Forced reproduction:** approved by Rob, 2026-11-02 (#393): "yes, agreed." A forced reproduction is the red for making a named flaky test deterministic; stress runs don't count. See "Q55: forced reproduction" below.
 - **Q31 Escalation reports:** only the impact on the parent's goals, at most about 2,000 tokens. The parent can pull the evidence for one goal per escalation.
 
 **Order of work**
@@ -654,6 +655,21 @@ Rob approved three Publishing rows for a required check that never reports on th
 TL3 decides on the check-suite and check-run webhooks it already receives, with no timers or polling. A completed check suite triggers the same look as a check run on the approved head. The controller implements the rows with its existing setup-incident machinery; the kernel is unchanged. An incident is raised once per head, context and app, so a clear stands for that head. A requirement with no expected app accepts a check run or a legacy status from any source.
 
 A pending or missing required check is a legitimate wait, not a stall. The held enqueue arms no allowance timer, and a look at it never spends a retry. An incident clears when its head stops being the node's head or approved head, or the node closes, because that kernel result is evidence the head no longer matters.
+
+## Q55: forced reproduction
+
+Rob, 2026-11-02, answering #393: "yes, agreed." This is a reading of Q40 for deflakes. A flaky test passes on the base most of the time, and the demonstrating base run applies the change's test edits, so a fix inside the test already exists there. Neither can show red.
+
+> For a change whose goal is to make a named flaky test deterministic, a **forced reproduction** counts as the red:
+> - The plan names a **forcing**: a patch, fixture or environment setting the harness applies. It deterministically recreates the flake's condition, for example "a real process holds PID 4242".
+> - With the forcing applied, the harness runs the **old test on the base code**, which must fail by assertion, and the **new test on the change**, which must pass. The new test must also pass without the forcing.
+> - The maker can't alter the forcing's verdict, because it's applied by the harness outside the test being fixed. The reviewer judges whether the forcing really models the symptom the issue describes.
+> - Stress runs, meaning repeat until it fails, don't count.
+> - If no forcing can be written, the planner says "can't meet" once, with the reason. Under fail-fast (#440) the request then stops for TL3 review.
+
+The forcing is a field on a demonstrating check. It is declarative: a symptom, environment variables, and patches of attributes inside the served repository with a JSON value, a returned value, a builtin exception other than `AssertionError`, or a bounded delay. The planner writes it, so it is untrusted model output. The harness's host process only bounds it; the runner applies it inside the test container, under the same sandbox as the tests. The maker's edits can't reach it. The check's result echoes the forcing and the head's outcome under it, for review. The kernel is unchanged: it still sees a check pass or fail.
+
+A leaf that changes only tests (#444's `edits_tests` rule) is valid when every demonstrating check carries a valid forcing. Otherwise the planner reports that a change to tests alone needs a forced reproduction, or can't meet.
 
 ## Q57: requests that require protected paths
 

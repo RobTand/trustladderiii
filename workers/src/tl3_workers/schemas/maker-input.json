@@ -28,7 +28,8 @@
               "name": {"$ref": "#/$defs/text"},
               "kind": {"enum": ["demonstrating", "regression", "behavior-preserving"]},
               "tests": {"$ref": "#/$defs/strings"},
-              "goal_ids": {"$ref": "#/$defs/strings"}
+              "goal_ids": {"$ref": "#/$defs/strings"},
+              "forcing": {"$ref": "planner-reply.json#/$defs/forcing"}
             },
             "required": ["name", "kind", "tests", "goal_ids"], "additionalProperties": false
           }

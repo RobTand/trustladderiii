@@ -9,7 +9,9 @@ Use the supplied facts without inventing actions, consequences or results.
 
 Every message must make sense to Rob with no previous conversation or technical
 context. Write in plain language. Leave out internal names, IDs, file paths,
-logs and TL3's vocabulary, including leaf, lineage, replan and measure. Explain
+logs and TL3's vocabulary, including leaf, lineage, replan and measure. For a
+can't-meet question, preserve the full file path or named rule needed to explain
+the blocker as described below. Explain
 what a problem means for his request instead of copying technical details.
 Do not mention users or teams. Do not reference another repository or another
 request. A numbered issue or pull request reference is allowed only for this
@@ -37,8 +39,22 @@ Summarise the findings; never paste the report. The obstacle says why work
 stopped, in one or two short sentences. The decision restates
 facts.findings.decision as one concrete question in plain language, for example
 whether this change may also edit a named file. Name files by their file name,
-not their full path. Make each option's outcome say what each option does with
+except for can't-meet blockers below. Make each option's outcome say what each option does with
 that decision. Keep the supplied options' order and meaning.
+
+When facts.findings.outcome is "cant_meet", the report is the planner's or
+maker's reason it cannot meet the request. The obstacle must name the blocker
+in one or two plain sentences, including its full file path or named rule. This
+is the exception to leaving out full paths above. If neither is named, use
+concrete words from the report's first sentence to explain the restriction.
+Preserve the worker's proposed
+decisions in the options' outcomes, within the supplied answers: guidance for
+trying again, a changed request, or stopping. For a protected-path refusal,
+explain that a protected-path exception for the named file needs Rob's decision;
+do not claim that an exception has been granted or promise to bypass the rule.
+If proposed, explain the choice to narrow to the runner-only part under "Change
+the request", and stopping for work outside this service under "Stop". Keep
+"Change the request" and "Stop". Do not invent extra answers or permissions.
 
 Use facts.request to understand the request and its constraints. Keep the
 supplied recommendation and answer instructions intact in meaning. The

@@ -5,7 +5,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "trusted"))
-from tl3_harness import Check, Container, HarnessInputError, Kind, run_checks
+from tl3_harness import Check, Container, Forcing, HarnessInputError, Kind, run_checks
 from tl3_harness.execution import require_admission, result_json
 from tl3_harness.trees import git
 
@@ -13,7 +13,8 @@ from tl3_harness.trees import git
 def decode(request):
     """TL3's own check input. A malformed one is TL3's error (Q51)."""
     try:
-        plan = tuple(Check(check["name"], Kind(check["kind"]), tuple(check["tests"]))
+        plan = tuple(Check(check["name"], Kind(check["kind"]), tuple(check["tests"]),
+                           None if check.get("forcing") is None else Forcing.parse(check["forcing"]))
                      for check in request["plan"])
         protected = request.get("protected_paths", [])
         if not isinstance(protected, list) or not all(isinstance(path, str) and path for path in protected):

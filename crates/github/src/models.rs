@@ -114,6 +114,12 @@ pub struct WorkflowRun {
     pub run_attempt: u64,
     pub status: String,
     pub conclusion: Option<String>,
+    /// The triggering event, such as `pull_request` or `pull_request_target`.
+    #[serde(default)]
+    pub event: String,
+    /// The workflow file, such as `.github/workflows/gate.yml`.
+    #[serde(default)]
+    pub path: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
