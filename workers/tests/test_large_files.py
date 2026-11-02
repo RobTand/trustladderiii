@@ -144,3 +144,73 @@ def test_planner_fit_check_bounds_a_large_doc_in_a_small_plan(tmp_path, planner_
     assert reply["forecast"]["fits"] is True, reply["forecast"]
     assert reply["forecast"]["tokens"] < 100_000
     assert not any("does not fit" in violation for violation in reply["violations"])
+
+
+def test_ingest_names_a_non_utf8_file(tmp_path, request_doc):  # noqa: F811
+    (tmp_path / "latin1.txt").write_bytes(b"caf\xe9 au lait\n")
+    result = ingest(tmp_path, request_doc, ["latin1.txt"])
+    assert result.exit_code == 0, result.stderr
+    assert "latin1.txt: not UTF-8 text (14 bytes)" in result.events[-1]["reply"]["brief"]
+
+
+@pytest.mark.parametrize("code,environment", [
+    (13, True),   # EACCES
+    (5, True),    # EIO
+    (24, True),   # EMFILE
+    (40, False),  # ELOOP: a link the model declared
+])
+def test_environment_errors_are_infrastructure_not_file_problems(tmp_path, monkeypatch, code, environment):
+    # Q50: the environment's failure must not tell the planner to leave a file out.
+    from tl3_workers.forecast import DeclaredFileError, Forecaster
+
+    (tmp_path / "doc.md").write_text("text\n")
+    monkeypatch.chdir(tmp_path)
+
+    def failing(self, path, **kwargs):
+        raise OSError(code, "fixture failure")
+    monkeypatch.setattr(Worktree, "_file", failing)
+    forecaster = Forecaster({"fit_tokens": 100, "context_tokens": 150, "overhead_tokens": {}})
+    if environment:
+        with pytest.raises(OSError) as raised:
+            forecaster.files(["doc.md"])
+        assert not isinstance(raised.value, DeclaredFileError)
+    else:
+        forecaster.files(["doc.md"])
+        assert [error.path for error in forecaster.problems] == ["doc.md"]
+
+
+def test_brief_notes_name_ten_files_and_stay_within_the_schema(tmp_path, monkeypatch):
+    from tl3_workers.contracts import validate
+    from tl3_workers.roles.ingest import BRIEF_CHARACTERS, check_memory_ids
+
+    paths = [f"docs/part_{index:02}.md" for index in range(12)]
+    (tmp_path / "docs").mkdir()
+    for path in paths:
+        (tmp_path / path).write_bytes(b"A long design note.\n" * 4_000)
+    monkeypatch.chdir(tmp_path)
+    inputs = {"forecast": {"fit_tokens": 100_000, "context_tokens": 150_000, "overhead_tokens": {}}}
+    reply = {**BRIEF, "files": paths}
+    check_memory_ids(inputs, reply)
+    assert "docs/part_09.md" in reply["brief"] and "docs/part_10.md" not in reply["brief"]
+    assert "and 2 more" in reply["brief"]
+    validate("ingest-reply", reply)
+    # A brief already near its limit gets no note rather than an invalid reply.
+    reply = {**BRIEF, "brief": "x" * (BRIEF_CHARACTERS - 10), "files": paths}
+    check_memory_ids(inputs, reply)
+    assert len(reply["brief"]) <= BRIEF_CHARACTERS
+    validate("ingest-reply", reply)
+
+
+def test_write_refuses_to_replace_a_large_file(tmp_path):
+    from tl3_workers.tools import LARGE_FILE_BYTES, build_tools
+
+    (tmp_path / "pool.py").write_bytes(POOL)
+    (tmp_path / "small.py").write_text("x = 1\n")
+    with Worktree(tmp_path) as worktree:
+        write, = build_tools(worktree, {"write": "Write."})
+        message = write.invoke({"name": "write", "args": {"path": "pool.py", "content": "clipped page"},
+                                "id": "write", "type": "tool_call"})
+        assert message.status == "error" and "edit" in message.text and str(len(POOL)) in message.text
+        assert write.invoke({"path": "small.py", "content": "x = 2\n"}) == "File written."
+        assert write.invoke({"path": "new.py", "content": "y = 1\n" * LARGE_FILE_BYTES}) == "File written."
+    assert (tmp_path / "pool.py").read_bytes() == POOL

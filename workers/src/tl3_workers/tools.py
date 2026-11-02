@@ -18,6 +18,7 @@ from tl3_workers.memory import current
 
 
 READ_TOOLS = frozenset({"list", "read", "glob", "grep"})
+LARGE_FILE_BYTES = 65_536
 WRITE_TOOLS = frozenset({"write", "edit"})
 # Payload budgets leave room for pagination metadata and truncation notices.
 OUTPUT_LIMITS = {

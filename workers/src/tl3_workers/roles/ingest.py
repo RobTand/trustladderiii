@@ -3,6 +3,8 @@
 from tl3_workers.roles.base import Role
 from tl3_workers.exploration import ExplorationBudget
 
+BRIEF_CHARACTERS = 80_000
+
 
 def check_memory_ids(inputs, reply):
     if "forecast" in reply:
