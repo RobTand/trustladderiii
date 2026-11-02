@@ -62,12 +62,32 @@ pub struct Operations {
     pub issue: u64,
 }
 
+/// The protected paths in force for one repository (#388): the slice-one
+/// defaults, plus `planning.protected_paths`, plus the repository's own list.
+pub fn protected_paths(global: &[String], repository: &[String]) -> Vec<String> {
+    let mut paths = global.to_vec();
+    paths.extend_from_slice(repository);
+    paths
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Planning {
     /// Calibration seam: replace these named estimates with measured overheads later.
     pub overhead_tokens: BTreeMap<String, u32>,
     pub protected_paths: Vec<String>,
+}
+
+impl Planning {
+    /// The defaults plus this file's additions. Nothing removes a default.
+    pub fn effective_protected_paths(&self) -> Vec<String> {
+        self.protected_paths.clone()
+    }
+
+    /// Defaults this file doesn't list. They stay protected.
+    pub fn defaults_not_listed(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 impl Default for Planning {
