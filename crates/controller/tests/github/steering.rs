@@ -606,6 +606,30 @@ pub(super) fn answer_recovery(settings: &tl3_config::Store) {
     assert_eq!(jobs[0].attempt, 0);
     fs::write(d.marker.with_extension("answer"), "go").unwrap();
     d.classified(15001);
+    // #422: the applied answer is retained as Rob's decision (Hindsight is down here).
+    let decisions: Vec<Value> = d
+        .store
+        .pending_memories(0)
+        .unwrap()
+        .into_iter()
+        .map(|(_, _, item)| item)
+        .filter(|item| {
+            item["tags"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("kind:decision"))
+        })
+        .collect();
+    assert_eq!(decisions.len(), 1, "one decision per applied answer");
+    let tags = decisions[0]["tags"].as_array().unwrap();
+    assert!(tags.contains(&json!("source:rob")), "{tags:?}");
+    assert!(
+        tags.iter()
+            .any(|t| t.as_str().unwrap().starts_with("repo:"))
+    );
+    let content = decisions[0]["content"].as_str().unwrap();
+    assert!(content.contains("Rob's answer: continue"), "{content}");
+    assert!(content.contains("Answer the old question"), "{content}");
     d.wait(|s| s.node()["phase"].get("Closed").is_some());
     assert_eq!(d.node()["phase"], json!({"Closed": "Merged"}));
     d.settled();
