@@ -1,13 +1,22 @@
 use super::*;
 
 pub(super) const MODES: &[&str] = &[
-    "outside", "repeat", "changed", "named", "unparsed", "hostile", "unknown", "mixed", "pytest",
+    "outside",
+    "repeat",
+    "changed",
+    "named",
+    "unparsed",
+    "hostile",
+    "unknown",
+    "mixed",
+    "pytest",
     "tl3",
     "aggregate",
     "check-name",
     "overflow",
     "renamed",
     "logs-unavailable",
+    "missing-plan",
 ];
 const TEST: &str = "//tests:test_a_ready_gpu_action_is_not_starved_by_cpu_shards";
 const URL: &str =
@@ -31,7 +40,9 @@ impl Fixture {
                 return Some(ResponseTemplate::new(200).set_body_string("Gate verdict: failed"));
             }
             "/repos/owner/sandbox/actions/jobs/125550020549/logs" => {
-                if self.log == "unavailable" { return Some(ResponseTemplate::new(403)); }
+                if self.log == "unavailable" {
+                    return Some(ResponseTemplate::new(403));
+                }
                 return Some(ResponseTemplate::new(200).set_body_string(&self.log));
             }
             _ => return None,
@@ -52,6 +63,7 @@ fn failure(api: &Server, mode: &str, repeat: bool) {
         "2026-11-02T21:09:00Z"
     });
     state.checks = json!([check]);
+    state.queue_rule["completed_at"] = json!("2026-11-02T21:30:00Z");
     let mut draft = state.pull.clone();
     draft["number"] = json!(2661);
     draft["user"]["login"] = json!("mergify[bot]");
@@ -63,12 +75,18 @@ fn failure(api: &Server, mode: &str, repeat: bool) {
         "changed" => {
             files = json!([{"filename":"tests/test_a_ready_gpu_action_is_not_starved_by_cpu_shards.py"}])
         }
-        "renamed" => files = json!([{
-            "filename":"tests/renamed.py",
-            "previous_filename":"tests/test_a_ready_gpu_action_is_not_starved_by_cpu_shards.py"
-        }]),
+        "renamed" => {
+            files = json!([{
+                "filename":"tests/renamed.py",
+                "previous_filename":"tests/test_a_ready_gpu_action_is_not_starved_by_cpu_shards.py"
+            }])
+        }
         "logs-unavailable" => log = "unavailable".into(),
-        "overflow" => log = (0..30).map(|index| format!("FAILED: //tests:test_outside_{index}\n")).collect(),
+        "overflow" => {
+            log = (0..30)
+                .map(|index| format!("FAILED: //tests:test_outside_{index}\n"))
+                .collect()
+        }
         "unparsed" => log = "runner exited without any test IDs".into(),
         "unknown" => log = "FAILED: //somewhere:unmapped".into(),
         "mixed" => log.push_str("FAILED: //tests:test_action_resource_profile\n"),
@@ -109,7 +127,6 @@ fn failure(api: &Server, mode: &str, repeat: bool) {
             "app":{"id":15368,"slug":"github-actions"},"output":{"title":"Gate verdict failed","summary":"Bazel failed"}
         }));
     }
-
 }
 fn observe(controller: &mut Controller, api: &Server, config: &Bootstrap) {
     let mut body = webhook_fixture();
@@ -145,7 +162,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
     let mut controller = queued_for(settings, &api, root.path(), true, &[], config.clone());
-    if matches!(mode, "named" | "check-name") {
+    if mode != "missing-plan" {
         let snapshot = controller.snapshot().unwrap();
         let head = api.state.lock().unwrap().pull["head"]["sha"]
             .as_str()
@@ -153,8 +170,8 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             .to_owned();
         let mut commit = tl3_store::Commit::new("named-ci-check", json!({}), &snapshot);
         commit.rows.push(tl3_store::RowChange::Put {table:"check_plans".into(),id:format!("0:{head}"),value:json!({
-            "repository":"/fixture", "base_sha":"566bee93ba4b52681864132960cfd63e36bcc9cd", "plan":[{
-                "name":if mode == "check-name" {"Bazel"} else {"gpu fairness"}, "kind":"regression", "tests":if mode == "check-name" {json!(["tests/a.py::test_a"])} else {json!([TEST])}}]})});
+            "repository":"/fixture", "base_sha":"566bee93ba4b52681864132960cfd63e36bcc9cd", "plan":if matches!(mode, "named" | "check-name") {json!([{
+                "name":if mode == "check-name" {"Bazel"} else {"gpu fairness"}, "kind":"regression", "tests":if mode == "check-name" {json!(["tests/a.py::test_a"])} else {json!([TEST])}}])} else {json!([])}})});
         Store::open(settings).unwrap().commit(&commit).unwrap();
     }
     let before = controller.world().unwrap().nodes[0];
