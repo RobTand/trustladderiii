@@ -107,6 +107,7 @@ class TestSizingTests(unittest.TestCase):
                      if package == "harness/tests" else ["test_planner", "test_classifier"])
             for name in names:
                 namespace["tl3_py_test"](name=name, srcs=[name + ".py"])
+        self.postgres_packages = namespace["_POSTGRES"]
         return {name: attrs for name, attrs in rules.items()
                 if attrs.get("main") in ["//tools/bazel:rust_runner.py",
                                          "//tools/bazel:python_runner.py"]}
@@ -125,7 +126,9 @@ class TestSizingTests(unittest.TestCase):
         self.assert_sized("crates/controller")
 
     def test_every_postgres_runner_is_sized(self):
-        self.assert_sized("crates/store")
+        self.rules("crates/store")
+        for package in self.postgres_packages:
+            self.assert_sized(package)
 
     def test_nested_python_suites_are_sized(self):
         self.assert_sized("harness/tests")
