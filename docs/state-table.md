@@ -699,7 +699,7 @@ What the look finds enters the kernel as replies, acknowledgements and facts.
 
 A look ends work only when the upstream's own record shows no progress.
 
-A record that doesn't yet show an acknowledgement, such as an enqueue Mergify hasn't acknowledged, is a live operation waiting, not a failed read. Only a read that errors is a failed look. Webhooks can bring several looks within seconds, so failed looks within one silence allowance count as one failure (#356).
+A record that doesn't yet show an acknowledgement, such as an enqueue Mergify hasn't acknowledged, is a live operation waiting, not a failed read. A failed look is a read that errors, or an operation still unacknowledged when its no-progress allowance runs out. That second case is how a never-acknowledged enqueue still ends in a read incident. Webhooks can bring several looks within seconds, so failed looks within one silence allowance count as one failure (#356).
 
 After a restart or a gap in webhooks, every pending operation gets a look.
 
