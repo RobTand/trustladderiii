@@ -1079,19 +1079,23 @@ fn deployment_model_defaults_pass_validation() {
 }
 
 // Rob, 2026-11-02: "Limit to Opus and Sonnet for now, please. In addition to
-// Sol 6.1". The example config only has placeholder names, so it is not checked.
+// Sol 6.1". Sol is out of quota, so the defaults use Opus and Sonnet only.
+// The example config only has placeholder names, so it is not checked.
 #[test]
-fn deployment_model_defaults_use_only_allowed_models() {
+fn deployment_model_defaults_use_only_active_models() {
     let defaults: Value = include_str!("../../../deploy/dl380g10/models.toml")
         .parse()
         .unwrap();
+    for name in tl3_config::ACTIVE_MODELS {
+        assert!(tl3_config::ALLOWED_MODELS.contains(name), "{name}");
+    }
     for (role, ladder) in defaults["models"].as_table().unwrap() {
         for model in ladder.as_array().unwrap() {
             let name = model["name"].as_str().unwrap();
             assert!(
-                tl3_config::ALLOWED_MODELS.contains(&name),
-                "models.toml {role} uses {name}; allowed: {:?}",
-                tl3_config::ALLOWED_MODELS
+                tl3_config::ACTIVE_MODELS.contains(&name),
+                "models.toml {role} uses {name}; active: {:?}",
+                tl3_config::ACTIVE_MODELS
             );
         }
     }
