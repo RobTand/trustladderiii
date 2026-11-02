@@ -292,6 +292,8 @@ pub struct Repository {
     /// as one more regression check (#359). Absent means off.
     #[serde(default)]
     pub selected_tests: Option<u32>,
+    #[serde(default)]
+    pub always_tests: Vec<String>,
     pub owner: String,
     pub name: String,
     pub installation_id: u64,

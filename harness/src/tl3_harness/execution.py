@@ -318,7 +318,8 @@ def selected_head(tool: TestTool, new: Path, container: Container, kept: tuple[s
 
 def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                container: Container, reviewed: str | None = None, tool: TestTool = PYTEST,
-               protected: tuple[str, ...] = (), selected_tests: int | None = None) -> tuple[Result, ...]:
+               protected: tuple[str, ...] = (), selected_tests: int | None = None,
+               always_tests: tuple[str, ...] = ()) -> tuple[Result, ...]:
     """Run one round inside one admitted PB action, from trusted installed code. `protected`
     holds the repository's protected path patterns; a change to any of them is refused.
     With `selected_tests`, up to that many existing tests whose imports reach the change,

@@ -1395,3 +1395,63 @@ fn heal_rerun_workflows_are_workflow_file_names() {
         assert!(error.contains("heal_rerun_workflows"), "{bad:?}: {error}");
     }
 }
+
+#[test]
+fn repository_always_tests_defaults_empty_and_accepts_files_and_node_ids() {
+    assert!(
+        Config::parse(EXAMPLE).unwrap().github.repos[0]
+            .always_tests
+            .is_empty()
+    );
+    let mut document: Value = EXAMPLE.parse().unwrap();
+    let tests = vec![
+        "tests/test_rules.py",
+        "tests/test_rules.py::test_rule[../case]",
+    ];
+    document["github"]["repos"][0]
+        .as_table_mut()
+        .unwrap()
+        .insert(
+            "always_tests".into(),
+            Value::Array(tests.iter().map(|s| Value::String((*s).into())).collect()),
+        );
+    assert_eq!(
+        Config::parse(&toml::to_string(&document).unwrap())
+            .unwrap()
+            .github
+            .repos[0]
+            .always_tests,
+        tests
+    );
+}
+
+#[test]
+fn repository_always_tests_rejects_paths_outside_the_repo_and_globs() {
+    for invalid in [
+        "/tmp/test_rule.py",
+        "../test_rule.py",
+        "tests/../test_rule.py",
+        "..",
+        "tests/*.py",
+        "tests/**/test_rule.py",
+        "tests/test_?.py",
+        "tests/[ab].py",
+        "C:/test_rule.py",
+        "tests\\test_rule.py",
+        "-test_rule.py",
+        "",
+        "tests/test_rule.py::",
+        "tests/test_rule.py\0",
+    ] {
+        let mut document: Value = EXAMPLE.parse().unwrap();
+        document["github"]["repos"][0]
+            .as_table_mut()
+            .unwrap()
+            .insert(
+                "always_tests".into(),
+                Value::Array(vec![Value::String(invalid.into())]),
+            );
+        let error = Config::parse(&toml::to_string(&document).unwrap()).expect_err(invalid);
+        assert!(error.to_string().contains("always_tests"), "{error}");
+    }
+}
