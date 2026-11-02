@@ -386,6 +386,7 @@ fn main() {
         ] {
             planning::planning(&database.create(&mode.replace('-', "_")), mode);
         }
+        planning::memories(&database.create("plan_memories"));
         database.stop();
         return;
     }
@@ -603,6 +604,8 @@ fn main() {
         planning::planning(&database.create(&mode.replace('-', "_")), mode);
     }
     println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
+    planning::memories(&database.create("plan_memories"));
+    println!("test planner_memories_recall_and_flag ... ok");
     planning::stop(&database.create("planner_stop"));
     println!("test planner_stop ... ok");
     quota_scenarios(&mut database);

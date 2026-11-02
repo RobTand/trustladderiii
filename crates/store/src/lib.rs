@@ -149,6 +149,11 @@ impl Store {
         Ok(())
     }
 
+    /// #422: every recorded memory curation, oldest first.
+    pub fn memory_curations(&mut self) -> Result<Vec<serde_json::Value>> {
+        todo!("#422")
+    }
+
     /// A cursor bounds each read without retaining the history of sent records.
     pub fn pending_memories(
         &mut self,

@@ -1,6 +1,7 @@
 """Exercise the real graph and transport against a local MLflow-shaped receiver."""
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 import subprocess
 import socket
 import threading
@@ -1153,3 +1154,37 @@ def test_ordinary_text_from_the_recheck_corpus_survives(text):
     redactor = Redactor('/nonexistent/key-file-path')
     assert redactor.text(text) == text
     assert redactor.payload(text) == text
+
+
+def test_trace_tags_recalled_cited_and_flagged_memories(request_doc, monkeypatch, exporters, receiver):
+    # #422: judges score whether memories helped from these tags.
+    uri, packets = receiver
+    request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
+    request_doc['inputs']['memories'] = [
+        {'id': 'b7e1c2d4-0000-4000-8000-000000000001', 'kind': 'lesson', 'content': 'Keep greet().'},
+        {'id': 'b7e1c2d4-0000-4000-8000-000000000002', 'kind': 'run', 'content': 'Earlier run.'}]
+    (Path(request_doc['worktree']) / 'greeting.py').write_text("def greet(): return 'hello'\n")
+    flag = {'id': 'b7e1c2d4-0000-4000-8000-000000000001', 'reason': 'greet() returns hello.',
+            'evidence': {'path': 'greeting.py', 'start_line': 1, 'end_line': 1,
+                         'quote': "def greet(): return 'hello'"}}
+    reply = {**BRIEF, 'memory_ids': ['b7e1c2d4-0000-4000-8000-000000000001'], 'memory_flags': [flag]}
+    model = FakeMessagesListChatModel(responses=[AIMessage(content=json.dumps(reply))])
+    monkeypatch.setattr(runtime, 'create_model', lambda _: model)
+    runtime.run(request_doc, [].append)
+    for child in exporters:
+        child.wait(timeout=15)
+    root = next(span for span in decode(packets) if not span.parent_span_id)
+    attrs = {attr.key: attr.value.string_value for attr in root.attributes}
+    assert attrs['mlflow.traceTag.memory_recalled'] == (
+        'b7e1c2d4-0000-4000-8000-000000000001,b7e1c2d4-0000-4000-8000-000000000002')
+    assert attrs['mlflow.traceTag.memory_cited'] == 'b7e1c2d4-0000-4000-8000-000000000001'
+    assert attrs['mlflow.traceTag.memory_flagged'] == 'b7e1c2d4-0000-4000-8000-000000000001'
+
+
+def test_trace_has_no_memory_tags_without_memories(request_doc, monkeypatch, exporters, receiver):
+    uri, packets = receiver
+    run_fake(request_doc, monkeypatch, exporters, uri)
+    root = next(span for span in decode(packets) if not span.parent_span_id)
+    keys = {attr.key for attr in root.attributes}
+    assert 'mlflow.traceTag.memory_recalled' not in keys
+    assert 'mlflow.traceTag.memory_flagged' not in keys

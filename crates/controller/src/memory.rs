@@ -347,6 +347,69 @@ pub fn flush(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usiz
     Ok(count)
 }
 
+/// At most this many memories go into one run's inputs.
+pub const MAX_MEMORIES: usize = 8;
+/// Characters kept from one memory.
+pub const MEMORY_CHARS: usize = 1500;
+/// Characters kept across one run's memories.
+pub const MEMORIES_CHARS: usize = 8000;
+
+/// What one worker run recalls before it starts.
+pub enum Recall<'a> {
+    /// Ingest and planning: lessons, decisions and conventions first, then anything relevant.
+    Context { repo: &'a str, query: &'a str },
+    /// Review: the repo's conventions only.
+    Conventions { repo: &'a str, query: &'a str },
+}
+
+/// Recall bounded, redacted memories as worker inputs. Hindsight failures degrade
+/// to no memories and a note; only store errors are returned.
+pub fn recall(
+    _store: &mut Store,
+    _settings: &tl3_config::Hindsight,
+    _recall: Recall<'_>,
+) -> Result<Value> {
+    todo!("#422")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CurationState {
+    Invalidated,
+    Valid,
+}
+
+/// Rob's own correction or revert of one memory.
+pub fn rob_curation(
+    _store: &mut Store,
+    _memory_id: &str,
+    _state: CurationState,
+    _reason: &str,
+) -> Result<()> {
+    todo!("#422")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LessonKind {
+    Lesson,
+    Decision,
+    Convention,
+}
+
+/// A durable lesson, decision or convention for later recall.
+pub struct Lesson<'a> {
+    pub kind: LessonKind,
+    pub source: &'a str,
+    pub repo: &'a str,
+    pub topic: Option<&'a str>,
+    pub text: &'a str,
+    /// Stable identity, so a replay queues the same remote operation.
+    pub identity: &'a str,
+}
+
+pub fn queue_lesson(_store: &mut Store, _lesson: &Lesson<'_>) -> Result<()> {
+    todo!("#422")
+}
+
 #[derive(Clone)]
 pub(crate) struct Feed(SyncSender<()>);
 impl Feed {
