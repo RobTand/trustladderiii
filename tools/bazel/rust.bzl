@@ -19,7 +19,7 @@ load("//tools/bazel:python.bzl", "tl3_py_test")
 # a private /tmp, which remote containers and Bazel's sandbox both provide.
 WORKSPACE = "/tmp/tl3-workspace"
 
-_POSTGRES = ["crates/controller", "crates/store"]
+_POSTGRES = ["crates/console", "crates/controller", "crates/store"]
 
 # Files that include_str! and build.rs read from outside the crate.
 _COMPILE_DATA = {
@@ -33,6 +33,8 @@ _COMPILE_DATA = {
         "//workers/tests:fixtures",
     ],
     "crates/config": ["//deploy/dl380g10:models.toml"],
+    # The console's tests and fixture include the store's embedded Postgres support.
+    "crates/console": ["//crates/store:sources"],
     "crates/github": ["//crates/mergify:sources"],
     "crates/mergify": ["//crates/github:sources"],
 }
@@ -41,6 +43,13 @@ _BUILD_SCRIPT_DATA = {
 }
 _EXAMPLE_DATA = {
     "//deploy/dl380g10:helper.rs": ["//deploy/github-app:manifest.json"],
+    "examples/console_fixture.rs": ["//crates/store:sources"],
+}
+
+# Files other crates' tests read at run time.
+_RUNTIME = {
+    # web_api_types_are_current compares the generated TypeScript with the Rust types.
+    "crates/console": ["//web:api_types"],
 }
 
 # rust_gate.py runs the controller's github binary as two timed groups.
@@ -66,7 +75,7 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     env = {"CARGO_MANIFEST_DIR": WORKSPACE + "/" + package}
     for binary in binaries:
         env["CARGO_BIN_EXE_" + binary[1:]] = WORKSPACE + "/$(rootpath " + binary + ")"
-    runtime = _CONTROLLER_RUNTIME if controller else []
+    runtime = _CONTROLLER_RUNTIME if controller else _RUNTIME.get(package, [])
     postgres = select({
         "@platforms//cpu:aarch64": ["@postgres_linux_arm64//:all"],
         "//conditions:default": ["@postgres_linux_amd64//:all"],
@@ -203,7 +212,11 @@ def _crate_test(kind, package, name, source, harness, options):
             crate_name = name.replace("-", "_"),
             crate_root = source,
             srcs = [":sources", source],
-            compile_data = options["compile_data"] + _EXAMPLE_DATA.get(source, []),
+            compile_data = options["compile_data"] + [
+                label
+                for label in _EXAMPLE_DATA.get(source, [])
+                if label not in options["compile_data"]
+            ],
             edition = "2024",
             crate_features = options["crate_features"],
             use_libtest_harness = harness,
