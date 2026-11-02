@@ -139,6 +139,7 @@ impl Controller {
                 signature,
                 effect: Some(delivery.key.clone()),
                 post_key: Some(post.key.clone()),
+                cause: Some(crate::looks::Cause::Upstream),
             }),
         ));
         commit.rows.push(put(

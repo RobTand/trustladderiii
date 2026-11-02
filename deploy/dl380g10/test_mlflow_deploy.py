@@ -38,3 +38,19 @@ class MlflowDeployTests(unittest.TestCase):
                 with contextlib.redirect_stdout(io.StringIO()) as output:
                     self.assertFalse(deploy.mlflow_health(home))
                 self.assertIn('MISSING MLflow HTTP', output.getvalue())
+
+
+class MlflowHostsTests(unittest.TestCase):
+    def test_launcher_accepts_ip_hostname_and_mdns_for_hosts_and_cors(self):
+        spec = importlib.util.spec_from_file_location('mlflow_server', Path(__file__).with_name('mlflow-server.py'))
+        launcher = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(launcher)
+        build = getattr(launcher, 'access_args', None)
+        self.assertTrue(callable(build), 'launcher needs testable host/CORS arguments')
+        args = build('http://192.168.1.107:5033', hostname='dl380g10')
+        hosts = args[args.index('--allowed-hosts') + 1].split(',')
+        origins = args[args.index('--cors-allowed-origins') + 1].split(',')
+        for host in ['192.168.1.107', '127.0.0.1', 'localhost', 'dl380g10', 'dl380g10.local']:
+            self.assertIn(host + ':5033', hosts)
+            self.assertIn('http://' + host + ':5033', origins)
+        self.assertNotIn('*', ','.join(args))

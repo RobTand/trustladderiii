@@ -173,7 +173,7 @@ fn failed(completion: &tl3_controller::executor::Completion) -> bool {
         [Observation::Kernel(Event::Reply {
             reply: Reply::RunFailed,
             ..
-        })]
+        })] | [Observation::WorkerFailed { .. }]
     )
 }
 
@@ -887,6 +887,55 @@ fn invalid_replies(settings: &tl3_config::Store) {
         supervisor.execute(&delivery()).unwrap();
         assert!(failed(&terminal(&mut supervisor, &delivery())), "{mode}");
     }
+
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "diagnostic-failure");
+    let (registry, mut source) =
+        ingest_audit_simulation(&root.path().join("fakes"), &config).unwrap();
+    let mut controller = Controller::open(
+        Store::open(settings).unwrap(),
+        registry,
+        Bootstrap::from_config(&config).unwrap(),
+    )
+    .unwrap();
+    let mut store = Store::open(settings).unwrap();
+    controller.intake(labelled()).unwrap();
+    wait(|| {
+        drive(&mut controller, &mut source, &mut store);
+        controller.world().unwrap().nodes[0].waiting_incident
+    });
+    let snapshot = controller.snapshot().unwrap();
+    let failure = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "worker_failures")
+        .unwrap();
+    assert_eq!(failure.value["failure_class"], "ValueError");
+    assert_eq!(
+        failure.value["failure_message"],
+        "sized briefs must declare their root files"
+    );
+    assert!(
+        snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "incidents")
+            .any(|r| r.value["summary"]
+                .as_str()
+                .unwrap()
+                .contains("ValueError: sized briefs must declare their root files"))
+    );
+    let mut reader = tl3_store::Reader::open(settings).unwrap();
+    let status = tl3_controller::status::load(&mut reader).unwrap();
+    assert!(
+        status.requests[0]
+            .details
+            .last_progress
+            .as_deref()
+            .unwrap()
+            .contains("ValueError: sized briefs must declare their root files")
+    );
+    assert_retired(&config, &mut store);
 }
 
 fn stop_and_exit_gate(settings: &tl3_config::Store) {

@@ -118,6 +118,13 @@ fn repository_orientation_and_ingest_replay() {
             "ORIENTATION {}",
             json!({"repository":name,"head":head.as_str(),"file_count":repo["file_count"],"listed_files":repo["file_list"].as_array().unwrap().len(),"orientation_bytes":repo.to_string().len(),"summarized":repo["tree_summary"] != ""})
         );
+        if let Some(output) = std::env::var_os("TL3_TEST_ORIENTATION_OUTPUT") {
+            fs::write(
+                PathBuf::from(output).join(format!("{name}.json")),
+                inputs.to_string(),
+            )
+            .unwrap();
+        }
         if name.starts_with("prismabuild") {
             let checkout = root.path().join("checkout");
             fs::create_dir(&checkout).unwrap();
@@ -141,4 +148,21 @@ fn repository_orientation_and_ingest_replay() {
             println!("REPLAY {}", String::from_utf8_lossy(&output.stdout));
         }
     }
+}
+
+#[test]
+fn failed_attempt_preserves_diagnostic_before_retirement() {
+    let f = crate::git_tests::Repo::new();
+    let attempt = tempfile::tempdir().unwrap();
+    fs::write(attempt.path().join("exit.json"), r#"{"code":1}"#).unwrap();
+    fs::write(attempt.path().join("memory.json"), r#"{"outcome":"failed","reason":{"failure_class":"ValueError","failure_message":"reply cites a memory it was not given"}}"#).unwrap();
+    let Reconciliation::Found(completion) = inspect(attempt.path(), &f.delivery()).unwrap() else {
+        panic!("a failed exit must be terminal");
+    };
+    let value = json!(completion.observations);
+    assert_eq!(value[0]["WorkerFailed"]["failure_class"], "ValueError");
+    assert_eq!(
+        value[0]["WorkerFailed"]["failure_message"],
+        "reply cites a memory it was not given"
+    );
 }

@@ -12,6 +12,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 import pytest
+from message_invariants import assert_tool_pairs
 
 from tl3_workers import runtime
 from tl3_workers.contracts import validate
@@ -1185,3 +1186,83 @@ def test_original_conflict_files_survive_staging_and_restart(maker_request, monk
     runtime.run(maker_request, events.append)
     assert events[-1]['reply']['kind'] == 'cant_meet', 'staging must not hide leftover markers on restart'
     assert git(root, 'rev-parse', 'HEAD') == leaf
+
+
+@pytest.mark.parametrize('resume', [False, True])
+def test_long_maker_session_bounds_context_and_commits(tmp_path, maker_request, monkeypatch, resume):
+    from langchain_core.messages import HumanMessage, ToolMessage, messages_to_dict
+
+    root = Path(maker_request['worktree'])
+    before = git(root, 'rev-parse', 'HEAD')
+    # Match the live maker's 50 tool turns, using real confined reads and writes.
+    (root / 'evidence.txt').write_text(('source evidence ' * 30 + '\n') * 60)
+    git(root, 'add', 'evidence.txt')
+    git(root, 'commit', '--quiet', '-m', 'Repository evidence fixture')
+    before = git(root, 'rev-parse', 'HEAD')
+    maker_request['inputs']['context_size'] = 10_000_000
+    maker_request['session_file'] = str(tmp_path / 'session.json')
+    if resume:
+        maker_request['resume_session'] = True
+        Path(maker_request['session_file']).write_text(json.dumps(messages_to_dict([
+            HumanMessage(content='Previous visit: preserve the public interface.'),
+            AIMessage(content='Previous visit completed.'),
+        ])))
+    observed = []
+    script = [turn(calls=[{'name': 'read', 'args': {'path': 'evidence.txt'},
+                           'id': str(i), 'type': 'tool_call'}]) for i in range(48)]
+    script += [write_turn(), turn(calls=[{'name': 'read', 'args': {'path': 'greeting.py'},
+                                         'id': 'verify', 'type': 'tool_call'}]), turn(DONE)]
+
+    class RecordingMaker(ToolModel):
+        def _generate(self, messages, **kwargs):
+            observed.append(list(messages))
+            return super()._generate(messages, **kwargs)
+
+    monkeypatch.setattr(runtime, 'create_model', lambda _: RecordingMaker(
+        responses=[AIMessage(**message) for message in script]))
+    events = []
+    runtime.run(maker_request, events.append)
+    for messages in observed:
+        assert_tool_pairs(messages)
+    assert len(observed) == 51, 'a long maker session can finish its planned edits'
+    assert max(sum(len(json.dumps(m.model_dump(), ensure_ascii=False).encode())
+                   for m in messages if isinstance(m, (AIMessage, ToolMessage)))
+               for messages in observed) > 65_536, 'history grows beyond the former rolling window'
+    for previous, following in zip(observed, observed[1:]):
+        assert [m.model_dump() for m in following[:len(previous)]] == [m.model_dump() for m in previous], \
+            'history below the context threshold preserves its exact prefix'
+    request_text = json.dumps(maker_request['inputs'], ensure_ascii=False)
+    assert all(any(m.content == request_text for m in messages if isinstance(m, HumanMessage))
+               for messages in observed), 'the current request survives across resumed visits'
+    assert observed[-1][-1].text == "def greet(): return 'hello'\n", 'the newest read stays whole'
+    reply = events[-1]['reply']
+    assert reply == {**DONE, 'head': git(root, 'rev-parse', 'HEAD')}
+    assert reply['head'] != before
+    assert git(root, 'show', 'HEAD:greeting.py') == "def greet(): return 'hello'"
+    assert git(root, 'status', '--porcelain') == ''
+
+
+@pytest.mark.parametrize('final_done', [False, True])
+def test_maker_budget_exhaustion_finishes_without_claiming_unmade_changes(maker_request, monkeypatch,
+                                                                         final_done):
+    observed = []
+    maker_request['inputs']['context_size'] = 1_000_000
+    final = DONE if final_done else {'kind': 'cant_meet', 'report': 'The work is incomplete.'}
+
+    class EndlessMaker(ToolModel):
+        def _generate(self, messages, **kwargs):
+            observed.append(list(messages))
+            exhausted = any('budget is exhausted' in m.text for m in messages if m.type == 'human')
+            response = turn(final) if exhausted or len(observed) >= 75 else turn(calls=[{
+                'name': 'read', 'args': {'path': 'greeting.py'}, 'id': str(len(observed)),
+                'type': 'tool_call'}])
+            self.responses = [AIMessage(**response)]
+            self.i = 0
+            return super()._generate(messages, **kwargs)
+
+    monkeypatch.setattr(runtime, 'create_model', lambda _: EndlessMaker(responses=[]))
+    events = []
+    runtime.run(maker_request, events.append)
+    assert len(observed) <= 65, 'maker allows at most 64 tool turns and one final answer'
+    assert events[-1]['reply'] == {'kind': 'cant_meet', 'report':
+                                  'no code change was made' if final_done else 'The work is incomplete.'}

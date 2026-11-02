@@ -69,7 +69,7 @@ def test_one_pass_uses_real_prompt_and_reports_per_kind_and_usage():
     assert len(observed) == 2
     prompt = files('tl3_workers').joinpath('prompts/classifier.md').read_text()
     for messages, item in zip(observed, cases):
-        assert messages[0].text.startswith(prompt + '\n\nReply with one JSON object matching this schema:\n')
+        assert messages[0].text.startswith(prompt + '\n\nReply with one JSON object only: no prose, no code fences. It must match this schema:\n')
         assert json.loads(messages[1].text) == item['inputs']
         assert '/never/read/model-key' not in str(messages)
     assert report['by_kind'] == {

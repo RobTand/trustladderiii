@@ -10,6 +10,7 @@ pub mod adoption;
 pub mod findings;
 
 pub mod adapters;
+mod blocked;
 mod branches;
 pub mod cli;
 pub mod clock;
@@ -25,6 +26,7 @@ mod loom_tests;
 pub mod memory;
 mod notices;
 pub mod production;
+pub mod release;
 mod scope;
 mod snapshot;
 pub mod status;
@@ -1636,7 +1638,12 @@ impl Controller {
             } = output
             {
                 let id = looks::incident_id(snapshot, index);
-                let (source, class) = self.attach_incident(snapshot, node, &id, commit)?;
+                let (mut source, mut class) = self.attach_incident(snapshot, node, &id, commit)?;
+                let blocked = blocked::evidence(commit, node)?;
+                if blocked.is_some() {
+                    source = executor::Upstream::Workers;
+                    class = blocked::CLASS.into();
+                }
                 let signature = looks::IncidentSignature {
                     upstream: source,
                     class: class.clone(),
@@ -1659,6 +1666,49 @@ impl Controller {
                     summary.push(' ');
                     summary.push_str(&detail);
                 }
+                if let Some(evidence) = blocked {
+                    summary.push(' ');
+                    summary.push_str(&evidence);
+                }
+                if source == executor::Upstream::Workers {
+                    let failure = commit
+                        .rows
+                        .iter()
+                        .rev()
+                        .find_map(|row| match row {
+                            RowChange::Put { table, id, value }
+                                if table == "worker_failures" && id == &node.0.to_string() =>
+                            {
+                                Some(value)
+                            }
+                            _ => None,
+                        })
+                        .or_else(|| {
+                            snapshot
+                                .rows
+                                .iter()
+                                .find(|row| {
+                                    row.table == "worker_failures" && row.id == node.0.to_string()
+                                })
+                                .map(|row| &row.value)
+                        });
+                    let incident_generation = snapshot
+                        .rows
+                        .iter()
+                        .find(|row| row.table == "nodes" && row.id == node.0.to_string())
+                        .and_then(|row| row.value["generation"].as_u64());
+                    if let Some(failure) = failure
+                        && failure["generation"].as_u64() == incident_generation
+                    {
+                        summary.push_str(&format!(
+                            " Last worker failure: {}: {}.",
+                            failure["failure_class"].as_str().unwrap_or("unknown"),
+                            failure["failure_message"]
+                                .as_str()
+                                .unwrap_or("worker run failed")
+                        ));
+                    }
+                }
                 commit.rows.push(put(
                     "incidents",
                     id.clone(),
@@ -1673,6 +1723,7 @@ impl Controller {
                         signature: signature.clone(),
                         effect: None,
                         post_key: Some(key.clone()),
+                        cause: Some(looks::Cause::of(source, &class)),
                     }),
                 ));
                 delivery.note = Some(looks::incident_note(
@@ -1885,27 +1936,12 @@ impl Controller {
                 .iter()
                 .find(|r| r.table == "incidents" && r.id == id && r.value["open"] == true)
         {
-            let mut incident: looks::Incident = decode_stored(row.value.clone())?;
-            if incident.blocking {
-                commit.rows.push(put(
-                    "inbox",
-                    format!("incident-clear:{}:{id}", comment.id),
-                    json!(Observation::Kernel(Event::Fact {
-                        node: incident
-                            .node
-                            .ok_or(Error::Invalid("blocking incident needs a node"))?,
-                        fact: Fact::IncidentCleared { by_rob: true }
-                    })),
-                ));
-            } else {
-                incident.open = false;
-                if !self.retry_notice(snapshot, &incident, commit)? {
-                    self.resume_incident_look(snapshot, &incident, commit)?;
-                }
-                commit
-                    .rows
-                    .push(put("incidents", id.into(), json!(incident)));
-            }
+            self.clear_incident(
+                snapshot,
+                decode_stored(row.value.clone())?,
+                format!("incident-clear:{}:{id}", comment.id),
+                commit,
+            )?;
         }
         commit.rows.push(put(
             "operations_comments",
@@ -1913,6 +1949,37 @@ impl Controller {
             json!({"repository":repository, "issue":issue, "comment":comment}),
         ));
         Ok(true)
+    }
+
+    /// Rob's clear, which a new release also applies to TL3-side incidents (Q51).
+    pub(crate) fn clear_incident(
+        &mut self,
+        snapshot: &Snapshot,
+        mut incident: looks::Incident,
+        inbox: String,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        if incident.blocking {
+            commit.rows.push(put(
+                "inbox",
+                inbox,
+                json!(Observation::Kernel(Event::Fact {
+                    node: incident
+                        .node
+                        .ok_or(Error::Invalid("blocking incident needs a node"))?,
+                    fact: Fact::IncidentCleared { by_rob: true }
+                })),
+            ));
+        } else {
+            incident.open = false;
+            if !self.retry_notice(snapshot, &incident, commit)? {
+                self.resume_incident_look(snapshot, &incident, commit)?;
+            }
+            commit
+                .rows
+                .push(put("incidents", incident.id.clone(), json!(incident)));
+        }
+        Ok(())
     }
 
     fn translate(
@@ -2267,6 +2334,33 @@ impl Controller {
                     },
                 }
             }
+            Observation::WorkerFailed {
+                node,
+                generation,
+                failure_class,
+                failure_message,
+            } => {
+                let n = world
+                    .nodes
+                    .get(node.0 as usize)
+                    .ok_or(Error::Invalid("worker node missing"))?;
+                if n.run != Some(generation) || n.generation != generation {
+                    return Ok(None);
+                }
+                commit.rows.push(put(
+                    "worker_failures",
+                    node.0.to_string(),
+                    json!({
+                        "node": node, "generation": generation,
+                        "failure_class": failure_class, "failure_message": failure_message,
+                    }),
+                ));
+                Event::Reply {
+                    node,
+                    generation,
+                    reply: Reply::RunFailed,
+                }
+            }
             Observation::WorkerReply {
                 node,
                 generation,
@@ -2559,6 +2653,12 @@ impl Controller {
                         }
                     }
                 };
+                if mapped != Reply::RunFailed {
+                    commit.rows.push(RowChange::Delete {
+                        table: "worker_failures".into(),
+                        id: node.0.to_string(),
+                    });
+                }
                 if role == "reviewer" {
                     commit.rows.push(put(
                         "reviewer_session",
@@ -2921,6 +3021,7 @@ fn observation_upstream(
         | Observation::PullRequest { .. } => Some(Upstream::GitHub),
         Observation::Classified { .. }
         | Observation::WorkerReply { .. }
+        | Observation::WorkerFailed { .. }
         | Observation::Plan { .. }
         | Observation::Made { .. }
         | Observation::Reviewed { .. } => Some(Upstream::Workers),

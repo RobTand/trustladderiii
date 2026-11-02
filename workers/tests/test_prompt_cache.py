@@ -1,0 +1,249 @@
+"""Offline cache behavior through the worker graph and real proxy client."""
+from copy import deepcopy
+import json
+from pathlib import Path
+
+import httpx
+from langchain_core.callbacks import UsageMetadataCallbackHandler
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+from langchain_core.messages import AIMessage
+import pytest
+
+from tl3_workers import runtime
+from message_invariants import assert_tool_pairs
+import test_maker
+import test_workers
+
+
+maker_request = test_maker.maker_request
+request_doc = test_workers.request_doc
+
+
+class ToolModel(FakeMessagesListChatModel):
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+
+def capture_budget(monkeypatch):
+    instances = []
+    original = runtime.ExplorationMiddleware
+
+    def construct(*args, **kwargs):
+        instance = original(*args, **kwargs)
+        instances.append(instance)
+        return instance
+
+    monkeypatch.setattr(runtime, "ExplorationMiddleware", construct)
+    return instances
+
+
+def payload(messages):
+    return json.dumps([m.model_dump(include={"type", "content", "tool_calls", "tool_call_id", "name"})
+                       for m in messages], ensure_ascii=False)
+
+
+def evidence_explorer(maker_request, seen, usage):
+    maker_request["inputs"]["context_size"] = 100_000
+    Path(maker_request["worktree"], "evidence.txt").write_text(("source evidence " * 7 + "\n") * 200)
+
+    class Explorer(ToolModel):
+        def _generate(self, messages, **kwargs):
+            seen.append(deepcopy(messages))
+            index = len(seen)
+            final = index == 10
+            tokens = usage.get(index, 10_000)
+            self.responses = [AIMessage(
+                content=json.dumps({"kind": "cant_meet", "report": "Need more checks."}) if final else "",
+                tool_calls=[] if final else [{"name": "read", "args": {"path": "evidence.txt"},
+                                              "id": str(index), "type": "tool_call"}],
+                usage_metadata={"input_tokens": tokens, "output_tokens": 1, "total_tokens": tokens + 1})]
+            self.i = 0
+            return super()._generate(messages, **kwargs)
+
+    return Explorer(responses=[])
+
+
+def test_append_only_prefix_and_one_threshold_compaction(maker_request, monkeypatch):
+    seen = []
+    model = evidence_explorer(maker_request, seen, {7: 71_000})
+    monkeypatch.setattr(runtime, "create_model", lambda _: model)
+    runtime.run(maker_request, lambda _: None)
+    assert len(seen) == 10
+    for messages in seen:
+        assert_tool_pairs(messages)
+    breaks = [index for index in range(1, len(seen))
+              if payload(seen[index][:len(seen[index - 1])]) != payload(seen[index - 1])]
+    assert breaks == [7], "the prefix changes once, after the 70%-context call, never as a rolling window"
+    compacted = seen[7]
+    assert any("removed or clipped" in m.text for m in compacted if m.type == "human")
+    assert any(m.type == "tool" and m.tool_call_id == "7" for m in compacted), "keep the newest group"
+
+
+def finish_requested(messages):
+    return any("budget is exhausted" in m.text for m in messages if m.type == "human")
+
+
+def test_context_regrowing_after_compaction_requests_finish(maker_request, monkeypatch):
+    seen = []
+    # Call 8 compacts below 70%. Call 9 reports 75%, so call 10 must finish.
+    model = evidence_explorer(maker_request, seen, {7: 71_000, 9: 75_000})
+    monkeypatch.setattr(runtime, "create_model", lambda _: model)
+    runtime.run(maker_request, lambda _: None)
+    assert [finish_requested(messages) for messages in seen] == [False] * 9 + [True]
+
+
+def scripted_maker(seen, usage):
+    calls = [*[("read", {"path": "greeting.py"})] * 3,
+             ("write", {"path": "greeting.py", "content": "def greet(): return 'hello'\n"})]
+
+    class Scripted(ToolModel):
+        def _generate(self, messages, **kwargs):
+            seen.append(deepcopy(messages))
+            index = len(seen)
+            if index > len(calls):
+                content, tool_calls = json.dumps(test_maker.DONE), []
+            else:
+                name, args = calls[index - 1]
+                content, tool_calls = "", [{"name": name, "args": args, "id": str(index), "type": "tool_call"}]
+            tokens = usage(index)
+            self.responses = [AIMessage(content=content, tool_calls=tool_calls, usage_metadata={
+                "input_tokens": tokens, "output_tokens": 1, "total_tokens": tokens + 1})]
+            self.i = 0
+            return super()._generate(messages, **kwargs)
+
+    return Scripted(responses=[])
+
+
+def test_instructions_above_threshold_leave_room_to_work(maker_request, monkeypatch):
+    # A fix round's accumulated review feedback alone can exceed 70% of the context.
+    # Compaction cannot shrink instructions, so it must not end the run on the next turn.
+    maker_request["inputs"]["context_size"] = 100_000
+    seen = []
+    monkeypatch.setattr(runtime, "create_model", lambda _: scripted_maker(seen, lambda index: 80_000))
+    events = []
+    runtime.run(maker_request, events.append)
+    assert len(seen) == 5
+    assert not any(finish_requested(messages) for messages in seen)
+    assert events[-1]["reply"]["kind"] == "done"
+
+
+@pytest.mark.parametrize("details,weights,expected", [
+    ({"cache_read": 80_000, "cache_creation": 10_000}, {}, 30_500),
+    ({"cache_read": 80_000, "cache_creation": 10_000},
+     {"UNCACHED": "2", "CREATION": "3", "READ": "0.5"}, 90_000),
+    ({"cache_read": 80_000}, {}, 28_000),
+    ({"cache_creation": 10_000}, {}, 102_500),
+    ({}, {}, 100_000),
+    (None, {}, 100_000),
+])
+def test_cache_weighted_budget_uses_reported_components(tmp_path, monkeypatch, details, weights, expected):
+    for name, value in weights.items():
+        monkeypatch.setenv("TL3_CACHE_" + name + "_WEIGHT", value)
+    budgets = capture_budget(monkeypatch)
+    usage = {"input_tokens": 100_000, "output_tokens": 1, "total_tokens": 100_001}
+    if details is not None:
+        usage["input_token_details"] = details
+    model = ToolModel(responses=[AIMessage(content=json.dumps(test_workers.BRIEF), usage_metadata=usage)])
+    monkeypatch.setattr(runtime, "create_model", lambda _: model)
+    runtime.run({"role": "ingest", "worktree": str(tmp_path), "inputs": {}}, lambda _: None)
+    assert budgets[0].spent == expected
+
+
+def test_cached_intake_keeps_four_exploration_rounds(tmp_path, monkeypatch):
+    Path(tmp_path, "evidence.txt").write_text("source evidence")
+    seen = []
+
+    class Explorer(ToolModel):
+        def _generate(self, messages, **kwargs):
+            seen.append(messages)
+            index = len(seen)
+            final = index == 5 or any("budget is exhausted" in m.text for m in messages if m.type == "human")
+            self.responses = [AIMessage(
+                content=json.dumps(test_workers.BRIEF) if final else "",
+                tool_calls=[] if final else [{"name": "read", "args": {"path": "evidence.txt"},
+                                              "id": str(index), "type": "tool_call"}],
+                usage_metadata={"input_tokens": 100_000, "output_tokens": 1, "total_tokens": 100_001,
+                                "input_token_details": {"cache_read": 90_000}})]
+            self.i = 0
+            return super()._generate(messages, **kwargs)
+
+    budgets = capture_budget(monkeypatch)
+    monkeypatch.setattr(runtime, "create_model", lambda _: Explorer(responses=[]))
+    runtime.run({"role": "ingest", "worktree": str(tmp_path), "inputs": {}}, lambda _: None)
+    assert len(seen) == 5, "cached input must not consume the uncached-input allowance"
+    assert budgets[0].spent == 95_000
+
+
+def response_frames(content, *, duplicate_usage=False, trailing_usage=None):
+    chunk = {"id": "fixture-completion", "object": "chat.completion.chunk", "created": 0,
+             "model": "fixture-model"}
+    usage = {"prompt_tokens": 1000, "completion_tokens": 5, "total_tokens": 1005,
+             "prompt_tokens_details": {"cached_tokens": 800, "cache_write_tokens": 100}}
+    frames = [{**chunk, "choices": [{"index": 0, "delta": {"role": "assistant", "content": content},
+                                    "finish_reason": None}]},
+              {**chunk, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}], "usage": usage}]
+    if duplicate_usage or trailing_usage is not None:
+        frames.append({**chunk, "choices": [], "usage": trailing_usage or usage})
+    stream = "".join("data: " + json.dumps(frame) + "\n\n" for frame in frames) + "data: [DONE]\n\n"
+    return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=stream)
+
+
+@pytest.mark.parametrize("corrected_total", [False, True])
+def test_duplicate_stream_usage_is_charged_and_recorded_once(request_doc, monkeypatch, corrected_total):
+    Path(request_doc["key_file"]).write_text("fixture-only-key")
+    recorded = UsageMetadataCallbackHandler()
+    budgets = capture_budget(monkeypatch)
+
+    def respond(request):
+        trailing = ({"prompt_tokens": 1200, "completion_tokens": 6, "total_tokens": 1206,
+                     "prompt_tokens_details": {"cached_tokens": 900, "cache_write_tokens": 200}}
+                    if corrected_total else None)
+        return response_frames(json.dumps(test_workers.BRIEF), duplicate_usage=True, trailing_usage=trailing)
+
+    proxy = runtime.ProxyChatOpenAI
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        monkeypatch.setattr(runtime, "ProxyChatOpenAI", lambda **kwargs: proxy(
+            http_client=client, callbacks=[recorded], **kwargs))
+        runtime.run(request_doc, lambda _: None)
+    usage = recorded.usage_metadata["fixture-model"]
+    expected_input, output, read, creation, charge = ((1200, 6, 900, 200, 440) if corrected_total
+                                                      else (1000, 5, 800, 100, 305))
+    assert usage["input_tokens"] == expected_input, "only the last usage chunk describes the call total"
+    assert usage["output_tokens"] == output and usage["total_tokens"] == expected_input + output
+    assert usage["input_token_details"] == {"cache_read": read, "cache_creation": creation}
+    assert budgets[0].spent == charge
+
+
+def test_session_identity_reaches_header_and_body_across_turns_and_resume(request_doc, monkeypatch, tmp_path):
+    Path(request_doc["key_file"]).write_text("fixture-only-key")
+    request_doc.update(role="maker", session_file=str(tmp_path / "session.json"), last_accepted_generation=6)
+    request_doc["operation"]["generation"] = 7
+    request_doc["inputs"]["attempt"] = 1
+    Path(request_doc["session_file"]).with_suffix(".head").write_text(json.dumps(
+        {"generation": 7, "head": "a" * 40}))
+    sent = []
+    stream_options = []
+
+    def respond(request):
+        body = json.loads(request.content)
+        sent.append((request.headers.get("X-Session-ID"), body.get("prompt_cache_key")))
+        stream_options.append(body.get("stream_options"))
+        return response_frames("A fixture reply.")
+
+    proxy = runtime.ProxyChatOpenAI
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        monkeypatch.setattr(runtime, "ProxyChatOpenAI", lambda **kwargs: proxy(http_client=client, **kwargs))
+        model = runtime.create_model(request_doc)
+        model.invoke("First turn")
+        model.invoke("Second turn")
+        request_doc["operation"]["generation"] = 8
+        runtime.create_model(request_doc).invoke("Resumed worker")
+        request_doc["operation"]["generation"] = 9
+        request_doc["last_accepted_generation"] = 8
+        request_doc["inputs"]["attempt"] = 2
+        runtime.create_model(request_doc).invoke("Next attempt")
+    expected = f"tl3-{request_doc['operation']['node']}-7-1"
+    assert sent[:3] == [(expected, expected)] * 3, "affinity and cache identity survive a worker retry"
+    assert sent[3][0] == sent[3][1] and sent[3][0] != expected
+    assert all(options == {"include_usage": True} for options in stream_options)
+    assert "fixture-only-key" not in json.dumps(sent)

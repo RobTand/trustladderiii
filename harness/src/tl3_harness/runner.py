@@ -93,6 +93,7 @@ class Reporter:
         self.summary = summary
         self.phases = {}
         self.collection_errors = []
+        self.started = False
 
     @pytest.fixture(autouse=True)
     def _tl3_scratch(self, tmp_path):
@@ -119,7 +120,9 @@ class Reporter:
             data = data[os.write(self.descriptor, data):]
 
     def pytest_sessionstart(self):
-        self.emit(event="start", schema=1)
+        if not self.started:
+            self.started = True
+            self.emit(event="start", schema=1)
 
     @pytest.hookimpl(trylast=True)
     def pytest_collection_modifyitems(self, items):
@@ -205,16 +208,18 @@ def main():
     checkout = arguments[0] if arguments else "/checkout"
     os.chdir(checkout)
     sys.path.insert(0, str(Path.cwd()))
+    reporter = Reporter(tests, descriptor, summary)
+    # Start before pytest loads the checkout's conftest files, ini options and
+    # plugins. Any exit after this point may come from the code under test.
+    reporter.pytest_sessionstart()
     if summary:
-        return int(pytest.main(["--rootdir=.", "--", *(tests or ["."])], plugins=[Reporter(tests, descriptor, True)]))
+        return int(pytest.main(["--rootdir=.", "--", *(tests or ["."])], plugins=[reporter]))
     files = sorted({test.split("::")[0] for test in tests if Path(test.split("::")[0]).is_file()})
     if not files:
-        reporter = Reporter(tests, descriptor)
-        reporter.pytest_sessionstart()
         reporter.emit(event="collection", tests=[])
         reporter.pytest_sessionfinish(5)
         return 5
-    return int(pytest.main(["--rootdir=.", "--continue-on-collection-errors", *files], plugins=[Reporter(tests, descriptor)]))
+    return int(pytest.main(["--rootdir=.", "--continue-on-collection-errors", *files], plugins=[reporter]))
 
 
 if __name__ == "__main__":

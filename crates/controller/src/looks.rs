@@ -74,6 +74,48 @@ pub(crate) struct Incident {
     pub effect: Option<String>,
     #[serde(default)]
     pub post_key: Option<String>,
+    /// Absent on incidents stored before Q51; see `Incident::cause`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<Cause>,
+}
+
+/// Who caused an incident (Q51, Rob, 2026-11-01). A new TL3 release clears
+/// TL3-side incidents once; upstream incidents keep the probe and Rob rules.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Cause {
+    /// GitHub, Mergify, PrismaBuild or the model proxy.
+    Upstream,
+    /// TL3's own code, prompts, tools or harness environment.
+    Tl3,
+}
+
+impl Cause {
+    /// Workers and worktrees are TL3's own harness: agent runs, reply
+    /// validation, Q50 blockers and local Git checkouts. A worktree failure
+    /// that reaches GitHub, a Git remote or its token, is upstream. Agent runs
+    /// that fail because the model proxy is down still count as TL3-side;
+    /// the controller can't yet tell them from worker bugs.
+    pub(crate) fn of(upstream: Upstream, class: &str) -> Self {
+        match upstream {
+            Upstream::Workers => Cause::Tl3,
+            Upstream::Worktrees if matches!(class, "git_remote" | "invalid_token") => {
+                Cause::Upstream
+            }
+            Upstream::Worktrees => Cause::Tl3,
+            Upstream::GitHub | Upstream::Mergify | Upstream::PrismaBuild => Cause::Upstream,
+        }
+    }
+}
+
+impl Incident {
+    pub(crate) fn cause(&self) -> Cause {
+        self.cause.unwrap_or(if self.input_failure.is_some() {
+            Cause::Upstream
+        } else {
+            Cause::of(self.signature.upstream, &self.signature.class)
+        })
+    }
 }
 
 pub(crate) fn resolve_effect_incidents(
@@ -999,6 +1041,7 @@ impl Controller {
                 signature: signature.clone(),
                 effect: Some(state.delivery.key.clone()),
                 post_key: Some(format!("incident:{id}")),
+                cause: Some(Cause::of(signature.upstream, &signature.class)),
             }),
         ));
         let mut delivery = state.delivery.clone();
@@ -1422,9 +1465,13 @@ pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
             "permission"
         }
         crate::Error::Io(_) => "transport",
-        crate::Error::Adapter(error) => error
-            .downcast_ref::<tl3_github::Error>()
-            .map_or("transport", |error| error.failure_class().as_str()),
+        crate::Error::Adapter(error) => match error.downcast_ref::<tl3_worktrees::Error>() {
+            // Git's own message showed a network or remote cause.
+            Some(tl3_worktrees::Error::Network { .. }) => "git_remote",
+            _ => error
+                .downcast_ref::<tl3_github::Error>()
+                .map_or("transport", |error| error.failure_class().as_str()),
+        },
         crate::Error::MessageRejected => "message_rejected",
         _ => "setup",
     }
@@ -1486,6 +1533,8 @@ pub(crate) fn incident_summary(
         "quota" => "reached its usage allowance",
         "message_rejected" => "could not prepare a readable message",
         "setup" => "could not complete its setup",
+        "environment_blocked" => "reported that TL3's environment blocked the work",
+        "git_remote" => "could not reach the Git remote",
         _ => "could not finish the operation",
     };
     let next = if needs_rob {
@@ -1602,6 +1651,53 @@ mod git_failure_tests {
 #[cfg(test)]
 mod incident_tests {
     use super::*;
+
+    #[test]
+    fn git_remote_failures_in_worktrees_are_upstream() {
+        // The operation names crates/worktrees gives its network calls.
+        for operation in [
+            "fetch base",
+            "fetch pull head",
+            "fetch pinned pull commit",
+            "publish head",
+            "read remote branch",
+            "delete recorded remote branch",
+        ] {
+            let network: crate::Error = tl3_worktrees::Error::Network {
+                operation,
+                code: Some(128),
+            }
+            .into();
+            assert_eq!(failure_class(&network), "git_remote", "{operation}");
+            // Without a clear network message, the failure stays TL3-side (#309).
+            let ambiguous: crate::Error = tl3_worktrees::Error::Git {
+                operation,
+                code: Some(128),
+            }
+            .into();
+            assert_eq!(failure_class(&ambiguous), "transport", "{operation}");
+        }
+        let local: crate::Error = tl3_worktrees::Error::Git {
+            operation: "abort superseded merge",
+            code: Some(1),
+        }
+        .into();
+        assert_ne!(failure_class(&local), "git_remote");
+        assert_eq!(
+            Cause::of(Upstream::Worktrees, "git_remote"),
+            Cause::Upstream
+        );
+        assert_eq!(
+            Cause::of(Upstream::Worktrees, "invalid_token"),
+            Cause::Upstream
+        );
+        assert_eq!(
+            Cause::of(Upstream::Worktrees, failure_class(&local)),
+            Cause::Tl3
+        );
+        assert_eq!(Cause::of(Upstream::Workers, "transport"), Cause::Tl3);
+        assert_eq!(Cause::of(Upstream::PrismaBuild, "setup"), Cause::Upstream);
+    }
 
     #[test]
     fn legacy_incident_signature_remains_readable() {
@@ -1811,6 +1907,7 @@ impl Controller {
                 signature: signature.clone(),
                 effect: None,
                 post_key: Some(key.clone()),
+                cause: Some(Cause::Upstream),
             }),
         ));
         let world = snapshot::decode(snapshot)?;
