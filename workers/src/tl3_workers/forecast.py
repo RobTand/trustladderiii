@@ -35,18 +35,25 @@ def _fail(message):
 
 
 def _encoding():
-    message = "o200k_base tokenizer data must be preloaded in TIKTOKEN_CACHE_DIR"
+    encoding = optional_encoding()
+    if encoding is None:
+        _fail("o200k_base tokenizer data must be preloaded in TIKTOKEN_CACHE_DIR")
+    return encoding
+
+
+def optional_encoding():
+    """Load the pinned tokenizer, or silently return None if its cache is unavailable."""
     cache = os.environ.get("TIKTOKEN_CACHE_DIR")
     if not cache:
-        _fail(message)
+        return None
     key = hashlib.sha1(TOKENIZER_URL.encode()).hexdigest()
     try:
         with (Path(cache) / key).open("rb") as stream:
             data = stream.read(4 * 1024 * 1024)
     except OSError:
-        _fail(message)
+        return None
     if hashlib.sha256(data).hexdigest() != TOKENIZER_SHA256:
-        _fail(message)
+        return None
     ranks = {
         base64.b64decode(token): int(rank)
         for token, rank in (line.split() for line in data.splitlines() if line)
