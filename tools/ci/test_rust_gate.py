@@ -47,11 +47,14 @@ class GateTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'may not grow'):
             rust_gate.check_budget({}, {**baseline, 'cpu': {'seconds': 10, 'slow': {}}}, baseline)
 
-    def test_cpu_bootstrap_cannot_exceed_previous_wall_limits(self):
+    def test_cpu_bootstrap_uses_cpu_units_and_still_preserves_wall_caps(self):
         old = {'seconds': 10, 'slow': {'slow': 20}}
-        policy = {**old, 'cpu': {'seconds': 11, 'slow': {}}}
+        policy = {**old, 'cpu': {'seconds': 28, 'slow': {'slow': 36}}}
+        rust_gate.check_budget({}, policy, old)
         with self.assertRaisesRegex(RuntimeError, 'may not grow'):
-            rust_gate.check_budget({}, policy, old)
+            rust_gate.check_budget({}, {**policy, 'seconds': 11}, old)
+        with self.assertRaisesRegex(RuntimeError, 'may not grow'):
+            rust_gate.check_budget({}, {**policy, 'cpu': {'seconds': 29, 'slow': {}}}, policy)
 
     def test_explicit_wall_only_fallbacks_and_missing_linux_samples(self):
         policy = self.cpu_policy()
