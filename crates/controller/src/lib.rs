@@ -29,6 +29,7 @@ pub mod memory;
 mod narrowing;
 mod notices;
 mod postmortems;
+pub mod pr_body;
 pub mod priority;
 pub mod production;
 pub mod prompts;
@@ -2238,6 +2239,30 @@ impl Controller {
                         if enqueue_pending && commit_sha(snapshot, current.approved) == Some(&head)
                         {
                             self.missing_check_incident(snapshot, commit, node, &head, &required)?;
+                            commit.rows.push(put("queue_facts", identity, value));
+                        }
+                        return Ok(None);
+                    }
+                    Evidence::QueueBlocked {
+                        head,
+                        conditions,
+                        failed,
+                    } => {
+                        let waiting = current.phase == tl3_kernel::Phase::Queued
+                            || current.phase == tl3_kernel::Phase::Publishing
+                                && current.effect.is_some_and(|effect| {
+                                    effect.kind == tl3_kernel::EffectKind::Enqueue
+                                        && !effect.cancelling
+                                });
+                        if waiting && commit_sha(snapshot, current.approved) == Some(&head) {
+                            self.queue_blocked_incident(
+                                snapshot,
+                                commit,
+                                node,
+                                &head,
+                                &conditions,
+                                &failed,
+                            )?;
                             commit.rows.push(put("queue_facts", identity, value));
                         }
                         return Ok(None);

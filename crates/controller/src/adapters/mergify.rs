@@ -91,6 +91,12 @@ pub enum Evidence {
         head: String,
         required: RequiredCheck,
     },
+    /// #447: Mergify waits on queue conditions that nothing still running can meet.
+    QueueBlocked {
+        head: String,
+        conditions: Vec<String>,
+        failed: Vec<String>,
+    },
     /// The context of an open missing-check incident has reported on that head (Q52).
     CheckReported {
         head: String,
@@ -154,6 +160,7 @@ impl QueueFact {
             Evidence::ChecksUnavailable { .. }
                 | Evidence::CheckMissing { .. }
                 | Evidence::CheckReported { .. }
+                | Evidence::QueueBlocked { .. }
         )
     }
     pub(crate) fn recorded(&self, snapshot: &Snapshot) -> Result<bool> {
@@ -173,6 +180,19 @@ impl QueueFact {
                 Evidence::CheckMissing { .. } => incident.is_some(),
                 _ => !incident.is_some_and(|row| row.value["open"] == true),
             });
+        }
+        if let Evidence::QueueBlocked {
+            head, conditions, ..
+        } = &self.evidence
+        {
+            let Some(node) = self.node(snapshot)? else {
+                return Ok(false);
+            };
+            let id = crate::looks::queue_blocked_incident_id(node, head, conditions);
+            return Ok(snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == "incidents" && row.id == id));
         }
         if let Evidence::ChecksUnavailable { permissions } = &self.evidence {
             let Some(node) = self.node(snapshot)? else {
@@ -225,6 +245,12 @@ impl QueueFact {
                     serde_json::to_string(required).unwrap()
                 )
             }
+            Evidence::QueueBlocked {
+                head, conditions, ..
+            } => format!(
+                "queue-blocked:{head}:{}",
+                serde_json::to_string(conditions).unwrap()
+            ),
             Evidence::Merged { head, .. } => format!("merged:{head}"),
             Evidence::CiFailed {
                 check, head_check, ..
@@ -341,6 +367,17 @@ pub struct Adapter {
     epoch: i64,
     records: Records,
     runtime: &'static tokio::runtime::Runtime,
+    /// Each served repository's PR-body policy and heal reruns (#447).
+    policies: Vec<(Repository, BodyPolicy)>,
+    /// TL3's branch names, so a heal touches only TL3's own PRs.
+    branches: Option<crate::branches::Branches>,
+    /// The world, so a heal touches only a node in Publishing or Queued.
+    store: Option<tl3_config::Store>,
+}
+/// A served repository's PR-body lines and the workflows a heal reruns (#447).
+struct BodyPolicy {
+    rules: Vec<tl3_config::BodyLine>,
+    reruns: Vec<String>,
 }
 impl Adapter {
     pub fn new(clients: BTreeMap<u64, GitHub>, epoch: i64, records: &Path) -> Result<Self> {
@@ -350,7 +387,154 @@ impl Adapter {
             epoch,
             records: Records::new(records),
             runtime: crate::executor::runtime()?,
+            policies: Vec::new(),
+            branches: None,
+            store: None,
         })
+    }
+    pub fn with_repositories(mut self, repos: &[tl3_config::Repository]) -> Result<Self> {
+        self.policies = repos
+            .iter()
+            .map(|repo| {
+                (
+                    Repository {
+                        owner: repo.owner.clone(),
+                        name: repo.name.clone(),
+                        installation: repo.installation_id,
+                    },
+                    BodyPolicy {
+                        rules: repo.pr_body_lines.clone(),
+                        reruns: repo.heal_rerun_workflows.clone(),
+                    },
+                )
+            })
+            .collect();
+        self.branches = Some(crate::branches::Branches::new(repos)?);
+        Ok(self)
+    }
+    /// Reads the world, so a heal touches only a node in Publishing or Queued.
+    pub fn with_store(mut self, store: tl3_config::Store) -> Self {
+        self.store = Some(store);
+        self
+    }
+    /// #447: one idempotent update brings an open TL3 PR's body into its
+    /// repository's policy. A body that complies is left alone, and so is a PR
+    /// on another branch or a node outside Publishing and Queued. Returns
+    /// whether it edited the body.
+    fn heal_body(&self, delivery: &Delivery, pull: &tl3_github::PullRequest) -> Result<bool> {
+        let Some((_, policy)) = self
+            .policies
+            .iter()
+            .find(|(repo, _)| *repo == delivery.repository)
+        else {
+            return Ok(false);
+        };
+        let rules = &policy.rules;
+        if pull.state != "open" || pull.merged_at.is_some() {
+            return Ok(false);
+        }
+        let ours = match &self.branches {
+            Some(branches) => branches.matches(delivery, &pull.head.branch)?,
+            None => false,
+        };
+        if !ours {
+            return Ok(false);
+        }
+        let github = &self.clients[&delivery.repository.installation];
+        let repo = full_name(&delivery.repository);
+        let head = &pull.head.sha;
+        // Keyed by PR, not by effect, so a later enqueue of the same head
+        // finds the heal and never reruns twice.
+        let path = self
+            .records
+            .path(&format!("body-heal:{repo}#{}", pull.number))
+            .with_extension("body-heal");
+        let mut heal: Option<BodyHeal> = match std::fs::read(&path) {
+            Ok(bytes) => Some(serde_json::from_slice(&bytes)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        let body = pull.body.as_deref().unwrap_or_default();
+        let gaps = crate::pr_body::gaps(body, rules);
+        let pending = heal
+            .as_ref()
+            .is_some_and(|heal| heal.head == *head && !heal.reran);
+        // Read the world only when there is something to do.
+        if (gaps.is_empty() && !pending) || !heal_phase(self.phase(delivery)?) {
+            return Ok(false);
+        }
+        let mut edited = false;
+        let request = if gaps.is_empty() {
+            None
+        } else {
+            // The issue's own instruction names the value; read it only to heal.
+            match &delivery.request_text {
+                Some(text) => Some(text.clone()),
+                None => {
+                    self.runtime
+                        .block_on(github.issue(&repo, delivery.issue))?
+                        .body
+                }
+            }
+        };
+        if let Some(healed) =
+            crate::pr_body::healed(body, rules, request.as_deref(), &delivery.paths)
+        {
+            // Record the intent first, so a crash after the PATCH still reruns.
+            let intent = BodyHeal {
+                head: head.clone(),
+                reran: false,
+            };
+            self.records.write(&path, &serde_json::to_vec(&intent)?)?;
+            self.runtime
+                .block_on(github.update_pull_request_body(&repo, pull.number, &healed))?;
+            eprintln!(
+                "PR-body policy: added {gaps:?} to {repo}#{} (#447)",
+                pull.number
+            );
+            heal = Some(intent);
+            edited = true;
+        }
+        // The edit's completion triggers the reruns, once per head. Closing and
+        // reopening the PR would also rerun them, but TL3 would read it as a
+        // person closing its PR.
+        let Some(heal) = heal.filter(|heal| heal.head == *head && !heal.reran) else {
+            return Ok(edited);
+        };
+        let runs = if policy.reruns.is_empty() {
+            Vec::new()
+        } else {
+            self.runtime
+                .block_on(github.workflow_runs(&repo, head))
+                .map_err(Error::from)?
+        };
+        for run in body_edit_reruns(&runs, head, &policy.reruns) {
+            if let Err(error) = self.runtime.block_on(github.rerun_failed_jobs(&repo, run)) {
+                // The next read of this PR retries; the heal stays pending.
+                eprintln!("PR-body policy: rerun of {repo} run {run} failed: {error}");
+                return Ok(edited);
+            }
+            eprintln!("PR-body policy: reran the failed jobs of {repo} run {run} (#447)");
+        }
+        self.records.write(
+            &path,
+            &serde_json::to_vec(&BodyHeal {
+                head: heal.head,
+                reran: true,
+            })?,
+        )?;
+        Ok(edited)
+    }
+    /// The delivery's node phase, from the world; `None` without a store.
+    fn phase(&self, delivery: &Delivery) -> Result<Option<tl3_kernel::Phase>> {
+        let Some(store) = &self.store else {
+            return Ok(None);
+        };
+        let world = crate::snapshot::decode(&tl3_store::Store::open(store)?.load()?)?;
+        Ok(world
+            .nodes
+            .get(delivery.node().0 as usize)
+            .map(|node| node.phase))
     }
     fn fence(&mut self, delivery: &Delivery) -> Result<()> {
         if delivery.epoch < self.epoch {
@@ -372,6 +556,10 @@ impl Adapter {
             .block_on(read_queue(github, &repo, number, head))?;
         if is_merge_queue_pr(&state.pull_request) {
             return Err(Error::Invalid("cannot queue a Mergify draft PR"));
+        }
+        if self.heal_body(delivery, &state.pull_request)? {
+            // The checks read before the edit are stale; the next read decides.
+            return Ok((state, Vec::new()));
         }
         let facts = self
             .runtime
@@ -605,7 +793,8 @@ impl Executor for Adapter {
                             head_check: true,
                             ..
                         } | Evidence::ChecksUnavailable { .. }
-                            | Evidence::CheckMissing { .. },
+                            | Evidence::CheckMissing { .. }
+                            | Evidence::QueueBlocked { .. },
                         ..
                     })
                 )
@@ -826,6 +1015,124 @@ fn full_name(repo: &Repository) -> String {
     format!("{}/{}", repo.owner, repo.name)
 }
 
+/// #447: the failed runs a PR-body edit leaves stale. A `pull_request` workflow
+/// reruns on `opened`, `synchronize` and `reopened`; an edit doesn't rerun it, so
+/// its failed run stays failed. `pull_request_target` workflows, like
+/// PrismaBuild's regression-test, can listen for `edited` and rerun themselves.
+/// Only the repository's listed workflow files are rerun, since a rerun can
+/// have side effects; an empty list reruns nothing.
+pub(crate) fn body_edit_reruns(
+    runs: &[tl3_github::WorkflowRun],
+    head: &str,
+    workflows: &[String],
+) -> Vec<u64> {
+    let listed = |path: &str| {
+        let file = path.rsplit('/').next().unwrap_or(path);
+        workflows.iter().any(|listed| listed == file)
+    };
+    let mut latest: BTreeMap<&str, &tl3_github::WorkflowRun> = BTreeMap::new();
+    for run in runs
+        .iter()
+        .filter(|run| run.head_sha == head && run.event == "pull_request" && listed(&run.path))
+    {
+        let entry = latest.entry(run.path.as_str()).or_insert(run);
+        if run.id > entry.id {
+            *entry = run;
+        }
+    }
+    latest
+        .into_values()
+        .filter(|run| {
+            run.status == "completed"
+                && matches!(
+                    run.conclusion.as_deref(),
+                    Some("failure" | "cancelled" | "timed_out" | "startup_failure")
+                )
+        })
+        .map(|run| run.id)
+        .collect()
+}
+
+/// #447 review: a heal touches only a node in Publishing or Queued.
+pub(crate) fn heal_phase(phase: Option<tl3_kernel::Phase>) -> bool {
+    matches!(
+        phase,
+        Some(tl3_kernel::Phase::Publishing | tl3_kernel::Phase::Queued)
+    )
+}
+
+/// #447 review: whether every check on the head, other than Mergify's own,
+/// has completed. Until then a check suite read can't show a blocked queue.
+pub(crate) fn checks_settled(state: &tl3_mergify::Observation) -> bool {
+    state
+        .check_runs
+        .iter()
+        .filter(|check| check.head_sha == state.pull_request.head.sha)
+        .filter(|check| !check.app.as_ref().is_some_and(|app| app.slug == "mergify"))
+        .all(|check| check.status == "completed")
+}
+
+/// A PR-body heal on one head: whether its stale runs have been rerun (#447).
+#[derive(Serialize, Deserialize)]
+struct BodyHeal {
+    head: String,
+    reran: bool,
+}
+
+/// #447: Mergify waits on queue conditions while every check suite on the head
+/// has completed, so nothing still running can meet them. Returns the unmet
+/// conditions and the failed checks outside TL3's required set.
+pub(crate) fn queue_blocked(
+    state: &tl3_mergify::Observation,
+    suites_completed: bool,
+    required: &[RequiredCheck],
+) -> Option<(Vec<String>, Vec<String>)> {
+    if state.state != QueueState::Waiting || !suites_completed {
+        return None;
+    }
+    let conditions = tl3_mergify::unmet_conditions(state.check.as_ref()?);
+    if conditions.is_empty() {
+        return None;
+    }
+    let head = &state.pull_request.head.sha;
+    let mut latest: BTreeMap<&str, &CheckRun> = BTreeMap::new();
+    for check in state
+        .check_runs
+        .iter()
+        .filter(|check| &check.head_sha == head)
+    {
+        let entry = latest.entry(check.name.as_str()).or_insert(check);
+        if check.id > entry.id {
+            *entry = check;
+        }
+    }
+    let failed = latest
+        .into_values()
+        .filter(|check| {
+            check.status == "completed"
+                && matches!(
+                    check.conclusion.as_deref(),
+                    Some(
+                        "failure"
+                            | "cancelled"
+                            | "timed_out"
+                            | "action_required"
+                            | "startup_failure"
+                    )
+                )
+                && !check.app.as_ref().is_some_and(|app| app.slug == "mergify")
+                && !required.iter().any(|rule| {
+                    rule.context == check.name
+                        && rule
+                            .app
+                            .is_none_or(|id| check.app.as_ref().is_some_and(|app| app.id == id))
+                })
+        })
+        .map(|check| check.name.clone())
+        .collect();
+    Some((conditions, failed))
+}
+
 /// `open` names the open missing-check incidents on the expected head.
 async fn queue_facts(
     github: &GitHub,
@@ -885,6 +1192,36 @@ async fn queue_facts(
                         required: required.clone(),
                     },
                 }));
+            }
+        }
+        // #447: Mergify waits on a condition nothing still running can meet,
+        // such as PrismaBuild's scopes after its pr-gate failed.
+        if state.state == QueueState::Waiting
+            && checks_settled(state)
+            && state
+                .check
+                .as_ref()
+                .is_some_and(|check| !tl3_mergify::unmet_conditions(check).is_empty())
+        {
+            let suites = github.check_suites(&repo_name, &pull.head.sha).await?;
+            let completed =
+                !suites.is_empty() && suites.iter().all(|suite| suite.status == "completed");
+            let required: Vec<_> = checks
+                .missing
+                .iter()
+                .chain(&checks.reported)
+                .cloned()
+                .collect();
+            if let Some((conditions, failed)) = queue_blocked(state, completed, &required) {
+                facts.push(QueueFact {
+                    repository: repo.clone(),
+                    number: pull.number,
+                    evidence: Evidence::QueueBlocked {
+                        head: pull.head.sha.clone(),
+                        conditions,
+                        failed,
+                    },
+                });
             }
         }
         facts.extend(
@@ -1501,5 +1838,124 @@ mod error_tests {
                 expected
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod queue_blocked_tests {
+    use super::*;
+    use tl3_mergify::pb2632_fixture::{PB2632_CHECK_RUNS, PB2632_PULL_REQUEST};
+
+    fn pb2632() -> tl3_mergify::Observation {
+        let pull: tl3_github::PullRequest = serde_json::from_str(PB2632_PULL_REQUEST).unwrap();
+        let checks: Vec<tl3_github::CheckRun> = serde_json::from_str(PB2632_CHECK_RUNS).unwrap();
+        let head = pull.head.sha.clone();
+        tl3_mergify::observe(pull, &checks, &head)
+    }
+
+    // PrismaBuild's branch protection requires only issue-link (app 15368).
+    fn required() -> Vec<RequiredCheck> {
+        vec![RequiredCheck {
+            context: "issue-link".into(),
+            app: Some(15368),
+        }]
+    }
+
+    #[test]
+    fn prismabuild_2632_is_blocked_on_scopes_by_pr_gate() {
+        let (conditions, failed) = queue_blocked(&pb2632(), true, &required())
+            .expect("TL3 must not wait silently on #2632");
+        assert_eq!(
+            conditions,
+            ["scopes-available: waiting for pull request scopes to be reported"]
+        );
+        assert_eq!(
+            failed,
+            ["Bazel", "Hosted lane", "pr-gate", "regression-test"]
+        );
+    }
+
+    #[test]
+    fn a_body_edit_reruns_only_prismabuilds_gate() {
+        // gate.yml (pull_request) has no `edited` trigger; regression-test.yml
+        // (pull_request_target) has one and reruns itself; issue-link passed.
+        let runs: Vec<tl3_github::WorkflowRun> =
+            serde_json::from_str(tl3_mergify::pb2632_fixture::PB2632_WORKFLOW_RUNS).unwrap();
+        let head = "4309359678fc08ddfb44f12439e3a3744ee3eb11";
+        let gate = ["gate.yml".to_owned()];
+        assert_eq!(body_edit_reruns(&runs, head, &gate), [41476603888]);
+        assert!(body_edit_reruns(&runs, "another-head", &gate).is_empty());
+        // A rerun that already succeeded needs nothing more.
+        let mut passed = runs.clone();
+        for run in &mut passed {
+            run.conclusion = Some("success".into());
+        }
+        assert!(body_edit_reruns(&passed, head, &gate).is_empty());
+    }
+
+    #[test]
+    fn a_body_edit_reruns_only_listed_workflows() {
+        // #447 review: a rerun can have side effects, so only listed files rerun.
+        let mut runs: Vec<tl3_github::WorkflowRun> =
+            serde_json::from_str(tl3_mergify::pb2632_fixture::PB2632_WORKFLOW_RUNS).unwrap();
+        let head = "4309359678fc08ddfb44f12439e3a3744ee3eb11";
+        let mut deploy = runs[0].clone();
+        deploy.id = 41476609999;
+        deploy.path = ".github/workflows/deploy.yml".into();
+        deploy.conclusion = Some("failure".into());
+        runs.push(deploy);
+        assert!(body_edit_reruns(&runs, head, &[]).is_empty());
+        assert_eq!(
+            body_edit_reruns(&runs, head, &["gate.yml".to_owned()]),
+            [41476603888]
+        );
+        // A name that only ends like a listed file doesn't count.
+        assert!(body_edit_reruns(&runs, head, &["ate.yml".to_owned()]).is_empty());
+    }
+
+    #[test]
+    fn a_heal_touches_only_publishing_or_queued_nodes() {
+        use tl3_kernel::{Outcome, Phase};
+        assert!(heal_phase(Some(Phase::Publishing)));
+        assert!(heal_phase(Some(Phase::Queued)));
+        for phase in [
+            Phase::Making,
+            Phase::Rebasing,
+            Phase::Closed(Outcome::Merged),
+        ] {
+            assert!(!heal_phase(Some(phase)), "{phase:?}");
+        }
+        assert!(!heal_phase(None), "an unknown node is never healed");
+    }
+
+    #[test]
+    fn a_running_check_skips_the_suite_read() {
+        assert!(checks_settled(&pb2632()));
+        let mut running = pb2632();
+        let check = running
+            .check_runs
+            .iter_mut()
+            .find(|check| check.name == "pr-gate")
+            .unwrap();
+        check.status = "in_progress".into();
+        check.conclusion = None;
+        assert!(!checks_settled(&running));
+        // Mergify's own queue check stays in progress while it waits.
+        let mut waiting = pb2632();
+        for check in &mut waiting.check_runs {
+            if check.app.as_ref().is_some_and(|app| app.slug == "mergify") {
+                check.status = "in_progress".into();
+                check.conclusion = None;
+            }
+        }
+        assert!(checks_settled(&waiting));
+    }
+
+    #[test]
+    fn a_suite_still_running_or_a_queue_not_waiting_is_not_blocked() {
+        assert_eq!(queue_blocked(&pb2632(), false, &required()), None);
+        let mut queued = pb2632();
+        queued.state = tl3_mergify::QueueState::Queued;
+        assert_eq!(queue_blocked(&queued, true, &required()), None);
     }
 }
