@@ -228,3 +228,10 @@ py_binary(
     srcs = ["check_no_secret_leak.py"],
     visibility = ["//visibility:public"],
 )
+
+tl3_py_test(
+    name = "test_docs_security",
+    srcs = ["test_docs_security.py"],
+    data = ["//:instruction_docs"],
+    deps = ["//tools/ci:child_env"],
+)
