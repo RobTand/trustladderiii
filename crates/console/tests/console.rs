@@ -47,13 +47,15 @@ fn main() {
     println!("test serves_board_and_web_app ... ok");
     console_reads_through_a_role_that_cannot_write(&settings);
     println!("test console_reads_through_a_role_that_cannot_write ... ok");
+    cards_follow_the_quota_fallback(&settings, assets.path());
+    println!("test cards_follow_the_quota_fallback ... ok");
     drop(controller);
     builds_once_the_store_is_migrated(&mut database, assets.path());
     println!("test builds_once_the_store_is_migrated ... ok");
     streams_again_after_postgres_restarts(address, &mut database, &settings, records.path());
     println!("test streams_again_after_postgres_restarts ... ok");
     database.stop();
-    println!("7 console scenarios passed; no skips");
+    println!("8 console scenarios passed; no skips");
 }
 
 fn bootstrap() -> Bootstrap {
@@ -498,4 +500,49 @@ fn builds_once_the_store_is_migrated(database: &mut Database, assets: &Path) {
     assert_eq!(event.name, "snapshot");
     assert_eq!(event.data["revision"], 0);
     assert_eq!(event.data["cards"], serde_json::json!([]));
+}
+
+/// Q53: when the maker's model reports quota, the card names the fallback the
+/// worker will run, as soon as the quota row commits.
+fn cards_follow_the_quota_fallback(settings: &tl3_config::Store, assets: &Path) {
+    let config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+    let console = tl3_console::start(
+        TcpListener::bind("127.0.0.1:0").unwrap(),
+        tl3_console::Options {
+            store: settings.clone(),
+            assets: assets.into(),
+            models: Some(config.models),
+        },
+    )
+    .unwrap();
+    let mut stream = EventStream::open_with_guard(console.address(), None, Duration::from_secs(20));
+    let model = |cards: &Value| {
+        cards
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|card| card["issue"] == 42)
+            .map(|card| card["model"].clone())
+    };
+    let first = stream.board_event();
+    assert_eq!(
+        model(&first.data["cards"]),
+        Some(Value::from("default-model"))
+    );
+    let mut store = Store::open(settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let mut quota = tl3_store::Commit::new("console-quota", serde_json::json!("quota"), &snapshot);
+    quota.rows.push(tl3_store::RowChange::Put {
+        table: "model_quotas".into(),
+        id: "default-model".into(),
+        value: serde_json::json!({"reset_ms": now_ms() + 3_600_000}),
+    });
+    store.commit(&quota).unwrap();
+    loop {
+        let event = stream.board_event();
+        if let Some(model) = model(&event.data["patch"]["upserts"]) {
+            assert_eq!(model, "alternate-model");
+            break;
+        }
+    }
 }

@@ -18,6 +18,7 @@ fn request(id: u64, phase: Phase) -> Request {
         progress: None,
         worker_failure: None,
         incidents: vec![],
+        maker_model: None,
     }
 }
 
@@ -28,6 +29,7 @@ fn board(requests: Vec<Request>) -> Board {
         requests,
         unassigned_incidents: vec![],
         models: None,
+        quota_resets: BTreeMap::new(),
     })
 }
 
@@ -235,6 +237,7 @@ fn card_carries_counters_progress_and_incidents() {
         requests: vec![making, reviewing, planning, checking, untitled],
         unassigned_incidents: vec![],
         models: Some(&config.models),
+        quota_resets: BTreeMap::new(),
     })
     .cards;
     assert_eq!(
@@ -400,6 +403,7 @@ fn board_keeps_revision_order_and_unassigned_incidents() {
             maker_blocked: false,
         }],
         models: None,
+        quota_resets: BTreeMap::new(),
     });
     assert_eq!(board.revision, 12);
     assert_eq!(board.built_at_ms, NOW);
@@ -507,5 +511,48 @@ fn a_cancelled_step_is_not_the_wait() {
             "the current task to stop",
             "a cancelled step to settle",
         ]
+    );
+}
+
+/// The card names the model the worker runs: Q53's quota fallback, and a
+/// reviewer from another family than the maker that actually ran.
+#[test]
+fn card_names_the_model_the_worker_runs() {
+    let config = tl3_config::Config::parse(include_str!("../../../config/example.toml")).unwrap();
+    let mut making = request(0, Phase::Making);
+    making.node.attempt = 1;
+    let mut reviewing = request(1, Phase::Reviewing);
+    reviewing.node.attempt = 1;
+    // The maker fell back to the alternate model, so review takes the default.
+    reviewing.maker_model = Some("alternate-model".into());
+    let models = |quota_resets: BTreeMap<String, u64>| -> Vec<_> {
+        project(Input {
+            revision: 1,
+            now_ms: NOW,
+            requests: vec![making.clone(), reviewing.clone()],
+            unassigned_incidents: vec![],
+            models: Some(&config.models),
+            quota_resets,
+        })
+        .cards
+        .into_iter()
+        .map(|card| card.model)
+        .collect()
+    };
+    assert_eq!(
+        models(BTreeMap::new()),
+        [Some("default-model".into()), Some("default-model".into())]
+    );
+    let out = BTreeMap::from([("default-model".to_string(), (NOW + 60 * MINUTE) as u64)]);
+    assert_eq!(
+        models(out),
+        [Some("alternate-model".into()), Some("default-model".into())],
+        "an out-of-quota model falls back down the ladder"
+    );
+    let reset = BTreeMap::from([("default-model".to_string(), (NOW - MINUTE) as u64)]);
+    assert_eq!(
+        models(reset)[0],
+        Some("default-model".into()),
+        "a past reset no longer limits"
     );
 }

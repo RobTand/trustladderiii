@@ -226,6 +226,8 @@ pub struct Input<'a> {
     pub unassigned_incidents: Vec<StoredIncident>,
     /// Configured model ladders, to name each card's model.
     pub models: Option<&'a tl3_config::Models>,
+    /// Q53: models that reported quota, with their announced resets in Unix ms.
+    pub quota_resets: BTreeMap<String, u64>,
 }
 
 /// A request's newest node and what the controller's side tables say about it.
@@ -243,6 +245,8 @@ pub struct Request {
     pub worker_failure: Option<WorkerFailure>,
     /// Open incidents.
     pub incidents: Vec<StoredIncident>,
+    /// The model the maker ran for this attempt, which its reviewer must differ from.
+    pub maker_model: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -656,6 +660,7 @@ pub struct Rows {
     pub revision: i64,
     pub requests: Vec<Request>,
     pub unassigned_incidents: Vec<StoredIncident>,
+    pub quota_resets: BTreeMap<String, u64>,
 }
 
 impl Rows {
@@ -667,6 +672,7 @@ impl Rows {
             revision: snapshot.revision.get(),
             requests: Vec::new(),
             unassigned_incidents: Vec::new(),
+            quota_resets: BTreeMap::new(),
         };
         if snapshot.rows.is_empty() {
             return Ok(rows);
@@ -748,6 +754,7 @@ impl Rows {
                 progress: details.as_ref().and_then(|d| d.progress.clone()),
                 worker_failure: details.as_ref().and_then(|d| d.worker_failure.clone()),
                 incidents: details.map(|d| d.incidents).unwrap_or_default(),
+                maker_model: None,
             });
         }
         rows.unassigned_incidents = incidents
@@ -779,6 +786,7 @@ impl Rows {
             requests: self.requests.clone(),
             unassigned_incidents: self.unassigned_incidents.clone(),
             models,
+            quota_resets: self.quota_resets.clone(),
         })
     }
 }

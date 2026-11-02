@@ -1332,5 +1332,16 @@ fn reader_role(settings: &tl3_config::Store) {
             .collect::<Vec<_>>(),
         [false, false, false, false, true]
     );
+    // A session that forgets the reader's read-only option still can't write.
+    assert_eq!(
+        owner
+            .query_one(
+                "SELECT rolconfig FROM pg_roles WHERE rolname = 'tl3_reader_test'",
+                &[],
+            )
+            .unwrap()
+            .get::<_, Option<Vec<String>>>(0),
+        Some(vec!["default_transaction_read_only=on".to_string()])
+    );
     assert!(grant_reader(settings, "bad role; DROP TABLE tl3_world", password).is_err());
 }

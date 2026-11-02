@@ -564,3 +564,55 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "../../crates/store/tests/support/mod.rs"]
+mod database_support;
+
+#[cfg(test)]
+mod database_tests {
+    use super::*;
+
+    /// tl3d and the status page require tl3-postgres, whose start runs
+    /// `database`. A console login problem must never stop it.
+    #[test]
+    fn a_console_login_fault_never_stops_postgres() {
+        let mut postgres = database_support::Database::start();
+        let admin = postgres.create("postgres_admin");
+        let mut client = postgres::Config::new()
+            .host(&admin.host)
+            .port(admin.port)
+            .user(&admin.user)
+            .dbname(&admin.database)
+            .password("tl3-disposable-test-password")
+            .connect(postgres::NoTls)
+            .unwrap();
+        client
+            .batch_execute(
+                "CREATE ROLE tl3 LOGIN SUPERUSER PASSWORD 'tl3-disposable-test-password'",
+            )
+            .unwrap();
+        let mut config =
+            tl3_config::Config::parse(include_str!("../../crates/config/example.toml")).unwrap();
+        config.store = tl3_config::Store {
+            database: "tl3".into(),
+            user: "tl3".into(),
+            ..admin.clone()
+        };
+        let scratch = tempfile::tempdir().unwrap();
+        let empty = scratch.path().join("empty-password");
+        fs::write(&empty, "").unwrap();
+        for password in [scratch.path().join("missing-password"), empty] {
+            let console = config.console.as_mut().unwrap();
+            console.user = Some("tl3_console".into());
+            console.password_file = Some(password.clone());
+            database(&config).unwrap_or_else(|error| panic!("{password:?}: {error}"));
+            assert!(
+                console_role(&config).is_err(),
+                "the explicit grant still fails for {password:?}"
+            );
+        }
+        tl3_store::Reader::open(&config.store).unwrap();
+        postgres.stop();
+    }
+}

@@ -1,3 +1,4 @@
+import argparse
 import importlib.util
 import io
 import contextlib
@@ -340,6 +341,8 @@ class DeployTests(unittest.TestCase):
         (installed / "stale.js").write_text("old")
         calls = []
         with patch.object(deploy, "run", side_effect=lambda command, **kwargs: calls.append((command, kwargs.get("cwd")))):
+            deploy.build_console_assets(source)
+            self.assertFalse((installed / "index.html").exists(), "a build alone installs nothing")
             deploy.install_console_assets(self.home, source)
         self.assertEqual(calls, [(["npm", "ci", "--no-audit", "--no-fund"], source / "web"),
                                  (["npm", "run", "build"], source / "web")])
@@ -367,9 +370,10 @@ class DeployTests(unittest.TestCase):
         console = tomllib.loads(destination.read_text())["console"]
         self.assertEqual(console["user"], "tl3_console")
         self.assertEqual(console["password_file"], str(config / "secrets/console-postgres-password"))
-        for unit in ("tl3-console.service", "tl3-postgres.service"):
-            self.assertIn("LoadCredential=console-postgres-password:%h/.config/tl3/secrets/console-postgres-password",
-                          (deploy.HERE / "units" / unit).read_text().splitlines(), unit)
+        credential = "LoadCredential=console-postgres-password:%h/.config/tl3/secrets/console-postgres-password"
+        self.assertIn(credential, (deploy.HERE / "units/tl3-console.service").read_text().splitlines())
+        # A missing console credential must never stop Postgres, which tl3d and status require.
+        self.assertNotIn("console-postgres-password", (deploy.HERE / "units/tl3-postgres.service").read_text())
 
     def test_postgres_setup_creates_the_console_credential_once(self):
         root, config, binaries = deploy.paths(self.home)
@@ -391,13 +395,15 @@ class DeployTests(unittest.TestCase):
         deploy.write_file(destination, config.read_bytes())
         runtime = self.home / "runtime"
         credentials = self.home / "credentials"
-        for service in ("console", "database"):
+        secret = self.home / ".config/tl3/secrets/console-postgres-password"
+        for service, expected in (("console", credentials / "console-postgres-password"), ("database", secret)):
             with self.subTest(service=service), \
                  patch.dict(os.environ, {"RUNTIME_DIRECTORY": str(runtime), "CREDENTIALS_DIRECTORY": str(credentials)}), \
                  patch.object(os, "execv"):
                 deploy.service(self.home, service)
                 written = tomllib.loads((runtime / "tl3.toml").read_text())
-                self.assertEqual(written["console"]["password_file"], str(credentials / "console-postgres-password"))
+                # The database service reads the console secret in place; the grant is best effort there.
+                self.assertEqual(written["console"]["password_file"], str(expected))
 
     def test_install_grants_the_console_login_when_postgres_runs(self):
         root, config, _ = deploy.paths(self.home)
@@ -416,6 +422,20 @@ class DeployTests(unittest.TestCase):
             self.assertEqual(grant in calls, active)
             if not active:
                 self.assertIn("tl3-postgres", output.getvalue())
+
+    def test_install_builds_the_web_app_before_changing_anything(self):
+        args = argparse.Namespace(home=self.home, binaries=self.home / "artifacts", status_listen="192.168.1.107:8033",
+                                  console_listen=None, image=None, primary=None, alternate=None, managed_tunnel=False)
+        touched = []
+        with patch.object(deploy, "build_console_assets", side_effect=RuntimeError("npm ci failed")), \
+             patch.object(deploy, "postgres", side_effect=lambda *a: touched.append("postgres")), \
+             patch.object(deploy, "checked_download", side_effect=lambda *a: touched.append("download")), \
+             patch.object(deploy, "write_file", side_effect=lambda *a, **k: touched.append("write")), \
+             patch.object(deploy, "configure", side_effect=lambda *a, **k: touched.append("configure")), \
+             contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, "npm ci failed"):
+                deploy.install(args)
+        self.assertEqual(touched, [])
 
     def test_command_failure_never_prints_child_output(self):
         with contextlib.redirect_stdout(io.StringIO()) as output:
