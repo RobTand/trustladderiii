@@ -187,8 +187,15 @@ Reserve 192.168.1.107 in Rob's router DHCP settings if desired, so the status ad
 The console (PRD #327) is a separate service, `tl3-console.service`. It shows
 the live board at `http://192.168.1.107:8034`. It connects as its own Postgres
 login, `tl3_console`, which may read every table, including ones later
-migrations add, and may write none. It never writes the world snapshot or the
-event log, so it can restart at any time without touching `tl3d`.
+migrations add. It may write only prompt versions (decision C5), through the
+`tl3_prompt_editor` role the grant adds it to. It never writes the world
+snapshot or the event log, so it can restart at any time without touching
+`tl3d`.
+
+`tl3d` adds the prompts in `workers/src/tl3_workers/prompts/` as built-in
+versions each time it starts. A deploy that changes one makes it active only
+if the previous built-in version was active, so a deploy never replaces Rob's
+edit. Each worker run uses the version active when it starts.
 
 The installer creates the login's password at
 `~/.config/tl3/secrets/console-postgres-password` (0600, once, never

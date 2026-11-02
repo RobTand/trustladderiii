@@ -296,6 +296,11 @@ and LangChain Core 1.7.3 source for model settings and fake models. Dependencies
 are locked in `uv.lock`.
 
 Each role has a TL3-written system prompt in `src/tl3_workers/prompts/`.
+These are the built-in versions. The controller sends the role's active
+version from its prompt store as the request's `prompt` (`version` and
+`text`), and the worker uses that text instead of the packaged file. The run's
+MLflow trace carries the `prompt_version` tag, or `packaged` when the request
+has no `prompt`. The reply schema is still appended from the package.
 `HarnessProfile` uses an empty base prompt and suffix, disables the default
 general-purpose sub-agent, and excludes built-in tools. TL3 supplies file tools
 only when the role declares them, with descriptions written by that role.

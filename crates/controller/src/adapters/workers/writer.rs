@@ -49,6 +49,7 @@ pub trait Writer {
 pub struct ProcessWriter {
     config: tl3_config::Config,
     root: std::path::PathBuf,
+    prompts: bool,
 }
 impl ProcessWriter {
     pub fn new(config: &tl3_config::Config, root: &std::path::Path) -> Result<Self> {
@@ -56,7 +57,14 @@ impl ProcessWriter {
         Ok(Self {
             config: config.clone(),
             root: root.to_owned(),
+            prompts: false,
         })
+    }
+
+    /// Draft with the writer's active prompt version from the store.
+    pub fn with_prompts(mut self) -> Self {
+        self.prompts = true;
+        self
     }
 }
 impl Writer for ProcessWriter {
@@ -82,6 +90,15 @@ impl Writer for ProcessWriter {
         let mut request = json!({"protocol":1,"operation":{"node":0,"generation":0,"kind":"writer"},
             "role":"writer","model":self.config.models.worker_model(model), "key_file":self.config.models.key_file,
             "inputs":input,"worktree":root});
+        if self.prompts
+            && let Some(prompt) = crate::prompts::for_run(
+                &mut tl3_store::Store::open(&self.config.store)?,
+                key,
+                "writer",
+            )?
+        {
+            request["prompt"] = prompt;
+        }
         let credentials = root.join("credentials");
         if credentials.exists() {
             fs::remove_dir_all(&credentials)?;

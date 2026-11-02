@@ -101,6 +101,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (8, include_str!("../migrations/0008_memory_parking.sql")),
     (9, include_str!("../migrations/0009_memory_recovery.sql")),
     (10, include_str!("../migrations/0010_change_feed.sql")),
+    (11, include_str!("../migrations/0011_prompts.sql")),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -941,9 +942,9 @@ impl Reader {
     }
 }
 
-/// Create or update a login that may only read TL3's tables, now and after
-/// later migrations, with the password in `password_file`. Connects as the
-/// store's owner. Safe to repeat.
+/// Create or update a login that may read TL3's tables, now and after later
+/// migrations, and write nothing but prompt versions, with the password in
+/// `password_file`. Connects as the store's owner. Safe to repeat.
 pub fn grant_reader(
     settings: &tl3_config::Store,
     role: &str,
@@ -982,6 +983,8 @@ pub fn grant_reader(
          REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {role};
          GRANT SELECT ON ALL TABLES IN SCHEMA public TO {role};
          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO {role};
+         DO $editor$ BEGIN CREATE ROLE tl3_prompt_editor NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $editor$;
+         GRANT tl3_prompt_editor TO {role};
          ALTER ROLE {role} SET default_transaction_read_only = on;"
     ))?;
     tx.commit()?;

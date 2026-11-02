@@ -1,7 +1,7 @@
 //! Built-in role prompts (PRD #327, C5). tl3d seeds them as versions when it
 //! starts, so a deploy that changes one adds a version without undoing Rob's.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use tl3_store::Store;
 
 macro_rules! builtin {
@@ -22,20 +22,19 @@ pub const BUILTIN: &[(&str, &str)] = builtin!(
 );
 
 pub fn seed(store: &mut Store) -> crate::Result<()> {
-    let _ = store;
-    todo!("seed the built-in prompts")
+    Ok(store.seed_prompts(BUILTIN)?)
 }
 
 /// The request's `prompt`: the version this run uses, recorded with it. None
 /// leaves the worker on its packaged prompt.
-#[allow(dead_code)]
 pub(crate) fn for_run(
     store: &mut Store,
     run_key: &str,
     role: &str,
 ) -> crate::Result<Option<Value>> {
-    let _ = (store, run_key, role);
-    todo!("resolve the run's prompt version")
+    Ok(store
+        .run_prompt(run_key, role)?
+        .map(|version| json!({"version": version.id, "text": version.body})))
 }
 
 #[cfg(test)]

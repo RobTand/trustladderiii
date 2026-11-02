@@ -90,6 +90,15 @@
     "resume_session": {
       "type": "boolean"
     },
+    "prompt": {
+      "type": "object",
+      "properties": {
+        "version": {"type": "integer", "minimum": 1},
+        "text": {"type": "string", "minLength": 1}
+      },
+      "required": ["version", "text"],
+      "additionalProperties": false
+    },
     "memory": {
       "type": "object",
       "properties": {
