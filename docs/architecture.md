@@ -172,9 +172,10 @@ deletion. Retirement never changes kernel rules or chooses a retry.
 Worker progress is liveness data, not a kernel verdict. Migration 3 creates
 `tl3_worker_progress`, including a start time before progress and a nullable
 last-progress time. Ticket #15 uses these times. Ticket #18's status hook gets
-a `Transaction` and queries the table directly. Deployment #19 syncs the venv
-once and keeps workers outside the controller's kill scope, through systemd
-`KillMode=process` or separate scopes. If the supervisor dies, a valid reply
+a `Transaction` and queries the table directly. Deployment keeps workers
+outside the controller's kill scope: since #372 each attempt's supervisor runs
+in its own systemd scope under `tl3-workers.slice`, and each run uses the
+immutable release it started from. If the supervisor dies, a valid reply
 without a recorded exit is discarded after the worker ends and the run is redone.
 
 Each adapter's ticket extends `Delivery` with the fields it needs, such as

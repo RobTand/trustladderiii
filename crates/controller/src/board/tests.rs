@@ -19,6 +19,7 @@ fn request(id: u64, phase: Phase) -> Request {
         worker_failure: None,
         incidents: vec![],
         maker_model: None,
+        question_context: None,
     }
 }
 
@@ -272,6 +273,7 @@ fn card_carries_counters_progress_and_incidents() {
                 summary: "Checks stalled".into(),
             }],
             badges: vec![Badge::Incident],
+            question: None,
         }
     );
     let roles: Vec<_> = cards

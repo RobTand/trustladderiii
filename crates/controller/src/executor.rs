@@ -29,6 +29,7 @@ pub enum CommentKind {
     FileCorrection,
     ReplacementDropped,
     Restart,
+    ConsoleNote,
 }
 
 impl From<tl3_kernel::Out> for Output {

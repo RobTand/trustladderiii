@@ -15,6 +15,7 @@ pub mod board;
 mod branches;
 pub mod cli;
 pub mod clock;
+pub mod console;
 pub mod executor;
 mod goals;
 mod http;

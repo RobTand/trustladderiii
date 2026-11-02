@@ -6,6 +6,10 @@ pub(super) fn reproducing_rebase_contract(settings: &tl3_config::Store) {
     real::reproducing_fix(settings, true);
 }
 
+pub(super) fn restart_child(settings: &tl3_config::Store, root: &Path) {
+    real::restart_child(settings, root);
+}
+
 pub(super) fn review_trial(settings: &tl3_config::Store) {
     real::review_feedback(settings);
 }
@@ -48,11 +52,7 @@ fn git(root: &Path, args: &[&str]) -> String {
     String::from_utf8(result.stdout).unwrap().trim().into()
 }
 
-fn repository_fixture(
-    settings: &tl3_config::Store,
-    root: &Path,
-    mode: &str,
-) -> (tl3_config::Config, PathBuf, PathBuf, String) {
+fn fixture_config(settings: &tl3_config::Store, root: &Path, mode: &str) -> tl3_config::Config {
     let mut config = super::config(settings, root, "normal");
     config.worktrees_root = root.join("worktrees");
     config.workers.command = vec![
@@ -63,6 +63,20 @@ fn repository_fixture(
             .into(),
         mode.into(),
     ];
+    if mode == "restart" {
+        // Stands in for `systemd-run --user --scope`: a supervisor in its own
+        // session outlives a kill of the controller's process group.
+        config.workers.launcher = vec!["setsid".into()];
+    }
+    config
+}
+
+fn repository_fixture(
+    settings: &tl3_config::Store,
+    root: &Path,
+    mode: &str,
+) -> (tl3_config::Config, PathBuf, PathBuf, String) {
+    let config = fixture_config(settings, root, mode);
     let repository = root.join("repo");
     fs::create_dir(&repository).unwrap();
     git(
@@ -941,6 +955,8 @@ pub(super) fn run(database: &mut Database) {
     println!("test maker_recorded_pytest_message_reaches_fix_round ... ok");
     real::acceptance(&database.create("maker_real_worktrees"));
     println!("test maker_real_worktrees_and_recorded_harness ... ok");
+    real::survives_controller_restart(&database.create("maker_controller_restart"));
+    println!("test maker_run_survives_controller_restart ... ok");
     for new_edits in [false, true] {
         real::rebase_revisit(
             &database.create(&format!("maker_rebase_{new_edits}")),

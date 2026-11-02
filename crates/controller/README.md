@@ -354,9 +354,15 @@ records its identity before exec. Atomic claims also let recovery cancel a
 launcher that has not started. No file locks are used. Machine ID, PID, process start time
 and boot ID identify each process. A record from another machine stays unknown. Stop uses pidfds and waits for termination.
 Keep these runs on the controller's host, including after a restart.
-The deployed unit uses `KillMode=control-group`: a service restart stops workers,
-supervisors and other local children. Recovery reconciles durable records before
-retrying. A process-only controller crash can still reattach to a live supervisor.
+`workers.launcher`, when set, starts each attempt's supervisor through that
+command. The deployment uses `systemd-run --user --scope` under
+`tl3-workers.slice`, so a tl3d restart or deploy, despite its
+`KillMode=control-group`, leaves runs alive (#372). The restarted controller
+reattaches through the claim record and accepts the reply under the same key
+and generation. A launcher failure fails the launch. The supervisor launches
+the Python that `workers.python` names after resolving its directories, and
+records it in `launch.json`, so a later release switch leaves a running worker
+on its own code. Recovery reconciles durable records before retrying.
 See [the startup procedure](../../deploy/dl380g10/GO-LIVE.md) for restart checks.
 
 Sync the worker environment once at deployment with
