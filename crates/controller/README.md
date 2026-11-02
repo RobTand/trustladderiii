@@ -1135,7 +1135,7 @@ planner and reviewer launch, so recall is the first thing those roles see.
   delivery, such as the next retained run record. Then the next launch tries
   again. No timer is involved.
 - Retain can succeed while recall still hangs. Then each acknowledged retain
-  closes the breaker, and the next launch pays one recall timeout (about 8 s)
+  closes the breaker, and the next launch pays one recall timeout (5 s)
   before it opens again. The cost is bounded by the retain rate, which is at
   most one per retired worker run.
 

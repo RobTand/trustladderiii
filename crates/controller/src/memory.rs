@@ -414,7 +414,8 @@ fn bank_url(settings: &tl3_config::Hindsight, tail: &[&str]) -> Result<reqwest::
 
 fn recall_once(settings: &tl3_config::Hindsight, body: &Value) -> Result<Vec<Value>> {
     let key = settings.retain_key()?;
-    let client = client(Duration::from_secs(8))?;
+    // Live recalls take about 0.6 s per call (#439 trial); a hang costs one launch this much.
+    let client = client(Duration::from_secs(5))?;
     let url = bank_url(settings, &["recall"])?;
     crate::executor::runtime()?.block_on(async {
         let mut request = client.post(url).json(body);
