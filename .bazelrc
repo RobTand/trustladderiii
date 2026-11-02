@@ -50,6 +50,7 @@ test:remote-arm64 --test_env=TL3_RUNNER_CLASS=buildbuddy-arm64
 test:remote-arm64 --test_env=TL3_BUDGETS=record
 
 # Commit and branch metadata are supplied by the CI entrypoint.
+common:ci --lockfile_mode=error
 build:ci --remote_grpc_log=bazel-remote-grpc.log
 build:ci --execution_log_compact_file=execution_log.binpb.zst
 build:ci --build_metadata=ROLE=CI

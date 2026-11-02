@@ -143,7 +143,7 @@ class StaticParityTests(unittest.TestCase):
         # Light checks' pytest also collects *_test.py; Gazelle and parity only know test_*.py.
         files = ['harness/pyproject.toml', 'harness/tests/test_harness.py',
                  'harness/tests/chunk_test.py', 'harness/tests/fixtures/chunked_test.py']
-        with self.assertRaisesRegex(RuntimeError, r'harness/tests/chunk_test\.py[\s\S]*test_\*\.py') as failure:
+        with self.assertRaisesRegex(RuntimeError, r'test_\*\.py[\s\S]*harness/tests/chunk_test\.py') as failure:
             bazel_parity.python_modules(files)
         self.assertNotIn('fixtures', str(failure.exception))
         self.assertEqual(bazel_parity.python_modules(files[:2] + files[3:]),

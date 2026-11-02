@@ -8,6 +8,7 @@ cargo, git and bazel query, and runs on every CI build.
 against rust_gate timing files from a Cargo run of the same commit.
 """
 import argparse
+import fnmatch
 import json
 import os
 from pathlib import Path
@@ -34,9 +35,10 @@ def python_modules(files):
     paths = [Path(path) for path in files]
     projects = check.python_projects(paths)
     standalone = set(check.standalone_test_dirs(paths, projects))
-    modules = []
+    modules, refused = [], []
     for path in paths:
-        if not check.active(path) or not path.match('test_*.py'):
+        suffixed = path.match('*_test.py')
+        if not check.active(path) or not (path.match('test_*.py') or suffixed):
             continue
         owners = [project for project in projects if path.is_relative_to(project)]
         if owners:
@@ -45,9 +47,19 @@ def python_modules(files):
             roots = options.get('testpaths', ['.'])
             if not any(path.is_relative_to(owner / root) for root in roots):
                 continue
-        elif path.parent not in standalone:
+            skipped = options.get('norecursedirs', [])
+            if any(fnmatch.fnmatch(part, pattern) for part in path.relative_to(owner).parts[:-1]
+                   for pattern in skipped):
+                continue
+            if suffixed:
+                refused.append(str(path))
+                continue
+        elif suffixed or path.parent not in standalone:
             continue
         modules.append(str(path))
+    if refused:
+        raise RuntimeError('pytest would collect these files, but Bazel only generates targets for '
+                           'test_*.py; rename them to test_*.py:\n' + '\n'.join(sorted(refused)))
     return sorted(modules)
 
 
@@ -71,7 +83,7 @@ def cargo_binaries(metadata, root=ROOT):
 
 def bazel_tests(query_lines):
     """Read Rust binary ids and Python modules from `bazel query --output=streamed_jsonproto`."""
-    rust, python = {}, []
+    rust, python, manual = {}, [], []
     for line in query_lines:
         rule = json.loads(line).get('rule')
         if not rule:
@@ -79,12 +91,18 @@ def bazel_tests(query_lines):
         attributes = {attribute['name']: attribute for attribute in rule.get('attribute', [])}
         main = attributes.get('main', {}).get('stringValue')
         args = attributes.get('args', {}).get('stringListValue', [])
-        if main == RUST_RUNNER:
+        if main in (RUST_RUNNER, PYTHON_RUNNER) and 'manual' in attributes.get('tags', {}).get('stringListValue', []):
+            # The gate's selection excludes manual targets, so they would never run.
+            manual.append(args[0] if main == PYTHON_RUNNER else args[1])
+        elif main == RUST_RUNNER:
             if args[1] in rust:
                 raise RuntimeError(f'two Bazel targets run {args[1]}')
             rust[args[1]] = args[2]
         elif main == PYTHON_RUNNER:
             python.append(args[0])
+    if manual:
+        raise RuntimeError('These tests are tagged manual, so the gate never runs them; remove the tag:\n'
+                           + '\n'.join(sorted(manual)))
     return rust, sorted(python)
 
 
