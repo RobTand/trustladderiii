@@ -3,7 +3,7 @@ use super::{
     results, retire_superseded, wait_paths, write,
 };
 use crate::sync::{Arc, Mutex, mpsc::Sender};
-use crate::{Result, cli::Input};
+use crate::{Result, cli::Input, executor::Observation};
 use std::{
     collections::{BTreeMap, BTreeSet},
     thread,
@@ -259,7 +259,7 @@ impl Source {
                     for observation in &completion.observations {
                         sender
                             .send(Input::Observation {
-                                key: format!("pb:{key}"),
+                                key: observation_key(&key, observation),
                                 observation: observation.clone(),
                             })
                             .map_err(|_| {
@@ -290,3 +290,14 @@ impl Source {
 #[cfg(all(test, loom))]
 #[path = "../../../tests/loom/bell.rs"]
 mod loom_tests;
+
+/// Each observation of a completion is committed under its own stable key (#378).
+/// `Checks` keeps the key single-observation completions used, so their stored rows
+/// still deduplicate a replay. Never key by position: it would change meaning between
+/// releases.
+fn observation_key(key: &ActionKey, observation: &Observation) -> String {
+    match observation {
+        Observation::CheckPlan { .. } => format!("pb:{key}:plan"),
+        _ => format!("pb:{key}"),
+    }
+}
