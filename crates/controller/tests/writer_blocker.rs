@@ -124,13 +124,9 @@ fn path_or_rule_is_enough_but_title_and_options_do_not_replace_the_obstacle() {
         "The protected-path rule prevents the requested change.",
     ] {
         let mut writer = scripted(&[obstacle]);
-        checked_draft(
-            &mut writer,
-            "anchor",
-            input("planner", &real_report()),
-            &Policy::default(),
-        )
-        .unwrap();
+        let mut request = input("planner", &real_report());
+        request.facts["options"][0]["outcome"] = json!("Grant a protected-path exception.");
+        checked_draft(&mut writer, "anchor", request, &Policy::default()).unwrap();
     }
     let mut request = input("planner", &real_report());
     request.facts["issue_title"] = json!("Change tools/ci/bazel_gate.py");
@@ -166,11 +162,88 @@ fn reported_paths_do_not_allow_unrelated_paths_or_internal_vocabulary() {
 }
 
 #[test]
-fn fixed_fallback_cannot_post_a_generic_question_over_a_reported_blocker() {
+fn fixed_fallback_names_the_reported_blocker() {
+    let text = fixed_question(
+        &input("planner", &real_report()),
+        Some("What should I change?"),
+        &Policy::default(),
+    )
+    .unwrap();
+    assert!(text.contains("tools/ci/bazel_gate.py"), "{text}");
+    assert!(text.contains("protected"), "{text}");
+}
+
+#[test]
+fn paraphrased_rule_requires_a_distinctive_word_from_the_first_sentence() {
+    let mut writer = scripted(&[
+        "I could not finish your request.",
+        "The controller forbids that file.",
+    ]);
+    checked_draft(
+        &mut writer,
+        "paraphrase",
+        input(
+            "maker",
+            "The controller forbids that file. More context follows.",
+        ),
+        &Policy::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        writer.calls.len(),
+        2,
+        "a paraphrased rule cannot admit a generic draft"
+    );
+}
+
+#[test]
+fn proposed_decisions_must_reach_an_option() {
+    struct OptionsWriter(usize);
+    impl Writer for OptionsWriter {
+        fn draft(
+            &mut self,
+            _: &str,
+            request: &WriteRequest,
+        ) -> tl3_controller::Result<WriterReply> {
+            self.0 += 1;
+            let WriterReply::Question(mut question) = FakeWriter.draft("options", request)? else {
+                unreachable!()
+            };
+            question.obstacle = BLOCKER.into();
+            if self.0 > 1 {
+                assert!(request.violations.iter().any(|v| v.contains("option")));
+                question.options[0].outcome =
+                    "Request a protected-path exception for tools/ci/bazel_gate.py.".into();
+            }
+            Ok(WriterReply::Question(question))
+        }
+    }
+    let mut writer = OptionsWriter(0);
+    let text = checked_draft(
+        &mut writer,
+        "options",
+        input("planner", &real_report()),
+        &Policy::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        writer.0, 2,
+        "concrete obstacles cannot excuse generic options"
+    );
+    assert!(text.contains("Request a protected-path exception"));
+}
+
+#[test]
+fn a_repository_name_cannot_substitute_for_the_file_blocker() {
+    let mut writer = scripted(&["I cannot change RobTand/trustladderiii."; 3]);
     assert!(matches!(
-        fixed_question(
-            &input("planner", &real_report()),
-            Some("What should I change?"),
+        checked_draft(
+            &mut writer,
+            "repository",
+            input(
+                "planner",
+                "I cannot change tools/ci/bazel_gate.py in RobTand/trustladderiii."
+            ),
             &Policy::default()
         ),
         Err(Error::MessageRejected)

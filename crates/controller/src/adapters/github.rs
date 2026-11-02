@@ -1220,4 +1220,49 @@ mod question_findings_tests {
         assert!(message.contains("1. Try again with guidance: "));
         assert!(!message.contains("digests"), "{message}");
     }
+
+    #[test]
+    fn three_generic_drafts_still_post_the_worker_blocker() {
+        let reply: Value = serde_json::from_str(include_str!(
+            "../../../../workers/tests/fixtures/question-findings/prismabuild-2636-planner-cant-meet.json"
+        )).unwrap();
+        for source in ["planner", "maker"] {
+            let delivery = ask(
+                QKind::CantMeet,
+                Cont::Planning { must_split: false },
+                json!({"source":source, "outcome":"cant_meet", "report":reply["report"],
+                    "decision":"May I edit the protected file?"}),
+            );
+            let mut writer = Scripted(vec![Some("What should I change?"); 3], vec![]);
+            let message =
+                question_draft(&mut writer, &delivery, input(&delivery), &Policy::default())
+                    .unwrap();
+            assert_eq!(writer.1.len(), 3);
+            assert!(message.contains("tools/ci/bazel_gate.py"), "{message}");
+            assert!(message.contains("protected"), "{message}");
+            assert!(message.contains("1. Try again with guidance:"));
+            assert!(message.contains("2. Change the request:"));
+            assert!(message.contains("3. Stop:"));
+        }
+    }
+
+    #[test]
+    fn fallback_redacts_secrets_and_clips_report_sentences() {
+        let report = format!(
+            "The controller forbids tools/ci/bazel_gate.py with password=secret123. {}",
+            "Extra detail. ".repeat(100)
+        );
+        let delivery = ask(
+            QKind::CantMeet,
+            Cont::Planning { must_split: false },
+            json!({"source":"planner", "outcome":"cant_meet", "report":report,
+                "decision":"May I edit the protected file?"}),
+        );
+        let mut writer = Scripted(vec![Some("What should I change?"); 3], vec![]);
+        let message =
+            question_draft(&mut writer, &delivery, input(&delivery), &Policy::default()).unwrap();
+        assert!(message.contains("tools/ci/bazel_gate.py"), "{message}");
+        assert!(!message.contains("secret123"), "{message}");
+        assert!(!message.contains("Extra detail"), "{message}");
+    }
 }
