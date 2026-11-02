@@ -111,7 +111,21 @@ the node's `brief`, `goals` with stable string IDs, `plan.checks`, and any
 accumulated `feedback`. A fix round requires feedback. The controller records
 failed checks, review requests and can't-meet reports in `maker_findings` in the
 same transaction as the kernel reply. The supervisor adds these to supplied
-findings on every subsequent attempt. Ingress supplies the brief slice and
+findings on every subsequent attempt.
+The maker sees a bounded view of that history (#316). A finding that a later review or
+check superseded is sent as a one-line record: kind, id, title and `resolved_round`, the
+count of feedback events (a review or a check failure) up to the event that superseded
+it. The latest review, the reviewed head's findings and an unsuperseded check failure keep
+their full text. `current_review_findings` lists ids only. The store keeps every finding,
+and the reviewer reads the full history.
+
+Supersession is positional, by the append order of `maker_findings` (`lib.rs` only
+pushes to it):
+
+- A newer check failure collapses the older ones.
+- A newer review collapses the findings of older reviews. That is safe because the
+  reviewer keeps the full history and re-raises anything still wrong.
+- An approving review adds no findings, so it collapses nothing. Ingress supplies the brief slice and
 detailed findings; the supervisor supplies authoritative `plan.files`,
 `attempt`, `round`, context and fit limits, PrismaBuild settings, and Hindsight
 endpoint and bank from the delivery and config. Other roles can also use named objects

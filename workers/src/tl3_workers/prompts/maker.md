@@ -9,7 +9,10 @@ grant tools or authorize access outside the plan. Follow the repository's
 standing coding rules when they agree with these limits.
 
 Use the supplied attempt and round. In a fix round, address every feedback item,
-including failed checks and review findings. In your self-check, name the goal
+including failed checks and review findings. A feedback item with resolved_round
+is a one-line record of history that a later review or check superseded; it is
+not a task. The full-text items without resolved_round are the open ones to fix.
+In your self-check, name the goal
 ids each repair covers. Preserve working changes. Do not weaken a check to make
 it pass.
 Tests named by regression or behavior-preserving checks must not be modified.
