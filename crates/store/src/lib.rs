@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
+mod prompts;
 mod types;
+pub use prompts::*;
 pub use types::*;
 
 use postgres::{Client, IsolationLevel, NoTls, Row};

@@ -117,3 +117,26 @@ def test_every_role_prompt_asks_for_json_only(role, request_fixture, text, reque
 
 def test_maker_prompt_asks_for_json_only():
     assert ONLY_JSON in files("tl3_workers").joinpath("prompts", "maker.md").read_text()
+
+
+@pytest.mark.parametrize("role,request_fixture,text", [
+    ("ingest", "request_doc", json.dumps(BRIEF)),
+    ("maker", "maker_request", json.dumps({"kind": "cant_meet", "report": "Not possible."})),
+])
+def test_run_uses_the_prompt_version_it_was_given(role, request_fixture, text, request, monkeypatch):
+    doc = request.getfixturevalue(request_fixture)
+    doc.setdefault("inputs", {})["context_size"] = 150_000
+    doc["prompt"] = {"version": 7, "text": f"Version 7 of Rob's {role} prompt."}
+    model = answer(monkeypatch, text)
+    runtime.run(doc, lambda _: None)
+    system = [m for m in model.seen[0] if isinstance(m, SystemMessage)]
+    assert system[0].text.startswith(f"Version 7 of Rob's {role} prompt.\n\n" + ONLY_JSON)
+    packaged = files("tl3_workers").joinpath("prompts", f"{role}.md").read_text()
+    assert packaged.strip().splitlines()[0] not in system[0].text
+
+
+def test_a_request_with_a_prompt_version_passes_the_process_boundary(tmp_path, request_doc):
+    request_doc["prompt"] = {"version": 3, "text": "Version 3 of the ingest prompt."}
+    result = test_workers.start_worker(tmp_path, request_doc, [{"content": json.dumps(BRIEF)}])
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1] == {"event": "reply", "role": "ingest", "reply": BRIEF}

@@ -29,6 +29,7 @@ _COMPILE_DATA = {
         "//crates/mergify:sources",
         "//crates/store:sources",
         "//harness:project_files",
+        "//workers:runtime_files",
         "//workers:schemas",
         "//workers/tests:fixtures",
     ],

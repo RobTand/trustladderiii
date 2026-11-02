@@ -724,6 +724,22 @@ fn simulation(settings: &tl3_config::Store) {
     materials(&mut store);
     let (registry, mut source) =
         ingest_audit_simulation(&root.path().join("fakes"), &config).unwrap();
+    // PRD #327, C5: Rob's prompt edit applies to the next run, while a
+    // running one keeps the version it started with.
+    let mut prompts = tl3_store::Prompts::open(settings).unwrap();
+    let shipped_audit = prompts.role("audit").unwrap().unwrap().active;
+    let base = prompts.role("ingest").unwrap().unwrap().active;
+    let robs_ingest = prompts
+        .save(
+            "ingest",
+            "Rob's ingest prompt.",
+            "Before the run.",
+            "Rob",
+            base,
+        )
+        .unwrap()
+        .unwrap()
+        .active;
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
         registry,
@@ -735,6 +751,21 @@ fn simulation(settings: &tl3_config::Store) {
         drive(&mut controller, &mut source, &mut store);
         controller.world().unwrap().nodes[0].phase == Phase::Auditing
     });
+    wait(|| {
+        fs::read_to_string(root.path().join("entered.requests"))
+            .is_ok_and(|requests| requests.lines().count() == 2)
+    });
+    let robs_audit = prompts
+        .save(
+            "audit",
+            "Rob's audit prompt.",
+            "During the run.",
+            "Rob",
+            shipped_audit,
+        )
+        .unwrap()
+        .unwrap()
+        .active;
     // Pause lets the in-flight audit finish and exposes Unplanned before admission.
     controller
         .observe(
@@ -802,6 +833,55 @@ fn simulation(settings: &tl3_config::Store) {
             .any(|e| e.receipt.result["kernel_event"]["Reply"]["reply"] == "AuditAgrees")
     );
     assert_recorded_runs(root.path(), 2);
+    let runs = recorded_runs(root.path());
+    let prompt = |role: &str| {
+        runs.iter()
+            .find(|run| run["request"]["role"] == role)
+            .unwrap()["request"]["prompt"]
+            .clone()
+    };
+    assert_eq!(
+        prompt("ingest"),
+        json!({"version": robs_ingest, "text": "Rob's ingest prompt."})
+    );
+    let shipped = tl3_controller::prompts::BUILTIN
+        .iter()
+        .find(|(role, _)| *role == "audit")
+        .unwrap()
+        .1;
+    assert_eq!(
+        prompt("audit"),
+        json!({"version": shipped_audit, "text": shipped}),
+        "the running audit kept its version"
+    );
+    let recorded: Vec<(String, i64)> = postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .user(&settings.user)
+        .dbname(&settings.database)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap()
+        .query(
+            "SELECT role, version FROM tl3_prompt_runs ORDER BY role",
+            &[],
+        )
+        .unwrap()
+        .iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect();
+    assert_eq!(
+        recorded,
+        [
+            ("audit".into(), shipped_audit),
+            ("ingest".into(), robs_ingest)
+        ]
+    );
+    assert_eq!(
+        store.run_prompt("next-audit", "audit").unwrap().unwrap().id,
+        robs_audit,
+        "the next run takes Rob's edit"
+    );
     assert_retired(&config, &mut store);
     let memory = store.pending_memories(0).unwrap();
     assert_eq!(memory.len(), 2, "both real workers survive a memory outage");
