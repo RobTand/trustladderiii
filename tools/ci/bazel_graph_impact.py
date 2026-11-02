@@ -83,7 +83,13 @@ def from_deps(deps, tests, sources, loc=None):
 
 
 def baseline(graph):
-    return graph_impact.baseline_record(graph, tolerances={'u_pct': .1, 'loc_u_pct': .1, 'scc_max': 0})
+    return ratchet(graph_impact.baseline_record(
+        graph, tolerances={'u_pct': .1, 'loc_u_pct': .1, 'scc_max': 0}))
+
+
+def ratchet(policy):
+    """Persist numeric limits only; edge history comes from the actual base graph."""
+    return {key: value for key, value in policy.items() if key != 'edge_groups'}
 
 
 def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, previous_policy=None,
@@ -91,8 +97,18 @@ def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, 
     head = {**head, **comparison_inputs(base, head)}
     errors = graph_impact.allowlist_errors(allowlist or {}, previous_allowlist if previous_allowlist is not None
                                           else allowlist or {})
-    errors += graph_impact.baseline_errors(policy, previous_policy)
-    errors += graph_impact.compare(base, head, policy, changed_tests=changed, allowlist=allowlist,
+    errors += graph_impact.baseline_errors(ratchet(policy), ratchet(previous_policy) if previous_policy else None)
+    base_edges = set(map(tuple, base['edges']))
+    # The core also checks absolute forbidden-edge exceptions. Supply those
+    # transiently from base edges, including edges whose classification changed.
+    # Never let a stored list either reject an old edge or excuse a new one.
+    base_groups = {group: [edge for edge in rows if tuple(edge.split(' -> ', 1)) in base_edges]
+                   for group, rows in head['edge_groups'].items()}
+    comparison_policy = {**ratchet(policy), 'edge_groups': base_groups,
+                         'figures': {key: value for key, value in policy['figures'].items() if key != 'scc_max'}}
+    # SCC growth is checked component-by-component against base by compare().
+    errors += graph_impact.compare({**base, 'edge_groups': base_groups}, head, comparison_policy,
+                                   changed_tests=changed, allowlist=allowlist,
                                    record_gains=record_gains)
     added = set(map(tuple, head['edges'])) - set(map(tuple, base['edges']))
     deps = {}
@@ -118,10 +134,10 @@ def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, 
 def write_baseline(graph, previous=None):
     if previous is None:
         return baseline(graph)
-    errors = graph_impact.regressions(graph, previous)
+    errors = graph_impact.regressions({**graph, 'edge_groups': {}}, ratchet(previous))
     if errors:
         raise ValueError('baseline writer refuses losses: ' + '; '.join(errors))
-    return graph_impact.baseline_record(graph, previous)
+    return ratchet(graph_impact.baseline_record(graph, ratchet(previous)))
 
 
 def canonical(label):

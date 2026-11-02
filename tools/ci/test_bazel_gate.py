@@ -198,6 +198,22 @@ class ClassifyTests(unittest.TestCase):
 
 
 class GateTests(unittest.TestCase):
+    def test_mergify_batch_keeps_the_supplied_base_for_graph_and_selection(self):
+        batch_base, batch_head = 'c' * 40, 'd' * 40
+        workspace = FakeWorkspace(['crates/kernel/src/lib.rs'], [], {})
+        calls = []
+        def graph_check(base, head):
+            calls.append(('graph', base, head))
+            return {'errors': [], 'summary': 'unchanged'}
+        def bazel_diff(base, head):
+            calls.append(('selection', base, head))
+            return {'//crates/kernel:lib_test_tl3_kernel'}
+        workspace.graph_check = graph_check
+        workspace.bazel_diff = bazel_diff
+        bazel_gate.gate_pr(workspace, batch_base, batch_head, {})
+        self.assertEqual(calls, [('graph', batch_base, batch_head),
+                                 ('selection', batch_base, batch_head)])
+
     def test_graph_regression_fails_even_a_docs_only_pr(self):
         workspace = FakeWorkspace(['docs/bazel.md'], [], {})
         calls = []

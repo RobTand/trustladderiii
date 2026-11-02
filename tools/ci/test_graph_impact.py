@@ -14,6 +14,53 @@ def graph(deps=None, tests=('//tests:small', '//tests:other'), sources=('//pkg:a
 
 
 class GraphImpactTests(unittest.TestCase):
+    def test_existing_edges_missing_from_stored_baseline_are_not_new(self):
+        policy = impact.baseline(graph())
+        for consumer, dependency in [('//tests:small', '//tests:other'),
+                                     ('//tests:conftest.py', '//pkg:a.py')]:
+            with self.subTest(edge=(consumer, dependency)):
+                current = graph({'//tests:small': ['//pkg:a.py'],
+                                 '//tests:other': ['//pkg:b.py'], consumer: [dependency]})
+                result = impact.check(current, current, set(), policy)
+                self.assertEqual(result['errors'], [])
+                self.assertEqual(result['added_edges'], [])
+
+    def test_stored_edge_exceptions_cannot_hide_a_pr_edge(self):
+        base = graph()
+        head = graph({'//tests:small': ['//pkg:a.py', '//tests:other'],
+                      '//tests:other': ['//pkg:b.py']})
+        policy = impact.baseline(head)
+        result = impact.check(base, head, set(), policy)
+        self.assertIn('new test_to_test edge: //tests:small -> //tests:other', result['errors'])
+
+    def test_baseline_records_and_writes_never_store_edges(self):
+        current = graph({'//tests:small': ['//tests:other'], '//tests:other': ['//pkg:b.py']})
+        policy = impact.baseline(current)
+        self.assertNotIn('edge_groups', policy)
+        legacy = {**policy, 'edge_groups': {'test_to_test': []}}
+        self.assertNotIn('edge_groups', impact.write_baseline(current, legacy))
+
+    def test_preexisting_cycle_missing_from_ratchet_is_not_a_pr_regression(self):
+        policy = impact.baseline(graph())
+        current = graph({'//tests:small': ['//pkg:a.py'], '//tests:other': ['//pkg:b.py'],
+                         '//cycle:a': ['//cycle:b'], '//cycle:b': ['//cycle:a']})
+        self.assertEqual(impact.check(current, current, set(), policy)['errors'], [])
+
+    def test_conftest_reclassification_does_not_make_an_existing_edge_new(self):
+        deps = {'//tests:small': ['//pkg:a.py'], '//tests:other': ['//pkg:b.py'],
+                '//tests:conftest': ['//pkg:lib'], '//pkg:lib': []}
+        base = graph(deps)
+        head = graph({**deps, '//pkg:lib': ['//pkg:a.py']})
+        result = impact.check(base, head, set(), impact.baseline(base))
+        self.assertEqual(result['errors'], [])
+
+    def test_deleting_an_existing_forbidden_edge_needs_no_baseline_update(self):
+        head = graph()
+        base = graph({'//tests:small': ['//pkg:a.py'], '//tests:other': ['//pkg:b.py'],
+                      '//tests:conftest.py': ['//pkg:a.py']})
+        policy = {**impact.baseline(base), 'edge_groups': base['edge_groups']}
+        self.assertEqual(impact.check(base, head, set(), policy)['errors'], [])
+
     def test_metrics_include_unused_sources_and_loc_weighting(self):
         current = graph(sources=('//pkg:a.py', '//pkg:b.py', '//pkg:unused.py'),
                         loc={'//pkg:a.py': 8, '//pkg:b.py': 1, '//pkg:unused.py': 1})

@@ -42,6 +42,13 @@ def planted(workspace):
         if not any(message in error for error in result['errors']):
             raise RuntimeError(f'planted {name} did not fail as expected: {result["errors"]}')
         records[name] = {'summary': result['summary'], 'errors': result['errors']}
+    new_source = '//graph-impact-proof:unrelated.py'
+    head = bazel_graph_impact.from_deps({**deps, tests[0]: deps[tests[0]] + [new_source], new_source: []},
+                                      tests, sources + [new_source], {**base['loc'], new_source: 1})
+    result = bazel_graph_impact.check(base, head, set(), policy)
+    if not any('existing test reach grew' in error for error in result['errors']):
+        raise RuntimeError(f'planted existing test reach did not fail: {result["errors"]}')
+    records['existing test reach'] = {'summary': result['summary'], 'errors': result['errors']}
     detached = {node: [dep for dep in values if dep not in sources] for node, values in deps.items()}
     head = bazel_graph_impact.from_deps(detached, tests, sources, base['loc'])
     result = bazel_graph_impact.check(base, head, set(), policy)

@@ -45,12 +45,21 @@ these counts fail and appear in the diagnostic. New tests do not inflate the
 structural fan-out comparison. New sources may inherit existing package fan-out;
 the summary reports them. The adapter supplies each test's package, package base
 maximum reach, and typed added and removed rule-to-rule and rule-to-source edges.
-Maximum SCC size and forbidden-edge limits still fail the check. The baseline
-writer refuses those losses and preserves the global budget's minimum.
+SCC growth and forbidden edges use only the actual base-to-head edge diff.
+The baseline stores numeric figures, tolerances, and the reach budget. It stores
+no edge lists; exceptions live in the separate allowlist. For the shared core's
+absolute edge check, the adapter supplies an in-memory list from base's edges.
+Its component comparison detects SCC growth or mergers, including growth hidden
+by a larger existing cycle. The baseline writer preserves numeric minima and
+refuses an increased maximum SCC size.
 
 New test-to-test rule dependencies and new conftest dependencies on production
 code fail. This uses declared Bazel dependencies. An import missing from BUILD
 declarations is outside this check's evidence; generated-input checks still apply.
+Edges already present at base cannot become new because a stored baseline is old.
+The gate uses Mergify's queue-aware base commit unchanged, so earlier PRs in a
+batch belong to the base graph. It does not replace that commit with main or the
+PR's original merge base.
 
 The empty `tools/ci/graph-impact-allowlist.json` maps exception keys to nonempty
 reasons. Keys are `reach:<test-label>`, `edge:<group>:<consumer> -> <dependency>`, `figure:u_pct`, `figure:loc_u_pct`,
