@@ -23,6 +23,7 @@ fn main() {
             "mvp_schema_6_upgrades_to_hindsight",
             mvp_schema_6_upgrades_to_hindsight as fn(&tl3_config::Store),
         ),
+        ("worker_completion_facts", worker_completion_facts),
         ("review_fixes_worker_document", review_fixes_worker_document),
         (
             "atomic_commit_and_idempotency",
@@ -2339,4 +2340,59 @@ fn settings_editor(settings: &tl3_config::Store) {
             .unwrap(),
         0.25
     );
+}
+
+fn worker_completion_facts(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let facts = WorkerRunFacts {
+        started_ms: 1_000_000,
+        finished_ms: 9_666_000,
+        outcome: "succeeded".into(),
+        release: Some("release-fixture".into()),
+        model: "fixture-model".into(),
+        input_tokens: Some(1_600_000),
+        cached_tokens: Some(1_000_000),
+        output_tokens: Some(170_000),
+        trace_id: Some("tr-0f626041aebfeefcdea5b8365b1a3e46".into()),
+        failure: None,
+    };
+    store
+        .record_worker_facts("run:83:17", "83", 0, "maker", &facts)
+        .unwrap();
+    store
+        .record_worker_facts("run:83:17", "83", 0, "maker", &facts)
+        .unwrap();
+    let mut second = facts.clone();
+    second.finished_ms = second.started_ms + 764_000;
+    second.outcome = "failed".into();
+    second.cached_tokens = None;
+    second.failure = Some(WorkerBoundaryFailure {
+        origin: "proxy".into(),
+        class: "InternalServerError".into(),
+        status: Some(502),
+        request_id: Some("req-fixture-120".into()),
+    });
+    store
+        .record_worker_facts("run:83:17", "83", 1, "maker", &second)
+        .unwrap();
+    let mut client = raw(settings);
+    let rows = client.query("SELECT attempt, finished_ms - started_ms, input_tokens, cached_tokens, output_tokens, failure_request_id FROM tl3_worker_runs ORDER BY attempt", &[]).unwrap();
+    assert_eq!(rows.len(), 2, "replay must not duplicate attempts");
+    assert_eq!(rows[0].get::<_, i64>(1), 8_666_000);
+    assert_eq!(rows[1].get::<_, i64>(1), 764_000);
+    assert_eq!(rows[1].get::<_, Option<i64>>(3), None);
+    assert_eq!(rows[1].get::<_, String>(5), "req-fixture-120");
+    assert!(
+        store
+            .record_worker_facts("run:83:17", "83", 0, "maker", &second)
+            .is_err(),
+        "a terminal record is immutable"
+    );
+    grant_reader(
+        settings,
+        "tl3_worker_facts_reader",
+        settings.password_file.as_deref().unwrap(),
+    )
+    .unwrap();
+    assert!(client.query_one("SELECT has_table_privilege('tl3_worker_facts_reader', 'tl3_worker_runs', 'SELECT') AND NOT has_table_privilege('tl3_worker_facts_reader', 'tl3_worker_runs', 'INSERT,UPDATE,DELETE')", &[]).unwrap().get::<_, bool>(0));
 }

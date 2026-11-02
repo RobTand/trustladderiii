@@ -934,6 +934,17 @@ impl Store {
             .map(|row| row.get(0)))
     }
 
+    pub fn record_worker_facts(
+        &mut self,
+        _key: &str,
+        _node: &str,
+        _attempt: i64,
+        _role: &str,
+        _facts: &WorkerRunFacts,
+    ) -> Result<()> {
+        todo!("persist worker completion facts")
+    }
+
     /// Claim time exists even if the worker never emits progress.
     pub fn claim_worker(&mut self, key: &str, node: &str, epoch: i64, attempt: i64) -> Result<()> {
         self.client.execute("INSERT INTO tl3_worker_progress (run_key, node_id, epoch, attempt, output_offset, unit, started_ms) SELECT $1, $2, $3, $4, 0, '', (extract(epoch FROM clock_timestamp()) * 1000)::bigint FROM tl3_meta WHERE epoch = $3 ON CONFLICT (run_key) DO UPDATE SET attempt = EXCLUDED.attempt, output_offset = 0, unit = '', started_ms = EXCLUDED.started_ms, last_progress_ms = NULL, external_wait = NULL WHERE tl3_worker_progress.epoch = EXCLUDED.epoch AND tl3_worker_progress.attempt < EXCLUDED.attempt", &[&key, &node, &epoch, &attempt])?;

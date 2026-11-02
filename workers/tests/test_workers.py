@@ -388,3 +388,72 @@ def test_supplied_memories_are_redacted_before_the_model(request_doc, monkeypatc
     assert "Deploy with export GITHUB_TOKEN=" in sent
     assert json.loads(sent)["memories"][0]["id"] == "m-1"
     assert events[-1]["reply"]["memory_ids"] == ["m-1"]
+
+
+def test_completion_records_actual_worker_time_and_model_usage(tmp_path, request_doc, monkeypatch):
+    from tl3_workers import facts
+    import time
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+
+    completion = tmp_path / "facts.json"
+    request_doc["trace"] = {"completion": str(completion), "release": "release-fixture"}
+    clock = iter([1_000_000_000_000, 9_666_000_000_000])
+    monkeypatch.setattr(time, "time_ns", lambda: next(clock))
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="ok", usage_metadata={
+        "input_tokens": 1_600_000, "output_tokens": 170_000, "total_tokens": 1_770_000,
+        "input_token_details": {"cache_read": 1_000_000},
+    })])
+    with facts.observe(request_doc):
+        model.invoke("fixture")
+    row = json.loads(completion.read_text())
+    assert (row["started_ms"], row["finished_ms"]) == (1_000_000, 9_666_000)
+    assert row["finished_ms"] - row["started_ms"] == 8_666_000
+    assert row["outcome"] == "succeeded"
+    assert row["model"] == "fixture-model"
+    assert row["release"] == "release-fixture"
+    assert (row["input_tokens"], row["cached_tokens"], row["output_tokens"]) == (
+        1_600_000, 1_000_000, 170_000)
+    assert row["trace_id"] is None
+    assert row["failure"] is None
+
+
+def test_failed_worker_keeps_usage_and_redacted_proxy_correlation(tmp_path, request_doc):
+    from tl3_workers import facts
+    import httpx
+    from openai import InternalServerError
+
+    completion = tmp_path / "facts.json"
+    request_doc["trace"] = {"completion": str(completion)}
+    response = httpx.Response(502, headers={"x-request-id": "req-fixture-120"},
+                              request=httpx.Request("POST", "http://model.invalid/v1"))
+    failure = InternalServerError("Bearer fixture-secret-value response body", response=response,
+                                  body={"secret": "fixture-secret-value"})
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="ok", usage_metadata={
+        "input_tokens": 1_600_000, "output_tokens": 170_000, "total_tokens": 1_770_000})])
+    with pytest.raises(InternalServerError), facts.observe(request_doc):
+        model.invoke("fixture")
+        raise failure
+    row = json.loads(completion.read_text())
+    assert row["outcome"] == "failed"
+    assert row["input_tokens"] + row["output_tokens"] == 1_770_000
+    assert row["cached_tokens"] is None
+    assert row["failure"] == {"origin": "proxy", "class": "InternalServerError",
+                              "status": 502, "request_id": "req-fixture-120"}
+    assert "fixture-secret-value" not in completion.read_text()
+    assert "response body" not in completion.read_text()
+
+
+@pytest.mark.parametrize("error", [RuntimeError("secret local text"),
+                                  ValueError("secret invalid reply")])
+def test_missing_usage_stays_unknown_and_local_failure_has_no_body(tmp_path, request_doc, error):
+    from tl3_workers import facts
+
+    completion = tmp_path / "facts.json"
+    request_doc["trace"] = {"completion": str(completion)}
+    with pytest.raises(type(error)), facts.observe(request_doc):
+        raise error
+    row = json.loads(completion.read_text())
+    assert row["failure"]["origin"] == "worker"
+    assert row["failure"]["class"] == type(error).__name__
+    assert all(row[key] is None for key in ("input_tokens", "cached_tokens", "output_tokens"))
+    assert "secret" not in completion.read_text()

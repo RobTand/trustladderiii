@@ -375,3 +375,28 @@ pub struct MemoryCuration {
     pub reason: String,
     pub evidence: serde_json::Value,
 }
+
+/// One worker process attempt. Missing measurements stay unknown.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerRunFacts {
+    pub started_ms: i64,
+    pub finished_ms: i64,
+    pub outcome: String,
+    pub release: Option<String>,
+    pub model: String,
+    pub input_tokens: Option<i64>,
+    pub cached_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub trace_id: Option<String>,
+    pub failure: Option<WorkerBoundaryFailure>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerBoundaryFailure {
+    pub origin: String,
+    pub class: String,
+    pub status: Option<i32>,
+    pub request_id: Option<String>,
+}
