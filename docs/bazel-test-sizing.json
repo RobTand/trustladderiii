@@ -1,0 +1,936 @@
+{
+  "schema": "tl3.bazel-test-sizing.v1",
+  "date": "2026-11-02",
+  "measurement_method": "BuildBuddy execution usage timeline CPU deltas / interval; memory is usageStats.peakMemoryBytes. CPU has 25% headroom rounded up; memory has >=25% headroom and rounds to GiB with a 512 MiB floor.",
+  "caveat": "Historical controller and workers baselines precede merged #466 and the current scenario inventory. These are allocation checks, not paired speed benchmarks.",
+  "classes": {
+    "controller": {
+      "label": "//crates/controller:test_test_publishing",
+      "properties": {
+        "EstimatedComputeUnits": "1",
+        "EstimatedCPU": "4",
+        "EstimatedMemory": "2GB"
+      },
+      "before": {
+        "invocation": "cf925036-43e2-41c6-be27-3d3276560385",
+        "url": "https://app.buildbuddy.io/invocation/cf925036-43e2-41c6-be27-3d3276560385",
+        "receipts": [
+          {
+            "action_digest": {
+              "hash": "a5ffc018c6a8963a7c6d1717d1a9f315bc42d899bc69e87aae90675d776d7e6e",
+              "sizeBytes": "403"
+            },
+            "execution_id": "/uploads/9ea5946e-a9d9-46b4-b196-de5ca327ef8d/blobs/a5ffc018c6a8963a7c6d1717d1a9f315bc42d899bc69e87aae90675d776d7e6e/403",
+            "shard": null,
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {
+              "estimatedMemoryBytes": "8589934592",
+              "estimatedMilliCpu": "4000"
+            },
+            "effective": {
+              "estimatedMemoryBytes": "491680192",
+              "estimatedMilliCpu": "1000"
+            },
+            "predicted": {
+              "estimatedMemoryBytes": "491680192",
+              "estimatedMilliCpu": "1000"
+            },
+            "measured": null,
+            "cgroup": {
+              "cpuWeight": "39",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "8192",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                15,
+                16,
+                18
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T18:38:52.484114333Z",
+            "completed": "2026-11-02T18:45:31.415928848Z",
+            "cpu_seconds": 476.797852,
+            "peak_memory_bytes": "547672064",
+            "sampled_peak_cpu": 2.8557114228456912
+          }
+        ]
+      },
+      "after": {
+        "invocation": "478d4cf8-90a5-4e22-bded-2a127ce841e4",
+        "label": "//crates/controller:test_test_publishing",
+        "receipts": [
+          {
+            "action_digest": {
+              "hash": "a91f05111ee822ff70439a36255b6a007c521048688f81d85978558a148d7ca1",
+              "sizeBytes": "431"
+            },
+            "execution_id": "/uploads/cde4afdf-d189-4248-a1d3-9eff5f6d196f/blobs/a91f05111ee822ff70439a36255b6a007c521048688f81d85978558a148d7ca1/431",
+            "shard": null,
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {
+              "estimatedMemoryBytes": "2147483648",
+              "estimatedMilliCpu": "4000"
+            },
+            "effective": {
+              "estimatedMemoryBytes": "2147483648",
+              "estimatedMilliCpu": "4000",
+              "estimatedFreeDiskBytes": "100000000"
+            },
+            "predicted": null,
+            "measured": null,
+            "cgroup": {
+              "cpuWeight": "157",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "20480",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                2,
+                19,
+                20,
+                24,
+                40,
+                41
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T21:51:55.694711524Z",
+            "completed": "2026-11-02T21:56:10.770605878Z",
+            "cpu_seconds": 374.664529,
+            "peak_memory_bytes": "449101824",
+            "sampled_peak_cpu": 2.946107784431138
+          }
+        ],
+        "url": "https://app.buildbuddy.io/invocation/478d4cf8-90a5-4e22-bded-2a127ce841e4",
+        "verified": true
+      }
+    },
+    "workers": {
+      "label": "//crates/controller:test_test_workers",
+      "properties": {
+        "EstimatedComputeUnits": "1",
+        "EstimatedCPU": "3",
+        "EstimatedMemory": "1GB"
+      },
+      "before": {
+        "invocation": "0a78d9d0-37f1-41a2-9f4e-17df84f37ba2",
+        "url": "https://app.buildbuddy.io/invocation/0a78d9d0-37f1-41a2-9f4e-17df84f37ba2",
+        "receipts": [
+          {
+            "action_digest": {
+              "hash": "f0370f68c3e9a3613597b4b5d67feda8473c8f6d75d6b45bf7e4d9d38c2a8f75",
+              "sizeBytes": "401"
+            },
+            "execution_id": "/uploads/c03ac55f-906a-452a-8cfb-d3eaff4edfd8/blobs/f0370f68c3e9a3613597b4b5d67feda8473c8f6d75d6b45bf7e4d9d38c2a8f75/401",
+            "shard": "shard_3_of_8",
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {
+              "estimatedMemoryBytes": "8589934592",
+              "estimatedMilliCpu": "4000"
+            },
+            "effective": {
+              "estimatedMemoryBytes": "913741312",
+              "estimatedMilliCpu": "1000"
+            },
+            "predicted": {
+              "estimatedMemoryBytes": "913741312",
+              "estimatedMilliCpu": "1000"
+            },
+            "measured": null,
+            "cgroup": {
+              "cpuWeight": "39",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "8192",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                6,
+                17,
+                18
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T20:06:44.370496959Z",
+            "completed": "2026-11-02T20:08:00.387587524Z",
+            "cpu_seconds": 82.916534,
+            "peak_memory_bytes": "460464128",
+            "sampled_peak_cpu": 2.008
+          },
+          {
+            "action_digest": {
+              "hash": "339132fc50fe6f812c4e3381d039af7dcad2a96b7c2c34ddad03165b25c38b4a",
+              "sizeBytes": "401"
+            },
+            "execution_id": "/uploads/4beb57a9-46d2-4883-a470-ebef6be7ef7b/blobs/339132fc50fe6f812c4e3381d039af7dcad2a96b7c2c34ddad03165b25c38b4a/401",
+            "shard": "shard_1_of_8",
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {
+              "estimatedMemoryBytes": "8589934592",
+              "estimatedMilliCpu": "4000"
+            },
+            "effective": {
+              "estimatedMemoryBytes": "913741312",
+              "estimatedMilliCpu": "1000"
+            },
+            "predicted": {
+              "estimatedMemoryBytes": "913741312",
+              "estimatedMilliCpu": "1000"
+            },
+            "measured": null,
+            "cgroup": {
+              "cpuWeight": "39",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "8192",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                9,
+                10,
+                21
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T20:06:45.050026787Z",
+            "completed": "2026-11-02T20:07:51.809191707Z",
+            "cpu_seconds": 67.707281,
+            "peak_memory_bytes": "524288000",
+            "sampled_peak_cpu": 2.2395209580838324
+          },
+          {
+            "action_digest": {
+              "hash": "299fa6614835bd4c1403319c2154ccbc27703d7d47ddc1407eefe443fd6ea611",
+              "sizeBytes": "401"
+            },
+            "execution_id": "/uploads/be4c1963-17dd-4496-b6e8-79620a32d50b/blobs/299fa6614835bd4c1403319c2154ccbc27703d7d47ddc1407eefe443fd6ea611/401",
+            "shard": "shard_8_of_8",
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {
+              "estimatedMemoryBytes": "8589934592",
+              "estimatedMilliCpu": "4000"
+            },
+            "effective": {
+              "estimatedMemoryBytes": "913741312",
+              "estimatedMilliCpu": "1000"
+            },
+            "predicted": {
+              "estimatedMemoryBytes": "913741312",
+              "estimatedMilliCpu": "1000"
+            },
+            "measured": null,
+            "cgroup": {
+              "cpuWeight": "39",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "8192",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                24,
+                25,
+                26
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T20:06:44.441840419Z",
+            "completed": "2026-11-02T20:10:03.962442311Z",
+            "cpu_seconds": 211.961827,
+            "peak_memory_bytes": "498638848",
+            "sampled_peak_cpu": 2.085828343313373
+          },
+          {
+            "action_digest": {
+              "hash": "e0c85f2224cbc2f7c7ddba969a235bff6652000f3415e508470063c543d48fc9",
+              "sizeBytes": "401"
+            },
+            "execution_id": "/uploads/6cc84e4e-0bd5-4cac-b46b-e54c952f9039/blobs/e0c85f2224cbc2f7c7ddba969a235bff6652000f3415e508470063c543d48fc9/401",
+            "shard": "shard_6_of_8",
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {
+              "estimatedMemoryBytes": "8589934592",
+              "estimatedMilliCpu": "4000"
+            },
+            "effective": {
+              "estimatedMemoryBytes": "913741312",
+              "estimatedMilliCpu": "1000"
+            },
+            "predicted": {
+              "estimatedMemoryBytes": "913741312",
+              "estimatedMilliCpu": "1000"
+            },
+            "measured": null,
+            "cgroup": {
+              "cpuWeight": "39",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "8192",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                3,
+                20,
+                21
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T20:06:44.404227186Z",
+            "completed": "2026-11-02T20:08:04.230653664Z",
+            "cpu_seconds": 71.462673,
+            "peak_memory_bytes": "434843648",
+            "sampled_peak_cpu": 1.858
+          },
+          {
+            "action_digest": {
+              "hash": "a3889c8d6362094b6b69a9a49055665e4d0f9e1006b16cd6504cc0bd85f105f4",
+              "sizeBytes": "401"
+            },
+            "execution_id": "/uploads/3440466f-2226-42f0-b6f4-d46077dedfc4/blobs/a3889c8d6362094b6b69a9a49055665e4d0f9e1006b16cd6504cc0bd85f105f4/401",
+            "shard": "shard_7_of_8",
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {
+              "estimatedMemoryBytes": "8589934592",
+              "estimatedMilliCpu": "4000"
+            },
+            "effective": {
+              "estimatedMemoryBytes": "913741312",
+              "estimatedMilliCpu": "1000"
+            },
+            "predicted": {
+              "estimatedMemoryBytes": "913741312",
+              "estimatedMilliCpu": "1000"
+            },
+            "measured": null,
+            "cgroup": {
+              "cpuWeight": "39",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "8192",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                2,
+                13,
+                14
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T20:06:44.353659017Z",
+            "completed": "2026-11-02T20:07:12.444763740Z",
+            "cpu_seconds": 27.245736,
+            "peak_memory_bytes": "423862272",
+            "sampled_peak_cpu": 1.554
+          },
+          {
+            "action_digest": {
+              "hash": "f15ae082573e43aeb70ae7df4aed4ab566571c8d6516f80f6e37f632e4e8a271",
+              "sizeBytes": "401"
+            },
+            "execution_id": "/uploads/c0bbb035-d6da-48ef-ab27-a7041dccd80f/blobs/f15ae082573e43aeb70ae7df4aed4ab566571c8d6516f80f6e37f632e4e8a271/401",
+            "shard": "shard_2_of_8",
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {
+              "estimatedMemoryBytes": "8589934592",
+              "estimatedMilliCpu": "4000"
+            },
+            "effective": {
+              "estimatedMemoryBytes": "913741312",
+              "estimatedMilliCpu": "1000"
+            },
+            "predicted": {
+              "estimatedMemoryBytes": "913741312",
+              "estimatedMilliCpu": "1000"
+            },
+            "measured": null,
+            "cgroup": {
+              "cpuWeight": "39",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "8192",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                0,
+                3,
+                14
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T20:06:44.572359167Z",
+            "completed": "2026-11-02T20:07:40.939954227Z",
+            "cpu_seconds": 62.446626,
+            "peak_memory_bytes": "380821504",
+            "sampled_peak_cpu": 2.1162324649298596
+          },
+          {
+            "action_digest": {
+              "hash": "b54fb9f9ff7a6b76d0ef4ffe6ec96f1c9a3efe7c0f1d1b33ef8f7ecb38d3f01b",
+              "sizeBytes": "401"
+            },
+            "execution_id": "/uploads/6cf5768f-f2bf-4dfe-b151-16df337a0413/blobs/b54fb9f9ff7a6b76d0ef4ffe6ec96f1c9a3efe7c0f1d1b33ef8f7ecb38d3f01b/401",
+            "shard": "shard_4_of_8",
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {
+              "estimatedMemoryBytes": "8589934592",
+              "estimatedMilliCpu": "4000"
+            },
+            "effective": {
+              "estimatedMemoryBytes": "913741312",
+              "estimatedMilliCpu": "1000"
+            },
+            "predicted": {
+              "estimatedMemoryBytes": "913741312",
+              "estimatedMilliCpu": "1000"
+            },
+            "measured": null,
+            "cgroup": {
+              "cpuWeight": "39",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "8192",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                5,
+                6,
+                29
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T20:06:44.610527955Z",
+            "completed": "2026-11-02T20:07:40.738503528Z",
+            "cpu_seconds": 53.243885,
+            "peak_memory_bytes": "514928640",
+            "sampled_peak_cpu": 1.9820359281437125
+          },
+          {
+            "action_digest": {
+              "hash": "1bc73328fd4ad19663347cfce386e6f90e83b0f6392208f10fa4b0d8661d9abf",
+              "sizeBytes": "401"
+            },
+            "execution_id": "/uploads/bad5091c-4090-440c-a1be-fc131a3795f6/blobs/1bc73328fd4ad19663347cfce386e6f90e83b0f6392208f10fa4b0d8661d9abf/401",
+            "shard": "shard_5_of_8",
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {
+              "estimatedMemoryBytes": "8589934592",
+              "estimatedMilliCpu": "4000"
+            },
+            "effective": {
+              "estimatedMemoryBytes": "913741312",
+              "estimatedMilliCpu": "1000"
+            },
+            "predicted": {
+              "estimatedMemoryBytes": "913741312",
+              "estimatedMilliCpu": "1000"
+            },
+            "measured": null,
+            "cgroup": {
+              "cpuWeight": "39",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "8192",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                0,
+                1,
+                10
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T20:06:44.644214090Z",
+            "completed": "2026-11-02T20:08:24.583322094Z",
+            "cpu_seconds": 79.128085,
+            "peak_memory_bytes": "503799808",
+            "sampled_peak_cpu": 2.176
+          }
+        ]
+      },
+      "after": {
+        "invocation": "419c494b-02a7-4cca-876b-3650d56777d3",
+        "label": "//crates/controller:test_test_workers",
+        "receipts": [
+          {
+            "action_digest": {
+              "hash": "ff9ca67355a6f8ea453e5348bbb011b311943b3f2a8abeb1d038be5523e5f216",
+              "sizeBytes": "431"
+            },
+            "execution_id": "/uploads/dd2e0923-959c-4417-b81e-666c166bd6a2/blobs/ff9ca67355a6f8ea453e5348bbb011b311943b3f2a8abeb1d038be5523e5f216/431",
+            "shard": null,
+            "stage": "COMPLETED",
+            "status": {
+              "code": 1,
+              "message": "invocation cancelled"
+            },
+            "exit_code": 0,
+            "requested": {},
+            "effective": {},
+            "predicted": null,
+            "measured": null,
+            "cgroup": null,
+            "isolation": null,
+            "started": null,
+            "completed": null,
+            "cpu_seconds": null,
+            "peak_memory_bytes": null,
+            "sampled_peak_cpu": null
+          }
+        ],
+        "url": "https://app.buildbuddy.io/invocation/419c494b-02a7-4cca-876b-3650d56777d3",
+        "verified": false,
+        "head": "8e1d5d977e284c821a26b071722f8259881943a8",
+        "outcome": "Unsharded target run alone with jobs=16. Remote Bazel ten-minute deadline expired before verdict. Remaining execution cancelled and terminal; no allocation metadata. Checker exit 1. Workers proof remains required before merge."
+      },
+      "previous_after_attempt": {
+        "invocation": "02bb5f9b-e74d-40df-ab7a-c9f168f4a568",
+        "label": "//crates/controller:test_test_workers",
+        "receipts": [
+          {
+            "action_digest": {
+              "hash": "ff9ca67355a6f8ea453e5348bbb011b311943b3f2a8abeb1d038be5523e5f216",
+              "sizeBytes": "431"
+            },
+            "execution_id": "/uploads/99bfc02b-954d-4e4f-85e1-dac00320a339/blobs/ff9ca67355a6f8ea453e5348bbb011b311943b3f2a8abeb1d038be5523e5f216/431",
+            "shard": null,
+            "stage": "COMPLETED",
+            "status": {
+              "code": 1,
+              "message": "invocation cancelled"
+            },
+            "exit_code": 0,
+            "requested": {},
+            "effective": {},
+            "predicted": null,
+            "measured": null,
+            "cgroup": null,
+            "isolation": null,
+            "started": null,
+            "completed": null,
+            "cpu_seconds": null,
+            "peak_memory_bytes": null,
+            "sampled_peak_cpu": null
+          },
+          {
+            "action_digest": {
+              "hash": "ff9ca67355a6f8ea453e5348bbb011b311943b3f2a8abeb1d038be5523e5f216",
+              "sizeBytes": "431"
+            },
+            "execution_id": "/uploads/7a8fde1f-b43b-4b63-a044-3273be008355/blobs/ff9ca67355a6f8ea453e5348bbb011b311943b3f2a8abeb1d038be5523e5f216/431",
+            "shard": null,
+            "stage": "COMPLETED",
+            "status": {
+              "code": 1,
+              "message": "invocation cancelled"
+            },
+            "exit_code": 0,
+            "requested": {},
+            "effective": {},
+            "predicted": null,
+            "measured": null,
+            "cgroup": null,
+            "isolation": null,
+            "started": null,
+            "completed": null,
+            "cpu_seconds": null,
+            "peak_memory_bytes": null,
+            "sampled_peak_cpu": null
+          }
+        ],
+        "url": "https://app.buildbuddy.io/invocation/02bb5f9b-e74d-40df-ab7a-c9f168f4a568",
+        "verified": false,
+        "outcome": "No verdict within the ten-minute window. Explicitly cancelled, including the automatic retry. Both executions ended COMPLETED with status code 1; allocation metadata was unavailable. Worker after-sizing proof remains pending #483 or coordinator review."
+      }
+    },
+    "postgres": {
+      "label": "//crates/store:test_test_postgres",
+      "properties": {
+        "EstimatedComputeUnits": "1",
+        "EstimatedCPU": "2",
+        "EstimatedMemory": "1GB"
+      },
+      "before": {
+        "invocation": "a2d4c76d-d46a-4bc3-b6b3-27901233211f",
+        "url": "https://app.buildbuddy.io/invocation/a2d4c76d-d46a-4bc3-b6b3-27901233211f",
+        "receipts": [
+          {
+            "action_digest": {
+              "hash": "5803bbd23d9eba8f19c76133624d5f2459a3f7f6efd1771d4ca039ae634dd662",
+              "sizeBytes": "360"
+            },
+            "execution_id": "/uploads/246576af-7b39-4a5f-bd60-121aeb74757a/blobs/5803bbd23d9eba8f19c76133624d5f2459a3f7f6efd1771d4ca039ae634dd662/360",
+            "shard": null,
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {},
+            "effective": {
+              "estimatedMemoryBytes": "682360832",
+              "estimatedMilliCpu": "1000"
+            },
+            "predicted": null,
+            "measured": {
+              "estimatedMemoryBytes": "682360832",
+              "estimatedMilliCpu": "1000"
+            },
+            "cgroup": {
+              "cpuWeight": "39",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "8192",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                6,
+                7,
+                9
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T21:45:59.254827659Z",
+            "completed": "2026-11-02T21:46:22.453887839Z",
+            "cpu_seconds": 7.226818,
+            "peak_memory_bytes": "721035264",
+            "sampled_peak_cpu": 0.912
+          }
+        ]
+      }
+    },
+    "nested_pytest": {
+      "label": "//harness/tests:test_report_limits",
+      "properties": {
+        "EstimatedComputeUnits": "1",
+        "EstimatedCPU": "2",
+        "EstimatedMemory": "0.5GB"
+      },
+      "before": {
+        "invocation": "81abd858-8657-449c-ab8e-7520ded0247d",
+        "url": "https://app.buildbuddy.io/invocation/81abd858-8657-449c-ab8e-7520ded0247d",
+        "receipts": [
+          {
+            "action_digest": {
+              "hash": "e4c75856b692f61722ed95f0e01164dda51c10196c93e3e049e0f3d80e33e018",
+              "sizeBytes": "360"
+            },
+            "execution_id": "/uploads/16fe98e0-54b4-40bf-a797-c0f7172befbe/blobs/e4c75856b692f61722ed95f0e01164dda51c10196c93e3e049e0f3d80e33e018/360",
+            "shard": null,
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {},
+            "effective": {
+              "estimatedMemoryBytes": "152608768",
+              "estimatedMilliCpu": "1000"
+            },
+            "predicted": null,
+            "measured": {
+              "estimatedMemoryBytes": "152608768",
+              "estimatedMilliCpu": "1000"
+            },
+            "cgroup": {
+              "cpuWeight": "39",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "8192",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                21,
+                22,
+                23
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T21:46:42.892324531Z",
+            "completed": "2026-11-02T21:46:47.162318032Z",
+            "cpu_seconds": 3.85525,
+            "peak_memory_bytes": "106151936",
+            "sampled_peak_cpu": 0.9939879759519038
+          }
+        ]
+      },
+      "after": {
+        "invocation": "ec92ab37-9842-4948-8f82-1ab9f4abbf50",
+        "label": "//harness/tests:test_report_limits",
+        "receipts": [
+          {
+            "action_digest": {
+              "hash": "f310b3fe5ca7d9c05da8e14f2d67e441a5d0fa6e577ca7e2f943c5e98c7c4f78",
+              "sizeBytes": "433"
+            },
+            "execution_id": "/uploads/0f2a7040-35e6-4eb8-8b00-48b440de1b4c/blobs/f310b3fe5ca7d9c05da8e14f2d67e441a5d0fa6e577ca7e2f943c5e98c7c4f78/433",
+            "shard": null,
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {
+              "estimatedMemoryBytes": "536870912",
+              "estimatedMilliCpu": "2000"
+            },
+            "effective": {
+              "estimatedMemoryBytes": "536870912",
+              "estimatedMilliCpu": "2000",
+              "estimatedFreeDiskBytes": "100000000"
+            },
+            "predicted": null,
+            "measured": null,
+            "cgroup": {
+              "cpuWeight": "79",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "12288",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                5,
+                6,
+                7,
+                8
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T21:54:14.482742350Z",
+            "completed": "2026-11-02T21:55:58.416444390Z",
+            "cpu_seconds": 8.468418,
+            "peak_memory_bytes": "154341376",
+            "sampled_peak_cpu": 0.994
+          }
+        ],
+        "url": "https://app.buildbuddy.io/invocation/ec92ab37-9842-4948-8f82-1ab9f4abbf50",
+        "verified": true
+      }
+    },
+    "workers_nested_pytest": {
+      "label": "//workers/tests:test_pb_tests",
+      "properties": {
+        "EstimatedComputeUnits": "1",
+        "EstimatedCPU": "2",
+        "EstimatedMemory": "1GB"
+      },
+      "before": {
+        "invocation": "e6b25f43-11c2-495a-87fb-f11c8794cf56",
+        "url": "https://app.buildbuddy.io/invocation/e6b25f43-11c2-495a-87fb-f11c8794cf56",
+        "receipts": [
+          {
+            "action_digest": {
+              "hash": "dbe3b8e5624b83a14ab971951a399246dfbba0796ee74369b89fe54ef3919473",
+              "sizeBytes": "360"
+            },
+            "execution_id": "/uploads/61475dac-7269-4a94-ab05-c56ca51509a2/blobs/dbe3b8e5624b83a14ab971951a399246dfbba0796ee74369b89fe54ef3919473/360",
+            "shard": null,
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {},
+            "effective": {
+              "estimatedMemoryBytes": "358338560",
+              "estimatedMilliCpu": "1000"
+            },
+            "predicted": null,
+            "measured": {
+              "estimatedMemoryBytes": "358338560",
+              "estimatedMilliCpu": "1000"
+            },
+            "cgroup": {
+              "cpuWeight": "39",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "8192",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                8,
+                21,
+                22
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T22:29:55.394885926Z",
+            "completed": "2026-11-02T22:31:34.462533994Z",
+            "cpu_seconds": 54.207676,
+            "peak_memory_bytes": "420798464",
+            "sampled_peak_cpu": 0.998
+          }
+        ]
+      },
+      "calibration_after": {
+        "invocation": "7bec24ad-7944-4e73-8e65-ae09a25babb2",
+        "label": "//workers/tests:test_pb_tests",
+        "receipts": [
+          {
+            "action_digest": {
+              "hash": "2eb4daa365680980b05c2ae1c6ae62b9296662940f634b3b521e2d722b7210e1",
+              "sizeBytes": "433"
+            },
+            "execution_id": "/uploads/eeeb7fcf-141d-4f9a-97a4-5ed62e1135a5/blobs/2eb4daa365680980b05c2ae1c6ae62b9296662940f634b3b521e2d722b7210e1/433",
+            "shard": null,
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {
+              "estimatedMemoryBytes": "536870912",
+              "estimatedMilliCpu": "2000"
+            },
+            "effective": {
+              "estimatedMemoryBytes": "536870912",
+              "estimatedMilliCpu": "2000",
+              "estimatedFreeDiskBytes": "100000000"
+            },
+            "predicted": null,
+            "measured": null,
+            "cgroup": {
+              "cpuWeight": "79",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "12288",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                2,
+                18,
+                20,
+                21
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T22:36:36.608031083Z",
+            "completed": "2026-11-02T22:37:23.045903006Z",
+            "cpu_seconds": 43.40551,
+            "peak_memory_bytes": "433860608",
+            "sampled_peak_cpu": 1.0200400801603207
+          }
+        ],
+        "url": "https://app.buildbuddy.io/invocation/7bec24ad-7944-4e73-8e65-ae09a25babb2",
+        "verified": true,
+        "note": "Receipt-verified 512 MiB request; observed 433860608-byte peak leaves only 23.7% headroom, so final request raised to 1 GiB."
+      },
+      "after": {
+        "invocation": "eb6c1647-add9-409d-aeb5-9e93779e1484",
+        "label": "//workers/tests:test_pb_tests",
+        "receipts": [
+          {
+            "action_digest": {
+              "hash": "715b860392e52f4af1d825a2fb37a82f9b7c5753b3c8e55f271bb4a12bcc51c6",
+              "sizeBytes": "431"
+            },
+            "execution_id": "/uploads/b5705e0c-aff6-4e4a-9510-104d2237e9ad/blobs/715b860392e52f4af1d825a2fb37a82f9b7c5753b3c8e55f271bb4a12bcc51c6/431",
+            "shard": null,
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {
+              "estimatedMemoryBytes": "1073741824",
+              "estimatedMilliCpu": "2000"
+            },
+            "effective": {
+              "estimatedMemoryBytes": "1073741824",
+              "estimatedMilliCpu": "2000",
+              "estimatedFreeDiskBytes": "100000000"
+            },
+            "predicted": null,
+            "measured": null,
+            "cgroup": {
+              "cpuWeight": "79",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "12288",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                3,
+                22,
+                29,
+                30
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T22:40:04.294486430Z",
+            "completed": "2026-11-02T22:41:22.056787138Z",
+            "cpu_seconds": 74.901196,
+            "peak_memory_bytes": "423309312",
+            "sampled_peak_cpu": 1.022
+          }
+        ],
+        "url": "https://app.buildbuddy.io/invocation/eb6c1647-add9-409d-aeb5-9e93779e1484",
+        "verified": true
+      }
+    }
+  },
+  "gate_concurrency": {
+    "gate_jobs": 80,
+    "agent_jobs": 16,
+    "quota_cores": 30,
+    "basis": "Gate concurrency is unchanged. A measured jobs change can follow separately."
+  },
+  "controller_memory": {
+    "invocation": "8be061d6-7e36-49f9-91bc-e7ffcfc80865",
+    "receipts": [
+      {
+        "action_digest": {
+          "hash": "7124b7e3eaaa30a2e644fc30eaaab1353256787c720b9661d0393d7bf1575a4b",
+          "sizeBytes": "403"
+        },
+        "execution_id": "/uploads/f69f8929-fb28-4605-8cd5-3c6bead3e4a7/blobs/7124b7e3eaaa30a2e644fc30eaaab1353256787c720b9661d0393d7bf1575a4b/403",
+        "shard": null,
+        "stage": "COMPLETED",
+        "status": {},
+        "exit_code": 0,
+        "requested": {
+          "estimatedMemoryBytes": "8589934592",
+          "estimatedMilliCpu": "4000"
+        },
+        "effective": {
+          "estimatedMemoryBytes": "492661696",
+          "estimatedMilliCpu": "1000"
+        },
+        "predicted": {
+          "estimatedMemoryBytes": "492661696",
+          "estimatedMilliCpu": "1000"
+        },
+        "measured": null,
+        "cgroup": {
+          "cpuWeight": "39",
+          "cpuQuotaLimitUsec": "3000000",
+          "cpuQuotaPeriodUsec": "100000",
+          "pidsMax": "8192",
+          "memoryOomGroup": true,
+          "cpusetCpus": [
+            8,
+            16,
+            20
+          ],
+          "numaNode": 0
+        },
+        "isolation": "oci",
+        "started": "2026-11-02T19:00:52.836557035Z",
+        "completed": "2026-11-02T19:03:57.947298071Z",
+        "cpu_seconds": 166.714186,
+        "peak_memory_bytes": "980955136",
+        "sampled_peak_cpu": 1.136
+      }
+    ]
+  }
+}
