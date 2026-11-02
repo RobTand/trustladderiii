@@ -111,6 +111,7 @@ py_library(
 tl3_py_test(
     name = "test_runtime",
     srcs = ["test_runtime.py"],
+    deps = [":python_runner"],
 )
 
 filegroup(
