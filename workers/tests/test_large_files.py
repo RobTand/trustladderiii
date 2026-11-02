@@ -147,10 +147,11 @@ def test_planner_fit_check_bounds_a_large_doc_in_a_small_plan(tmp_path, planner_
 
 
 def test_ingest_names_a_non_utf8_file(tmp_path, request_doc):  # noqa: F811
-    (tmp_path / "latin1.txt").write_bytes(b"caf\xe9 au lait\n")
+    content = b"caf\xe9 au lait\n"
+    (tmp_path / "latin1.txt").write_bytes(content)
     result = ingest(tmp_path, request_doc, ["latin1.txt"])
     assert result.exit_code == 0, result.stderr
-    assert "latin1.txt: not UTF-8 text (14 bytes)" in result.events[-1]["reply"]["brief"]
+    assert f"latin1.txt: not UTF-8 text ({len(content)} bytes)" in result.events[-1]["reply"]["brief"]
 
 
 @pytest.mark.parametrize("code,environment", [
