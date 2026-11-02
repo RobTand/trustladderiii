@@ -427,6 +427,10 @@ mod reply_defects {
                 json!({"$id":"https://trustladderiii.invalid/workers/protocol-1/new-input.json", "$ref":"maker-input.json#/properties/goals/items"}),
             ),
             (
+                "new-forecast.json".into(),
+                json!({"$id":"https://trustladderiii.invalid/workers/protocol-1/new-forecast.json", "$ref":"maker-input.json#/properties/forecast"}),
+            ),
+            (
                 "maker-input.json".into(),
                 serde_json::from_str(include_str!(
                     "../../../../../workers/src/tl3_workers/schemas/maker-input.json"
@@ -448,6 +452,11 @@ mod reply_defects {
                 .is_valid(&json!({"id":"g", "description":"Hello", "verification":"test"}))
         );
         assert!(!validators["new-input.json"].is_valid(&json!({})));
+        let mut forecast = json!({"fit_tokens":100000, "context_tokens":150000,
+            "overhead_tokens":{"prompt":5000, "making":20000}});
+        assert!(validators["new-forecast.json"].is_valid(&forecast));
+        forecast["overhead_tokens"]["making"] = json!(-1);
+        assert!(!validators["new-forecast.json"].is_valid(&forecast));
     }
 
     #[test]
