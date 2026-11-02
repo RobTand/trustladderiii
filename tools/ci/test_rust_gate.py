@@ -12,6 +12,18 @@ import rust_gate
 
 
 class GateTests(unittest.TestCase):
+    def test_scenario_without_a_postgres_fixture_keeps_cpu_enforcement(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = Path(temporary, 'fixture.py')
+            executable.write_text('print("test pure_logic ... ok", flush=True)\n'
+                                  'print("1 fixture scenarios passed", flush=True)\n')
+            details = {}
+            with patch.dict(os.environ, {'TMPDIR': temporary}):
+                rust_gate.execute_binary({'name': 'tl3-controller/prismabuild',
+                                          'command': [sys.executable, str(executable)]},
+                                         True, cpu_details=details)
+            self.assertEqual(details['cpu_fallbacks'], {})
+
     def test_receipt_counts_a_live_postmaster_and_its_reaped_backend_cpu(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
