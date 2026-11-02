@@ -65,6 +65,10 @@ def irrelevant(path):
                for pattern in IRRELEVANT)
 
 
+def build_graph(path):
+    return Path(path).name in ('BUILD.bazel', 'BUILD') or path.endswith('.bzl')
+
+
 def needs_no_diff(changed, deleted, used_sources):
     """Only unread, allowlisted files changed; bazel-diff has nothing to find."""
     return not deleted and all(irrelevant(path) and path not in used_sources for path in changed)
@@ -96,7 +100,12 @@ def plan(changed, deleted, impacted, used_sources, tests):
         raise GateError('changed files that no Bazel target reads: ' + ', '.join(unmapped)
                         + '. Declare them as target inputs (docs/bazel.md), or add the pattern '
                         'to IRRELEVANT in tools/ci/bazel_gate.py if nothing can read them.')
-    if not impacted and not all(irrelevant(path) for path in changed | deleted):
+    relevant = [path for path in changed | deleted if not irrelevant(path)]
+    if not impacted and relevant and all(build_graph(path) for path in relevant):
+        # A BUILD or .bzl edit that changes no rule hash (formatting, comments): test everything.
+        return {'selection': 'fallback', 'reason': sorted(relevant), 'selected': sorted(tests),
+                'build': ['//...'], 'scopes': [], 'all_scopes': True}
+    if not impacted and relevant:
         raise GateError('bazel-diff found no impacted targets for build-relevant changes')
     selected = sorted(set(impacted) & set(tests))
     scopes = sorted({label.split(':', 1)[0] for label in impacted if label.startswith('//')})
@@ -180,7 +189,8 @@ class Workspace:
         return set(map(canonical, self.query(f'attr(tags, "\\brust\\b", {TESTS})')))
 
     def used_sources(self):
-        labels = self.query('kind("source file", deps(//...))')
+        # BUILD and .bzl files define targets rather than being read by one; Bazel still reads them.
+        labels = self.query('kind("source file", deps(//...))') + self.query('buildfiles(//...)')
         return {label.removeprefix('//').replace(':', '/').lstrip('/') for label in map(canonical, labels)
                 if label.startswith('//')}
 
