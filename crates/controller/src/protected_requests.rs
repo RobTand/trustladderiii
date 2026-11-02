@@ -105,7 +105,7 @@ fn named_edits(body: &str, patterns: &[String]) -> BTreeSet<String> {
         Regex::new(r"(?i)\b(add|change|edit|update|modify|delete|remove|create|write|implement|extend|regenerate|replace|rename|move|fix)(?:\s+(?:the|file|directory))*\s+`?$").unwrap()
     });
     static LOCATION: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)\b(in|to|into|from|at)\s+`?$").unwrap());
+        LazyLock::new(|| Regex::new(r"(?i)\b(in|into|at)\s+`?$").unwrap());
     static LEADING_LOCATION: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)^(?:[-*]|[0-9]+\.)\s+in\s+`?$").unwrap());
     let mut footprint = false;
@@ -142,14 +142,20 @@ fn named_edits(body: &str, patterns: &[String]) -> BTreeSet<String> {
         if !listed || NEGATED.is_match(line) || !(footprint || goals && EDIT.is_match(line)) {
             continue;
         }
+        let mut previous_path_end = 0;
         for found in PATH.find_iter(line) {
             if goals {
                 let before = &line[..found.start()];
                 let after = &line[found.end()..];
+                let clause = before[previous_path_end..]
+                    .rsplit([',', ';'])
+                    .next()
+                    .unwrap();
+                previous_path_end = found.end();
                 // Associate edit intent with this target. "Read X and edit Y"
                 // and "add tests for X" do not request edits to X.
                 if !(TARGET.is_match(before)
-                    || LOCATION.is_match(before) && EDIT.is_match(before)
+                    || LOCATION.is_match(before) && EDIT.is_match(clause)
                     || LEADING_LOCATION.is_match(before) && EDIT.is_match(after))
                 {
                     continue;
