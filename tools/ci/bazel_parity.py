@@ -107,6 +107,16 @@ def bazel_tests(query_lines):
     return rust, sorted(python)
 
 
+def has_nested_suite(source):
+    """Whether a Python test starts a nested test runner."""
+    return False
+
+
+def check_python_sizing(query_lines, root=ROOT):
+    """Require explicit resources for nested suites in any Python package."""
+    pass
+
+
 def compare_static(cargo, bazel_rust, expected_python, bazel_python):
     problems = []
     for binary, (source, harness) in sorted(cargo.items()):

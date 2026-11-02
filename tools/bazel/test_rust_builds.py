@@ -104,7 +104,7 @@ class TestSizingTests(unittest.TestCase):
             exec(compile(source, str(directory / "BUILD.bazel"), "exec"), namespace)
         else:
             names = (["test_report_limits", "test_harness", "test_future_nested_suite"]
-                     if package == "harness/tests" else ["test_planner", "test_classifier"])
+                     if package == "harness/tests" else ["test_planner", "test_classifier", "test_pb_tests"])
             for name in names:
                 namespace["tl3_py_test"](name=name, srcs=[name + ".py"])
         self.postgres_packages = namespace["_POSTGRES"]
@@ -132,6 +132,20 @@ class TestSizingTests(unittest.TestCase):
 
     def test_nested_python_suites_are_sized(self):
         self.assert_sized("harness/tests")
+
+    def test_workers_nested_pytest_is_sized(self):
+        rule = self.rules("workers/tests")["test_pb_tests"]
+        for key in ["EstimatedComputeUnits", "EstimatedCPU", "EstimatedMemory"]:
+            self.assertIn(key, rule["exec_properties"])
+            self.assertGreater(float(rule["exec_properties"][key].removesuffix("GB")), 0)
+
+    def test_sizing_loads_without_recorder_globals(self):
+        path = Path(__file__).with_name("test_sizing.bzl")
+        namespace = {}
+        exec(compile(path.read_text(), str(path), "exec"), namespace)
+        helper = namespace["test_size"]
+        self.assertNotIn("native", helper.__code__.co_names)
+        self.assertIn("EstimatedComputeUnits", helper("workers/tests", "test_pb_tests"))
 
     def test_sizing_preserves_network_and_leaves_other_tests_dynamic(self):
         rules = self.rules("workers/tests")
