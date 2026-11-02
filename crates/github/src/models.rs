@@ -91,6 +91,8 @@ pub struct CheckRun {
     pub name: String,
     pub head_sha: String,
     pub external_id: Option<String>,
+    #[serde(default)]
+    pub details_url: Option<String>,
     pub status: String,
     pub conclusion: Option<String>,
     #[serde(default)]

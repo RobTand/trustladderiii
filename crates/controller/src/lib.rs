@@ -2135,19 +2135,20 @@ impl Controller {
             return Ok(None);
         }
 
-        let ci_checks = match &observation {
-            Observation::CiFailed { checks, .. } => checks
-                .iter()
-                .take(20)
-                .map(|check| findings::CiFailure {
-                    name: findings::clipped(&check.name, 256),
-                    summary: findings::clipped(&check.summary, findings::MAX_MESSAGE_CHARS),
-                    url: check.url.as_ref().map(|url| findings::clipped(url, 4096)),
-                })
-                .collect(),
-            _ => Vec::new(),
+        let mut ci_details = match &observation {
+            Observation::CiFailed { checks, .. } => findings::QueueCiEvidence {
+                checks: checks.clone(),
+                ..Default::default()
+            },
+            Observation::Queue(adapters::mergify::QueueFact {
+                evidence: adapters::mergify::Evidence::CiFailed { details, .. },
+                ..
+            }) => details.clone(),
+            _ => Default::default(),
         };
-        let mut failed_tests = Vec::new();
+        ci_details = adapters::mergify::ci_evidence::bounded(ci_details);
+        let ci_checks = ci_details.checks.clone();
+        let mut failed_tests = ci_details.failed_tests.clone();
         let mut outside_paths = Vec::new();
         let mut outside_paths_total = 0;
         let mut detailed_review = false;
@@ -2180,7 +2181,7 @@ impl Controller {
             } => {
                 return self.linked_request(snapshot, repository, issue, original, commit);
             }
-            Observation::Queue(fact) => {
+            Observation::Queue(mut fact) => {
                 let identity = fact.identity();
                 if fact.recorded(snapshot)? {
                     return Ok(None);
@@ -2211,6 +2212,44 @@ impl Controller {
                     // A later active enqueue must still be able to consume this head evidence.
                     if !can_consume {
                         return Ok(None);
+                    }
+                }
+                if let Evidence::CiFailed {
+                    head,
+                    infra,
+                    head_check: false,
+                    details,
+                    ..
+                } = &mut fact.evidence
+                {
+                    let plan = check_run(snapshot, node, Some(head))?;
+                    let outside = adapters::mergify::ci_evidence::outside_change(
+                        &fact.repository,
+                        details,
+                        plan.as_ref(),
+                    );
+                    let repeated = snapshot
+                        .rows
+                        .iter()
+                        .filter(|row| row.table == "queue_facts")
+                        .any(|row| {
+                            row.value["repository"] == json!(&fact.repository)
+                                && row.value["number"] == fact.number
+                                && row.value["evidence"]["CiFailed"]["head"] == *head
+                                && row.value["evidence"]["CiFailed"]["infra"] == true
+                                && row.value["evidence"]["CiFailed"]["details"]["failed_tests"]
+                                    .as_array()
+                                    .is_some_and(|previous| {
+                                        previous.iter().any(|previous| {
+                                            details
+                                                .failed_tests
+                                                .iter()
+                                                .any(|test| previous["test"] == test.test)
+                                        })
+                                    })
+                        });
+                    if outside || repeated {
+                        *infra = outside && !repeated;
                     }
                 }
                 let value = json!(&fact);
@@ -3028,7 +3067,22 @@ impl Controller {
                 Some((
                     node,
                     findings::Kind::FailedCheck,
-                    findings::ci_report(&ci_checks),
+                    format!(
+                        "{}{}",
+                        findings::ci_report(&ci_checks),
+                        if failed_tests.is_empty() {
+                            String::new()
+                        } else {
+                            format!(
+                                "\n{}",
+                                failed_tests
+                                    .iter()
+                                    .map(|test| format!("{}: {}", test.test, test.message))
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            )
+                        }
+                    ),
                 ))
             }
             _ => None,

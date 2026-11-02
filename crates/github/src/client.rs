@@ -793,6 +793,126 @@ impl GitHub {
         .await
     }
 
+    /// GitHub caps a PR file listing at 3,000 entries. At the cap, completeness
+    /// cannot be established, so callers must not infer an unchanged file.
+    pub async fn pull_request_paths(
+        &self,
+        repo: &str,
+        number: u64,
+    ) -> Result<Option<Vec<String>>, Error> {
+        #[derive(Deserialize)]
+        struct File {
+            filename: String,
+            previous_filename: Option<String>,
+        }
+        let files: Vec<File> = self
+            .list(
+                format!("{}/pulls/{number}/files", repo_path(repo)?),
+                vec![],
+                None,
+            )
+            .await?;
+        if files.len() >= 3000 {
+            return Ok(None);
+        }
+        Ok(Some(
+            files
+                .into_iter()
+                .flat_map(|file| std::iter::once(file.filename).chain(file.previous_filename))
+                .collect(),
+        ))
+    }
+
+    /// Read only a bounded tail. GitHub redirects job logs to a signed blob;
+    /// that second request carries no installation credential.
+    pub async fn job_log_tail(&self, repo: &str, job: u64) -> Result<String, Error> {
+        const CAP: usize = 64 * 1024;
+        let token = self.installation_token().await?;
+        let path = format!("{}/actions/jobs/{job}/logs", repo_path(repo)?);
+        let mut url = self.0.options.api_url.clone();
+        url.set_path(&format!("{}{path}", url.path()));
+        let mut throttle = self.0.requests.lock().await;
+        let wait = throttle
+            .blocked_until
+            .saturating_duration_since(Instant::now());
+        if wait > self.0.options.max_wait {
+            return Err(Error::RateLimited { retry_after: wait });
+        }
+        tokio::time::sleep(wait).await;
+        let mut response = self
+            .0
+            .http
+            .get(url)
+            .bearer_auth(token)
+            .header("X-GitHub-Api-Version", API_VERSION)
+            .header("User-Agent", "tl3-github")
+            .send()
+            .await
+            .map_err(|_| Error::Transport)?;
+        if response.status() == StatusCode::TOO_MANY_REQUESTS
+            || response.status() == StatusCode::FORBIDDEN
+                && response
+                    .headers()
+                    .get("x-ratelimit-remaining")
+                    .is_some_and(|value| value == "0")
+        {
+            let delay = rate_delay(response.headers(), 0);
+            throttle.blocked_until = Instant::now().checked_add(delay).ok_or(Error::Response)?;
+            return Err(Error::RateLimited { retry_after: delay });
+        }
+        drop(throttle);
+        if response.status() == StatusCode::FOUND {
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or(Error::Response)?;
+            let url = Url::parse(location).map_err(|_| Error::Response)?;
+            let host = url.host_str().ok_or(Error::Response)?;
+            if url.scheme() != "https"
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.port().is_some()
+                || !(host.ends_with(".blob.core.windows.net")
+                    || host.ends_with(".actions.githubusercontent.com"))
+            {
+                return Err(Error::Response);
+            }
+            response = self
+                .0
+                .http
+                .get(url)
+                .header(reqwest::header::RANGE, format!("bytes=-{CAP}"))
+                .send()
+                .await
+                .map_err(|_| Error::Transport)?;
+        }
+        if !response.status().is_success() {
+            return Err(Error::Http {
+                status: response.status().as_u16(),
+            });
+        }
+        let mut tail = Vec::new();
+        let mut read = 0;
+        while let Some(chunk) = response.chunk().await.map_err(|_| Error::Transport)? {
+            read += chunk.len();
+            if read > 8 * 1024 * 1024 {
+                return Err(Error::Response);
+            }
+            tail.extend_from_slice(&chunk);
+            if tail.len() > CAP {
+                tail.drain(..tail.len() - CAP);
+            }
+        }
+        // A partial first line cannot establish a failing test ID.
+        if read > CAP
+            && let Some(newline) = tail.iter().position(|byte| *byte == b'\n')
+        {
+            tail.drain(..=newline);
+        }
+        Ok(String::from_utf8_lossy(&tail).into_owned())
+    }
+
     pub async fn required_status_checks(
         &self,
         repo: &str,

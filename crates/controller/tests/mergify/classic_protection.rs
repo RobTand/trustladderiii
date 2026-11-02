@@ -138,6 +138,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
                             head: check.head_sha,
                             infra: false,
                             head_check: true,
+                            details: Default::default(),
                         },
                     },
                 ),

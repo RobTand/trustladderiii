@@ -1,3 +1,4 @@
+pub(crate) mod ci_evidence;
 mod head_checks;
 
 use super::record::Records;
@@ -114,6 +115,8 @@ pub enum Evidence {
         infra: bool,
         #[serde(default)]
         head_check: bool,
+        #[serde(default)]
+        details: crate::findings::QueueCiEvidence,
     },
     Conflict {
         check: u64,
@@ -1236,7 +1239,10 @@ async fn queue_facts(
                     },
                 }),
         );
-        if let Some(evidence) = checks.evidence(pull) {
+        if let Some(mut evidence) = checks.evidence(pull) {
+            if let Evidence::CiFailed { details, .. } = &mut evidence {
+                *details = ci_evidence::read_checks(github, &repo_name, &state.check_runs).await;
+            }
             facts.push(QueueFact {
                 repository: repo.clone(),
                 number: pull.number,
@@ -1278,6 +1284,7 @@ async fn queue_facts(
             completed_at: check.completed_at.map(|time| time.to_rfc3339()),
             head: pull.head.sha.clone(),
             head_check: false,
+            details: Default::default(),
             infra: head_infrastructure.unwrap_or_else(|| tl3_mergify::ci_is_infrastructure(check)),
         }),
         QueueState::DequeuedByPerson => {
@@ -1296,6 +1303,7 @@ async fn queue_facts(
             head: pull.head.sha.clone(),
             infra: head_infrastructure.unwrap_or(true),
             head_check: false,
+            details: Default::default(),
         }),
         QueueState::Conflict => state.check.as_ref().map(|check| Evidence::Conflict {
             check: check.id,
@@ -1304,6 +1312,10 @@ async fn queue_facts(
         }),
         _ => None,
     };
+    let mut evidence = evidence;
+    if let Some(Evidence::CiFailed { details, .. }) = &mut evidence {
+        *details = ci_evidence::read_queue(github, &full_name(repo), state).await;
+    }
     facts.extend(evidence.into_iter().map(|evidence| QueueFact {
         repository: repo.clone(),
         number: pull.number,

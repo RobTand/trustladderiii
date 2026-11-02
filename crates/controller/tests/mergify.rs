@@ -1,9 +1,9 @@
-#[path = "mergify/ci_evidence.rs"]
-mod ci_evidence;
 #[path = "mergify/ack_wait.rs"]
 mod ack_wait;
 #[path = "mergify/check_reads.rs"]
 mod check_reads;
+#[path = "mergify/ci_evidence.rs"]
+mod ci_evidence;
 #[path = "mergify/classic_protection.rs"]
 mod classic_protection;
 #[path = "mergify/dequeue_followups.rs"]
@@ -269,7 +269,12 @@ impl support::github::Routes for State {
 impl Respond for Api {
     fn respond(&self, request: &Request) -> ResponseTemplate {
         let mut state = self.0.lock().unwrap();
-        let path = request.url.path();
+        let normalized = request
+            .url
+            .path()
+            .replace("/repos/RobTand/prismabuild", "/repos/owner/sandbox")
+            .replace("/repos/RobTand/trustladderiii", "/repos/owner/sandbox");
+        let path = normalized.as_str();
         let method = request.method.as_str();
         if let Some(response) = support::github::access_token(path, 3, "disposable") {
             return response;
@@ -487,6 +492,17 @@ fn queued_with(
     confirmed: bool,
     repos: &[tl3_config::Repository],
 ) -> Controller {
+    queued_for(settings, api, root, confirmed, repos, bootstrap())
+}
+fn queued_for(
+    settings: &tl3_config::Store,
+    api: &Server,
+    root: &Path,
+    confirmed: bool,
+    repos: &[tl3_config::Repository],
+    config: Bootstrap,
+) -> Controller {
+    let repository = config.repos[0].clone();
     let mut registry = adapters::simulation(root).unwrap();
     registry.register(
         Upstream::Mergify,
@@ -496,13 +512,13 @@ fn queued_with(
             .with_store(settings.clone()),
     );
     let mut controller =
-        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+        Controller::open(Store::open(settings).unwrap(), registry, config).unwrap();
     controller.register_github_translator("mergify", Translator::new(api.clients()).unwrap());
     controller
         .intake(LabelledIssue {
             delivery: "label-1".into(),
-            owner: "owner".into(),
-            repo: "sandbox".into(),
+            owner: repository.owner,
+            repo: repository.name,
             installation: 3,
             number: 12,
             title: "change".into(),
@@ -2625,7 +2641,10 @@ fn legacy_intent_ignores_completed_at() {
 }
 
 fn main() {
-    if let Some(mode) = std::env::args().nth(1).and_then(|arg| arg.strip_prefix("--ci-evidence-").map(str::to_owned)) {
+    if let Some(mode) = std::env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--ci-evidence-").map(str::to_owned))
+    {
         let mut database = support::Database::start();
         ci_evidence::scenario(&database.create("ci_evidence"), &mode);
         database.stop();
@@ -2841,7 +2860,10 @@ fn main() {
     scenario!(applied_marker_waits_for_person_evidence());
     let mut database = support::Database::start();
     for mode in ci_evidence::MODES {
-        scenario!(ci_evidence::scenario(&database.create(&format!("ci_evidence_{mode}")), mode));
+        scenario!(ci_evidence::scenario(
+            &database.create(&format!("ci_evidence_{mode}")),
+            mode
+        ));
     }
     scenario!(ack_wait::scenario(&database.create("ack_wait")));
     for mode in ["gaps", "adapter", "source", "reopen-look", "reopen-source"] {

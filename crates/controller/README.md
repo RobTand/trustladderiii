@@ -180,9 +180,20 @@ Feedback items have `kind`, `report` and `goal_ids`. Actionable evidence adds
 `failed_tests` with `test` and `message`, `outside_paths`, and `ci_checks` with
 `name`, `summary` and optional `url`. The report describes the failure in plain
 language. `Observation::CiFailed` persists named CI evidence in the same
-transaction as its kernel fact. A bare non-infrastructure CI fact still records
-feedback, explicitly stating when the upstream supplied no check details.
-Infrastructure failures and stale replies do not add maker findings.
+transaction as its kernel fact. Merge queue failures read the failed draft's
+checks and bounded job-log tails through the GitHub App. Feedback includes check
+names, conclusions, titles, summaries, details URLs and parsed Bazel or pytest
+test IDs. External text is redacted before persistence and clipped to 20 tests,
+1,000 characters per message and 16,000 per report.
+
+When every parsed failing test maps to an unchanged file and the plan named
+none of the failing tests or checks, the controller journals an infrastructure
+failure with those IDs. The kernel requeues once without a maker or credit.
+A repeat on any of those tests takes normal failure handling with evidence,
+including after restart. Unknown mappings, absent IDs and incomplete evidence
+take normal handling. A bare non-infrastructure CI fact still records feedback
+stating when the upstream supplied no check details. Infrastructure failures
+and stale replies do not add maker findings.
 Reviewer blockers supply their problem, evidence and cited goal IDs to the next
 maker run, with up to 20 blockers per review. Each problem and evidence is
 capped at 1,000 characters, with a 16,000-character total per review. Accumulated maker reports enter the planner's

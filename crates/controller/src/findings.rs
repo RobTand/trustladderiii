@@ -14,6 +14,18 @@ pub struct CiFailure {
     pub url: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct QueueCiEvidence {
+    #[serde(default)]
+    pub checks: Vec<CiFailure>,
+    #[serde(default)]
+    pub failed_tests: Vec<FailedTest>,
+    #[serde(default)]
+    pub changed_paths: Option<Vec<String>>,
+    #[serde(default)]
+    pub complete: bool,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Kind {
