@@ -161,7 +161,7 @@ pub(super) async fn read_queue(
         .as_ref()
         .and_then(|check| check.output.as_ref())
         .and_then(|output| output.summary.as_deref())
-        .and_then(|summary| DRAFT.captures(summary))
+        .and_then(|summary| DRAFT.captures_iter(summary).last())
         .and_then(|capture| capture[1].parse::<u64>().ok());
     let mut details = match draft {
         Some(number) => match github.pull_request(repo, number).await {

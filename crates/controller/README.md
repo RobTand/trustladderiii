@@ -181,7 +181,8 @@ Feedback items have `kind`, `report` and `goal_ids`. Actionable evidence adds
 `name`, `summary` and optional `url`. The report describes the failure in plain
 language. `Observation::CiFailed` persists named CI evidence in the same
 transaction as its kernel fact. Merge queue failures read the failed draft's
-checks and bounded job-log tails through the GitHub App. Feedback includes check
+checks and bounded job-log tails through the GitHub App. When the queue check
+names several draft attempts, the collector uses the last one. Feedback includes check
 names, conclusions, titles, summaries, details URLs and parsed Bazel or pytest
 test IDs. External text is redacted before persistence and clipped to 20 tests,
 1,000 characters per message and 16,000 per report.
