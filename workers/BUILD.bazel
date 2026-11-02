@@ -1,0 +1,17 @@
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "schemas",
+    srcs = ["//workers/src:schemas"],
+)
+
+exports_files(["uv.lock"])
+
+filegroup(
+    name = "runtime_files",
+    srcs = [
+        "pyproject.toml",
+        "uv.lock",
+        "//workers/src:runtime_files",
+    ],
+)

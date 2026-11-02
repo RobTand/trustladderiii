@@ -1,0 +1,71 @@
+load("@bazel_gazelle//:def.bzl", "gazelle", "gazelle_binary")
+
+# gazelle:exclude spikes
+# Crate BUILD files come from cargo metadata via tools/bazel/rust_builds.py.
+# gazelle:exclude crates
+# gazelle:exclude target
+# gazelle:exclude **/fixtures
+# gazelle:python_generation_mode file
+# gazelle:python_test_file_pattern test_*.py
+
+load("@rules_python_gazelle_plugin//manifest:defs.bzl", "gazelle_python_manifest")
+load("@rules_python_gazelle_plugin//modules_mapping:def.bzl", "modules_mapping")
+load("@tl3_pip//:requirements.bzl", "all_whl_requirements")
+
+exports_files([
+    "Cargo.toml",
+    "Cargo.lock",
+    "MODULE.bazel",
+    "gazelle_python.yaml",
+])
+
+filegroup(
+    name = "workflows",
+    srcs = glob([".github/workflows/**"]),
+    visibility = ["//visibility:public"],
+)
+
+gazelle_binary(
+    name = "gazelle_bin",
+    languages = ["@rules_python_gazelle_plugin//python"],
+    visibility = ["//visibility:public"],
+)
+
+gazelle(
+    name = "gazelle",
+    gazelle = ":gazelle_bin",
+)
+
+modules_mapping(
+    name = "modules_map",
+    wheels = all_whl_requirements,
+)
+
+gazelle_python_manifest(
+    name = "gazelle_python_manifest",
+    lockfiles = "//workers:uv.lock",
+    modules_mapping = ":modules_map",
+    pip_repository_name = "tl3_pip",
+)
+
+# Read by the workspace contract tests in tools/ci.
+filegroup(
+    name = "bazel_config",
+    srcs = [
+        ".bazelrc",
+        ".bazelversion",
+        ".gitignore",
+        "BUILD.bazel",
+        "MODULE.bazel",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# gazelle:map_kind py_test tl3_py_test //tools/bazel:python.bzl
+# gazelle:python_resolve_sibling_imports true
+# gazelle:python_default_visibility //visibility:public
+
+# gazelle:resolve py worker_process //workers/tests:worker_process
+
+# gazelle:python_experimental_allow_relative_imports false
+# gazelle:map_kind py_library py_library //tools/bazel:python.bzl
