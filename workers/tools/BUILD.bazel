@@ -62,3 +62,14 @@ py_binary(
         "@tl3_pip//protobuf",
     ],
 )
+
+py_binary(
+    name = "trial_live_traces",
+    srcs = ["trial_live_traces.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//workers/src",
+        "@tl3_pip//httpx",
+        "@tl3_pip//mlflow_tracing",
+    ],
+)
