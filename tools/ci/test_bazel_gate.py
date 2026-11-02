@@ -71,6 +71,9 @@ class FakeWorkspace:
     def budget_check(self, base):
         return []
 
+    def graph_check(self, base, head):
+        return {'errors': [], 'summary': 'U unchanged', 'mermaid': {}}
+
 
 class PlanTests(unittest.TestCase):
     def test_impacted_tests_are_selected_and_packages_become_scopes(self):
@@ -192,6 +195,18 @@ class ClassifyTests(unittest.TestCase):
 
 
 class GateTests(unittest.TestCase):
+    def test_graph_regression_fails_even_a_docs_only_pr(self):
+        workspace = FakeWorkspace(['docs/bazel.md'], [], {})
+        calls = []
+        def graph_check(base, head):
+            calls.append((base, head))
+            return {'errors': ['U worsened'], 'summary': 'U 10% → 20%', 'mermaid': {}}
+        workspace.graph_check = graph_check
+        result = bazel_gate.gate_pr(workspace, 'a' * 40, 'b' * 40, {})
+        self.assertEqual(calls, [('a' * 40, 'b' * 40)])
+        self.assertEqual(result['graph_impact']['errors'], ['U worsened'])
+        self.assertFalse(bazel_gate.passed({**result, 'mode': 'pr'}))
+
     def test_pr_gate_runs_selection_on_amd64_and_reports_failures(self):
         workspace = FakeWorkspace(['crates/kernel/src/lib.rs'], ['//crates/kernel:lib_test_tl3_kernel'],
                                   {'//crates/kernel:lib_test_tl3_kernel': 'FAILED'})

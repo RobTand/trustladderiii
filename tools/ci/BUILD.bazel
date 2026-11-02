@@ -6,6 +6,16 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files(["rust-test-budget.json"])
 
+tl3_py_test(
+    name = "test_graph_impact",
+    srcs = ["test_graph_impact.py"],
+)
+
+tl3_py_test(
+    name = "test_bazel_graph_impact",
+    srcs = ["test_bazel_graph_impact.py"],
+)
+
 py_binary(
     name = "bazel_parity",
     srcs = ["bazel_parity.py"],
