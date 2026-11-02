@@ -74,7 +74,10 @@ py_library(
 tl3_py_test(
     name = "test_bazel_parity",
     srcs = ["test_bazel_parity.py"],
-    deps = [":bazel_parity"],
+    deps = [
+        ":bazel_parity",
+        "//tools/bazel:rust_runner",
+    ],
 )
 
 tl3_py_test(
