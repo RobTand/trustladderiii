@@ -49,6 +49,8 @@ pub struct Config {
     pub prismabuild: PrismaBuild,
     pub hindsight: Hindsight,
     pub status: Status,
+    #[serde(default)]
+    pub console: Option<Console>,
     pub allowances: Allowances,
 }
 
@@ -353,6 +355,34 @@ impl Hindsight {
 #[serde(deny_unknown_fields)]
 pub struct Status {
     pub listen: SocketAddr,
+}
+
+/// PRD #327: the operator console, a service apart from tl3d and the status page.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Console {
+    pub listen: SocketAddr,
+    /// The built web app. Deploy builds and installs it, so Rust builds never need Node.
+    pub assets: PathBuf,
+    /// A Postgres login that may only read, used instead of `store.user`.
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub password_file: Option<PathBuf>,
+}
+
+impl Console {
+    /// The store settings the console connects with.
+    pub fn store(&self, store: &Store) -> Store {
+        match &self.user {
+            Some(user) => Store {
+                user: user.clone(),
+                password_file: self.password_file.clone(),
+                ..store.clone()
+            },
+            None => store.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -677,6 +707,42 @@ impl Config {
                 "use a unicast listen address with a fixed port from 1 to 65535 (Q24)",
             ));
         }
+        if let Some(console) = &self.console {
+            if console.listen.port() == 0
+                || console.listen.ip().is_multicast()
+                || console.listen.ip().is_unspecified()
+            {
+                return Err(invalid(
+                    "console.listen",
+                    "use a unicast listen address with a fixed port from 1 to 65535",
+                ));
+            }
+            absolute("console.assets", &console.assets)?;
+            match (&console.user, &console.password_file) {
+                (None, None) => {}
+                (Some(user), Some(path)) => {
+                    // The deploy helper names this role in GRANT statements.
+                    if user.is_empty()
+                        || !user.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
+                        || !user
+                            .chars()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                    {
+                        return Err(invalid(
+                            "console.user",
+                            "use a lowercase Postgres role name: letters, digits and underscores",
+                        ));
+                    }
+                    absolute("console.password_file", path)?;
+                }
+                (Some(_), None) => {
+                    return Err(invalid("console.password_file", "set it with console.user"));
+                }
+                (None, Some(_)) => {
+                    return Err(invalid("console.user", "set it with console.password_file"));
+                }
+            }
+        }
         if let Some(operations) = &self.github.operations {
             github_name("github.operations.owner", &operations.owner, false)?;
             github_name("github.operations.name", &operations.name, true)?;
@@ -729,6 +795,28 @@ impl Config {
             validate_secret_file(field, path)?;
         }
         Ok(())
+    }
+
+    /// The console needs only the store credential it connects with: its own
+    /// login's when it has one, otherwise the store's.
+    pub fn load_console(path: impl AsRef<Path>) -> Result<Self, Error> {
+        let path = path.as_ref();
+        let text = fs::read_to_string(path).map_err(|source| Error::File {
+            field: "config".into(),
+            path: path.into(),
+            source,
+        })?;
+        let config = Self::parse(&text)?;
+        let console = config
+            .console
+            .as_ref()
+            .ok_or_else(|| invalid("console", "add a [console] section"))?;
+        match (&console.password_file, &config.store.password_file) {
+            (Some(path), _) => validate_secret_file("console.password_file", path)?,
+            (None, Some(path)) => validate_secret_file("store.password_file", path)?,
+            (None, None) => {}
+        }
+        Ok(config)
     }
 
     /// Status needs only its store credential. It can run before model setup.

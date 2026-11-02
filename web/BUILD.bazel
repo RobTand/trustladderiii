@@ -1,0 +1,6 @@
+# The web app builds with npm, outside Bazel. Rust tests read its generated API types.
+filegroup(
+    name = "api_types",
+    srcs = ["src/api/types.gen.ts"],
+    visibility = ["//visibility:public"],
+)
