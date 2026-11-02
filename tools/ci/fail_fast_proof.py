@@ -4,11 +4,13 @@ The synthetic selection has the same number of targets as a fallback selection,
 without compiling or executing the repository's full suite. Raw BEP stays in
 /tmp and is read in-process. Only this derived summary becomes an artifact.
 """
+import argparse
 import json
 import os
 from pathlib import Path
 import tempfile
 import time
+from urllib.parse import urlparse, unquote
 
 import bazel_gate
 
@@ -19,6 +21,7 @@ PLANTED = '''import os
 from pathlib import Path
 import sys
 import time
+from urllib.parse import urlparse, unquote
 mode = sys.argv[1]
 if mode == 'budget':
     Path(os.environ['TEST_UNDECLARED_OUTPUTS_DIR'], 'budget-overrun.txt').write_text('budget only')
@@ -34,14 +37,21 @@ assert mode == 'slow', 'planted early assertion failure'
 def metrics(name, elapsed, workspace, statuses):
     path = Path(tempfile.gettempdir(), f'{name}-bep.json')
     invocation, seconds, remote = None, 0.0, 0
+    debug_outputs = []
     for event in bazel_gate.BepStream(path).read():
         if 'started' in event:
             invocation = event['started']['uuid']
         result = event.get('testResult')
         if result:
+            for output in result.get('testActionOutput', []):
+                uri = urlparse(output.get('uri', ''))
+                debug_outputs.append({'name': output.get('name'), 'scheme': uri.scheme,
+                                      'exists': uri.scheme == 'file' and Path(unquote(uri.path)).exists()})
             duration = result.get('testAttemptDuration', '0s')
             seconds += float(duration.removesuffix('s'))
             remote += result.get('executionInfo', {}).get('strategy') == 'remote'
+    print('[DEBUG-fail-fast] ' + json.dumps({'outputs': debug_outputs,
+          'budget_markers': sorted(workspace.budget_only(statuses))}), flush=True)
     return {'invocation': invocation, 'wall_seconds': round(elapsed, 3),
             'completed': len(statuses), 'statuses': statuses,
             'remote_test_results': remote, 'test_seconds': round(seconds, 3),
@@ -57,6 +67,9 @@ def run(targets, mode, name, quarantine=(), extra=()):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--guards-only', action='store_true')
+    args = parser.parse_args()
     if os.environ.get('BBRUN_FINAL_SCAN') != '1':
         raise SystemExit('Use the shared bbrun.py step wrapper for the required final artifact scan')
     count = len(bazel_gate.Workspace().tests())
@@ -77,6 +90,9 @@ def main():
         assert guards['aborted_early'] is None, guards
         assert guards['statuses'] == {prefix + 'budget': 'FAILED', prefix + 'timeout': 'TIMEOUT',
                                      prefix + 'quarantine': 'FAILED'}, guards
+        if args.guards_only:
+            print(json.dumps({'guards': guards}), flush=True)
+            return
         targets = [prefix + f't{index:04}' for index in range(count)]
         baseline = run(targets, 'main', 'fail-fast-baseline')
         assert baseline['completed'] == count, baseline
