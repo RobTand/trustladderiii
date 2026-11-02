@@ -152,6 +152,7 @@ command = ["-m", "tl3_workers", "run"]
 # launcher = ["/usr/bin/systemd-run", "--user", "--scope", "--quiet", "--collect", "--slice=tl3-workers.slice"]
 
 [planning]
+# Additions to the built-in defaults, which always apply and needn't be listed (#388).
 protected_paths = [".github/**", ".mergify.yml", ".mergify.yaml", "**/conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "noxfile.py", "setup.cfg", "pyproject.toml"]
 
 # Calibration seam for future MLflow measurements. Code sums these estimates.
