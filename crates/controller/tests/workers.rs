@@ -2669,8 +2669,8 @@ fn run_default() {
         println!("test inotify_overflow_rescans_active_runs_and_keeps_ingress_alive ... ok");
         finish_fixture(database, "worker_retirement");
     });
-    let mut database = Database::start();
-    shard.run(1, || {
+    shard.run(7, || {
+        let mut database = Database::start();
         for mode in [
             "normal",
             "plan-split",
@@ -2682,16 +2682,10 @@ fn run_default() {
             planning::planning(&database.create(&mode.replace('-', "_")), mode);
         }
         println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
-    });
-    shard.run(1, || {
         planning::stop(&database.create("planner_stop"));
         println!("test planner_stop ... ok");
-    });
-    shard.run(4, || quota_scenarios(&mut database));
-    database.stop();
-    drop(database);
-    shard.run(1, || {
-        println!("test worker_planning_fixture_cleanup ... ok")
+        quota_scenarios(&mut database);
+        finish_fixture(database, "worker_planning");
     });
     let mut database = Database::start();
     maker::run(&mut database, &mut shard);
