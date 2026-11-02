@@ -783,12 +783,12 @@ impl Store {
             .collect())
     }
 
-    /// The phases a node entered, with seconds since the Unix epoch, oldest first.
+    /// The phases a node entered, with milliseconds since the Unix epoch, oldest first.
     pub fn phase_history(&mut self, node: &str) -> Result<Vec<(serde_json::Value, i64)>> {
         Ok(self
             .client
             .query(
-                "SELECT phase, extract(epoch FROM since)::bigint FROM tl3_phase_history WHERE node_id = $1 ORDER BY since, id",
+                "SELECT phase, (extract(epoch FROM since) * 1000)::bigint FROM tl3_phase_history WHERE node_id = $1 ORDER BY since, id",
                 &[&node],
             )?
             .iter()

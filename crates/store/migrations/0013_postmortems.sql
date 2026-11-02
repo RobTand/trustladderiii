@@ -112,8 +112,9 @@ CREATE TABLE tl3_settings (
     value jsonb NOT NULL,
     updated_by text NOT NULL,
     updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    CHECK (key <> 'postmortem_sample_share'
-        OR (jsonb_typeof(value) = 'number' AND (value #>> '{}')::double precision BETWEEN 0 AND 1))
+    -- CASE keeps a non-number from reaching the cast: it fails as a check violation.
+    CHECK (key <> 'postmortem_sample_share' OR CASE WHEN jsonb_typeof(value) = 'number'
+        THEN (value #>> '{}')::double precision BETWEEN 0 AND 1 ELSE false END)
 );
 -- Q32: a random share of clean merges is also judged.
 INSERT INTO tl3_settings (key, value, updated_by) VALUES ('postmortem_sample_share', '0.1', 'migration');

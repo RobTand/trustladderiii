@@ -25,7 +25,7 @@ pub(crate) struct History {
     pub dequeues: u32,
     /// It merged with failing checks.
     pub escaped_ci: bool,
-    /// Seconds spent in each phase, in order.
+    /// Milliseconds spent in each phase that has ended, in order.
     pub phases: Vec<(String, u64)>,
 }
 
@@ -70,6 +70,7 @@ pub(crate) fn close_reason(
     } else if node.attempt > 1 || node.round > 0 || node.replanned {
         Reason::NeededFix
     } else if history.run_failure
+        || history.retries > 0
         || !history.incidents.is_empty()
         || node.run_incidents > 0
         || node.fx_incidents > 0
@@ -108,7 +109,8 @@ pub(crate) fn close_grades(
     let merged = outcome == Outcome::Merged;
     let tries = u32::from(node.attempt.saturating_sub(1))
         + u32::from(node.round)
-        + u32::from(node.replanned);
+        + u32::from(node.replanned)
+        + history.retries;
     let needed_rob = history.questions.len() as u32
         + history
             .incidents
@@ -128,7 +130,7 @@ pub(crate) fn close_grades(
             "reliability",
             Some(if merged { fewer_is_better(tries) } else { 1 }),
             json!({"attempt": node.attempt, "round": node.round, "replanned": node.replanned,
-                "outcome": format!("{outcome:?}")}),
+                "retries": history.retries, "outcome": format!("{outcome:?}")}),
         ),
         (
             "escalation",
@@ -189,6 +191,64 @@ pub(crate) fn owed(
     })
 }
 
+/// The kernel zeroes its failure counters once a step succeeds, so each retry
+/// is counted in the commit where its counter rises.
+fn record_retries(
+    snapshot: &Snapshot,
+    previous: &World,
+    world: &World,
+    commit: &mut Commit,
+) -> Result<()> {
+    for (index, node) in world.nodes.iter().enumerate() {
+        let Some(before) = previous.nodes.get(index) else {
+            continue;
+        };
+        let rose = |now: u8, then: u8| u64::from(now > then);
+        let added = [
+            (
+                "run",
+                rose(node.run_failures, before.run_failures)
+                    + rose(node.run_incidents, before.run_incidents),
+            ),
+            (
+                "effect",
+                rose(node.fx_failures, before.fx_failures)
+                    + rose(node.fx_incidents, before.fx_incidents),
+            ),
+            ("plan", rose(node.plan_retries, before.plan_retries)),
+        ];
+        if added.iter().all(|(_, count)| *count == 0) {
+            continue;
+        }
+        let id = index.to_string();
+        let mut counts = commit
+            .rows
+            .iter()
+            .rev()
+            .find_map(|row| match row {
+                RowChange::Put {
+                    table,
+                    id: row,
+                    value,
+                } if table == "retries" && *row == id => Some(value.clone()),
+                _ => None,
+            })
+            .or_else(|| {
+                snapshot
+                    .rows
+                    .iter()
+                    .find(|row| row.table == "retries" && row.id == id)
+                    .map(|row| row.value.clone())
+            })
+            .unwrap_or_else(|| json!({}));
+        for (kind, count) in added {
+            counts[kind] = json!(counts[kind].as_u64().unwrap_or(0) + count);
+        }
+        commit.rows.push(crate::put("retries", id, counts));
+    }
+    Ok(())
+}
+
 /// A phase's name as the board shows it: Planning, not Planning { must_split }.
 fn phase_name(phase: &Value) -> String {
     match phase {
@@ -207,6 +267,7 @@ impl crate::Controller {
         world: &World,
         commit: &mut Commit,
     ) -> Result<()> {
+        record_retries(snapshot, previous, world, commit)?;
         for (index, node) in world.nodes.iter().enumerate() {
             let Phase::Closed(outcome) = node.phase else {
                 continue;
@@ -277,6 +338,12 @@ impl crate::Controller {
                     value["needs_rob"] == true,
                 )),
                 "worker_failures" if *row == id => history.run_failure = true,
+                "retries" if *row == id => {
+                    history.retries = ["run", "effect", "plan"]
+                        .iter()
+                        .filter_map(|kind| value[kind].as_u64())
+                        .sum::<u64>() as u32;
+                }
                 "queue_facts" => {
                     let Ok(fact) = serde_json::from_value::<crate::adapters::mergify::QueueFact>(
                         value.clone(),
@@ -304,16 +371,13 @@ impl crate::Controller {
                 _ => {}
             }
         }
-        let phases = self.store.phase_history(&id)?;
-        let now = i64::try_from(self.now_ms() / 1000).unwrap_or(i64::MAX);
-        for (index, (phase, since)) in phases.iter().enumerate() {
-            let until = phases.get(index + 1).map_or(now, |(_, next)| *next);
-            let name = phase_name(phase);
-            if name != "Closed" {
-                history
-                    .phases
-                    .push((name, u64::try_from(until - since).unwrap_or(0)));
-            }
+        // The phase that ends at close is open-ended here, so it is left out and
+        // grades depend only on stored times.
+        for pair in self.store.phase_history(&id)?.windows(2) {
+            let ((phase, since), (_, until)) = (&pair[0], &pair[1]);
+            history
+                .phases
+                .push((phase_name(phase), u64::try_from(until - since).unwrap_or(0)));
         }
         Ok(history)
     }

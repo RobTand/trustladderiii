@@ -952,7 +952,11 @@ one and no delivery work waits on one.
 - **At close**, every node gets code grades under TL3's rubric
   (`src/rubric.json`, version 1): reliability, escalation and queue outcome are
   graded 1 to 5, and credit, questions, incidents and time per phase are recorded
-  as facts. A postmortem is owed when the node asked Rob or raised an incident
+  as facts. The kernel zeroes its failure counters when a step succeeds, so the
+  world row `retries` counts each run, effect and plan retry in the commit where
+  its counter rises; reliability and selection read it. Time per phase is in
+  milliseconds from the phase history; the phase that ends at close is left out,
+  so the grades depend only on stored times. A postmortem is owed when the node asked Rob or raised an incident
   that needed him (`escalation`), had a fix round, later attempt or replan
   (`needed_fix`), had a run, effect or plan retry (`retry`), or closed without
   merging (`closed_without_merge`). Otherwise a clean merge is `sampled` when it
@@ -965,7 +969,12 @@ one and no delivery work waits on one.
   id>`, `rob_asked`) on a closed request or one awaiting Rob. It's refused while
   one is owed or running, and posts nothing on the issue.
 
-The judge that writes postmortems arrives separately; until then they stay owed.
+Early-end closes (duplicate, already done, not actionable) stay owed: a wrong
+early end is exactly the quiet error a postmortem should catch. The judge that
+writes postmortems arrives separately; until then owed rows accumulate. They
+drain as it runs them on spare capacity, at most one at a time. Their number is
+bounded by closes, questions and incidents, and `tl3_phase_history` grows by one
+row per phase change.
 The store tables are described in `crates/store/README.md`.
 
 ## Hindsight write-back
