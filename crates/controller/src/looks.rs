@@ -31,6 +31,9 @@ pub(crate) struct AllowanceState {
     read_failures: u8,
     #[serde(default)]
     read_incidents: u8,
+    /// When the last failed read was counted.
+    #[serde(default)]
+    counted_failure_ms: Option<u64>,
     #[serde(default)]
     external_wait: Option<tl3_store::ExternalWait>,
     #[serde(default)]
@@ -53,6 +56,7 @@ impl AllowanceState {
             failure: None,
             read_failures: 0,
             read_incidents: 0,
+            counted_failure_ms: None,
             external_wait: None,
             wait_ended: false,
         }
@@ -1001,6 +1005,17 @@ impl Controller {
         ) {
             return Ok(());
         }
+        // #356: looks woken by webhooks can land seconds apart. Failed reads
+        // within one allowance count once, so escalation keeps the allowance's pace.
+        let now = self.now_ms();
+        let period = u64::from(self.allowance(&state.delivery).silence_secs) * 1000;
+        if state
+            .counted_failure_ms
+            .is_some_and(|last| now.saturating_sub(last) < period)
+        {
+            return Ok(());
+        }
+        state.counted_failure_ms = Some(now);
         state.read_failures += 1;
         if state.read_failures < 2 {
             return Ok(());
