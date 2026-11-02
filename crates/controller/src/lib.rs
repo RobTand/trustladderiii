@@ -16,6 +16,7 @@ mod branches;
 pub mod cli;
 pub mod clock;
 pub mod console;
+pub mod evidence;
 pub mod executor;
 mod goals;
 mod http;
@@ -1714,6 +1715,7 @@ impl Controller {
                 question_context,
                 steering: None,
                 request_text: request.source,
+                evidence: None,
             };
             if matches!(
                 output,

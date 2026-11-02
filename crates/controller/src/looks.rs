@@ -2156,6 +2156,7 @@ impl Controller {
             marker_key: None,
             steering: None,
             request_text: None,
+            evidence: None,
             question_context: Some(
                 json!({"issue_title":request.title, "signature":signature,"incident_id":id}),
             ),

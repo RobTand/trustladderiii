@@ -51,6 +51,7 @@ pub(crate) fn delivery() -> Delivery {
         question_context: None,
         steering: None,
         request_text: None,
+        evidence: None,
     }
 }
 pub(crate) fn spawn<T: Send + 'static>(

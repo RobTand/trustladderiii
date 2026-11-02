@@ -87,6 +87,8 @@ pub struct Delivery {
     pub steering: Option<crate::steering::Task>,
     #[serde(default)]
     pub request_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<crate::evidence::Evidence>,
 }
 
 impl Delivery {

@@ -114,6 +114,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
         scope_removals: None,
         steering: None,
         request_text: None,
+        evidence: None,
         proposed: None,
         question_context: None,
         question: None,
