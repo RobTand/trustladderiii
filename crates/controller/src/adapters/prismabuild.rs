@@ -607,6 +607,47 @@ impl Executor for Adapter {
     fn wait_record(&mut self, key: &str, checkout: &Path) -> Result<crate::executor::WaitRecord> {
         read_wait(&self.client, &self.runtime, key, checkout)
     }
+    /// #369: a checks job its own record shows queued, claimed or moving is
+    /// alive, even with no test completed since the last look. TL3 sets no
+    /// deadline on it; PrismaBuild ends a quiet job itself. Only a read that
+    /// errors is a failed look.
+    fn look(&mut self, delivery: &Delivery) -> Result<crate::executor::Look> {
+        use crate::executor::Look;
+        if matches!(
+            delivery.output,
+            Out::Effect {
+                kind: EffectKind::SubmitChecks,
+                ..
+            }
+        ) && let Some(job) = self.job(delivery)?
+            && !record_path(&self.settings.records, &job.delivery, "done").try_exists()?
+        {
+            let record = self
+                .runtime
+                .block_on(self.client.read(&job.action))
+                .map_err(adapter_error)?;
+            let state = match &record {
+                RecordRead::Moving => Some("moving".to_owned()),
+                RecordRead::Present(record) if record.state == ActionState::Queued => {
+                    Some("queued".to_owned())
+                }
+                RecordRead::Present(record) if record.state == ActionState::Claimed => {
+                    Some("claimed".to_owned())
+                }
+                _ => None,
+            };
+            if let Some(state) = state {
+                return Ok(Look::Alive {
+                    progress: format!("prismabuild:{state}"),
+                });
+            }
+        }
+        Ok(match self.reconcile(delivery)? {
+            Reconciliation::Found(completion) => Look::Found(completion),
+            Reconciliation::Absent => Look::Absent,
+            Reconciliation::Pending => Look::Pending,
+        })
+    }
     fn retire(&mut self, store: &mut tl3_store::Store) -> Result<()> {
         let snapshot = store.load()?;
         let world = crate::snapshot::decode(&snapshot)?;

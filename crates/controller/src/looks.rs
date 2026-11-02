@@ -766,9 +766,13 @@ impl Controller {
             }
             Ok(Look::Alive { progress }) => {
                 let changed = state.progress.as_ref() != Some(&progress);
-                // An unacknowledged effect that stopped moving keeps its failure
-                // count, so a stall past the allowance can escalate (#356).
+                // An unacknowledged effect that stopped moving past its allowance
+                // keeps its failure count, so the stall can escalate (#356).
+                // Inside the allowance an alive look is a successful read (#373).
+                let within = now.saturating_sub(state.progress_ms)
+                    < u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000;
                 if changed
+                    || within
                     || !self
                         .store
                         .effect(&state.delivery.key)?
@@ -1563,6 +1567,17 @@ pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
             "permission"
         }
         crate::Error::Io(_) => "transport",
+        // Mergify's own read errors aren't GitHub errors or outages (#373).
+        crate::Error::Adapter(error) if error.is::<tl3_mergify::Error>() => {
+            match error.downcast_ref::<tl3_mergify::Error>() {
+                Some(tl3_mergify::Error::ChangedDuringRead) => "inconsistent_read",
+                Some(tl3_mergify::Error::MergeabilityPending) => "mergeability_pending",
+                Some(tl3_mergify::Error::HeadChanged) => "head_changed",
+                Some(tl3_mergify::Error::PullRequestClosed) => "pull_request_closed",
+                Some(tl3_mergify::Error::GitHub(error)) => error.failure_class().as_str(),
+                None => "transport",
+            }
+        }
         crate::Error::Adapter(error) => match error.downcast_ref::<tl3_worktrees::Error>() {
             // Git's own message showed a network or remote cause.
             Some(tl3_worktrees::Error::Network { .. }) => "git_remote",
@@ -1627,6 +1642,10 @@ pub(crate) fn incident_summary(
         "worktree_occupied" => "found a path or branch owned by another checkout",
         "worktree_recovery" => "needs recovery after an interrupted rebase",
         "transport" => "could not be reached",
+        "inconsistent_read" => "kept changing while TL3 read it",
+        "mergeability_pending" => "has not yet worked out whether the pull request can merge",
+        "head_changed" => "shows a different head from the approved one",
+        "pull_request_closed" => "shows the pull request closed or merged",
         "upstream_server" => "reported a service error",
         "invalid_response" => "returned an unreadable response",
         "quota" => "reached its usage allowance",
@@ -2066,5 +2085,56 @@ impl Controller {
         commit.rows.push(self.allowance_row(delivery.clone()));
         commit.effects.push(delivery.into_effect());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod summary_wording {
+    use super::*;
+
+    fn summary(class: &str) -> String {
+        incident_summary(
+            "Fix the value",
+            &IncidentSignature {
+                upstream: Upstream::Mergify,
+                class: class.into(),
+            },
+            false,
+            None,
+        )
+    }
+
+    /// #373: Mergify's own read errors aren't GitHub errors, so each needs its
+    /// own class instead of reading "could not be reached".
+    #[test]
+    fn mergify_read_errors_carry_their_own_class_and_wording() {
+        for (error, class, wording) in [
+            (
+                tl3_mergify::Error::ChangedDuringRead,
+                "inconsistent_read",
+                "kept changing while TL3 read it",
+            ),
+            (
+                tl3_mergify::Error::MergeabilityPending,
+                "mergeability_pending",
+                "has not yet worked out whether the pull request can merge",
+            ),
+            (
+                tl3_mergify::Error::HeadChanged,
+                "head_changed",
+                "shows a different head from the approved one",
+            ),
+            (
+                tl3_mergify::Error::PullRequestClosed,
+                "pull_request_closed",
+                "shows the pull request closed or merged",
+            ),
+        ] {
+            let error = crate::Error::Adapter(Box::new(error));
+            assert_eq!(failure_class(&error), class);
+            let text = summary(class);
+            assert!(text.contains(wording), "{class}: {text}");
+            assert!(!text.contains("could not be reached"), "{class}: {text}");
+        }
     }
 }
