@@ -655,3 +655,5 @@ Rob, 2026-11-02, answering #393: "yes, agreed." This is a reading of Q40 for def
 > - If no forcing can be written, the planner says "can't meet" once, with the reason. Under fail-fast (#440) the request then stops for TL3 review.
 
 The forcing is a field on a demonstrating check. It is declarative: a symptom, environment variables, and patches of attributes inside the served repository with a JSON value, a returned value, a builtin exception other than `AssertionError`, or a bounded delay. The planner writes it, so it is untrusted model output. The harness's host process only bounds it; the runner applies it inside the test container, under the same sandbox as the tests. The maker's edits can't reach it. The check's result echoes the forcing and the head's outcome under it, for review. The kernel is unchanged: it still sees a check pass or fail.
+
+A leaf that changes only tests (#444's `edits_tests` rule) is valid when every demonstrating check carries a valid forcing. Otherwise the planner reports that a change to tests alone needs a forced reproduction, or can't meet.

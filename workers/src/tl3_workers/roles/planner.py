@@ -175,6 +175,13 @@ def asks_to_edit(before, after):
     return False
 
 
+def valid_forcing(check):
+    try:
+        return "forcing" in check and Forcing.parse(check["forcing"]) is not None
+    except HarnessInputError:
+        return False
+
+
 def function(node_id):
     # The harness's edit guard compares a test's function source, so every case shares it.
     return node_id.split("[", 1)[0]
@@ -234,10 +241,14 @@ def edit_violations(goals, reply):
                                   "check. If the change edits that test, list it in edits_tests and name it only "
                                   "in a demonstrating check. If it leaves the test as written there, guard that "
                                   "behavior with other existing tests.")
-    if test_only and (edited or demonstrated or names_frozen):
-        violations.append("This leaf changes only tests, so no check can show it: the base run applies the "
-                          "leaf's test edits, so base and head run the same test. Return can't meet and name "
-                          "#393, which asks Rob whether a forced reproduction counts as deflake evidence.")
+    # Q55: a forced reproduction recreates the flake outside the test, so it can show a test-only change.
+    demonstrating = [check for check in reply["checks"] if check["kind"] == "demonstrating"]
+    forced = bool(demonstrating) and all(valid_forcing(check) for check in demonstrating)
+    if test_only and (edited or demonstrated or names_frozen) and not forced:
+        violations.append("This leaf changes only tests, so an ordinary demonstrating check can't show it: the "
+                          "base run applies the leaf's test edits, so base and head run the same test. A change "
+                          "to tests alone needs a forced reproduction (Q55) on its demonstrating check; if no "
+                          "forcing can be written, return can't meet.")
     return violations
 
 
