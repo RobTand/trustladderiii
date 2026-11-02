@@ -1366,10 +1366,10 @@ class Shipper:
     """Sends span log records in order. Records are decoded once, as they
     arrive; a failed send keeps them queued for the next wake."""
 
-    def __init__(self, log=None, wake=None):
+    def __init__(self, log=None, wake=None, fd=None):
         import httpx
         self.client = httpx.Client(timeout=1, trust_env=False)
-        self.log, self.wake = log, wake
+        self.log, self.wake, self.fd = log, wake, fd
         self.header, self.experiment, self.failed, self.reported = None, None, False, False
         self.queue, self.end, self.final, self.sent_final = [], None, None, False
         self.buffer = b''
@@ -1479,11 +1479,23 @@ class Shipper:
         return self.sent_final
 
     def shipped(self):
-        if self.log:
+        """Mark the log shipped where it lives now. Retirement may have moved it
+        while this process held it open; /proc names the open file's current path."""
+        if not self.log:
+            return
+        log = self.log
+        if self.fd is not None:
             try:
-                Path(self.log + '.shipped').touch()
+                current = os.readlink(f'/proc/self/fd/{self.fd}')
             except OSError:
-                pass  # Retirement moved the log; the trace is sent either way.
+                current = None
+            if current is None or current.endswith(' (deleted)'):
+                return  # Removed with its run; nothing is left to resend.
+            log = current
+        try:
+            Path(log + '.shipped').touch()
+        except OSError:
+            pass
 
 
 def options(args):
@@ -1506,7 +1518,7 @@ def ship(fd, log=None, wake=None):
     offset, closed = 0, False
     try:
         # The first successful send also wakes held flushes.
-        shipper = Shipper(log, wake)
+        shipper = Shipper(log, wake, fd)
         shipper.failed = True
         while True:
             ended = not os.read(0, 4096)
@@ -1567,7 +1579,7 @@ def flush(path):
     signal.signal(signal.SIGALRM, expired)
     signal.alarm(10)
     try:
-        shipper = Shipper(path)
+        shipper = Shipper(path, fd=0)
         shipper.feed(sys.stdin.buffer.read())
         if shipper.header is None:
             shipper.shipped()  # Nothing was traced, so there is nothing to retry.

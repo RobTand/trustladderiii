@@ -95,9 +95,12 @@ pub(super) fn flush(directory: &Path, flusher: &Flusher) {
 }
 
 /// Move an attempt's unshipped span log out of the run root before retirement
-/// removes it. The model key and the rest of the attempt are not kept.
+/// removes it. The model key and the rest of the attempt are not kept. Files
+/// are staged in the attempt first, so the held directory appears complete in
+/// one rename, and a retry after a crash finishes an interrupted hold.
 pub(super) fn hold(attempt: &Path, runs: &Path) -> Result<()> {
-    if !attempt.join(LOG).try_exists()? || shipped(attempt)? {
+    let staging = attempt.join(".held");
+    if shipped(attempt)? || !(attempt.join(LOG).try_exists()? || staging.join(LOG).try_exists()?) {
         return Ok(());
     }
     let (Some(run), Some(name)) = (
@@ -106,20 +109,25 @@ pub(super) fn hold(attempt: &Path, runs: &Path) -> Result<()> {
     ) else {
         return Err(Error::Invalid("span log outside a run root"));
     };
-    let held = runs.join(HELD).join(format!(
-        "{}-{}",
-        run.to_string_lossy(),
-        name.to_string_lossy()
-    ));
-    fs::create_dir_all(&held)?;
+    fs::create_dir_all(&staging)?;
     for file in HELD_FILES {
-        match fs::rename(attempt.join(file), held.join(file)) {
+        match fs::rename(attempt.join(file), staging.join(file)) {
             Err(e) if !missing(&e) => return Err(e.into()),
             _ => {}
         }
     }
-    File::open(&held)?.sync_all()?;
-    File::open(runs.join(HELD))?.sync_all()?;
+    File::open(&staging)?.sync_all()?;
+    let parent = runs.join(HELD);
+    fs::create_dir_all(&parent)?;
+    fs::rename(
+        &staging,
+        parent.join(format!(
+            "{}-{}",
+            run.to_string_lossy(),
+            name.to_string_lossy()
+        )),
+    )?;
+    File::open(&parent)?.sync_all()?;
     Ok(())
 }
 
