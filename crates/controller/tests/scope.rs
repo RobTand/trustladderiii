@@ -161,6 +161,7 @@ fn scope_leaf_trims_before_checks_and_survives_restart_into_closing_summary() {
         title: "Fix the value".into(),
         actor: 1,
         label: "tl3".into(),
+        labels: Vec::new(),
     })
     .unwrap();
     while c.drive_once().unwrap() {}

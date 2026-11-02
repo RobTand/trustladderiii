@@ -67,6 +67,7 @@ fn labelled() -> LabelledIssue {
         title: "Fix a greeting".into(),
         actor: 42,
         label: "tl3".into(),
+        labels: Vec::new(),
     }
 }
 fn allowances() -> tl3_config::Allowances {
@@ -1184,6 +1185,7 @@ fn stopped_worktree_saves_scratch(settings: &tl3_config::Store, check: &str) {
         title: "Fix a greeting".into(),
         actor: 42,
         label: "tl3".into(),
+        labels: Vec::new(),
     })
     .unwrap();
     let delivery = fixture.delivery(EffectKind::PrepareWorktree, 1);
@@ -1263,6 +1265,7 @@ fn stopped_worktree_saves_scratch(settings: &tl3_config::Store, check: &str) {
             title: "Fix another greeting".into(),
             actor: 42,
             label: "tl3".into(),
+            labels: Vec::new(),
         })
         .unwrap();
         drain(&mut c);

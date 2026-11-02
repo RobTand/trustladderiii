@@ -44,6 +44,7 @@ fn labelled() -> LabelledIssue {
         title: "Fix the sandbox build".into(),
         actor: 24923402,
         label: "tl3".into(),
+        labels: Vec::new(),
     }
 }
 fn open(settings: &tl3_config::Store, root: &Path) -> Controller {

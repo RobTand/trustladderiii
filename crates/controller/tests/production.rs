@@ -146,6 +146,7 @@ print(json.dumps({'event':'reply','role':'writer','reply':{'text':'The requested
         kind: MessageKind::Summary,
         facts: json!({"issue_title":"A change","request":"Make a change","outcome":"Delivered"}),
         violations: vec![],
+        request: None,
     };
     let mut writer = ProcessWriter::new(&config, root.path()).unwrap();
     assert!(matches!(

@@ -790,6 +790,7 @@ impl Controller {
             title: issue.title.clone(),
             actor: self.bootstrap.rob,
             label: "tl3".into(),
+            labels: Vec::new(),
         };
         let repository = self.intake_repository(&labelled).ok_or(Error::Invalid(
             "linked request is not authorized for intake",

@@ -285,6 +285,7 @@ impl Executor for Adapter {
             kind: MessageKind::Note,
             facts: json!({"issue_title":notice.title, "request":notice.title, "change":notice.summary}),
             violations: vec![],
+            request: None,
         };
         let mut draft = checked_draft(self.writer.as_mut(), &notice.key, input, &policy)?;
         draft.push_str(&format!(
@@ -511,6 +512,25 @@ pub fn writer_input(
     title: &str,
     request: &str,
 ) -> Result<WriteRequest> {
+    let mut input = writer_facts(delivery, notice, title, request)?;
+    // #427: the draft is written for this delivery's request.
+    input.request = Some(super::workers::writer::WriteFor {
+        node: delivery.node().0,
+        generation: delivery.generation,
+        repo: format!("{}/{}", delivery.repository.owner, delivery.repository.name),
+        issue: delivery.issue,
+        attempt: delivery.attempt,
+        round: delivery.round,
+    });
+    Ok(input)
+}
+
+fn writer_facts(
+    delivery: &Delivery,
+    notice: Option<Notice>,
+    title: &str,
+    request: &str,
+) -> Result<WriteRequest> {
     let request = delivery.request_text.as_deref().unwrap_or(request);
     let request = if request.trim().is_empty() {
         title
@@ -528,6 +548,7 @@ pub fn writer_input(
             facts: json!({"issue_title": title, "request": request,
                 "change": change, "change_quote": text}),
             violations: vec![],
+            request: None,
         });
     }
     if let Some(crate::steering::Task::RestartDropped { text }) = &delivery.steering {
@@ -537,6 +558,7 @@ pub fn writer_input(
                 "change": "The issue for this request could not be found, so the restart was dropped. Nothing was filed.",
                 "change_quote": text}),
             violations: vec![],
+            request: None,
         });
     }
     if let Some(crate::steering::Task::ClarifyComment { question, excerpt }) = &delivery.steering {
@@ -544,6 +566,7 @@ pub fn writer_input(
             kind: MessageKind::Clarification,
             facts: json!({"issue_title": title, "request": request, "question": question, "comment_excerpt": excerpt}),
             violations: vec![],
+            request: None,
         });
     }
     let (kind, mut facts) = match notice.ok_or(Error::Invalid("missing request notice"))? {
@@ -704,6 +727,7 @@ pub fn writer_input(
         kind,
         facts,
         violations: vec![],
+        request: None,
     })
 }
 
@@ -1029,6 +1053,44 @@ mod question_findings_tests {
             "Add a blue button",
         )
         .unwrap()
+    }
+
+    #[test]
+    fn writer_input_names_the_request_it_writes_for() {
+        // #427: the writer run's operation and trace tags come from this.
+        let delivery: Delivery = serde_json::from_value(json!({
+            "key":"notice:5:0", "epoch":1,
+            "output":Out::Notice {node:NodeId(4), notice:Notice::Summary(tl3_kernel::Outcome::Merged)},
+            "generation":6, "repository":{"owner":"RobTand","name":"sandbox","installation":1},
+            "issue":42, "paths":[], "attempt":2, "round":1
+        }))
+        .unwrap();
+        let request = writer_input(
+            &delivery,
+            Some(Notice::Summary(tl3_kernel::Outcome::Merged)),
+            "Add a blue button",
+            "Add a blue button",
+        )
+        .unwrap();
+        assert_eq!(
+            request.request,
+            Some(super::super::workers::writer::WriteFor {
+                node: 4,
+                generation: 6,
+                repo: "RobTand/sandbox".into(),
+                issue: 42,
+                attempt: 2,
+                round: 1,
+            })
+        );
+        // Every question and note for a request is written for that request.
+        assert_eq!(
+            input(&ask(QKind::CantMeet, Cont::Nowhere, Value::Null))
+                .request
+                .unwrap()
+                .node,
+            0
+        );
     }
 
     fn outcome(request: &WriteRequest, action: &str) -> String {

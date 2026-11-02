@@ -143,6 +143,7 @@ impl World {
                     title: format!("Fix greeting {issue}"),
                     actor: ROB,
                     label: "tl3".into(),
+                    labels: Vec::new(),
                 })
                 .unwrap();
         }

@@ -90,6 +90,7 @@ fn issue(seed: u64) -> LabelledIssue {
         title: "Crash simulation fixture".into(),
         actor: 24923402,
         label: "tl3".into(),
+        labels: Vec::new(),
     }
 }
 fn raw(settings: &tl3_config::Store) -> postgres::Client {

@@ -130,6 +130,7 @@ fn open_registry(
         title: "Fix a greeting".into(),
         actor: 42,
         label: "tl3".into(),
+        labels: Vec::new(),
     })
     .unwrap();
     drain(&mut c);

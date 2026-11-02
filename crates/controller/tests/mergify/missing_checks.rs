@@ -233,6 +233,7 @@ fn publishing(
             title: "change".into(),
             actor: 42,
             label: "tl3".into(),
+            labels: Vec::new(),
         })
         .unwrap();
     for _ in 0..300 {
