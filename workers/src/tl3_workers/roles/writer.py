@@ -10,9 +10,9 @@ def redact_findings(inputs, request):
     if "findings" not in facts:
         return inputs
     redactor = tracing.Redactor(request.get("key_file"))
-    if (capture := tracing.active.get()) is not None:
-        # Includes the model key that create_model loaded for this run.
-        redactor.secrets |= capture.redactor.secrets
+    if key := tracing.model_key.get():
+        # The key create_model loaded for this run, whether or not tracing is on.
+        redactor.secrets.add(key)
     return {**inputs, "facts": {**facts, "findings": redactor.payload(facts["findings"])}}
 
 

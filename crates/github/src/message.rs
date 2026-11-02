@@ -65,6 +65,10 @@ pub enum Violation {
     HtmlEntity(String),
 }
 
+/// Hard caps on a question's prose, in characters.
+pub const MAX_OBSTACLE_CHARS: usize = 600;
+pub const MAX_DECISION_CHARS: usize = 400;
+
 #[derive(Clone, Debug)]
 pub struct CheckedMessage(String);
 
@@ -139,10 +143,15 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
     if is_blank(&draft.how_to_answer) {
         errors.push(Violation::MissingAnswerInstructions);
     }
+    // A summary, never a pasted report (#322).
+    if normalize(&draft.obstacle).chars().count() > MAX_OBSTACLE_CHARS {
+        errors.push(Violation::ObstacleTooLong);
+    }
     if let Some(decision) = &draft.decision {
         let decision = normalize(&without_title_quotes(decision, &policy));
         let decision = decision.trim();
-        if !decision.ends_with('?')
+        if decision.chars().count() > MAX_DECISION_CHARS
+            || !decision.ends_with('?')
             || decision.matches('?').count() != 1
             || decision.contains(". ")
             || decision.contains("! ")

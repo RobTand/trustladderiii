@@ -307,6 +307,40 @@ pub fn checked_draft(
     Err(Error::MessageRejected)
 }
 
+/// The controller's own question, without findings, for when every draft fails.
+pub fn fixed_question(
+    input: &WriteRequest,
+    decision: Option<&str>,
+    policy: &Policy,
+) -> Result<String> {
+    let text = |field: &str| -> Result<String> {
+        Ok(input.facts[field]
+            .as_str()
+            .ok_or(Error::Invalid("fixed question needs its facts"))?
+            .to_owned())
+    };
+    let title = text("issue_title")?;
+    let draft = Draft {
+        issue_title: title.clone(),
+        request_quote: title.clone(),
+        obstacle: text("obstacle")?,
+        options: serde_json::from_value(input.facts["options"].clone())?,
+        recommended_option: input.facts["recommended_option"]
+            .as_u64()
+            .map(|index| index as usize),
+        recommendation_reason: text("recommendation_reason")?,
+        how_to_answer: text("how_to_answer")?,
+        decision: decision.map(str::to_owned),
+    };
+    let policy = Policy {
+        request_title: Some(title),
+        ..policy.clone()
+    };
+    message::check(&draft, &policy)
+        .map(|checked| checked.as_str().to_owned())
+        .map_err(|_| Error::MessageRejected)
+}
+
 fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> Vec<String> {
     let fields = match reply {
         WriterReply::Text(text) => vec![("message".to_owned(), text.text.clone())],

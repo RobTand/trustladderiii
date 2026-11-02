@@ -1577,14 +1577,12 @@ impl Controller {
                         _ => None,
                     })
                 };
-                let latest = |table: &str| {
-                    written(table).or_else(|| {
-                        snapshot
-                            .rows
-                            .iter()
-                            .find(|r| r.table == table && r.id == node.0.to_string())
-                            .map(|r| r.value.clone())
-                    })
+                let before = |table: &str| {
+                    snapshot
+                        .rows
+                        .iter()
+                        .find(|r| r.table == table && r.id == node.0.to_string())
+                        .map(|r| r.value.clone())
                 };
                 let incidents: Vec<_> = commit
                     .rows
@@ -1607,7 +1605,7 @@ impl Controller {
                         binding,
                         &question_findings::Sources {
                             fresh: &written,
-                            stored: &latest,
+                            previous: &before,
                             incidents: &incidents,
                             prior,
                         },

@@ -55,7 +55,7 @@ impl Executor for Fake {
     }
 }
 
-use super::workers::writer::{MessageKind, WriteRequest, Writer, checked_draft};
+use super::workers::writer::{MessageKind, WriteRequest, Writer, checked_draft, fixed_question};
 use crate::Error;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -794,14 +794,28 @@ impl Adapter {
     }
 }
 
-/// Draft a message for Rob. A question always posts (#322).
+/// Draft a message for Rob. A question always posts (#322): when every draft
+/// is rejected, Rob gets the fixed obstacle, options and the kind's decision.
 pub(crate) fn question_draft(
     writer: &mut dyn Writer,
     delivery: &Delivery,
     input: WriteRequest,
     policy: &Policy,
 ) -> Result<String> {
-    checked_draft(writer, &delivery.key, input, policy)
+    let fallback = (input.kind == MessageKind::Question).then(|| input.clone());
+    match (
+        checked_draft(writer, &delivery.key, input, policy),
+        fallback,
+    ) {
+        (Err(Error::MessageRejected), Some(input)) => fixed_question(
+            &input,
+            delivery
+                .question
+                .and_then(|question| crate::question_findings::fixed_decision(question.kind)),
+            policy,
+        ),
+        (result, _) => result,
+    }
 }
 
 fn fixed_notice_text(delivery: &Delivery) -> Result<Option<String>> {

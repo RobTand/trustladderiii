@@ -31,12 +31,12 @@
       "type": "object",
       "properties": {
         "request_quote": {"$ref": "#/$defs/text"},
-        "obstacle": {"$ref": "#/$defs/text"},
+        "obstacle": {"$ref": "#/$defs/text", "maxLength": 600},
         "options": {"$ref": "#/$defs/options"},
         "recommended_option": {"type": "integer", "minimum": 0},
         "recommendation_reason": {"$ref": "#/$defs/text"},
         "how_to_answer": {"$ref": "#/$defs/text"},
-        "decision": {"$ref": "#/$defs/text"}
+        "decision": {"$ref": "#/$defs/text", "maxLength": 400}
       },
       "required": [
         "request_quote", "obstacle", "options", "recommended_option",

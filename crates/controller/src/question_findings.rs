@@ -2,7 +2,7 @@
 //! summarises them; the worker process redacts them before any model sees them.
 
 use serde_json::{Value, json};
-use tl3_kernel::{Cont, Phase, QKind, Question};
+use tl3_kernel::{Cont, Phase, QKind, Question, Resume};
 
 /// Longest report passed to the writer; it summarises, and never pastes, the report.
 pub(crate) const REPORT_CHARS: usize = 6_000;
@@ -11,45 +11,75 @@ const ITEM_CHARS: usize = 600;
 const ITEMS: usize = 8;
 
 const AUDIT: &str = "Should I go ahead with this reading of your request even though its independent check still has open objections?";
-const SPLIT: &str =
-    "Which of these smaller parts should I do first, or how would you like to narrow the request?";
+const SPLIT: &str = "How would you like to narrow the request?";
 const CANT_MEET: &str = "What should I change about the approach so the request can be met?";
-const CREDIT: &str =
-    "Should I spend more of the request's allowance on another attempt to fix these problems?";
-const EFFECT: &str = "Can you fix this cause so that I can continue?";
+const CREDIT: &str = "Should I spend more of the request's allowance on another attempt?";
+const EFFECT: &str = "Can you fix the cause so that I can continue?";
+
+const OUT_OF_ROOM: &str = "The work ran out of room in a single attempt, so it has to be split into smaller parts before it can continue.";
+const RECHECK: &str =
+    "The change needs another check after its latest update, and its free rechecks are used up.";
+const REBASE: &str =
+    "Bringing the change up to date with the main branch needs further code changes.";
 
 /// Where a question's evidence can come from.
 pub(crate) struct Sources<'a> {
     /// Worker documents written by the step that raised the question.
     pub fresh: &'a dyn Fn(&str) -> Option<Value>,
-    /// The node's latest worker documents, including earlier steps.
-    pub stored: &'a dyn Fn(&str) -> Option<Value>,
+    /// The node's worker documents before that step.
+    pub previous: &'a dyn Fn(&str) -> Option<Value>,
     /// Incidents raised by the step that raised the question.
     pub incidents: &'a [Value],
     /// The node's phase before that step.
     pub prior: Phase,
 }
 
-/// Findings for `question`, read from the node's worker documents and incidents.
-pub(crate) fn findings(question: &Question, sources: &Sources) -> Option<Value> {
-    let document = sources.stored;
-    let incidents = sources.incidents;
-    match question.kind {
-        QKind::AuditDisagreement => audit(document),
-        QKind::NeedsSplitting => split(&document("plans")?),
-        QKind::CantMeet if matches!(question.cont, Cont::Planning { .. }) => {
-            planner(&document("plans")?)
-        }
-        QKind::CantMeet => maker(document),
-        QKind::OutOfCredit => failures(document, CREDIT),
-        QKind::EffectFailed => incident(incidents),
+impl Sources<'_> {
+    fn stored(&self, table: &str) -> Option<Value> {
+        (self.fresh)(table).or_else(|| (self.previous)(table))
+    }
+}
+
+/// The question a kind asks when no worker findings can be shown.
+pub(crate) fn fixed_decision(kind: QKind) -> Option<&'static str> {
+    match kind {
+        QKind::AuditDisagreement => Some(AUDIT),
+        QKind::NeedsSplitting => Some(SPLIT),
+        QKind::CantMeet => Some(CANT_MEET),
+        QKind::OutOfCredit => Some(CREDIT),
+        QKind::EffectFailed => Some(EFFECT),
         QKind::CleanupFailed => None,
     }
 }
 
-fn audit(document: &dyn Fn(&str) -> Option<Value>) -> Option<Value> {
-    let brief = document("briefs")?;
-    let audit = document("audits")?;
+/// Findings for `question` from the step that raised it. A source that does
+/// not match the question's cause gives no findings, never stale ones.
+pub(crate) fn findings(question: &Question, sources: &Sources) -> Option<Value> {
+    match question.kind {
+        QKind::AuditDisagreement => audit(sources),
+        QKind::NeedsSplitting => split(&(sources.fresh)("plans")?),
+        QKind::CantMeet if matches!(question.cont, Cont::Planning { .. }) => {
+            planner(&(sources.fresh)("plans")?)
+        }
+        QKind::CantMeet => rung(sources, CANT_MEET),
+        QKind::OutOfCredit => match question.cont {
+            Cont::Planning { must_split: true } => caused(OUT_OF_ROOM),
+            Cont::Ready(Resume::Reviewing | Resume::Checking) => caused(RECHECK),
+            _ if sources.prior == Phase::Rebasing => caused(REBASE),
+            _ => rung(sources, CREDIT),
+        },
+        QKind::EffectFailed => incident(sources.incidents),
+        QKind::CleanupFailed => None,
+    }
+}
+
+fn caused(report: &str) -> Option<Value> {
+    Some(json!({"source": "credit", "report": report, "decision": CREDIT}))
+}
+
+fn audit(sources: &Sources) -> Option<Value> {
+    let audit = (sources.fresh)("audits")?;
+    let brief = sources.stored("briefs")?;
     let objections = items(
         audit["objections"]
             .as_array()?
@@ -58,6 +88,13 @@ fn audit(document: &dyn Fn(&str) -> Option<Value>) -> Option<Value> {
     );
     if audit["verdict"] != "disagree" || objections.is_empty() {
         return None;
+    }
+    if brief["kind"] == "early_end" {
+        // A duplicate, already-done or not-actionable reading has no brief.
+        return Some(json!({"source": "audit",
+            "reading": clip(brief["reason"].as_str()?, REPORT_CHARS),
+            "outcome": brief["outcome"].as_str()?, "goals": [],
+            "objections": objections, "decision": AUDIT}));
     }
     let goals = items(
         brief["goals"]
@@ -72,6 +109,29 @@ fn audit(document: &dyn Fn(&str) -> Option<Value>) -> Option<Value> {
     )
 }
 
+/// The planner's size estimate, when it found the work too large.
+fn size(forecast: &Value) -> Option<String> {
+    let tokens = forecast["tokens"].as_u64()?;
+    let limit = forecast["fit_tokens"].as_u64()?;
+    let mut report = format!(" Its size estimate is {tokens} tokens against a limit of {limit}.");
+    let mut files: Vec<_> = forecast["file_tokens"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(path, tokens)| Some((tokens.as_u64()?, path)))
+        .collect();
+    files.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(b.1)));
+    let largest: Vec<_> = files
+        .iter()
+        .take(3)
+        .map(|(tokens, path)| format!("{} ({tokens} tokens)", clip(path, ITEM_CHARS)))
+        .collect();
+    if !largest.is_empty() {
+        report.push_str(&format!(" The largest files are {}.", largest.join(", ")));
+    }
+    Some(report)
+}
+
 fn split(plan: &Value) -> Option<Value> {
     if plan["kind"] != "split" {
         return None;
@@ -81,70 +141,67 @@ fn split(plan: &Value) -> Option<Value> {
         "multiple_repos" => "spans more than one repository",
         _ => "ran out of room in a single attempt",
     };
-    let mut report = format!("The planned change {reason}.");
-    let forecast = &plan["forecast"];
-    if let (Some(tokens), Some(limit)) =
-        (forecast["tokens"].as_u64(), forecast["fit_tokens"].as_u64())
-    {
-        report.push_str(&format!(
-            " Its size estimate is {tokens} tokens against a limit of {limit}."
-        ));
-        let mut files: Vec<_> = forecast["file_tokens"]
-            .as_object()
-            .into_iter()
-            .flatten()
-            .filter_map(|(path, tokens)| Some((tokens.as_u64()?, path)))
-            .collect();
-        files.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(b.1)));
-        let largest: Vec<_> = files
-            .iter()
-            .take(3)
-            .map(|(tokens, path)| format!("{path} ({tokens} tokens)"))
-            .collect();
-        if !largest.is_empty() {
-            report.push_str(&format!(" The largest files are {}.", largest.join(", ")));
-        }
-    }
+    let report =
+        format!("The planned change {reason}.") + &size(&plan["forecast"]).unwrap_or_default();
     let pieces: Vec<_> = plan["pieces"]
         .as_array()?
         .iter()
         .take(ITEMS)
         .map(|piece| {
+            let files = items(
+                piece["files"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str),
+            );
             json!({"brief": clip(piece["brief"].as_str().unwrap_or_default(), PIECE_CHARS),
-                "files": piece["files"].clone()})
+                "files": files})
         })
         .collect();
     Some(json!({"source": "planner", "report": report, "pieces": pieces, "decision": SPLIT}))
 }
 
 fn planner(plan: &Value) -> Option<Value> {
+    let violations = items(
+        plan["violations"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str),
+    );
     let report = match plan["report"].as_str() {
         Some(report) if plan["kind"] == "cant_meet" => report.to_owned(),
         // A rejected plan's reasons are its violations.
-        _ => items(
-            plan["violations"]
-                .as_array()?
-                .iter()
-                .filter_map(Value::as_str),
-        )
-        .join("\n"),
+        _ if !violations.is_empty() => violations.join("\n"),
+        _ if plan["forecast"]["fits"] == false => {
+            "The planned change is too large to make as one change.".to_owned()
+                + &size(&plan["forecast"])?
+        }
+        _ => return None,
     };
     reported("planner", &report, CANT_MEET)
 }
 
-fn maker(document: &dyn Fn(&str) -> Option<Value>) -> Option<Value> {
-    match document("maker_replies") {
+/// Evidence from a failed run: the maker's own report, or the failures it just got.
+fn rung(sources: &Sources, decision: &str) -> Option<Value> {
+    match (sources.fresh)("maker_replies") {
         Some(reply) if reply["kind"] == "cant_meet" => {
-            reported("maker", reply["report"].as_str()?, CANT_MEET)
+            reported("maker", reply["report"].as_str()?, decision)
         }
-        _ => failures(document, CANT_MEET),
+        _ => failures(sources, decision),
     }
 }
 
-fn failures(document: &dyn Fn(&str) -> Option<Value>, decision: &str) -> Option<Value> {
-    let findings = document("maker_findings")?;
-    let reports: Vec<_> = findings
-        .as_array()?
+/// Only the findings this step appended; earlier rounds were already resolved.
+fn failures(sources: &Sources, decision: &str) -> Option<Value> {
+    let fresh = (sources.fresh)("maker_findings")?;
+    let fresh = fresh.as_array()?;
+    let before = (sources.previous)("maker_findings")
+        .and_then(|value| value.as_array().map(Vec::len))
+        .filter(|len| *len <= fresh.len())
+        .unwrap_or(0);
+    let reports: Vec<_> = fresh[before..]
         .iter()
         .filter_map(|finding| finding["report"].as_str())
         .collect();
@@ -179,17 +236,32 @@ fn reported(source: &str, report: &str, fallback: &str) -> Option<Value> {
     Some(json!({"source": source, "report": clip(report, REPORT_CHARS), "decision": decision}))
 }
 
-/// The worker's own question to Rob: the sentence ending at its first question mark.
+/// The worker's own question to Rob: the sentence ending at the report's last
+/// question mark that ends a sentence, not one inside a URL or code.
 fn question_in(report: &str) -> Option<String> {
-    let end = report.find('?')? + 1;
-    let line = report[..end].rfind('\n').map_or(0, |index| index + 1);
-    let start = report[line..end]
-        .rfind(". ")
-        .map_or(line, |index| line + index + 2);
-    let sentence = report[start..end].trim();
-    // Drop a lead-in such as "Question for Rob:".
-    let sentence = match sentence.split_once(": ") {
-        Some((label, rest)) if label.to_lowercase().contains("question") => rest,
+    let mark = report
+        .char_indices()
+        .filter(|&(index, c)| {
+            c == '?'
+                && report[index + 1..]
+                    .chars()
+                    .next()
+                    .is_none_or(char::is_whitespace)
+        })
+        .map(|(index, _)| index)
+        .last()?;
+    let head = &report[..mark];
+    let start = ["\n", ". ", "? ", "! "]
+        .iter()
+        .filter_map(|separator| head.rfind(separator).map(|index| index + separator.len()))
+        .max()
+        .unwrap_or(0);
+    let sentence = report[start..=mark].trim_start_matches(['*', '-', '>', '#', ' ']);
+    // Drop a lead-in such as "**Question for Rob:**".
+    let sentence = match sentence.split_once(':') {
+        Some((label, rest)) if label.to_lowercase().contains("question") => {
+            rest.trim_start_matches(['*', ' '])
+        }
         _ => sentence,
     };
     (sentence.len() > 1 && sentence.chars().count() <= ITEM_CHARS).then(|| sentence.to_owned())
@@ -261,12 +333,12 @@ mod tests {
         prior: Phase,
     ) -> Option<Value> {
         let written = |table: &str| fresh.get(table).cloned();
-        let latest = |table: &str| fresh.get(table).or_else(|| stored.get(table)).cloned();
+        let before = |table: &str| stored.get(table).cloned();
         findings(
             question,
             &Sources {
                 fresh: &written,
-                stored: &latest,
+                previous: &before,
                 incidents,
                 prior,
             },

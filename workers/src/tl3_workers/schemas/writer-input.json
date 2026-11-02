@@ -30,8 +30,9 @@
               "description": "The deciding worker's findings (#322). The worker redacts them before the model turn.",
               "type": "object",
               "properties": {
-                "source": {"enum": ["audit", "planner", "maker", "checks_and_review", "incident"]},
+                "source": {"enum": ["audit", "planner", "maker", "checks_and_review", "incident", "credit"]},
                 "report": {"type": "string"},
+                "outcome": {"type": "string"},
                 "decision": {"$ref": "writer-reply.json#/$defs/text"},
                 "reading": {"type": "string"},
                 "goals": {"type": "array", "items": {"type": "string"}},

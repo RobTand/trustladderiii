@@ -28,6 +28,7 @@ For kind "question", return exactly these fields, with no wrapper or kind tag:
 - how_to_answer: how Rob can answer in a comment on the request's issue.
 - decision: the one decision Rob must make, as a single question ending in a
   question mark. Required when facts.findings is supplied; omit it otherwise.
+  At most 400 characters. The obstacle is at most 600 characters.
 
 facts.findings, when supplied, holds the evidence of the worker that stopped:
 its report, the reading and the check's objections, the proposed smaller parts,
