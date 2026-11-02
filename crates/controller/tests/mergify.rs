@@ -1,3 +1,5 @@
+#[path = "mergify/ack_wait.rs"]
+mod ack_wait;
 #[path = "mergify/check_reads.rs"]
 mod check_reads;
 #[path = "mergify/classic_protection.rs"]
@@ -2700,6 +2702,7 @@ fn main() {
     scenario!(label_removed_before_confirmation());
     scenario!(applied_marker_waits_for_person_evidence());
     let mut database = support::Database::start();
+    scenario!(ack_wait::scenario(&database.create("ack_wait")));
     for mode in ["gaps", "adapter", "source", "reopen-look", "reopen-source"] {
         scenario!(check_reads::scenario(
             &database.create(&format!("check_read_{mode}")),

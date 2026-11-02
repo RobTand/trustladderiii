@@ -306,7 +306,9 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         "restart must preserve command dispatch"
     );
     if mode == "no-acceptance" {
-        for _ in 0..2 {
+        // #356: the first look finds the command alive and waiting; two more,
+        // past the no-progress allowance, raise the usual incident.
+        for _ in 0..3 {
             clock.0.set(clock.0.get() + Duration::from_secs(100_000));
             controller.look_now().unwrap();
             drain(&mut controller);
