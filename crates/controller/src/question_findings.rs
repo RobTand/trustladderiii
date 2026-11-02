@@ -249,7 +249,7 @@ fn question_in(report: &str) -> Option<String> {
                     .is_none_or(char::is_whitespace)
         })
         .map(|(index, _)| index)
-        .last()?;
+        .next_back()?;
     let head = &report[..mark];
     let start = ["\n", ". ", "? ", "! "]
         .iter()
