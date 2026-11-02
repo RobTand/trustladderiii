@@ -537,6 +537,32 @@ impl Controller {
         if !current_answer {
             return Ok(None);
         }
+        // #422: Rob's answer, with the question and his reason, is a decision later
+        // requests recall. An unclear answer decides nothing.
+        if let Command::Answer { question, answer } = &command
+            && !matches!(answer, Answer::Unclear)
+            && let Some(repository) = crate::stored_repositories(snapshot)?.get(n.repo.0 as usize)
+        {
+            let context = self.store.question_context(*question)?.unwrap_or_default();
+            let asked = context["findings"]["decision"]
+                .as_str()
+                .unwrap_or("A question TL3 asked about this request.");
+            crate::memory::queue_lesson(
+                &mut self.store,
+                &crate::memory::Lesson {
+                    kind: crate::memory::LessonKind::Decision,
+                    source: "rob",
+                    repo: &format!("{}/{}", repository.owner, repository.name),
+                    topic: None,
+                    text: &format!(
+                        "Question: {asked}\nRob's answer: {}\nHis reason, in his words: {}",
+                        reply["answer"].as_str().unwrap_or("unknown"),
+                        origin.text
+                    ),
+                    identity: origin.key,
+                },
+            )?;
+        }
         if let Some(text) = reply["new_text"].as_str()
             && !matches!(n.phase, tl3_kernel::Phase::Stopping(_))
         {

@@ -311,3 +311,18 @@ pub struct WorkerProgress {
     pub started_ms: i64,
     pub last_progress_ms: Option<i64>,
 }
+
+/// #422: one decision about a recalled memory, kept as an audit trail.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MemoryCuration {
+    pub memory_id: String,
+    /// `invalidated` or `valid`.
+    pub state: &'static str,
+    /// `accepted` decisions are sent to Hindsight; `rejected` ones are only recorded.
+    pub verdict: &'static str,
+    pub source: String,
+    pub request: Option<String>,
+    pub run: Option<String>,
+    pub reason: String,
+    pub evidence: serde_json::Value,
+}

@@ -56,6 +56,63 @@
           },
           "uniqueItems": true,
           "description": "Files in the root scope used by the forecaster. Required when forecast settings are supplied."
+        },
+        "memory_flags": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "evidence": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "start_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "end_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "quote": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "path",
+                  "start_line",
+                  "end_line",
+                  "quote"
+                ],
+                "additionalProperties": false,
+                "description": "A verbatim quote of at most 40 lines from the read-only checkout, at these 1-based lines of this repo-relative file."
+              }
+            },
+            "required": [
+              "id",
+              "reason",
+              "evidence"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Cited memories the checkout shows to be wrong, each with the evidence that contradicts it. Code checks the quote before the memory is retired."
         }
       },
       "required": [

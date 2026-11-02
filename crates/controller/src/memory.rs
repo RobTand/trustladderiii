@@ -52,18 +52,22 @@ fn sensitive_key(key: &str) -> bool {
 }
 
 fn safe_text(text: &str) -> String {
+    let text = redact(text);
+    if text.len() > 2048 {
+        format!("{} [truncated]", clip(&text, 2048))
+    } else {
+        text
+    }
+}
+
+fn redact(text: &str) -> String {
     static SECRET: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
         r#"(?is)(?:bearer\s+\S+|-----BEGIN[^\r\n]*PRIVATE KEY-----.*?(?:-----END[^\r\n]*PRIVATE KEY-----|$)|\b(?:sk-|gh[pousr]_|github_pat_|hf_|glpat-|xox[a-z]-)[a-zA-Z0-9_-]+|AKIA[A-Z0-9]{16}|\b[a-fA-F0-9]{32,}\b|eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+|(?:https?|postgres(?:ql)?)://[^/\s:@]+:[^/\s@]+@|(?:[a-z0-9_]*_api_key|[a-z0-9_]*_secret[a-z0-9_]*|[a-z0-9_]*_token|api[_-]?key|password|passwd|secret|authorization|cookie)["']?\s*[=:]\s*(?:(?:bearer|basic)\s+)?(?:"[^"]*"|'[^']*'|\S+)|\btoken["']?\s*=\s*(?:(?:bearer|basic)\s+)?(?:"[^"]*"|'[^']*'|\S+)|\btoken["']?\s*:\s*(?:["'][^"']+["']|[a-zA-Z0-9_-]*[0-9_-][a-zA-Z0-9_-]*))"#
     ).expect("memory secret pattern")
     });
     let text = text.replace('\0', "");
-    let text = SECRET.replace_all(&text, "[redacted]");
-    if text.len() > 2048 {
-        format!("{} [truncated]", clip(&text, 2048))
-    } else {
-        text.into_owned()
-    }
+    SECRET.replace_all(&text, "[redacted]").into_owned()
 }
 
 fn sanitize(value: &Value, depth: usize, budget: &mut usize) -> Value {
@@ -212,22 +216,25 @@ pub fn queue_attempt(store: &mut Store, key: &str, attempt: &Path) -> Result<()>
         attempt.file_name().and_then(|n| n.to_str()),
         request["operation"]
     ]);
-    let mut hash = Sha256::digest(identity.to_string().as_bytes());
-    hash[6] = (hash[6] & 0x0f) | 0x50;
-    hash[8] = (hash[8] & 0x3f) | 0x80;
-    let h: String = hash[..16].iter().map(|b| format!("{b:02x}")).collect();
-    let id = format!(
-        "{}-{}-{}-{}-{}",
-        &h[..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..]
-    );
-    // Infrastructure inputs and repository contents belong in the trace, not memory.
+    let id = uuid(&identity);
+    if succeeded && matches!(role.as_str(), "ingest" | "planner") {
+        let worktree = attempt
+            .parent()
+            .ok_or(Error::Invalid("worker attempt has no run directory"))?
+            .join("worktree");
+        let run = Run {
+            role: &role,
+            repo: &repo,
+            request: &request_id,
+            id: &id,
+        };
+        review_memories(store, &run, &request["inputs"], &reply, &worktree)?;
+    }
+    // Infrastructure inputs, recalled memories and repository contents belong in
+    // the trace, not memory.
     let mut inputs = request["inputs"].clone();
     if let Some(inputs) = inputs.as_object_mut() {
-        for field in ["tests", "hindsight", "forecast"] {
+        for field in ["tests", "hindsight", "forecast", "memories", "memory_note"] {
             inputs.remove(field);
         }
         if let Some(repo) = inputs.get_mut("repo").and_then(Value::as_object_mut) {
@@ -249,7 +256,7 @@ pub fn queue_attempt(store: &mut Store, key: &str, attempt: &Path) -> Result<()>
         record["head_sha"] = json!(head);
     }
     let mut item = json!({"content": record.to_string(), "document_id": format!("tl3-run-{id}"),
-        "context": "TL3 Deep Agents run summary", "tags": [format!("repo:{repo}"), format!("request:{request_id}"), format!("role:{role}")],
+        "context": "TL3 Deep Agents run summary", "tags": [format!("repo:{repo}"), format!("request:{request_id}"), format!("role:{role}"), "kind:run", "source:run"],
         "metadata": {"source": "tl3", "run": id}});
     if stored_json_bytes(&item) > RECORD_BYTES {
         for field in ["inputs", "activity", "reply", "reason", "model"] {
@@ -270,24 +277,16 @@ pub fn queue_attempt(store: &mut Store, key: &str, attempt: &Path) -> Result<()>
 /// after any ambiguous response reuses its UUID and cannot enqueue new work.
 pub fn flush(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usize> {
     store.expire_parked_memories()?;
+    // A wrong memory misleads every run until Hindsight retires it, so curations go first.
+    let mut count = curate(store, settings)?;
     let mut pending = store.pending_memories(0)?;
     if pending.is_empty() {
-        return Ok(0);
+        return Ok(count);
     }
     let key = settings.retain_key()?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| Error::Adapter(Box::new(e)))?;
-    let mut url = settings.endpoint.clone();
-    url.path_segments_mut()
-        .map_err(|_| Error::Invalid("invalid Hindsight endpoint"))?
-        .clear()
-        .extend(["v1", "default", "banks", &settings.bank, "memories"]);
+    let client = client(Duration::from_secs(10))?;
+    let url = bank_url(settings, &[])?;
     let mut after = 0;
-    let mut count = 0;
     loop {
         for (sequence, id, item) in pending {
             after = sequence;
@@ -353,6 +352,14 @@ pub const MAX_MEMORIES: usize = 8;
 pub const MEMORY_CHARS: usize = 1500;
 /// Characters kept across one run's memories.
 pub const MEMORIES_CHARS: usize = 8000;
+const RECALL_NOTE: &str =
+    "Hindsight recall was unavailable, so no memories were supplied. Work from the other inputs.";
+const RECALL_RESPONSE_BYTES: usize = 256 * 1024;
+const CURATED_KINDS: [&str; 3] = ["kind:lesson", "kind:decision", "kind:convention"];
+/// Flags and conventions read per run; more are ignored.
+const PER_RUN: usize = 3;
+const EVIDENCE_LINES: u64 = 40;
+const EVIDENCE_FILE_BYTES: u64 = 1024 * 1024;
 
 /// What one worker run recalls before it starts.
 pub enum Recall<'a> {
@@ -362,14 +369,187 @@ pub enum Recall<'a> {
     Conventions { repo: &'a str, query: &'a str },
 }
 
+fn clip_chars(text: &str, limit: usize) -> &str {
+    match text.char_indices().nth(limit) {
+        Some((end, _)) => &text[..end],
+        None => text,
+    }
+}
+
+fn uuid(identity: &Value) -> String {
+    let mut hash = Sha256::digest(identity.to_string().as_bytes());
+    hash[6] = (hash[6] & 0x0f) | 0x50;
+    hash[8] = (hash[8] & 0x3f) | 0x80;
+    let h: String = hash[..16].iter().map(|b| format!("{b:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &h[..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..]
+    )
+}
+
+fn client(timeout: Duration) -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .connect_timeout(Duration::from_secs(2))
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| Error::Adapter(Box::new(e)))
+}
+
+fn bank_url(settings: &tl3_config::Hindsight, tail: &[&str]) -> Result<reqwest::Url> {
+    let mut url = settings.endpoint.clone();
+    url.path_segments_mut()
+        .map_err(|_| Error::Invalid("invalid Hindsight endpoint"))?
+        .clear()
+        .extend(["v1", "default", "banks", &settings.bank, "memories"])
+        .extend(tail);
+    Ok(url)
+}
+
+fn recall_once(settings: &tl3_config::Hindsight, body: &Value) -> Result<Vec<Value>> {
+    let key = settings.retain_key()?;
+    let client = client(Duration::from_secs(8))?;
+    let url = bank_url(settings, &["recall"])?;
+    crate::executor::runtime()?.block_on(async {
+        let mut request = client.post(url).json(body);
+        if let Some(key) = &key {
+            request = request.bearer_auth(key);
+        }
+        let mut response = request
+            .send()
+            .await
+            .map_err(|e| Error::Adapter(Box::new(e)))?;
+        if !response.status().is_success() {
+            return Err(Error::HindsightStatus(response.status().as_u16()));
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| Error::Adapter(Box::new(e)))?
+        {
+            bytes.extend_from_slice(&chunk);
+            if bytes.len() > RECALL_RESPONSE_BYTES {
+                return Err(Error::Invalid("oversized Hindsight recall"));
+            }
+        }
+        let value: Value = serde_json::from_slice(&bytes)?;
+        value["results"]
+            .as_array()
+            .cloned()
+            .ok_or(Error::Invalid("invalid Hindsight recall"))
+    })
+}
+
+fn memory_kind(tags: &Value) -> &'static str {
+    let tags: Vec<&str> = tags
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    for kind in ["lesson", "decision", "convention", "run"] {
+        if tags
+            .iter()
+            .any(|tag| tag.strip_prefix("kind:") == Some(kind))
+        {
+            return kind;
+        }
+    }
+    // Run records retained before #422 carry a role tag but no kind.
+    if tags.iter().any(|tag| tag.starts_with("role:")) {
+        "run"
+    } else {
+        "other"
+    }
+}
+
+fn memory_id(value: &Value) -> Option<&str> {
+    value.as_str().filter(|id| {
+        !id.is_empty()
+            && id.len() <= 256
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_:.".contains(&b))
+    })
+}
+
 /// Recall bounded, redacted memories as worker inputs. Hindsight failures degrade
-/// to no memories and a note; only store errors are returned.
+/// to no memories and a note, never an incident or a wait; only store errors are returned.
 pub fn recall(
-    _store: &mut Store,
-    _settings: &tl3_config::Hindsight,
-    _recall: Recall<'_>,
+    store: &mut Store,
+    settings: &tl3_config::Hindsight,
+    recall: Recall<'_>,
 ) -> Result<Value> {
-    todo!("#422")
+    let (repo, query) = match recall {
+        Recall::Context { repo, query } | Recall::Conventions { repo, query } => (repo, query),
+    };
+    let base = json!({
+        "query": safe_text(&format!("Repository {repo}\n{query}")),
+        "types": ["world", "experience"], "budget": "low", "max_tokens": 2048,
+    });
+    let mut calls = Vec::new();
+    match recall {
+        Recall::Context { .. } => {
+            let mut lessons = base.clone();
+            lessons["tags"] = json!(CURATED_KINDS);
+            lessons["tags_match"] = json!("any_strict");
+            calls.extend([lessons, base]);
+        }
+        Recall::Conventions { .. } => {
+            let mut conventions = base;
+            conventions["tag_groups"] = json!([
+                {"tags": ["kind:convention"], "match": "any_strict"},
+                {"tags": [format!("repo:{repo}")], "match": "any_strict"},
+            ]);
+            calls.push(conventions);
+        }
+    }
+    let mut found = Vec::new();
+    let mut unavailable = false;
+    for body in &calls {
+        match recall_once(settings, body) {
+            Ok(results) => found.extend(results),
+            Err(error) => {
+                // One failure is enough: a second call would only double the wait.
+                eprintln!("Hindsight recall degraded to no memories: {error}");
+                unavailable = true;
+                break;
+            }
+        }
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let found: Vec<(&str, &Value)> = found
+        .iter()
+        .filter_map(|item| Some((memory_id(&item["id"])?, item)))
+        .filter(|(id, item)| item["text"].is_string() && seen.insert(*id))
+        .collect();
+    let ids: Vec<String> = found.iter().map(|(id, _)| (*id).to_owned()).collect();
+    let retired = store.undelivered_invalidations(&ids)?;
+    let mut memories = Vec::new();
+    let mut total = 0;
+    for (id, item) in found {
+        if retired.contains(id) {
+            continue;
+        }
+        let content =
+            clip_chars(&safe_text(item["text"].as_str().unwrap()), MEMORY_CHARS).to_owned();
+        total += content.chars().count();
+        if memories.len() == MAX_MEMORIES || total > MEMORIES_CHARS {
+            break;
+        }
+        memories.push(json!({"content": content, "id": id, "kind": memory_kind(&item["tags"])}));
+    }
+    let mut value = json!({"memories": memories});
+    if unavailable {
+        value["memory_note"] = json!(RECALL_NOTE);
+    }
+    Ok(value)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -378,14 +558,45 @@ pub enum CurationState {
     Valid,
 }
 
-/// Rob's own correction or revert of one memory.
+impl CurationState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Invalidated => "invalidated",
+            Self::Valid => "valid",
+        }
+    }
+}
+
+/// Rob's own correction or revert of one memory. Each call is its own decision.
 pub fn rob_curation(
-    _store: &mut Store,
-    _memory_id: &str,
-    _state: CurationState,
-    _reason: &str,
+    store: &mut Store,
+    memory_id: &str,
+    state: CurationState,
+    reason: &str,
 ) -> Result<()> {
-    todo!("#422")
+    let id = self::memory_id(&json!(memory_id)).ok_or(Error::Invalid("invalid memory id"))?;
+    let reason = safe_text(clip_chars(reason.trim(), 1000));
+    if reason.is_empty() {
+        return Err(Error::Invalid("a curation needs a reason"));
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let operation = uuid(&json!(["rob", id, state.as_str(), reason, now.to_string()]));
+    store.record_memory_curation(
+        &operation,
+        &tl3_store::MemoryCuration {
+            memory_id: id.into(),
+            state: state.as_str(),
+            verdict: "accepted",
+            source: "rob".into(),
+            request: None,
+            run: None,
+            reason: format!("Rob: {reason}"),
+            evidence: json!({}),
+        },
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -406,8 +617,254 @@ pub struct Lesson<'a> {
     pub identity: &'a str,
 }
 
-pub fn queue_lesson(_store: &mut Store, _lesson: &Lesson<'_>) -> Result<()> {
-    todo!("#422")
+/// Queue a lesson on the retain outbox, tagged so recall ranks it before run records.
+pub fn queue_lesson(store: &mut Store, lesson: &Lesson<'_>) -> Result<()> {
+    let kind = match lesson.kind {
+        LessonKind::Lesson => "lesson",
+        LessonKind::Decision => "decision",
+        LessonKind::Convention => "convention",
+    };
+    let repo = safe_text(clip(lesson.repo, 256));
+    let source = safe_text(clip(lesson.source, 64));
+    let id = uuid(&json!(["lesson", kind, source, repo, lesson.identity]));
+    let mut tags = vec![
+        format!("repo:{repo}"),
+        format!("kind:{kind}"),
+        format!("source:{source}"),
+    ];
+    if let Some(topic) = lesson.topic {
+        tags.push(format!("topic:{}", safe_text(clip(topic, 64))));
+    }
+    let content = clip(&redact(lesson.text), 8192).to_owned();
+    if content.trim().is_empty() {
+        return Err(Error::Invalid("an empty lesson"));
+    }
+    let item = json!({"content": content, "document_id": format!("tl3-{kind}-{id}"),
+        "context": format!("TL3 {kind}"), "tags": tags,
+        "metadata": {"source": "tl3", "kind": kind}});
+    store.queue_memory(&id, &item)
+}
+
+fn normalized(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Check a quote against the base checkout the run read. Code verifies the
+/// evidence; the model's word alone never retires or teaches anything.
+fn verify(worktree: &Path, evidence: &Value) -> std::result::Result<Value, &'static str> {
+    let (Some(path), Some(start), Some(end), Some(quote)) = (
+        evidence["path"].as_str(),
+        evidence["start_line"].as_u64(),
+        evidence["end_line"].as_u64(),
+        evidence["quote"].as_str(),
+    ) else {
+        return Err("the evidence is incomplete");
+    };
+    if start == 0 || end < start || end - start >= EVIDENCE_LINES {
+        return Err("the evidence lines are invalid");
+    }
+    let relative = Path::new(path);
+    let mut current = worktree.to_owned();
+    for component in relative.components() {
+        match component {
+            std::path::Component::Normal(name) if name != ".git" => current.push(name),
+            _ => return Err("the evidence path is not a repository file"),
+        }
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if !meta.file_type().is_symlink() => {}
+            _ => return Err("the evidence path is not a repository file"),
+        }
+    }
+    match std::fs::metadata(&current) {
+        Ok(meta) if meta.is_file() && meta.len() <= EVIDENCE_FILE_BYTES => {}
+        _ => return Err("the evidence path is not a repository file"),
+    }
+    let text = std::fs::read_to_string(&current).map_err(|_| "the evidence file is not text")?;
+    let lines: Vec<&str> = text
+        .lines()
+        .skip(start as usize - 1)
+        .take((end - start + 1) as usize)
+        .collect();
+    if lines.len() as u64 != end - start + 1 {
+        return Err("the evidence lines are past the end of the file");
+    }
+    let wanted = normalized(quote);
+    if wanted.chars().count() < 8 || wanted.len() > 2000 {
+        return Err("the quote is too short or too long");
+    }
+    if !normalized(&lines.join("\n")).contains(&wanted) {
+        return Err("the quote is not at the cited lines");
+    }
+    Ok(json!({"path": path, "start_line": start, "end_line": end,
+        "quote": clip_chars(&safe_text(quote), 500)}))
+}
+
+fn cite(evidence: &Value) -> String {
+    format!(
+        "{}:{}-{} \"{}\"",
+        evidence["path"].as_str().unwrap_or(""),
+        evidence["start_line"],
+        evidence["end_line"],
+        evidence["quote"].as_str().unwrap_or("")
+    )
+}
+
+struct Run<'a> {
+    role: &'a str,
+    repo: &'a str,
+    request: &'a str,
+    id: &'a str,
+}
+
+/// Record a run's memory flags and queue its verified conventions. Only ingest and
+/// planner runs qualify: they read the pinned base, so a quote is evidence about the
+/// repo rather than about TL3's own change.
+fn review_memories(
+    store: &mut Store,
+    run: &Run<'_>,
+    inputs: &Value,
+    reply: &Value,
+    worktree: &Path,
+) -> Result<()> {
+    let supplied: std::collections::BTreeMap<&str, &str> = inputs["memories"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|m| Some((m["id"].as_str()?, m["kind"].as_str().unwrap_or("other"))))
+        .collect();
+    let cited: std::collections::BTreeSet<&str> = reply["memory_ids"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    for flag in reply["memory_flags"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(PER_RUN)
+    {
+        let Some(memory_id) = memory_id(&flag["id"]) else {
+            continue;
+        };
+        let reason = safe_text(clip_chars(
+            flag["reason"].as_str().unwrap_or("").trim(),
+            1000,
+        ));
+        let checked = match supplied.get(memory_id) {
+            None => Err("the run was not given this memory"),
+            Some(_) if !cited.contains(memory_id) => Err("the run did not cite this memory"),
+            Some(&"decision") => Err("only Rob retires a decision"),
+            Some(_) if reason.is_empty() => Err("the flag gives no reason"),
+            Some(_) => verify(worktree, &flag["evidence"]),
+        };
+        let (verdict, recorded, evidence) = match checked {
+            Ok(evidence) => (
+                "accepted",
+                format!(
+                    "TL3 {} run {} ({} request {}): {reason} Evidence: {}",
+                    run.role,
+                    run.id,
+                    run.repo,
+                    run.request,
+                    cite(&evidence)
+                ),
+                evidence,
+            ),
+            Err(why) => (
+                "rejected",
+                format!("Not invalidated: {why}. The flag said: {reason}"),
+                section(&flag["evidence"]),
+            ),
+        };
+        store.record_memory_curation(
+            &uuid(&json!([run.id, "flag", memory_id])),
+            &tl3_store::MemoryCuration {
+                memory_id: memory_id.into(),
+                state: "invalidated",
+                verdict,
+                source: run.role.into(),
+                request: Some(run.request.into()),
+                run: Some(run.id.into()),
+                reason: clip_chars(&recorded, 4000).into(),
+                evidence,
+            },
+        )?;
+    }
+    if run.role == "planner" {
+        for (index, convention) in reply["conventions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .take(PER_RUN)
+            .enumerate()
+        {
+            let text = convention["text"].as_str().unwrap_or("").trim();
+            if text.is_empty() {
+                continue;
+            }
+            let Ok(evidence) = verify(worktree, &convention["evidence"]) else {
+                continue;
+            };
+            queue_lesson(
+                store,
+                &Lesson {
+                    kind: LessonKind::Convention,
+                    source: "planner",
+                    repo: run.repo,
+                    topic: None,
+                    text: &format!("{}\nEvidence: {}", clip_chars(text, 1000), cite(&evidence)),
+                    identity: &format!("{}:convention:{index}", run.id),
+                },
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Send accepted curations in decision order. A PATCH sets the same state again on
+/// replay, so retrying after an ambiguous response is safe.
+fn curate(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usize> {
+    let mut pending = store.pending_memory_curations()?;
+    if pending.is_empty() {
+        return Ok(0);
+    }
+    let key = settings.retain_key()?;
+    let client = client(Duration::from_secs(10))?;
+    let mut count = 0;
+    while !pending.is_empty() {
+        for (sequence, memory_id, state, reason) in pending {
+            let url = bank_url(settings, &[&memory_id])?;
+            let status = crate::executor::runtime()?.block_on(async {
+                let mut request = client
+                    .patch(url)
+                    .json(&json!({"state": state, "reason": reason}));
+                if let Some(key) = &key {
+                    request = request.bearer_auth(key);
+                }
+                request
+                    .send()
+                    .await
+                    .map(|response| response.status().as_u16())
+                    .map_err(|e| Error::Adapter(Box::new(e)))
+            })?;
+            match status {
+                200..=299 => {
+                    store.settle_memory_curation(sequence, None)?;
+                    count += 1;
+                }
+                401 | 403 => {
+                    store.reject_memory_key(status)?;
+                    return Err(Error::HindsightStatus(status));
+                }
+                408 | 429 => return Err(Error::HindsightStatus(status)),
+                400..=499 => store.settle_memory_curation(sequence, Some(status))?,
+                _ => return Err(Error::HindsightStatus(status)),
+            }
+        }
+        pending = store.pending_memory_curations()?;
+    }
+    Ok(count)
 }
 
 #[derive(Clone)]

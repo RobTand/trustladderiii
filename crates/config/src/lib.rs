@@ -372,7 +372,8 @@ pub struct Hindsight {
 }
 
 impl Hindsight {
-    /// Memory delivery validates and reads this only on its background thread.
+    /// Read for each retain or curation batch and each recall; it only ever goes
+    /// into the Authorization header.
     pub fn retain_key(&self) -> Result<Option<String>, Error> {
         let Some(path) = &self.api_key_file else {
             return Ok(None);

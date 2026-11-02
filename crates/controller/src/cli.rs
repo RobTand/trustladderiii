@@ -112,6 +112,48 @@ pub fn status() -> Result<()> {
     }
 }
 
+/// `tl3 memory {list | invalidate ID | revert ID} [--reason TEXT] --config FILE`:
+/// the audit trail of TL3's memory curations, and Rob's own corrections (#422).
+pub fn memory() -> Result<()> {
+    const USAGE: &str =
+        "usage: tl3 memory {list | invalidate ID | revert ID} [--reason TEXT] --config FILE";
+    let mut args = std::env::args().skip(2);
+    let action = args.next().ok_or(Error::Invalid(USAGE))?;
+    let state = match action.as_str() {
+        "list" => None,
+        "invalidate" => Some(crate::memory::CurationState::Invalidated),
+        "revert" => Some(crate::memory::CurationState::Valid),
+        _ => return Err(Error::Invalid(USAGE)),
+    };
+    let id = match state {
+        Some(_) => Some(args.next().ok_or(Error::Invalid(USAGE))?),
+        None => None,
+    };
+    let (mut path, mut reason) = (None, None);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--config" => path = args.next().map(PathBuf::from),
+            "--reason" if state.is_some() => reason = args.next(),
+            _ => return Err(Error::Invalid(USAGE)),
+        }
+    }
+    let config = tl3_config::Config::load(path.ok_or(Error::Invalid(USAGE))?)?;
+    let mut store = Store::open(&config.store)?;
+    let (Some(state), Some(id)) = (state, id) else {
+        for curation in store.memory_curations()? {
+            println!("{curation}");
+        }
+        return Ok(());
+    };
+    let reason = reason.ok_or(Error::Invalid("--reason TEXT is required"))?;
+    crate::memory::rob_curation(&mut store, &id, state, &reason)?;
+    match crate::memory::flush(&mut store, &config.hindsight) {
+        Ok(_) => println!("Recorded and sent to Hindsight."),
+        Err(error) => println!("Recorded. tl3d sends it when Hindsight answers ({error})."),
+    }
+    Ok(())
+}
+
 pub fn daemon() -> Result<()> {
     let Arguments {
         config,

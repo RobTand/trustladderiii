@@ -8,11 +8,13 @@ from tl3_harness import Check, Kind
 from tl3_harness.limits import validate_check_plan
 from tl3_harness.trees import test_function_source
 from tl3_workers.tools import Worktree
+from tl3_workers.recall import check_citations
 
 
 def check_reply(inputs, reply):
     if "forecast" in reply or "violations" in reply:
         raise ValueError("only code may supply planning evidence")
+    check_citations(inputs, reply)
     goals = set(range(len(inputs["ingest"]["goals"])))
     violations = []
     paths = set()

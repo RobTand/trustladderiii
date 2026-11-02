@@ -371,6 +371,43 @@ impl Supervisor {
                 .ok_or(Error::Invalid("worker materials must be an object"))?
                 .remove("standing_rules");
         }
+        // #422: recall upfront. Ingest reads the issue, the planner its brief and
+        // goals, and the reviewer the repo's conventions. An outage degrades to none.
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        let goals = |goals: &Value| {
+            goals
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|goal| goal["description"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let query = match role {
+            "ingest" => Some(format!(
+                "{}\n{}",
+                inputs["issue"]["title"].as_str().unwrap_or(""),
+                inputs["issue"]["body"].as_str().unwrap_or("")
+            )),
+            "planner" => Some(format!(
+                "{}\n{}",
+                inputs["ingest"]["brief"].as_str().unwrap_or(""),
+                goals(&inputs["ingest"]["goals"])
+            )),
+            "reviewer" => Some(goals(&inputs["goals"])),
+            _ => None,
+        };
+        if let Some(query) = &query {
+            let recall = if role == "reviewer" {
+                crate::memory::Recall::Conventions { repo: &repo, query }
+            } else {
+                crate::memory::Recall::Context { repo: &repo, query }
+            };
+            let recalled = crate::memory::recall(store, &self.hindsight, recall)?;
+            for (field, value) in recalled.as_object().into_iter().flatten() {
+                inputs[field] = value.clone();
+            }
+        }
         if matches!(role, "ingest" | "audit") {
             // Cached simulation materials may still contain inline fixture text.
             if let Some(repo) = inputs["repo"].as_object_mut() {

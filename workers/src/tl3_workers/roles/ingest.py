@@ -3,6 +3,7 @@
 from tl3_workers.roles.base import Role
 from tl3_workers.contracts import schema
 from tl3_workers.exploration import ExplorationBudget
+from tl3_workers.recall import check_citations
 
 # The brief's maxLength, which the controller validates.
 BRIEF_CHARACTERS = next(
@@ -15,9 +16,7 @@ def check_memory_ids(inputs, reply):
     if "forecast" in reply:
         raise ValueError("only code may supply a forecast")
     if reply["kind"] == "brief":
-        supplied = {memory["id"] for memory in inputs.get("memories", [])}
-        if not set(reply["memory_ids"]) <= supplied:
-            raise ValueError("reply cites a memory it was not given")
+        check_citations(inputs, reply)
 
         if "forecast" in inputs:
             from tl3_workers.forecast import Forecaster
