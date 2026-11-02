@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+import zipfile
 
 import bazel_generated
 import rust_gate
@@ -44,6 +45,8 @@ IRRELEVANT = [
     '.github/*.md', '.github/ISSUE_TEMPLATE/*', '.github/CODEOWNERS',
 ]
 CONFIGS = {'amd64': 'remote', 'arm64': 'remote-arm64'}
+# Written by tools/bazel/rust_runner.py when every test passed but a budget overran.
+BUDGET_MARKER = 'budget-overrun.txt'
 # .bazelrc's default names; test and build runs prefix their own.
 DIAGNOSTICS = ['bazel-remote-grpc.log', 'execution_log.binpb.zst']
 TESTS = 'tests(//...)'
@@ -214,7 +217,7 @@ class Workspace:
         self.run(*query)
         return {canonical(line) for line in impacted.read_text().split() if line}
 
-    def test(self, targets, config, metadata, log_name):
+    def test(self, targets, config, metadata, log_name, extra=()):
         """Run targets; return per-label status. Build failures leave labels without status."""
         if not targets:
             return {}
@@ -224,10 +227,25 @@ class Workspace:
         bep.unlink(missing_ok=True)
         self.run(self.bazel, 'test', f'--config={config}', '--config=ci', '--keep_going',
                  f'--target_pattern_file={patterns}', f'--build_event_json_file={bep}',
-                 *diagnostic_logs(log_name),
+                 *diagnostic_logs(log_name), *extra,
                  *[f'--build_metadata={key}={value}' for key, value in metadata.items()],
                  capture=False, check=False)
         return test_statuses(bep)
+
+    def budget_only(self, labels):
+        """Failed labels whose runner reported only a time-budget overrun."""
+        found = set()
+        for label in labels:
+            package, _, name = label.removeprefix('//').partition(':')
+            outputs = self.root / 'bazel-testlogs' / package / name / 'test.outputs'
+            archive = outputs / 'outputs.zip'
+            if (outputs / BUDGET_MARKER).is_file():
+                found.add(label)
+            elif archive.is_file():
+                with zipfile.ZipFile(archive) as zipped:
+                    if BUDGET_MARKER in zipped.namelist():
+                        found.add(label)
+        return found
 
     def build(self, targets, config, metadata, log_name):
         """Build targets; True when every one built."""
@@ -282,6 +300,18 @@ def write_result(result, directory, root=ROOT):
             log.replace(directory / log.name)
 
 
+def rerun_budget_only(workspace, labels, statuses, config, metadata, log_name):
+    """Rerun once the targets that failed only a time budget. Real failures are never retried."""
+    failed = [label for label in labels if statuses.get(label) != 'PASSED']
+    budget = sorted(workspace.budget_only(failed))
+    if not budget:
+        return statuses, {}
+    again = workspace.test(budget, config, metadata, f'{log_name}-budget-rerun',
+                           extra=['--nocache_test_results'])
+    reruns = {label: again.get(label, 'NO_STATUS') for label in budget}
+    return {**statuses, **reruns}, reruns
+
+
 def gate_pr(workspace, base, head, metadata):
     started = time.monotonic()
     for sha in [base, head]:
@@ -297,12 +327,14 @@ def gate_pr(workspace, base, head, metadata):
     decision = plan(changed, deleted, impacted, used, tests)
     selected_seconds = time.monotonic() - started
     statuses = workspace.test(decision['selected'], CONFIGS['amd64'], metadata, 'pr')
+    statuses, reruns = rerun_budget_only(workspace, decision['selected'], statuses, CONFIGS['amd64'],
+                                         metadata, 'pr')
     verdicts, failed = classify(decision['selected'], statuses, rust)
     inputs = workspace.inputs_check() + workspace.budget_check(base)
     if not workspace.build(decision['build'], CONFIGS['amd64'], metadata, 'pr'):
         # Reported like stale inputs, so both checks fail.
         inputs.append('bazel build of impacted targets failed: ' + ' '.join(decision['build']))
-    return {**decision, 'verdicts': verdicts, 'failed': failed, 'inputs': inputs,
+    return {**decision, 'verdicts': verdicts, 'failed': failed, 'inputs': inputs, 'budget_reruns': reruns,
             'changed': sorted(changed | deleted),
             'durations': {'selection': round(selected_seconds, 1),
                           'total': round(time.monotonic() - started, 1)}}
@@ -331,11 +363,13 @@ def gate_main(workspace, base, head, metadata):
     for architecture, config in CONFIGS.items():
         begun = time.monotonic()
         statuses = workspace.test(everything, config, metadata, f'main-{architecture}')
+        statuses, reruns = rerun_budget_only(workspace, everything, statuses, config, metadata,
+                                             f'main-{architecture}')
         verdicts, failed = classify(everything, statuses, rust)
         failures = failed['rust'] + failed['python']
         architectures[architecture] = {
             'verdicts': verdicts, 'failed': failed,
-            'missed': sorted(set(failures) - set(selection['selected'])),
+            'missed': sorted(set(failures) - set(selection['selected'])), 'budget_reruns': reruns,
             'seconds': round(time.monotonic() - begun, 1)}
     return {'selection': selection['selection'], 'reason': selection['reason'],
             'selected': selection['selected'], 'tests': len(everything),
