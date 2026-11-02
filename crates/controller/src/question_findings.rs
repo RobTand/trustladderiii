@@ -361,6 +361,42 @@ mod tests {
     const MAKING: Cont = Cont::Ready(Resume::Making);
 
     #[test]
+    fn real_2636_report_identifies_cant_meet_for_planner_and_maker() {
+        let reply: Value = serde_json::from_str(include_str!(
+            "../../../workers/tests/fixtures/question-findings/prismabuild-2636-planner-cant-meet.json"
+        )).unwrap();
+        for (source, cont, fresh, prior) in [
+            (
+                "planner",
+                PLANNING,
+                json!({"plans": reply}),
+                Phase::Planning { must_split: false },
+            ),
+            (
+                "maker",
+                MAKING,
+                json!({"maker_replies": reply}),
+                Phase::Making,
+            ),
+        ] {
+            let found = run(
+                &question(QKind::CantMeet, cont),
+                &fresh,
+                &json!({}),
+                &[],
+                prior,
+            )
+            .unwrap();
+            assert_eq!(found["source"], source);
+            assert_eq!(
+                found["outcome"], "cant_meet",
+                "the writer must distinguish an explicit refusal"
+            );
+            assert_eq!(found["report"], reply["report"]);
+        }
+    }
+
+    #[test]
     fn planner_cant_meet_reports_carry_their_cause_and_question() {
         // prismaquant#2662, question 10: both planner reports from MLflow, redacted.
         for name in [
