@@ -169,7 +169,7 @@ fn hostile_maker_head() {
                     ),
                     (
                         "plans",
-                        json!({"kind":"leaf","files":["README.md"],"checks":[{"kind":"regression","node_ids":["test_value.py::test_value"],"goal_ids":[0]}]}),
+                        json!({"kind":"leaf","files":["README.md"],"checks":[{"kind":"demonstrating","node_ids":["test_value.py::test_value"],"goal_ids":[0],"forcing":{"symptom":"The value is late.","environment":{"VALUE_LATE":"1"},"patches":[]}}]}),
                     ),
                     (
                         "maker_findings",
@@ -185,6 +185,12 @@ fn hostile_maker_head() {
             assert_eq!(
                 store.worker_materials("0").unwrap().unwrap()["check_run"]["base_sha"],
                 f.base
+            );
+            // #393: the harness gets the plan's forcing through the stored check run.
+            assert_eq!(
+                store.worker_materials("0").unwrap().unwrap()["check_run"]["plan"][0]["forcing"]["environment"]
+                    ["VALUE_LATE"],
+                "1"
             );
             // A fix round may start after commits and a rebase changed the check base.
             fs::write(checkout.join("README.md"), "earlier maker round\n").unwrap();

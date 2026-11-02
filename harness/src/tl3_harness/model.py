@@ -51,10 +51,26 @@ class FailureNotes(dict):
 
 
 @dataclass(frozen=True)
+class Forcing:
+    """A plan's declarative recreation of a flake's condition (#393)."""
+    symptom: str
+    environment: tuple[tuple[str, str], ...] = ()
+    patches: tuple[tuple[str, str, str], ...] = ()
+
+    @classmethod
+    def parse(cls, data) -> "Forcing":
+        raise NotImplementedError
+
+    def as_json(self) -> dict:
+        raise NotImplementedError
+
+
+@dataclass(frozen=True)
 class Check:
     name: str
     kind: Kind
     tests: tuple[str, ...]
+    forcing: Forcing | None = None
 
     def __post_init__(self):
         if not self.name or not isinstance(self.kind, Kind) or not self.tests:

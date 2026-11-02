@@ -323,6 +323,19 @@ mod tests {
     }
 
     #[test]
+    fn forced_check_carries_its_forcing_to_the_maker() {
+        // #393: the maker sees the forcing its deflake must survive.
+        let brief = json!({"brief":"Deflake", "goals":[{"description":"State the departure","verification":"test"}]});
+        let forcing = json!({"symptom":"PID 4242 is live.","environment":{},"patches":[{"target":"sampler.process_in_scope","raises":"ValueError"}]});
+        let plan = json!({"kind":"leaf","files":["tests/test_sampler.py"],"checks":[
+            {"kind":"demonstrating","node_ids":["tests/test_sampler.py::test_departed"],"goal_ids":[0],"forcing":forcing},
+            {"kind":"regression","node_ids":["tests/test_sampler.py::test_other"],"goal_ids":[0]}]});
+        let inputs = maker_inputs(&brief, &plan).unwrap();
+        assert_eq!(inputs["plan"]["checks"][0]["forcing"], forcing);
+        assert!(inputs["plan"]["checks"][1].get("forcing").is_none());
+    }
+
+    #[test]
     fn repository_orientation_ignores_total_text_size() {
         let f = crate::git_tests::Repo::new();
         let content = "source-only-never-inline\n".repeat(40_000);

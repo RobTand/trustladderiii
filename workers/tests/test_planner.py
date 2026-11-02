@@ -549,7 +549,89 @@ def test_prompt_requires_deterministic_reproduction_for_determinism_work():
     prompt = " ".join((Path(__file__).parents[1] / "src/tl3_workers/prompts/planner.md").read_text().split())
     assert "must name a test that reproduces the race deterministically" in prompt
     assert "a flaky test can pass on the base" in prompt
-    assert "regression or behavior-preserving checks that fit the evidence" in prompt
+
+
+def test_prompt_states_forced_reproduction_for_deflakes():
+    # #393, Rob 2026-11-02: a forced reproduction is the deflake red; stress runs don't count.
+    prompt = " ".join((Path(__file__).parents[1] / "src/tl3_workers/prompts/planner.md").read_text().split())
+    assert "forcing" in prompt and "forced reproduction" in prompt
+    assert "fails by assertion on the base under the forcing" in prompt
+    assert "passes on the change both with and without the forcing" in prompt
+    assert "Repeating a test until it fails does not count" in prompt
+    assert "regression or behavior-preserving checks that fit the evidence" not in prompt
+
+
+PID_FORCING = {
+    "symptom": "A real, unrelated process holds PID 4242, so the sampler cannot decide whether it left.",
+    "environment": {},
+    "patches": [{"target": "sampler.process_in_scope", "raises": "ValueError"}],
+}
+
+
+@pytest.fixture
+def deflake_worktree(planner_request, monkeypatch):
+    from tl3_workers.forecast import Forecaster
+
+    root = Path(planner_request['worktree'])
+    (root / 'tests').mkdir(exist_ok=True)
+    (root / 'tests/test_sampler.py').write_text(
+        'import sampler\n\n\ndef test_departed_process_is_not_live():\n'
+        '    assert sampler.live_after([4242], [], "/fake") == 0\n')
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(Forecaster, 'measure', lambda *a: {'fits': True})
+    reply = copy.deepcopy(LEAF)
+    reply['files'] = ['tests/test_sampler.py']
+    reply['checks'] = [{'kind': 'demonstrating', 'goal_ids': [0, 1], 'forcing': copy.deepcopy(PID_FORCING),
+                        'node_ids': ['tests/test_sampler.py::test_departed_process_is_not_live']}]
+    return reply
+
+
+def test_forced_reproduction_is_a_valid_plan(planner_request, deflake_worktree):
+    from tl3_workers.roles.planner import check_reply
+
+    validate("planner-reply", deflake_worktree)
+    check_reply(planner_request['inputs'], deflake_worktree)
+    assert deflake_worktree['violations'] == []
+
+
+def test_forcing_belongs_only_on_demonstrating_checks(planner_request, deflake_worktree):
+    from tl3_workers.roles.planner import check_reply
+
+    deflake_worktree['checks'][0]['kind'] = 'regression'
+    check_reply(planner_request['inputs'], deflake_worktree)
+    assert "Only a demonstrating check can carry a forcing." in deflake_worktree['violations']
+
+
+def test_forced_check_names_the_old_test_at_the_base(planner_request, deflake_worktree):
+    from tl3_workers.roles.planner import check_reply
+
+    test = 'tests/test_sampler.py::test_departure_is_stated'
+    deflake_worktree['checks'][0]['node_ids'] = [test]
+    check_reply(planner_request['inputs'], deflake_worktree)
+    assert any(test in item and 'base' in item for item in deflake_worktree['violations'])
+
+
+def test_invalid_forcing_is_a_planner_violation(planner_request, deflake_worktree):
+    from tl3_workers.roles.planner import check_reply
+
+    deflake_worktree['checks'][0]['forcing']['patches'][0]['raises'] = 'AssertionError'
+    validate("planner-reply", deflake_worktree)
+    check_reply(planner_request['inputs'], deflake_worktree)
+    assert any(item.startswith('Invalid forcing:') and 'AssertionError' in item
+               for item in deflake_worktree['violations'])
+
+
+@pytest.mark.parametrize('change', [
+    {'code': 'print(1)'},
+    {'symptom': ''},
+    {'patches': [{'target': 'sampler.f', 'exec': 'x'}]},
+])
+def test_planner_schema_keeps_the_forcing_declarative(deflake_worktree, change):
+    import jsonschema
+
+    deflake_worktree['checks'][0]['forcing'].update(change)
+    with pytest.raises(jsonschema.ValidationError):
+        validate("planner-reply", deflake_worktree)
 
 
 def test_oversized_check_plan_is_a_planner_violation(planner_request, monkeypatch):

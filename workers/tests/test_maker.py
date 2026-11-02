@@ -1333,3 +1333,20 @@ def test_maker_budget_exhaustion_finishes_without_claiming_unmade_changes(maker_
     assert len(observed) <= 65, 'maker allows at most 64 tool turns and one final answer'
     assert events[-1]['reply'] == {'kind': 'cant_meet', 'report':
                                   'no code change was made' if final_done else 'The work is incomplete.'}
+
+
+def test_maker_input_carries_a_forced_check(maker_request):
+    # #393: the maker sees the forcing its deflake must survive.
+    check = maker_request['inputs']['plan']['checks'][0]
+    check['forcing'] = {"symptom": "A real, unrelated process holds PID 4242.", "environment": {},
+                        "patches": [{"target": "sampler.process_in_scope", "raises": "ValueError"}]}
+    validate('maker-input', maker_request['inputs'])
+    check['forcing']['code'] = 'print(1)'
+    with pytest.raises(ValidationError):
+        validate('maker-input', maker_request['inputs'])
+
+
+def test_maker_prompt_explains_forced_checks():
+    prompt = " ".join((Path(__file__).parents[1] / "src/tl3_workers/prompts/maker.md").read_text().split())
+    assert "forcing" in prompt
+    assert "both with and without the forcing" in prompt
