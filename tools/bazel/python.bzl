@@ -18,6 +18,7 @@ _PACKAGE_DATA = {
     "harness/tests": ["//harness:project_files"],
     "tools/ci": [
         "//:bazel_config",
+        "//:workflows",
         "//crates/store:sources",
         "//harness:project_files",
         "//tools/bazel:sources",
