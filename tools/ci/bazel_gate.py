@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -302,6 +303,43 @@ def write_result(result, directory, root=ROOT):
             log.replace(directory / log.name)
 
 
+def scan_artifacts(directory):
+    """Only the scanner child receives the runner credential, never other tools."""
+    if os.environ.get('BBRUN_FINAL_SCAN') == '1':
+        print('secret scan deferred to bbrun final scan', flush=True)
+        return 0
+    env = child_env()
+    if 'BUILDBUDDY_API_KEY' in os.environ:
+        env['BUILDBUDDY_API_KEY'] = os.environ['BUILDBUDDY_API_KEY']
+    status = 75
+    try:
+        status = subprocess.run(
+            [sys.executable, '-I', '-S', str(ROOT / 'tools/ci/before_upload.py'),
+             '--require', 'BUILDBUDDY_API_KEY', str(directory)], env=env).returncode
+        return status
+    finally:
+        if status and directory.exists():
+            for path in directory.iterdir():
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+
+
+def runner_entrypoint(main):
+    """Keep the credential in the scan supervisor; run gate logic scrubbed."""
+    if sys.argv[1:2] == ['--runner-child']:
+        del sys.argv[1]
+        return main()
+    directory = Path(os.environ['BUILDBUDDY_ARTIFACTS_DIRECTORY'])
+    try:
+        status = subprocess.run([sys.executable, sys.argv[0], '--runner-child', *sys.argv[1:]],
+                                env=child_env()).returncode
+    finally:
+        scan_status = scan_artifacts(directory)
+    return scan_status or status
+
+
 def rerun_budget_only(workspace, labels, statuses, config, metadata, log_name):
     """Rerun once the targets that failed only a time budget. Real failures are never retried."""
     failed = [label for label in labels if statuses.get(label) != 'PASSED']
@@ -410,4 +448,4 @@ def passed(result):
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    sys.exit(runner_entrypoint(main))

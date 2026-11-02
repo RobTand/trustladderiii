@@ -1,4 +1,5 @@
 load("@rules_python//python:defs.bzl", "py_binary")
+load("@tl3_pip//:requirements.bzl", "requirement")
 load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
 
 # gazelle:python_root
@@ -173,6 +174,17 @@ tl3_py_test(
     name = "test_remote_gate",
     srcs = ["test_remote_gate.py"],
     deps = [":remote_gate"],
+)
+
+tl3_py_test(
+    name = "test_secret_scans",
+    srcs = ["test_secret_scans.py"],
+    deps = [
+        ":bazel_gate",
+        ":remote_gate",
+        "//tools/ci:child_env",
+        "@tl3_pip//pyyaml",
+    ],
 )
 
 py_binary(
