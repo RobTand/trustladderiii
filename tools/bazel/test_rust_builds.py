@@ -98,7 +98,7 @@ class RustDependencyTests(unittest.TestCase):
             bins=["tl3", "tl3d"], declared_tests={
                 name: {"path": "tests/" + name + ".rs"}
                 for name in ["core_defects", "workers", "publishing", "prismabuild",
-                             "github", "hindsight", "writer_references"]})
+                             "github", "hindsight", "writer_references", "writer_blocker"]})
 
     def dependencies(self, target):
         pending, found = [":" + target], set()
@@ -126,6 +126,12 @@ class RustDependencyTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn("//tools/bazel:worker_python",
                               self.dependencies("test_test_" + name))
+
+    def test_writer_blocker_keeps_its_compile_time_recording_without_worker_python(self):
+        binary = self.rules[":test_test_writer_blocker_binary"]
+        self.assertIn("//workers/tests:fixtures", binary["compile_data"])
+        self.assertNotIn("//tools/bazel:worker_python",
+                         self.dependencies("test_test_writer_blocker"))
 
     def test_staged_harness_and_role_directory_inputs_are_kept(self):
         for name in ["workers", "publishing", "prismabuild"]:
