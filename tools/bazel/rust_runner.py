@@ -1,6 +1,8 @@
 """Run one Rust test binary with the existing gate's budgets and result checks."""
 import json
 import os
+import resource
+import time
 from pathlib import Path
 import sys
 
@@ -57,6 +59,14 @@ def main():
     for repository in Path('..').glob('*postgres_linux_*'):
         os.environ['TL3_TEST_POSTGRES_DIR'] = str(repository.resolve())
     binary = {'name': name, 'command': [str(Path(executable).resolve())]}
+    shard = None
+    if int(os.environ.get('TEST_TOTAL_SHARDS', '1')) > 1:
+        shard = {'index': int(os.environ['TEST_SHARD_INDEX']),
+                 'total': int(os.environ['TEST_TOTAL_SHARDS'])}
+        if harness != 'custom' or name not in ('tl3-controller/workers', 'tl3-controller/publishing'):
+            raise RuntimeError('scenario sharding requires a shard-aware custom harness')
+        Path(os.environ['TEST_SHARD_STATUS_FILE']).touch()
+    started = time.monotonic()
     results = rust_gate.execute_binary(binary, harness == 'custom', arguments)
     check_workspace()
     # .bazelrc names the executor class; budgets stay strict without one.
@@ -64,7 +74,11 @@ def main():
     names = [key.split('::', 1)[1] for key in results if not key.endswith('::__tail__')]
     # Written before the budget check so calibration also sees overruns.
     receipt = Path(os.environ['TEST_UNDECLARED_OUTPUTS_DIR'], 'inventory.json')
-    receipt.write_text(json.dumps({'rust': {name: names}, 'seconds': results, 'runner_class': runner}))
+    receipt.write_text(json.dumps({'rust': {name: names}, 'seconds': results, 'runner_class': runner,
+                                  'shard': shard, 'wall_seconds': time.monotonic() - started,
+                                  'cpu_seconds': sum((usage.ru_utime + usage.ru_stime) for usage in
+                                                     [resource.getrusage(resource.RUSAGE_SELF),
+                                                      resource.getrusage(resource.RUSAGE_CHILDREN)])}))
     if os.environ.get('TL3_BUDGETS') == 'record':
         # Uncalibrated executors (arm64) keep the seconds in the receipt only.
         return

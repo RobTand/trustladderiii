@@ -50,6 +50,7 @@ _CONTROLLER_TEST_DATA = [
 ]
 # Only these scenarios execute tl3_workers. Its imports include tl3_harness.
 _CONTROLLER_WORKERS = [
+    "lib_test_tl3_controller",
     "test_test_github-flow",
     "test_test_publishing",
     "test_test_workers",
@@ -67,6 +68,8 @@ _CONTROLLER_BINARIES = {
 _CONTROLLER_RUNTIME = {
     "lib_test_tl3_controller": [
         "//harness:project_files",
+        "//workers/tests:worker_process",
+        "//workers/tools:scripts",
         "//workers/src:prompts",
         "//workers/tests:fixtures",
     ],
@@ -153,6 +156,7 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
         tags = ["rust"] + tags,
         exec_properties = exec_properties,
         size = "large",
+        shard_count = 4 if controller and name in ["test_test_workers", "test_test_publishing"] else 0,
     )
 
 def tl3_crate(package, crate, local_deps = [], features = [], build_script = False,

@@ -188,15 +188,37 @@ def read_receipt(outputs):
 
 def bazel_receipts(directory):
     inventory = {'rust': {}, 'python': []}
+    shards, unsharded = {}, set()
     for outputs in sorted(directory.rglob('test.outputs')):
         receipt = read_receipt(outputs)
         if receipt is None:
             continue
         for binary, names in receipt.get('rust', {}).items():
-            if binary in inventory['rust']:
-                raise RuntimeError(f'duplicate Bazel binary receipt: {binary}')
-            inventory['rust'][binary] = names
+            shard = receipt.get('shard')
+            if shard:
+                if binary in unsharded:
+                    raise RuntimeError(f'duplicate Bazel binary receipt: {binary}')
+                index, total = shard['index'], shard['total']
+                if total < 2 or not 0 <= index < total:
+                    raise RuntimeError(f'invalid Bazel shard receipt: {binary}')
+                parts = shards.setdefault(binary, {'total': total, 'seen': set()})
+                if parts['total'] != total or index in parts['seen']:
+                    raise RuntimeError(f'duplicate or inconsistent Bazel shard receipt: {binary}')
+                parts['seen'].add(index)
+                existing = inventory['rust'].setdefault(binary, [])
+                if len(names) != len(set(names)) or set(existing) & set(names):
+                    raise RuntimeError(f'duplicate Bazel scenario across shards: {binary}')
+                existing.extend(names)
+            else:
+                if binary in inventory['rust']:
+                    raise RuntimeError(f'duplicate Bazel binary receipt: {binary}')
+                inventory['rust'][binary] = names
+                unsharded.add(binary)
         inventory['python'].extend(receipt.get('python', []))
+    for binary, parts in shards.items():
+        if parts['seen'] != set(range(parts['total'])):
+            raise RuntimeError(f'missing Bazel shard receipt: {binary}')
+        inventory['rust'][binary].sort()
     return inventory
 
 
