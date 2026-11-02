@@ -1024,6 +1024,26 @@ def test_review_fix_contract_accepts_named_tests_and_reasons(review_fix):
     maker._check_reply(inputs, reply)
 
 
+def test_bounded_fix_round_contract_accepts_resolved_records_and_finding_refs(maker_request):
+    from tl3_workers.contracts import schema
+    from jsonschema import Draft202012Validator
+    inputs = maker_request['inputs']
+    inputs.update(round=1, reviewed_sha='b' * 40, feedback=[
+        {'kind': 'review_finding', 'id': 'review-1-0', 'reviewed_sha': 'a' * 40,
+         'report': 'Greeting fails for an empty name.', 'goal_ids': ['greeting'], 'resolved_round': 1},
+        {'kind': 'failed_check', 'report': 'Existing test failed.', 'goal_ids': [], 'resolved_round': 2},
+        {'kind': 'review_finding', 'id': 'review-3-0', 'reviewed_sha': 'b' * 40,
+         'report': 'Describe the signature in full.', 'goal_ids': ['greeting']},
+    ])
+    inputs['current_review_findings'] = [{'id': 'review-3-0', 'reviewed_sha': 'b' * 40}]
+    assert Draft202012Validator(schema('maker-input')).is_valid(inputs), 'one-line records and finding refs'
+    maker._check_inputs(inputs)
+    reply = {**DONE, 'reproductions': [{'finding_id': 'review-3-0', 'reason': 'A documentation fix.'}]}
+    maker._check_reply(inputs, reply)
+    inputs['feedback'][0]['resolved_round'] = 0
+    assert not Draft202012Validator(schema('maker-input')).is_valid(inputs), 'rounds start at 1'
+
+
 @pytest.mark.parametrize('invalid', ['omitted', 'partial', 'duplicate', 'unknown', 'old', 'selector'])
 def test_review_fix_must_cover_current_findings_exactly_once(review_fix, invalid):
     inputs, reply = review_fix
