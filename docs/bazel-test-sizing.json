@@ -826,6 +826,56 @@
         "url": "https://app.buildbuddy.io/invocation/7bec24ad-7944-4e73-8e65-ae09a25babb2",
         "verified": true,
         "note": "Receipt-verified 512 MiB request; observed 433860608-byte peak leaves only 23.7% headroom, so final request raised to 1 GiB."
+      },
+      "after": {
+        "invocation": "eb6c1647-add9-409d-aeb5-9e93779e1484",
+        "label": "//workers/tests:test_pb_tests",
+        "receipts": [
+          {
+            "action_digest": {
+              "hash": "715b860392e52f4af1d825a2fb37a82f9b7c5753b3c8e55f271bb4a12bcc51c6",
+              "sizeBytes": "431"
+            },
+            "execution_id": "/uploads/b5705e0c-aff6-4e4a-9510-104d2237e9ad/blobs/715b860392e52f4af1d825a2fb37a82f9b7c5753b3c8e55f271bb4a12bcc51c6/431",
+            "shard": null,
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {
+              "estimatedMemoryBytes": "1073741824",
+              "estimatedMilliCpu": "2000"
+            },
+            "effective": {
+              "estimatedMemoryBytes": "1073741824",
+              "estimatedMilliCpu": "2000",
+              "estimatedFreeDiskBytes": "100000000"
+            },
+            "predicted": null,
+            "measured": null,
+            "cgroup": {
+              "cpuWeight": "79",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "12288",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                3,
+                22,
+                29,
+                30
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T22:40:04.294486430Z",
+            "completed": "2026-11-02T22:41:22.056787138Z",
+            "cpu_seconds": 74.901196,
+            "peak_memory_bytes": "423309312",
+            "sampled_peak_cpu": 1.022
+          }
+        ],
+        "url": "https://app.buildbuddy.io/invocation/eb6c1647-add9-409d-aeb5-9e93779e1484",
+        "verified": true
       }
     }
   },

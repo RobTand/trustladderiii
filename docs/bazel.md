@@ -101,7 +101,7 @@ scenario totals are not instantaneous CPU demand.
 | Workers, per shard | 2.240 | 524,288,000 | 3 / 1 GiB |
 | Store/Postgres | 0.912 | 721,035,264 | 2 / 1 GiB |
 | Harness/nested pytest | 0.994 | 106,151,936 | 2 / 512 MiB |
-| Workers nested pytest, `test_pb_tests` | 1.020 | 433,860,608 | 2 / 1 GiB |
+| Workers nested pytest, `test_pb_tests` | 1.022 | 433,860,608 | 2 / 1 GiB |
 
 CPU rounds up to a whole core after 25% headroom. Memory gets at least 25%
 headroom, rounds up to whole GiB, and has a 512 MiB minimum. The controller
@@ -140,7 +140,10 @@ For workers use `--cpu=3 --memory-bytes=1073741824`; for Postgres use CPU 2
 with the same memory; for harness use CPU 2 and 536870912 bytes.
 For `//workers/tests:test_pb_tests`, use CPU 2 and 1073741824 bytes. Its first
 512 MiB receipt passed, but the measured 433860608-byte peak left less than
-25% headroom. The reservation was raised to 1 GiB before final verification.
+25% headroom. The reservation was raised to 1 GiB. The final
+[eb6c1647 receipt](https://app.buildbuddy.io/invocation/eb6c1647-add9-409d-aeb5-9e93779e1484)
+shows requested and effective 2000m / 1073741824 bytes; the target and checker
+both passed.
 
 The old publishing receipt from [cf925036](https://app.buildbuddy.io/invocation/cf925036-43e2-41c6-be27-3d3276560385)
 requested 4000m and 8 GiB but received 1000m and 491,680,192 bytes. Worker
