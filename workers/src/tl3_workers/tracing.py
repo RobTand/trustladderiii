@@ -903,10 +903,6 @@ class Entry:
 
 class Capture:
     def __init__(self, request):
-        # mlflow-skinny's LangChain flavor imports these, and skinny doesn't
-        # depend on them; pyproject.toml pins them for the judges too (#403).
-        import numpy  # noqa: F401
-        import pandas  # noqa: F401
         import mlflow
         import mlflow.langchain
         from mlflow.entities import MlflowExperimentLocation

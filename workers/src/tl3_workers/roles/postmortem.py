@@ -7,9 +7,12 @@ twice and logs no assessment twice.
 """
 
 import base64
+from contextlib import contextmanager
 import json
 from pathlib import Path
 import secrets
+import signal
+import sys
 import time
 
 from tl3_workers import judges, tracing
@@ -38,9 +41,45 @@ class PostmortemDeadline(BaseException):
 
 
 def unusable(item, root):
-    """Why a recommendation can't apply to the release, or None."""
-    del item, root
-    return None
+    """Why a recommendation can't apply to the release, or None. TL1's rule: its
+    target is a file the release ships, and its before text appears there
+    exactly once, so slice C's curator never sees an edit that can't apply."""
+    target = item["target"]
+    root = Path(root).resolve()
+    path = (root / target).resolve()
+    if Path(target).is_absolute() or not path.is_relative_to(root) or not path.is_file():
+        return "not a file in the release"
+    if item["operation"] == "add":
+        return None
+    count = path.read_text(encoding="utf-8", errors="replace").count(item["before"])
+    return None if count == 1 else f"before appears {count} times"
+
+
+def applicable(recommendations, root):
+    """The recommendations that apply to the release; each dropped one is logged."""
+    kept = []
+    for rank, item in enumerate(recommendations, 1):
+        if (reason := unusable(item, root)) is None:
+            kept.append(item)
+        else:
+            print(f"tl3_workers: postmortem: dropped recommendation {rank}, "
+                  f"{item['target'][:200]}: {reason}", file=sys.stderr)
+    return kept
+
+
+@contextmanager
+def deadline(seconds):
+    """Raise PostmortemDeadline in this thread once `seconds` of wall clock pass."""
+    def expired(signum, frame):
+        raise PostmortemDeadline()
+
+    previous = signal.signal(signal.SIGALRM, expired)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 class MlflowTraces:
@@ -229,6 +268,12 @@ def run(model, request, worktree, emit):
     workdir = Path(request["worktree"])
     if (cached := _load(workdir / "reply.json")) is not None:
         return cached
+    # The whole run, every judge and MLflow call, has one wall-clock allowance (#486).
+    with deadline(request["inputs"]["deadline_secs"]):
+        return _judged_run(request, workdir, emit)
+
+
+def _judged_run(request, workdir, emit):
     inputs = request["inputs"]
     redactor = redactor_for(request)
     settings = tracing.mlflow_settings(request)
@@ -259,7 +304,10 @@ def run(model, request, worktree, emit):
                 inputs=case, trace=trace))
         written = feedback.value if isinstance(feedback.value, dict) else read_reply(
             str(feedback.value))
-        judged = {"postmortem": scrub(written, redactor), "grades": grades}
+        written = scrub(written, redactor)
+        if isinstance(written, dict) and isinstance(written.get("recommendations"), list):
+            written["recommendations"] = applicable(written["recommendations"], RELEASE_ROOT)
+        judged = {"postmortem": written, "grades": grades}
         _save(workdir / "judged.json", judged)
     logged = _load(workdir / "assessments.json") or {}
     target = traces[0].info.trace_id if traces else None

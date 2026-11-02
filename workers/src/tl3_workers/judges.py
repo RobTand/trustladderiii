@@ -3,9 +3,12 @@ escalation ensemble.
 
 Judges return MLflow Feedback in memory. Nothing in this module logs a
 feedback or acts on a verdict. MLflow's judges import numpy and pandas, which
-mlflow-skinny doesn't depend on; pyproject.toml pins them, and `tracing`
-imports them.
+mlflow-skinny doesn't depend on: pyproject.toml pins them for the workers, and
+the annotations below give the Bazel targets the same dependencies.
 """
+
+# gazelle:include_dep @tl3_pip//numpy
+# gazelle:include_dep @tl3_pip//pandas
 
 from contextlib import contextmanager
 import os
@@ -64,6 +67,10 @@ def endpoint_url(base_url):
     return base_url.rstrip("/") + "/chat/completions"
 
 
+# Model turns, each with its tool calls, one judge may take.
+MAX_TURNS = 12
+
+
 def configure(base_url, key):
     """Route judges through CLIProxyAPI with the run's already-loaded key.
 
@@ -73,6 +80,8 @@ def configure(base_url, key):
     if not key:
         raise ValueError("empty model key")
     os.environ["OPENAI_API_KEY"] = key
+    # make_judge ignores effort and budget_tokens; this bounds each judge (#486).
+    os.environ["MLFLOW_JUDGE_MAX_ITERATIONS"] = str(MAX_TURNS)
     os.environ["MLFLOW_DISABLE_TELEMETRY"] = "true"
     os.environ["DO_NOT_TRACK"] = "true"
     _endpoint = endpoint_url(base_url)

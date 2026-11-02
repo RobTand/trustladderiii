@@ -993,6 +993,7 @@ impl Controller {
         let mut delivery = state.delivery.clone();
         delivery.epoch = self.store.load()?.epoch.get();
         let completion = match self.adapters.adapter(&delivery)?.stop_stalled(&delivery) {
+            Ok(completion) if delivery.is_postmortem() => crate::postmortems::stalled(completion),
             Ok(completion) => completion,
             Err(error) => {
                 self.look_failed(state, error)?;

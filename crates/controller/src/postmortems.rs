@@ -2,7 +2,7 @@
 //! commit that makes them owed, outside the kernel. The runner then judges one
 //! postmortem at a time on spare agent-pool capacity (Q39).
 
-use crate::executor::{CommentKind, Delivery, Output};
+use crate::executor::{CommentKind, Completion, Delivery, Observation, Output};
 use crate::steering::Task;
 use crate::{Error, Result};
 use serde_json::{Value, json};
@@ -277,13 +277,15 @@ pub(crate) fn simulated_reply() -> Value {
 
 /// The case file for one postmortem, written into the worker's inputs: the
 /// request, its outcome and grades, phase times, questions with their #322
-/// findings, incidents, plan, brief, audit and the release that ran.
+/// findings, incidents, plan, brief, audit and the release that ran, with
+/// the run's whole wall-clock allowance.
 pub(crate) fn case_file(
     store: &mut Store,
     snapshot: &Snapshot,
     delivery: &Delivery,
     id: i64,
     models: &tl3_config::Models,
+    deadline_secs: u32,
 ) -> Result<Value> {
     let node = delivery.node();
     let key = node.0.to_string();
@@ -361,6 +363,7 @@ pub(crate) fn case_file(
         "rubric": serde_json::from_str::<Value>(include_str!("rubric.json"))?,
         "release": release,
         "grade_model": grade_model.name,
+        "deadline_secs": deadline_secs,
         "trace_tags": {"node": key, "request": key, "repo": repo,
             "issue": request.issue.to_string()},
     }))
@@ -392,8 +395,28 @@ fn failure_class(failure: Option<&str>) -> &'static str {
         Some("invalid_reply") => "invalid_reply",
         Some("launch_failed") => "launch_failed",
         Some("no_progress") => "no_progress",
+        Some("deadline") => "deadline",
         _ => "worker_failed",
     }
+}
+
+/// Failed runs in a row, since tl3d started, that pause the runner (#486).
+const PAUSE_AFTER_FAILURES: u32 = 3;
+
+/// A postmortem the controller stopped for making no progress failed with
+/// `no_progress`, whatever the stopped worker's record says (#486).
+pub(crate) fn stalled(mut completion: Completion) -> Completion {
+    for observation in &mut completion.observations {
+        if let Observation::Postmortem {
+            reply: None,
+            failure,
+            ..
+        } = observation
+        {
+            *failure = Some("no_progress".into());
+        }
+    }
+    completion
 }
 
 /// How fast the spare-capacity runner may spend model quota (#486).
@@ -431,17 +454,45 @@ impl crate::Controller {
     /// Claim the oldest owed postmortem when the pool has spare capacity, in
     /// the commit that creates its worker delivery.
     pub(crate) fn start_postmortem(&mut self, snapshot: &Snapshot) -> Result<bool> {
+        let Some(pace) = &self.postmortems else {
+            return Ok(false);
+        };
         let running = snapshot.rows.iter().filter(|row| row.table == JOBS).count();
-        if self.postmortems.is_none() || running > 0 {
+        // Spare slots aren't spare quota (#486).
+        if running > 0
+            || snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == "model_quotas" && pace.models.contains(&row.id))
+        {
+            return Ok(false);
+        }
+        let per_day = pace.per_day;
+        // Every drive pass asks; most find nothing owed and stop here.
+        let Some(owed) = self.store.owed_postmortem()? else {
+            return Ok(false);
+        };
+        if self
+            .store
+            .postmortem_failure_streak(self.postmortem_since)?
+            >= PAUSE_AFTER_FAILURES
+        {
+            if !self.postmortem_paused {
+                self.postmortem_paused = true;
+                eprintln!(
+                    "postmortems paused: {PAUSE_AFTER_FAILURES} runs in a row failed; owed postmortems wait for tl3d to start again"
+                );
+            }
+            return Ok(false);
+        }
+        self.postmortem_paused = false;
+        if self.store.postmortem_claims_today()? >= per_day {
             return Ok(false);
         }
         let world = crate::snapshot::decode(snapshot)?;
         if !spare_pool_capacity(&world, running) {
             return Ok(false);
         }
-        let Some(owed) = self.store.owed_postmortem()? else {
-            return Ok(false);
-        };
         let node = NodeId(
             owed.node
                 .parse()
@@ -584,6 +635,8 @@ impl crate::Controller {
     /// At startup, a `running` postmortem with no live delivery is owed again.
     pub(crate) fn recover_postmortems(&mut self) -> Result<()> {
         let snapshot = self.store.load()?;
+        // Runs that failed before this start never pause the runner.
+        self.postmortem_since = snapshot.revision.get() as i64;
         let has = |table: &str, key: &str| {
             snapshot
                 .rows

@@ -148,9 +148,7 @@ impl Store {
     /// Independent of kernel revisions. The immutable operation ID survives lost acknowledgements.
     pub fn queue_memory(&mut self, operation_id: &str, item: &serde_json::Value) -> Result<()> {
         let mut tx = self.client.transaction()?;
-        tx.batch_execute("LOCK TABLE tl3_memory_outbox IN SHARE ROW EXCLUSIVE MODE")?;
-        tx.execute("INSERT INTO tl3_memory_outbox (operation_id, item) VALUES ($1, $2) ON CONFLICT (operation_id) DO NOTHING", &[&operation_id, item])?;
-        tx.execute("UPDATE tl3_memory_outbox SET parked_reason = 'capacity', parked_at = CURRENT_TIMESTAMP WHERE sequence IN (SELECT sequence FROM tl3_memory_outbox WHERE parked_reason IS NULL ORDER BY sequence DESC OFFSET 10000)", &[])?;
+        queue_memory_in(&mut tx, operation_id, item)?;
         tx.commit()?;
         Ok(())
     }
@@ -765,28 +763,42 @@ impl Store {
             .collect())
     }
 
-    /// The oldest owed postmortem, which the runner claims next (#403).
+    /// The oldest owed postmortem, which the runner claims next (#403). Runs
+    /// owed again after a failure wait behind every first run (#486).
     pub fn owed_postmortem(&mut self) -> Result<Option<PostmortemRecord>> {
         Ok(self
             .client
             .query_opt(
-                &format!("SELECT {POSTMORTEM_RECORD} FROM tl3_postmortems WHERE status = 'owed' ORDER BY owed_at, id LIMIT 1"),
+                &format!("SELECT {POSTMORTEM_RECORD} FROM tl3_postmortems WHERE status = 'owed' ORDER BY attempts, owed_at, id LIMIT 1"),
                 &[],
             )?
             .as_ref()
             .map(postmortem_record))
     }
 
-    /// Postmortem claims made since the start of the current UTC day (#403).
+    /// Postmortem claims made since the start of the current UTC day (#486).
     pub fn postmortem_claims_today(&mut self) -> Result<u32> {
-        todo!("postmortem claims today")
+        let count: i64 = self
+            .client
+            .query_one(
+                "SELECT count(*) FROM tl3_postmortem_claims WHERE claimed_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'",
+                &[],
+            )?
+            .get(0);
+        Ok(u32::try_from(count).unwrap_or(u32::MAX))
     }
 
     /// Failed postmortem runs since the last one that succeeded, counting only
-    /// claims committed after `since`, up to 3 (#403).
+    /// claims committed after revision `since`, up to 3 (#486).
     pub fn postmortem_failure_streak(&mut self, since: i64) -> Result<u32> {
-        let _ = since;
-        todo!("postmortem failure streak")
+        let outcomes = self.client.query(
+            "SELECT outcome FROM tl3_postmortem_claims WHERE revision > $1 AND outcome IN ('done', 'failed') ORDER BY revision DESC LIMIT 3",
+            &[&since],
+        )?;
+        Ok(outcomes
+            .iter()
+            .take_while(|row| row.get::<_, &str>(0) == "failed")
+            .count() as u32)
     }
 
     /// Postmortems claimed by a runner and not yet finished.
@@ -1174,6 +1186,10 @@ fn apply_postmortem(
             if claimed != 1 {
                 return Err(Error::Invalid("the postmortem is no longer owed"));
             }
+            tx.execute(
+                &format!("INSERT INTO tl3_postmortem_claims (run_key, postmortem_id, revision, claimed_at) VALUES ($2, $1, $3, {AT})"),
+                &[id, run_key, &revision],
+            )?;
         }
         PostmortemUpdate::Done {
             id,
@@ -1188,6 +1204,7 @@ fn apply_postmortem(
             if done != 1 {
                 return Ok(());
             }
+            claim_ended(tx, run_key, "done")?;
             for item in &result.recommendations {
                 tx.execute("INSERT INTO tl3_postmortem_recommendations (postmortem_id, fingerprint, rank, phase, kind, target, operation, before, after, evidence, effect) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                     &[id, &item.fingerprint, &item.rank, &item.phase, &item.kind, &item.target, &item.operation, &item.before, &item.after, &item.evidence, &item.effect])?;
@@ -1196,9 +1213,7 @@ fn apply_postmortem(
                 insert_grade(tx, grade, revision)?;
             }
             if let Some((operation, item)) = &result.memory {
-                tx.batch_execute("LOCK TABLE tl3_memory_outbox IN SHARE ROW EXCLUSIVE MODE")?;
-                tx.execute("INSERT INTO tl3_memory_outbox (operation_id, item) VALUES ($1, $2) ON CONFLICT (operation_id) DO NOTHING", &[operation, item])?;
-                tx.execute("UPDATE tl3_memory_outbox SET parked_reason = 'capacity', parked_at = CURRENT_TIMESTAMP WHERE sequence IN (SELECT sequence FROM tl3_memory_outbox WHERE parked_reason IS NULL ORDER BY sequence DESC OFFSET 10000)", &[])?;
+                queue_memory_in(tx, operation, item)?;
             }
         }
         PostmortemUpdate::Failed {
@@ -1206,18 +1221,50 @@ fn apply_postmortem(
             run_key,
             failure,
         } => {
-            tx.execute(
-                &format!("UPDATE tl3_postmortems SET status = 'failed', failed_at = {AT}, failure = $4 WHERE id = $1 AND status = 'running' AND run_key = $2"),
-                &[id, run_key, &revision, failure],
+            // A failure worth retrying is owed again, twice at most (#486).
+            let retried = RETRIED_FAILURES.contains(&failure.as_str());
+            let failed = tx.execute(
+                &format!("UPDATE tl3_postmortems SET status = CASE WHEN $5 AND attempts < 2 THEN 'owed' ELSE 'failed' END, attempts = CASE WHEN $5 AND attempts < 2 THEN attempts + 1 ELSE attempts END, run_key = CASE WHEN $5 AND attempts < 2 THEN NULL ELSE run_key END, started_at = CASE WHEN $5 AND attempts < 2 THEN NULL ELSE started_at END, model = CASE WHEN $5 AND attempts < 2 THEN NULL ELSE model END, rubric_version = CASE WHEN $5 AND attempts < 2 THEN NULL ELSE rubric_version END, failed_at = {AT}, failure = $4 WHERE id = $1 AND status = 'running' AND run_key = $2"),
+                &[id, run_key, &revision, failure, &retried],
             )?;
+            if failed == 1 {
+                claim_ended(tx, run_key, "failed")?;
+            }
         }
         PostmortemUpdate::Release { id, run_key } => {
-            tx.execute(
+            let released = tx.execute(
                 "UPDATE tl3_postmortems SET status = 'owed', run_key = NULL, started_at = NULL, model = NULL, rubric_version = NULL WHERE id = $1 AND status = 'running' AND run_key = $2",
                 &[id, run_key],
             )?;
+            if released == 1 {
+                claim_ended(tx, run_key, "released")?;
+            }
         }
     }
+    Ok(())
+}
+
+/// Postmortem failure classes worth another run: the worker died or ran out
+/// of time. A stall, a refused launch or an invalid reply would repeat (#486).
+const RETRIED_FAILURES: [&str; 2] = ["worker_failed", "deadline"];
+
+fn claim_ended(tx: &mut Transaction<'_>, run_key: &str, outcome: &str) -> Result<()> {
+    tx.execute(
+        "UPDATE tl3_postmortem_claims SET outcome = $2 WHERE run_key = $1",
+        &[&run_key, &outcome],
+    )?;
+    Ok(())
+}
+
+/// Queue one Hindsight memory in `tx`, parking the oldest past the outbox's capacity.
+fn queue_memory_in(
+    tx: &mut Transaction<'_>,
+    operation_id: &str,
+    item: &serde_json::Value,
+) -> Result<()> {
+    tx.batch_execute("LOCK TABLE tl3_memory_outbox IN SHARE ROW EXCLUSIVE MODE")?;
+    tx.execute("INSERT INTO tl3_memory_outbox (operation_id, item) VALUES ($1, $2) ON CONFLICT (operation_id) DO NOTHING", &[&operation_id, item])?;
+    tx.execute("UPDATE tl3_memory_outbox SET parked_reason = 'capacity', parked_at = CURRENT_TIMESTAMP WHERE sequence IN (SELECT sequence FROM tl3_memory_outbox WHERE parked_reason IS NULL ORDER BY sequence DESC OFFSET 10000)", &[])?;
     Ok(())
 }
 

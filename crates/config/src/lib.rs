@@ -646,6 +646,12 @@ impl Config {
         if !(1..=3).contains(&limits.w) {
             return Err(invalid("limits.w", "must be in 1..=3"));
         }
+        if limits.postmortem_deadline_secs == 0 {
+            return Err(invalid(
+                "limits.postmortem_deadline_secs",
+                "must be greater than zero",
+            ));
+        }
         if limits.agent_pool == 0 {
             return Err(invalid("limits.agent_pool", "must be greater than zero"));
         }

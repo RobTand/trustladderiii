@@ -25,7 +25,11 @@ py_binary(
     name = "__main__",
     srcs = ["tl3_workers/__main__.py"],
     visibility = ["//visibility:public"],
-    deps = [":src"],
+    deps = [
+        ":src",
+        "@tl3_pip//numpy",
+        "@tl3_pip//pandas",
+    ],
 )
 
 py_binary(
@@ -35,6 +39,8 @@ py_binary(
     deps = [
         ":src",
         "@tl3_pip//langchain_core",
+        "@tl3_pip//numpy",
+        "@tl3_pip//pandas",
     ],
 )
 

@@ -10,8 +10,8 @@ Your result is one JSON object, written as text, with exactly these fields:
 - recommendations: at most three changes, the most valuable first, each one that would have prevented a process failure. Each is {"phase", "kind", "target", "operation", "before", "after", "evidence", "effect"}:
   - phase: the role or step the change is for, such as ingest, planner, maker, reviewer or the controller;
   - kind: "prompt", "code", "config" or "rule";
-  - target: exactly what to change, such as a prompt's role name or a file path;
-  - operation, before and after, as exact text: "add" appends after and leaves before empty; "remove" gives before and leaves after empty; "replace" gives both. before must appear exactly once in the target;
+  - target: the file to change, as a path from TL3's repository root, such as workers/src/tl3_workers/prompts/maker.md;
+  - operation, before and after, as exact text: "add" appends after and leaves before empty; "remove" gives before and leaves after empty; "replace" gives both. before must appear exactly once in the target. A recommendation whose target isn't a file in the release, or whose before text isn't in it exactly once, is dropped;
   - evidence: what shows the failure, by source trace id or case-file fact, and why the change addresses it;
   - effect: the behavior you expect to change, and what would show it did.
   Recommend only what the evidence supports. Prefer a small, specific correction to a general rule. Empty when nothing your materials support would have helped.

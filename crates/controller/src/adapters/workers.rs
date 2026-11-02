@@ -217,9 +217,14 @@ impl Supervisor {
         let resume_review = review::resumes(delivery, review_session.as_ref(), review_restarted);
         let mut materials = match &delivery.steering {
             Some(crate::steering::Task::Classify { inputs, .. }) => inputs.clone(),
-            Some(crate::steering::Task::Postmortem { id, .. }) => {
-                crate::postmortems::case_file(store, snapshot, delivery, *id, &self.models)?
-            }
+            Some(crate::steering::Task::Postmortem { id, .. }) => crate::postmortems::case_file(
+                store,
+                snapshot,
+                delivery,
+                *id,
+                &self.models,
+                self.limits.postmortem_deadline_secs,
+            )?,
             _ => self.materials(delivery, store, snapshot)?,
         };
         if role == "maker" && self.materials_provider.is_some() {
@@ -1159,6 +1164,18 @@ pub(super) fn inspect(attempt: &Path, delivery: &Delivery) -> Result<Reconciliat
         return Ok(Reconciliation::Absent);
     };
     if exit["code"] != 0 {
+        if delivery.is_postmortem() {
+            // #486: a run its own deadline stopped names that class.
+            let deadline = read(&attempt.join("memory.json"))
+                .ok()
+                .flatten()
+                .is_some_and(|summary| summary["reason"]["failure_class"] == "PostmortemDeadline");
+            return Ok(Reconciliation::Found(if deadline {
+                failed_with(delivery, "deadline")
+            } else {
+                failed(delivery)
+            }));
+        }
         let mut completion = failed(delivery);
         if delivery.job_table().is_none()
             && let Some(summary) = read(&attempt.join("memory.json")).ok().flatten()

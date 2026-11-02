@@ -270,6 +270,7 @@ pub enum PostmortemUpdate {
         result: Box<PostmortemResult>,
     },
     /// running -> failed with a fixed failure class, only under this run key.
+    /// A worker failure or a deadline is owed again instead, twice at most.
     Failed {
         id: i64,
         run_key: String,
