@@ -134,6 +134,7 @@ pub fn apply(controller: &mut Controller, input: Input) -> Result<()> {
         Input::LabelledIssue(issue) => {
             controller.intake(issue)?;
         }
+        Input::IssueChanged(change) => controller.issue_changed(&change)?,
         Input::ProposedIssue { issue, proposed } => {
             controller.intake_proposed(issue, Some(proposed))?;
         }
@@ -887,3 +888,59 @@ impl WebhookReceiver {
 #[cfg(all(test, loom))]
 #[path = "../tests/loom/ingress.rs"]
 mod loom_tests;
+
+#[cfg(test)]
+mod priority_tests {
+    use super::*;
+
+    fn delivery(event: &str, action: &str, labels: &[&str]) -> Option<tl3_github::webhook::Event> {
+        let body = serde_json::json!({
+            "action": action,
+            "repository": {"id": 9, "name": "tl3-sandbox", "owner": {"id": 3, "login": "RobTand"}},
+            "installation": {"id": 1},
+            "issue": {"number": 42, "title": "[P2] Fix the greeting", "body": null, "state": "open",
+                      "updated_at": "2026-11-02T12:00:00Z", "pull_request": null,
+                      "labels": labels.iter().map(|name| serde_json::json!({"name": name})).collect::<Vec<_>>()},
+            "label": {"name": labels.last().copied().unwrap_or("bug")},
+            "sender": {"id": 7, "login": "requester"},
+        });
+        tl3_github::webhook::parse("d-1", event, body.to_string().as_bytes())
+            .unwrap()
+            .event
+    }
+
+    #[test]
+    fn issue_edits_and_label_changes_refresh_priority() {
+        let config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+        let bootstrap = Bootstrap::from_config(&config).unwrap();
+        for action in ["edited", "labeled", "unlabeled"] {
+            let inputs = inputs(
+                "d-1",
+                delivery("issues", action, &["tl3", "P1"]),
+                &bootstrap,
+            );
+            let change = inputs
+                .iter()
+                .find_map(|input| match input {
+                    Input::IssueChanged(change) => Some(change.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("issues.{action} carries no issue change"));
+            assert_eq!(change.number, 42);
+            assert_eq!(change.title, "[P2] Fix the greeting");
+            assert_eq!(change.labels, ["tl3", "P1"]);
+        }
+        let labelled = inputs(
+            "d-1",
+            delivery("issues", "labeled", &["P1", "tl3"]),
+            &bootstrap,
+        );
+        assert!(
+            labelled
+                .iter()
+                .any(|input| matches!(input, Input::LabelledIssue(issue)
+                if issue.labels == ["P1", "tl3"] && issue.label == "tl3")),
+            "intake sees every label"
+        );
+    }
+}

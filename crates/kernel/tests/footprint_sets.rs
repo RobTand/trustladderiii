@@ -49,7 +49,14 @@ fn reply(w: &mut World, node: NodeId, reply: Reply) {
 
 /// Add a request in repo 0 and plan it as one leaf over `files`.
 fn plan(w: &mut World, files: &BTreeSet<FileId>) -> NodeId {
-    *w = step(w.clone(), Event::NewRequest { repo: RepoId(0) }).0;
+    *w = step(
+        w.clone(),
+        Event::NewRequest {
+            repo: RepoId(0),
+            priority: Priority::Unranked,
+        },
+    )
+    .0;
     let node = NodeId(w.nodes.len() as u64 - 1);
     let footprint = w.intern_footprint(files.iter().copied());
     reply(w, node, Reply::IngestDone { size: 1 });

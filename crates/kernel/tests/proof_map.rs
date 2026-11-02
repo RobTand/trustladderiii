@@ -25,6 +25,9 @@ const ADDITIONAL_PROOFS: &[&str] = &[
     "gate_merge_progress_w3",
     "gate_resume_progress_w2",
     "gate_resume_progress_w3",
+    // Q39: priority-first agent-pool grants and their aging bound.
+    "pool_grant_is_priority_ordered",
+    "pool_aging_bound",
 ];
 
 const LIB: &str = include_str!("../src/lib.rs");

@@ -388,6 +388,9 @@ pub struct Node {
     #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
     pub review_restarted: bool,
     pub credit: Credit,
+    /// Orders agent-pool grants (Q39).
+    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    pub priority: Priority,
 }
 
 impl Node {
@@ -439,6 +442,7 @@ impl Node {
                 spent: 0,
                 merge_credited: false,
             },
+            priority: Priority::Unranked,
         }
     }
 
@@ -615,6 +619,29 @@ pub enum Ack {
     Permanent,
 }
 
+/// A request's priority from its issue (Q39): best first, then unranked.
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+pub enum Priority {
+    P0,
+    P1,
+    P2,
+    P3,
+    #[default]
+    Unranked,
+}
+
+impl Priority {
+    /// 0 for P0 through 4 for unranked.
+    pub fn rank(self) -> u8 {
+        self as u8
+    }
+}
+
 #[cfg_attr(
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
@@ -640,6 +667,8 @@ pub enum Fact {
     },
     /// A PR or queue record is alive but unchanged across allowance looks.
     UpstreamStalled,
+    /// The issue's title or labels now give this priority.
+    Priority(Priority),
 }
 
 #[cfg_attr(
@@ -682,10 +711,15 @@ pub enum Command {
 pub enum Event {
     NewRequest {
         repo: RepoId,
+        /// Events stored before Q39 carry none and read as unranked.
+        #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+        priority: Priority,
     },
     NewAdoption {
         repo: RepoId,
         head: HeadId,
+        #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+        priority: Priority,
     },
     Reply {
         node: NodeId,
@@ -1512,6 +1546,7 @@ pub fn proof_of_event(event: &Event) -> &'static str {
             Fact::Conflict => "apply_conflict",
             Fact::IncidentCleared { .. } => "apply_incident_cleared",
             Fact::UpstreamStalled => "apply_upstream_stalled",
+            Fact::Priority(_) => "apply_priority",
         },
         Event::Command { command, .. } => match command {
             Command::Stop => "apply_stop",
@@ -1602,16 +1637,23 @@ pub fn step_traced(mut world: World, event: Event) -> (World, Vec<Out>, Vec<Worl
 
 fn apply(w: &mut World, event: Event, out: &mut Outbox) {
     match event {
-        Event::NewAdoption { repo, head } => {
+        Event::NewAdoption {
+            repo,
+            head,
+            priority,
+        } => {
             if repo.index().is_some_and(|r| r < w.gates.len()) {
                 let mut node = Node::new(repo);
                 node.proposed = Some(head);
+                node.priority = priority;
                 w.nodes.push(node);
             }
         }
-        Event::NewRequest { repo } => {
+        Event::NewRequest { repo, priority } => {
             if repo.index().is_some_and(|r| r < w.gates.len()) {
-                w.nodes.push(Node::new(repo));
+                let mut node = Node::new(repo);
+                node.priority = priority;
+                w.nodes.push(node);
             }
         }
         Event::Reply {
@@ -2184,6 +2226,7 @@ fn effect_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
 
 fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
     match fact {
+        Fact::Priority(_) => {}
         Fact::PrMerged {
             head,
             checks_passed,
@@ -2675,6 +2718,14 @@ fn slot_free(w: &World, i: usize) -> bool {
         }
     }
     holders < gate.w as u32
+}
+
+/// Tickets issued after a pool waiter's own that raise it one level (Q39).
+pub const POOL_AGING_TICKETS: u64 = 8;
+
+/// A pool waiter's place in line (Q39). Stub: ticket order only.
+pub fn pool_level(_next_ticket: u64, _priority: Priority, _ticket: u64) -> u8 {
+    0
 }
 
 /// Older slot waiters block runnable or overlapping younger leaves.

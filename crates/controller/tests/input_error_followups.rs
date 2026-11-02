@@ -298,6 +298,7 @@ fn failed_post_backoff_survives_wakes_and_restart() {
         "invalid",
         Observation::Kernel(Event::NewRequest {
             repo: tl3_kernel::RepoId(0),
+            priority: tl3_kernel::Priority::Unranked,
         }),
     )
     .unwrap();
@@ -355,6 +356,7 @@ fn missing_destination_logs() {
         "invalid",
         Observation::Kernel(Event::NewRequest {
             repo: tl3_kernel::RepoId(0),
+            priority: tl3_kernel::Priority::Unranked,
         }),
     )
     .unwrap();

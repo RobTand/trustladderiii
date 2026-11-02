@@ -210,6 +210,18 @@ pub struct LabelledIssue {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
 }
+
+/// An issue's title or labels changed; its request's priority may follow (Q39).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IssueChange {
+    pub delivery: String,
+    pub owner: String,
+    pub repo: String,
+    pub installation: u64,
+    pub number: u64,
+    pub title: String,
+    pub labels: Vec<String>,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Request {
     repo: Repository,
@@ -545,6 +557,11 @@ impl Controller {
             .cloned()
     }
 
+    /// Refresh an open request's priority from its issue's current title and labels.
+    pub fn issue_changed(&mut self, _change: &IssueChange) -> Result<()> {
+        Ok(())
+    }
+
     fn prepare_intake(
         &mut self,
         snapshot: &Snapshot,
@@ -600,10 +617,12 @@ impl Controller {
                 Event::NewAdoption {
                     repo: tl3_kernel::RepoId(index as u64),
                     head: self.head(NodeId(world.nodes.len() as u64), &proposed.head)?,
+                    priority: tl3_kernel::Priority::Unranked,
                 }
             } else {
                 Event::NewRequest {
                     repo: tl3_kernel::RepoId(index as u64),
+                    priority: tl3_kernel::Priority::Unranked,
                 }
             };
             commit.rows.push(put(

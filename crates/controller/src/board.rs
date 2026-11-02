@@ -143,6 +143,10 @@ pub struct Card {
     pub phase: String,
     pub ending: Option<Ending>,
     pub waiting_on: String,
+    /// Q39: `P0`–`P3`, or `unranked`.
+    pub priority: String,
+    /// Q39: 1-based place in the agent-pool line, while the request waits for a slot.
+    pub pool_position: Option<u32>,
     pub role: Option<String>,
     pub model: Option<String>,
     pub attempt: u8,
@@ -230,6 +234,8 @@ pub struct Input<'a> {
     pub models: Option<&'a tl3_config::Models>,
     /// Q53: models that reported quota, with their announced resets in Unix ms.
     pub quota_resets: BTreeMap<String, u64>,
+    /// The world's next ticket, which ages pool waiters (Q39).
+    pub next_ticket: u64,
 }
 
 /// A request's newest node and what the controller's side tables say about it.
@@ -413,6 +419,8 @@ fn card(
         column: Column::of(node.phase),
         phase: phase_label(node.phase, ending),
         ending,
+        priority: "unranked".into(),
+        pool_position: None,
         waiting_on: if request.question_post_failed {
             "the question post that failed; the question was never posted"
         } else if node.effect.is_some_and(|effect| effect.cancelling) {
@@ -681,6 +689,7 @@ pub struct Rows {
     pub requests: Vec<Request>,
     pub unassigned_incidents: Vec<StoredIncident>,
     pub quota_resets: BTreeMap<String, u64>,
+    pub next_ticket: u64,
 }
 
 impl Rows {
@@ -693,11 +702,13 @@ impl Rows {
             requests: Vec::new(),
             unassigned_incidents: Vec::new(),
             quota_resets: BTreeMap::new(),
+            next_ticket: 0,
         };
         if snapshot.rows.is_empty() {
             return Ok(rows);
         }
         let world = crate::snapshot::decode(&snapshot)?;
+        rows.next_ticket = world.next_ticket;
         let ids: Vec<_> = (0..world.nodes.len())
             .map(|index| NodeId(index as u64))
             .collect();
@@ -827,6 +838,7 @@ impl Rows {
             unassigned_incidents: self.unassigned_incidents.clone(),
             models,
             quota_resets: self.quota_resets.clone(),
+            next_ticket: self.next_ticket,
         })
     }
 }

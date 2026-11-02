@@ -14,6 +14,7 @@ pub enum Input {
         key: String,
     },
     LabelledIssue(LabelledIssue),
+    IssueChanged(crate::IssueChange),
     ProposedIssue {
         issue: LabelledIssue,
         proposed: crate::adoption::ProposedPullRequest,

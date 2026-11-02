@@ -25,7 +25,10 @@ impl Run {
             seen: BTreeSet::new(),
             notices: Vec::new(),
         };
-        run.send(Event::NewRequest { repo: RepoId(0) });
+        run.send(Event::NewRequest {
+            repo: RepoId(0),
+            priority: Priority::Unranked,
+        });
         run.confirm();
         run
     }
@@ -392,7 +395,14 @@ fn a_late_merge_after_a_stop_corrects_the_record() {
 fn two_requests_share_one_slot_first_come_first_served() {
     let mut w = World::new(&[1], 2);
     for _ in 0..2 {
-        w = step(w, Event::NewRequest { repo: RepoId(0) }).0;
+        w = step(
+            w,
+            Event::NewRequest {
+                repo: RepoId(0),
+                priority: Priority::Unranked,
+            },
+        )
+        .0;
     }
     // Drive both with the witness. The world must stay valid, the measure must
     // fall, and the two leaves must never hold the slot at once.
@@ -529,7 +539,14 @@ fn approval_is_one_exact_wide_head() {
 #[test]
 fn repo_and_node_ids_do_not_truncate() {
     let mut w = World::new(&vec![1; 300], 1);
-    w = step(w, Event::NewRequest { repo: RepoId(299) }).0;
+    w = step(
+        w,
+        Event::NewRequest {
+            repo: RepoId(299),
+            priority: Priority::Unranked,
+        },
+    )
+    .0;
     assert_eq!(w.nodes[0].repo, RepoId(299));
     let before = w.clone();
     w = step(
@@ -546,6 +563,7 @@ fn repo_and_node_ids_do_not_truncate() {
         w,
         Event::NewRequest {
             repo: RepoId(u64::MAX),
+            priority: Priority::Unranked,
         },
     )
     .0;
@@ -580,7 +598,14 @@ fn file_locks_cover_large_footprints_and_stay_within_the_repo() {
     }
     let mut w = World::new(&[2, 1], 3);
     for repo in [RepoId(0), RepoId(0), RepoId(1)] {
-        w = step(w, Event::NewRequest { repo }).0;
+        w = step(
+            w,
+            Event::NewRequest {
+                repo,
+                priority: Priority::Unranked,
+            },
+        )
+        .0;
     }
     let files = w.intern_footprint((0..300).map(|i| FileId((1 << 40) + i)));
     for node in [NodeId(0), NodeId(1), NodeId(2)] {
@@ -876,6 +901,7 @@ fn adoption_run() -> Run {
     run.send(Event::NewAdoption {
         repo: RepoId(0),
         head: HeadId(7),
+        priority: Priority::Unranked,
     });
     run.confirm();
     run.reply(Reply::IngestDone { size: 1 });
@@ -1041,7 +1067,16 @@ fn settle_world_grants_reconciled_capacity_and_is_idempotent() {
     }
     let mut world = World::new(&[1], 3);
     for _ in 0..3 {
-        world = confirm(step(world, Event::NewRequest { repo: RepoId(0) }).0);
+        world = confirm(
+            step(
+                world,
+                Event::NewRequest {
+                    repo: RepoId(0),
+                    priority: Priority::Unranked,
+                },
+            )
+            .0,
+        );
     }
     for i in 0..3 {
         for reply in [Reply::IngestDone { size: 1 }, Reply::AuditAgrees] {
@@ -1192,4 +1227,143 @@ fn publishing_ci_failure_before_enqueue_step_is_ignored() {
         fact: Fact::CiFailed { infra: false },
     });
     assert_eq!(run.node(), before);
+}
+
+/// Q39 pool worlds: one repo with room for every leaf, and an agent pool of one.
+fn pool_world() -> World {
+    World::new(&[3], 1)
+}
+
+fn admit(w: World, priority: Priority) -> World {
+    confirm_all(
+        step(
+            w,
+            Event::NewRequest {
+                repo: RepoId(0),
+                priority,
+            },
+        )
+        .0,
+    )
+}
+
+fn confirm_all(mut w: World) -> World {
+    for _ in 0..256 {
+        let Some((i, e)) = w
+            .nodes
+            .iter()
+            .enumerate()
+            .find_map(|(i, n)| n.effect.map(|e| (i, e)))
+        else {
+            return w;
+        };
+        let (next, _) = step(
+            w,
+            Event::Ack {
+                node: NodeId(i as u64),
+                seq: e.seq,
+                ack: Ack::Confirmed,
+            },
+        );
+        assert!(next.valid() && next.is_settled());
+        w = next;
+    }
+    panic!("effects never stopped");
+}
+
+/// Nodes holding the agent pool.
+fn running(w: &World) -> Vec<usize> {
+    (0..w.nodes.len()).filter(|&i| w.nodes[i].pool).collect()
+}
+
+/// Finish node i's ingest run as a duplicate, releasing its pool grant for good.
+fn end_ingest(w: World, i: usize) -> World {
+    let generation = w.nodes[i].generation;
+    let (next, _) = step(
+        w,
+        Event::Reply {
+            node: NodeId(i as u64),
+            generation,
+            reply: Reply::IngestEarlyEnd(EarlyEnd::Duplicate),
+        },
+    );
+    assert!(next.valid() && next.is_settled());
+    confirm_all(next)
+}
+
+#[test]
+fn a_p1_waiting_behind_an_older_p3_gets_the_next_pool_grant() {
+    let mut w = pool_world();
+    for priority in [Priority::P3, Priority::P3, Priority::P1] {
+        w = admit(w, priority);
+    }
+    assert_eq!(running(&w), [0]);
+    w = end_ingest(w, 0);
+    assert_eq!(running(&w), [2], "the P1 overtakes the older P3");
+    w = end_ingest(w, 2);
+    assert_eq!(running(&w), [1]);
+}
+
+#[test]
+fn pool_ties_go_to_the_older_ticket() {
+    for priority in [Priority::P2, Priority::Unranked] {
+        let mut w = pool_world();
+        for _ in 0..3 {
+            w = admit(w, priority);
+        }
+        w = end_ingest(w, 0);
+        assert_eq!(running(&w), [1], "first come, first served at {priority:?}");
+    }
+}
+
+#[test]
+fn an_aging_p3_is_granted_within_its_bound_under_constant_p0_load() {
+    let mut w = admit(pool_world(), Priority::P0);
+    w = admit(w, Priority::P3);
+    let p3 = 1;
+    let mut ahead = 0u64;
+    for _ in 0..1000 {
+        // A newer P0 arrives before every grant, so pure priority would starve the P3.
+        w = admit(w, Priority::P0);
+        let [holder] = running(&w)[..] else {
+            panic!("one pool holder")
+        };
+        w = end_ingest(w, holder);
+        if running(&w) == [p3] {
+            break;
+        }
+        ahead += 1;
+    }
+    assert_eq!(running(&w), [p3], "the P3 is never starved");
+    assert!(ahead >= 1, "fresh P0 work overtakes the P3 first");
+    assert!(
+        ahead <= Priority::P3.rank() as u64 * POOL_AGING_TICKETS,
+        "{ahead} grants passed the P3; the bound is rank x POOL_AGING_TICKETS"
+    );
+}
+
+#[test]
+fn a_priority_fact_refreshes_an_open_request_and_leaves_a_closed_one() {
+    let mut w = admit(pool_world(), Priority::Unranked);
+    w = admit(w, Priority::P3);
+    let (next, _) = step(
+        w,
+        Event::Fact {
+            node: NodeId(1),
+            fact: Fact::Priority(Priority::P0),
+        },
+    );
+    assert!(next.valid() && next.is_settled());
+    assert_eq!(next.nodes[1].priority, Priority::P0);
+    w = end_ingest(next, 0);
+    let closed = w.nodes[0];
+    assert!(closed.phase.is_closed());
+    let (after, _) = step(
+        w,
+        Event::Fact {
+            node: NodeId(0),
+            fact: Fact::Priority(Priority::P0),
+        },
+    );
+    assert_eq!(after.nodes[0], closed, "Closed is final");
 }
