@@ -99,12 +99,9 @@ def test_always_tests_rejects_unsafe_selectors(repo, selector):
         execution.run_checks(repo, base, base, PLAN, container=CONTAINER, always_tests=(selector,))
 
 
-@pytest.mark.parametrize('contents', [None, '', 'import pytest\n\n@pytest.mark.skip(reason="fixture")\ndef test_rule():\n    pass\n'])
-def test_missing_empty_or_skipped_rule_cannot_pass(repo, contents):
-    if contents is None:
-        (repo / RULE).unlink()
-    else:
-        (repo / RULE).write_text(contents)
+@pytest.mark.parametrize('contents', ['', 'import pytest\n\n@pytest.mark.skip(reason="fixture")\ndef test_rule():\n    pass\n'])
+def test_empty_or_skipped_rule_cannot_pass(repo, contents):
+    (repo / RULE).write_text(contents)
     base = save(repo)
     results = execution.run_checks(repo, base, base, PLAN, container=CONTAINER, always_tests=(RULE,))
     assert len(results) == 2
@@ -117,3 +114,78 @@ def test_passing_rule_and_duplicate_entries_run_once(repo):
     assert len(results) == 2
     assert results[1].verdict == Verdict.PASS
     assert [test.test for test in results[1].tests] == [RULE]
+
+
+@pytest.mark.parametrize('selector', [RULE, 'old_rules/test_removed.py', RULE + '::test_removed',
+                                     RULE + '::test_no_sleep[removed]'])
+def test_stale_rule_is_nonblocking_and_its_note_survives_serialization(repo, monkeypatch, selector):
+    if '::' not in selector:
+        (repo / RULE).unlink()
+    base = save(repo)
+    head = break_rule(repo)
+    runs = []
+    original = execution.run_tree
+
+    def record(tree, container, tests, *args, **kwargs):
+        runs.extend(tests)
+        return original(tree, container, tests, *args, **kwargs)
+
+    monkeypatch.setattr(execution, 'run_tree', record)
+    results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER, always_tests=(selector,))
+    assert all(result.verdict == Verdict.PASS for result in results)
+    ignored, = results[1].tests
+    assert ignored.passed and not ignored.pre_existing
+    assert selector in ignored.message and 'stale' in ignored.message and 'both' in ignored.message
+    report = json.loads(execution.result_json(results))
+    assert report[1]['tests'][0]['message'] == ignored.message
+    if '::' not in selector:
+        assert selector not in runs
+
+
+@pytest.mark.parametrize('selector', [RULE, RULE + '::test_no_sleep'])
+def test_head_deletion_of_a_rule_that_existed_on_base_still_fails(repo, selector):
+    base = save(repo)
+    if '::' in selector:
+        (repo / RULE).write_text('def test_replacement():\n    assert True\n')
+    else:
+        (repo / RULE).unlink()
+    results = execution.run_checks(repo, base, save(repo), PLAN, container=CONTAINER, always_tests=(selector,))
+    assert results[1].verdict == Verdict.FAIL
+    test, = results[1].tests
+    assert not test.passed and test.base == Outcome.PASSED
+    assert 'stale' not in test.message
+
+
+@pytest.mark.parametrize('kind', list(Kind))
+def test_planned_checks_still_require_exact_node_ids(kind):
+    with pytest.raises(HarnessInputError):
+        Check('planned', kind, (RULE,))
+
+
+@pytest.mark.parametrize('selector', [RULE, RULE + '::test_no_sleep'])
+def test_rule_test_cannot_be_weakened_to_hide_a_violation(repo, selector):
+    base = save(repo)
+    (repo / RULE).write_text('def test_no_sleep():\n    assert True\n')
+    head = break_rule(repo)
+    results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER, always_tests=(selector,))
+    test, = results[1].tests
+    assert results[1].verdict == Verdict.FAIL and not test.passed
+    assert 'Restore the existing test' in test.message
+
+
+def test_stale_notes_survive_when_planned_failures_fill_the_message_budget(repo):
+    (repo / RULE).unlink()
+    base = save(repo)
+    (repo / 'tests/test_other.py').write_text('def test_other():\n    assert False\n')
+    plan = tuple(Check(f'planned-{n}', Kind.REGRESSION, PLAN[0].tests) for n in range(20))
+    results = execution.run_checks(repo, base, save(repo), plan, container=CONTAINER, always_tests=(RULE,))
+    assert results[-1].verdict == Verdict.PASS
+    report = json.loads(execution.result_json(results))
+    assert RULE in report[-1]['tests'][0]['message']
+
+
+def test_harness_also_bounds_always_tests_before_execution(repo):
+    base = save(repo)
+    entries = tuple(f'tests/test_rule_{n}.py' for n in range(21))
+    with pytest.raises(HarnessInputError, match='always_tests.*at most 20'):
+        execution.run_checks(repo, base, base, PLAN, container=CONTAINER, always_tests=entries)

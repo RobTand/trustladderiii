@@ -1455,3 +1455,30 @@ fn repository_always_tests_rejects_paths_outside_the_repo_and_globs() {
         assert!(error.to_string().contains("always_tests"), "{error}");
     }
 }
+
+#[test]
+fn repository_always_tests_accepts_twenty_entries_and_names_the_limit_error() {
+    let with = |count: usize| {
+        let mut document: Value = EXAMPLE.parse().unwrap();
+        document["github"]["repos"][0]
+            .as_table_mut()
+            .unwrap()
+            .insert(
+                "always_tests".into(),
+                Value::Array(
+                    (0..count)
+                        .map(|n| Value::String(format!("tests/test_rule_{n}.py")))
+                        .collect(),
+                ),
+            );
+        Config::parse(&toml::to_string(&document).unwrap())
+    };
+    assert!(with(20).is_ok());
+    let error = with(21)
+        .expect_err("21 repo-wide rules must be refused")
+        .to_string();
+    assert!(
+        error.contains("always_tests") && error.contains("at most 20"),
+        "{error}"
+    );
+}

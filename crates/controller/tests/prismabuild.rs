@@ -471,6 +471,37 @@ fn always_tests_are_staged_required_and_reported_in_every_round() {
     }
 }
 
+fn stale_always_test_notes_survive_controller_evidence() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+    config.github.repos[0].always_tests = vec!["test_removed.py".into()];
+    let mut adapter = fixture(root.path(), "done").with_repositories(&config.github.repos);
+    let planned = &delivery.checks.as_ref().unwrap().plan[0];
+    let note = "Ignored stale always_tests entry `test_removed.py`: missing on both the base and the head.";
+    fs::write(root.path().join("queue/recorded_results.json"), serde_json::to_vec(&serde_json::json!([
+        {"name": planned.name, "kind": "demonstrating", "custody": "in-process", "verdict": "pass", "tests": [{"test": planned.tests[0], "base": "assertion", "head": "passed", "pre_existing": false, "passed": true}]},
+        {"name": "Repository always tests", "kind": "regression", "custody": "in-process", "verdict": "pass", "tests": [{"test": "test_removed.py", "base": "missing", "head": "missing", "pre_existing": false, "passed": true, "message": note}]}
+    ])).unwrap()).unwrap();
+    adapter.execute(&delivery).unwrap();
+    match &completion(&mut adapter, &delivery).observations[..] {
+        [
+            Observation::Checks {
+                report,
+                pass,
+                failed_tests,
+                results,
+                ..
+            },
+        ] => {
+            assert!(*report && *pass);
+            assert!(failed_tests.is_empty());
+            assert_eq!(results[1]["tests"][0]["message"], note);
+        }
+        other => panic!("expected nonblocking evidence: {other:?}"),
+    }
+}
+
 /// #359: a repository with `selected_tests` stages the limit, and the harness's one
 /// trailing regression check of selected existing tests is accepted, failing the round
 /// when it fails. Without the limit, the same trailing result is an invalid report.
@@ -2168,6 +2199,7 @@ fn main() {
     let args: Vec<_> = std::env::args().collect();
     if args.get(1).is_some_and(|arg| arg == "--always-tests") {
         always_tests_are_staged_required_and_reported_in_every_round();
+        stale_always_test_notes_survive_controller_evidence();
         return;
     }
     if args.get(1).is_some_and(|arg| arg == "--r5") {
@@ -2298,6 +2330,10 @@ fn main() {
         ),
         ("bounded_failure_details", bounded_failure_details),
         (
+            "stale_always_test_notes_survive_controller_evidence",
+            stale_always_test_notes_survive_controller_evidence,
+        ),
+        (
             "always_tests_are_staged_required_and_reported_in_every_round",
             always_tests_are_staged_required_and_reported_in_every_round,
         ),
@@ -2388,7 +2424,7 @@ fn main() {
     quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
     println!("test unreadable_job_record_is_a_failed_read ... ok");
     database.stop();
-    println!("46 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("47 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
