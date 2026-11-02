@@ -27,6 +27,7 @@ pub mod looks;
 mod loom_tests;
 pub mod memory;
 mod notices;
+mod postmortems;
 pub mod pr_body;
 pub mod priority;
 pub mod production;
@@ -1470,6 +1471,7 @@ impl Controller {
             .extend(snapshot::changes(&before, snapshot::encode(&world)?));
         self.close_replacement(snapshot, &previous, &world, commit)?;
         self.resolve_closed_effect_incidents(snapshot, &world, commit)?;
+        self.record_postmortems(snapshot, &previous, &world, commit)?;
         self.resolve_stale_missing_checks(snapshot, &world, commit)?;
         for (index, node) in world.nodes.iter().enumerate() {
             if previous
@@ -1589,7 +1591,15 @@ impl Controller {
                             .find(|r| r.table == "plans" && r.id == node.0.to_string())
                             .map(|r| r.value.clone())
                     });
-                let mut context = json!({"node": node, "question": question, "generation": n.generation, "pieces": plan.as_ref().and_then(|p| p.get("pieces")).cloned().unwrap_or(json!([])), "plan": plan});
+                let mut context = json!({"node": node, "question": question, "kind": n.question.map(|q| q.kind), "generation": n.generation, "pieces": plan.as_ref().and_then(|p| p.get("pieces")).cloned().unwrap_or(json!([])), "plan": plan});
+                // #403: every question to Rob owes a postmortem.
+                commit.postmortems.push(postmortems::owed(
+                    snapshot,
+                    node,
+                    format!("question:{question}"),
+                    postmortems::Reason::Escalation,
+                    None,
+                )?);
                 // #322: Rob sees the deciding worker's findings, not only the question kind.
                 let written = |table: &str| {
                     commit.rows.iter().rev().find_map(|row| match row {
@@ -1780,6 +1790,16 @@ impl Controller {
                                 .unwrap_or("worker run failed")
                         ));
                     }
+                }
+                if needs_rob {
+                    // #403: an incident that needs Rob owes a postmortem.
+                    commit.postmortems.push(postmortems::owed(
+                        snapshot,
+                        node,
+                        format!("incident:{id}"),
+                        postmortems::Reason::Escalation,
+                        None,
+                    )?);
                 }
                 commit.rows.push(put(
                     "incidents",
