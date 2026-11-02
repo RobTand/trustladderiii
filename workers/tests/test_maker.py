@@ -757,7 +757,9 @@ def test_maker_rejects_shell_and_other_undeclared_tools(tmp_path, maker_request,
 
 @pytest.mark.parametrize('fit_tokens,linked,expected', [(100000, False, True), (1, False, False), (100000, True, False)])
 def test_requested_file_fit_is_computed_by_worker_code(tmp_path, maker_request, cache_tokenizer, fit_tokens, linked, expected):
-    maker_request['inputs']['fit_tokens'] = fit_tokens
+    maker_request['inputs']['forecast'] = {
+        'fit_tokens': fit_tokens, 'context_tokens': 150000, 'overhead_tokens': {'reserve': 32000},
+    }
     root = Path(maker_request['worktree'])
     if linked:
         (root / 'helper.py').symlink_to(root / 'greeting.py')
@@ -770,7 +772,9 @@ def test_requested_file_fit_is_computed_by_worker_code(tmp_path, maker_request, 
 @pytest.mark.parametrize('content_source', ['brief', 'file'])
 @pytest.mark.parametrize('cache', ['available', 'disabled', 'empty', 'corrupt'])
 def test_requested_file_fit_counts_tokens_with_byte_fallback(tmp_path, maker_request, cache_tokenizer, content_source, cache):
-    maker_request['inputs']['fit_tokens'] = 100000
+    maker_request['inputs']['forecast'] = {
+        'fit_tokens': 100000, 'context_tokens': 150000, 'overhead_tokens': {'reserve': 32000},
+    }
     if content_source == 'brief':
         maker_request['inputs']['brief'] = 'token ' * 18000
     else:
@@ -795,7 +799,9 @@ def test_requested_file_fit_counts_tokens_with_byte_fallback(tmp_path, maker_req
 
 
 def test_model_cannot_claim_that_requested_files_fit(tmp_path, maker_request):
-    maker_request['inputs']['fit_tokens'] = 100000
+    maker_request['inputs']['forecast'] = {
+        'fit_tokens': 100000, 'context_tokens': 150000, 'overhead_tokens': {'reserve': 32000},
+    }
     result = start_worker(tmp_path, maker_request, [turn({'kind': 'needs_files', 'files': [{'path': 'helper.py', 'why': 'Needed.'}], 'fits': True})])
     assert result.exit_code == 1
     assert all(event['event'] != 'reply' for event in result.events)
@@ -821,7 +827,6 @@ def test_pq_2629_plan_and_requested_file_fit(maker_request, cache_tokenizer, mon
     config = {'fit_tokens': 100000, 'context_tokens': 150000,
               'overhead_tokens': {'prompt': 5000, 'making': 20000}}
     inputs['forecast'] = config
-    inputs['fit_tokens'] = config['fit_tokens']
     inputs['brief'] = 'x\n' * 1643
     # Model PQ #2629's eight files: two ranged files and six small files.
     costs = dict(zip([f'plan_{i}.py' for i in range(8)], [16384, 16384, 4000, 4000, 4000, 4000, 4000, 2232]))
@@ -854,7 +859,6 @@ def test_planner_fit_implies_maker_fit(maker_request, cache_tokenizer, monkeypat
     total = Forecaster(config).measure(inputs['brief'], inputs['plan']['files'])['tokens']
     config['fit_tokens'] = total + 1
     inputs['forecast'] = config
-    inputs['fit_tokens'] = config['fit_tokens']
     if fix_round:
         inputs.update(round=1, feedback=[{'kind': 'failed_check', 'report': 'Fix it. ' * 2000, 'goal_ids': ['greeting']}])
     assert Forecaster(config).measure(inputs['brief'], inputs['plan']['files'])['fits'] is True

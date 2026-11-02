@@ -59,7 +59,7 @@
             "type": "integer",
             "minimum": 0
           },
-          "description": "Named overhead constants from controller config, summed by code."
+          "description": "Named overhead constants from controller config, summed by code. Includes the reserve for tools, making history and fix-round feedback shared with the maker."
         }
       },
       "required": [
