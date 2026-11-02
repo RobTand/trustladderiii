@@ -380,8 +380,20 @@ fn check_fail_fast(before: &World, after: &World, event: Event) {
             }
             // A work failure never asks Rob whether to go on. Only the kernel's
             // rule-break path, which the planner worker can't reach, still does.
+            // Rob's unclear answer re-asks his open question under a new id; that
+            // clarification is the same question, not a new one.
+            let clarifies = |p: Question, q: Question| {
+                b.phase == Phase::AwaitingRob
+                    && p.kind == q.kind
+                    && p.cont == q.cont
+                    && p.cost == q.cost
+                    && !p.clarified
+                    && q.clarified
+            };
             let asked = n.question.is_some_and(|q| {
-                q.kind == QKind::CantMeet && b.question.map_or(true, |p| p.id != q.id)
+                q.kind == QKind::CantMeet
+                    && b.question
+                        .map_or(true, |p| p.id != q.id && !clarifies(p, q))
             });
             if asked {
                 assert!(
