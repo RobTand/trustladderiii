@@ -12,6 +12,82 @@ import rust_gate
 
 
 class GateTests(unittest.TestCase):
+    def cpu_policy(self):
+        return {'seconds': 10, 'slow': {'slow': 20},
+                'cpu': {'seconds': 2, 'slow': {'slow': 4}},
+                'wall_only': {'database': 'Work runs in a persistent server'},
+                'wall_only_platforms': {'darwin': 'No Linux procfs', 'win32': 'No Linux procfs'}}
+
+    def test_waiting_three_wall_budgets_passes_with_low_cpu(self):
+        policy = self.cpu_policy()
+        rust_gate.check_budget({'waiting': 30}, policy, policy, cpu_seconds={'waiting': 0.2})
+
+    def test_cpu_regression_and_wall_backstop_fail_independently(self):
+        policy = self.cpu_policy()
+        for wall, cpu, message in [(1, 6, 'CPU'), (100.01, .2, 'wall backstop')]:
+            with self.subTest(message=message), self.assertRaisesRegex(RuntimeError, message):
+                rust_gate.check_budget({'scenario': wall}, policy, policy,
+                                       cpu_seconds={'scenario': cpu})
+        rust_gate.check_budget({'scenario': 100}, policy, policy, cpu_seconds={'scenario': 2})
+
+    def test_cpu_limits_and_fallbacks_cannot_grow(self):
+        baseline = self.cpu_policy()
+        for change in [{'cpu': {'seconds': 3, 'slow': {}}},
+                       {'cpu': {'seconds': 2, 'slow': {'slow': 5}}},
+                       {'cpu': {'seconds': 2, 'slow': {'new': 1}}},
+                       {'wall_only': {'new': 'Unreviewed exception'}},
+                       {'wall_only_platforms': {'linux': 'Disable CPU checks'}}]:
+            with self.subTest(change=change), self.assertRaisesRegex(RuntimeError, 'may not grow'):
+                rust_gate.check_budget({}, {**baseline, **change}, baseline)
+        with self.assertRaisesRegex(RuntimeError, 'may not grow'):
+            rust_gate.check_budget({}, {**baseline, 'cpu': None}, baseline)
+
+    def test_cpu_bootstrap_cannot_exceed_previous_wall_limits(self):
+        old = {'seconds': 10, 'slow': {'slow': 20}}
+        policy = {**old, 'cpu': {'seconds': 11, 'slow': {}}}
+        with self.assertRaisesRegex(RuntimeError, 'may not grow'):
+            rust_gate.check_budget({}, policy, old)
+
+    def test_explicit_wall_only_fallbacks_and_missing_linux_samples(self):
+        policy = self.cpu_policy()
+        with self.assertRaisesRegex(RuntimeError, 'database'):
+            rust_gate.check_budget({'database': 30}, policy, policy, cpu_seconds={'database': .1})
+        with self.assertRaisesRegex(RuntimeError, 'CPU.*missing|Missing CPU'):
+            rust_gate.check_budget({'scenario': 1}, policy, policy, cpu_seconds={})
+        with patch.object(sys, 'platform', 'darwin'):
+            rust_gate.check_budget({'scenario': 10}, policy, policy, cpu_seconds={})
+            with self.assertRaisesRegex(RuntimeError, 'scenario'):
+                rust_gate.check_budget({'scenario': 30}, policy, policy, cpu_seconds={})
+        for cpu in [float('nan'), float('inf'), -1]:
+            with self.subTest(cpu=cpu), self.assertRaisesRegex(RuntimeError, 'CPU'):
+                rust_gate.check_budget({'scenario': 1}, policy, policy, cpu_seconds={'scenario': cpu})
+
+    def test_proc_stat_handles_spaces_parentheses_and_all_four_cpu_counters(self):
+        fields = ['S'] + ['0'] * 10 + ['100', '200', '300', '400'] + ['0'] * 20
+        with patch.object(Path, 'read_text', return_value='42 (odd ) worker) ' + ' '.join(fields)), \
+             patch.object(os, 'sysconf', return_value=100):
+            self.assertEqual(rust_gate.process_cpu_seconds(42), 10)
+
+    def test_custom_and_libtest_receipts_include_reaped_child_cpu_and_tail(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = Path(temporary, 'fixture.py')
+            child = 'import time; start=time.process_time(); exec("while time.process_time()-start < .12: pass")'
+            for custom in [True, False]:
+                marker = ('test child ... ok' if custom else
+                          json.dumps({'type': 'test', 'event': 'ok', 'name': 'child', 'exec_time': .5}))
+                summary = ('1 fixture scenarios passed' if custom else
+                           json.dumps({'type': 'suite', 'event': 'ok', 'passed': 1}))
+                executable.write_text('import subprocess, sys\n'
+                                      + f'subprocess.run([sys.executable, "-c", {child!r}], check=True)\n'
+                                      + f'print({marker!r}, flush=True)\n'
+                                      + f'print({summary!r}, flush=True)\n')
+                cpu = {}
+                results = rust_gate.execute_binary({'name': 'fixture',
+                                                   'command': [sys.executable, str(executable)]},
+                                                  custom, cpu_seconds=cpu)
+                self.assertEqual(set(cpu), set(results))
+                self.assertGreaterEqual(sum(cpu.values()), .1)
+
     def test_recorded_hosted_noise_passes_but_clear_regressions_fail(self):
         bridge = 'tl3-controller/tl3_controller::adapters::worktrees::tests::github_installation_and_synchronous_token_bridge'
         policy = {'seconds': 10, 'slow': {bridge: 15}}

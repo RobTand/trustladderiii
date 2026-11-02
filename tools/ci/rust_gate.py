@@ -31,7 +31,7 @@ def runner_class():
     raise ValueError('Unmeasured hosted runner class')
 
 
-def check_budget(results, config, baseline, runner_class='baseline'):
+def check_budget(results, config, baseline, runner_class='baseline', cpu_seconds=None):
     seconds, slow = config['seconds'], config['slow']
     if (not isinstance(seconds, (int, float)) or not math.isfinite(seconds) or seconds <= 0
             or seconds > baseline['seconds'] or not slow.keys() <= baseline['slow'].keys()
@@ -49,7 +49,11 @@ def check_budget(results, config, baseline, runner_class='baseline'):
         raise RuntimeError('Per-test time budget exceeded:\n' + '\n'.join(failures))
 
 
-def execute_binary(binary, custom, arguments=()):
+def process_cpu_seconds(pid):
+    return 0.0
+
+
+def execute_binary(binary, custom, arguments=(), cpu_seconds=None):
     name = binary['name']
     command = list(binary['command'])
     if not custom:
