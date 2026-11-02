@@ -89,7 +89,8 @@ def _environment(error):
 
 
 def _file_tokens(worktree, path, encoding):
-    """Return the file's token cost, and its size when it is read by range."""
+    """Return the file's token cost, and its size when it is read by range.
+    Without an encoding, a small file costs its byte count, an upper bound."""
     try:
         parts = _parts(path)
     except ValueError as error:
@@ -133,7 +134,27 @@ def _file_tokens(worktree, path, encoding):
         raise DeclaredFileError(path, "not a regular file inside the worktree") from None
     if read > LARGE_FILE_BYTES:
         return RANGED_FILE_TOKENS, read
+    if encoding is None:
+        return read, None
     return len(encoding.encode_ordinary("".join(chunks))), None
+
+
+def measure_files(worktree, paths, encoding=None):
+    """Cost declared files with one rule for every role: a large file costs a
+    ranged-edit allowance and an unusable one is a reply problem (#321).
+    Returns the costs, the problems and the large files' sizes. Environment
+    errors propagate as infrastructure failures (Q50)."""
+    file_tokens, problems, large = {}, [], {}
+    for path in sorted(set(paths)):
+        try:
+            file_tokens[path], size = _file_tokens(worktree, path, encoding)
+        except DeclaredFileError as error:
+            problems.append(error)
+            file_tokens[path] = 0
+            continue
+        if size is not None:
+            large[path] = size
+    return file_tokens, problems, large
 
 
 class Forecaster:
@@ -147,18 +168,8 @@ class Forecaster:
     def files(self, paths):
         """Measure declared files. Unusable files cost nothing and are kept in
         `problems`; large files are kept in `large` with their sizes."""
-        self.problems, self.large = [], {}
-        file_tokens = {}
         with Worktree(".") as worktree:
-            for path in sorted(set(paths)):
-                try:
-                    file_tokens[path], size = _file_tokens(worktree, path, self.encoding)
-                except DeclaredFileError as error:
-                    self.problems.append(error)
-                    file_tokens[path] = 0
-                    continue
-                if size is not None:
-                    self.large[path] = size
+            file_tokens, self.problems, self.large = measure_files(worktree, paths, self.encoding)
         return file_tokens
 
     def forecast(self, brief, file_tokens):
