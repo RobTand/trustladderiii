@@ -119,6 +119,55 @@ pub(super) fn open_request(settings: &tl3_config::Store) {
         .value;
     assert_eq!(inherited["request_version"], 1);
     assert_eq!(inherited["decisions"], context["decisions"]);
+    // A change request revokes the contradictory approval without erasing its history.
+    drop(controller);
+    let mut controller = steering::race_controller(
+        settings,
+        root.path(),
+        &api,
+        json!({
+            "kind": "change_request", "new_text": "Do not update the retention pin.",
+            "supersedes": ["pq2662-q10"],
+        }),
+    );
+    let mut comment = fixture(true)["comment"].clone();
+    comment["id"] = json!(20011);
+    comment["body"] = json!("Change the request: do not update the retention pin.");
+    controller
+        .observe(
+            "contradict-q10",
+            Observation::GitHubComment {
+                repository: bootstrap().repos.remove(0),
+                issue: 12,
+                comment: serde_json::from_value(comment).unwrap(),
+            },
+        )
+        .unwrap();
+    drain(&mut controller);
+    let updated = store
+        .load()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|r| r.table == "request_decisions" && r.id == "2")
+        .unwrap()
+        .value;
+    assert_eq!(updated["request_version"], 2);
+    assert_eq!(
+        updated["decisions"][0]["superseded_by"],
+        "https://github.com/owner/sandbox/issues/12#issuecomment-20011"
+    );
+    assert_eq!(
+        store
+            .load()
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|r| r.table == "request_decisions" && r.id == "0")
+            .unwrap()
+            .value,
+        context
+    );
     println!("test restart_open_request_starts_from_edited_issue ... ok");
 }
 

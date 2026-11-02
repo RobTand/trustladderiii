@@ -945,7 +945,7 @@ pub(super) fn answer_replacement(settings: &tl3_config::Store) {
         .iter()
         .find(|r| r["role"] == "ingest" && r["operation"]["node"] == 1)
         .unwrap()["inputs"];
-    assert_eq!(input["decision_context"], inherited);
+    assert_eq!(&input["decision_context"], inherited);
     let body = d
         .requests()
         .iter()
