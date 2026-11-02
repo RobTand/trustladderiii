@@ -947,3 +947,50 @@ def test_test_only_regression_plan_is_accepted(planner_request, digests_plan):
     digests_plan['files'] = [DIGESTS]
     digests_plan['checks'] = [{'kind': 'regression', 'node_ids': [FROZEN, SIBLING], 'goal_ids': [0, 1]}]
     assert planned(planner_request, digests_plan) == []
+
+
+@pytest.mark.parametrize('dimension,value', [
+    ('executor', 'buildbuddy_remote_bazel'),
+    ('runner_features', ['pinned_cpu_contention']),
+    ('artifacts', ['invocation_url']),
+    ('methods', ['forced_reproduction.contention_wrapper']),
+    ('protected_files', ['.github/workflows/gate.yml']),
+])
+def test_evidence_contract_blocks_unsupported_requirements(planner_request, monkeypatch, dimension, value):
+    from tl3_workers.roles.planner import check_reply
+    monkeypatch.chdir(planner_request['worktree'])
+    tool = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+            'runner_features': ['base_head'], 'artifacts': ['logs', 'terminal_verdict', 'sha'],
+            'methods': ['red_green'], 'protected_files': []}
+    requirement = {**copy.deepcopy(tool), 'requirement': 'PB2640-2650 and PB2654 require exact remote evidence.'}
+    requirement[dimension] = value
+    inputs = copy.deepcopy(planner_request['inputs'])
+    inputs['tool_capabilities'] = [tool]
+    inputs['ingest']['evidence_contract'] = [requirement]
+    proposal = copy.deepcopy(LEAF)
+    proposal['evidence_contract'] = []  # Planning cannot erase an intake requirement.
+    check_reply(inputs, proposal)
+    assert proposal['kind'] == 'cant_meet'
+    assert dimension in proposal['report']
+    assert (value if isinstance(value, str) else value[0]) in proposal['report']
+    assert requirement in proposal['evidence_contract']
+
+
+def test_evidence_contract_requires_one_tool_to_supply_all_artifacts(planner_request, monkeypatch):
+    from tl3_workers.roles.planner import check_reply
+    monkeypatch.chdir(planner_request['worktree'])
+    inputs = copy.deepcopy(planner_request['inputs'])
+    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+                  'runner_features': ['base_head'], 'artifacts': ['logs', 'terminal_verdict'],
+                  'methods': ['red_green'], 'protected_files': []}
+    inputs['tool_capabilities'] = [dict(capability, artifacts=['logs']),
+                                   dict(capability, artifacts=['terminal_verdict'])]
+    inputs['ingest']['evidence_contract'] = [dict(capability, requirement='Both artifacts from the run.')]
+    reply = dict(copy.deepcopy(LEAF), evidence_contract=[])
+    check_reply(inputs, reply)
+    assert reply['kind'] == 'cant_meet'
+    inputs['tool_capabilities'] = [capability]
+    reply = dict(copy.deepcopy(LEAF), evidence_contract=[])
+    check_reply(inputs, reply)
+    assert reply['kind'] == 'leaf'
+    assert reply['violations'] == []

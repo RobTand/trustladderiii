@@ -1395,3 +1395,9 @@ fn heal_rerun_workflows_are_workflow_file_names() {
         assert!(error.contains("heal_rerun_workflows"), "{bad:?}: {error}");
     }
 }
+
+#[test]
+fn evidence_tools_are_explicit_configuration() {
+    let source = EXAMPLE.replace("[planning]", "[planning]\ntool_capabilities = []");
+    assert!(Config::parse(&source).is_ok(), "operators must be able to disable evidence tools");
+}
