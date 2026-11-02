@@ -158,6 +158,21 @@ class GateTests(unittest.TestCase):
             rust_gate.check_budget({'scenario': 300.001}, policy, policy,
                                    runner_class='buildbuddy-amd64', cpu_seconds={'scenario': 0})
 
+    def test_workers_wall_budgets_cover_observed_shard_timings_with_headroom(self):
+        # Gate 94441763-c3f2-442f-9fb3-ab5ce7ac1985, 2026-11-02.
+        observed = {
+            'tl3-controller/workers::maker_failure_fix-killed': 51.464240706991404,
+            'tl3-controller/workers::reviewer_blockers_reach_real_maker': 114.39952875798917,
+            'tl3-controller/workers::schema_missing_nonzero_and_duplicate_replies_fail': 75.760305216,
+        }
+        policy = json.loads((rust_gate.ROOT / rust_gate.POLICY).read_text())
+        runner = 'buildbuddy-amd64'
+        rust_gate.check_budget(observed, policy, policy, runner_class=runner)
+        for name, wall in observed.items():
+            with self.subTest(scenario=name):
+                limit = policy['slow'][name] * rust_gate.BUDGET_MULTIPLIERS[runner]
+                self.assertLessEqual(wall, .7 * limit)
+
     def test_waiting_three_wall_budgets_passes_with_low_cpu(self):
         policy = self.cpu_policy()
         rust_gate.check_budget({'waiting': 30}, policy, policy, cpu_seconds={'waiting': 0.2})
