@@ -1,6 +1,5 @@
 """Inventory a served repository through run_checks in an admitted PB action."""
 import argparse
-import ast
 from collections import Counter
 import json
 from pathlib import Path
@@ -8,42 +7,13 @@ import subprocess
 import tempfile
 
 from tl3_harness import Check, Container, Kind, run_checks
+from tl3_harness import selection
 from tl3_harness.execution import result_json
 
 
 def node_ids(repo, files):
     """Use function selectors so pytest expands each parametrized case itself."""
-    nodes = []
-    for name in files:
-        module = ast.parse((repo / name).read_bytes())
-        cases = {f"{alias.asname or alias.name}.TestCase" for node in module.body
-                 if isinstance(node, ast.Import) for alias in node.names if alias.name == "unittest"}
-        cases.update(alias.asname or alias.name for node in module.body
-                     if isinstance(node, ast.ImportFrom) and node.module == "unittest"
-                     for alias in node.names if alias.name == "TestCase")
-        disabled = {target.value.id for statement in module.body
-                    if isinstance(statement, ast.Assign) and isinstance(statement.value, ast.Constant)
-                    and statement.value.value is False for target in statement.targets
-                    if isinstance(target, ast.Attribute) and target.attr == "__test__"
-                    and isinstance(target.value, ast.Name)}
-        class_tests = {}
-        for node in module.body:
-            if getattr(node, "name", None) in disabled:
-                continue
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
-                nodes.append(f"{name}::{node.name}")
-            elif isinstance(node, ast.ClassDef):
-                if any(ast.unparse(base) in cases for base in node.bases):
-                    cases.add(node.name)
-                methods = dict.fromkeys(method for base in node.bases
-                                        for method in class_tests.get(ast.unparse(base), ()))
-                methods.update(dict.fromkeys(method.name for method in node.body
-                               if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
-                               and method.name.startswith("test_")))
-                class_tests[node.name] = methods
-                if node.name.startswith("Test") or node.name in cases:
-                    nodes.extend(f"{name}::{node.name}::{method}" for method in methods)
-    return nodes
+    return [node for name in files for node in selection.node_ids(repo, name)]
 
 
 def main():

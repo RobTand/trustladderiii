@@ -26,6 +26,7 @@ py_library(
         "node_ids.py",
         "report.py",
         "runner.py",
+        "selection.py",
         "test_tool.py",
         "trees.py",
     ],

@@ -260,6 +260,10 @@ pub struct Repository {
     pub container_image: Option<String>,
     #[serde(default)]
     pub exec_scratch: bool,
+    /// Run up to this many existing tests that import the change, and pass on the base,
+    /// as one more regression check (#359). Absent means off.
+    #[serde(default)]
+    pub selected_tests: Option<u32>,
     pub owner: String,
     pub name: String,
     pub installation_id: u64,
@@ -268,6 +272,9 @@ pub struct Repository {
     #[serde(default = "default_base_branch")]
     pub base_branch: String,
 }
+
+/// The harness's `MAX_SELECTED_TESTS`.
+pub const MAX_SELECTED_TESTS: u32 = 1000;
 
 fn default_branch_template() -> String {
     tl3_worktrees::branch_template::DEFAULT_TEMPLATE.into()
@@ -619,6 +626,15 @@ impl Config {
                 return Err(invalid(
                     format!("{field}.container_image"),
                     "use sha256:<64 lowercase hex digits> or repository@sha256:<64 lowercase hex digits>, as harness.Container requires",
+                ));
+            }
+            if repo
+                .selected_tests
+                .is_some_and(|limit| !(1..=MAX_SELECTED_TESTS).contains(&limit))
+            {
+                return Err(invalid(
+                    format!("{field}.selected_tests"),
+                    format!("must be 1 to {MAX_SELECTED_TESTS}, the harness's limit"),
                 ));
             }
             if repo.installation_id == 0 {

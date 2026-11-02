@@ -11,15 +11,23 @@ from typing import Protocol
 
 from .limits import MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, validate_check_plan
 from .model import Check, HarnessInputError, Kind, Outcome, Result, TestResult, Verdict, judge
+from .node_ids import selects
 from .report import InvalidReport, decode, parse
+from . import selection
 from .trees import (UnsupportedEntry, added_names, changed_configuration, changed_existing_tests,
-                    changed_protected, commit, configuration, export, is_test, own_base, test_edits)
+                    changed_files, changed_protected, commit, configuration, export, is_test, own_base,
+                    test_edits)
 
 
 TMPFS_MIB = 512
+# The one check the harness adds to a plan: existing tests that import the change (#359).
+SELECTED_CHECK = "Existing tests that import the change"
+MAX_SELECTED_TESTS = 1000
 
 
 _BASE_RESULTS: dict[tuple, dict[str, Outcome]] = {}
+# Selected candidates' base outcomes, per test, apart from the plan's base cache.
+_SELECTED_BASE: dict[tuple, Outcome] = {}
 
 
 @dataclass(frozen=True)
@@ -198,6 +206,8 @@ class TestTool(Protocol):
 
     def changed_existing_tests(self, base: Path, head: Path, tests: tuple[str, ...]) -> set[str]: ...
 
+    def select(self, tree: Path, changed: list[str], config: dict) -> list[str]: ...
+
     def run(self, tree: Path, container: Container, tests: tuple[str, ...], report: Path,
             progress: Progress, additions: frozenset[tuple[str, str]] = frozenset(), *,
             messages: dict[str, str] | None = None) -> dict[str, Outcome]: ...
@@ -224,6 +234,9 @@ class Pytest:
     def changed_existing_tests(self, base, head, tests):
         return changed_existing_tests(base, head, tests)
 
+    def select(self, tree, changed, config):
+        return selection.select(tree, changed, lambda name: is_test(name, config["test-files"]))
+
     def run(self, tree, container, tests, report, progress, additions=frozenset(), *, messages=None):
         return run_tree(tree, container, tests, report, progress, additions, messages=messages)
 
@@ -231,14 +244,87 @@ class Pytest:
 PYTEST = Pytest()
 
 
+def selected_candidates(repo: Path, tool: TestTool, old: Path, new: Path, config: dict, base: str,
+                        head: str, plan: tuple[Check, ...], limit: int) -> tuple[str, ...]:
+    """Existing tests the change's imports reach, closest first, up to `limit`. Tests the plan
+    names are judged there; tests the head edits or lacks are the leaf's own, for review."""
+    named = [test for check in plan for test in check.tests]
+    candidates = []
+    try:
+        # Lazily, closest first: a widely imported file can reach thousands of tests.
+        for test in tool.select(old, changed_files(repo, own_base(repo, base, head), head), config):
+            if (any(selects(test, other) or selects(other, test) for other in named)
+                    or tool.changed_existing_tests(old, new, (test,))):
+                continue
+            candidates.append(test)
+            if len(candidates) == limit:
+                break
+    except (RecursionError, MemoryError):
+        return ()
+    while candidates:
+        try:
+            validate_check_plan(plan + (Check(SELECTED_CHECK, Kind.REGRESSION, tuple(candidates)),))
+            break
+        except ValueError:
+            candidates = candidates[:len(candidates) // 2]
+    return tuple(candidates)
+
+
+def selected_base(tool: TestTool, old: Path, container: Container, candidates: tuple[str, ...], base: str,
+                  root: Path, progress: Progress) -> dict[str, Outcome]:
+    """The candidates' base outcomes, from one run apart from the plan's, cached per test."""
+    key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container)
+    missing = tuple(test for test in candidates if (*key, test) not in _SELECTED_BASE)
+    if missing:
+        for test, outcome in tool.run(old, container, missing, root / "selected-base.jsonl", progress).items():
+            if outcome != Outcome.NO_REPORT:
+                _SELECTED_BASE[(*key, test)] = outcome
+    return {test: _SELECTED_BASE.get((*key, test), Outcome.NO_REPORT) for test in candidates}
+
+
+def selected_head(tool: TestTool, new: Path, container: Container, kept: tuple[str, ...],
+                  before: dict[str, Outcome], root: Path, progress: Progress) -> Result:
+    """Judge the kept tests on the head, apart from the plan's run. A failing test reruns once,
+    alone: the maker can't fix a flake, and one test ending the process must not take the
+    others with it. The first MAX_DETAILED_FAILURES failures rerun; the rest stand."""
+    messages, notes = {}, {}
+    after = tool.run(new, container, kept, root / "selected-head.jsonl", progress, messages=messages)
+    failing = [test for test in kept if after.get(test) != Outcome.PASSED]
+    for index, test in enumerate(failing[:MAX_DETAILED_FAILURES]):
+        alone_messages = {}
+        alone = tool.run(new, container, (test,), root / f"selected-alone-{index}.jsonl", progress,
+                         messages=alone_messages).get(test, Outcome.NO_REPORT)
+        if alone == Outcome.PASSED:
+            notes[test] = (f"{after.get(test, Outcome.NO_REPORT)} on the head with the other selected tests, "
+                           "then passed alone: flaky or disturbed by another test. Not counted against the change.")
+        elif test in alone_messages:
+            messages[test] = alone_messages[test]
+        after[test] = alone
+    for test in kept:
+        if after.get(test, Outcome.NO_REPORT) == Outcome.NO_REPORT:
+            # It passed on the base; ending the process on the head is the change's failure.
+            after[test] = Outcome.ERROR
+            messages[test] = "The test ended its process on the head without a report; it passed on the base."
+    result = judge(Check(SELECTED_CHECK, Kind.REGRESSION, kept), before, after, messages=messages)
+    return replace(result, tests=tuple(replace(test, message=notes[test.test][:MAX_MESSAGE_CHARS])
+                                       if test.passed and test.test in notes else test for test in result.tests))
+
+
 def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                container: Container, reviewed: str | None = None, tool: TestTool = PYTEST,
-               protected: tuple[str, ...] = ()) -> tuple[Result, ...]:
+               protected: tuple[str, ...] = (), selected_tests: int | None = None) -> tuple[Result, ...]:
     """Run one round inside one admitted PB action, from trusted installed code. `protected`
-    holds the repository's protected path patterns; a change to any of them is refused."""
+    holds the repository's protected path patterns; a change to any of them is refused.
+    With `selected_tests`, up to that many existing tests whose imports reach the change,
+    and that pass on the base, run as one more regression check, `SELECTED_CHECK`."""
     require_admission()
     if not plan or len({check.name for check in plan}) != len(plan):
         raise HarnessInputError("a plan needs uniquely named checks")
+    if any(check.name == SELECTED_CHECK for check in plan):
+        raise HarnessInputError("a planned check may not use the harness's selected-check name")
+    if selected_tests is not None and (type(selected_tests) is not int
+                                       or not 1 <= selected_tests <= MAX_SELECTED_TESTS):
+        raise HarnessInputError(f"selected_tests must be 1 to {MAX_SELECTED_TESTS}")
     tests = tuple(dict.fromkeys(test for check in plan for test in check.tests))
     try:
         validate_check_plan(plan)
@@ -279,6 +365,8 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         changed = tool.changed_existing_tests(old, new, ordinary)
         demonstrating = tuple(dict.fromkeys(test for check in plan if check.kind == Kind.DEMONSTRATING
                                             for test in check.tests))
+        candidates = (selected_candidates(repo, tool, old, new, config, base, head, plan, selected_tests)
+                      if selected_tests else ())
         progress = Progress()
         cache_key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container, ordinary)
         if ordinary and cache_key not in _BASE_RESULTS:
@@ -286,6 +374,10 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             if Outcome.NO_REPORT not in observed.values():
                 _BASE_RESULTS[cache_key] = observed
         before = _BASE_RESULTS.get(cache_key, dict.fromkeys(ordinary, Outcome.NO_REPORT)).copy()
+        # Candidates run apart, so one crashing there can't cost the plan its base evidence.
+        selected_before = selected_base(tool, old, container, candidates, base, root, progress)
+        # A test that doesn't pass on the base says nothing about the change: drop it, don't excuse it.
+        kept = tuple(test for test in candidates if selected_before[test] == Outcome.PASSED)
         if demonstrating:
             shutil.copytree(old, demo)
             tool.test_edits(old, new, demo, config)
@@ -316,12 +408,14 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         for check in plan:
             result = judge(check, comparisons[check.kind], after, messages=messages)
             if check.kind in (Kind.REGRESSION, Kind.BEHAVIOR_PRESERVING):
-                protected = tuple(replace(test, passed=False, message=(
+                restored = tuple(replace(test, passed=False, message=(
                     f"Restore the existing test `{test.test}`; existing tests may not be changed to satisfy a check.")[:1000])
                     if test.test in changed else test for test in result.tests)
                 if any(test.test in changed for test in result.tests):
-                    result = replace(result, verdict=Verdict.FAIL, tests=protected)
+                    result = replace(result, verdict=Verdict.FAIL, tests=restored)
             results.append(result)
+        if kept:
+            results.append(selected_head(tool, new, container, kept, selected_before, root, progress))
         return tuple(results)
 
 
@@ -330,7 +424,8 @@ def result_json(results: tuple[Result, ...]) -> str:
     detailed = 0
     for report in reports:
         for test in report['tests']:
-            if not test['passed'] and detailed < MAX_DETAILED_FAILURES:
+            # A passing test carries a message only when a selected rerun found it flaky.
+            if (not test['passed'] or test['message']) and detailed < MAX_DETAILED_FAILURES:
                 test['message'] = test['message'][:MAX_MESSAGE_CHARS].encode(errors='backslashreplace').decode()[:MAX_MESSAGE_CHARS]
                 detailed += 1
             else:
