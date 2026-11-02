@@ -2,7 +2,7 @@
 //! records which version each worker run uses; the console adds versions and
 //! moves each role's active pointer. None of this is world state.
 
-use crate::{Result, Store, check_schema, connect, read_transaction};
+use crate::{Error, Result, Store, connect, read_transaction};
 use postgres::{Client, GenericClient, IsolationLevel, Row, Transaction};
 
 /// Who added a built-in version, in the version history.
@@ -139,7 +139,9 @@ impl Store {
 }
 
 /// The console's session for prompt versions. Its login may read every TL3
-/// table but write only the prompt versions and the active pointers.
+/// table but write only the prompt versions and the active pointers. It checks
+/// only that the prompt tables exist: the console judges the store's
+/// migrations itself and serves a store ahead of the TL3 it pins.
 pub struct Prompts {
     client: Client,
 }
@@ -295,7 +297,7 @@ impl Prompts {
             .isolation_level(IsolationLevel::ReadCommitted)
             .read_only(false)
             .start()?;
-        check_schema(&mut tx)?;
+        prompt_tables(&mut tx)?;
         let Some(active) = tx.query_opt(
             "SELECT version FROM tl3_prompt_active WHERE role = $1 FOR UPDATE",
             &[&role],
@@ -306,15 +308,29 @@ impl Prompts {
         if let Err(refusal) = change(&mut tx, active.get(0))? {
             return Ok(Err(refusal));
         }
-        let prompts = load(&mut tx, role)?.ok_or(crate::Error::Invalid("prompt role vanished"))?;
+        let prompts = load(&mut tx, role)?.ok_or(Error::Invalid("prompt role vanished"))?;
         tx.commit()?;
         Ok(Ok(prompts))
     }
 
     fn read(&mut self) -> Result<Transaction<'_>> {
         let mut tx = read_transaction(&mut self.client)?;
-        check_schema(&mut tx)?;
+        prompt_tables(&mut tx)?;
         Ok(tx)
+    }
+}
+
+fn prompt_tables(tx: &mut Transaction<'_>) -> Result<()> {
+    let present: bool = tx
+        .query_one(
+            "SELECT to_regclass('tl3_prompt_versions') IS NOT NULL AND to_regclass('tl3_prompt_active') IS NOT NULL",
+            &[],
+        )?
+        .get(0);
+    if present {
+        Ok(())
+    } else {
+        Err(Error::NotInitialized)
     }
 }
 
@@ -395,7 +411,7 @@ fn load(client: &mut impl GenericClient, role: &str) -> Result<Option<RolePrompt
     Ok(Some(RolePrompts {
         role: role.into(),
         active: full(client, role, active)?
-            .ok_or(crate::Error::Invalid("active prompt version is missing"))?,
+            .ok_or(Error::Invalid("active prompt version is missing"))?,
         activated_by: pointer.get(2),
         activated_ms: pointer.get(3),
         builtin_update,
