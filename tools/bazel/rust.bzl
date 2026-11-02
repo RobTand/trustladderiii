@@ -161,7 +161,7 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
         tags = ["rust"] + tags,
         exec_properties = exec_properties,
         size = "large",
-        shard_count = {"test_test_workers": 8, "test_test_publishing": 4}.get(name, 0) if controller else 0,
+        shard_count = 8 if controller and name == "test_test_workers" else 0,
     )
 
 def tl3_crate(package, crate, local_deps = [], features = [], build_script = False,

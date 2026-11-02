@@ -133,8 +133,8 @@ class RustDependencyTests(unittest.TestCase):
                               self.dependencies("test_test_" + name))
         self.assertIn("//workers/src:role_files", self.dependencies("test_test_hindsight"))
 
-    def test_heavy_scenarios_use_bazel_shards(self):
-        for name, count in [("workers", 8), ("publishing", 4)]:
+    def test_measured_controller_shard_configuration(self):
+        for name, count in [("workers", 8), ("publishing", 0)]:
             with self.subTest(name=name):
                 self.assertEqual(self.rules[":test_test_" + name].get("shard_count"), count)
 

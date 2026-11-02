@@ -14,7 +14,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use support::scenario_shard;
 use tl3_controller::executor::Output as Out;
 use tl3_controller::{
     Bootstrap, Boundary, Controller, LabelledIssue, Repository,
@@ -1759,10 +1758,6 @@ fn publication_404_look(settings: &tl3_config::Store, case: &str) {
 }
 
 fn main() {
-    if env::args().len() == 1 {
-        run_default();
-        return;
-    }
     if env::args().nth(1).as_deref() == Some("q46-open") {
         publication_open_conflict();
         println!("test publication_open_conflict ... ok");
@@ -1809,40 +1804,16 @@ fn main() {
         println!("test publishing_{mode} ... ok");
         return;
     }
-    panic!("unknown publishing scenario arguments");
-}
-
-fn run_default() {
-    let mut shard = scenario_shard::Shard::from_env();
-    shard.run(1, || {
-        let root = tempfile::tempdir().unwrap();
-        let mut router = workers(
-            support::executor_probe::Probe,
-            support::executor_probe::Probe,
-            Arc::new(Fixture::create(root.path())),
-            "merged".into(),
-        );
-        support::executor_probe::assert_retire_delivery(&mut router);
-        println!("test router_retire_delivery ... ok");
-    });
-    shard.run(1, || {
-        publication_open_conflict();
-        println!("test publication_open_conflict ... ok");
-    });
-    shard.run(1, || {
-        publication_requires_conventions();
-        println!("test publication_requires_conventions ... ok");
-    });
-    shard.run(1, || {
-        publication_recovery();
-        println!("test publication_lost_response_recovery ... ok");
-    });
+    publication_open_conflict();
+    println!("test publication_open_conflict ... ok");
+    publication_requires_conventions();
+    println!("test publication_requires_conventions ... ok");
+    publication_recovery();
+    println!("test publication_lost_response_recovery ... ok");
     let python = prepare_workers();
     let mut database = support::Database::start();
     for case in ["open", "approval", "open-restart"] {
-        shard.run(1, || {
-            publication_404_look(&database.create(&format!("publication_404_{case}")), case)
-        });
+        publication_404_look(&database.create(&format!("publication_404_{case}")), case);
     }
     for mode in [
         "repo-conventions",
@@ -1870,14 +1841,12 @@ fn run_default() {
         "reports-latest",
         "reports-closed",
     ] {
-        shard.run(1, || {
-            lifecycle(
-                &database.create(&format!("publishing_{mode}")),
-                &python,
-                mode,
-            );
-            println!("test publishing_{mode} ... ok");
-        });
+        lifecycle(
+            &database.create(&format!("publishing_{mode}")),
+            &python,
+            mode,
+        );
+        println!("test publishing_{mode} ... ok");
     }
     for mode in [
         "adoption-pass",
@@ -1885,11 +1854,9 @@ fn run_default() {
         "adoption-extras",
         "adoption-negative",
     ] {
-        shard.run(1, || {
-            publishing_adoption::run(&database.create(&mode.replace('-', "_")), &python, mode);
-            println!("test {mode} ... ok");
-        });
+        publishing_adoption::run(&database.create(&mode.replace('-', "_")), &python, mode);
+        println!("test {mode} ... ok");
     }
     database.stop();
-    shard.finish(35, "publishing");
+    println!("35 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }

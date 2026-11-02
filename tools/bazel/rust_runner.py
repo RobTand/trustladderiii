@@ -63,7 +63,7 @@ def main():
     if int(os.environ.get('TEST_TOTAL_SHARDS', '1')) > 1:
         shard = {'index': int(os.environ['TEST_SHARD_INDEX']),
                  'total': int(os.environ['TEST_TOTAL_SHARDS'])}
-        if harness != 'custom' or name not in ('tl3-controller/workers', 'tl3-controller/publishing'):
+        if harness != 'custom' or name != 'tl3-controller/workers':
             raise RuntimeError('scenario sharding requires a shard-aware custom harness')
         Path(os.environ['TEST_SHARD_STATUS_FILE']).touch()
     started = time.monotonic()
