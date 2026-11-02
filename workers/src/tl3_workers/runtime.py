@@ -19,7 +19,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 from langchain_core.outputs import ChatGenerationChunk
 from langchain_openai import ChatOpenAI
 
-from tl3_workers.contracts import read_json, schema, validate
+from tl3_workers.contracts import read_json, read_reply, schema, validate
 from tl3_workers.roles import ROLES
 from tl3_workers.tools import Worktree, build_tools
 from tl3_workers.memory import Summary, current
@@ -41,6 +41,12 @@ BUILTIN_TOOL_DESCRIPTIONS = {
 
 
 class ProxyChatOpenAI(ChatOpenAI):
+    def _convert_chunk_to_generation_chunk(self, chunk, default_chunk_class, base_generation_info):
+        from tl3_workers.tracing import record_chunk_usage
+        record_chunk_usage(chunk)
+        return super()._convert_chunk_to_generation_chunk(
+            chunk, default_chunk_class, base_generation_info)
+
     def _get_ls_params(self, stop=None, **kwargs):
         params = super()._get_ls_params(stop=stop, **kwargs)
         # Built-in per-model profiles can inject prompts and tools. TL3 owns its profile.
@@ -79,6 +85,8 @@ def create_model(request) -> BaseChatModel:
     key = Path(request["key_file"]).read_text().strip()
     if not key:
         raise ValueError("empty model key")
+    from tl3_workers.tracing import record_model_key
+    record_model_key(key)
     spec = request["model"]
     identity = session_identity(request)
     return ProxyChatOpenAI(
@@ -94,6 +102,9 @@ def create_model(request) -> BaseChatModel:
         model_kwargs={"prompt_cache_key": identity},
         max_retries=0,
     )
+
+
+ONLY_JSON = "Reply with one JSON object only: no prose, no code fences."
 
 
 def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None, context_size=150_000):
@@ -117,7 +128,7 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None,
     if identifier:
         register_harness_profile(f"{provider}:{identifier}", profile)
     prompt = files("tl3_workers").joinpath("prompts", role.prompt).read_text()
-    prompt += "\n\nReply with one JSON object matching this schema:\n"
+    prompt += "\n\n" + ONLY_JSON + " It must match this schema:\n"
     proposal = deepcopy(schema(role.reply_schema)) if reply_schema is None else reply_schema
     for variant in proposal.get("oneOf", [proposal]):
         for name in role.code_only_fields:
@@ -144,7 +155,7 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None,
 
 
 def run(request, emit: Callable[[dict], None]):
-    from tl3_workers.tracing import observe
+    from tl3_workers.tracing import observe, record_reply
 
     with observe(request):
         summary = Summary(request)
@@ -153,6 +164,7 @@ def run(request, emit: Callable[[dict], None]):
         reply, error = None, None
         try:
             reply = _run(request, emit)
+            record_reply(reply)
         except BaseException as exc:
             error = exc
             raise
@@ -199,4 +211,4 @@ def _run_agent(agent, request, emit):
                     emit({"event": "progress", "unit": "tool_result"})
     if last_message is None or last_message.tool_calls or last_message.invalid_tool_calls:
         raise ValueError("missing final model reply")
-    return read_json(last_message.text)
+    return read_reply(last_message.text)
