@@ -2,8 +2,8 @@
 //! request for TL3 review instead of retrying the work. At the stop the
 //! controller records the failing step with its evidence, for the closing
 //! summary, and posts one code-written line to the operations issue for the
-//! coordinator. A postmortem for the stop is owed as `needed_fix` (#415 reads
-//! `Node::review_stop`).
+//! coordinator. `postmortems::close_reason` owes the stop a postmortem as
+//! `needed_fix`.
 
 use crate::executor::{CommentKind, Delivery, Output};
 use crate::question_findings::{self, Sources};

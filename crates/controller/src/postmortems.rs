@@ -67,7 +67,8 @@ pub(crate) fn close_reason(
         || history.incidents.iter().any(|(_, needs_rob)| *needs_rob)
     {
         Reason::Escalation
-    } else if node.attempt > 1 || node.round > 0 || node.replanned {
+    } else if node.attempt > 1 || node.round > 0 || node.replanned || node.review_stop.is_some() {
+        // Q54: a stop for TL3 review is TL3's own failure to fix.
         Reason::NeededFix
     } else if history.run_failure
         || history.retries > 0
