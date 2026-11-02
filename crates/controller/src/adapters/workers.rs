@@ -226,13 +226,27 @@ impl Supervisor {
             let checkout = super::worktrees::checkout_path(&self.worktrees, delivery);
             let base = if let Some(run) = &delivery.checks {
                 run.base_sha.clone()
-            } else if let Some(base) = materials["check_run"]["base_sha"].as_str() {
-                CommitId::new(base)?
             } else {
-                Worktrees::open(&checkout, &checkout)?
+                let worktree = Worktrees::open(&checkout, &checkout)?;
+                let recorded = worktree
                     .branch_state(&self.branches.branch(delivery)?)?
-                    .ok_or(Error::Invalid("maker checkout has no base"))?
-                    .1
+                    .map(|(_, base)| base);
+                let stored = materials["check_run"]["base_sha"]
+                    .as_str()
+                    .map(CommitId::new)
+                    .transpose()?;
+                match (stored, recorded) {
+                    // A stored base that main has since moved past would blame main's
+                    // changes on the maker (#326). The base only ever moves forward.
+                    (Some(stored), Some(recorded))
+                        if stored != recorded && worktree.is_ancestor(&stored, &recorded)? =>
+                    {
+                        recorded
+                    }
+                    (Some(stored), _) => stored,
+                    (None, Some(recorded)) => recorded,
+                    (None, None) => return Err(Error::Invalid("maker checkout has no base")),
+                }
             };
             let checks = materials["maker"]["plan"]["checks"]
                 .as_array()

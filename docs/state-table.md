@@ -341,8 +341,9 @@ goals and forecast settings:
   The planner uses these findings when choosing its next plan.
 - `protected_paths`: repo-relative glob patterns for files a leaf or split may
   not declare. Code rejects matching declarations. The controller's defaults
-  include `.github/**`, `.mergify.yml`, `**/conftest.py`, `pytest.ini`, `tox.ini`,
-  `noxfile.py`, `setup.cfg` and `pyproject.toml`. `**` matches zero or more path
+  include `.github/**`, `.mergify.yml`, `**/conftest.py`, `pytest.ini`, `.pytest.ini`,
+  `tox.ini`, `noxfile.py`, `setup.cfg` and `pyproject.toml`, matching the files the
+  check harness refuses to run changed. `**` matches zero or more path
   segments, including a root `conftest.py`.
 
 | Event | Condition | Next | Effects |

@@ -314,7 +314,7 @@ fn maker_checks_against_the_worktree_base(database: &str, stored_on: &str, resta
         .unwrap();
     assert_eq!(
         request["inputs"]["check_base_sha"], f.head,
-        "checks compare against the base the restarted worktree sits on"
+        "checks compare against the base the worktree sits on"
     );
     assert_eq!(
         store.worker_materials("1").unwrap().unwrap()["check_run"]["base_sha"],

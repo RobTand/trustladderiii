@@ -83,6 +83,7 @@ impl Default for Planning {
                 ".mergify.yaml",
                 "**/conftest.py",
                 "pytest.ini",
+                ".pytest.ini",
                 "tox.ini",
                 "noxfile.py",
                 "setup.cfg",

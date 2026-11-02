@@ -23,6 +23,14 @@ def commit(repo: Path, ref: str) -> str:
     return git(repo, "rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}").decode().strip()
 
 
+class UnsupportedEntry(ValueError):
+    """A tree entry checks never run: a symlink, a submodule or another special file."""
+
+    def __init__(self, name: str):
+        super().__init__(f"check trees must contain only regular files and directories: {name}")
+        self.name = name
+
+
 def export(repo: Path, revision: str, target: Path):
     target.mkdir()
     for entry in git(repo, "ls-tree", "-rz", revision).split(b"\x00"):
@@ -32,7 +40,7 @@ def export(repo: Path, revision: str, target: Path):
         mode, kind, oid = metadata.split()
         # A served checkout may contain a symlink to a host credential or socket.
         if mode not in (b"100644", b"100755") or kind != b"blob":
-            raise ValueError("check trees must contain only regular files and directories")
+            raise UnsupportedEntry(raw_name.decode(errors="backslashreplace"))
         path = target / raw_name.decode()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(git(repo, "cat-file", "blob", oid.decode()))
