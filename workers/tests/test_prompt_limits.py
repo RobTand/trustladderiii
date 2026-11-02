@@ -38,7 +38,7 @@ def test_every_stated_byte_limit_is_one_the_code_enforces(name):
 
 # What the code does with `path` (see test_file_tools.py), as prompts and tool descriptions say it.
 GREP_PATH = "grep's path may be a file or a directory"
-GREP_PATTERN = "grep's pattern is a Python regular expression"
+GREP_PATTERN = "grep's pattern is an RE2 regular expression, with no backreferences or lookarounds"
 GREP_LITERAL = "set literal to true to search text as written"
 GLOB_PATH = "glob's path must be a directory"
 SHARED_TOOLS = ("grep", "glob")
@@ -53,7 +53,7 @@ def test_prompts_describe_the_path_argument_of_grep_and_glob(name):
     assert GREP_PATTERN in prompt
     assert GREP_LITERAL in prompt
     assert GLOB_PATH in prompt
-    assert "not a regular expression" not in prompt
+    assert "Python" not in GREP_PATTERN and "not a regular expression" not in prompt
     for option in GREP_OPTIONS:
         assert option in prompt
 
@@ -64,7 +64,7 @@ def test_role_tool_descriptions_describe_the_path_argument(role):
     if "grep" not in tools:
         pytest.skip(f"{role} has no file tools")
     assert "path may be a file or a directory" in tools["grep"]
-    assert "pattern is a Python regular expression" in tools["grep"]
+    assert "pattern is an RE2 regular expression, with no backreferences or lookarounds" in tools["grep"]
     assert "set literal to true to search text as written" in tools["grep"]
     assert "not a regular expression" not in tools["grep"]
     assert "path must be a directory" in tools["glob"]

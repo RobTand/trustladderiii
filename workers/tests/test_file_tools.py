@@ -3,6 +3,9 @@ from contextlib import contextmanager
 import errno
 import json
 import os
+import subprocess
+import sys
+import time
 
 import pytest
 
@@ -711,32 +714,82 @@ def test_grep_says_when_a_regex_found_nothing_that_the_text_might_be_literal(cod
         assert worktree.grep("rung_speed|SupplierRevision", offset=2)["message"] == ""
 
 
-@pytest.mark.parametrize("pattern,reason", [
-    ("(a+)+$", "nested repeat"),
-    ("(a*)*b", "nested repeat"),
-    ("(a|aa)+$", "alternation inside a repeat"),
-    ("(?:ab|a)*c", "alternation inside a repeat"),
-    (r"(a)\1", "backreference"),
-    ("(?=a)a", "lookaround"),
-    ("(?<!a)b", "lookaround"),
-    (".*.*x", "adjacent repeats"),
-    (".+.*x", "adjacent repeats"),
-    (r"\w+.*x", "adjacent repeats"),
-    ("a{1,500}", "repeat count"),
-    ("a+b+c+d+e+f", "too many repeats"),
-    ("a|" * 251, "too long"),
+@pytest.mark.parametrize("pattern,text,feature", [
+    ("(?=a)a", "see (?=a)a here", "lookarounds"),
+    ("(?<!a)b", "see (?<!a)b here", "lookarounds"),
+    (r"(a)\1", "see (a)\\1 here", "backreferences"),
+    ("a{1,5000}", "see a{1,5000} here", "repeat counts to 1,000"),
 ])
-def test_grep_refuses_patterns_that_can_backtrack_catastrophically(code_tree, pattern, reason):
-    with Worktree(code_tree) as worktree:
+def test_grep_searches_a_pattern_the_engine_lacks_as_literal_text_and_says_which(tmp_path, pattern, text, feature):
+    # RE2 has no backreferences or lookarounds, and caps repeat counts at 1,000. The note names which one it was.
+    (tmp_path / "f.py").write_text(f"before\n{text}\nafter\n")
+    with Worktree(tmp_path) as worktree:
         result = call(tools_for(worktree)["grep"], pattern=pattern)
-        error = pytest.raises(ValueError, worktree.grep, pattern)
-    assert result.status == "error"
-    assert reason in result.text
-    assert "literal=true" in result.text
-    assert str(error.value) == result.text
+        direct = worktree.grep(pattern)
+    assert result.status != "error"
+    assert lines(direct) == [2]
+    assert "not a valid regular expression" in direct["message"]
+    assert "searched as literal text" in direct["message"]
+    assert feature in direct["message"]
+    assert "literal=true" in direct["message"]
+    others = {"lookarounds", "backreferences", "repeat counts to 1,000"} - {feature}
+    assert not any(other in direct["message"] for other in others)
 
 
-def test_grep_still_searches_a_refused_pattern_as_literal_text(tmp_path):
+# Python's re hangs on every one of these for over 20 seconds, and holds the GIL while it does.
+ADVERSARIAL = {
+    "stars": ("a*a*a*a*b", "a" * 2048, []),
+    "classes": ("[a-z]+[a-z]+[a-z]+[a-z]+!", "a" * 2048, []),
+    "wildcards": (".*a.*a.*a.*b", "a" * 2048, []),
+    "alternations": ("(a|aa)" * 45 + "b", "a" * 2048, []),
+    "words": (r"\w+\s?\w+\s?\w+\s?\w+!", "a" * 2048, []),
+    "optionals": ("a?" * 120 + "a" * 120, "a" * 120, [1]),
+    "nested": ("(a+)+$", "a" * 2048 + "!", []),
+    "adjacent": (".*.*.*.*x", "a" * 2048, []),
+    "long pattern": ("a|" * 400 + "b", "a" * 2048, [1]),
+}
+# Only the test harness has a clock. The tool under test has none, and no pattern needs one.
+HARD_KILL_SECONDS = 20
+CHILD = """
+import json, sys
+from tl3_workers.tools import Worktree
+with Worktree(sys.argv[1]) as worktree:
+    result = worktree.grep(sys.argv[2])
+print(json.dumps([match["line"] for match in result["matches"]]))
+"""
+
+
+@pytest.fixture(scope="module")
+def adversarial_runs(tmp_path_factory):
+    started = time.monotonic()
+    children = {}
+    for name, (pattern, text, _) in ADVERSARIAL.items():
+        root = tmp_path_factory.mktemp(name.replace(" ", "-"))
+        (root / "line.txt").write_text(text + "\n")
+        children[name] = subprocess.Popen(
+            [sys.executable, "-c", CHILD, str(root), pattern],
+            env={**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p)},
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+    yield started, children
+    for child in children.values():
+        child.kill()
+        child.communicate()
+
+
+@pytest.mark.parametrize("name", sorted(ADVERSARIAL))
+def test_grep_finishes_catastrophic_looking_patterns_on_a_long_line(adversarial_runs, name):
+    started, children = adversarial_runs
+    try:
+        out, err = children[name].communicate(timeout=max(1, HARD_KILL_SECONDS - (time.monotonic() - started)))
+    except subprocess.TimeoutExpired:
+        children[name].kill()
+        pytest.fail(f"grep {ADVERSARIAL[name][0]!r} did not finish within {HARD_KILL_SECONDS} s and was killed")
+    assert children[name].returncode == 0, err
+    assert json.loads(out) == ADVERSARIAL[name][2]
+
+
+def test_grep_still_searches_a_catastrophic_looking_pattern_as_literal_text(tmp_path):
     (tmp_path / "f.py").write_text("see (a+)+$ here\n")
     with Worktree(tmp_path) as worktree:
         assert lines(worktree.grep("(a+)+$", literal=True)) == [1]
@@ -744,21 +797,50 @@ def test_grep_still_searches_a_refused_pattern_as_literal_text(tmp_path):
 
 @pytest.mark.parametrize("pattern", [
     r"^\s*def \w+\(.*\):", r"class \w+\(.*Test", r"foo(bar|baz)?qux", r"(?:ab)+c",
-    r"\w+\s*=\s*\d+", r"a{1,50}b", r"[a-z_]+\.py$", "x|y|z|w|v|u|t",
+    r"\w+\s*=\s*\d+", r"a{1,50}b", r"[a-z_]+\.py$", "x|y|z|w|v|u|t", r"(?P<name>rung)_speed", r"[[:alpha:]]+_speed",
 ])
 def test_grep_accepts_ordinary_code_search_patterns(code_tree, pattern):
     with Worktree(code_tree) as worktree:
-        worktree.grep(pattern)
+        result = worktree.grep(pattern)
+        assert "not a valid regular expression" not in result["message"]
 
 
-def test_grep_regex_looks_only_at_the_first_characters_of_a_long_line(tmp_path):
+def test_grep_regex_searches_a_whole_long_line(tmp_path):
     cap = OUTPUT_LIMITS["line_bytes"]
-    (tmp_path / "wide.txt").write_text("x" * cap + "needle\nneedle at the start\n")
+    (tmp_path / "wide.txt").write_text("x" * (4 * cap) + "needle\nneedle at the start\n")
     with Worktree(tmp_path) as worktree:
-        assert lines(worktree.grep("need[l]e")) == [2]
+        assert lines(worktree.grep("need[l]e")) == [1, 2]
         assert lines(worktree.grep("needle", literal=True)) == [1, 2]
-        # Text with no regex syntax is searched whole-line, as before.
         assert lines(worktree.grep("needle")) == [1, 2]
+        assert lines(worktree.grep("x$|nomatch")) == []
+        assert lines(worktree.grep("e$|nomatch")) == [1]
+
+
+@pytest.mark.parametrize("extra,said", [
+    (1, "1 line longer than 1,048,576 characters was searched only in its first 1,048,576 characters"),
+    (2, "2 lines longer than 1,048,576 characters were searched only in their first 1,048,576 characters"),
+])
+def test_grep_says_when_a_regex_found_nothing_in_lines_it_cut(tmp_path, extra, said):
+    cap = OUTPUT_LIMITS["regex_line_chars"]
+    (tmp_path / "bundle.js").write_text(("x" * cap + "needle\n") * extra + "short line\n")
+    with Worktree(tmp_path) as worktree:
+        result = worktree.grep("need[l]e")
+        assert result["matches"] == []
+        assert said in result["message"]
+        assert "literal=true" in result["message"]
+        # The note replaces nothing: the hint about text meant as written still appears.
+        assert "No matches for the regular expression" in result["message"]
+        # A match elsewhere, a plain-text search and literal=true need no note.
+        assert "longer than" not in worktree.grep("need[l]e|short")["message"]
+        assert worktree.grep("needle")["message"] == ""
+        assert lines(worktree.grep("needle", literal=True)) == list(range(1, extra + 1))
+        assert "longer than" not in worktree.grep("needle", literal=True)["message"]
+
+
+def test_grep_does_not_mention_cut_lines_when_none_were_cut(tmp_path):
+    (tmp_path / "f.txt").write_text("x" * 5000 + "\nshort\n")
+    with Worktree(tmp_path) as worktree:
+        assert "longer than" not in worktree.grep("need[l]e")["message"]
 
 
 def test_grep_regex_keeps_paging_and_truncation(tmp_path):

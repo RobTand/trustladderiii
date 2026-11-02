@@ -31,6 +31,8 @@ OUTPUT_LIMITS = {
     "grep_matches": 100,
     "glob_entries": 200,
     "list_entries": 200,
+    # A regular expression sees this many characters of a line.
+    "regex_line_chars": 1_048_576,
 }
 
 
