@@ -50,6 +50,12 @@ fn main() {
         ("prompt_builtin_updates", prompt_builtin_updates),
         ("prompt_edits_and_revert", prompt_edits_and_revert),
         (
+            "prompt_activation_needs_the_active_version",
+            prompt_activation_needs_the_active_version,
+        ),
+        ("prompt_history_and_limits", prompt_history_and_limits),
+        ("prompt_session_liveness", prompt_session_liveness),
+        (
             "prompt_version_recorded_for_a_run",
             prompt_version_recorded_for_a_run,
         ),
@@ -1387,10 +1393,6 @@ const BUILTIN: &[(&str, &str)] = &[
     ("reviewer", "Review, as shipped."),
 ];
 
-fn active_body(prompts: &RolePrompts) -> &str {
-    &prompts.version(prompts.active).unwrap().body
-}
-
 fn prompt_seeding(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     store.seed_prompts(BUILTIN).unwrap();
@@ -1412,9 +1414,9 @@ fn prompt_seeding(settings: &tl3_config::Store) {
                 version.builtin,
                 version.author.as_str()
             ),
-            (role.active, 1, true, BUILTIN_AUTHOR)
+            (role.active.id, 1, true, BUILTIN_AUTHOR)
         );
-        assert_eq!(&version.body, body);
+        assert_eq!(&role.active.body, body);
         assert!(!version.note.is_empty());
         assert_eq!(role.builtin_update, None);
     }
@@ -1427,7 +1429,7 @@ fn prompt_builtin_updates(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     store.seed_prompts(BUILTIN).unwrap();
     let mut prompts = Prompts::open(settings).unwrap();
-    let base = prompts.role("ingest").unwrap().unwrap().active;
+    let base = prompts.role("ingest").unwrap().unwrap().active.id;
     let edited = prompts
         .save(
             "ingest",
@@ -1437,7 +1439,9 @@ fn prompt_builtin_updates(settings: &tl3_config::Store) {
             base,
         )
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .active
+        .id;
     let shipped = [
         ("ingest", "Ingest, second release."),
         ("reviewer", "Review, second release."),
@@ -1445,52 +1449,57 @@ fn prompt_builtin_updates(settings: &tl3_config::Store) {
     store.seed_prompts(&shipped).unwrap();
     store.seed_prompts(&shipped).unwrap();
     let reviewer = prompts.role("reviewer").unwrap().unwrap();
-    assert_eq!(active_body(&reviewer), "Review, second release.");
+    assert_eq!(reviewer.active.body, "Review, second release.");
     assert_eq!(reviewer.versions.len(), 2);
     assert_eq!(reviewer.builtin_update, None);
     let ingest = prompts.role("ingest").unwrap().unwrap();
-    assert_eq!(ingest.active, edited.active, "Rob's version stays active");
+    assert_eq!(ingest.active.id, edited, "Rob's version stays active");
     assert_eq!(ingest.versions.len(), 3);
     let update = ingest.builtin_update.expect("the console flags the update");
-    let version = ingest.version(update).unwrap();
     assert_eq!(
-        (version.body.as_str(), version.builtin, version.number),
+        (update.body.as_str(), update.builtin, update.number),
         ("Ingest, second release.", true, 3)
     );
     // Keeping Rob's version settles this update, not the next one.
     assert_eq!(
-        prompts.keep("ingest", update + 100).unwrap(),
+        prompts.keep("ingest", update.id + 100).unwrap(),
         Err(Refusal::NoUpdate)
     );
-    let kept = prompts.keep("ingest", update).unwrap().unwrap();
-    assert_eq!((kept.active, kept.builtin_update), (edited.active, None));
+    let kept = prompts.keep("ingest", update.id).unwrap().unwrap();
+    assert_eq!((kept.active.id, kept.builtin_update), (edited, None));
     store
         .seed_prompts(&[("ingest", "Ingest, third release.")])
         .unwrap();
     let ingest = prompts.role("ingest").unwrap().unwrap();
-    assert_eq!(ingest.active, edited.active);
-    let third = ingest.builtin_update.unwrap();
+    assert_eq!(ingest.active.id, edited);
+    let third = ingest.builtin_update.unwrap().id;
     // Choosing the built-in again lets later deploys update it.
-    let chosen = prompts.activate("ingest", third, "Rob").unwrap().unwrap();
-    assert_eq!((chosen.active, chosen.builtin_update), (third, None));
+    let chosen = prompts
+        .activate("ingest", third, "Rob", edited)
+        .unwrap()
+        .unwrap();
+    assert_eq!((chosen.active.id, chosen.builtin_update), (third, None));
     store
         .seed_prompts(&[("ingest", "Ingest, fourth release.")])
         .unwrap();
     let ingest = prompts.role("ingest").unwrap().unwrap();
-    assert_eq!(active_body(&ingest), "Ingest, fourth release.");
+    assert_eq!(ingest.active.body, "Ingest, fourth release.");
     assert_eq!(ingest.builtin_update, None);
     assert_eq!(ingest.activated_by, BUILTIN_AUTHOR);
     // Reverting to an older built-in is Rob's choice: no update to flag, and
     // the next deploy leaves it active.
-    let reverted = prompts.activate("ingest", third, "Rob").unwrap().unwrap();
-    assert_eq!((reverted.active, reverted.builtin_update), (third, None));
+    let reverted = prompts
+        .activate("ingest", third, "Rob", ingest.active.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!((reverted.active.id, reverted.builtin_update), (third, None));
     store
         .seed_prompts(&[("ingest", "Ingest, fifth release.")])
         .unwrap();
     let ingest = prompts.role("ingest").unwrap().unwrap();
-    assert_eq!(ingest.active, third);
+    assert_eq!(ingest.active.id, third);
     assert_eq!(
-        ingest.version(ingest.builtin_update.unwrap()).unwrap().body,
+        ingest.builtin_update.unwrap().body,
         "Ingest, fifth release."
     );
 }
@@ -1499,7 +1508,7 @@ fn prompt_edits_and_revert(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     store.seed_prompts(BUILTIN).unwrap();
     let mut prompts = Prompts::open(settings).unwrap();
-    let first = prompts.role("reviewer").unwrap().unwrap().active;
+    let first = prompts.role("reviewer").unwrap().unwrap().active.id;
     assert_eq!(
         prompts
             .save("reviewer", "Text", "  ", "Rob", first)
@@ -1528,8 +1537,8 @@ fn prompt_edits_and_revert(settings: &tl3_config::Store) {
         )
         .unwrap()
         .unwrap();
-    let second = &saved.versions[0];
-    assert_eq!(saved.active, second.id);
+    let second = &saved.active;
+    assert_eq!(saved.versions[0].id, second.id);
     assert_eq!(
         (
             second.number,
@@ -1541,31 +1550,133 @@ fn prompt_edits_and_revert(settings: &tl3_config::Store) {
         (2, "Review v2.", "Check the tests first.", "Rob", false)
     );
     assert_eq!(saved.activated_by, "Rob");
-    assert!(second.created_ms >= saved.versions[1].created_ms);
+    assert!(saved.versions[0].created_ms >= saved.versions[1].created_ms);
     // An editor still showing the first version can't overwrite the second.
     assert_eq!(
         prompts
             .save("reviewer", "Review v2b.", "Note", "Rob", first)
             .unwrap(),
-        Err(Refusal::Stale {
-            active: saved.active
-        })
+        Err(Refusal::Stale { active: second.id })
     );
-    let reverted = prompts.activate("reviewer", first, "Rob").unwrap().unwrap();
-    assert_eq!(reverted.active, first);
-    assert_eq!(active_body(&reverted), "Review, as shipped.");
+    let reverted = prompts
+        .activate("reviewer", first, "Rob", second.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(reverted.active.id, first);
+    assert_eq!(reverted.active.body, "Review, as shipped.");
     assert_eq!(reverted.versions.len(), 2, "a revert adds no version");
     assert_eq!(reverted.builtin_update, None);
-    let ingest_version = prompts.role("ingest").unwrap().unwrap().active;
+    let ingest_version = prompts.role("ingest").unwrap().unwrap().active.id;
     assert_eq!(
-        prompts.activate("reviewer", ingest_version, "Rob").unwrap(),
+        prompts
+            .activate("reviewer", ingest_version, "Rob", first)
+            .unwrap(),
         Err(Refusal::UnknownVersion),
         "a version of another role"
     );
     assert_eq!(
-        prompts.activate("reviewer", 9_999, "Rob").unwrap(),
+        prompts.activate("reviewer", 9_999, "Rob", first).unwrap(),
         Err(Refusal::UnknownVersion)
     );
+}
+
+/// A revert from a page that missed a newer save changes nothing.
+fn prompt_activation_needs_the_active_version(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    store.seed_prompts(BUILTIN).unwrap();
+    let mut prompts = Prompts::open(settings).unwrap();
+    let first = prompts.role("reviewer").unwrap().unwrap().active.id;
+    let second = prompts
+        .save("reviewer", "Review v2.", "Second.", "Rob", first)
+        .unwrap()
+        .unwrap()
+        .active
+        .id;
+    let third = prompts
+        .save("reviewer", "Review v3.", "Third.", "Rob", second)
+        .unwrap()
+        .unwrap()
+        .active
+        .id;
+    // A page that loaded while v2 was active tries to revert to v1.
+    assert_eq!(
+        prompts.activate("reviewer", first, "Rob", second).unwrap(),
+        Err(Refusal::Stale { active: third })
+    );
+    assert_eq!(
+        prompts.role("reviewer").unwrap().unwrap().active.id,
+        third,
+        "the newer save stays active"
+    );
+}
+
+/// History rows carry no text; one version's text comes on request; text and
+/// notes have limits.
+fn prompt_history_and_limits(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    store.seed_prompts(BUILTIN).unwrap();
+    let mut prompts = Prompts::open(settings).unwrap();
+    let first = prompts.role("reviewer").unwrap().unwrap().active.id;
+    let long_note = "n".repeat(NOTE_LIMIT + 1);
+    assert_eq!(
+        prompts
+            .save("reviewer", "Text", &long_note, "Rob", first)
+            .unwrap(),
+        Err(Refusal::NoteTooLong)
+    );
+    let long_text = "t".repeat(TEXT_LIMIT + 1);
+    assert_eq!(
+        prompts
+            .save("reviewer", &long_text, "Note", "Rob", first)
+            .unwrap(),
+        Err(Refusal::TextTooLong)
+    );
+    let largest = "é".repeat(TEXT_LIMIT / 2);
+    let saved = prompts
+        .save("reviewer", &largest, &"n".repeat(NOTE_LIMIT), "Rob", first)
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.active.body, largest, "the limits are inclusive");
+    assert_eq!(
+        saved.versions.iter().map(|v| v.number).collect::<Vec<_>>(),
+        [2, 1]
+    );
+    let shipped = prompts.version("reviewer", first).unwrap().unwrap();
+    assert_eq!(
+        (shipped.body.as_str(), shipped.number, shipped.builtin),
+        ("Review, as shipped.", 1, true)
+    );
+    assert_eq!(prompts.version("ingest", first).unwrap(), None);
+    assert_eq!(prompts.version("reviewer", 9_999).unwrap(), None);
+    // The table holds the same limits for any other writer.
+    let mut owner = raw(settings);
+    for (body, note) in [(long_text.as_str(), "Note"), ("Text", long_note.as_str())] {
+        assert!(
+            owner
+                .execute(
+                    "INSERT INTO tl3_prompt_versions (role, body, author, note) VALUES ('reviewer', $1, 'Rob', $2)",
+                    &[&body, &note],
+                )
+                .is_err()
+        );
+    }
+}
+
+/// A session Postgres has dropped reports itself dead before an edit is sent.
+fn prompt_session_liveness(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    store.seed_prompts(BUILTIN).unwrap();
+    let (login, _) = console_login(settings, "tl3_console_liveness");
+    let mut prompts = Prompts::open(&login).unwrap();
+    assert!(prompts.is_live());
+    raw(settings)
+        .execute(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = 'tl3_console_liveness'",
+            &[],
+        )
+        .unwrap();
+    assert!(!prompts.is_live());
+    assert!(Prompts::open(&login).unwrap().is_live());
 }
 
 /// A run keeps the version it started with; later runs take the active one.
@@ -1582,7 +1693,9 @@ fn prompt_version_recorded_for_a_run(settings: &tl3_config::Store) {
     let saved = prompts
         .save("ingest", "Ingest v2.", "Shorter.", "Rob", first.id)
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .active
+        .id;
     assert_eq!(
         store.run_prompt("effect:0:1", "ingest").unwrap().unwrap(),
         first,
@@ -1594,7 +1707,7 @@ fn prompt_version_recorded_for_a_run(settings: &tl3_config::Store) {
             .unwrap()
             .unwrap()
             .id,
-        saved.active
+        saved
     );
     let recorded: Vec<(String, String, i64)> = raw(settings)
         .query(
@@ -1609,7 +1722,7 @@ fn prompt_version_recorded_for_a_run(settings: &tl3_config::Store) {
         recorded,
         [
             ("effect:0:1".into(), "ingest".into(), first.id),
-            ("effect:0:2".into(), "ingest".into(), saved.active),
+            ("effect:0:2".into(), "ingest".into(), saved),
         ]
     );
 }
@@ -1633,13 +1746,18 @@ fn console_login_writes_only_prompts(settings: &tl3_config::Store) {
     store.run_prompt("effect:0:1", "ingest").unwrap();
     let (login, mut client) = console_login(settings, "tl3_console_prompts");
     let mut prompts = Prompts::open(&login).unwrap();
-    let base = prompts.role("ingest").unwrap().unwrap().active;
+    let base = prompts.role("ingest").unwrap().unwrap().active.id;
     let saved = prompts
         .save("ingest", "Rob's ingest.", "Edited.", "Rob", base)
         .unwrap()
+        .unwrap()
+        .active
+        .id;
+    prompts
+        .activate("ingest", base, "Rob", saved)
+        .unwrap()
         .unwrap();
-    prompts.activate("ingest", base, "Rob").unwrap().unwrap();
-    let reviewer = prompts.role("reviewer").unwrap().unwrap().active;
+    let reviewer = prompts.role("reviewer").unwrap().unwrap().active.id;
     prompts
         .save("reviewer", "Rob's review.", "Edited.", "Rob", reviewer)
         .unwrap()
@@ -1652,7 +1770,8 @@ fn console_login_writes_only_prompts(settings: &tl3_config::Store) {
         .unwrap()
         .unwrap()
         .builtin_update
-        .unwrap();
+        .unwrap()
+        .id;
     let kept = prompts.keep("reviewer", update).unwrap().unwrap();
     assert_eq!(kept.builtin_update, None);
     for sql in [
@@ -1685,7 +1804,7 @@ fn console_login_writes_only_prompts(settings: &tl3_config::Store) {
         owner
             .query_one(
                 "SELECT body FROM tl3_prompt_versions WHERE id = $1",
-                &[&saved.active]
+                &[&saved]
             )
             .unwrap()
             .get::<_, String>(0)
@@ -1699,7 +1818,7 @@ fn console_login_granted_before_migration(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     store.seed_prompts(BUILTIN).unwrap();
     let mut prompts = Prompts::open(&login).unwrap();
-    let base = prompts.role("reviewer").unwrap().unwrap().active;
+    let base = prompts.role("reviewer").unwrap().unwrap().active.id;
     prompts
         .save("reviewer", "Review v2.", "Edited.", "Rob", base)
         .unwrap()

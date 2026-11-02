@@ -727,8 +727,8 @@ fn simulation(settings: &tl3_config::Store) {
     // PRD #327, C5: Rob's prompt edit applies to the next run, while a
     // running one keeps the version it started with.
     let mut prompts = tl3_store::Prompts::open(settings).unwrap();
-    let shipped_audit = prompts.role("audit").unwrap().unwrap().active;
-    let base = prompts.role("ingest").unwrap().unwrap().active;
+    let shipped_audit = prompts.role("audit").unwrap().unwrap().active.id;
+    let base = prompts.role("ingest").unwrap().unwrap().active.id;
     let robs_ingest = prompts
         .save(
             "ingest",
@@ -739,7 +739,8 @@ fn simulation(settings: &tl3_config::Store) {
         )
         .unwrap()
         .unwrap()
-        .active;
+        .active
+        .id;
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
         registry,
@@ -765,7 +766,8 @@ fn simulation(settings: &tl3_config::Store) {
         )
         .unwrap()
         .unwrap()
-        .active;
+        .active
+        .id;
     // Pause lets the in-flight audit finish and exposes Unplanned before admission.
     controller
         .observe(

@@ -7,6 +7,10 @@ use postgres::{Client, GenericClient, IsolationLevel, Row, Transaction};
 
 /// Who added a built-in version, in the version history.
 pub const BUILTIN_AUTHOR: &str = "TL3 deploy";
+/// The longest prompt text, in bytes. Migration 12 holds the same limit.
+pub const TEXT_LIMIT: usize = 256 * 1024;
+/// The longest version note, in characters. Migration 12 holds the same limit.
+pub const NOTE_LIMIT: usize = 500;
 const SEED_LOCK: i64 = 0x544c3350524f4d50;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -22,23 +26,29 @@ pub struct PromptVersion {
     pub created_ms: i64,
 }
 
-/// A role's versions, newest first, and which one runs.
+/// A version in a role's history, without its text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PromptSummary {
+    pub id: i64,
+    pub number: i64,
+    pub builtin: bool,
+    pub author: String,
+    pub note: String,
+    pub created_ms: i64,
+}
+
+/// Which version of a role runs, and its history, newest first. Only the
+/// active version and a waiting built-in update carry their text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RolePrompts {
     pub role: String,
-    pub active: i64,
+    pub active: PromptVersion,
     pub activated_by: String,
     pub activated_ms: i64,
     /// A built-in version a deploy shipped while another version stayed active,
     /// until Rob activates it or keeps his own.
-    pub builtin_update: Option<i64>,
-    pub versions: Vec<PromptVersion>,
-}
-
-impl RolePrompts {
-    pub fn version(&self, id: i64) -> Option<&PromptVersion> {
-        self.versions.iter().find(|version| version.id == id)
-    }
+    pub builtin_update: Option<PromptVersion>,
+    pub versions: Vec<PromptSummary>,
 }
 
 /// Why the console's edit changed nothing.
@@ -52,6 +62,10 @@ pub enum Refusal {
     },
     EmptyText,
     EmptyNote,
+    /// Longer than `TEXT_LIMIT` bytes.
+    TextTooLong,
+    /// Longer than `NOTE_LIMIT` characters.
+    NoteTooLong,
     /// Nothing to keep: no built-in update waits for this version.
     NoUpdate,
 }
@@ -162,6 +176,18 @@ impl Prompts {
         Ok(prompts)
     }
 
+    /// One version of a role, with its text.
+    pub fn version(&mut self, role: &str, id: i64) -> Result<Option<PromptVersion>> {
+        let _ = (role, id);
+        todo!("one version's text")
+    }
+
+    /// Whether the session still reaches Postgres. Check before an edit, so a
+    /// dropped session is replaced before anything is sent rather than after.
+    pub fn is_live(&mut self) -> bool {
+        todo!("probe the session")
+    }
+
     /// Add a version and make it active at once. `base` is the active version
     /// the edit started from; if another became active since, nothing changes.
     pub fn save(
@@ -193,9 +219,18 @@ impl Prompts {
         })
     }
 
-    /// Make an existing version active, as a revert does.
-    pub fn activate(&mut self, role: &str, version: i64, author: &str) -> Result<Edit> {
+    /// Make an existing version active, as a revert does. `expected` is the
+    /// version the caller saw active; if another became active since, nothing
+    /// changes.
+    pub fn activate(
+        &mut self,
+        role: &str,
+        version: i64,
+        author: &str,
+        expected: i64,
+    ) -> Result<Edit> {
         self.edit(role, |tx, active| {
+            let _ = expected;
             let builtin = tx
                 .query_opt(
                     "SELECT builtin FROM tl3_prompt_versions WHERE role = $1 AND id = $2",
@@ -225,7 +260,7 @@ impl Prompts {
             let Some(prompts) = load(tx, role)? else {
                 return Ok(Err(Refusal::UnknownRole));
             };
-            if prompts.builtin_update != Some(builtin) {
+            if prompts.builtin_update.map(|update| update.id) != Some(builtin) {
                 return Ok(Err(Refusal::NoUpdate));
             }
             tx.execute(
@@ -302,6 +337,15 @@ fn version(row: Row) -> PromptVersion {
     }
 }
 
+fn full(client: &mut impl GenericClient, role: &str, id: i64) -> Result<Option<PromptVersion>> {
+    Ok(client
+        .query_opt(
+            &format!("{VERSION} WHERE v.role = $1 AND v.id = $2"),
+            &[&role, &id],
+        )?
+        .map(version))
+}
+
 fn load(client: &mut impl GenericClient, role: &str) -> Result<Option<RolePrompts>> {
     let Some(pointer) = client.query_opt(
         "SELECT version, builtin_seen, activated_by, (extract(epoch FROM activated_at) * 1000)::bigint FROM tl3_prompt_active WHERE role = $1",
@@ -310,24 +354,36 @@ fn load(client: &mut impl GenericClient, role: &str) -> Result<Option<RolePrompt
     else {
         return Ok(None);
     };
-    let versions: Vec<PromptVersion> = client
+    let versions: Vec<PromptSummary> = client
         .query(
-            &format!("{VERSION} WHERE v.role = $1 ORDER BY v.id DESC"),
+            "SELECT id, row_number() OVER (ORDER BY id), builtin, author, note, (extract(epoch FROM created_at) * 1000)::bigint FROM tl3_prompt_versions WHERE role = $1 ORDER BY id DESC",
             &[&role],
         )?
         .into_iter()
-        .map(version)
+        .map(|row| PromptSummary {
+            id: row.get(0),
+            number: row.get(1),
+            builtin: row.get(2),
+            author: row.get(3),
+            note: row.get(4),
+            created_ms: row.get(5),
+        })
         .collect();
     let active: i64 = pointer.get(0);
     let seen: i64 = pointer.get(1);
-    let builtin_update = versions
+    let update = versions
         .iter()
         .find(|version| version.builtin)
         .map(|latest| latest.id)
         .filter(|&latest| latest > seen && latest != active);
+    let builtin_update = match update {
+        Some(id) => full(client, role, id)?,
+        None => None,
+    };
     Ok(Some(RolePrompts {
         role: role.into(),
-        active,
+        active: full(client, role, active)?
+            .ok_or(crate::Error::Invalid("active prompt version is missing"))?,
         activated_by: pointer.get(2),
         activated_ms: pointer.get(3),
         builtin_update,
