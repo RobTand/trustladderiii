@@ -221,6 +221,32 @@ caller looked. The `tl3_prompt_editor` role may insert versions, without the
 built-in flag, and update the pointer's version columns. `grant_reader` adds
 the console's login to it. `tl3_prompt_runs` keeps every row for now.
 
+## Postmortems and code grades
+
+Migration 13 adds these tables (#403). None is world state.
+
+- `tl3_postmortems`: one row per node and trigger (`close`, `question:<id>`,
+  `incident:<id>` or `rob:<command id>`), with its `reason`, `sample_share`,
+  repo, issue and title, and its status: `owed`, `running`, `done` or `failed`,
+  each with a timestamp. `Commit.postmortems` inserts owed rows with the commit's
+  time; a replay or a later commit for the same trigger adds nothing. The
+  judge's results (`cause`, `summary`, `timeline`, `process_failures`, `grades`,
+  `notes`) fill in later, and `search` is a generated tsvector over the title,
+  summary and notes.
+- `tl3_postmortem_recommendations`: at most three per postmortem, ranked, each an
+  exact before-and-after edit with evidence and effect. `fingerprint` is stable
+  across postmortems, for counting how many point at the same change.
+- `tl3_code_grades`: append-only grades by node, trigger, rubric version and
+  dimension. `grade` is 1 to 5, or null for a recorded fact.
+- `tl3_phase_history`: append-only, every phase a node enters from migration 13
+  on, written by the same trigger as `tl3_node_phases`.
+- `tl3_settings`: `postmortem_sample_share`, between 0 and 1. The console's login
+  may change it through `tl3_settings_editor`.
+
+Each table notifies `tl3_changes`. `grant_reader`'s default privileges give the
+console's login SELECT on them, and migration 13 grants existing reader logins
+explicitly.
+
 ## MVP and Hindsight upgrades
 
 Migration 6 is `0006_worker_wait.sql`. Its deployed SQL remains unchanged.
