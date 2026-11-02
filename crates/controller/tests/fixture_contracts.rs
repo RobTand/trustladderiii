@@ -258,7 +258,7 @@ fn assert_delivery_methods(
 
 #[test]
 fn scenario_shards_cover_every_group_once_and_balance_the_worker_fixture_groups() {
-    let mut groups = vec![2, 6, 4, 4, 2, 9, 8, 3, 4, 5, 1, 1, 4, 1];
+    let mut groups = vec![2, 6, 6, 4, 2, 9, 8, 3, 4, 5, 1, 1, 4, 1];
     groups.extend([1; 29]);
     let mut owners = vec![0; groups.len()];
     let mut loads = Vec::new();
@@ -274,7 +274,7 @@ fn scenario_shards_cover_every_group_once_and_balance_the_worker_fixture_groups(
         loads.push(load);
     }
     assert!(owners.iter().all(|owners| *owners == 1), "{owners:?}");
-    assert_eq!(loads.iter().sum::<usize>(), 83);
+    assert_eq!(loads.iter().sum::<usize>(), 85);
     assert!(
         loads.iter().max().unwrap() - loads.iter().min().unwrap() <= 1,
         "fixture group sizes must inform the partition: {loads:?}"

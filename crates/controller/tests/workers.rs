@@ -240,6 +240,82 @@ fn linked_materials(settings: &tl3_config::Store, wrapped: bool) {
     );
 }
 
+/// #449: PB #2626's shape. Rob's answer narrows the request to items of a section and
+/// refers to the issue's protocol section; the new request's ingest input must keep both.
+fn narrowed_materials(settings: &tl3_config::Store, wrapped: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "normal");
+    let mut store = Store::open(settings).unwrap();
+    let original = include_str!("fixtures/narrowing/issue-2626.md");
+    let answer = include_str!("fixtures/narrowing/answer-q20.md");
+    let issue = json!({"number": 2626, "title": "[P2] Defer new GPU claims while a gate GPU lease is live on the host",
+        "body": original, "author": "requester", "comments": []});
+    let repo = json!({"readme": "PrismaBuild", "file_list": ["src/prismabuild/pool.py"]});
+    let materials = if wrapped {
+        let inputs = json!({"issue": issue, "repo": repo});
+        json!({"ingest": inputs, "audit": inputs, "repo": repo})
+    } else {
+        json!({"issue": issue, "repo": repo})
+    };
+    store.put_worker_materials("0", &materials).unwrap();
+    let mut commit = Commit::new("narrowed-materials", json!({}), &store.load().unwrap());
+    commit.rows.push(RowChange::Put {
+        table: "request_links".into(),
+        id: "1".into(),
+        value: json!({"original": 0, "issue": {
+            "number": 2626, "title": "[P2] Defer new GPU claims while a gate GPU lease is live on the host",
+            "body": answer, "state": "open", "updated_at": "2026-11-02T16:10:00Z", "pull_request": null
+        }, "narrowing": {"question": {"id": 20, "kind": "needs_splitting"}}}),
+    });
+    store.commit(&commit).unwrap();
+    let mut delivery = delivery();
+    delivery.output = Out::Effect {
+        node: NodeId(1),
+        seq: 1,
+        kind: EffectKind::StartRun(Role::Ingest),
+        head: None,
+    };
+    delivery.issue = 2626;
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    supervisor.execute(&delivery).unwrap();
+    assert!(!failed(&terminal(&mut supervisor, &delivery)));
+    let request: Value = serde_json::from_slice(
+        &fs::read(root_for(&config, &delivery.key).join("attempt-00000000/request.json")).unwrap(),
+    )
+    .unwrap();
+    let body = request["inputs"]["issue"]["body"].as_str().unwrap();
+    assert!(
+        body.starts_with(
+            "## Rob's answer (the new scope; it wins where it conflicts with the original issue)\n"
+        ),
+        "the answer leads as the scope: {body}"
+    );
+    assert!(body.contains(answer.trim()), "the answer is carried whole");
+    assert!(
+        body.contains("## Original issue, narrowed by Rob's answer above\n"),
+        "the original issue is labelled as context"
+    );
+    assert!(
+        body.contains("## Protocol `prismabuild.gpu_lease.v1`") && body.contains("`TTL_S = 30`"),
+        "the protocol section the answer refers to reaches ingest"
+    );
+    assert!(
+        body.contains("## Sections of the original issue that the answer refers to\n")
+            && body.contains("\n- Behaviour wanted\n")
+    );
+    assert!(
+        body.contains("## Question Rob answered\n"),
+        "the answered question is named"
+    );
+    assert_eq!(request["inputs"]["issue"]["number"], 2626);
+    assert_eq!(request["role"], "ingest");
+    // Every later role reads the same narrowed issue, even if the GitHub issue changes.
+    assert_eq!(
+        store.worker_materials("1").unwrap().unwrap()["issue"]["body"],
+        request["inputs"]["issue"]["body"]
+    );
+}
+
 fn finish_fixture(database: Database, group: &str) {
     database.stop();
     drop(database);
@@ -419,6 +495,10 @@ fn main() {
         for wrapped in [false, true] {
             linked_materials(
                 &database.create(&format!("linked_materials_{wrapped}")),
+                wrapped,
+            );
+            narrowed_materials(
+                &database.create(&format!("narrowed_materials_{wrapped}")),
                 wrapped,
             );
         }
@@ -2482,7 +2562,7 @@ fn run_default() {
         println!("test missing_prompt_holds_the_launch_without_claiming_a_worker ... ok");
         finish_fixture(database, "worker_waits");
     });
-    shard.run(4, || {
+    shard.run(6, || {
         let mut database = Database::start();
         for wrapped in [false, true] {
             linked_materials(
@@ -2490,6 +2570,13 @@ fn run_default() {
                 wrapped,
             );
             println!("test linked_issue_role_materials_wrapped_{wrapped} ... ok");
+            narrowed_materials(
+                &database.create(&format!("narrowed_materials_{wrapped}")),
+                wrapped,
+            );
+            println!(
+                "test narrowed_request_ingest_carries_issue_scope_and_question_wrapped_{wrapped} ... ok"
+            );
         }
         simulation(&database.create("workers_sim"));
         println!("test real_ingest_audit_reaches_unplanned_and_posts_goals ... ok");
@@ -2611,5 +2698,5 @@ fn run_default() {
     database.stop();
     drop(database);
     shard.run(1, || println!("test maker_fixture_cleanup ... ok"));
-    shard.finish(83, "worker supervisor, planning and maker");
+    shard.finish(85, "worker supervisor, planning and maker");
 }
