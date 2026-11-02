@@ -92,6 +92,14 @@ A gate decrease refuses startup while any request in that repo is open. A pool
 decrease refuses startup while any request is open. Idle decreases are recorded
 in the event journal. Startup also retires ended looks when capacity changes.
 
+`limits.fail_fast` (Q54, #440) is a boolean and defaults to false, which keeps
+today's retry rules. When it is true, a step that would retry the work stops
+the request for TL3 review instead. `Controller::open` writes the configured
+value to the stored world in the same commit as the capacities, and records
+the change in the event journal. The kernel reads it at each retry, so
+requests already open follow it after the next start. It can change in either
+direction at any start; it needs no drain.
+
 At open, configured repositories are matched to stored identities by owner,
 name and installation. Owner and name ignore case. Missing repositories append
 new stored indices and gates; reordering the config never remaps an existing

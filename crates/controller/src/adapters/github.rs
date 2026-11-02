@@ -33,7 +33,7 @@ impl Executor for Fake {
             }
             | Out::Notice { .. }
             | Out::Comment {
-                kind: CommentKind::ConsoleNote,
+                kind: CommentKind::ConsoleNote | CommentKind::OperationsNote,
                 ..
             } => vec![],
             _ => return Err(crate::Error::Invalid("unsupported GitHub effect")),
@@ -660,18 +660,27 @@ pub fn writer_input(
             json!({"issue_title":title, "request": request,
                 "change": delivery.note.as_deref().unwrap_or("Work needs help before it can continue.")}),
         ),
-        Notice::Summary(outcome) => (
-            MessageKind::Summary,
-            json!({"issue_title": title, "request": request,
+        Notice::Summary(outcome) => {
+            // Q54: a stop for TL3 review names its step and carries its evidence.
+            let review_stop = delivery
+                .question_context
+                .as_ref()
+                .filter(|_| outcome == Outcome::Stopped);
+            let stopped = review_stop.and_then(crate::review_stops::outcome);
+            let mut facts = json!({"issue_title": title, "request": request,
             "outcome": match outcome {
                 Outcome::Merged => "Your change was merged.",
                 Outcome::AlreadyDone => "The requested work was already done.",
                 Outcome::Duplicate => "This request duplicates work already tracked elsewhere.",
                 Outcome::NotActionable => "This request could not be acted on.",
-                Outcome::Stopped => "Work on this request has stopped.",
+                Outcome::Stopped => stopped.as_deref().unwrap_or("Work on this request has stopped."),
                 Outcome::Replaced => "This request has been replaced. Work continues on your new request.",
-            }, "unmet_goals": if matches!(outcome, Outcome::Merged | Outcome::AlreadyDone) { vec![] } else { vec!["The original request was not completed by this work."] }}),
-        ),
+            }, "unmet_goals": if matches!(outcome, Outcome::Merged | Outcome::AlreadyDone) { vec![] } else { vec!["The original request was not completed by this work."] }});
+            if let Some(findings) = review_stop.and_then(crate::review_stops::findings) {
+                facts["findings"] = findings;
+            }
+            (MessageKind::Summary, facts)
+        }
         notice => (
             MessageKind::Note,
             json!({"issue_title": title, "request": request, "change": match notice {

@@ -105,6 +105,7 @@ fn require_consistent(w: &World) {
         Err(Broken::Merge) => panic!("broken: merge"),
         Err(Broken::Closed) => panic!("broken: closed"),
         Err(Broken::Gate) => panic!("broken: gate"),
+        Err(Broken::ReviewStop) => panic!("broken: review stop"),
     }
 }
 

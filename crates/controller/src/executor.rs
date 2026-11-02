@@ -30,6 +30,8 @@ pub enum CommentKind {
     ReplacementDropped,
     Restart,
     ConsoleNote,
+    /// Q54: a code-written line for the coordinator on the operations issue.
+    OperationsNote,
 }
 
 impl From<tl3_kernel::Out> for Output {

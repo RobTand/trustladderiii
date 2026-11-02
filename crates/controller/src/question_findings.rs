@@ -2,7 +2,7 @@
 //! summarises them; the worker process redacts them before any model sees them.
 
 use serde_json::{Value, json};
-use tl3_kernel::{Cont, Phase, QKind, Question, Resume};
+use tl3_kernel::{Cont, Phase, QKind, Question, Resume, ReviewStop};
 
 /// Longest report passed to the writer; it summarises, and never pastes, the report.
 pub(crate) const REPORT_CHARS: usize = 6_000;
@@ -71,6 +71,24 @@ pub(crate) fn findings(question: &Question, sources: &Sources) -> Option<Value> 
         QKind::EffectFailed => incident(sources.incidents),
         QKind::CleanupFailed => None,
     }
+}
+
+/// Q54: the evidence behind a stop for TL3 review, from the step that
+/// stopped. The summary has no decision for Rob, so none is kept.
+pub(crate) fn review_stop(step: ReviewStop, sources: &Sources) -> Option<Value> {
+    let found = match step {
+        ReviewStop::PlanCantMeet | ReviewStop::PlanBrokeRule => planner(&(sources.fresh)("plans")?),
+        ReviewStop::MakerOutOfRoom | ReviewStop::MakerNeedsFiles => {
+            let reply = (sources.fresh)("maker_replies")?;
+            reported("maker", reply["report"].as_str()?, CANT_MEET)
+        }
+        ReviewStop::ReviewerOutOfRoom => None,
+        ReviewStop::ChecksFailed
+        | ReviewStop::ChangesRequested
+        | ReviewStop::CiFailed
+        | ReviewStop::MakerCantMeet => rung(sources, CANT_MEET),
+    }?;
+    Some(json!({"source": found["source"], "report": found["report"]}))
 }
 
 fn caused(report: &str) -> Option<Value> {

@@ -31,6 +31,7 @@ pub mod production;
 pub mod prompts;
 mod question_findings;
 pub mod release;
+mod review_stops;
 mod scope;
 mod snapshot;
 pub mod status;
@@ -340,6 +341,10 @@ impl Controller {
         let pool_change = (configured_pool != world.pool_capacity)
             .then(|| json!({"stored": world.pool_capacity, "configured": configured_pool}));
         world.pool_capacity = configured_pool;
+        // Q54: the kernel reads the flag at each retry, so open requests follow it too.
+        let fail_fast_change = (self.bootstrap.fail_fast != world.fail_fast)
+            .then(|| json!({"stored": world.fail_fast, "configured": self.bootstrap.fail_fast}));
+        world.fail_fast = self.bootstrap.fail_fast;
         let mut changes = Vec::new();
         for (repo, gate) in world.gates.iter_mut().enumerate() {
             if configured == gate.w {
@@ -367,12 +372,17 @@ impl Controller {
                 additions.push((index, repository));
             }
         }
-        if changes.is_empty() && pool_change.is_none() && additions.is_empty() {
+        if changes.is_empty()
+            && pool_change.is_none()
+            && fail_fast_change.is_none()
+            && additions.is_empty()
+        {
             return Ok(());
         }
         let mut commit = Commit::new(
             format!("controller:gates:{}", snapshot.revision.get()),
-            json!({"gate_capacity": changes, "agent_capacity": pool_change, "repositories": additions}),
+            json!({"gate_capacity": changes, "agent_capacity": pool_change,
+                "fail_fast": fail_fast_change, "repositories": additions}),
             &snapshot,
         );
         for (index, repository) in additions {
@@ -1451,6 +1461,7 @@ impl Controller {
             .rows
             .extend(snapshot::changes(&before, snapshot::encode(&world)?));
         self.close_replacement(snapshot, &previous, &world, commit)?;
+        self.record_review_stops(snapshot, &previous, &world, commit)?;
         self.resolve_closed_effect_incidents(snapshot, &world, commit)?;
         self.resolve_stale_missing_checks(snapshot, &world, commit)?;
         for (index, node) in world.nodes.iter().enumerate() {
@@ -1660,6 +1671,7 @@ impl Controller {
                 }
             ) {
                 delivery.scope_removals = scope::summary(snapshot, node)?;
+                delivery.question_context = review_stops::context(snapshot, commit, node);
                 let mut references = std::collections::BTreeSet::new();
                 for value in snapshot
                     .rows

@@ -218,12 +218,17 @@ pub struct Limits {
     #[serde(default = "default_agent_pool")]
     pub agent_pool: u8,
     /// Q54 (#440): stop for TL3 review instead of retrying the work.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "fail_fast_setting")]
     pub fail_fast: bool,
 }
 
 fn default_agent_pool() -> u8 {
     1
+}
+
+fn fail_fast_setting<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    bool::deserialize(deserializer)
+        .map_err(|_| serde::de::Error::custom("limits.fail_fast must be true or false"))
 }
 
 #[derive(Clone, Debug, Deserialize)]
