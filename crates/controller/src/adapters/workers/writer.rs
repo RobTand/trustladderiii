@@ -52,6 +52,8 @@ pub struct ProcessWriter {
     config: tl3_config::Config,
     root: std::path::PathBuf,
     prompts: bool,
+    /// One store session for every draft's prompt, replaced after a failure.
+    store: Option<tl3_store::Store>,
 }
 impl ProcessWriter {
     pub fn new(config: &tl3_config::Config, root: &std::path::Path) -> Result<Self> {
@@ -60,6 +62,7 @@ impl ProcessWriter {
             config: config.clone(),
             root: root.to_owned(),
             prompts: false,
+            store: None,
         })
     }
 
@@ -93,11 +96,19 @@ impl Writer for ProcessWriter {
             "role":"writer","model":self.config.models.worker_model(model), "key_file":self.config.models.key_file,
             "inputs":input,"worktree":root});
         if self.prompts {
-            request["prompt"] = crate::prompts::for_run(
-                &mut tl3_store::Store::open(&self.config.store)?,
-                key,
-                "writer",
-            )?;
+            let store = match &mut self.store {
+                Some(store) => store,
+                None => self
+                    .store
+                    .insert(tl3_store::Store::open(&self.config.store)?),
+            };
+            match crate::prompts::for_run(store, key, "writer") {
+                Ok(prompt) => request["prompt"] = prompt,
+                Err(error) => {
+                    self.store = None;
+                    return Err(error);
+                }
+            }
         }
         let credentials = root.join("credentials");
         if credentials.exists() {

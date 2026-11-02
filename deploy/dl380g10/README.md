@@ -190,9 +190,12 @@ reads through: the board projection (`crates/controller/src/board.rs`), the
 change feed (`LISTEN tl3_changes`), the prompt store and the console's
 Postgres login.
 
-That login is `tl3_console`, which may read every table, including ones later
-migrations add. It may write only prompt versions (decision C5), through the
-`tl3_prompt_editor` role the grant adds it to. The installer creates its password at
+That login is `tl3_console`. It may read every table, including ones later
+migrations add. It may write only two things (decision C5): new prompt
+versions, and each role's active prompt pointer. It gets those rights through
+the `tl3_prompt_editor` role that the grant adds it to.
+
+The installer creates the login's password at
 `~/.config/tl3/secrets/console-postgres-password` (0600, once, never
 replaced). `deploy.py install` creates or updates the login and its grants
 when Postgres is running (`tl3-deploy console-role`), and fails if it can't.

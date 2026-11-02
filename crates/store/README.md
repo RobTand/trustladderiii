@@ -198,6 +198,29 @@ never reported progress still shows no recorded progress. Closed requests have
 no summary. These side-table writes do not change the kernel revision.
 
 
+## Prompt store
+
+Migration 12, `0012_prompts.sql`, adds role prompts as versions (PRD #327,
+decision C5). None of it is world state.
+
+- `tl3_prompt_versions` is append-only: each role's versions, with the text,
+  whether it is built in, the author, a note and the time. Text is at most
+  256 KiB (`TEXT_LIMIT`) and notes at most 500 characters (`NOTE_LIMIT`).
+- `tl3_prompt_active` has one row per role: the active version, and
+  `builtin_seen`, the newest built-in version decided on. A newer built-in
+  version is an update the console shows.
+- `tl3_prompt_runs` records the version each run used, by run key and role.
+
+`Store::seed_prompts` adds each changed built-in prompt as a version. It makes
+the new version active only where the previous built-in version was active.
+`Store::run_prompt` records a run's version at its first launch and returns
+the same version for later attempts. `Prompts` is the console's session:
+`save`, `activate` and `keep` lock the role's pointer, and `save` and
+`activate` refuse with `Stale` when another version became active since the
+caller looked. The `tl3_prompt_editor` role may insert versions, without the
+built-in flag, and update the pointer's version columns. `grant_reader` adds
+the console's login to it. `tl3_prompt_runs` keeps every row for now.
+
 ## MVP and Hindsight upgrades
 
 Migration 6 is `0006_worker_wait.sql`. Its deployed SQL remains unchanged.

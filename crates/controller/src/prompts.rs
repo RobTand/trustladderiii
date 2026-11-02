@@ -21,7 +21,12 @@ pub fn seed(store: &mut Store) -> crate::Result<()> {
 pub(crate) fn for_run(store: &mut Store, run_key: &str, role: &str) -> crate::Result<Value> {
     match store.run_prompt(run_key, role)? {
         Some(version) => Ok(json!({"version": version.id, "text": version.body})),
-        None => Ok(Value::Null),
+        None => {
+            eprintln!("prompt store: worker role {role} has no active prompt version");
+            Err(crate::Error::Invalid(
+                "a worker role has no active prompt version; tl3d seeds every built-in prompt when it starts",
+            ))
+        }
     }
 }
 
