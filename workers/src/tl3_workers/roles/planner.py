@@ -1,12 +1,14 @@
 """Report plan measurements and rule violations to the controller."""
 
 from pathlib import PurePosixPath
+import re
+import tomllib
 
 from tl3_workers.roles.base import Role
 from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES
 from tl3_harness import Check, Kind
 from tl3_harness.limits import validate_check_plan
-from tl3_harness.trees import test_function_source
+from tl3_harness.trees import is_test, test_function_source
 from tl3_workers.tools import Worktree
 
 
@@ -38,16 +40,8 @@ def check_reply(inputs, reply):
                     violations.append("Checks must name exact pytest node IDs.")
                     continue
                 if check["kind"] in {"regression", "behavior-preserving"}:
-                    # The whole module is parsed to find the test, so the
-                    # declared-file hard cap bounds it, not a page size.
                     path = node_id.split("::")[0]
-                    try:
-                        with Worktree(".") as tree, tree._file(path) as stream:
-                            source = stream.read(HARD_CAP_BYTES + 1)
-                        oversized = len(source.encode("utf-8")) > HARD_CAP_BYTES
-                        exists = not oversized and test_function_source(source, node_id) is not None
-                    except (OSError, ValueError, UnicodeError):
-                        oversized, exists = False, False
+                    oversized, exists = base_definition(node_id)
                     if oversized:
                         violations.append(f"Existing check's test file is over the {HARD_CAP_BYTES}-byte limit: {path}")
                     elif not exists:
@@ -56,6 +50,7 @@ def check_reply(inputs, reply):
             if not cited <= goals:
                 violations.append("A check cites an unknown goal.")
             covered.update(cited)
+        violations.extend(edit_violations(inputs["ingest"]["goals"], reply))
         if "Checks must name exact pytest node IDs." not in violations:
             try:
                 validate_check_plan(tuple(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']))
@@ -110,6 +105,129 @@ def check_reply(inputs, reply):
                 violations.append("Every proposed piece must have a smaller forecast than its parent.")
     reply["forecast"] = forecast
     reply["violations"] = list(dict.fromkeys(violations))
+
+
+def base_definition(node_id):
+    """Whether the base defines the test, after whether its file is over the hard cap."""
+    # The whole module is parsed to find the test, so the
+    # declared-file hard cap bounds it, not a page size.
+    try:
+        with Worktree(".") as tree, tree._file(node_id.split("::")[0]) as stream:
+            source = stream.read(HARD_CAP_BYTES + 1)
+    except (OSError, ValueError, UnicodeError):
+        return False, False
+    if len(source.encode("utf-8")) > HARD_CAP_BYTES:
+        return True, False
+    return False, test_function_source(source, node_id) is not None
+
+
+def test_files():
+    """The repository's harness test-file patterns, or None when the base doesn't configure them."""
+    try:
+        with Worktree(".") as tree, tree._file("pyproject.toml") as stream:
+            patterns = tomllib.loads(stream.read(HARD_CAP_BYTES))["tool"]["tl3"]["harness"]["test-files"]
+    except (OSError, ValueError, UnicodeError, KeyError, TypeError):
+        return None
+    if not isinstance(patterns, list) or not all(isinstance(pattern, str) for pattern in patterns):
+        return None
+    return patterns
+
+
+EDIT_VERBS = frozenset(("extend", "extends", "extending", "patch", "patches", "patching", "update", "updates",
+                        "updating", "modify", "modifies", "modifying", "rewrite", "rewrites", "rewriting",
+                        "change", "changes", "changing", "edit", "edits", "editing", "fix", "fixes", "fixing",
+                        "replace", "replaces", "replacing"))
+ADD_VERBS = frozenset(("add", "adds", "adding"))
+HOLDS = frozenset(("not", "never", "don't", "don’t", "dont", "nothing", "without", "unchanged", "keep",
+                   "keeps", "keeping", "leave", "leaves", "leaving", "preserve", "preserves", "preserving"))
+CLAUSES = frozenset(("so", "that", "until", "while", "and", "because", "when", "then", "but", "or", "if"))
+WORD = re.compile(r"[a-z][\w'’-]*")
+
+
+def mentions(text, test):
+    """Each mention of a test's name, as the words before and after it in its sentence.
+    A path such as `tests/<name>.py` isn't a mention."""
+    for sentence in re.split(r"[.;!?](?:\s|$)|\n", text):
+        for match in re.finditer(rf"(?<![\w/]){re.escape(test)}(?!\w|\.py)", sentence):
+            yield WORD.findall(sentence[:match.start()].lower()), WORD.findall(sentence[match.end():].lower())
+
+
+def asks_to_edit(before, after):
+    """An edit verb within seven words before the name, with no negation or new clause between them,
+    none just before the verb, and no "unchanged" just after the name. "Add" counts only as "add ... to"."""
+    for index in range(len(before) - 1, max(len(before) - 8, -1), -1):
+        word = before[index]
+        if word in HOLDS or word in CLAUSES:
+            return False
+        if word in EDIT_VERBS or word in ADD_VERBS and before[-1] in ("to", "into"):
+            return not HOLDS.intersection(before[max(index - 3, 0):index]) and "unchanged" not in after[:3]
+    return False
+
+
+def function(node_id):
+    # The harness's edit guard compares a test's function source, so every case shares it.
+    return node_id.split("[", 1)[0]
+
+
+def edit_violations(goals, reply):
+    """Regression and behavior-preserving checks run tests exactly as the base wrote them,
+    so a test the change edits can only be shown by a demonstrating check (#438)."""
+    violations = []
+    frozen, demonstrated = {}, set()
+    for index, check in enumerate(reply["checks"]):
+        for node_id in check["node_ids"]:
+            if check["kind"] == "demonstrating":
+                demonstrated.add(function(node_id))
+            else:
+                frozen.setdefault(function(node_id), (f"check-{index + 1}", check["kind"], node_id))
+    edits = reply.get("edits_tests", [])
+    edited = set()
+    for node_id in edits:
+        try:
+            Check("edits", Kind.DEMONSTRATING, (node_id,))
+        except ValueError:
+            violations.append("edits_tests must name exact pytest node IDs.")
+            continue
+        edited.add(function(node_id))
+        path = node_id.split("::")[0]
+        if path not in reply["files"]:
+            violations.append(f"A test the change edits must be in a declared file: `{path}`.")
+        oversized, exists = base_definition(node_id)
+        if oversized:
+            violations.append(f"edits_tests names a test in a file over the {HARD_CAP_BYTES}-byte limit: {path}")
+        elif not exists:
+            violations.append(f"edits_tests must name a test defined at the base: `{node_id}`. "
+                              "A test the change adds belongs only in a demonstrating check.")
+        if function(node_id) in frozen:
+            violations.append(f"`{node_id}` is in edits_tests, so a regression or behavior-preserving check "
+                              "can't name it: those checks run tests exactly as the base wrote them. "
+                              "Name it only in a demonstrating check.")
+        if function(node_id) not in demonstrated:
+            violations.append(f"`{node_id}` is in edits_tests but no demonstrating check names it. "
+                              "Name it in a demonstrating check that fails on the base by an assertion.")
+    patterns = test_files()
+    # The base run applies every test-file edit, so a head that changes only test files is its own base.
+    test_only = bool(reply["files"]) and patterns is not None and all(
+        is_test(path, patterns) for path in reply["files"])
+    names_frozen = False
+    for goal_id, goal in enumerate(goals):
+        for key, (name, kind, node_id) in frozen.items():
+            if key in edited or node_id.split("::")[0] not in reply["files"]:
+                continue
+            test = key.rsplit("::", 1)[-1]
+            found = list(mentions(goal["description"], test))
+            names_frozen = names_frozen or bool(found)
+            # A heuristic: an edit verb governing the name says the goal edits the test.
+            if any(asks_to_edit(before, after) for before, after in found):
+                violations.append(f"Goal {goal_id} names `{test}`, and {name} freezes `{node_id}` as a {kind} "
+                                  "check. If the change edits that test, list it in edits_tests and name it only "
+                                  "in a demonstrating check. If it leaves the test as written there, guard that "
+                                  "behavior with other existing tests.")
+    if test_only and (edited or demonstrated or names_frozen):
+        violations.append("This leaf changes only tests, so no check can show it: the base run applies the "
+                          "leaf's test edits, so base and head run the same test. Return can't meet and name "
+                          "#393, which asks Rob whether a forced reproduction counts as deflake evidence.")
+    return violations
 
 
 ROLE = Role(

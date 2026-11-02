@@ -64,6 +64,8 @@ pub enum Action {
     Comment {
         text: String,
     },
+    /// Rob asked for a postmortem of a closed request or one waiting for him (#403).
+    Postmortem {},
 }
 
 /// One of a question's options, with the details it needs from Rob.
@@ -423,6 +425,32 @@ fn translate(
     {
         return Ok(refuse("A newer request replaced this one."));
     }
+    if command.action == (Action::Postmortem {}) {
+        // An internal record: nothing is posted on the issue.
+        if !(n.phase.is_closed() || n.phase == tl3_kernel::Phase::AwaitingRob) {
+            return Ok(refuse(
+                "A postmortem can be asked for once the request has closed or is waiting for Rob.",
+            ));
+        }
+        if controller
+            .store
+            .postmortems(&node.0.to_string())?
+            .iter()
+            .any(|record| matches!(record.status.as_str(), "owed" | "running"))
+        {
+            return Ok(refuse(
+                "A postmortem for this request is already owed or running.",
+            ));
+        }
+        commit.postmortems.push(crate::postmortems::owed(
+            snapshot,
+            node,
+            format!("rob:{}", command.id),
+            crate::postmortems::Reason::RobAsked,
+            None,
+        )?);
+        return Ok(Ok(()));
+    }
     let note = match &command.action {
         Action::ClearIncident { incident } => {
             match clear_incident(controller, snapshot, command, &binding, incident, commit)? {
@@ -637,7 +665,7 @@ fn steering_reply(
                 ),
             )
         }
-        Action::ClearIncident { .. } | Action::Comment { .. } => {
+        Action::ClearIncident { .. } | Action::Comment { .. } | Action::Postmortem {} => {
             unreachable!("handled before steering")
         }
     })

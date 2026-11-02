@@ -98,6 +98,33 @@ fn split_forecast_keys_are_the_union_of_piece_files() {
 }
 
 #[test]
+fn leaf_with_declared_test_edits_maps_by_its_violations() {
+    // #438: edits_tests is optional on a leaf; worker code reports its rule breaks.
+    let test = "tests/test_greeting.py::test_hello";
+    let mut reply = json!({"kind": "leaf", "files": ["greeting.py"], "checks": [
+        {"kind": "demonstrating", "node_ids": [test], "goal_ids": [0]},
+    ], "edits_tests": [test], "no_design_questions": true, "lands_on_its_own": true,
+    "forecast": ingest(1)["forecast"], "violations": []});
+    assert!(matches!(
+        map_reply("planner", &reply).unwrap(),
+        MappedReply::Kernel(Reply::PlanLeaf { fits: true, .. })
+    ));
+    reply["violations"] = json!(["A test the change edits can't be frozen."]);
+    assert!(matches!(
+        map_reply("planner", &reply).unwrap(),
+        MappedReply::Kernel(Reply::PlanCantMeet)
+    ));
+    let mut cant_meet = json!({"kind": "cant_meet", "report": "Blocked.", "files": ["greeting.py"],
+        "edits_tests": [test], "forecast": ingest(1)["forecast"], "violations": []});
+    assert!(map_reply("planner", &cant_meet).is_err());
+    cant_meet.as_object_mut().unwrap().remove("edits_tests");
+    assert!(matches!(
+        map_reply("planner", &cant_meet).unwrap(),
+        MappedReply::Kernel(Reply::PlanCantMeet)
+    ));
+}
+
+#[test]
 fn blocked_maker_reply_needs_cited_evidence() {
     // Worker code adds the class (and tool) it recorded; the controller cites only those.
     for evidence in [

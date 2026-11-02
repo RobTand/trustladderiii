@@ -19,7 +19,10 @@ SCENARIO_COUNT = re.compile(r'^(\d+) .+ scenarios passed(?:;.*)?$')
 # Fixed calibration from hosted artifacts; see docs/hosted-budget-tolerance.md.
 BUDGET_MULTIPLIERS = {'baseline': 1.0, 'hosted-x64': 1.25, 'hosted-arm64': 1.15,
                       # BuildBuddy remote execution; docs/bazel-budget-calibration.json.
-                      'buildbuddy-amd64': 1.65}
+                      # Stopgap (2026-11-02): 1.65 calibrated quiet executors, but shared load
+                      # ran the same commit 3.2x slower (publishing 180 s vs 575 s at f79a3e58).
+                      # #452 replaces wall budgets with CPU budgets; restore 1.65 then.
+                      'buildbuddy-amd64': 3.0}
 
 
 def runner_class():

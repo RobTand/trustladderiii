@@ -251,6 +251,17 @@ impl World {
     }
 }
 
+fn controller_lock_barrier(settings: &tl3_config::Store) {
+    // Client drop can precede Postgres releasing the session lock.
+    let mut client = raw(settings);
+    client
+        .query_one("SELECT pg_advisory_lock($1)", &[&0x544c33434f4e5452_i64])
+        .unwrap();
+    client
+        .query_one("SELECT pg_advisory_unlock($1)", &[&0x544c33434f4e5452_i64])
+        .unwrap();
+}
+
 fn raw(settings: &tl3_config::Store) -> postgres::Client {
     postgres::Config::new()
         .host(&settings.host)
@@ -649,6 +660,7 @@ fn a_crash_between_filing_and_applying_loses_nothing_and_applies_once() {
         workers,
     } = world;
     drop(controller);
+    controller_lock_barrier(&settings);
     let mut crashing = open(&settings, root.path(), &workers, store);
     assert!(
         catch_unwind(AssertUnwindSafe(|| tl3_controller::ingress::drain(
@@ -657,6 +669,7 @@ fn a_crash_between_filing_and_applying_loses_nothing_and_applies_once() {
         .is_err()
     );
     drop(crashing);
+    controller_lock_barrier(&settings);
     // The restarted controller replays the command; it changes nothing more.
     let mut world = World {
         controller: open(
@@ -1118,6 +1131,7 @@ fn a_command_filed_during_a_drain_wakes_tl3d_again() {
         workers,
     } = world;
     drop(controller);
+    controller_lock_barrier(&settings);
     let mut draining = open(&settings, root.path(), &workers, store);
     tl3_controller::ingress::drain(&mut draining).unwrap();
     assert!(
@@ -1126,4 +1140,62 @@ fn a_command_filed_during_a_drain_wakes_tl3d_again() {
     );
     wake("for the command filed during the drain");
     db.stop();
+}
+
+/// #403: Rob's postmortem button works on closed requests and requests waiting
+/// for him, and never files a second postmortem while one is owed or running.
+#[test]
+fn postmortem_button_files_once_on_closed_or_waiting_requests() {
+    let mut db = support::Database::start();
+    let mut world = World::new(&mut db, "postmortem_button", &[12], false);
+    assert!(world.console(&uuid(1), 0, json!({"kind": "postmortem"})));
+    assert_eq!(
+        world.outcome(&uuid(1)).0,
+        "refused",
+        "a running request has no postmortem yet"
+    );
+    world.console(&uuid(2), 0, json!({"kind": "stop"}));
+    assert!(world.node(0).phase.is_closed(), "{:?}", world.node(0).phase);
+    let owed = Store::open(&world.settings)
+        .unwrap()
+        .postmortems("0")
+        .unwrap();
+    assert_eq!(owed.len(), 1, "{owed:?}");
+    assert_eq!(
+        (owed[0].trigger.as_str(), owed[0].reason.as_str()),
+        ("close", "closed_without_merge")
+    );
+    world.console(&uuid(3), 0, json!({"kind": "postmortem"}));
+    let (status, reason) = world.outcome(&uuid(3));
+    assert_eq!(status, "refused");
+    assert!(
+        reason.unwrap().contains("already"),
+        "an owed postmortem is not filed twice"
+    );
+    raw(&world.settings)
+        .execute(
+            "UPDATE tl3_postmortems SET status = 'done', finished_at = now()",
+            &[],
+        )
+        .unwrap();
+    let notes = world.notes().len();
+    world.console(&uuid(4), 0, json!({"kind": "postmortem"}));
+    assert_eq!(world.outcome(&uuid(4)).0, "applied");
+    let owed = Store::open(&world.settings)
+        .unwrap()
+        .postmortems("0")
+        .unwrap();
+    assert_eq!(
+        (
+            owed[1].trigger.clone(),
+            owed[1].reason.as_str(),
+            owed[1].status.as_str()
+        ),
+        (format!("rob:{}", uuid(4)), "rob_asked", "owed")
+    );
+    assert_eq!(
+        world.notes().len(),
+        notes,
+        "the button posts nothing on the issue"
+    );
 }
