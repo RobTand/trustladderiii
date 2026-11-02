@@ -8,6 +8,7 @@ p99 of those maxima, add 10% and round up to the next 0.05, floor 1.0.
 """
 import argparse
 from collections import defaultdict
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -59,17 +60,50 @@ def summarize(testlogs, policy, runner):
 
 
 def calibrate_cpu(paths, policy):
-    return {'cpu': policy, 'receipts': []}
+    """Tighten observed slow caps from two or more CPU receipts; leave unmeasured caps alone."""
+    if len(paths) < 2:
+        raise ValueError('need at least two CPU receipts')
+    maxima, records = {}, []
+    for path in paths:
+        raw = path.read_bytes()
+        receipt = json.loads(raw)
+        wall, cpu = receipt['seconds'], receipt.get('cpu_seconds', {})
+        if set(cpu) != set(wall) or not cpu:
+            raise ValueError(f'{path}: missing CPU samples')
+        for name, seconds in cpu.items():
+            if not math.isfinite(seconds) or seconds < 0:
+                raise ValueError(f'{path}: invalid CPU sample {name}')
+            maxima[name] = max(maxima.get(name, 0), seconds)
+        records.append({'file': path.name, 'sha256': hashlib.sha256(raw).hexdigest(),
+                        'scenarios': len(wall), 'wall_seconds': sum(wall.values()),
+                        'cpu_seconds': sum(cpu.values()),
+                        'max_wall_base_ratio': max(wall[name] / policy['slow'].get(name, policy['seconds'])
+                                                   for name in wall)})
+    previous = policy.get('cpu') or policy
+    limits = dict(previous['slow'])
+    for name in limits.keys() & maxima.keys():
+        # Two runs cannot establish a percentile. Allow 2x observed CPU, rounded to seconds.
+        limits[name] = min(limits[name], max(1, math.ceil(maxima[name] * 2)))
+    return {'cpu': {'seconds': previous['seconds'], 'slow': limits},
+            'method': 'existing caps; observed slow caps shrink to ceil(2 * max CPU), floor 1s',
+            'receipts': records, 'max_cpu_seconds': dict(sorted(maxima.items()))}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('testlogs', type=Path)
-    parser.add_argument('--runner-class', required=True)
+    parser.add_argument('testlogs', type=Path, nargs='?')
+    parser.add_argument('--cpu-receipts', type=Path, nargs='+')
+    parser.add_argument('--runner-class')
     parser.add_argument('--policy', type=Path, default=Path('tools/ci/rust-test-budget.json'))
     args = parser.parse_args()
     policy = json.loads(args.policy.read_text())
-    print(json.dumps(summarize(args.testlogs, policy, args.runner_class), indent=2))
+    if args.cpu_receipts:
+        summary = calibrate_cpu(args.cpu_receipts, policy)
+    else:
+        if args.testlogs is None or args.runner_class is None:
+            parser.error('wall calibration needs testlogs and --runner-class')
+        summary = summarize(args.testlogs, policy, args.runner_class)
+    print(json.dumps(summary, indent=2, sort_keys=True))
 
 
 if __name__ == '__main__':
