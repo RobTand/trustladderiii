@@ -255,6 +255,7 @@ fn check_apply(event: Event) -> World {
     };
     check_outputs(&before, &after, &out, exempt);
     check_fail_fast(&before, &after, event);
+    check_fail_fast_funding(&before, &after, event);
     if let Event::Reply {
         generation,
         reply: Reply::ReviewerOutOfRoom,
@@ -377,6 +378,23 @@ fn check_fail_fast(before: &World, after: &World, event: Event) {
                     Phase::Planning { .. } | Phase::AwaitingRob
                 ));
             }
+            // A work failure never asks Rob whether to go on. Only the kernel's
+            // rule-break path, which the planner worker can't reach, still does.
+            let asked = n.question.is_some_and(|q| {
+                q.kind == QKind::CantMeet && b.question.map_or(true, |p| p.id != q.id)
+            });
+            if asked {
+                assert!(
+                    matches!(
+                        event,
+                        Event::Reply {
+                            reply: Reply::PlanLeaf { .. },
+                            ..
+                        }
+                    ),
+                    "fail_fast asks can't-meet only after a broken rule"
+                );
+            }
             if stopped {
                 assert!(b.review_stop.is_none());
                 assert_eq!(n.phase, Phase::Stopping(Outcome::Stopped));
@@ -405,6 +423,35 @@ fn check_fail_fast(before: &World, after: &World, event: Event) {
     }
 }
 
+/// fail_fast stops retries, not credit decisions: a footprint extension that
+/// fits but has no credit asks Rob for credit (#482).
+fn check_fail_fast_funding(before: &World, after: &World, event: Event) {
+    if let Event::Reply {
+        generation,
+        reply: Reply::MakerNeedsFiles { files, fits },
+        ..
+    } = event
+    {
+        let b = &before.nodes[0];
+        let n = &after.nodes[0];
+        if before.fail_fast
+            && b.phase == Phase::Making
+            && b.current() == Some(Item::Await)
+            && b.run == Some(generation)
+            && before.has_footprint(files)
+            && fits
+            && !files.is_empty()
+            && !b.credit.can_spend(1)
+        {
+            assert_eq!(n.phase, Phase::AwaitingRob);
+            assert!(n.question.is_some_and(
+                |q| q.kind == QKind::OutOfCredit && q.cont == Cont::Ready(Resume::Making)
+            ));
+            assert!(n.review_stop.is_none());
+        }
+    }
+}
+
 /// Q54: the flag changes only a step that would retry the work, and that step
 /// stops for TL3 review instead. So with the flag off, the event does exactly
 /// what it did before the flag existed. The phase is the one that accepts the
@@ -427,10 +474,22 @@ fn check_fail_fast_diverts(phase: Phase, event: Event) {
         let n = &on.nodes[0];
         let r = &off.nodes[0];
         assert_eq!(on.nodes[1], off.nodes[1]);
-        assert_eq!(n.phase, Phase::Stopping(Outcome::Stopped));
-        assert!(n.review_stop.is_some());
         assert_eq!(n.credit, b.credit);
-        assert!(out_on.is_empty());
+        let funding = n
+            .question
+            .is_some_and(|q| q.kind == QKind::OutOfCredit && q.cont == Cont::Ready(Resume::Making));
+        if funding {
+            // An unfunded extension that fits waits for credit instead of a split.
+            assert!(
+                r.question.is_some_and(|q| q.kind == QKind::OutOfCredit
+                    && q.cont == Cont::Planning { must_split: true })
+            );
+            assert!(n.review_stop.is_none());
+        } else {
+            assert_eq!(n.phase, Phase::Stopping(Outcome::Stopped));
+            assert!(n.review_stop.is_some());
+            assert!(out_on.is_empty());
+        }
         let retried = r.attempt > b.attempt
             || matches!(r.phase, Phase::Planning { .. })
             || r.question
@@ -1389,18 +1448,6 @@ fn check_publishing_ci_tests() {
 proof!(apply_publishing_ci_tests, check_publishing_ci_tests());
 
 // Q54: one proof per event that can reach a retry, in the phase that accepts it.
-proof!(
-    fail_fast_plan_leaf,
-    check_fail_fast_diverts(
-        Phase::Planning {
-            must_split: kani::any()
-        },
-        reply(Reply::PlanLeaf {
-            footprint: kani::any(),
-            fits: kani::any()
-        })
-    )
-);
 proof!(
     fail_fast_plan_cant_meet,
     check_fail_fast_diverts(

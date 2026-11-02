@@ -9,7 +9,6 @@ const ADDITIONAL_PROOFS: &[&str] = &[
     "apply_publishing_ci_tests",
     "apply_publishing_ci_infrastructure",
     "apply_publishing_ci_earlier_step",
-    "fail_fast_plan_leaf",
     "fail_fast_plan_cant_meet",
     "fail_fast_maker_needs_files",
     "fail_fast_maker_cant_meet",

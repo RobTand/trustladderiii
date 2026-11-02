@@ -135,6 +135,19 @@ impl Run {
         assert_eq!((self.node().attempt, self.node().round), (1, 1));
     }
 
+    fn answer(&mut self, answer: Answer) {
+        let q = self.node().question.expect("an open question");
+        self.send(Event::Command {
+            node: NodeId(0),
+            id: self.node().last_cmd + 1,
+            command: Command::Answer {
+                question: q.id,
+                answer,
+            },
+        });
+        self.confirm();
+    }
+
     fn spent(&self) -> u32 {
         self.node().credit.spent
     }
@@ -249,6 +262,35 @@ fn a_footprint_extension_that_fits_is_unchanged() {
     assert_eq!(run.node().review_stop, None);
 }
 
+/// fail_fast stops retries, not credit decisions: a footprint extension that
+/// fits but has no credit asks Rob for credit, as without the flag (#482).
+#[test]
+fn a_footprint_extension_that_fits_without_credit_asks_rob_for_credit() {
+    let mut run = Run::new(true);
+    run.start_making();
+    let mut world = run.w.clone();
+    world.nodes[0].credit.spent = world.nodes[0].credit.start;
+    run.w = world;
+    assert_eq!(run.node().credit.balance(), 0);
+    let files = run.w.intern_footprint([FileId(1)]);
+    run.reply(Reply::MakerNeedsFiles { files, fits: true });
+    assert_eq!(run.phase(), Phase::AwaitingRob);
+    let q = run.node().question.unwrap();
+    assert_eq!(
+        (q.kind, q.cont, q.cost),
+        (QKind::OutOfCredit, Cont::Ready(Resume::Making), 1)
+    );
+    assert_eq!(run.node().review_stop, None);
+    assert!(!run.node().holds);
+    run.answer(Answer::AddCredit(1));
+    assert_eq!(run.phase(), Phase::Making);
+    let footprint: Vec<_> = run.w.files(run.node().footprint).unwrap().collect();
+    assert!(
+        footprint.contains(&FileId(1)),
+        "the extension applies once funded"
+    );
+}
+
 #[test]
 fn reviewer_out_of_room_keeps_one_fresh_review_then_stops() {
     let mut run = Run::new(true);
@@ -271,8 +313,12 @@ fn plan_cant_meet_stops_without_rerunning_the_planner() {
     run.assert_stopped_for_review(ReviewStop::PlanCantMeet, 0, 0);
 }
 
+/// The planner worker reports any broken rule as `cant_meet`, so a rule
+/// break reaches the kernel as `PlanCantMeet` and stops at once. The kernel's
+/// own rule-break path, `PlanLeaf` that doesn't fit, can't arise live, and
+/// fail_fast leaves it as it was (#482 review).
 #[test]
-fn a_plan_that_breaks_a_rule_reruns_once_then_stops() {
+fn the_kernels_rule_break_path_is_unchanged_under_fail_fast() {
     let mut run = Run::new(true);
     run.start_planning();
     let footprint = run.w.intern_footprint([FileId(0)]);
@@ -280,15 +326,14 @@ fn a_plan_that_breaks_a_rule_reruns_once_then_stops() {
         footprint,
         fits: false,
     });
-    assert!(
-        matches!(run.phase(), Phase::Planning { .. }),
-        "the first re-run is unchanged"
-    );
+    assert!(matches!(run.phase(), Phase::Planning { .. }));
     run.reply(Reply::PlanLeaf {
         footprint,
         fits: false,
     });
-    run.assert_stopped_for_review(ReviewStop::PlanBrokeRule, 0, 0);
+    assert_eq!(run.phase(), Phase::AwaitingRob);
+    assert_eq!(run.node().question.unwrap().kind, QKind::CantMeet);
+    assert_eq!(run.node().review_stop, None);
 }
 
 #[test]
