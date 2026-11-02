@@ -1,7 +1,11 @@
 //! Request records shared by closing summaries and published proof.
+use crate::executor::Output;
 use crate::{Result, executor::Delivery};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
+use std::collections::{BTreeMap, BTreeSet};
+use tl3_kernel::{Notice, Outcome};
+use tl3_store::RowChange;
 use tl3_store::{Commit, Snapshot};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -16,12 +20,287 @@ pub struct Evidence {
     pub artifacts: Vec<String>,
 }
 
-pub fn capture(_snapshot: &Snapshot, _commit: &Commit, _delivery: &Delivery) -> Result<Evidence> {
-    todo!("capture recorded request facts")
+/// Include writes made by the event that emits the delivery. Check reports and
+/// queue facts retired at close remain reporting evidence for that close.
+pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Result<Evidence> {
+    let mut rows: BTreeMap<_, _> = snapshot
+        .rows
+        .iter()
+        .map(|row| {
+            (
+                (row.table.clone(), row.id.clone()),
+                (row.arrival, row.value.clone()),
+            )
+        })
+        .collect();
+    let last = snapshot.rows.iter().map(|r| r.arrival).max().unwrap_or(0);
+    for (index, row) in commit.rows.iter().enumerate() {
+        match row {
+            RowChange::Put { table, id, value } => {
+                let arrival = rows
+                    .get(&(table.clone(), id.clone()))
+                    .map_or(last + index as i64 + 1, |r| r.0);
+                rows.insert((table.clone(), id.clone()), (arrival, value.clone()));
+            }
+            RowChange::Delete { table, id }
+                if !matches!(table.as_str(), "check_reports" | "queue_facts") =>
+            {
+                rows.remove(&(table.clone(), id.clone()));
+            }
+            _ => {}
+        }
+    }
+    let id = delivery.node().0.to_string();
+    let prefix = format!("{id}:");
+    let mut facts = Evidence::default();
+    let mut ordered: Vec<_> = rows.into_iter().collect();
+    ordered.sort_by_key(|(_, (arrival, _))| *arrival);
+    for ((table, row), (_, value)) in &ordered {
+        match table.as_str() {
+            "check_evidence" if row.starts_with(&prefix) => facts.checks.push(value.clone()),
+            "review_evidence" if row.starts_with(&prefix) => facts.reviews.push(value.clone()),
+            "audits" if row == &id => facts.audit = Some(value.clone()),
+            "goals" if row == &id => facts.goals = value.as_array().cloned().unwrap_or_default(),
+            "saved_scratch" if value["node"] == json!(delivery.node()) => {
+                if let Some(reference) = value["reference"].as_str() {
+                    facts.scratch.push(reference.into());
+                }
+            }
+            "queue_facts" => {
+                let fact: crate::adapters::mergify::QueueFact =
+                    crate::decode_stored(value.clone())?;
+                if fact.repository == delivery.repository
+                    && Some(fact.number) == delivery.pull_request
+                {
+                    facts.queue.push(serde_json::to_value(fact.evidence)?);
+                }
+            }
+            _ => {}
+        }
+    }
+    // Older releases only kept the current check report. Preserve its exact
+    // results without inventing a run key or a top-level verdict.
+    for ((table, row), (_, value)) in &ordered {
+        if table == "check_reports" && row.starts_with(&prefix) {
+            let head = &row[prefix.len()..];
+            if !facts.checks.iter().any(|record| record["head_sha"] == head) {
+                let mut record = value.clone();
+                record["head_sha"] = json!(head);
+                facts.checks.push(record);
+            }
+        }
+    }
+    if let Some(check) = facts
+        .checks
+        .iter()
+        .rev()
+        .find(|c| c["head_sha"].as_str() == delivery.head_sha.as_deref())
+    {
+        if check["pass"] == false || check["report"] == false {
+            facts.remaining_failures.push(check.clone());
+        } else {
+            facts.remaining_failures.extend(
+                check["results"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|result| result["verdict"] == "fail")
+                    .cloned(),
+            );
+        }
+    }
+    if let Some(review) = facts
+        .reviews
+        .iter()
+        .rev()
+        .find(|r| r["head_sha"].as_str() == delivery.head_sha.as_deref())
+    {
+        facts.remaining_failures.extend(
+            review["blocking_findings"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .cloned(),
+        );
+    }
+    if let Some(queue) = facts.queue.last().filter(|q| {
+        q.get("CiFailed").is_some()
+            || q.get("Conflict").is_some()
+            || q.get("QueueBlocked").is_some()
+    }) {
+        facts.remaining_failures.push(queue.clone());
+    }
+    let mut links = BTreeSet::new();
+    collect_links(&serde_json::to_value(&facts)?, &mut links);
+    facts.artifacts = links.into_iter().collect();
+    facts.scratch.sort();
+    facts.scratch.dedup();
+    Ok(facts)
 }
 
-pub fn publication(_delivery: &Delivery, _request: &str) -> Result<String> {
-    todo!("render and validate recorded PR evidence")
+fn collect_links(value: &Value, links: &mut BTreeSet<String>) {
+    match value {
+        Value::String(text) => {
+            for word in text.split_whitespace() {
+                let word = word.trim_matches(['(', ')', '[', ']', ',', ';', '"']);
+                if word.starts_with("https://") || word.starts_with("http://") {
+                    links.insert(word.to_owned());
+                }
+            }
+        }
+        Value::Array(values) => values.iter().for_each(|v| collect_links(v, links)),
+        Value::Object(values) => values.values().for_each(|v| collect_links(v, links)),
+        _ => {}
+    }
+}
+
+/// Plain statements whose scope is the record, not everything that may have run.
+pub fn summary(delivery: &Delivery) -> String {
+    let Some(facts) = &delivery.evidence else {
+        return "Details of checks and review were not captured in this summary.".into();
+    };
+    let mut lines = Vec::new();
+    for check in &facts.checks {
+        let results = check["results"].as_array();
+        let passed = check["pass"] == true
+            || results.is_some_and(|r| !r.is_empty() && r.iter().all(|c| c["verdict"] == "pass"));
+        lines.push(if passed {
+            "The recorded checks passed."
+        } else {
+            "Check results were recorded."
+        });
+        if results.is_some_and(|r| r.iter().any(|c| c.get("forcing").is_some())) {
+            lines.push("These checks include forced reproduction results.");
+        }
+    }
+    for review in &facts.reviews {
+        lines.push(match review["verdict"].as_str() {
+            Some("approve") => "The independent review approved the change.",
+            Some("changes") => "The independent review requested changes.",
+            _ => "An independent review result was recorded.",
+        });
+    }
+    if facts
+        .audit
+        .as_ref()
+        .is_some_and(|a| a["verdict"] == "agree")
+    {
+        lines.push("The request's independent audit agreed with its goals.");
+    }
+    if facts.queue.iter().any(|q| q.get("CiFailed").is_some()) {
+        lines.push("The merge queue later reported a check failure.");
+    }
+    if !facts.remaining_failures.is_empty() {
+        lines.push("Recorded failures remain unresolved.");
+    }
+    if !matches!(
+        delivery.output,
+        Output::Notice {
+            notice: Notice::Summary(Outcome::Merged),
+            ..
+        }
+    ) {
+        lines.push("A merge has not been recorded for this request.");
+    }
+    if facts.checks.is_empty() {
+        lines.push("Check results were not captured.");
+    }
+    if facts.reviews.is_empty() {
+        lines.push("A review verdict was not captured.");
+    }
+    lines.dedup();
+    lines.join(" ")
+}
+
+fn proof_required(text: &str) -> bool {
+    let text = text.to_lowercase();
+    ["pr", "pull request", "publish"]
+        .iter()
+        .any(|word| text.contains(word))
+        && ["evidence", "proof", "red/green", "red and green"]
+            .iter()
+            .any(|word| text.contains(word))
+}
+
+fn current<'a>(records: &'a [Value], delivery: &Delivery) -> Vec<&'a Value> {
+    records
+        .iter()
+        .filter(|record| {
+            delivery
+                .head_sha
+                .as_deref()
+                .is_some_and(|head| record["head_sha"] == head)
+        })
+        .collect()
+}
+
+/// PR evidence is rendered by code from records for the published head.
+/// Missing proof fails before any GitHub write.
+pub fn publication(delivery: &Delivery, request: &str) -> Result<String> {
+    let required = proof_required(request)
+        || delivery
+            .evidence
+            .as_ref()
+            .is_some_and(|e| e.goals.iter().any(|g| proof_required(&g.to_string())));
+    let checks = delivery
+        .evidence
+        .as_ref()
+        .map(|e| current(&e.checks, delivery))
+        .unwrap_or_default();
+    let complete = !checks.is_empty()
+        && checks.iter().all(|record| {
+            record["results"].as_array().is_some_and(|results| {
+                !results.is_empty()
+                    && results.iter().all(|result| {
+                        result["verdict"].as_str().is_some()
+                            && (result.get("forcing").is_none()
+                                || result["tests"].as_array().is_some_and(|tests| {
+                                    !tests.is_empty()
+                                        && tests
+                                            .iter()
+                                            .all(|test| test.get("head_forced").is_some())
+                                }))
+                    })
+            })
+        });
+    if required && !complete {
+        return Err(crate::Error::Permanent {class:"pr_evidence", source:"The request requires published proof, but completed evidence for this head was not captured".into()});
+    }
+    if checks.is_empty() {
+        return Ok(String::new());
+    }
+    let reviews = delivery
+        .evidence
+        .as_ref()
+        .map(|e| current(&e.reviews, delivery))
+        .unwrap_or_default();
+    // JSON escaping keeps external strings from introducing Markdown or markers.
+    let records = serde_json::to_string_pretty(
+        &json!({"head_sha":delivery.head_sha,"checks":checks,"reviews":reviews}),
+    )?
+    .replace('`', "\\u0060")
+    .replace('<', "\\u003c")
+    .replace('>', "\\u003e")
+    .replace('@', "\\u0040");
+    let records = crate::memory::redact_text(&records);
+    Ok(format!(
+        "<!-- tl3:recorded-evidence:start -->\n## Recorded evidence\n\n```json\n{records}\n```\n<!-- tl3:recorded-evidence:end -->"
+    ))
+}
+
+/// Replace only our generated section. Repeated publication preserves other text.
+pub fn with_publication(body: &str, evidence: &str) -> String {
+    if evidence.is_empty() {
+        return body.into();
+    }
+    let start = "<!-- tl3:recorded-evidence:start -->";
+    let end = "<!-- tl3:recorded-evidence:end -->";
+    if let Some((before, rest)) = body.split_once(start)
+        && let Some((_, after)) = rest.split_once(end)
+    {
+        return format!("{before}{evidence}{after}");
+    }
+    format!("{}\n\n{evidence}", body.trim_end())
 }
 
 #[cfg(test)]

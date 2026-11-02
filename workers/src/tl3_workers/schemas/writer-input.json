@@ -87,6 +87,14 @@
             "issue_title": {"$ref": "writer-reply.json#/$defs/text"},
             "request": {"$ref": "writer-reply.json#/$defs/text"},
             "outcome": {"$ref": "writer-reply.json#/$defs/text"},
+            "evidence_status": {"enum": ["captured", "not_captured"]},
+            "merge_status": {"enum": ["merged", "not_recorded"]},
+            "recorded_summary": {"type": "string"},
+            "pull_request": {"type": ["object", "null"]},
+            "evidence": {
+              "type": ["object", "null"],
+              "description": "Recorded checks, verdicts, remaining failures, artifacts, review, audit, queue and scratch. Missing records mean not captured, never not run."
+            },
             "removed_changes": {"$ref": "writer-reply.json#/$defs/text"},
             "unmet_goals": {
               "type": "array",

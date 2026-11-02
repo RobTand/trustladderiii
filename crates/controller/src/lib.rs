@@ -1722,6 +1722,18 @@ impl Controller {
                 Out::Notice {
                     notice: tl3_kernel::Notice::Summary(_),
                     ..
+                } | Out::Effect {
+                    kind: tl3_kernel::EffectKind::OpenPr,
+                    ..
+                }
+            ) {
+                delivery.evidence = Some(evidence::capture(snapshot, commit, &delivery)?);
+            }
+            if matches!(
+                output,
+                Out::Notice {
+                    notice: tl3_kernel::Notice::Summary(_),
+                    ..
                 }
             ) {
                 delivery.scope_removals = scope::summary(snapshot, node)?;
@@ -2493,7 +2505,7 @@ impl Controller {
                 pass,
                 results,
                 base_sha,
-                ..
+                action_key,
             } => {
                 let request = request(snapshot, node)?;
                 let repo = self
@@ -2526,6 +2538,12 @@ impl Controller {
                         earlier.iter().map(|row| &row.value),
                         &results,
                     );
+                    commit.rows.push(put(
+                        "check_evidence",
+                        format!("{}:{generation:020}", node.0),
+                        json!({"head_sha":sha,"base_sha":base_sha,"action_key":action_key,
+                            "report":report,"pass":pass,"results":results}),
+                    ));
                     let mut report = json!({"base_sha": base_sha, "results": results});
                     if !selected.is_empty() {
                         report["selected_failures"] = json!(selected);
@@ -2681,6 +2699,9 @@ impl Controller {
                                 }));
                             }
                         };
+                    commit.rows.push(put("review_evidence",format!("{}:{generation:020}",node.0),
+                        json!({"head_sha":criteria["head_sha"],"verdict":reply["verdict"],
+                            "blocking_findings":reply["blocking_findings"],"findings":reply["findings"]})));
                     if reply["verdict"] == "approve" {
                         mapped =
                             adapters::workers::protocol::MappedReply::Kernel(Reply::Approved {
