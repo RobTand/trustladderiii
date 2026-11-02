@@ -17,7 +17,6 @@ const CHECKS_FAIL: Reply = Reply::ChecksDone {
 
 struct Run {
     w: World,
-    cmd: u64,
     notices: Vec<Notice>,
     head: u64,
 }
@@ -28,7 +27,6 @@ impl Run {
         w.fail_fast = fail_fast;
         let mut run = Run {
             w,
-            cmd: 0,
             notices: Vec::new(),
             head: 0,
         };
