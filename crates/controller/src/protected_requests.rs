@@ -249,6 +249,22 @@ mod tests {
             ("## Goals\n- This doesn't touch `.github/`.", vec![]),
             ("## Goals\n- Read `tools/ci/bazel_gate.py`.", vec![]),
             (
+                "## Goals\n- Read `tools/ci/bazel_gate.py` and update `docs/bazel.md`.",
+                vec![],
+            ),
+            (
+                "## Goals\n- Add tests for `tools/ci/bazel_gate.py`.",
+                vec![],
+            ),
+            (
+                "## Expected footprint\n- Possibly `tools/ci/bazel_gate.py`.",
+                vec![],
+            ),
+            (
+                "## Goals\n- In `tools/ci/bazel_gate.py`, add budget reruns.",
+                vec!["tools/ci/bazel_gate.py"],
+            ),
+            (
                 "## Expected footprint\n- `tests/test_gate.py`\n## Out of scope\n- Edit `tools/ci/bazel_gate.py`.",
                 vec![],
             ),
