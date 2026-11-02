@@ -728,7 +728,7 @@
       "properties": {
         "EstimatedComputeUnits": "1",
         "EstimatedCPU": "2",
-        "EstimatedMemory": "0.5GB"
+        "EstimatedMemory": "1GB"
       },
       "before": {
         "invocation": "e6b25f43-11c2-495a-87fb-f11c8794cf56",
@@ -776,7 +776,7 @@
           }
         ]
       },
-      "after": {
+      "calibration_after": {
         "invocation": "7bec24ad-7944-4e73-8e65-ae09a25babb2",
         "label": "//workers/tests:test_pb_tests",
         "receipts": [
@@ -824,7 +824,8 @@
           }
         ],
         "url": "https://app.buildbuddy.io/invocation/7bec24ad-7944-4e73-8e65-ae09a25babb2",
-        "verified": true
+        "verified": true,
+        "note": "Receipt-verified 512 MiB request; observed 433860608-byte peak leaves only 23.7% headroom, so final request raised to 1 GiB."
       }
     }
   },

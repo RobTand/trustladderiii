@@ -13,8 +13,8 @@ def test_size(package, name, postgres = False):
         # Nested pytest: 0.99 CPU burst, 106 MB peak. Cover future nested suites too.
         cpu, memory = "2", "0.5GB"
     elif package == "workers/tests" and name == "test_pb_tests":
-        # Nested harness runner: 1.00 CPU burst and 421 MB peak, plus 25% headroom.
-        cpu, memory = "2", "0.5GB"
+        # Nested harness runner: 1.02 CPU burst and 434 MB peak, plus 25% headroom.
+        cpu, memory = "2", "1GB"
     else:
         return {}
     return {
