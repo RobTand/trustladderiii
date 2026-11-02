@@ -1659,6 +1659,9 @@ pub(crate) fn incident_summary(
         "environment_blocked" => "reported that TL3's environment blocked the work",
         "git_remote" => "could not reach the Git remote",
         "harness" => "rejected TL3's own check input inside the PrismaBuild action",
+        crate::postmortems::PAUSED => {
+            "failed three postmortem runs in a row, so claims are paused and owed postmortems wait for tl3d to start again"
+        }
         _ => "could not finish the operation",
     };
     let next = if needs_rob {

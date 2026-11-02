@@ -16,7 +16,9 @@ CREATE TABLE tl3_postmortem_claims (
     postmortem_id bigint NOT NULL REFERENCES tl3_postmortems (id),
     revision bigint NOT NULL REFERENCES tl3_events (revision),
     claimed_at timestamptz NOT NULL,
-    outcome text CHECK (outcome IN ('done', 'failed', 'released'))
+    outcome text CHECK (outcome IN ('done', 'failed', 'released')),
+    -- A failed run's fixed class, so a pause can name what failed.
+    failure text CHECK ((failure IS NULL) = (outcome IS DISTINCT FROM 'failed'))
 );
 CREATE INDEX tl3_postmortem_claims_claimed_at ON tl3_postmortem_claims (claimed_at);
 CREATE INDEX tl3_postmortem_claims_revision ON tl3_postmortem_claims (revision);

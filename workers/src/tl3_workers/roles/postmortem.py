@@ -55,16 +55,32 @@ def unusable(item, root):
     return None if count == 1 else f"before appears {count} times"
 
 
+# The reply schema's cap on a postmortem's notes.
+NOTES_CHARS = 2000
+
+
 def applicable(recommendations, root):
-    """The recommendations that apply to the release; each dropped one is logged."""
-    kept = []
+    """The recommendations that apply to the release, and a sentence for each
+    dropped one, which is also logged."""
+    kept, dropped = [], []
     for rank, item in enumerate(recommendations, 1):
         if (reason := unusable(item, root)) is None:
             kept.append(item)
         else:
-            print(f"tl3_workers: postmortem: dropped recommendation {rank}, "
-                  f"{item['target'][:200]}: {reason}", file=sys.stderr)
-    return kept
+            dropped.append(f"Dropped recommendation {rank}, {item['target'][:200]}: {reason}.")
+            print(f"tl3_workers: postmortem: {dropped[-1]}", file=sys.stderr)
+    return kept, dropped
+
+
+def with_drops(notes, dropped):
+    """The judge's notes followed by the drop reasons, within the notes' cap.
+    The reasons are kept whole; the judge's notes give way."""
+    if not dropped:
+        return notes
+    reasons = " ".join(dropped)[:NOTES_CHARS]
+    room = NOTES_CHARS - len(reasons) - 1
+    notes = notes.strip()[:room] if room > 0 else ""
+    return f"{notes} {reasons}" if notes else reasons
 
 
 @contextmanager
@@ -306,7 +322,10 @@ def _judged_run(request, workdir, emit):
             str(feedback.value))
         written = scrub(written, redactor)
         if isinstance(written, dict) and isinstance(written.get("recommendations"), list):
-            written["recommendations"] = applicable(written["recommendations"], RELEASE_ROOT)
+            written["recommendations"], dropped = applicable(written["recommendations"],
+                                                             RELEASE_ROOT)
+            if isinstance(written.get("notes"), str):
+                written["notes"] = with_drops(written["notes"], dropped)
         judged = {"postmortem": written, "grades": grades}
         _save(workdir / "judged.json", judged)
     logged = _load(workdir / "assessments.json") or {}

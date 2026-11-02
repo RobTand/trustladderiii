@@ -793,13 +793,13 @@ impl Store {
     /// after revision `since` (#486).
     pub fn postmortem_failure_streak(&mut self, since: i64) -> Result<Vec<String>> {
         let outcomes = self.client.query(
-            "SELECT outcome FROM tl3_postmortem_claims WHERE revision > $1 AND outcome IN ('done', 'failed') ORDER BY revision DESC LIMIT 3",
+            "SELECT failure FROM tl3_postmortem_claims WHERE revision > $1 AND outcome IN ('done', 'failed') ORDER BY revision DESC LIMIT 3",
             &[&since],
         )?;
+        // A success has no failure class, and ends the streak.
         Ok(outcomes
             .iter()
-            .map(|row| row.get::<_, String>(0))
-            .take_while(|outcome| outcome == "failed")
+            .map_while(|row| row.get::<_, Option<String>>(0))
             .collect())
     }
 
@@ -1199,14 +1199,14 @@ fn apply_postmortem(
             result,
         } => {
             let done = tx.execute(
-                &format!("UPDATE tl3_postmortems SET status = 'done', finished_at = {AT}, cause = $4, summary = $5, timeline = $6, process_failures = $7, grades = $8, notes = $9, assessment_ids = $10, model = $11 WHERE id = $1 AND status = 'running' AND run_key = $2"),
+                &format!("UPDATE tl3_postmortems SET status = 'done', finished_at = {AT}, failed_at = NULL, failure = NULL, cause = $4, summary = $5, timeline = $6, process_failures = $7, grades = $8, notes = $9, assessment_ids = $10, model = $11 WHERE id = $1 AND status = 'running' AND run_key = $2"),
                 &[id, run_key, &revision, &result.cause, &result.summary, &result.timeline, &result.process_failures, &result.grades, &result.notes, &result.assessment_ids, &result.model],
             )?;
             // A stale run's result changes nothing.
             if done != 1 {
                 return Ok(());
             }
-            claim_ended(tx, run_key, "done")?;
+            claim_ended(tx, run_key, "done", None)?;
             for item in &result.recommendations {
                 tx.execute("INSERT INTO tl3_postmortem_recommendations (postmortem_id, fingerprint, rank, phase, kind, target, operation, before, after, evidence, effect) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                     &[id, &item.fingerprint, &item.rank, &item.phase, &item.kind, &item.target, &item.operation, &item.before, &item.after, &item.evidence, &item.effect])?;
@@ -1230,7 +1230,7 @@ fn apply_postmortem(
                 &[id, run_key, &revision, failure, &retried],
             )?;
             if failed == 1 {
-                claim_ended(tx, run_key, "failed")?;
+                claim_ended(tx, run_key, "failed", Some(failure.as_str()))?;
             }
         }
         PostmortemUpdate::Release { id, run_key } => {
@@ -1239,7 +1239,7 @@ fn apply_postmortem(
                 &[id, run_key],
             )?;
             if released == 1 {
-                claim_ended(tx, run_key, "released")?;
+                claim_ended(tx, run_key, "released", None)?;
             }
         }
     }
@@ -1250,10 +1250,15 @@ fn apply_postmortem(
 /// of time. A stall, a refused launch or an invalid reply would repeat (#486).
 const RETRIED_FAILURES: [&str; 2] = ["worker_failed", "deadline"];
 
-fn claim_ended(tx: &mut Transaction<'_>, run_key: &str, outcome: &str) -> Result<()> {
+fn claim_ended(
+    tx: &mut Transaction<'_>,
+    run_key: &str,
+    outcome: &str,
+    failure: Option<&str>,
+) -> Result<()> {
     tx.execute(
-        "UPDATE tl3_postmortem_claims SET outcome = $2 WHERE run_key = $1",
-        &[&run_key, &outcome],
+        "UPDATE tl3_postmortem_claims SET outcome = $2, failure = $3 WHERE run_key = $1",
+        &[&run_key, &outcome, &failure],
     )?;
     Ok(())
 }

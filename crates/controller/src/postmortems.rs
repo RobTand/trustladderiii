@@ -403,6 +403,9 @@ fn failure_class(failure: Option<&str>) -> &'static str {
 /// Failed runs in a row, since tl3d started, that pause the runner (#486).
 const PAUSE_AFTER_FAILURES: usize = 3;
 
+/// The incident class of a paused runner.
+pub(crate) const PAUSED: &str = "postmortems_paused";
+
 /// A postmortem the controller stopped for making no progress failed with
 /// `no_progress`, whatever the stopped worker's record says (#486).
 pub(crate) fn stalled(mut completion: Completion) -> Completion {
@@ -472,17 +475,13 @@ impl crate::Controller {
         let Some(owed) = self.store.owed_postmortem()? else {
             return Ok(false);
         };
-        if self
+        let failures = self
             .store
-            .postmortem_failure_streak(self.postmortem_since)?
-            .len()
-            >= PAUSE_AFTER_FAILURES
-        {
+            .postmortem_failure_streak(self.postmortem_since)?;
+        if failures.len() >= PAUSE_AFTER_FAILURES {
             if !self.postmortem_paused {
+                self.raise_postmortem_pause(snapshot, &failures)?;
                 self.postmortem_paused = true;
-                eprintln!(
-                    "postmortems paused: {PAUSE_AFTER_FAILURES} runs in a row failed; owed postmortems wait for tl3d to start again"
-                );
             }
             return Ok(false);
         }
@@ -555,6 +554,38 @@ impl crate::Controller {
         });
         self.store.commit(&commit)?;
         Ok(true)
+    }
+
+    /// Claims paused after failed runs: one operations incident per tl3d
+    /// start, naming the failure classes, newest first. It blocks nothing.
+    fn raise_postmortem_pause(&mut self, snapshot: &Snapshot, failures: &[String]) -> Result<()> {
+        let title = format!(
+            "Postmortems paused after failed runs: {}",
+            failures.join(", ")
+        );
+        eprintln!("{title}; owed postmortems wait for tl3d to start again");
+        let mut commit = Commit::new(
+            format!("postmortem:paused:{}", snapshot.revision.get()),
+            json!({"postmortems_paused": failures}),
+            snapshot,
+        );
+        self.input_failed(
+            snapshot,
+            "postmortems",
+            None,
+            &title,
+            None,
+            crate::executor::Upstream::Workers,
+            Error::Permanent {
+                class: PAUSED,
+                source: "three postmortem runs in a row failed".into(),
+            },
+            &mut commit,
+        )?;
+        if !commit.rows.is_empty() {
+            self.store.commit(&commit)?;
+        }
+        Ok(())
     }
 
     /// Store a postmortem's result, or its failure, for the claim's run key only.
