@@ -13,7 +13,7 @@ ROLE = Role(
     tools={
         "list": "List repository directories to locate evidence for the request.",
         "read": "Read repository text to check the request against its implementation.",
-        "glob": "Find repository paths using relative glob patterns.",
-        "grep": "Find literal references in repository text to check the request.",
+        "glob": "Find repository paths using relative glob patterns. The path must be a directory.",
+        "grep": "Find literal references in repository text to check the request. The path may be a file or a directory, and the pattern is literal text, not a regular expression.",
     },
 )
