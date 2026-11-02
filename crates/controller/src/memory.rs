@@ -356,6 +356,9 @@ const RECALL_NOTE: &str =
     "Hindsight recall was unavailable, so no memories were supplied. Work from the other inputs.";
 const RECALL_PAUSED: &str = "Hindsight recall is paused after a failed recall, so no memories were supplied. Work from the other inputs.";
 const RECALL_RESPONSE_BYTES: usize = 256 * 1024;
+// Hindsight 0.10.2 rejects queries over 500 tokens. A 400-byte UTF-8 prefix
+// leaves margin even for text that tokenizes into one token per byte.
+const RECALL_QUERY_BYTES: usize = 400;
 const CURATED_KINDS: [&str; 3] = ["kind:lesson", "kind:decision", "kind:convention"];
 /// Flags and conventions read per run; more are ignored.
 const PER_RUN: usize = 3;
@@ -511,7 +514,7 @@ pub fn recall(
         Recall::Context { repo, query } | Recall::Conventions { repo, query } => (repo, query),
     };
     let base = json!({
-        "query": safe_text(&format!("Repository {repo}\n{query}")),
+        "query": clip(&safe_text(&format!("Repository {repo}\n{query}")), RECALL_QUERY_BYTES),
         "types": ["world", "experience"], "budget": "low", "max_tokens": 2048,
     });
     let mut calls = Vec::new();
@@ -539,7 +542,10 @@ pub fn recall(
             Err(error) => {
                 // One failure is enough: a second call would only double the wait.
                 eprintln!("Hindsight recall degraded to no memories: {error}");
-                breaker.open();
+                // A refused request says nothing about Hindsight's health.
+                if !matches!(error, Error::HindsightStatus(400)) {
+                    breaker.open();
+                }
                 unavailable = true;
                 break;
             }
@@ -578,7 +584,7 @@ pub fn recall(
     Ok(value)
 }
 
-/// Recall stays off after a failed recall, so a hung Hindsight costs one launch
+/// Recall stays off after an outage, so a hung Hindsight costs one launch
 /// rather than every launch. It closes again on evidence, never on a clock: the
 /// next delivery Hindsight acknowledges.
 #[derive(Clone, Default)]
