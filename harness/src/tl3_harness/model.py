@@ -5,6 +5,9 @@ import json
 import re
 
 
+ALWAYS_CHECK = "Repository always tests"
+
+
 class HarnessInputError(ValueError):
     """TL3's own check input is malformed: TL3's error, never the repo's or PrismaBuild's (Q51)."""
 
@@ -155,7 +158,7 @@ class Check:
             raise HarnessInputError("a check repeats a test")
         for test in self.tests:
             path, *names = test.split("::")
-            if (not names and self.kind != Kind.REGRESSION or not all(names) or not path.endswith(".py")
+            if (not names and (self.kind != Kind.REGRESSION or self.name != ALWAYS_CHECK) or not all(names) or not path.endswith(".py")
                     or path.startswith(("/", "-")) or ".." in path.split("/")
                     or "\\" in path or "\x00" in test):
                 raise HarnessInputError(f"not a pytest selector: {test!r}")

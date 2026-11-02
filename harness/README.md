@@ -92,22 +92,36 @@ explicitly required by repository settings belong in the trusted image.
 
 `run_checks(..., always_tests=("tests/test_rules.py",))` adds a regression
 check named `Repository always tests`. The controller supplies this list from
-`[[github.repos]] always_tests` and exposes it to the planner. Every leaf runs
-it in round 0 and in each fix round, alongside the planned checks. The default
-empty list adds nothing. Repeated entries run once.
+`[[github.repos]] always_tests` and exposes it to the planner. Every entry runs
+in every check run of every leaf, in round 0 and fix rounds, alongside the
+planned checks. The default empty list adds nothing. Repeated entries run once.
+
+Config and the harness cap the list at 20 entries. `MAX_SELECTED_TESTS` does
+not apply. Entries should be fast rule tests because every check run pays
+their cost. A file entry runs all its collected cases, including parametrized
+cases, so one entry can still select many tests.
 
 Entries are repo-relative pytest files or node IDs, without globs, absolute
-paths, or parent traversal. A file selects all its collected tests, including
-parametrized cases. Its result passes only when every case passes; otherwise
-it carries the first failing case's outcome and assertion in collection order.
-No collected cases means uncollected. Named functions still select only their
-own cases.
+paths, or parent traversal. A file's result passes only when every case passes;
+otherwise it carries the first failing case's outcome and assertion in
+collection order. No collected cases in an existing file means uncollected.
+Named functions still select only their own cases. Planner-written checks
+continue to require exact node IDs.
 
 These entries use the existing regression rules. An assertion or error on both
 the base and head is pre-existing. A new failure returns the selector and the
-assertion to the maker. Missing, skipped, or uncollected entries fail. Existing
-rule tests cannot be edited to satisfy the check; a file selector guards the
-whole file's contents.
+assertion to the maker. An entry missing on both the base and head is stale and
+is dropped from execution. Its passing result retains the missing or
+uncollected outcomes and a note naming the stale entry in `message`. The
+controller preserves that note in check evidence for the repository owner.
+These notes take priority within the existing report message budget. A head
+that deletes or renames an entry present on the base still fails. Empty or
+skipped rule files fail.
+
+A file entry freezes the whole file. The maker cannot weaken the rule test to
+make a violation pass. If a goal needs to change a frozen file, the planner
+reports `cant_meet` naming it. Rule changes belong to the repository's owner.
+A node ID freezes its named test as with other regression checks.
 
 A plan may not use this check's name. The controller records the additional
 check in the durable job and rejects a report that omits it. `selected_tests`

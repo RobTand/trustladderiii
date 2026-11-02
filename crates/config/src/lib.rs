@@ -324,6 +324,7 @@ pub struct BodyLine {
 
 /// The harness's `MAX_SELECTED_TESTS`.
 pub const MAX_SELECTED_TESTS: u32 = 1000;
+pub const MAX_ALWAYS_TESTS: usize = 20;
 
 fn default_branch_template() -> String {
     tl3_worktrees::branch_template::DEFAULT_TEMPLATE.into()
@@ -731,6 +732,12 @@ impl Config {
                 return Err(invalid(
                     format!("{field}.selected_tests"),
                     format!("must be 1 to {MAX_SELECTED_TESTS}, the harness's limit"),
+                ));
+            }
+            if repo.always_tests.len() > MAX_ALWAYS_TESTS {
+                return Err(invalid(
+                    format!("{field}.always_tests"),
+                    format!("always_tests accepts at most {MAX_ALWAYS_TESTS} entries"),
                 ));
             }
             for (entry, test) in repo.always_tests.iter().enumerate() {

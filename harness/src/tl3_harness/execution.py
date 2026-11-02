@@ -10,7 +10,7 @@ import time
 from typing import Protocol
 
 from .limits import MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, validate_check_plan
-from .model import (Check, FailureNotes, Forcing, HarnessInputError, Kind, Outcome, Result, TestResult, Verdict,
+from .model import (ALWAYS_CHECK, Check, FailureNotes, Forcing, HarnessInputError, Kind, Outcome, Result, TestResult, Verdict,
                     judge)
 from .node_ids import selects, validate_always_tests
 from .report import InvalidReport, decode, parse
@@ -24,7 +24,6 @@ TMPFS_MIB = 512
 # Existing tests that import the change (#359), and configured repo-wide rules (#498).
 SELECTED_CHECK = "Existing tests that import the change"
 MAX_SELECTED_TESTS = 1000
-ALWAYS_CHECK = "Repository always tests"
 
 
 _BASE_RESULTS: dict[tuple, dict[str, Outcome]] = {}
@@ -317,6 +316,18 @@ def selected_head(tool: TestTool, new: Path, container: Container, kept: tuple[s
                                        if test.passed and test.test in notes else test for test in result.tests))
 
 
+def stale_result(result: Result, stale: set[str]) -> Result:
+    if result.name != ALWAYS_CHECK:
+        return result
+    tests = tuple(replace(test, passed=True, message=(
+        f"Ignored stale always_tests entry `{test.test}`: missing on both the base and the head. "
+        "The repository owner should update or remove it.")[:MAX_MESSAGE_CHARS])
+        if test.test in stale else test for test in result.tests)
+    verdict = (Verdict.INFRASTRUCTURE_FAILURE if result.verdict == Verdict.INFRASTRUCTURE_FAILURE else
+               Verdict.PASS if all(test.passed for test in tests) else Verdict.FAIL)
+    return replace(result, tests=tests, verdict=verdict)
+
+
 def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                container: Container, reviewed: str | None = None, tool: TestTool = PYTEST,
                protected: tuple[str, ...] = (), selected_tests: int | None = None,
@@ -368,17 +379,22 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             export(repo, head, new)
         except UnsupportedEntry as entry:
             return refused(plan, unsupported_entry_message(entry))
+        stale = {test for test in always_tests
+                 if not (old / test.split("::")[0]).is_file() and not (new / test.split("::")[0]).is_file()}
+        tests = tuple(test for test in tests if test not in stale)
         config = tool.configuration(old)
         if refusal := configuration_changes(repo, root, base, old, head, new, tool, protected):
-            return refused(plan, refusal)
+            return tuple(stale_result(result, stale) for result in refused(plan, refusal))
         invalid = {test for test in tests if not tool.is_test(test.split("::")[0], config)}
         if invalid:
             outcomes = dict.fromkeys(tests, Outcome.UNCOLLECTED)
+            outcomes.update(dict.fromkeys(stale, Outcome.MISSING))
             messages = dict.fromkeys(tests, "The plan names a test outside the configured test files.")
-            return tuple(judge(replace(check, forcing=None), outcomes, outcomes, messages=messages) for check in plan)
+            return tuple(stale_result(judge(replace(check, forcing=None), outcomes, outcomes, messages=messages), stale)
+                         for check in plan)
         ordinary = tuple(dict.fromkeys(test for check in plan
                                        if check.kind not in (Kind.DEMONSTRATING, Kind.REPRODUCING)
-                                       for test in check.tests))
+                                       for test in check.tests if test not in stale))
         changed = tool.changed_existing_tests(old, new, ordinary)
         demonstrating = tuple(dict.fromkeys(test for check in plan
                                             if check.kind == Kind.DEMONSTRATING and check.forcing is None
@@ -393,6 +409,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             if Outcome.NO_REPORT not in observed.values():
                 _BASE_RESULTS[cache_key] = observed
         before = _BASE_RESULTS.get(cache_key, dict.fromkeys(ordinary, Outcome.NO_REPORT)).copy()
+        before.update(dict.fromkeys(stale, Outcome.MISSING))
         # Candidates run apart, so one crashing there can't cost the plan its base evidence.
         selected_before = selected_base(tool, old, container, candidates, base, root, progress)
         # A test that doesn't pass on the base says nothing about the change: drop it, don't excuse it.
@@ -433,6 +450,10 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             forced[check.name] = forced_base, notes, forced_head, head_messages
         messages = {}
         after = tool.run(new, container, tests, root / "head.jsonl", progress, messages=messages)
+        after.update(dict.fromkeys(stale, Outcome.MISSING))
+        stale.update(test for test in always_tests if "::" in test
+                     and before[test] in (Outcome.MISSING, Outcome.UNCOLLECTED)
+                     and after[test] in (Outcome.MISSING, Outcome.UNCOLLECTED))
         comparisons = {Kind.DEMONSTRATING: demonstrated, Kind.REPRODUCING: reproduced,
                        Kind.REGRESSION: before, Kind.BEHAVIOR_PRESERVING: before}
         results = []
@@ -450,7 +471,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                     if test.test in changed else test for test in result.tests)
                 if any(test.test in changed for test in result.tests):
                     result = replace(result, verdict=Verdict.FAIL, tests=restored)
-            results.append(result)
+            results.append(stale_result(result, stale))
         if kept:
             results.append(selected_head(tool, new, container, kept, selected_before, root, progress))
         return tuple(results)
@@ -459,7 +480,8 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
 def result_json(results: tuple[Result, ...]) -> str:
     reports = [asdict(result) for result in results]
     detailed = 0
-    for result, report in zip(results, reports):
+    # Owner-configured rule notes must survive even when planned failures fill the message budget.
+    for result, report in sorted(zip(results, reports), key=lambda pair: pair[0].name != ALWAYS_CHECK):
         # Unforced results keep their earlier shape; a forced one carries its forcing for review (#393).
         if result.forcing is None:
             del report['forcing']
@@ -468,7 +490,7 @@ def result_json(results: tuple[Result, ...]) -> str:
         for test in report['tests']:
             if test['head_forced'] is None:
                 del test['head_forced']
-            # A passing test carries a message only when a selected rerun found it flaky.
+            # Passing messages include stale rule notes and selected reruns that found a flake.
             if (not test['passed'] or test['message']) and detailed < MAX_DETAILED_FAILURES:
                 test['message'] = test['message'][:MAX_MESSAGE_CHARS].encode(errors='backslashreplace').decode()[:MAX_MESSAGE_CHARS]
                 detailed += 1
