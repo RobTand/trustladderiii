@@ -93,6 +93,8 @@ pub struct Adapter {
     client: PrismaBuild,
     settings: Settings,
     images: super::images::Images,
+    protected_paths: crate::scope::ProtectedPaths,
+    global_protected: Vec<String>,
     runtime: tokio::runtime::Runtime,
     keys: tokio::sync::broadcast::Sender<NodeId>,
     records_lock: Arc<Mutex<()>>,
@@ -274,12 +276,25 @@ fn clean_inputs(root: &Path) -> Result<()> {
 impl Adapter {
     pub fn with_repositories(mut self, repos: &[tl3_config::Repository]) -> Self {
         self.images = super::images::Images::new(repos);
+        self.protected_paths = crate::scope::ProtectedPaths::new(repos);
         self
     }
 
-    /// Red scaffold for #390: the global protected paths do not reach the harness yet.
-    pub fn with_protected_paths(self, _global: &[String]) -> Self {
+    /// The global `planning.protected_paths`. Checks refuse the same paths planning does.
+    pub fn with_protected_paths(mut self, global: &[String]) -> Self {
+        self.global_protected = global.to_vec();
         self
+    }
+
+    fn protected_paths(&self, repo: &crate::Repository) -> Vec<String> {
+        self.protected_paths
+            .for_repository(repo, &self.global_protected)
+            .unwrap_or_else(|_| {
+                // Only an adapter opened without repositories, such as a fixture's, lands here.
+                let mut paths = tl3_config::Planning::default().protected_paths;
+                paths.extend_from_slice(&self.global_protected);
+                paths
+            })
     }
 
     pub fn new(client: PrismaBuild, settings: Settings) -> Result<Self> {
@@ -324,6 +339,8 @@ impl Adapter {
             client,
             settings,
             images: super::images::Images::default(),
+            protected_paths: crate::scope::ProtectedPaths::default(),
+            global_protected: vec![],
             records_lock: Arc::new(Mutex::new(())),
             keys: tokio::sync::broadcast::channel(64).0,
             // Tool spawning stays on the daemon's controller owner thread. That thread
@@ -462,6 +479,7 @@ impl Adapter {
             &staged,
             image,
             self.images.exec_scratch(&delivery.repository),
+            &self.protected_paths(&delivery.repository),
         )?;
         let mut command = self.settings.python.clone();
         command.extend(["-I".into(), "-B".into(), "action.py".into()]);

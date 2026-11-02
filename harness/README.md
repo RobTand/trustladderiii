@@ -62,6 +62,20 @@ production files. The harness rejects changes to pytest configuration,
 `conftest.py` into the demonstrating base. The caller must keep its installed
 harness and the served checkout separate.
 
+`run_checks` also takes `protected`, the repository's protected path patterns.
+The controller passes the same list planning uses: the defaults, the global
+`planning.protected_paths` and the repository's own additions. A change to a
+matching file, judged from the commit the head descends from, fails every
+check with a message naming the files, and nothing runs. Patterns match as
+Git glob pathspecs, as in the worktree adapter's scope trim: they are anchored
+at the repository root, `*` stops at `/`, and `**` spans directories.
+
+A `TestTool` supplies everything tool-specific: reading the configuration,
+the protected configuration files, which files are tests, the demonstrating
+transplant, the existing-test guard and running one tree. `Pytest` is the
+default and only tool today. The round's trees, refusals and verdicts are the
+same for every tool.
+
 Test selectors name pytest functions or methods, optionally with parameter IDs.
 A bare function or method selects all its parametrized cases, as pytest does.
 Its outcome is passed only when every case passes, otherwise the first failing

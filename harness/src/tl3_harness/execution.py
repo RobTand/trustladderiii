@@ -7,12 +7,13 @@ import shutil
 import subprocess
 import tempfile
 import time
+from typing import Protocol
 
 from .limits import MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, validate_check_plan
 from .model import Check, HarnessInputError, Kind, Outcome, Result, TestResult, Verdict, judge
 from .report import InvalidReport, decode, parse
-from .trees import (UnsupportedEntry, added_names, changed_configuration, changed_existing_tests, commit,
-                    configuration, export, is_test, own_base, test_edits)
+from .trees import (UnsupportedEntry, added_names, changed_configuration, changed_existing_tests,
+                    changed_protected, commit, configuration, export, is_test, own_base, test_edits)
 
 
 TMPFS_MIB = 512
@@ -143,9 +144,8 @@ def refused(plan: tuple[Check, ...], message: str) -> tuple[Result, ...]:
         for test in check.tests)) for check in plan)
 
 
-def changed_configuration_message(changed: list[str]) -> str:
+def listed(instruction: str, changed: list[str]) -> str:
     """The instruction first, then as many files as fit; clipping never hides what to do."""
-    instruction = "Restore the changed test configuration: checks never run a changed test configuration. Changed: "
     for shown in range(len(changed), 0, -1):
         rest = len(changed) - shown
         message = instruction + ", ".join(changed[:shown]) + (f" and {rest} more." if rest else ".")
@@ -154,26 +154,88 @@ def changed_configuration_message(changed: list[str]) -> str:
     return f"{instruction}{len(changed)} files."
 
 
+def changed_files_message(configuration: list[str], protected: list[str]) -> str:
+    if set(protected) <= set(configuration):
+        return listed("Restore the changed test configuration: checks never run a changed test "
+                      "configuration. Changed: ", configuration)
+    return listed("Restore the changed protected files: checks never run a change to this repository's "
+                  "protected paths. Changed: ", sorted(set(configuration) | set(protected)))
+
+
 def unsupported_entry_message(entry: UnsupportedEntry) -> str:
     return ("Replace this entry with a regular file or remove it: checks run only regular files and "
             f"directories, never symlinks or submodules. Entry: {entry.name}")
 
 
 def configuration_changes(repo: Path, root: Path, base: str, base_tree: Path, head: str,
-                          head_tree: Path) -> list[str]:
+                          head_tree: Path, tool: "TestTool", protected: tuple[str, ...]) -> str | None:
     """Judge only what the head changed, against the commit it descends from. A head
-    built on an older main than the check base must not answer for main's changes."""
+    built on an older main than the check base must not answer for main's changes.
+    Returns the refusal message, or None."""
     fork = own_base(repo, base, head)
     if fork != base:
         base_tree = root / f"fork-{fork}"
         if not base_tree.exists():
             export(repo, fork, base_tree)
-    return changed_configuration(base_tree, head_tree)
+    configuration = tool.changed_configuration(base_tree, head_tree)
+    paths = changed_protected(repo, fork, head, protected)
+    return changed_files_message(configuration, paths) if configuration or paths else None
+
+
+class TestTool(Protocol):
+    """How a served repository configures, transplants and runs its tests (#390). The
+    round's trees, refusals and verdicts in run_checks are the same for every tool."""
+
+    def configuration(self, tree: Path) -> dict: ...
+
+    def changed_configuration(self, base: Path, head: Path) -> list[str]: ...
+
+    def is_test(self, name: str, config: dict) -> bool: ...
+
+    def test_edits(self, base: Path, head: Path, destination: Path, config: dict) -> None: ...
+
+    def added_names(self, base: Path, head: Path, config: dict) -> frozenset[tuple[str, str]]: ...
+
+    def changed_existing_tests(self, base: Path, head: Path, tests: tuple[str, ...]) -> set[str]: ...
+
+    def run(self, tree: Path, container: Container, tests: tuple[str, ...], report: Path,
+            progress: Progress, additions: frozenset[tuple[str, str]] = frozenset(), *,
+            messages: dict[str, str] | None = None) -> dict[str, Outcome]: ...
+
+
+class Pytest:
+    """The default tool: `[tool.tl3.harness]` in pyproject.toml, one container per tree."""
+
+    def configuration(self, tree):
+        return configuration(tree)
+
+    def changed_configuration(self, base, head):
+        return changed_configuration(base, head)
+
+    def is_test(self, name, config):
+        return is_test(name, config["test-files"])
+
+    def test_edits(self, base, head, destination, config):
+        test_edits(base, head, destination, config["test-files"])
+
+    def added_names(self, base, head, config):
+        return added_names(base, head, config["test-files"])
+
+    def changed_existing_tests(self, base, head, tests):
+        return changed_existing_tests(base, head, tests)
+
+    def run(self, tree, container, tests, report, progress, additions=frozenset(), *, messages=None):
+        return run_tree(tree, container, tests, report, progress, additions, messages=messages)
+
+
+PYTEST = Pytest()
 
 
 def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
-               container: Container, reviewed: str | None = None) -> tuple[Result, ...]:
-    """Run one round inside one admitted PB action, from trusted installed code."""
+               container: Container, reviewed: str | None = None, tool: TestTool = PYTEST,
+               protected: tuple[str, ...] = ()) -> tuple[Result, ...]:
+    """Run one round inside one admitted PB action, from trusted installed code. `protected`
+    holds the repository's protected path patterns; a change to any of them is refused."""
     require_admission()
     if not plan or len({check.name for check in plan}) != len(plan):
         raise HarnessInputError("a plan needs uniquely named checks")
@@ -203,10 +265,10 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             export(repo, head, new)
         except UnsupportedEntry as entry:
             return refused(plan, unsupported_entry_message(entry))
-        config = configuration(old)
-        if configs := configuration_changes(repo, root, base, old, head, new):
-            return refused(plan, changed_configuration_message(configs))
-        invalid = {test for test in tests if not is_test(test.split("::")[0], config["test-files"])}
+        config = tool.configuration(old)
+        if refusal := configuration_changes(repo, root, base, old, head, new, tool, protected):
+            return refused(plan, refusal)
+        invalid = {test for test in tests if not tool.is_test(test.split("::")[0], config)}
         if invalid:
             outcomes = dict.fromkeys(tests, Outcome.UNCOLLECTED)
             messages = dict.fromkeys(tests, "The plan names a test outside the configured test files.")
@@ -214,21 +276,21 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         ordinary = tuple(dict.fromkeys(test for check in plan
                                        if check.kind not in (Kind.DEMONSTRATING, Kind.REPRODUCING)
                                        for test in check.tests))
-        changed = changed_existing_tests(old, new, ordinary)
+        changed = tool.changed_existing_tests(old, new, ordinary)
         demonstrating = tuple(dict.fromkeys(test for check in plan if check.kind == Kind.DEMONSTRATING
                                             for test in check.tests))
         progress = Progress()
         cache_key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container, ordinary)
         if ordinary and cache_key not in _BASE_RESULTS:
-            observed = run_tree(old, container, ordinary, root / "base.jsonl", progress)
+            observed = tool.run(old, container, ordinary, root / "base.jsonl", progress)
             if Outcome.NO_REPORT not in observed.values():
                 _BASE_RESULTS[cache_key] = observed
         before = _BASE_RESULTS.get(cache_key, dict.fromkeys(ordinary, Outcome.NO_REPORT)).copy()
         if demonstrating:
             shutil.copytree(old, demo)
-            test_edits(old, new, demo, config["test-files"])
-            additions = added_names(old, new, config["test-files"])
-            demonstrated = run_tree(demo, container, demonstrating, root / "demonstrating.jsonl", progress, additions)
+            tool.test_edits(old, new, demo, config)
+            additions = tool.added_names(old, new, config)
+            demonstrated = tool.run(demo, container, demonstrating, root / "demonstrating.jsonl", progress, additions)
         else:
             demonstrated = {}
         reproduced = {}
@@ -239,15 +301,15 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             except UnsupportedEntry as entry:
                 return refused(plan, unsupported_entry_message(entry))
             # `changed` holds the edited existing tests; keep it for the guard below.
-            if configs := configuration_changes(repo, root, base, old, reviewed, reviewed_tree):
-                return refused(plan, changed_configuration_message(configs))
+            if refusal := configuration_changes(repo, root, base, old, reviewed, reviewed_tree, tool, protected):
+                return refused(plan, refusal)
             shutil.copytree(reviewed_tree, round_tree)
-            test_edits(reviewed_tree, new, round_tree, config["test-files"])
-            additions = added_names(reviewed_tree, new, config["test-files"])
-            reproduced = run_tree(round_tree, container, reproducing,
+            tool.test_edits(reviewed_tree, new, round_tree, config)
+            additions = tool.added_names(reviewed_tree, new, config)
+            reproduced = tool.run(round_tree, container, reproducing,
                                   root / "reproducing.jsonl", progress, additions)
         messages = {}
-        after = run_tree(new, container, tests, root / "head.jsonl", progress, messages=messages)
+        after = tool.run(new, container, tests, root / "head.jsonl", progress, messages=messages)
         comparisons = {Kind.DEMONSTRATING: demonstrated, Kind.REPRODUCING: reproduced,
                        Kind.REGRESSION: before, Kind.BEHAVIOR_PRESERVING: before}
         results = []

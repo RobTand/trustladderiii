@@ -15,7 +15,10 @@ def decode(request):
     try:
         plan = tuple(Check(check["name"], Kind(check["kind"]), tuple(check["tests"]))
                      for check in request["plan"])
-        return plan, Container(request["image"], exec_scratch=request.get("exec_scratch", False))
+        protected = request.get("protected_paths", [])
+        if not isinstance(protected, list) or not all(isinstance(path, str) and path for path in protected):
+            raise ValueError("protected_paths must list path patterns")
+        return plan, Container(request["image"], exec_scratch=request.get("exec_scratch", False)), tuple(protected)
     except (KeyError, TypeError, ValueError) as error:
         raise HarnessInputError(f"invalid check request: {type(error).__name__}") from error
 
@@ -28,9 +31,9 @@ with tempfile.TemporaryDirectory(prefix="tl3-controller-checks-") as directory:
     git(root, "clone", "--quiet", "--template=", "--", str(root / "served.bundle"), str(repo))
     git(repo, "checkout", "--quiet", "--detach", request["head"])
     try:
-        plan, container = decode(request)
-        results = run_checks(repo, request["base"], request["head"], plan,
-                             container=container, reviewed=request.get("reviewed"))
+        plan, container, protected = decode(request)
+        results = run_checks(repo, request["base"], request["head"], plan, container=container,
+                             reviewed=request.get("reviewed"), protected=protected)
     except HarnessInputError as error:
         # The trusted harness rejected TL3's own check input. Repository configuration,
         # admission and container failures stay upstream.
