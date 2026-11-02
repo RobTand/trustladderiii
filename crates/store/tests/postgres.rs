@@ -1618,18 +1618,22 @@ fn console_login_writes_only_prompts(settings: &tl3_config::Store) {
         .unwrap()
         .unwrap();
     prompts.activate("ingest", base, "Rob").unwrap().unwrap();
+    let reviewer = prompts.role("reviewer").unwrap().unwrap().active;
+    prompts
+        .save("reviewer", "Rob's review.", "Edited.", "Rob", reviewer)
+        .unwrap()
+        .unwrap();
     store
         .seed_prompts(&[("reviewer", "Review, changed.")])
         .unwrap();
-    let reviewer = prompts.role("reviewer").unwrap().unwrap();
-    prompts
-        .activate("reviewer", reviewer.versions[1].id, "Rob")
+    let update = prompts
+        .role("reviewer")
         .unwrap()
-        .unwrap();
-    prompts
-        .keep("reviewer", reviewer.versions[0].id)
         .unwrap()
+        .builtin_update
         .unwrap();
+    let kept = prompts.keep("reviewer", update).unwrap().unwrap();
+    assert_eq!(kept.builtin_update, None);
     for sql in [
         "INSERT INTO tl3_world VALUES ('forbidden', '1', '{}', 1)",
         "UPDATE tl3_meta SET revision = revision",
