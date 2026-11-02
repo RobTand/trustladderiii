@@ -41,6 +41,12 @@ BUILTIN_TOOL_DESCRIPTIONS = {
 
 
 class ProxyChatOpenAI(ChatOpenAI):
+    def _convert_chunk_to_generation_chunk(self, chunk, default_chunk_class, base_generation_info):
+        from tl3_workers.tracing import record_chunk_usage
+        record_chunk_usage(chunk)
+        return super()._convert_chunk_to_generation_chunk(
+            chunk, default_chunk_class, base_generation_info)
+
     def _get_ls_params(self, stop=None, **kwargs):
         params = super()._get_ls_params(stop=stop, **kwargs)
         # Built-in per-model profiles can inject prompts and tools. TL3 owns its profile.
@@ -79,6 +85,8 @@ def create_model(request) -> BaseChatModel:
     key = Path(request["key_file"]).read_text().strip()
     if not key:
         raise ValueError("empty model key")
+    from tl3_workers.tracing import record_model_key
+    record_model_key(key)
     spec = request["model"]
     identity = session_identity(request)
     return ProxyChatOpenAI(
@@ -147,7 +155,7 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None,
 
 
 def run(request, emit: Callable[[dict], None]):
-    from tl3_workers.tracing import observe
+    from tl3_workers.tracing import observe, record_reply
 
     with observe(request):
         summary = Summary(request)
@@ -156,6 +164,7 @@ def run(request, emit: Callable[[dict], None]):
         reply, error = None, None
         try:
             reply = _run(request, emit)
+            record_reply(reply)
         except BaseException as exc:
             error = exc
             raise

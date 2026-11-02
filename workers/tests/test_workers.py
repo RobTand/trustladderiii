@@ -154,6 +154,7 @@ def test_model_settings_and_key_are_forwarded_without_network(tmp_path, request_
     assert model.openai_api_key.get_secret_value() == "fixture-only-not-a-real-secret"
     assert model.use_responses_api is False
     assert model.streaming is True
+    assert model.stream_usage is True
     assert model.max_retries == 0
     assert model._get_ls_params()["ls_provider"] == "tl3_proxy"
     assert "fixture-only-not-a-real-secret" not in repr(model)
