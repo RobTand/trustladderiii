@@ -1,3 +1,5 @@
+#[path = "mergify/ci_evidence.rs"]
+mod ci_evidence;
 #[path = "mergify/ack_wait.rs"]
 mod ack_wait;
 #[path = "mergify/check_reads.rs"]
@@ -133,6 +135,7 @@ struct State {
     tl3_branch: bool,
     body_patches: usize,
     failed_job_reruns: Vec<u64>,
+    ci_fixture: Option<ci_evidence::Fixture>,
 }
 impl State {
     fn new() -> Self {
@@ -191,6 +194,7 @@ impl State {
             tl3_branch: false,
             body_patches: 0,
             failed_job_reruns: vec![],
+            ci_fixture: None,
         }
     }
     fn checks(&self) -> Value {
@@ -286,6 +290,11 @@ impl Respond for Api {
         }
         if state.fail_reads && method == "GET" {
             return ResponseTemplate::new(503);
+        }
+        if let Some(fixture) = &state.ci_fixture
+            && let Some(response) = fixture.respond(path)
+        {
+            return response;
         }
         if let Some(response) =
             support::github::respond(request, path, "/repos/owner/sandbox", &mut *state)
@@ -2616,6 +2625,12 @@ fn legacy_intent_ignores_completed_at() {
 }
 
 fn main() {
+    if let Some(mode) = std::env::args().nth(1).and_then(|arg| arg.strip_prefix("--ci-evidence-").map(str::to_owned)) {
+        let mut database = support::Database::start();
+        ci_evidence::scenario(&database.create("ci_evidence"), &mode);
+        database.stop();
+        return;
+    }
     if let Some(mode) = std::env::args()
         .nth(1)
         .and_then(|arg| arg.strip_prefix("--held-").map(str::to_owned))
@@ -2825,6 +2840,9 @@ fn main() {
     scenario!(label_removed_before_confirmation());
     scenario!(applied_marker_waits_for_person_evidence());
     let mut database = support::Database::start();
+    for mode in ci_evidence::MODES {
+        scenario!(ci_evidence::scenario(&database.create(&format!("ci_evidence_{mode}")), mode));
+    }
     scenario!(ack_wait::scenario(&database.create("ack_wait")));
     for mode in ["gaps", "adapter", "source", "reopen-look", "reopen-source"] {
         scenario!(check_reads::scenario(
