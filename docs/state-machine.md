@@ -657,3 +657,34 @@ Rob, 2026-11-02, answering #393: "yes, agreed." This is a reading of Q40 for def
 The forcing is a field on a demonstrating check. It is declarative: a symptom, environment variables, and patches of attributes inside the served repository with a JSON value, a returned value, a builtin exception other than `AssertionError`, or a bounded delay. The planner writes it, so it is untrusted model output. The harness's host process only bounds it; the runner applies it inside the test container, under the same sandbox as the tests. The maker's edits can't reach it. The check's result echoes the forcing and the head's outcome under it, for review. The kernel is unchanged: it still sees a check pass or fail.
 
 A leaf that changes only tests (#444's `edits_tests` rule) is valid when every demonstrating check carries a valid forcing. Otherwise the planner reports that a change to tests alone needs a forced reproduction, or can't meet.
+
+## Q57: requests that require protected paths
+
+Rob, 2026-11-02, issue #451:
+
+> "ok, i guess for now things that attempt to hit protected paths should be tossed out and handled exogenously."
+> "give the work to PB worker, I guess. It should throw that stuff out early too, I guess."
+
+A request whose goals require changes to protected paths is not actionable by
+TL3. The effective list combines the defaults, `[planning].protected_paths`
+and that repository's additions. Before starting ingest, a deterministic check
+closes requests with declared protected edits, without launching a model.
+Ingest or audit closes as soon as exploration provides further evidence.
+Only definite footprint entries or edits named in the goals count. Context, excluded edits
+and ordinary unprotected test files do not count. Workers can identify required
+paths discovered during exploration. A planner reports them through the optional
+`cant_meet.protected_paths` list. The controller verifies the concrete paths
+against the effective list before reporting the blocker to the kernel.
+
+The kernel accepts `ProtectedPaths` only in Ingesting, Auditing and Planning.
+It enters Stopping(NotActionable) without a retry, question or credit charge,
+regardless of `fail_fast`. Normal teardown finishes before Closed. The controller
+records reason `protected_paths` and the paths. The issue summary names the paths
+and says the work belongs outside TL3. It leaves the issue open for its owner,
+or for a narrower request followed by `restart`, as in Q49. A durable one-line
+note links the request and names the paths on the configured operations issue.
+Both posts use code-written text, so no writer run can omit the paths.
+
+A useful unprotected leaf is allowed only when it meets all goals on its own.
+An unusable half is not a substitute. PB #2636's runner-only marker had no reader
+without the protected CI gate change, so the whole request belongs outside TL3.
