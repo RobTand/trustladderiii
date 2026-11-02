@@ -710,11 +710,40 @@ its first 1,024 and last 3,072; the root counts the rest in
 The MLflow server is LAN-only with no login; anyone on the LAN can read these
 prompts and repository contents. See the deployment README for access limits.
 
-One child exports the sanitized protobuf to the configured experiment. It uses
-no retries, one-second HTTP timeouts and a five-second process alarm. The worker
-never waits for that child. Export failures and initialization failures log a
-fixed diagnostic to stderr, without exception details, and preserve the role's
-result. Traces can be lost during an outage or if the supervisor kills a run.
-There is no retry backlog. Deep Agents remains the engine. Stored traces aren't
+### Live traces (#430)
+
+A run shows in MLflow while it works, marked `IN_PROGRESS`.
+
+- **Durable first.** Each ended span is redacted and appended to a span log
+  before any network call. The controller puts the log in the attempt
+  directory as `trace.jsonl`, through the request's `trace.log`. Without one,
+  the log is an unlinked temporary file. Each record is one JSON line written
+  in one append and synced: a `start` record with the trace and root span IDs,
+  settings and tags, then `span` records, and a `final` record that holds the
+  end-of-run packet.
+- **Shipped right away.** One shipper child reads the log and sends each new
+  record over OTLP, woken by one byte per record on a pipe. A failed send goes
+  out with the next span, or at the end. Batches carry the run's tags as
+  resource attributes, which MLflow stores as trace tags before the root span
+  arrives. A zero-length `tl3.run_started` span makes the trace appear before
+  the first model turn ends.
+- **Same end state.** The final packet is the export described above. It
+  upserts the live spans by span ID and adds the root, which sets the trace's
+  state once and its outcome and token tags. Live content draws on its own
+  1 MiB budget; later live spans keep metadata and token usage only, until the
+  final packet gives the newest spans their content.
+- **Ended runs.** When an attempt ends or is stopped, the controller starts
+  `python -I -m tl3_workers.tracing flush <log>` with the log on stdin, unless
+  `trace.jsonl.shipped` exists. The flusher sends the log again. If it has no
+  final record, it closes the trace with an `ERROR` root: `outcome = crashed`,
+  `failure_class = WorkerCrashed`, the exit code from `exit.json` and token sums
+  over the logged spans. Span IDs make every resend idempotent.
+
+The shipper and flusher use one-second HTTP timeouts. The shipper's last sends
+after the worker ends have a five-second alarm, and the flusher has ten
+seconds. The worker never waits for either. Export failures and initialization
+failures log a fixed diagnostic to stderr, without exception details, and
+preserve the role's result. Deep Agents remains the engine. Stored traces aren't
 pruned yet; `deploy/dl380g10/README.md` gives their growth and how to reclaim
-space.
+space. `workers/tools/trial_live_traces.py` checks all of this against a real
+server, in the scratch experiment `tl3-430-scratch`, through PrismaBuild.

@@ -333,6 +333,9 @@ number of runs. Spans include bounded prompts, replies, repository text and
 tool arguments/results, plus names and token counts. Each export has a 1 MiB
 trace budget. The root keeps its inputs and final reply, the newest model and
 tool spans keep the most content, and older spans shrink to a floor.
+Since #430, spans are also sent while a run works, from a separate 1 MiB live
+budget. The final export replaces them by span ID, but a live span the final
+export omits stays, so one trace stores at most about 2 MiB of content.
 To reclaim space, delete old traces in the UI or through
 MLflow's API, then run `mlflow gc` with the same backend store to remove the
 deleted rows and their artifacts. A retention window is an open decision in
