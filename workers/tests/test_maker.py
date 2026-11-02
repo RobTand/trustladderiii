@@ -801,6 +801,66 @@ def test_model_cannot_claim_that_requested_files_fit(tmp_path, maker_request):
     assert all(event['event'] != 'reply' for event in result.events)
 
 
+def requested_fit(maker_request, paths):
+    from tl3_workers.tools import Worktree
+
+    response = {'kind': 'needs_files', 'files': [{'path': path, 'why': 'Needed.'} for path in paths]}
+    with Worktree(maker_request['worktree']) as tree:
+        return maker.run(ToolModel(responses=[AIMessage(**turn(response))]),
+                         maker_request, tree, lambda event: None)['fits']
+
+
+@pytest.mark.parametrize('extra_tokens,expected', [(0, True), (4000, True), (18000, False)])
+def test_pq_2629_plan_and_requested_file_fit(maker_request, cache_tokenizer, monkeypatch, extra_tokens, expected):
+    from tl3_workers.forecast import Forecaster
+
+    monkeypatch.setenv('TIKTOKEN_CACHE_DIR', cache_tokenizer)
+    root = Path(maker_request['worktree'])
+    monkeypatch.chdir(root)
+    inputs = maker_request['inputs']
+    config = {'fit_tokens': 100000, 'context_tokens': 150000,
+              'overhead_tokens': {'prompt': 5000, 'making': 20000}}
+    inputs['forecast'] = config
+    inputs['fit_tokens'] = config['fit_tokens']
+    inputs['brief'] = 'x\n' * 1643
+    # Model PQ #2629's eight files: two ranged files and six small files.
+    costs = dict(zip([f'plan_{i}.py' for i in range(8)], [16384, 16384, 4000, 4000, 4000, 4000, 4000, 2232]))
+    for index, (path, tokens) in enumerate(costs.items()):
+        (root / path).write_text('large ' * 14000 if index < 2 else 'x\n' * (tokens // 2))
+    inputs['plan']['files'] = list(costs)
+    # The remaining input brought the old maker JSON count to about 25k.
+    inputs['goals'][0]['description'] = ' token' * 21000
+    inputs.update(round=1, feedback=[{'kind': 'failed_check', 'report': 'Fix the check.', 'goal_ids': ['greeting']}])
+    forecast = Forecaster(config).measure(inputs['brief'], inputs['plan']['files'])
+    assert forecast['brief_tokens'] == 3286
+    assert forecast['file_tokens'] == costs
+    assert forecast['tokens'] == 83286
+    assert forecast['fits'] is True
+    (root / 'requested.py').write_text('x\n' * (extra_tokens // 2))
+    paths = [*inputs['plan']['files'], 'requested.py'] if extra_tokens else inputs['plan']['files']
+    assert requested_fit(maker_request, paths) is expected
+
+
+@pytest.mark.parametrize('overhead', [0, 25000, 45000])
+@pytest.mark.parametrize('fix_round', [False, True])
+def test_planner_fit_implies_maker_fit(maker_request, cache_tokenizer, monkeypatch, overhead, fix_round):
+    from tl3_workers.forecast import Forecaster
+
+    monkeypatch.setenv('TIKTOKEN_CACHE_DIR', cache_tokenizer)
+    monkeypatch.chdir(maker_request['worktree'])
+    inputs = maker_request['inputs']
+    config = {'fit_tokens': 100000, 'context_tokens': 150000,
+              'overhead_tokens': {'reserve': overhead}}
+    total = Forecaster(config).measure(inputs['brief'], inputs['plan']['files'])['tokens']
+    config['fit_tokens'] = total + 1
+    inputs['forecast'] = config
+    inputs['fit_tokens'] = config['fit_tokens']
+    if fix_round:
+        inputs.update(round=1, feedback=[{'kind': 'failed_check', 'report': 'Fix it. ' * 2000, 'goal_ids': ['greeting']}])
+    assert Forecaster(config).measure(inputs['brief'], inputs['plan']['files'])['fits'] is True
+    assert requested_fit(maker_request, inputs['plan']['files']) is True
+
+
 @pytest.mark.parametrize('resume_requested', [False, True])
 def test_adopted_fix_round_without_session_starts_fresh(tmp_path, maker_request, resume_requested):
     root = Path(maker_request['worktree'])
