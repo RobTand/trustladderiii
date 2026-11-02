@@ -1,5 +1,7 @@
 """The GitHub side must fail on every way a remote run can go wrong."""
 import json
+from pathlib import Path
+import shlex
 import unittest
 
 import remote_gate
@@ -48,6 +50,22 @@ class WaitTests(unittest.TestCase):
                              clock=lambda: 11, sleep=print)
 
 
+    def test_transient_errors_are_retried_then_fail(self):
+        class Flaky:
+            def __init__(self, failures):
+                self.failures = failures
+
+            def call(self, method, body, timeout=120, raw=False):
+                if self.failures:
+                    self.failures -= 1
+                    raise remote_gate.RemoteError('BuildBuddy GetInvocation failed: 503')
+                return {'invocation': [{'invocationStatus': remote_gate.DONE}]}
+        invocation = remote_gate.wait(Flaky(2), 'id', 10, clock=lambda: 0, sleep=lambda _: None)
+        self.assertEqual(invocation['invocationStatus'], remote_gate.DONE)
+        with self.assertRaisesRegex(remote_gate.RemoteError, '503'):
+            remote_gate.wait(Flaky(10), 'id', 10, clock=lambda: 0, sleep=lambda _: None)
+
+
 class ResultTests(unittest.TestCase):
     def test_result_is_read_from_the_artifact(self):
         client = FakeClient([remote_gate.DONE], {remote_gate.RESULT: json.dumps(result()).encode()})
@@ -83,6 +101,33 @@ class ResultTests(unittest.TestCase):
         self.assertEqual(request['commit_sha'], HEAD)
         self.assertIn('@sha256:', request['platform_properties']['container-image'])
         self.assertIn(f'--base {"a" * 40}', request['steps'][0]['run'])
+
+
+    def test_run_request_quotes_the_branch_and_requires_both_commits(self):
+        class Args:
+            mode, base, head, branch = 'pr', 'a' * 40, HEAD, 'feature;touch pwned'
+            repo, cpu, memory, timeout = 'https://github.com/RobTand/trustladderiii', 8, '16GB', 60
+        words = shlex.split(remote_gate.run_request(Args)['steps'][0]['run'])
+        self.assertEqual(words[words.index('--branch') + 1], 'feature;touch pwned')
+        for field in ['head', 'base']:
+            with self.subTest(field=field):
+                setattr(Args, field, '')
+                with self.assertRaises(remote_gate.RemoteError):
+                    remote_gate.run_request(Args)
+                setattr(Args, field, HEAD if field == 'head' else 'a' * 40)
+
+
+class WorkflowTests(unittest.TestCase):
+    workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/gate.yml').read_text()
+
+    def test_an_empty_mergify_token_fails_before_the_upload_is_skipped(self):
+        # gha-mergify-ci skips scopes-upload and only warns when its token is empty.
+        check = self.workflow.index('test -n "$MERGIFY_TOKEN"')
+        self.assertLess(check, self.workflow.index('action: scopes-upload'))
+
+    def test_post_merge_pr_lookup_fails_when_gh_fails(self):
+        lookup = self.workflow.index('prs=$(')
+        self.assertIn('set -o pipefail', self.workflow[lookup - 200:lookup])
 
 
 class AggregateTests(unittest.TestCase):

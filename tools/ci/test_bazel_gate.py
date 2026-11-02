@@ -19,9 +19,9 @@ def plan(changed, impacted=(), deleted=()):
 class FakeWorkspace:
     """Records calls; answers from canned git and Bazel facts."""
 
-    def __init__(self, changed, impacted, statuses, diff_error=None):
+    def __init__(self, changed, impacted, statuses, diff_error=None, build_ok=True):
         self.changed, self.impacted, self.statuses = changed, impacted, statuses
-        self.diff_error, self.ran = diff_error, []
+        self.diff_error, self.ran, self.built, self.build_ok = diff_error, [], [], build_ok
 
     def ensure_commit(self, sha):
         if not sha:
@@ -50,6 +50,10 @@ class FakeWorkspace:
     def test(self, targets, config, metadata, log_name):
         self.ran.append((config, list(targets)))
         return {label: self.statuses.get(label, 'PASSED') for label in targets}
+
+    def build(self, targets, config, metadata, log_name):
+        self.built.append((config, list(targets)))
+        return self.build_ok
 
     def inputs_check(self):
         return []
@@ -95,6 +99,16 @@ class PlanTests(unittest.TestCase):
     def test_relevant_change_with_no_impacted_targets_fails(self):
         with self.assertRaisesRegex(bazel_gate.GateError, 'no impacted targets'):
             plan(['crates/kernel/src/lib.rs'], [])
+
+    def test_impacted_targets_without_tests_are_still_built(self):
+        decision = plan(['crates/kernel/src/lib.rs'],
+                        ['//crates/kernel:tl3_kernel', '//crates/kernel:lib_test_tl3_kernel'])
+        self.assertEqual(decision['build'], ['//crates/kernel:tl3_kernel'])
+        self.assertEqual(plan(['MODULE.bazel'])['build'], ['//...'])
+        self.assertEqual(plan(['docs/bazel.md'])['build'], [])
+
+    def test_gazelle_settings_force_everything(self):
+        self.assertEqual(plan(['gazelle_python.yaml'])['selection'], 'fallback')
 
     def test_empty_diff_fails(self):
         with self.assertRaisesRegex(bazel_gate.GateError, 'empty diff'):
@@ -158,6 +172,25 @@ class GateTests(unittest.TestCase):
         self.assertEqual(workspace.ran, [('remote', ['//crates/kernel:lib_test_tl3_kernel'])])
         self.assertEqual(result['verdicts'], {'rust': 'fail', 'python': 'skipped'})
         self.assertFalse(bazel_gate.passed({**result, 'mode': 'pr', 'error': None}))
+
+    def test_pr_gate_builds_impacted_targets_that_no_test_covers(self):
+        # Only a binary changed: no test is selected, but a broken build must still fail.
+        for build_ok in [True, False]:
+            with self.subTest(build_ok=build_ok):
+                workspace = FakeWorkspace(['crates/kernel/src/lib.rs'], ['//crates/kernel:tl3_kernel'], {},
+                                          build_ok=build_ok)
+                result = bazel_gate.gate_pr(workspace, 'a' * 40, 'b' * 40, {})
+                self.assertEqual(workspace.built, [('remote', ['//crates/kernel:tl3_kernel'])])
+                self.assertEqual(bazel_gate.passed({**result, 'mode': 'pr'}), build_ok)
+
+    def test_inputs_check_includes_every_generated_input_check(self):
+        workspace = bazel_gate.Workspace(bazel='bazel-under-test')
+        commands = []
+        workspace.run = lambda *command, **_: commands.append(' '.join(map(str, command))) or 0
+        workspace.inputs_check()
+        for needle in ['bazel_parity.py static', 'requirements.py --check', 'rust_builds.py --check',
+                       'bazel-under-test run //:gazelle -- -mode=diff']:
+            self.assertTrue(any(needle in command for command in commands), needle)
 
     def test_bazel_diff_error_fails_the_gate(self):
         workspace = FakeWorkspace(['crates/kernel/src/lib.rs'], [], {}, diff_error='bazel-diff exited 1')
