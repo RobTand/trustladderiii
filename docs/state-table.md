@@ -285,7 +285,7 @@ Code computes a signature for each failure from the upstream's error class, and 
 
 **Work failures** are failed checks, review findings and CI test failures. They follow the rules for rounds and attempts under "A failed round".
 
-**Fail fast,** as Rob approved on 2026-11-02 (Q54): `[limits] fail_fast` is false by default, which keeps every rule as written. When it is true, each row below marked "`fail_fast`" stops the request for TL3 review instead of retrying the work. Infrastructure failures, Q50 blockers and Q53 quota fallback are not work retries and are unchanged. tl3d sets the flag on the stored world each time it opens, and the kernel reads it at the moment of the retry, so it applies to requests already open.
+**Fail fast,** from Rob's decision on 2026-11-02 (Q54; which steps count as retries is the coordinator's reading, flagged to Rob in #482): `[limits] fail_fast` is false by default, which keeps every rule as written. When it is true, each row below marked "`fail_fast`" stops the request for TL3 review instead of retrying the work. Infrastructure failures, Q50 blockers and Q53 quota fallback are not work retries and are unchanged. tl3d sets the flag on the stored world each time it opens, and the kernel reads it at the moment of the retry, so it applies to requests already open.
 
 **Stop for TL3 review:** go to Stopping(Stopped) and record the failing step on the node. Spend nothing and ask Rob nothing. The closing summary names the step and its evidence and, as for any stop, says to comment `restart` and leaves the issue open (Q49). A postmortem is owed as `needed_fix`, and one line goes to the operations issue for the coordinator.
 
@@ -357,11 +357,10 @@ goals and forecast settings:
 | Plan: can't meet, with required protected paths (Q57) | Controller verifies concrete paths against defaults plus global and repository lists | Stopping(NotActionable) | No retry, credit spent or Rob question, regardless of `fail_fast` |
 | Plan: leaf | The leaf rules hold | Ready(fresh) | |
 | Plan: split | Slice one | AwaitingRob(needs splitting) | Ask Rob to narrow the request, showing the proposed pieces |
-| Plan: can't meet, with a report | `fail_fast` (Q54) | Stop for TL3 review | See "Failures" |
+| Plan: can't meet, with a report | `fail_fast` (Q54) | Stop for TL3 review | See "Failures". The planner worker reports a plan that breaks a rule as can't meet, so a rule-breaking plan arrives here and stops at once. |
 | Plan: can't meet, with a report | First time | Planning | Re-run with the next model on the planner's ladder, in a new generation |
 | Plan: can't meet, with a report | Second time | AwaitingRob(can't meet, continue to Planning) | |
 | Plan breaks a rule | First time | Planning | Re-run with the reason, in a new generation |
-| Plan breaks a rule | Second time, `fail_fast` (Q54) | Stop for TL3 review | See "Failures" |
 | Plan breaks a rule | Second time | AwaitingRob(can't meet, continue to Planning) | |
 
 Q57 closes with reason `protected_paths`. Its summary names those paths, says
@@ -409,6 +408,7 @@ The exact models come from what CLIProxyAPI serves. They are set in config, and 
 | Worktree preparation confirms | No proposed head, or already adopted | Making at the next step | Start or resume the maker run |
 | Maker done (a commit, and its own check that every measure is met) | | Checking | Submit the check job |
 | Maker needs more files (a list) | Credit at least 1, and the forecast with the new files still fits | Ready(the same Making) | Spend 1; record the larger footprint; release the slot and files. The worktree and session stay. |
+| Maker needs more files | `fail_fast` (Q54); the forecast with the new files still fits; credit 0 | AwaitingRob(out of credit, continue to Ready(the same Making)) | Record the larger footprint; release the slot and files. `fail_fast` stops retries, not credit decisions. |
 | Maker needs more files | Otherwise | As for out of room | |
 | Maker can't meet, with a report | `fail_fast` (Q54), in any round | Stop for TL3 review | See "Failures" |
 | Maker can't meet, with a report | | The next attempt, as for a failed round 1 | |

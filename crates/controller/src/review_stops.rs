@@ -25,7 +25,6 @@ pub(crate) fn step_name(step: ReviewStop) -> &'static str {
         ReviewStop::MakerOutOfRoom => "maker_out_of_room",
         ReviewStop::ReviewerOutOfRoom => "reviewer_out_of_room",
         ReviewStop::PlanCantMeet => "plan_cant_meet",
-        ReviewStop::PlanBrokeRule => "plan_broke_rule",
     }
 }
 
@@ -40,7 +39,6 @@ fn step_text(step: ReviewStop) -> &'static str {
         ReviewStop::MakerOutOfRoom => "the change was too large to make in one go",
         ReviewStop::ReviewerOutOfRoom => "the change was too large to review in one go",
         ReviewStop::PlanCantMeet => "planning found no way to meet the request",
-        ReviewStop::PlanBrokeRule => "planning broke one of its rules twice",
     }
 }
 
@@ -144,6 +142,11 @@ impl Controller {
                 record["findings"] = found;
             }
             commit.rows.push(put(TABLE, id.clone(), record));
+            // Without an operations issue there's nowhere for the coordinator's
+            // note; the issue summary already says the request stopped.
+            let Some(operations) = &self.bootstrap.operations else {
+                continue;
+            };
             let request = crate::request(snapshot, node)?;
             let line = format!(
                 "Stopped for TL3 review (tl3_review): {}/{}#{} at step {}, attempt {}, round {}. Restart it once the fix ships.",
@@ -154,17 +157,12 @@ impl Controller {
                 n.attempt,
                 n.round
             );
-            let (repository, issue) = match &self.bootstrap.operations {
-                Some(operations) => (
-                    Repository {
-                        owner: operations.owner.clone(),
-                        name: operations.name.clone(),
-                        installation: operations.installation_id,
-                    },
-                    operations.number,
-                ),
-                None => (request.repo.clone(), request.issue),
+            let repository = Repository {
+                owner: operations.owner.clone(),
+                name: operations.name.clone(),
+                installation: operations.installation_id,
             };
+            let issue = operations.number;
             let delivery = Delivery {
                 key: format!("review-stop:{index}:{}", n.generation),
                 epoch: snapshot.epoch.get(),

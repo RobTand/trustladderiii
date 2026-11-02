@@ -273,7 +273,6 @@ pub enum ReviewStop {
     MakerOutOfRoom,
     ReviewerOutOfRoom,
     PlanCantMeet,
-    PlanBrokeRule,
 }
 
 /// Where a node goes when Rob says carry on.
@@ -1911,11 +1910,11 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
                 m.plan_retries = 0;
                 set_phase(m, Phase::Ready(Resume::Making));
             } else {
-                plan_retry(w, i, ReviewStop::PlanBrokeRule, out);
+                plan_retry(w, i, false, out);
             }
         }
         Reply::PlanSplit => ask_rob(w, i, QKind::NeedsSplitting, Cont::Nowhere, 0, out),
-        Reply::PlanCantMeet => plan_retry(w, i, ReviewStop::PlanCantMeet, out),
+        Reply::PlanCantMeet => plan_retry(w, i, true, out),
         Reply::ProtectedPaths => enter_stopping(&mut w.nodes[i], Outcome::NotActionable),
         Reply::MakerDone { head } => {
             let m = &mut w.nodes[i];
@@ -1931,6 +1930,18 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
                 m.footprint = footprint;
                 m.holds = false;
                 set_phase(m, Phase::Ready(Resume::Making));
+            } else if fits && !files.is_empty() && w.fail_fast {
+                // Q54 stops retries, not credit decisions: Rob funds the extension.
+                let footprint = w.union_footprints(w.nodes[i].footprint, files);
+                w.nodes[i].footprint = footprint;
+                ask_rob(
+                    w,
+                    i,
+                    QKind::OutOfCredit,
+                    Cont::Ready(Resume::Making),
+                    1,
+                    out,
+                );
             } else {
                 out_of_room(w, i, ReviewStop::MakerNeedsFiles, out);
             }
@@ -2096,15 +2107,16 @@ fn out_of_room(w: &mut World, i: usize, step: ReviewStop, out: &mut Outbox) {
     }
 }
 
-/// `step` says why: a plan that broke a rule re-runs once even under
-/// `fail_fast`, but the planner never re-runs on `cant_meet` (Q54).
-fn plan_retry(w: &mut World, i: usize, step: ReviewStop, out: &mut Outbox) {
+/// Under `fail_fast` the planner never re-runs on `cant_meet` (Q54). The
+/// planner worker reports a broken rule as `cant_meet` too, so a plan that
+/// doesn't fit (`cant_meet` false) can't arise live and keeps today's rule.
+fn plan_retry(w: &mut World, i: usize, cant_meet: bool, out: &mut Outbox) {
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     m.plan_retries = m.plan_retries.saturating_add(1);
     let phase = m.phase;
-    if fail_fast && (step == ReviewStop::PlanCantMeet || m.plan_retries >= 2) {
-        stop_for_review(m, step);
+    if fail_fast && cant_meet {
+        stop_for_review(m, ReviewStop::PlanCantMeet);
     } else if m.plan_retries < 2 {
         // Re-run once, with the reason or the next model on the planner's ladder.
         set_phase(m, phase);

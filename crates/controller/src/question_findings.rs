@@ -77,7 +77,7 @@ pub(crate) fn findings(question: &Question, sources: &Sources) -> Option<Value> 
 /// stopped. The summary has no decision for Rob, so none is kept.
 pub(crate) fn review_stop(step: ReviewStop, sources: &Sources) -> Option<Value> {
     let found = match step {
-        ReviewStop::PlanCantMeet | ReviewStop::PlanBrokeRule => planner(&(sources.fresh)("plans")?),
+        ReviewStop::PlanCantMeet => planner(&(sources.fresh)("plans")?),
         ReviewStop::MakerOutOfRoom | ReviewStop::MakerNeedsFiles => {
             let reply = (sources.fresh)("maker_replies")?;
             reported("maker", reply["report"].as_str()?, CANT_MEET)
