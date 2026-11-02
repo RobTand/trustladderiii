@@ -30,6 +30,7 @@ mod notices;
 pub mod priority;
 pub mod production;
 pub mod prompts;
+mod protected_requests;
 mod question_findings;
 pub mod release;
 mod scope;
@@ -245,6 +246,7 @@ pub struct Controller {
     allowances: tl3_config::Allowances,
     /// Starting credit reserve by priority, P0 first (#416). Empty keeps the kernel's.
     priority_reserve: BTreeMap<u8, u8>,
+    request_protection: Vec<(Repository, Vec<String>)>,
 }
 impl Controller {
     pub fn open(store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
@@ -311,6 +313,7 @@ impl Controller {
             held_effects: BTreeMap::new(),
             allowances: tl3_config::Allowances::default(),
             priority_reserve: BTreeMap::new(),
+            request_protection: Vec::new(),
         };
         controller.reconcile_capacity()?;
         controller.cleanup_ended_looks()?;
@@ -439,8 +442,6 @@ impl Controller {
             .filter_map(|priority| Some((priority, limits.credit_reserve_for(Some(priority))?)))
             .collect();
     }
-
-    pub fn set_request_protection(&mut self, _config: &tl3_config::Config) {}
 
     pub fn intake(&mut self, issue: LabelledIssue) -> Result<bool> {
         self.intake_proposed(issue, None)
@@ -1705,6 +1706,15 @@ impl Controller {
                     ));
                 }
             }
+            if matches!(
+                output,
+                Out::Notice {
+                    notice: tl3_kernel::Notice::Summary(tl3_kernel::Outcome::NotActionable),
+                    ..
+                }
+            ) {
+                protected_requests::closing_summary(self, snapshot, commit, &mut delivery)?;
+            }
             if let Out::Notice {
                 notice: tl3_kernel::Notice::Incident { needs_rob },
                 ..
@@ -2482,6 +2492,11 @@ impl Controller {
                         }));
                     }
                 };
+                if let Some(protected) =
+                    self.protected_reply(snapshot, commit, node, &role, &reply)?
+                {
+                    mapped = adapters::workers::protocol::MappedReply::Kernel(protected);
+                }
                 if role == "planner" && reply["kind"] == "leaf" {
                     let checks = reply["checks"]
                         .as_array()

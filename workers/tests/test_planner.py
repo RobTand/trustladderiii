@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 import pytest
+from jsonschema import ValidationError
 import tiktoken
 
 from tl3_workers.contracts import validate
@@ -579,3 +580,11 @@ def test_existing_test_in_a_large_file_is_defined_at_the_base(planner_request, m
     reply['checks'] = [{'kind': kind, 'node_ids': ['tests/test_large.py::test_existing'], 'goal_ids': [0, 1]}]
     check_reply(planner_request['inputs'], reply)
     assert not any('test_large.py' in item for item in reply['violations']), reply['violations']
+
+
+def test_cant_meet_carries_required_protected_paths():
+    reply = {**CANT_MEET, "protected_paths": ["tools/ci/bazel_gate.py"]}
+    validate("planner-reply", reply)
+    for invalid in [[], [1], [""], ["tools/ci/bazel_gate.py"] * 2]:
+        with pytest.raises(ValidationError):
+            validate("planner-reply", {**reply, "protected_paths": invalid})

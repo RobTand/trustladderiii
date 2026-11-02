@@ -372,6 +372,10 @@ impl Supervisor {
                 .remove("standing_rules");
         }
         if matches!(role, "ingest" | "audit") {
+            inputs["protected_paths"] = json!(
+                self.protected_paths
+                    .for_repository(&delivery.repository, &self.planning.protected_paths)?
+            );
             // Cached simulation materials may still contain inline fixture text.
             if let Some(repo) = inputs["repo"].as_object_mut() {
                 repo.remove("materials");

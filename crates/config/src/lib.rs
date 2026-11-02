@@ -74,6 +74,21 @@ pub fn protected_paths(global: &[String], repository: &[String]) -> Vec<String> 
     paths
 }
 
+/// Match repository-relative paths with the same glob separators as scope trimming.
+pub fn path_is_protected(path: &str, patterns: &[String]) -> bool {
+    let options = glob::MatchOptions {
+        case_sensitive: true,
+        require_literal_separator: true,
+        require_literal_leading_dot: false,
+    };
+    patterns.iter().any(|pattern| {
+        let pattern = glob::Pattern::new(pattern).expect("validated protected path pattern");
+        pattern.matches_with(path, options)
+            || (path.ends_with('/')
+                && pattern.matches_with(&format!("{path}__tl3_path__"), options))
+    })
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Planning {

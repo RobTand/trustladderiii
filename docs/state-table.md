@@ -303,6 +303,7 @@ in Ingesting and requests an ingest run, retaining the proposed head.
 
 | Event | Condition | Next | Effects |
 |---|---|---|---|
+| Required protected edits confirmed (Q55) | Concrete paths match the effective protected list | Stopping(NotActionable) | No credit spent or Rob question; record reason `protected_paths` |
 | Ingest done (brief and measures, which the ingest agent has checked against the issue) | | Auditing | Request an audit run |
 | Ingest proposes an early end | Duplicate, already done, or not actionable | Auditing | Request an audit of that verdict |
 
@@ -312,6 +313,7 @@ An independent agent checks ingest's output against the original issue. It can b
 
 | Event | Condition | Next | Effects |
 |---|---|---|---|
+| Required protected edits confirmed (Q55) | From declared goals, footprint or audit evidence | Stopping(NotActionable) | No credit spent or Rob question; record reason `protected_paths` |
 | Audit agrees with the measures | | Unplanned | Post the measures to the issue in plain language |
 | Audit agrees with an early end | | Stopping(Duplicate, AlreadyDone or NotActionable) | |
 | Audit disagrees | First time | Ingesting | Re-run ingest with the audit's objections, in a new generation |
@@ -348,12 +350,19 @@ goals and forecast settings:
 
 | Event | Condition | Next | Effects |
 |---|---|---|---|
+| Plan: can't meet, with required protected paths (Q55) | Controller verifies concrete paths against defaults plus global and repository lists | Stopping(NotActionable) | No retry, credit spent or Rob question, regardless of `fail_fast` |
 | Plan: leaf | The leaf rules hold | Ready(fresh) | |
 | Plan: split | Slice one | AwaitingRob(needs splitting) | Ask Rob to narrow the request, showing the proposed pieces |
 | Plan: can't meet, with a report | First time | Planning | Re-run with the next model on the planner's ladder, in a new generation |
 | Plan: can't meet, with a report | Second time | AwaitingRob(can't meet, continue to Planning) | |
 | Plan breaks a rule | First time | Planning | Re-run with the reason, in a new generation |
 | Plan breaks a rule | Second time | AwaitingRob(can't meet, continue to Planning) | |
+
+Q55 closes with reason `protected_paths`. Its summary names those paths, says
+the work belongs outside TL3, leaves the issue open and offers `restart` after
+narrowing. A durable one-line note goes to the operations issue. Merely mentioned
+or excluded paths do not trigger the rule. A partial leaf must still meet every
+goal and land on its own. Normal teardown is unchanged.
 
 ### Ready(resume point)
 
