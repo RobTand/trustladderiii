@@ -91,6 +91,12 @@ pub enum Evidence {
         head: String,
         required: RequiredCheck,
     },
+    /// #447: Mergify waits on queue conditions that nothing still running can meet.
+    QueueBlocked {
+        head: String,
+        conditions: Vec<String>,
+        failed: Vec<String>,
+    },
     /// The context of an open missing-check incident has reported on that head (Q52).
     CheckReported {
         head: String,
@@ -154,6 +160,7 @@ impl QueueFact {
             Evidence::ChecksUnavailable { .. }
                 | Evidence::CheckMissing { .. }
                 | Evidence::CheckReported { .. }
+                | Evidence::QueueBlocked { .. }
         )
     }
     pub(crate) fn recorded(&self, snapshot: &Snapshot) -> Result<bool> {
@@ -173,6 +180,19 @@ impl QueueFact {
                 Evidence::CheckMissing { .. } => incident.is_some(),
                 _ => !incident.is_some_and(|row| row.value["open"] == true),
             });
+        }
+        if let Evidence::QueueBlocked {
+            head, conditions, ..
+        } = &self.evidence
+        {
+            let Some(node) = self.node(snapshot)? else {
+                return Ok(false);
+            };
+            let id = crate::looks::queue_blocked_incident_id(node, head, conditions);
+            return Ok(snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == "incidents" && row.id == id));
         }
         if let Evidence::ChecksUnavailable { permissions } = &self.evidence {
             let Some(node) = self.node(snapshot)? else {
@@ -225,6 +245,12 @@ impl QueueFact {
                     serde_json::to_string(required).unwrap()
                 )
             }
+            Evidence::QueueBlocked {
+                head, conditions, ..
+            } => format!(
+                "queue-blocked:{head}:{}",
+                serde_json::to_string(conditions).unwrap()
+            ),
             Evidence::Merged { head, .. } => format!("merged:{head}"),
             Evidence::CiFailed {
                 check, head_check, ..
@@ -341,6 +367,8 @@ pub struct Adapter {
     epoch: i64,
     records: Records,
     runtime: &'static tokio::runtime::Runtime,
+    /// Each served repository's PR-body policy (#447).
+    body_lines: Vec<(Repository, Vec<tl3_config::BodyLine>)>,
 }
 impl Adapter {
     pub fn new(clients: BTreeMap<u64, GitHub>, epoch: i64, records: &Path) -> Result<Self> {
@@ -350,7 +378,55 @@ impl Adapter {
             epoch,
             records: Records::new(records),
             runtime: crate::executor::runtime()?,
+            body_lines: Vec::new(),
         })
+    }
+    pub fn with_repositories(mut self, repos: &[tl3_config::Repository]) -> Self {
+        self.body_lines = repos
+            .iter()
+            .map(|repo| {
+                (
+                    Repository {
+                        owner: repo.owner.clone(),
+                        name: repo.name.clone(),
+                        installation: repo.installation_id,
+                    },
+                    repo.pr_body_lines.clone(),
+                )
+            })
+            .collect();
+        self
+    }
+    /// #447: one idempotent update brings an open TL3 PR's body into its
+    /// repository's policy. A body that complies is left alone.
+    fn heal_body(&self, delivery: &Delivery, pull: &tl3_github::PullRequest) -> Result<()> {
+        let Some((_, rules)) = self
+            .body_lines
+            .iter()
+            .find(|(repo, _)| *repo == delivery.repository)
+        else {
+            return Ok(());
+        };
+        if pull.state != "open" || pull.merged_at.is_some() {
+            return Ok(());
+        }
+        let body = pull.body.as_deref().unwrap_or_default();
+        if let Some(healed) = crate::pr_body::healed(body, rules, &delivery.paths) {
+            self.runtime.block_on(
+                self.clients[&delivery.repository.installation].update_pull_request_body(
+                    &full_name(&delivery.repository),
+                    pull.number,
+                    &healed,
+                ),
+            )?;
+            eprintln!(
+                "PR-body policy: added {:?} to {}#{} (#447)",
+                crate::pr_body::gaps(body, rules),
+                full_name(&delivery.repository),
+                pull.number
+            );
+        }
+        Ok(())
     }
     fn fence(&mut self, delivery: &Delivery) -> Result<()> {
         if delivery.epoch < self.epoch {
@@ -373,6 +449,7 @@ impl Adapter {
         if is_merge_queue_pr(&state.pull_request) {
             return Err(Error::Invalid("cannot queue a Mergify draft PR"));
         }
+        self.heal_body(delivery, &state.pull_request)?;
         let facts = self
             .runtime
             .block_on(queue_facts(github, &delivery.repository, &state, head, &[]))?
@@ -605,7 +682,8 @@ impl Executor for Adapter {
                             head_check: true,
                             ..
                         } | Evidence::ChecksUnavailable { .. }
-                            | Evidence::CheckMissing { .. },
+                            | Evidence::CheckMissing { .. }
+                            | Evidence::QueueBlocked { .. },
                         ..
                     })
                 )
@@ -830,11 +908,54 @@ fn full_name(repo: &Repository) -> String {
 /// has completed, so nothing still running can meet them. Returns the unmet
 /// conditions and the failed checks outside TL3's required set.
 pub(crate) fn queue_blocked(
-    _state: &tl3_mergify::Observation,
-    _suites_completed: bool,
-    _required: &[RequiredCheck],
+    state: &tl3_mergify::Observation,
+    suites_completed: bool,
+    required: &[RequiredCheck],
 ) -> Option<(Vec<String>, Vec<String>)> {
-    None
+    if state.state != QueueState::Waiting || !suites_completed {
+        return None;
+    }
+    let conditions = tl3_mergify::unmet_conditions(state.check.as_ref()?);
+    if conditions.is_empty() {
+        return None;
+    }
+    let head = &state.pull_request.head.sha;
+    let mut latest: BTreeMap<&str, &CheckRun> = BTreeMap::new();
+    for check in state
+        .check_runs
+        .iter()
+        .filter(|check| &check.head_sha == head)
+    {
+        let entry = latest.entry(check.name.as_str()).or_insert(check);
+        if check.id > entry.id {
+            *entry = check;
+        }
+    }
+    let failed = latest
+        .into_values()
+        .filter(|check| {
+            check.status == "completed"
+                && matches!(
+                    check.conclusion.as_deref(),
+                    Some(
+                        "failure"
+                            | "cancelled"
+                            | "timed_out"
+                            | "action_required"
+                            | "startup_failure"
+                    )
+                )
+                && !check.app.as_ref().is_some_and(|app| app.slug == "mergify")
+                && !required.iter().any(|rule| {
+                    rule.context == check.name
+                        && rule
+                            .app
+                            .is_none_or(|id| check.app.as_ref().is_some_and(|app| app.id == id))
+                })
+        })
+        .map(|check| check.name.clone())
+        .collect();
+    Some((conditions, failed))
 }
 
 /// `open` names the open missing-check incidents on the expected head.
@@ -896,6 +1017,35 @@ async fn queue_facts(
                         required: required.clone(),
                     },
                 }));
+            }
+        }
+        // #447: Mergify waits on a condition nothing still running can meet,
+        // such as PrismaBuild's scopes after its pr-gate failed.
+        if state.state == QueueState::Waiting
+            && state
+                .check
+                .as_ref()
+                .is_some_and(|check| !tl3_mergify::unmet_conditions(check).is_empty())
+        {
+            let suites = github.check_suites(&repo_name, &pull.head.sha).await?;
+            let completed =
+                !suites.is_empty() && suites.iter().all(|suite| suite.status == "completed");
+            let required: Vec<_> = checks
+                .missing
+                .iter()
+                .chain(&checks.reported)
+                .cloned()
+                .collect();
+            if let Some((conditions, failed)) = queue_blocked(state, completed, &required) {
+                facts.push(QueueFact {
+                    repository: repo.clone(),
+                    number: pull.number,
+                    evidence: Evidence::QueueBlocked {
+                        head: pull.head.sha.clone(),
+                        conditions,
+                        failed,
+                    },
+                });
             }
         }
         facts.extend(

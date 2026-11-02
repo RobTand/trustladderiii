@@ -1,24 +1,115 @@
 //! A served repository's PR-body policy (#447): the lines its PR checks require.
 use tl3_config::BodyLine;
 
-/// The value TL3 declares for a rule, from the change's files.
-pub fn value(rule: &BodyLine, _paths: &[String]) -> String {
-    rule.default.clone()
+fn is_test(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    path.split('/')
+        .any(|part| part == "tests" || part == "test")
+        || name.starts_with("test_")
+        || name.ends_with("_test.py")
+}
+
+fn is_doc(path: &str) -> bool {
+    path.starts_with("docs/") || path.ends_with(".md") || path.ends_with(".rst")
+}
+
+/// The value TL3 declares for a rule, from the change's files: only tests is
+/// `test`, only docs is `docs`, and a change with its own test is `fix`, since
+/// TL3's demonstrating test is the regression test such policies ask for. A
+/// value the repository doesn't allow falls back to its default.
+pub fn value(rule: &BodyLine, paths: &[String]) -> String {
+    let candidate = if paths.is_empty() {
+        None
+    } else if paths.iter().all(|path| is_test(path)) {
+        Some("test")
+    } else if paths.iter().all(|path| is_doc(path)) {
+        Some("docs")
+    } else if paths.iter().any(|path| is_test(path)) {
+        Some("fix")
+    } else {
+        None
+    };
+    candidate
+        .filter(|value| rule.values.iter().any(|allowed| allowed == value))
+        .map_or_else(|| rule.default.clone(), str::to_owned)
 }
 
 /// One `label: value` line per rule.
-pub fn lines(_rules: &[BodyLine], _paths: &[String]) -> String {
-    String::new()
+pub fn lines(rules: &[BodyLine], paths: &[String]) -> String {
+    rules
+        .iter()
+        .map(|rule| format!("{}: {}\n", rule.label, value(rule, paths)))
+        .collect()
 }
 
-/// The rules a body doesn't satisfy with exactly one line holding an allowed value.
-pub fn gaps(_body: &str, _rules: &[BodyLine]) -> Vec<String> {
-    Vec::new()
+/// The value a body line declares for this rule's label, if it is one.
+fn declared<'a>(line: &'a str, rule: &BodyLine) -> Option<&'a str> {
+    let (label, value) = line.trim_start().split_once(':')?;
+    label
+        .trim_end()
+        .eq_ignore_ascii_case(&rule.label)
+        .then(|| value.trim())
 }
 
-/// The body with every unsatisfied rule fixed, or `None` when it already complies.
-pub fn healed(_body: &str, _rules: &[BodyLine], _paths: &[String]) -> Option<String> {
-    None
+/// The rules a body doesn't satisfy with exactly one line holding an allowed
+/// value, matched as the repository's own check does: case-insensitively.
+pub fn gaps(body: &str, rules: &[BodyLine]) -> Vec<String> {
+    rules
+        .iter()
+        .filter(|rule| {
+            let values: Vec<_> = body
+                .lines()
+                .filter_map(|line| declared(line, rule))
+                .collect();
+            !(values.len() == 1
+                && rule
+                    .values
+                    .iter()
+                    .any(|allowed| allowed.eq_ignore_ascii_case(values[0])))
+        })
+        .map(|rule| rule.label.clone())
+        .collect()
+}
+
+/// The body with every unsatisfied rule fixed, or `None` when it already
+/// complies. Invalid declarations go, and the new lines follow `Refs #N.`.
+pub fn healed(body: &str, rules: &[BodyLine], paths: &[String]) -> Option<String> {
+    let gaps = gaps(body, rules);
+    if gaps.is_empty() {
+        return None;
+    }
+    let broken: Vec<_> = rules
+        .iter()
+        .filter(|rule| gaps.contains(&rule.label))
+        .collect();
+    let kept: Vec<&str> = body
+        .split_inclusive('\n')
+        .filter(|line| !broken.iter().any(|rule| declared(line, rule).is_some()))
+        .collect();
+    let added: String = broken
+        .iter()
+        .map(|rule| format!("{}: {}", rule.label, value(rule, paths)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut text = String::new();
+    let mut inserted = false;
+    for line in kept {
+        text.push_str(line);
+        if !inserted && line.trim_start().starts_with("Refs #") {
+            if !line.ends_with('\n') {
+                text.push('\n');
+            }
+            text.push_str(&added);
+            if line.ends_with('\n') {
+                text.push('\n');
+            }
+            inserted = true;
+        }
+    }
+    if !inserted {
+        text = format!("{added}\n{text}");
+    }
+    Some(text)
 }
 
 #[cfg(test)]

@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 
-use base64::{Engine, engine::general_purpose::STANDARD};
+use base64::{
+    Engine, alphabet,
+    engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
+};
 use serde::Deserialize;
 use tl3_github::{CheckRun, GitHub, PullRequest};
 
@@ -261,13 +264,9 @@ fn check_state(check: &CheckRun) -> QueueState {
         return QueueState::Unknown;
     }
     if let Some(summary) = &output.summary
-        && let Some(encoded) = summary
-            .split_once("<span itemprop=\"mergify.v1.")
-            .map(|(_, s)| s)
+        && summary.contains("<span itemprop=\"mergify.v1.")
     {
-        let state = encoded
-            .split_once('"')
-            .and_then(|(encoded, _)| STANDARD.decode(encoded).ok())
+        let state = payload_bytes(summary)
             .and_then(|json| String::from_utf8(json).ok())
             .and_then(|json| payload_state(&json));
         return state.unwrap_or(QueueState::Unknown);
@@ -309,6 +308,30 @@ struct Payload {
     step: Option<String>,
     #[serde(default)]
     dequeue_reason: Option<DequeueReason>,
+    #[serde(default)]
+    required_conditions: Vec<Condition>,
+}
+
+#[derive(Deserialize)]
+struct Condition {
+    description: String,
+    #[serde(rename = "match")]
+    matched: bool,
+    #[serde(default)]
+    note: Option<String>,
+}
+
+/// The versioned payload's bytes. Mergify encodes it as base64; prismabuild#2632's
+/// is URL-safe and unpadded (#447), so accept either alphabet with or without padding.
+fn payload_bytes(summary: &str) -> Option<Vec<u8>> {
+    let (_, encoded) = summary.split_once("<span itemprop=\"mergify.v1.")?;
+    let (encoded, _) = encoded.split_once('"')?;
+    let config =
+        GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent);
+    GeneralPurpose::new(&alphabet::STANDARD, config)
+        .decode(encoded)
+        .or_else(|_| GeneralPurpose::new(&alphabet::URL_SAFE, config).decode(encoded))
+        .ok()
 }
 
 #[derive(Deserialize)]
@@ -361,10 +384,8 @@ pub fn ci_is_infrastructure(check: &CheckRun) -> bool {
     let payload = check
         .output
         .as_ref()
-        .and_then(|output| output.summary.as_ref())
-        .and_then(|summary| summary.split_once("<span itemprop=\"mergify.v1."))
-        .and_then(|(_, encoded)| encoded.split_once('"'))
-        .and_then(|(encoded, _)| STANDARD.decode(encoded).ok())
+        .and_then(|output| output.summary.as_deref())
+        .and_then(payload_bytes)
         .and_then(|bytes| serde_json::from_slice::<Payload>(&bytes).ok());
     if let Some(payload) = payload {
         return payload.version == 1
@@ -386,8 +407,28 @@ pub fn ci_is_infrastructure(check: &CheckRun) -> bool {
 
 /// Mergify's unmet top-level queue entry conditions, each as `condition: note`,
 /// from the queue check's versioned payload (#447).
-pub fn unmet_conditions(_check: &CheckRun) -> Vec<String> {
-    Vec::new()
+pub fn unmet_conditions(check: &CheckRun) -> Vec<String> {
+    check
+        .output
+        .as_ref()
+        .and_then(|output| output.summary.as_deref())
+        .and_then(payload_bytes)
+        .and_then(|bytes| serde_json::from_slice::<Payload>(&bytes).ok())
+        .filter(|payload| payload.version == 1)
+        .map(|payload| {
+            payload
+                .required_conditions
+                .into_iter()
+                .filter(|condition| !condition.matched)
+                .map(|condition| match condition.note {
+                    Some(note) if !note.trim().is_empty() => {
+                        format!("{}: {}", condition.description, note.trim())
+                    }
+                    _ => condition.description,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The selected check belongs to Mergify on the original PR head.

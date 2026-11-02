@@ -163,25 +163,42 @@ impl Adapter {
                 }
                 let issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
                 let branch = self.branches.branch(delivery)?;
+                let rules = self.body_lines(&delivery.repository);
+                // Policy lines follow `Refs #N.`, where a self-heal also puts them.
+                let lines = crate::pr_body::lines(rules, &delivery.paths);
+                let body = format!(
+                    "Refs #{}.{}{}\n\n{}",
+                    delivery.issue,
+                    if lines.is_empty() {
+                        String::new()
+                    } else {
+                        format!("\n{}", lines.trim_end())
+                    },
+                    delivery
+                        .proposed
+                        .as_ref()
+                        .map(|proposed| format!(
+                            "\n\nCompletes https://github.com/{repo}/pull/{}.",
+                            proposed.number
+                        ))
+                        .unwrap_or_default(),
+                    GitHub::marker(&delivery.key)
+                );
+                // #447: a body the served repository's policy refuses is TL3's
+                // own failure. A permanent failure stops for review (#440's seam).
+                if !crate::pr_body::gaps(&body, rules).is_empty() {
+                    return Err(Error::Permanent {
+                        class: "pr_policy",
+                        source: "TL3's PR body breaks the repository's body policy".into(),
+                    });
+                }
                 let pull = self.runtime.block_on(client.open_pull_request(
                     &repo,
                     &NewPullRequest {
                         title: issue.title,
                         head: branch.as_str().into(),
                         base: self.branches.base(&delivery.repository)?.into(),
-                        body: format!(
-                                "Refs #{}.{}\n\n{}",
-                                delivery.issue,
-                                delivery
-                                    .proposed
-                                    .as_ref()
-                                    .map(|proposed| format!(
-                                        "\n\nCompletes https://github.com/{repo}/pull/{}.",
-                                        proposed.number
-                                    ))
-                                    .unwrap_or_default(),
-                                GitHub::marker(&delivery.key)
-                            ),
+                        body,
                     },
                 ))?;
                 Ok(binding(delivery, &pull))

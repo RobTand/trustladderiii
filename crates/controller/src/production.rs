@@ -134,7 +134,8 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
     adapters.register(Upstream::PrismaBuild, pb);
     adapters.register(
         Upstream::Mergify,
-        adapters::mergify::Adapter::new(clients.clone(), epoch, &records.join("mergify"))?,
+        adapters::mergify::Adapter::new(clients.clone(), epoch, &records.join("mergify"))?
+            .with_repositories(&config.github.repos),
     );
     let mergify = adapters::mergify::Translator::new(clients.clone())?;
     let adoption = crate::adoption::Translator::new(clients.clone(), bootstrap.clone())?;

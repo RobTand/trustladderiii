@@ -658,7 +658,21 @@ impl Config {
             github_name(&format!("{field}.name"), &repo.name, true)?;
             validate_protected_paths(&format!("{field}.protected_paths"), &repo.protected_paths)?;
             for (line, rule) in repo.pr_body_lines.iter().enumerate() {
-                let _ = (line, rule);
+                let label = &rule.label;
+                if label.trim().is_empty()
+                    || label.contains([':', '\n', '\r'])
+                    || rule.values.is_empty()
+                    || rule
+                        .values
+                        .iter()
+                        .any(|value| value.trim().is_empty() || value.contains(['\n', '\r']))
+                    || !rule.values.contains(&rule.default)
+                {
+                    return Err(invalid(
+                        format!("{field}.pr_body_lines[{line}]"),
+                        "needs a label without a colon, nonempty values, and a default among them",
+                    ));
+                }
             }
             tl3_worktrees::branch_template::BranchTemplate::new(&repo.branch_template)
                 .map_err(|error| invalid(format!("{field}.branch_template"), error.to_string()))?;

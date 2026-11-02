@@ -1014,6 +1014,22 @@ impl GitHub {
         .await
     }
 
+    /// Replace a pull request's body. The same body twice is the same request.
+    pub async fn update_pull_request_body(
+        &self,
+        repo: &str,
+        number: u64,
+        body: &str,
+    ) -> Result<PullRequest, Error> {
+        self.request(
+            Method::PATCH,
+            format!("{}/pulls/{number}", repo_path(repo)?),
+            vec![],
+            Some(json!({"body": body})),
+        )
+        .await
+    }
+
     pub async fn close_pull_request(&self, repo: &str, number: u64) -> Result<PullRequest, Error> {
         self.request(
             Method::PATCH,

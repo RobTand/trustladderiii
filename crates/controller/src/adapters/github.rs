@@ -79,11 +79,34 @@ pub struct Adapter {
     runtime: &'static tokio::runtime::Runtime,
     records: Records,
     operations: Option<tl3_config::OperationsIssue>,
+    /// Each served repository's PR-body policy (#447).
+    body_lines: Vec<(crate::Repository, Vec<tl3_config::BodyLine>)>,
 }
 impl Adapter {
     pub fn with_repositories(mut self, repos: &[tl3_config::Repository]) -> Result<Self> {
         self.branches = crate::branches::Branches::new(repos)?;
+        self.body_lines = repos
+            .iter()
+            .map(|repo| {
+                (
+                    crate::Repository {
+                        owner: repo.owner.clone(),
+                        name: repo.name.clone(),
+                        installation: repo.installation_id,
+                    },
+                    repo.pr_body_lines.clone(),
+                )
+            })
+            .collect();
         Ok(self)
+    }
+
+    /// The repository's PR-body policy; empty when it has none.
+    pub(crate) fn body_lines(&self, repo: &crate::Repository) -> &[tl3_config::BodyLine] {
+        self.body_lines
+            .iter()
+            .find(|(served, _)| served == repo)
+            .map_or(&[], |(_, rules)| rules)
     }
 
     pub fn new(
@@ -109,6 +132,7 @@ impl Adapter {
             runtime: crate::executor::runtime()?,
             records: Records::new(simulation),
             operations,
+            body_lines: Vec::new(),
         })
     }
     fn fence(&mut self, delivery: &Delivery) -> Result<()> {

@@ -1891,8 +1891,38 @@ pub(crate) fn check_setup_incident_id(node: NodeId, permission: &str) -> String 
 }
 
 /// #447: what Rob reads when Mergify waits on conditions nothing running can meet.
-pub(crate) fn queue_blocked_summary(_conditions: &[String], _failed: &[String]) -> String {
-    String::new()
+pub(crate) fn queue_blocked_summary(conditions: &[String], failed: &[String]) -> String {
+    let quote = |text: &String| match text.split_once(": ") {
+        Some((condition, note)) => format!("`{condition}` ({note})"),
+        None => format!("`{text}`"),
+    };
+    let conditions = conditions.iter().map(quote).collect::<Vec<_>>().join(", ");
+    let failed = if failed.is_empty() {
+        "No check on the head failed".to_owned()
+    } else {
+        format!(
+            "These checks on the head failed and are outside TL3's required set: {}",
+            failed
+                .iter()
+                .map(|name| format!("`{name}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    format!(
+        "Mergify is waiting for queue conditions that no running check can meet: {conditions}. Every check suite on the head has completed. {failed}. The enqueue waits; no credit is charged. This ends with the head."
+    )
+}
+
+/// One blocked-queue incident per head and set of unmet conditions (#447).
+pub(crate) fn queue_blocked_incident_id(node: NodeId, head: &str, conditions: &[String]) -> String {
+    use sha2::{Digest, Sha256};
+    let gap = serde_json::to_string(&(head, conditions)).expect("serializable conditions");
+    format!(
+        "queue-blocked:{}:{:x}",
+        node.0,
+        Sha256::digest(gap.as_bytes())
+    )
 }
 
 /// One missing-check incident per head, context and expected app (Q52).
@@ -1972,6 +2002,26 @@ impl Controller {
         )
     }
 
+    /// #447: a nonblocking repo setup incident, as Q52's; the enqueue waits and
+    /// nothing is charged. TL3-side PR-policy gaps are healed before this.
+    pub(crate) fn queue_blocked_incident(
+        &self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        node: NodeId,
+        head: &str,
+        conditions: &[String],
+        failed: &[String],
+    ) -> Result<()> {
+        self.setup_incident(
+            snapshot,
+            commit,
+            node,
+            queue_blocked_incident_id(node, head, conditions),
+            queue_blocked_summary(conditions, failed),
+        )
+    }
+
     /// A missing-check incident ends with its head: when the node closes, or
     /// the head is no longer its current or approved head.
     pub(crate) fn resolve_stale_missing_checks(
@@ -1989,13 +2039,27 @@ impl Controller {
             let Ok(fact) = serde_json::from_value::<QueueFact>(row.value.clone()) else {
                 continue;
             };
-            let Evidence::CheckMissing { head, required } = &fact.evidence else {
-                continue;
+            let (head, id) = match &fact.evidence {
+                Evidence::CheckMissing { head, required } => {
+                    let Some(node) = fact.node(snapshot)? else {
+                        continue;
+                    };
+                    (head, missing_check_incident_id(node, head, required))
+                }
+                // #447: a blocked-queue incident also ends with its head.
+                Evidence::QueueBlocked {
+                    head, conditions, ..
+                } => {
+                    let Some(node) = fact.node(snapshot)? else {
+                        continue;
+                    };
+                    (head, queue_blocked_incident_id(node, head, conditions))
+                }
+                _ => continue,
             };
             let Some(node) = fact.node(snapshot)? else {
                 continue;
             };
-            let id = missing_check_incident_id(node, head, required);
             let Some(incident) = snapshot
                 .rows
                 .iter()
