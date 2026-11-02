@@ -512,6 +512,25 @@ pub fn writer_input(
     title: &str,
     request: &str,
 ) -> Result<WriteRequest> {
+    let mut input = writer_facts(delivery, notice, title, request)?;
+    // #427: the draft is written for this delivery's request.
+    input.request = Some(super::workers::writer::WriteFor {
+        node: delivery.node().0,
+        generation: delivery.generation,
+        repo: format!("{}/{}", delivery.repository.owner, delivery.repository.name),
+        issue: delivery.issue,
+        attempt: delivery.attempt,
+        round: delivery.round,
+    });
+    Ok(input)
+}
+
+fn writer_facts(
+    delivery: &Delivery,
+    notice: Option<Notice>,
+    title: &str,
+    request: &str,
+) -> Result<WriteRequest> {
     let request = delivery.request_text.as_deref().unwrap_or(request);
     let request = if request.trim().is_empty() {
         title
