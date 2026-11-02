@@ -78,20 +78,31 @@ repository's effective list.
 Rob moved the ladders off GPT-6.1 Sol, which was out of quota, to Anthropic
 models on 2026-11-01. The maker ladder uses Claude Sonnet 5.5 twice, then Claude
 Opus 5.5. Attempt 2 uses `max` effort and 128,000 output tokens. Families are
-labelled per model line (`claude-sonnet`, `claude-opus`, `claude-fable`), so
+labelled per model line (`claude-sonnet`, `claude-opus`), so
 Q22 still forces a different model to review: Sonnet makers get Opus 5.5 review,
-and the Opus maker gets Sonnet 5.5 review. The planner uses Opus 5.5, then Fable
-5.1. The rebaser, ingest, audit, comment classification and writer use Sonnet
+and the Opus maker gets Sonnet 5.5 review. The planner uses Opus 5.5, then
+Sonnet 5.5, both at `high` effort and 32,000 output tokens. The rebaser, ingest, audit, comment classification and writer use Sonnet
 5.5. The writer field is optional for older configs and defaults to ingest.
 `crates/config/tests/config.rs` validates these defaults, so a ladder that
 breaks Q22 fails CI. For a new config, `--primary` renames Sonnet 5.5 and
 `--alternate` renames Opus 5.5 in every role.
 Production registration uses the configured ladders, including writer.
 
+Rob, 2026-11-02: Fable is not used. The allowed models are Claude Opus 5.5,
+Claude Sonnet 5.5 and GPT-6.1 Sol. Sol is out of quota on both accounts, so the
+defaults in `models.toml` use only Opus and Sonnet. `ALLOWED_MODELS` and
+`ACTIVE_MODELS` in `crates/config/src/lib.rs` list the two sets. A test in
+`crates/config/tests/config.rs` fails if `models.toml` names a model outside
+`ACTIVE_MODELS`, and checks that `ACTIVE_MODELS` is within `ALLOWED_MODELS`.
+Config loading does not enforce either list. Put Sol back in the defaults only
+when its quota returns, and add it to `ACTIVE_MODELS` in the same change.
+
 Provider limits checked on 2026-10-30:
 
+- [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol):
+  1,050,000 context tokens and 128,000 maximum output tokens.
 - [Claude models](https://platform.claude.com/docs/en/models/overview):
-  Fable 5.1, Opus 5.5 and Sonnet 5.5 each have 1M context and 128K maximum output.
+  Opus 5.5 and Sonnet 5.5 each have 1M context and 128K maximum output.
 
 All configured budgets also fit TL3's 150,000-token context setting. The proxy's
 catalog lists IDs without limits, so these limits come from provider docs.
