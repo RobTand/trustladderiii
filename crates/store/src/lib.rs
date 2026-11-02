@@ -999,6 +999,11 @@ impl Listener {
         Ok(Self { client })
     }
 
+    /// tl3d's wake for ingress filed outside its own process, such as console commands.
+    pub fn ingress(_settings: &tl3_config::Store) -> Result<Self> {
+        todo!()
+    }
+
     /// Block until at least one change commits, then take every notification
     /// already received. Returns the tables that changed. An error means the
     /// session ended, and changes after it may be missed until a new listener opens.
@@ -1014,6 +1019,20 @@ impl Listener {
             tables.insert(next.payload().to_string());
         }
         Ok(tables)
+    }
+}
+
+/// The console's session for filing commands.
+pub struct ConsoleCommands;
+
+impl ConsoleCommands {
+    pub fn open(_settings: &tl3_config::Store) -> Result<Self> {
+        todo!()
+    }
+
+    /// File a command for tl3d. False when this id was already filed.
+    pub fn submit(&mut self, _id: &str, _node: u64, _action: &serde_json::Value) -> Result<bool> {
+        todo!()
     }
 }
 

@@ -32,7 +32,11 @@ credit: number | null,
 /**
  * When the request entered its current phase, in Unix milliseconds.
  */
-phase_since_ms: number | null, last_progress: string | null, incidents: Array<CardIncident>, badges: Array<Badge>, };
+phase_since_ms: number | null, last_progress: string | null, incidents: Array<CardIncident>, badges: Array<Badge>, 
+/**
+ * The open question, with the options Rob can answer from the console.
+ */
+question: CardQuestion | null, };
 
 export type CardIncident = { id: string, summary: string, };
 
@@ -76,3 +80,32 @@ export type DatabaseStatus = { connected: boolean, };
  * `base`. A client holding another board reconnects for a fresh snapshot.
  */
 export type PatchEvent = { base: string, patch: BoardPatch, };
+
+/**
+ * An open question as Rob sees it on the issue, with its options.
+ */
+export type CardQuestion = { 
+/**
+ * The number Rob names when he answers on GitHub.
+ */
+id: number, prompt: string, options: Array<QuestionOption>, 
+/**
+ * The index of TL3's recommended option.
+ */
+recommended: number, reason: string, 
+/**
+ * Why "Let TL3 decide" can't apply the recommendation; None when it can.
+ */
+defer_blocked: string | null, };
+
+export type QuestionOption = { answer: AnswerKind, label: string, outcome: string, detail: Detail | null, };
+
+/**
+ * A question option's answer, without its details.
+ */
+export type AnswerKind = "continue" | "stop" | "retry" | "mark_handled" | "try_again" | "add_credit" | "change_request";
+
+/**
+ * What an option needs from Rob before it can apply.
+ */
+export type Detail = "text" | "guidance" | "amount";

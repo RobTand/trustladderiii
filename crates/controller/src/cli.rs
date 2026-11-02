@@ -33,6 +33,8 @@ struct Arguments {
     github_listen: Option<SocketAddr>,
     github_api: Option<String>,
     serve_status: bool,
+    /// Simulation only: wake on console commands, as production always does.
+    console: bool,
 }
 
 fn arguments(daemon: bool) -> Result<Arguments> {
@@ -56,6 +58,7 @@ fn arguments(daemon: bool) -> Result<Arguments> {
     let mut workers = false;
     let mut github_listen = None;
     let mut github_api = None;
+    let mut console = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--config" => path = args.next().map(PathBuf::from),
@@ -71,6 +74,7 @@ fn arguments(daemon: bool) -> Result<Arguments> {
                 )
             }
             "--github-api" if daemon => github_api = args.next(),
+            "--console" if daemon => console = true,
             _ => return Err(Error::Invalid("unknown or incomplete argument")),
         }
     }
@@ -88,6 +92,7 @@ fn arguments(daemon: bool) -> Result<Arguments> {
         github_listen,
         github_api,
         serve_status,
+        console,
     })
 }
 
@@ -114,10 +119,11 @@ pub fn daemon() -> Result<()> {
         workers,
         github_listen,
         github_api,
+        console,
         ..
     } = arguments(true)?;
     let Some(simulation) = simulation else {
-        if workers || github_listen.is_some() || github_api.is_some() || drain {
+        if workers || github_listen.is_some() || github_api.is_some() || drain || console {
             return Err(Error::Invalid(
                 "simulation options require --simulate DIRECTORY",
             ));
@@ -228,6 +234,9 @@ pub fn daemon() -> Result<()> {
     if drain {
         return Ok(());
     }
+    if console {
+        sources.register(crate::console::Wakes::new(config.store.clone()));
+    }
     sources.register(crate::ingress::Stdin);
     sources.run(&mut controller)
 }
@@ -254,5 +263,6 @@ fn production(config: tl3_config::Config) -> Result<()> {
     sources.register(registration.webhooks);
     sources.register(registration.workers);
     sources.register(registration.bell);
+    sources.register(crate::console::Wakes::new(config.store.clone()));
     sources.run(&mut controller)
 }

@@ -272,6 +272,7 @@ fn card_carries_counters_progress_and_incidents() {
                 summary: "Checks stalled".into(),
             }],
             badges: vec![Badge::Incident],
+            question: None,
         }
     );
     let roles: Vec<_> = cards

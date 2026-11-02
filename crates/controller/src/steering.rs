@@ -51,7 +51,7 @@ impl Delivery {
     }
 }
 
-fn question(kind: QKind) -> (&'static str, Vec<&'static str>) {
+pub(crate) fn question(kind: QKind) -> (&'static str, Vec<&'static str>) {
     match kind {
         QKind::AuditDisagreement => (
             "audit_disagreement",

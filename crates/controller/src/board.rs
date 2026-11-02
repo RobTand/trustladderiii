@@ -155,6 +155,8 @@ pub struct Card {
     pub last_progress: Option<String>,
     pub incidents: Vec<CardIncident>,
     pub badges: Vec<Badge>,
+    /// The open question, with the options Rob can answer from the console.
+    pub question: Option<crate::console::CardQuestion>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
@@ -437,6 +439,7 @@ fn card(
             .map(CardIncident::from)
             .collect(),
         badges: badges.into_iter().collect(),
+        question: None,
     }
 }
 

@@ -2,8 +2,11 @@
 //! from these and the board's, so the two can't drift.
 
 use serde::Serialize;
-use tl3_controller::board::{
-    Badge, Board, BoardPatch, Card, CardIncident, Column, ColumnCount, Ending, Flow, Retries,
+use tl3_controller::{
+    board::{
+        Badge, Board, BoardPatch, Card, CardIncident, Column, ColumnCount, Ending, Flow, Retries,
+    },
+    console::{AnswerKind, CardQuestion, Detail, QuestionOption},
 };
 use ts_rs::TS;
 
@@ -40,6 +43,10 @@ pub fn typescript() -> String {
         (Retries::docs(), Retries::decl(&config)),
         (DatabaseStatus::docs(), DatabaseStatus::decl(&config)),
         (PatchEvent::docs(), PatchEvent::decl(&config)),
+        (CardQuestion::docs(), CardQuestion::decl(&config)),
+        (QuestionOption::docs(), QuestionOption::decl(&config)),
+        (AnswerKind::docs(), AnswerKind::decl(&config)),
+        (Detail::docs(), Detail::decl(&config)),
     ] {
         output.push('\n');
         output.push_str(&docs.unwrap_or_default());

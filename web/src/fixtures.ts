@@ -31,6 +31,7 @@ export function card(fields: Partial<Card> & { id: number }): Card {
     last_progress: null,
     incidents: [],
     badges: [],
+    question: null,
     ...fields,
   };
 }

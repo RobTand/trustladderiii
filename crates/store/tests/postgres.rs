@@ -46,6 +46,7 @@ fn main() {
         ("phase_entry_times", phase_entry_times),
         ("phase_backfill_from_schema_9", phase_backfill_from_schema_9),
         ("reader_role", reader_role),
+        ("console_commands", console_commands),
     ];
     let selected: Vec<_> = cases
         .iter()
@@ -642,7 +643,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .iter()
             .map(|row| row.get::<_, i32>(0))
             .collect::<Vec<_>>(),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     );
     for table in ["tl3_events", "tl3_credit"] {
         for sql in [
@@ -1344,4 +1345,126 @@ fn reader_role(settings: &tl3_config::Store) {
         Some(vec!["default_transaction_read_only=on".to_string()])
     );
     assert!(grant_reader(settings, "bad role; DROP TABLE tl3_world", password).is_err());
+}
+
+/// PRD #327, C3: the console's login files a typed command through one
+/// function, which wakes tl3d. It still can't write any table itself, and
+/// tl3d's commit for the command settles it.
+fn console_commands(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let change = seed(&mut store);
+    store.commit(&change).unwrap();
+    let password = settings.password_file.as_deref().unwrap();
+    grant_reader(settings, "tl3_console_test", password).unwrap();
+    let console = tl3_config::Store {
+        user: "tl3_console_test".into(),
+        ..settings.clone()
+    };
+    let mut wake = Listener::ingress(settings).unwrap();
+    let mut changes = Listener::open(&console).unwrap();
+    let mut commands = ConsoleCommands::open(&console).unwrap();
+    let id = "0b9f3c3e-5f43-4a8e-9d1c-2f0e7c1d9a11";
+    let action = json!({"kind": "pause"});
+    assert!(commands.submit(id, 1, &action).unwrap());
+    assert_eq!(wake.wait().unwrap(), ["console".to_string()].into());
+    assert!(changes.wait().unwrap().contains("tl3_console_commands"));
+    // Resubmitting the same id files nothing more.
+    assert!(!commands.submit(id, 1, &action).unwrap());
+    let pending = store.pending_ingress().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(
+        (pending[0].source.as_str(), pending[0].delivery_key.as_str()),
+        ("console", id)
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&pending[0].payload).unwrap(),
+        json!({"id": id, "node": 1, "action": action})
+    );
+    for (bad_id, node, action) in [
+        ("not-a-uuid", 1, json!({"kind": "pause"})),
+        (
+            "0B9F3C3E-5F43-4A8E-9D1C-2F0E7C1D9A11",
+            1,
+            json!({"kind": "pause"}),
+        ),
+        ("1b9f3c3e-5f43-4a8e-9d1c-2f0e7c1d9a11", 1, json!("pause")),
+    ] {
+        assert!(
+            commands.submit(bad_id, node, &action).is_err(),
+            "{bad_id} {action}"
+        );
+    }
+    let mut client = postgres::Config::new()
+        .host(&console.host)
+        .port(console.port)
+        .user(&console.user)
+        .dbname(&console.database)
+        .password("tl3-disposable-test-password")
+        .connect(NoTls)
+        .unwrap();
+    for sql in [
+        "BEGIN READ WRITE; INSERT INTO tl3_ingress (source, delivery_key, event_name, payload) VALUES ('github-webhook', 'x', 'issues', '')",
+        "BEGIN READ WRITE; INSERT INTO tl3_console_commands (id, node_id, action) VALUES ('x', 1, '{}')",
+        "BEGIN READ WRITE; UPDATE tl3_console_commands SET status = 'applied'",
+        "BEGIN READ WRITE; UPDATE tl3_meta SET revision = revision",
+    ] {
+        assert!(client.batch_execute(sql).is_err(), "{sql}");
+        client.batch_execute("ROLLBACK").unwrap();
+    }
+    // Only the console login and the owner may file commands.
+    let mut other = raw(settings);
+    other
+        .batch_execute("CREATE ROLE tl3_other_test LOGIN PASSWORD 'tl3-disposable-test-password'")
+        .unwrap_or(());
+    let mut stranger = postgres::Config::new()
+        .host(&console.host)
+        .port(console.port)
+        .user("tl3_other_test")
+        .dbname(&console.database)
+        .password("tl3-disposable-test-password")
+        .connect(NoTls)
+        .unwrap();
+    assert!(
+        stranger
+            .query_one(
+                "SELECT tl3_console_command('2b9f3c3e-5f43-4a8e-9d1c-2f0e7c1d9a11', 1, '{\"kind\":\"stop\"}')",
+                &[]
+            )
+            .is_err()
+    );
+    let status = |client: &mut Client| {
+        client
+            .query_one(
+                "SELECT status, reason, revision FROM tl3_console_commands WHERE id = $1",
+                &[&id],
+            )
+            .map(|row| {
+                (
+                    row.get::<_, String>(0),
+                    row.get::<_, Option<String>>(1),
+                    row.get::<_, Option<i64>>(2),
+                )
+            })
+            .unwrap()
+    };
+    assert_eq!(status(&mut client), ("pending".into(), None, None));
+    let snapshot = store.load().unwrap();
+    let mut settle = Commit::new(format!("console:{id}"), action.clone(), &snapshot);
+    settle.result =
+        json!({"console": {"status": "refused", "reason": "The request is already paused."}});
+    let receipt = store.commit(&settle).unwrap();
+    assert_eq!(
+        status(&mut client),
+        (
+            "refused".into(),
+            Some("The request is already paused.".into()),
+            Some(receipt.revision.get())
+        )
+    );
+    // An unrelated commit leaves it alone.
+    let snapshot = store.load().unwrap();
+    store
+        .commit(&Commit::new("console-unrelated", json!(1), &snapshot))
+        .unwrap();
+    assert_eq!(status(&mut client).0, "refused");
 }

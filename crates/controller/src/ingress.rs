@@ -281,7 +281,9 @@ fn drain_pending(controller: &mut Controller) -> Result<bool> {
             break;
         }
         for stored in deliveries {
-            if let Some(delivery) = replay(&stored) {
+            if stored.source == crate::console::SOURCE {
+                crate::console::apply(controller, &stored)?;
+            } else if let Some(delivery) = replay(&stored) {
                 for input in translate(delivery, &controller.bootstrap) {
                     apply(controller, input)?;
                 }
@@ -381,6 +383,9 @@ fn translator_failed(
 }
 
 fn replay(stored: &tl3_store::Ingress) -> Option<GitHubDelivery> {
+    if stored.source == crate::console::SOURCE {
+        return None;
+    }
     let result = if stored.source == "github-webhook" {
         webhook::parse(&stored.delivery_key, &stored.event_name, &stored.payload)
             .map(|delivery| GitHubDelivery::Webhook(Box::new(delivery)))
