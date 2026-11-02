@@ -552,6 +552,69 @@ impl Executor for Outage {
         Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied).into())
     }
 }
+/// A GitHub write that never answers, with reads that alternate by `healthy`.
+struct FlakyRead {
+    healthy: Rc<Cell<bool>>,
+    fake: adapters::github::Fake,
+}
+impl Executor for FlakyRead {
+    fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+        if matches!(d.output, Out::Notice { .. }) {
+            return self.fake.execute(d);
+        }
+        Err(std::io::Error::from(std::io::ErrorKind::ConnectionRefused).into())
+    }
+    fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        Ok(Reconciliation::Pending)
+    }
+    fn look(&mut self, _: &Delivery) -> tl3_controller::Result<Look> {
+        if self.healthy.get() {
+            Ok(Look::Alive {
+                progress: "same".into(),
+            })
+        } else {
+            Err(std::io::Error::from(std::io::ErrorKind::ConnectionRefused).into())
+        }
+    }
+}
+
+/// #373: an unchanged alive look inside the no-progress allowance is a
+/// successful read, so it breaks a failure streak even for a pending effect.
+fn alive_look_inside_allowance_breaks_streak(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let healthy = Rc::new(Cell::new(true));
+    let mut c = open(
+        settings,
+        root.path(),
+        &clock,
+        Upstream::GitHub,
+        FlakyRead {
+            healthy: healthy.clone(),
+            fake: adapters::github::Fake::new(root.path()),
+        },
+    );
+    let open_incidents = |c: &mut Controller| {
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .filter(|r| r.table == "incidents" && r.value["open"] == true)
+            .count()
+    };
+    // Alive, failed, alive again inside the 3 s allowance, failed: one apart each.
+    for success in [true, false, true, false] {
+        healthy.set(success);
+        clock.advance(1);
+        c.look_now().unwrap();
+    }
+    assert_eq!(
+        open_incidents(&mut c),
+        0,
+        "a successful look inside the allowance breaks the failure streak"
+    );
+}
+
 /// #356: webhook-triggered looks inside one allowance count as one failed read.
 fn failure_burst_counts_once(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
@@ -2067,6 +2130,8 @@ fn main() {
     println!("test permanent_incident_clear ... ok");
     progress_releases_nothing(&db.create("progress_holds"));
     println!("test progress_releases_nothing ... ok");
+    alive_look_inside_allowance_breaks_streak(&db.create("alive_streak"));
+    println!("test alive_look_inside_allowance_breaks_streak ... ok");
     failure_burst_counts_once(&db.create("failure_burst"));
     println!("test failure_burst_counts_once_per_allowance ... ok");
     read_outages_keep_looking(&db.create("read_outage"), false);
@@ -2082,7 +2147,7 @@ fn main() {
     token_only_queue_progress(&db.create("token_only_queue"));
     println!("test token_only_queue_progress ... ok");
     db.stop();
-    println!("47 allowance and incident scenarios passed; no skips");
+    println!("48 allowance and incident scenarios passed; no skips");
 }
 
 struct WaitingMaker {

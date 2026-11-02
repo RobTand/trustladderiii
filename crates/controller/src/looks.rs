@@ -2068,3 +2068,54 @@ impl Controller {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod summary_wording {
+    use super::*;
+
+    fn summary(class: &str) -> String {
+        incident_summary(
+            "Fix the value",
+            &IncidentSignature {
+                upstream: Upstream::Mergify,
+                class: class.into(),
+            },
+            false,
+            None,
+        )
+    }
+
+    /// #373: Mergify's own read errors aren't GitHub errors, so each needs its
+    /// own class instead of reading "could not be reached".
+    #[test]
+    fn mergify_read_errors_carry_their_own_class_and_wording() {
+        for (error, class, wording) in [
+            (
+                tl3_mergify::Error::ChangedDuringRead,
+                "inconsistent_read",
+                "kept changing while TL3 read it",
+            ),
+            (
+                tl3_mergify::Error::MergeabilityPending,
+                "mergeability_pending",
+                "has not yet worked out whether the pull request can merge",
+            ),
+            (
+                tl3_mergify::Error::HeadChanged,
+                "head_changed",
+                "shows a different head from the approved one",
+            ),
+            (
+                tl3_mergify::Error::PullRequestClosed,
+                "pull_request_closed",
+                "shows the pull request closed or merged",
+            ),
+        ] {
+            let error = crate::Error::Adapter(Box::new(error));
+            assert_eq!(failure_class(&error), class);
+            let text = summary(class);
+            assert!(text.contains(wording), "{class}: {text}");
+            assert!(!text.contains("could not be reached"), "{class}: {text}");
+        }
+    }
+}
