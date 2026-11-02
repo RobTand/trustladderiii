@@ -26,6 +26,7 @@ pub mod looks;
 #[path = "../tests/loom/mod.rs"]
 mod loom_tests;
 pub mod memory;
+mod narrowing;
 mod notices;
 mod postmortems;
 pub mod priority;
@@ -584,9 +585,16 @@ impl Controller {
                         .map_err(|_| Error::Invalid("invalid request node"))?,
                 );
                 let replacement = steering::replacement_issue(snapshot, original, &pending.value)?;
-                commit.rows.push(put("request_links", node.clone(), json!({
+                let mut link = json!({
                     "original": original, "authorized_by": self.bootstrap.rob, "issue": replacement
-                })));
+                });
+                // #449: Rob's answer is the scope; ingest reads the original issue as context.
+                if let steering::Task::FileRequest { question, .. } =
+                    decode_stored(pending.value.clone())?
+                {
+                    link["narrowing"] = json!({"question": question});
+                }
+                commit.rows.push(put("request_links", node.clone(), link));
                 for table in ["replacement_pending", "replacement"] {
                     commit.rows.push(RowChange::Delete {
                         table: table.into(),

@@ -398,6 +398,10 @@ impl Supervisor {
                 .ok_or(Error::Invalid("worker materials must be an object"))?
                 .remove("standing_rules");
         }
+        // A narrowed request keeps the pristine issue for a later narrowing; no role reads it.
+        if let Some(inputs) = inputs.as_object_mut() {
+            inputs.remove("original_issue");
+        }
         // #422: recall upfront. Ingest reads the issue, the planner its brief and
         // goals, and the reviewer the repo's conventions. An outage degrades to none.
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
@@ -562,6 +566,7 @@ impl Supervisor {
     ) -> Result<Value> {
         let mut ancestor = delivery.node();
         let mut linked_issue: Option<tl3_github::Issue> = None;
+        let mut narrowing: Option<Value> = None;
         loop {
             if let Some(mut materials) = store.worker_materials(&ancestor.0.to_string())? {
                 if ancestor != delivery.node()
@@ -572,8 +577,34 @@ impl Supervisor {
                     materials.remove("check_run");
                 }
                 if let Some(issue) = linked_issue {
+                    let answer = issue.body.unwrap_or_default();
+                    let body = if let Some(narrowing) = &narrowing {
+                        // #449: the answer is the scope; the original issue is context it may
+                        // refer to. Later roles read the same text, so keep it for this request.
+                        let (title, original, read) = self.original_issue(delivery, &materials);
+                        let body = crate::narrowing::issue_body(
+                            &answer,
+                            &title,
+                            &original,
+                            narrowing
+                                .get("question")
+                                .filter(|question| !question.is_null()),
+                            read.is_err(),
+                        );
+                        // A later narrowing reads this pristine copy, not the composed body.
+                        materials["original_issue"] = json!({
+                            "title": title, "body": original,
+                            "read": read.err().unwrap_or_else(|| "github".into()),
+                        });
+                        Some(body)
+                    } else {
+                        None
+                    };
                     materials["issue"] = json!({"number": issue.number, "title": issue.title,
-                        "body": issue.body.unwrap_or_default(), "author": "TL3", "comments": []});
+                        "body": body.clone().unwrap_or(answer), "author": "TL3", "comments": []});
+                    if body.is_some() {
+                        store.put_worker_materials(&delivery.node().0.to_string(), &materials)?;
+                    }
                 }
                 return Ok(materials);
             }
@@ -595,6 +626,7 @@ impl Supervisor {
                 .ok_or(Error::Invalid("worker materials are missing"))?;
             if linked_issue.is_none() {
                 linked_issue = Some(serde_json::from_value(link.value["issue"].clone())?);
+                narrowing = link.value.get("narrowing").cloned();
             }
             let original: tl3_kernel::NodeId =
                 serde_json::from_value(link.value["original"].clone())?;
@@ -605,6 +637,30 @@ impl Supervisor {
             }
             ancestor = original;
         }
+    }
+
+    /// The original issue's title and body for a narrowed request, as GitHub has them now. If the
+    /// read fails the stored copy stands in, the pristine one when this request's parent was itself
+    /// narrowed, and the failure is returned so the agents and the stored materials say so.
+    fn original_issue(
+        &self,
+        delivery: &Delivery,
+        root: &Value,
+    ) -> (String, String, std::result::Result<(), String>) {
+        let read = match &self.materials_provider {
+            Some(provider) => match provider.current_issue(delivery) {
+                Ok(issue) => return (issue.title, issue.body.unwrap_or_default(), Ok(())),
+                Err(error) => format!("GitHub read failed: {error}"),
+            },
+            None => {
+                return {
+                    let (title, body) = crate::narrowing::stored_original(root);
+                    (title, body, Ok(()))
+                };
+            }
+        };
+        let (title, body) = crate::narrowing::stored_original(root);
+        (title, body, Err(read))
     }
 
     /// Stop and prove termination before acknowledging teardown or a stall.
