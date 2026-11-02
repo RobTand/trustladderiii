@@ -104,12 +104,26 @@ ordered by import distance, then path, then source order, and the first
 `limit` are candidates. Tests that a planned check names, and tests that the
 head edits or lacks, are not candidates.
 
-The candidates run on the base with the round's other base tests, sharing its
-cache. Only those that pass there are kept: a test that fails, errors or
-skips on the base says nothing about the change. The kept tests run on the
-head and are judged by the regression rules. If none are kept, no check is
-added. A plan may not use the selected check's name. The controller accepts
-the trailing check only from an action it staged with a limit.
+Selection is lazy: it reads one import level at a time, and expands and
+filters test files only until it has `limit` candidates. A file the parser
+can't read, including one deep enough to exhaust it, is skipped; selection
+never fails the round.
+
+The candidates run on the base in their own run, apart from the plan's, with
+outcomes cached per test. Only those that pass there are kept: a test that
+fails, errors or skips on the base says nothing about the change. The kept
+tests run on the head, again apart from the plan's run, and are judged by
+the regression rules. The first 20 that fail rerun once, alone. One that then
+passes counts as passed, and its result says it failed with the others and
+passed alone. One that ends its process on the head is an error, not an
+infrastructure failure, because it passed on the base. If none are kept, no
+check is added. A plan may not use the selected check's name. The controller
+accepts the trailing check only from an action it staged with a limit.
+
+The controller carries each round's failed selected tests forward in its
+check report. When the change under review edits the file of one of them,
+review receives its name in `edited_selected_tests`: an edited test is no
+longer selected, so review judges the edit.
 
 ## Verdict rules
 

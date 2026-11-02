@@ -1,7 +1,10 @@
 """Existing tests whose imports reach a change (#359). Static analysis only: no repository code runs."""
 import ast
-from collections import deque
+from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
+
+# A pathological file can exhaust the parser; it is then skipped, never fatal.
+UNREADABLE = (SyntaxError, ValueError, RecursionError, MemoryError)
 
 
 def node_ids(tree: Path, name: str) -> list[str]:
@@ -58,7 +61,7 @@ def imported_names(path: str, source: bytes) -> set[str]:
     """Every module name an import in this file could load, including parent packages."""
     try:
         module = ast.parse(source)
-    except (SyntaxError, ValueError):
+    except UNREADABLE:
         return set()
     package = PurePosixPath(path).parent.parts
     names = set()
@@ -86,33 +89,40 @@ def imported_names(path: str, source: bytes) -> set[str]:
     return names
 
 
-def select(tree: Path, changed: list[str], is_test) -> list[str]:
+def select(tree: Path, changed: list[str], is_test) -> Iterator[str]:
     """Existing test selectors in `tree` whose files reach a changed Python file through
-    imports, closest first: by import distance, then path, then source order."""
-    files = sorted(path.relative_to(tree).as_posix() for path in tree.rglob("*.py")
-                   if path.is_file() and not any(part.startswith(".") for part in path.relative_to(tree).parts))
-    defines, importers = {}, {}
-    for name in files:
-        for module in module_names(name, is_test(name)):
-            defines.setdefault(module, set()).add(name)
-        for module in imported_names(name, (tree / name).read_bytes()):
-            importers.setdefault(module, set()).add(name)
-    distance = {name: 0 for name in changed if name.endswith(".py")}
-    pending = deque(sorted(distance))
-    while pending:
-        name = pending.popleft()
-        for module in module_names(name, is_test(name)):
-            for importer in sorted(importers.get(module, ())):
-                if importer not in distance:
-                    distance[importer] = distance[name] + 1
-                    pending.append(importer)
-    tests = sorted((step, name) for name, step in distance.items()
-                   if name in files and is_test(name)
-                   and (PurePosixPath(name).name.startswith("test_") or name.endswith("_test.py")))
-    selected = []
-    for _, name in tests:
-        try:
-            selected.extend(node_ids(tree, name))
-        except (SyntaxError, ValueError):
-            continue
-    return selected
+    imports, closest first: by import distance, then path, then source order. Lazy: each
+    import level is read, and each test file expanded, only when the caller asks for more."""
+    files = {path.relative_to(tree).as_posix() for path in tree.rglob("*.py")
+             if path.is_file() and not any(part.startswith(".") for part in path.relative_to(tree).parts)}
+    sources, imports = {}, {}
+
+    def source(name):
+        if name not in sources:
+            sources[name] = (tree / name).read_bytes()
+        return sources[name]
+
+    frontier = sorted({name for name in changed if name.endswith(".py")})
+    seen = set(frontier)
+    while frontier:
+        for name in frontier:
+            if (name in files and is_test(name)
+                    and (PurePosixPath(name).name.startswith("test_") or name.endswith("_test.py"))):
+                try:
+                    yield from node_ids(tree, name)
+                except UNREADABLE:
+                    continue
+        modules = set().union(*(module_names(name, is_test(name)) for name in frontier))
+        # Only a file naming a module's last part, or importing relatively, can import it.
+        tokens = {module.rsplit(".", 1)[-1].encode() for module in modules}
+        reached = []
+        for name in sorted(files - seen):
+            text = source(name)
+            if not (b"from ." in text or any(token in text for token in tokens)):
+                continue
+            if name not in imports:
+                imports[name] = imported_names(name, text)
+            if imports[name] & modules:
+                reached.append(name)
+        seen.update(reached)
+        frontier = reached

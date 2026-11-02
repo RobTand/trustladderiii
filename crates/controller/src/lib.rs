@@ -2344,21 +2344,32 @@ impl Controller {
                 let exact_head = n.head == Some(self.head(node, &sha)?);
                 if n.job == Some(generation) && n.generation == generation && exact_head {
                     let prefix = format!("{}:", node.0);
-                    for row in snapshot.rows.iter().filter(|row| {
-                        row.table == "check_reports"
-                            && row.id.starts_with(&prefix)
-                            && row.id != format!("{}:{sha}", node.0)
-                    }) {
+                    let earlier: Vec<_> = snapshot
+                        .rows
+                        .iter()
+                        .filter(|row| row.table == "check_reports" && row.id.starts_with(&prefix))
+                        .collect();
+                    for row in earlier
+                        .iter()
+                        .filter(|row| row.id != format!("{}:{sha}", node.0))
+                    {
                         commit.rows.push(RowChange::Delete {
                             table: row.table.clone(),
                             id: row.id.clone(),
                         });
                     }
-                    commit.rows.push(put(
-                        "check_reports",
-                        format!("{}:{sha}", node.0),
-                        json!({"base_sha": base_sha, "results": results}),
-                    ));
+                    // Review must see an edit to a test that failed a selected check (#359).
+                    let selected = adapters::prismabuild::selected_failures(
+                        earlier.iter().map(|row| &row.value),
+                        &results,
+                    );
+                    let mut report = json!({"base_sha": base_sha, "results": results});
+                    if !selected.is_empty() {
+                        report["selected_failures"] = json!(selected);
+                    }
+                    commit
+                        .rows
+                        .push(put("check_reports", format!("{}:{sha}", node.0), report));
                 }
                 let mut in_footprint = true;
                 for path in changed_paths {

@@ -26,6 +26,8 @@ MAX_SELECTED_TESTS = 1000
 
 
 _BASE_RESULTS: dict[tuple, dict[str, Outcome]] = {}
+# Selected candidates' base outcomes, per test, apart from the plan's base cache.
+_SELECTED_BASE: dict[tuple, Outcome] = {}
 
 
 @dataclass(frozen=True)
@@ -247,10 +249,18 @@ def selected_candidates(repo: Path, tool: TestTool, old: Path, new: Path, config
     """Existing tests the change's imports reach, closest first, up to `limit`. Tests the plan
     names are judged there; tests the head edits or lacks are the leaf's own, for review."""
     named = [test for check in plan for test in check.tests]
-    candidates = [test for test in tool.select(old, changed_files(repo, own_base(repo, base, head), head), config)
-                  if not any(selects(test, other) or selects(other, test) for other in named)]
-    edited = tool.changed_existing_tests(old, new, tuple(candidates))
-    candidates = [test for test in candidates if test not in edited][:limit]
+    candidates = []
+    try:
+        # Lazily, closest first: a widely imported file can reach thousands of tests.
+        for test in tool.select(old, changed_files(repo, own_base(repo, base, head), head), config):
+            if (any(selects(test, other) or selects(other, test) for other in named)
+                    or tool.changed_existing_tests(old, new, (test,))):
+                continue
+            candidates.append(test)
+            if len(candidates) == limit:
+                break
+    except (RecursionError, MemoryError):
+        return ()
     while candidates:
         try:
             validate_check_plan(plan + (Check(SELECTED_CHECK, Kind.REGRESSION, tuple(candidates)),))
@@ -258,6 +268,46 @@ def selected_candidates(repo: Path, tool: TestTool, old: Path, new: Path, config
         except ValueError:
             candidates = candidates[:len(candidates) // 2]
     return tuple(candidates)
+
+
+def selected_base(tool: TestTool, old: Path, container: Container, candidates: tuple[str, ...], base: str,
+                  root: Path, progress: Progress) -> dict[str, Outcome]:
+    """The candidates' base outcomes, from one run apart from the plan's, cached per test."""
+    key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container)
+    missing = tuple(test for test in candidates if (*key, test) not in _SELECTED_BASE)
+    if missing:
+        for test, outcome in tool.run(old, container, missing, root / "selected-base.jsonl", progress).items():
+            if outcome != Outcome.NO_REPORT:
+                _SELECTED_BASE[(*key, test)] = outcome
+    return {test: _SELECTED_BASE.get((*key, test), Outcome.NO_REPORT) for test in candidates}
+
+
+def selected_head(tool: TestTool, new: Path, container: Container, kept: tuple[str, ...],
+                  before: dict[str, Outcome], root: Path, progress: Progress) -> Result:
+    """Judge the kept tests on the head, apart from the plan's run. A failing test reruns once,
+    alone: the maker can't fix a flake, and one test ending the process must not take the
+    others with it. The first MAX_DETAILED_FAILURES failures rerun; the rest stand."""
+    messages, notes = {}, {}
+    after = tool.run(new, container, kept, root / "selected-head.jsonl", progress, messages=messages)
+    failing = [test for test in kept if after.get(test) != Outcome.PASSED]
+    for index, test in enumerate(failing[:MAX_DETAILED_FAILURES]):
+        alone_messages = {}
+        alone = tool.run(new, container, (test,), root / f"selected-alone-{index}.jsonl", progress,
+                         messages=alone_messages).get(test, Outcome.NO_REPORT)
+        if alone == Outcome.PASSED:
+            notes[test] = (f"{after.get(test, Outcome.NO_REPORT)} on the head with the other selected tests, "
+                           "then passed alone: flaky or disturbed by another test. Not counted against the change.")
+        elif test in alone_messages:
+            messages[test] = alone_messages[test]
+        after[test] = alone
+    for test in kept:
+        if after.get(test, Outcome.NO_REPORT) == Outcome.NO_REPORT:
+            # It passed on the base; ending the process on the head is the change's failure.
+            after[test] = Outcome.ERROR
+            messages[test] = "The test ended its process on the head without a report; it passed on the base."
+    result = judge(Check(SELECTED_CHECK, Kind.REGRESSION, kept), before, after, messages=messages)
+    return replace(result, tests=tuple(replace(test, message=notes[test.test][:MAX_MESSAGE_CHARS])
+                                       if test.passed and test.test in notes else test for test in result.tests))
 
 
 def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
@@ -318,15 +368,16 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         candidates = (selected_candidates(repo, tool, old, new, config, base, head, plan, selected_tests)
                       if selected_tests else ())
         progress = Progress()
-        base_tests = tuple(dict.fromkeys(ordinary + candidates))
-        cache_key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container, base_tests)
-        if base_tests and cache_key not in _BASE_RESULTS:
-            observed = tool.run(old, container, base_tests, root / "base.jsonl", progress)
+        cache_key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container, ordinary)
+        if ordinary and cache_key not in _BASE_RESULTS:
+            observed = tool.run(old, container, ordinary, root / "base.jsonl", progress)
             if Outcome.NO_REPORT not in observed.values():
                 _BASE_RESULTS[cache_key] = observed
-        before = _BASE_RESULTS.get(cache_key, dict.fromkeys(base_tests, Outcome.NO_REPORT)).copy()
+        before = _BASE_RESULTS.get(cache_key, dict.fromkeys(ordinary, Outcome.NO_REPORT)).copy()
+        # Candidates run apart, so one crashing there can't cost the plan its base evidence.
+        selected_before = selected_base(tool, old, container, candidates, base, root, progress)
         # A test that doesn't pass on the base says nothing about the change: drop it, don't excuse it.
-        kept = tuple(test for test in candidates if before.get(test) == Outcome.PASSED)
+        kept = tuple(test for test in candidates if selected_before[test] == Outcome.PASSED)
         if demonstrating:
             shutil.copytree(old, demo)
             tool.test_edits(old, new, demo, config)
@@ -350,8 +401,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             reproduced = tool.run(round_tree, container, reproducing,
                                   root / "reproducing.jsonl", progress, additions)
         messages = {}
-        after = tool.run(new, container, tuple(dict.fromkeys(tests + kept)), root / "head.jsonl", progress,
-                         messages=messages)
+        after = tool.run(new, container, tests, root / "head.jsonl", progress, messages=messages)
         comparisons = {Kind.DEMONSTRATING: demonstrated, Kind.REPRODUCING: reproduced,
                        Kind.REGRESSION: before, Kind.BEHAVIOR_PRESERVING: before}
         results = []
@@ -365,7 +415,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                     result = replace(result, verdict=Verdict.FAIL, tests=restored)
             results.append(result)
         if kept:
-            results.append(judge(Check(SELECTED_CHECK, Kind.REGRESSION, kept), before, after, messages=messages))
+            results.append(selected_head(tool, new, container, kept, selected_before, root, progress))
         return tuple(results)
 
 
@@ -374,7 +424,8 @@ def result_json(results: tuple[Result, ...]) -> str:
     detailed = 0
     for report in reports:
         for test in report['tests']:
-            if not test['passed'] and detailed < MAX_DETAILED_FAILURES:
+            # A passing test carries a message only when a selected rerun found it flaky.
+            if (not test['passed'] or test['message']) and detailed < MAX_DETAILED_FAILURES:
                 test['message'] = test['message'][:MAX_MESSAGE_CHARS].encode(errors='backslashreplace').decode()[:MAX_MESSAGE_CHARS]
                 detailed += 1
             else:

@@ -51,7 +51,7 @@ mod results;
 mod source;
 pub(crate) use checks::validate_plan_size;
 pub use checks::{Check, CheckRun, Kind};
-pub(crate) use results::HARNESS;
+pub(crate) use results::{HARNESS, selected_failures};
 pub use source::{RunningSource, Source};
 
 use serde::{Deserialize, Serialize};

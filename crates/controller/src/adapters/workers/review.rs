@@ -85,6 +85,21 @@ pub(super) fn inputs(
         return Err(Error::Invalid("review diff exceeds the input bound"));
     }
     let mut inputs = json!({"goals": criteria["goals"], "base_sha": base, "check_base_sha": run.base_sha, "head_sha": head, "diff": String::from_utf8(diff).map_err(|_| Error::Invalid("review diff must be UTF-8"))?, "checks": report["results"], "standing_rules": criteria["standing_rules"]});
+    // A test that failed a selected check is no longer selected once edited (#359).
+    if let Some(failures) = report["selected_failures"].as_array() {
+        let touched = repository.changed_paths_since_merge_base(&base, &head_id)?;
+        let edited: Vec<_> = failures
+            .iter()
+            .filter_map(|test| test.as_str())
+            .filter(|test| {
+                let file = test.split("::").next().unwrap_or_default();
+                touched.iter().any(|path| path.as_os_str() == file)
+            })
+            .collect();
+        if !edited.is_empty() {
+            inputs["edited_selected_tests"] = json!(edited);
+        }
+    }
     if base != run.base_sha {
         let scope_base = repository.merge_base(&run.base_sha, &head_id)?;
         let scope_diff = repository.diff(&scope_base, &head_id)?;
