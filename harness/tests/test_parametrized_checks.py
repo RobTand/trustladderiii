@@ -83,6 +83,26 @@ def test_existing_named_test_is_protected(chunked_repo, kind, edit):
         f'Restore the existing test `{TEST}`; existing tests may not be changed to satisfy a check.')
 
 
+def test_declared_test_edit_is_judged_by_its_demonstrating_check(chunked_repo):
+    # #438: a plan's edits_tests names only demonstrating tests, so the edit guard leaves them alone.
+    repo, base = chunked_repo
+    path = repo / 'tests/test_sequences.py'
+    edited = 'tests/test_sequences.py::test_chunked_splits_by_size'
+    path.write_text(SOURCE + '\n\ndef test_chunked_splits_by_size():\n    assert chunked([1, 2, 3], 3) == [[1, 2, 3]]\n')
+    base = save(repo, 'base with a test to edit')
+    path.write_text(SOURCE + '\n\ndef test_chunked_splits_by_size():\n    assert chunked([1, 2, 3], 2) == [[1, 2], [3]]\n')
+    (repo / 'sequences.py').write_text(
+        'def chunked(items, size):\n    if size <= 0: raise ValueError(size)\n'
+        '    return [items[i:i + size] for i in range(0, len(items), size)]\n')
+    head = save(repo, 'head')
+    demonstrating, regression = execution.run_checks(repo, base, head, (
+        Check('edited', Kind.DEMONSTRATING, (edited,)), Check('sizes', Kind.REGRESSION, (TEST,))),
+        container=execution.Container('sha256:' + '1' * 64))
+    assert demonstrating.tests[0].base == Outcome.ASSERTION
+    assert demonstrating.verdict == Verdict.PASS, demonstrating
+    assert regression.verdict == Verdict.PASS, regression
+
+
 def test_many_parametrized_cases_keep_a_complete_report(chunked_repo, tmp_path, monkeypatch):
     repo, _ = chunked_repo
     path = repo / 'tests/test_sequences.py'

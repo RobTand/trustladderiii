@@ -110,6 +110,16 @@
           },
           "minItems": 0
         },
+        "edits_tests": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0,
+          "uniqueItems": true,
+          "description": "Existing tests, by pytest node ID, whose definitions the change modifies. Omit it when the change edits no existing test."
+        },
         "no_design_questions": {
           "type": "boolean"
         },
