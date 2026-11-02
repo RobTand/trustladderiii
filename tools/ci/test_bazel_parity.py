@@ -215,10 +215,6 @@ class StaticParityTests(unittest.TestCase):
             bazel_parity.compare_static({}, {}, [], [])
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class RustRunnerReceiptTests(unittest.TestCase):
     def test_shard_receipt_does_not_claim_scalar_action_resource_metrics(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'bazel'))
@@ -240,3 +236,7 @@ class RustRunnerReceiptTests(unittest.TestCase):
             self.assertEqual(receipt['rust'], {'tl3-controller/workers': ['one']})
             self.assertIsInstance(receipt.get('cpu_seconds', {}), dict)
             self.assertNotIn('wall_seconds', receipt)
+
+
+if __name__ == '__main__':
+    unittest.main()
