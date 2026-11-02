@@ -1,6 +1,8 @@
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -9,6 +11,26 @@ import check
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_allowlist_preserves_runtime_settings_and_rejects_unknown_names(self):
+        source = {'PATH': '/usr/bin', 'HOME': '/tmp/fixture',
+                  'TEST_TMPDIR': '/tmp/test', 'TEST_FIXTURE_TOKEN': 'synthetic-fixture',
+                  'RUNFILES_API_KEY': 'synthetic-fixture', 'UNKNOWN_SETTING': 'discard',
+                  'RUSTC_BOOTSTRAP': '1'}
+        env = check.child_env(source)
+        for name in ['PATH', 'HOME', 'TEST_TMPDIR', 'RUSTC_BOOTSTRAP']:
+            self.assertEqual(env[name], source[name])
+        for name in ['TEST_FIXTURE_TOKEN', 'RUNFILES_API_KEY', 'UNKNOWN_SETTING']:
+            self.assertFalse(name in env, name)
+
+    def test_python_children_do_not_inherit_runner_credentials(self):
+        names = ['BUILDBUDDY_API_KEY', 'MERGIFY_TOKEN', 'GITHUB_TOKEN',
+                 'OTHER_API_KEY', 'OTHER_TOKEN']
+        code = ('import json, os; print(json.dumps([name for name in os.environ '
+                'if name.endswith(("_API_KEY", "_TOKEN"))]))')
+        with patch.dict(os.environ, {name: 'synthetic-fixture' for name in names}):
+            present = json.loads(check.run(sys.executable, '-c', code, capture=True))
+        self.assertEqual(present, [])
+
     def test_workers_use_four_isolated_pytest_processes_and_other_projects_stay_serial(self):
         files = list(map(Path, [
             "workers/pyproject.toml", "workers/uv.lock", "workers/tests/test_workers.py",
