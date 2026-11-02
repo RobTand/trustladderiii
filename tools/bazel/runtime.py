@@ -6,7 +6,14 @@ import sys
 import venv
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'ci'))
+from child_env import child_env  # noqa: E402
+
+
 def prepare():
+    environment = child_env()
+    os.environ.clear()
+    os.environ.update(environment)
     os.environ.pop("PYTHONSAFEPATH", None)
     scratch = Path(os.environ['TEST_TMPDIR']).resolve()
     os.environ['HOME'] = str(scratch)

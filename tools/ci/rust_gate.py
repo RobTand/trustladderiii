@@ -11,6 +11,7 @@ import time
 import tomllib
 
 import shards
+from child_env import child_env
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = Path('tools/ci/rust-test-budget.json')
@@ -58,7 +59,7 @@ def execute_binary(binary, custom, arguments=()):
     if not custom:
         command.extend(['-Z', 'unstable-options', '--format=json', '--report-time', '--test-threads=1'])
     command.extend(arguments)
-    env = dict(os.environ)
+    env = child_env()
     if not custom:
         env['RUSTC_BOOTSTRAP'] = '1'
     started = previous = time.monotonic()
@@ -138,8 +139,8 @@ def collect_binaries(manifest):
     command = ['cargo', 'test', '--manifest-path', str(manifest), '--workspace',
                '--all-targets', '--locked', '--no-run', '--message-format=json']
     artifacts = []
-    subprocess.run(['cargo', '--version'], check=True)
-    with subprocess.Popen(command, stdout=subprocess.PIPE, text=True, cwd=ROOT) as process:
+    subprocess.run(['cargo', '--version'], check=True, env=child_env())
+    with subprocess.Popen(command, stdout=subprocess.PIPE, text=True, cwd=ROOT, env=child_env()) as process:
         for line in process.stdout:
             event = json.loads(line)
             if event.get('reason') == 'compiler-artifact' and event['profile']['test'] and event['executable']:
@@ -180,12 +181,12 @@ def baseline_policy(config):
         elif 'merge_group' in event:
             ref = event['merge_group']['base_sha']
     exists = subprocess.run(['git', 'cat-file', '-e', f'{ref}^{{commit}}'], cwd=ROOT,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=child_env())
     if exists.returncode:
         subprocess.run(['git', 'fetch', '--no-tags', '--depth=1', 'origin', ref],
-                       cwd=ROOT, check=True)
+                       cwd=ROOT, check=True, env=child_env())
     previous = subprocess.run(['git', 'show', f'{ref}:{POLICY}'], cwd=ROOT,
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, env=child_env())
     if previous.returncode:
         # Bootstrap only: the target branch predates the budget file. Future PRs
         # compare to the policy actually merged on that target branch.
@@ -199,7 +200,7 @@ def prepare_binaries(binaries):
         if binary['name'] == 'tl3-store/fixture_lifecycle':
             # Archive download is dependency setup, like the worker venv sync.
             # Real scenarios still create fresh databases and enforce their budgets.
-            subprocess.run([*binary['command'], '--prepare-cache'], check=True)
+            subprocess.run([*binary['command'], '--prepare-cache'], check=True, env=child_env())
     seconds = time.monotonic() - started
     print(json.dumps({'dependency_setup_seconds': seconds}), flush=True)
     return seconds

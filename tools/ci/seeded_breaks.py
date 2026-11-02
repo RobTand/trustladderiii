@@ -13,6 +13,7 @@ import subprocess
 import sys
 
 import bazel_gate
+from child_env import child_env
 
 COMPILE_ERROR = '\ncompile_error!("seeded break");\n'
 FAILING_TEST = ('\n#[cfg(test)]\nmod seeded_break {\n    #[test]\n    fn seeded_break() {\n'
@@ -81,8 +82,8 @@ def run_seed(workspace, base, place, path, mutation, expected_prefix):
     mutate(workspace.root, path, mutation)
     subprocess.run(['git', '-c', 'user.name=seed', '-c', 'user.email=seed@invalid', 'commit',
                     '--quiet', '--no-verify', '-am', f'seeded break: {place}'],
-                   cwd=workspace.root, check=True)
-    head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=workspace.root, text=True).strip()
+                   cwd=workspace.root, check=True, env=child_env())
+    head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=workspace.root, text=True, env=child_env()).strip()
     changed, deleted = workspace.changes(base, head)
     impacted = workspace.bazel_diff(base, head)
     workspace.checkout(head)
@@ -100,7 +101,7 @@ def main():
     parser.add_argument('--base', default='HEAD')
     args = parser.parse_args()
     workspace = bazel_gate.Workspace()
-    base = subprocess.check_output(['git', 'rev-parse', args.base], cwd=workspace.root, text=True).strip()
+    base = subprocess.check_output(['git', 'rev-parse', args.base], cwd=workspace.root, text=True, env=child_env()).strip()
     rows = [run_seed(workspace, base, *seed) for seed in SEEDS]
     workspace.checkout(base)
     report = table(rows)

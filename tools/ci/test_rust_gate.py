@@ -12,6 +12,17 @@ import rust_gate
 
 
 class GateTests(unittest.TestCase):
+    def test_test_binary_does_not_inherit_runner_credentials(self):
+        names = ['BUILDBUDDY_API_KEY', 'MERGIFY_TOKEN', 'GITHUB_TOKEN',
+                 'OTHER_API_KEY', 'OTHER_TOKEN']
+        code = ('import os, sys; '
+                'sys.exit(1) if any(name.endswith(("_API_KEY", "_TOKEN")) '
+                'for name in os.environ) else None; '
+                'print(\'{"type":"suite","event":"ok","passed":0}\')')
+        with patch.dict(os.environ, {name: 'synthetic-fixture' for name in names}):
+            rust_gate.execute_binary({'name': 'credential-probe',
+                                      'command': [sys.executable, '-c', code]}, False)
+
     def test_recorded_hosted_noise_passes_but_clear_regressions_fail(self):
         bridge = 'tl3-controller/tl3_controller::adapters::worktrees::tests::github_installation_and_synchronous_token_bridge'
         policy = {'seconds': 10, 'slow': {bridge: 15}}
