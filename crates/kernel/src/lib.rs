@@ -606,6 +606,7 @@ pub enum Reply {
     },
     PlanSplit,
     PlanCantMeet,
+    ProtectedPaths,
     MakerDone {
         head: HeadId,
     },
@@ -1521,6 +1522,7 @@ pub fn proof_of_event(event: &Event) -> &'static str {
             Reply::PlanLeaf { .. } => "apply_plan_leaf",
             Reply::PlanSplit => "apply_plan_split",
             Reply::PlanCantMeet => "apply_plan_cant_meet",
+            Reply::ProtectedPaths => "apply_protected_paths",
             Reply::MakerDone { .. } => "apply_maker_done",
             Reply::MakerNeedsFiles { .. } => "apply_maker_needs_files",
             Reply::MakerCantMeet => "apply_maker_cant_meet",
@@ -1812,6 +1814,9 @@ fn emit(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
 
 fn accepts(w: &World, n: &Node, reply: &Reply) -> bool {
     match (n.phase, reply) {
+        (Phase::Ingesting | Phase::Auditing | Phase::Planning { .. }, Reply::ProtectedPaths) => {
+            true
+        }
         (Phase::Ingesting, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)) => true,
         (Phase::Auditing, Reply::AuditAgrees | Reply::AuditDisagrees) => true,
         (Phase::Planning { .. }, Reply::PlanLeaf { footprint, .. }) => w.has_footprint(*footprint),
@@ -1911,6 +1916,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
         }
         Reply::PlanSplit => ask_rob(w, i, QKind::NeedsSplitting, Cont::Nowhere, 0, out),
         Reply::PlanCantMeet => plan_retry(w, i, ReviewStop::PlanCantMeet, out),
+        Reply::ProtectedPaths => enter_stopping(&mut w.nodes[i], Outcome::NotActionable),
         Reply::MakerDone { head } => {
             let m = &mut w.nodes[i];
             m.head = Some(head);
