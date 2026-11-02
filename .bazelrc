@@ -24,8 +24,7 @@ test --test_env=TOKIO_WORKER_THREADS=1
 # private rc file. Never commit the key.
 build:remote --remote_cache=grpcs://remote.buildbuddy.io
 build:remote --remote_download_minimal
-# Keep the client bounded on the shared 30-core account; test sizes govern admission.
-build:remote --jobs=16
+build:remote --jobs=80
 build:remote --remote_executor=grpcs://remote.buildbuddy.io
 build:remote --bes_backend=grpcs://remote.buildbuddy.io
 build:remote --bes_results_url=https://app.buildbuddy.io/invocation/
@@ -39,7 +38,7 @@ test:remote --test_env=TL3_RUNNER_CLASS=buildbuddy-amd64
 # Every action on linux/arm64 remote executors: compiles, tools and tests.
 build:remote-arm64 --remote_cache=grpcs://remote.buildbuddy.io
 build:remote-arm64 --remote_download_minimal
-build:remote-arm64 --jobs=16
+build:remote-arm64 --jobs=80
 build:remote-arm64 --remote_executor=grpcs://remote.buildbuddy.io
 build:remote-arm64 --bes_backend=grpcs://remote.buildbuddy.io
 build:remote-arm64 --bes_results_url=https://app.buildbuddy.io/invocation/

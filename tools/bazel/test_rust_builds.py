@@ -93,7 +93,11 @@ class TestSizingTests(unittest.TestCase):
             **{name: record for name in ["rust_test", "py_test", "rust_library",
                                         "rust_binary", "cargo_build_script", "_py_library"]},
         }
-        for name in ["test_sizing.bzl", "nonhermetic.bzl", "python.bzl", "rust.bzl"]:
+        sizing = {}
+        path = root / "tools/bazel/test_sizing.bzl"
+        exec(compile(path.read_text(), str(path), "exec"), sizing)
+        namespace["test_size"] = sizing["test_size"]
+        for name in ["nonhermetic.bzl", "python.bzl", "rust.bzl"]:
             path = root / "tools/bazel" / name
             if path.exists():
                 source = re.sub(r"^load\(.*\)$", "", path.read_text(), flags=re.MULTILINE)

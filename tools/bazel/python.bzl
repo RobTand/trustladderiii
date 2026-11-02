@@ -46,7 +46,7 @@ def tl3_py_test(name, srcs, main = None, deps = [], data = [], **kwargs):
     package = native.package_name()
     module = main or srcs[0]
     tags, exec_properties = nonhermetic(name)
-    exec_properties.update(test_size(name))
+    exec_properties.update(test_size(package, name))
     py_test(
         name = name,
         main = "//tools/bazel:python_runner.py",

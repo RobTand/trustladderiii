@@ -178,10 +178,6 @@ class StaticParityTests(unittest.TestCase):
             bazel_parity.compare_static({}, {}, [], [])
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class NestedSuiteSizingTests(unittest.TestCase):
     def test_detects_runners_in_any_package_and_embedded_scripts(self):
         sources = [
@@ -231,3 +227,7 @@ class NestedSuiteSizingTests(unittest.TestCase):
             bazel_parity.check_python_sizing(query(properties), root)
             module.write_text('def test_plain(): assert True')
             bazel_parity.check_python_sizing(query({}), root)
+
+
+if __name__ == '__main__':
+    unittest.main()

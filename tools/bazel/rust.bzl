@@ -76,7 +76,7 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
         "//conditions:default": ["@postgres_linux_amd64//:all"],
     }) if package in _POSTGRES else []
     tags, exec_properties = nonhermetic(name)
-    exec_properties.update(test_size(name, postgres = package in _POSTGRES))
+    exec_properties.update(test_size(package, name, postgres = package in _POSTGRES))
     runtime_data = kwargs.pop("data", [])
     harness = "libtest" if kwargs.get("use_libtest_harness", True) else "custom"
     rust_test(
