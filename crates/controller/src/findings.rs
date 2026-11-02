@@ -136,12 +136,29 @@ fn reviewed(item: &Value) -> Option<&str> {
     }
 }
 
+// The round of the first later event that superseded the item at `index`: a review with
+// another commit supersedes a review, and any later review or check failure supersedes a
+// check failure.
+fn superseded_in(feedback: &[Value], rounds: &[u64], index: usize) -> u64 {
+    let sha = reviewed(&feedback[index]);
+    feedback[index + 1..]
+        .iter()
+        .zip(&rounds[index + 1..])
+        .find(|(later, _)| match sha {
+            Some(sha) => reviewed(later).is_some_and(|other| other != sha),
+            None => reviewed(later).is_some() || later["kind"] == "failed_check",
+        })
+        .map_or(rounds[index], |(_, round)| *round)
+}
+
 /// What a maker fix round is sent of the accumulated feedback (#316). Findings that a
 /// later review or check superseded shrink to a one-line record: kind, id, title and the
-/// round that resolved them. The latest review, the reviewed head's findings and the
-/// check failure no review has superseded keep their full text. The store keeps it all.
+/// round of the event that superseded them. The latest review, the reviewed head's
+/// findings and the check failure no later review has superseded keep their full text.
+/// The store keeps it all.
 ///
-/// A round is one feedback event: a review (all its findings) or a check failure.
+/// A round is one feedback event: a review (all its findings) or a check failure. The
+/// order is the append order of `maker_findings`, which only ever pushes.
 pub(crate) fn bounded_feedback(feedback: Vec<Value>, head: Option<&str>) -> Vec<Value> {
     let last_review = feedback.iter().rposition(|item| reviewed(item).is_some());
     let last_sha = last_review.and_then(|index| reviewed(&feedback[index]));
@@ -190,7 +207,7 @@ pub(crate) fn bounded_feedback(feedback: Vec<Value>, head: Option<&str>) -> Vec<
             let mut record = serde_json::json!({
                 "kind": item["kind"], "goal_ids": item["goal_ids"],
                 "report": clipped(title.unwrap_or("(no text)"), TITLE_CHARS),
-                "resolved_round": rounds[index],
+                "resolved_round": superseded_in(&feedback, &rounds, index),
             });
             for field in ["id", "reviewed_sha"] {
                 if !item[field].is_null() {
