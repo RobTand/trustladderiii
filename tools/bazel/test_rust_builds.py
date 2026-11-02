@@ -102,8 +102,10 @@ class TestSizingTests(unittest.TestCase):
                             flags=re.MULTILINE)
             exec(compile(source, str(directory / "BUILD.bazel"), "exec"), namespace)
         else:
-            for path in directory.glob("test_*.py"):
-                namespace["tl3_py_test"](name=path.stem, srcs=[path.name])
+            names = ([path.stem for path in directory.glob("test_*.py")]
+                     if package == "harness/tests" else ["test_planner", "test_classifier"])
+            for name in names:
+                namespace["tl3_py_test"](name=name, srcs=[name + ".py"])
         return {name: attrs for name, attrs in rules.items()
                 if attrs.get("main") in ["//tools/bazel:rust_runner.py",
                                          "//tools/bazel:python_runner.py"]}
