@@ -14,9 +14,22 @@ use ts_rs::TS;
 
 const HOUR_MS: i64 = 3_600_000;
 const DAY_MS: i64 = 24 * HOUR_MS;
+/// How long a stopped request waits in the Backlog before it leaves the board.
+/// TL3 doesn't record that GitHub closed the issue (it ignores `issues` closed
+/// events and only reads the issue when a restart applies), so age is the only
+/// bound on a stopped card that Rob never restarts.
+const STOPPED_WINDOW_MS: i64 = 7 * DAY_MS;
 const NONE_RECORDED: &str = "none recorded";
 
 /// A workflow stage on the board, in board order.
+///
+/// Backlog holds requests that wait for Rob. A request that ended as Stopped
+/// is one: its issue stays open (Q49) until he restarts it. A restart files a
+/// newer request, which replaces the stopped one on the board.
+///
+/// **Auto-pickup (#334) must never start a stopped request by itself.** Only
+/// Rob's restart does. Auto-pickup draws from the backlog index, not from
+/// this column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, TS)]
 pub enum Column {
     Backlog,
@@ -28,10 +41,11 @@ pub enum Column {
     Merging,
     NeedsRob,
     Done,
+    Cancelled,
 }
 
 impl Column {
-    pub const ALL: [Column; 9] = [
+    pub const ALL: [Column; 10] = [
         Column::Backlog,
         Column::Intake,
         Column::Planning,
@@ -41,9 +55,11 @@ impl Column {
         Column::Merging,
         Column::NeedsRob,
         Column::Done,
+        Column::Cancelled,
     ];
 
-    /// The PRD's phase-to-column mapping.
+    /// The PRD's phase-to-column mapping. A stop that is still cleaning up
+    /// maps by its outcome, as a closed request does.
     pub fn of(phase: Phase) -> Column {
         match phase {
             Phase::Ingesting | Phase::Auditing => Column::Intake,
@@ -54,7 +70,7 @@ impl Column {
             Phase::Reviewing => Column::Reviewing,
             Phase::Publishing | Phase::Queued | Phase::Rebasing => Column::Merging,
             Phase::AwaitingRob => Column::NeedsRob,
-            Phase::Stopping(_) | Phase::Closed(_) => Column::Done,
+            Phase::Stopping(outcome) | Phase::Closed(outcome) => Ending::of(outcome).column(),
         }
     }
 
@@ -69,6 +85,7 @@ impl Column {
             Column::Merging => "Merging",
             Column::NeedsRob => "Needs Rob",
             Column::Done => "Done",
+            Column::Cancelled => "Cancelled",
         }
     }
 }
@@ -96,6 +113,25 @@ impl Ending {
         }
     }
 
+    /// Merged and already-done work is done. Duplicates and requests with
+    /// nothing to act on are cancelled. A stopped request waits in the
+    /// backlog for Rob. A replaced one is superseded by the newest request.
+    fn column(self) -> Column {
+        match self {
+            Ending::Merged | Ending::AlreadyDone | Ending::Replaced => Column::Done,
+            Ending::Stopped => Column::Backlog,
+            Ending::Duplicate | Ending::NotActionable => Column::Cancelled,
+        }
+    }
+
+    /// How long a closed request stays on the board.
+    fn window_ms(self) -> i64 {
+        match self.column() {
+            Column::Backlog => STOPPED_WINDOW_MS,
+            _ => DAY_MS,
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             Ending::Merged => "merged",
@@ -115,6 +151,8 @@ pub enum Badge {
     MakerBlocked,
     NeedsRob,
     WaitingForCapacity,
+    /// Ended as Stopped, and waits for Rob to restart it.
+    Stopped,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
@@ -170,7 +208,7 @@ pub struct ColumnCount {
 pub struct Flow {
     /// One entry per column, in board order.
     pub columns: Vec<ColumnCount>,
-    /// Requests that haven't reached Done.
+    /// Requests that are still moving: not Backlog, Done or Cancelled.
     pub in_flight: u32,
     /// Merged requests, by when they entered cleanup or closed.
     pub merged_last_hour: u32,
@@ -272,16 +310,22 @@ pub struct StoredIncident {
     pub maker_blocked: bool,
 }
 
-/// Closed requests stay on the board for a day; the counts include them all.
+/// Closed requests stay on the board for a day, and stopped ones for a week.
+/// The Done and Cancelled counts include every ending, however old. The
+/// Backlog count includes only the cards it shows.
 pub fn project(input: Input<'_>) -> Board {
     let mut cards = Vec::with_capacity(input.requests.len());
     let mut expired = BTreeSet::new();
     for request in input.requests {
-        if matches!(request.node.phase, Phase::Closed(_))
-            && request
+        let window = match request.node.phase {
+            Phase::Closed(outcome) => Some(Ending::of(outcome).window_ms()),
+            _ => None,
+        };
+        if window.is_some_and(|window| {
+            request
                 .phase_since_ms
-                .is_none_or(|since| input.now_ms - since > DAY_MS)
-        {
+                .is_none_or(|since| input.now_ms - since > window)
+        }) {
             expired.insert(request.id.0);
         }
         cards.push(card(
@@ -309,12 +353,24 @@ pub fn project(input: Input<'_>) -> Board {
             .map(|column| ColumnCount {
                 column,
                 label: column.label().into(),
-                count: cards.iter().filter(|card| card.column == column).count() as u32,
+                count: cards
+                    .iter()
+                    .filter(|card| {
+                        card.column == column
+                            && (matches!(column, Column::Done | Column::Cancelled)
+                                || !expired.contains(&card.id))
+                    })
+                    .count() as u32,
             })
             .collect(),
         in_flight: cards
             .iter()
-            .filter(|card| !matches!(card.column, Column::Done | Column::Backlog))
+            .filter(|card| {
+                !matches!(
+                    card.column,
+                    Column::Backlog | Column::Done | Column::Cancelled
+                )
+            })
             .count() as u32,
         merged_last_hour: merged_within(HOUR_MS),
         merged_last_day: merged_within(DAY_MS),
@@ -399,6 +455,9 @@ fn card(
     }
     if matches!(wait, Wait::AgentPool | Wait::SlotOrFiles) {
         badges.insert(Badge::WaitingForCapacity);
+    }
+    if ending == Some(Ending::Stopped) {
+        badges.insert(Badge::Stopped);
     }
     let last_progress = last_progress(request.progress.as_ref(), request.worker_failure.as_ref());
     Card {
