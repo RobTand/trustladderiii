@@ -1016,3 +1016,36 @@ fn repository_exec_scratch_is_an_optional_boolean() {
         .insert("exec_scratch".into(), Value::String("true".into()));
     assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
 }
+
+// `deploy.py model-defaults` writes these ladders into the live config, so a
+// default that breaks the Q22 rules must fail here, not on dl380g10.
+#[test]
+fn deployment_model_defaults_pass_validation() {
+    let defaults: Value = include_str!("../../../deploy/dl380g10/models.toml")
+        .parse()
+        .unwrap();
+    let defaults = defaults["models"].as_table().unwrap();
+    let mut document: Value = EXAMPLE.parse().unwrap();
+    let models = document["models"].as_table_mut().unwrap();
+    for role in [
+        "ingest",
+        "audit",
+        "planner",
+        "maker",
+        "reviewer",
+        "rebaser",
+        "comment_classifier",
+        "writer",
+    ] {
+        let ladder = defaults
+            .get(role)
+            .unwrap_or_else(|| panic!("models.toml must set {role}"));
+        models.insert(role.into(), ladder.clone());
+    }
+    assert_eq!(defaults.len(), 8, "models.toml sets only the role ladders");
+    let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+    for maker in &config.models.maker {
+        let reviewer = config.models.reviewer_for(&maker.family).unwrap();
+        assert_ne!(reviewer.name, maker.name, "Q22: a different model reviews");
+    }
+}

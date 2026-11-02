@@ -1,0 +1,4 @@
+# gazelle:python_root
+# gazelle:python_generation_mode package
+# gazelle:python_default_visibility //visibility:public
+# gazelle:python_test_file_pattern *_test.py

@@ -107,6 +107,14 @@ pub fn install(settings: &Settings, runtime: &tokio::runtime::Runtime) {
         return;
     }
     fs::DirBuilder::new().mode(0o700).create(&staging).unwrap();
+    if let Some(source) = std::env::var_os("TL3_TEST_POSTGRES_DIR") {
+        let source = PathBuf::from(source);
+        assert!(source.join("bin/postgres").is_file());
+        copy_tree(&source, &staging.join("binaries"));
+        fs::rename(staging.join("binaries"), &settings.installation_dir).unwrap();
+        fs::remove_dir_all(&staging).unwrap();
+        return;
+    }
     let mut installer = PostgreSQL::new(Settings {
         installation_dir: staging.join("binaries"),
         // setup also initializes this fixture's cluster; retain it after publication.
@@ -127,4 +135,20 @@ pub fn install(settings: &Settings, runtime: &tokio::runtime::Runtime) {
     )
     .unwrap();
     fs::remove_dir_all(&staging).unwrap();
+}
+
+fn copy_tree(source: &std::path::Path, destination: &std::path::Path) {
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(destination)
+        .unwrap();
+    for entry in fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let target = destination.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), target).unwrap();
+        }
+    }
 }
