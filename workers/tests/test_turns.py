@@ -406,9 +406,15 @@ def test_resume_keeps_an_exhausted_budget(maker_request, tmp_path, monkeypatch):
     def killed(*args):
         raise Killed()
 
+    commit = maker._commit
     monkeypatch.setattr(maker, "_commit", killed)
     interrupted(maker_request, monkeypatch, [reply(test_maker.DONE)])
     assert json.loads(visit.read_text())["budget_exhausted"] is True
+    # The rerun's done without a change ends as cant_meet, not with another turn.
+    monkeypatch.setattr(maker, "_commit", commit)
+    model, events = rerun(maker_request, monkeypatch, [reply(test_maker.DONE), reply(test_maker.DONE)])
+    assert events[-1]["reply"] == {"kind": "cant_meet", "report": "no code change was made"}
+    assert len(model.calls) == 1
 
 
 def test_dropped_call_retry_keeps_the_final_answer_reserve(request_doc, monkeypatch):
