@@ -50,6 +50,36 @@
       "required": ["kind", "report"], "additionalProperties": false
     },
     {
+      "type": "object",
+      "properties": {
+        "kind": {"const": "blocked"},
+        "evidence": {
+          "description": "An action_key whose run_tests summary had status infrastructure_error, or a tool_error id, recorded in this run.",
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "action_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "class": {"const": "test_infrastructure", "description": "Added by worker code. The model must omit this field."}
+              },
+              "required": ["action_key", "class"], "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "tool_error": {"type": "string", "pattern": "^tool-error-[1-9][0-9]*$"},
+                "tool": {"enum": ["list", "read", "glob", "grep", "write", "edit", "run_tests", "recall"], "description": "Added by worker code. The model must omit this field."},
+                "class": {"enum": ["test_submission", "EACCES", "EPERM", "EROFS", "ENOSPC", "EDQUOT", "EIO", "EMFILE", "ENFILE", "ENOMEM"], "description": "Added by worker code. The model must omit this field."}
+              },
+              "required": ["tool_error", "tool", "class"], "additionalProperties": false
+            }
+          ]
+        },
+        "report": {"$ref": "#/$defs/text"}
+      },
+      "required": ["kind", "evidence", "report"], "additionalProperties": false
+    },
+    {
       "type": "object", "properties": {"kind": {"const": "out_of_room"}},
       "required": ["kind"], "additionalProperties": false
     }

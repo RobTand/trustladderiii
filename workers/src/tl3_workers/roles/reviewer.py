@@ -9,7 +9,7 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 from langchain_openai import ChatOpenAI
 
-from tl3_workers.contracts import read_json, validate
+from tl3_workers.contracts import read_json, read_reply, validate
 from tl3_workers.roles.base import Role
 from tl3_workers.session import ContextCharacters, is_unaccepted_session, out_of_room, save
 from tl3_workers.tools import build_tools
@@ -109,7 +109,7 @@ def run(model, request, worktree, emit):
                 if isinstance(message, AIMessage) and not message.tool_calls:
                     if message.invalid_tool_calls:
                         raise ValueError("invalid reviewer tool calls")
-                    reply = read_json(message.text)
+                    reply = read_reply(message.text)
                     validate("reviewer-reply", reply)
                     if reply["verdict"] == "out_of_room":
                         raise ValueError("model cannot report reviewer exhaustion")

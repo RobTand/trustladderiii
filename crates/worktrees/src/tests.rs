@@ -1721,3 +1721,41 @@ fn adoption_scope_trim_excludes_main_only_progress() {
     );
     assert_eq!(f.manager.merge_base(&author, &trim.head).unwrap(), author);
 }
+
+#[test]
+fn only_clear_network_messages_mark_a_remote_failure() {
+    for stderr in [
+        "fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host: github.com\n",
+        "fatal: unable to access 'https://github.com/o/r.git/': Failed to connect to github.com port 443 after 3 ms: Connection refused\n",
+        "fatal: unable to access 'https://github.com/o/r.git/': Connection timed out after 300000 milliseconds\n",
+        "fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 502\n",
+        "error: RPC failed; HTTP 503 curl 22 The requested URL returned error: 503\n",
+        "fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 429\n",
+        "fatal: the remote end hung up unexpectedly\n",
+    ] {
+        assert!(remote_unreachable(stderr.as_bytes()), "{stderr}");
+    }
+    for stderr in [
+        "fatal: Unable to create '/repo/.git/shallow.lock': File exists.\n",
+        "error: cannot lock ref 'refs/tl3/upstream-base': Unable to create lock\n",
+        "fatal: '/missing' does not appear to be a git repository\nfatal: Could not read from remote repository.\n",
+        "fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 403\n",
+        "fatal: couldn't find remote ref refs/heads/main\n",
+        "",
+    ] {
+        assert!(!remote_unreachable(stderr.as_bytes()), "{stderr}");
+    }
+}
+
+#[test]
+fn an_ambiguous_remote_failure_stays_a_git_error() {
+    let fixture = Fixture::new();
+    fs::remove_dir_all(&fixture.bare).unwrap();
+    match fixture.manager.fetch_base(&fixture.remote, None) {
+        Err(Error::Git {
+            operation: "fetch base",
+            ..
+        }) => {}
+        other => panic!("a missing local remote is not a network failure: {other:?}"),
+    }
+}

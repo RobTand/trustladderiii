@@ -119,3 +119,32 @@ def test_summary_accepts_node_ids_above_the_old_line_cap(fixture, monkeypatch):
     result = test_tool.run_current(fixture, execution.Container('sha256:' + '1' * 64), (test,))
     assert result['status'] == 'completed'
     assert result['totals']['passed'] == 1
+
+
+@pytest.mark.parametrize("files,selectors", [
+    ({"test_value.py": "import os\n\ndef test_exit():\n    os._exit(3)\n"}, ()),
+    ({"conftest.py": "import os\nos._exit(3)\n"}, ()),
+    # Docker's own container-failure codes, from the checkout's code before pytest starts.
+    *[({"conftest.py": f"import os\nos._exit({code})\n"}, ()) for code in (125, 126, 127)],
+    ({"conftest.py": "import sys\nsys.exit(127)\n"}, ()),
+    ({"tests/conftest.py": "import os\nos._exit(126)\n",
+      "tests/test_value.py": "def test_ok():\n    pass\n"}, ("tests/test_value.py",)),
+    *[({"pytest.ini": "[pytest]\naddopts = -p hostile\n",
+        "hostile.py": f"import os\nos._exit({code})\n"}, ()) for code in (125, 126, 127)],
+])
+def test_report_cut_short_by_the_code_under_test_is_marked(fixture, files, selectors):
+    # Q50: an incomplete report the tested code could cause is not citable environment evidence.
+    for path, source in files.items():
+        (fixture / path).parent.mkdir(exist_ok=True)
+        (fixture / path).write_text(source)
+    result = test_tool.run_current(fixture, execution.Container("sha256:" + "1" * 64), selectors)
+    assert result["status"] == "infrastructure_error"
+    assert result["origin"] == "test_run"
+
+
+def test_container_that_cannot_start_is_harness_infrastructure(fixture, monkeypatch):
+    monkeypatch.setattr(test_tool, "container_command", lambda tree, container, tests: [
+        sys.executable, "-I", "-c", "import sys; sys.exit(125)"])
+    result = test_tool.run_current(fixture, execution.Container("sha256:" + "1" * 64), ())
+    assert result["status"] == "infrastructure_error"
+    assert "origin" not in result

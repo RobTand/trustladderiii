@@ -444,3 +444,136 @@ fn steering_creates_allowance_with_classifier() {
     );
     db.stop();
 }
+
+fn start_waiting_worker(settings: &tl3_config::Store, root: &std::path::Path) -> Controller {
+    let mut c = open(settings, root, Recorder::default());
+    while c.drive_once().unwrap() {}
+    assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Ingesting);
+    c
+}
+
+fn record_worker_failure(c: &mut Controller) {
+    let generation = c.world().unwrap().nodes[0].generation;
+    c.observe(
+        "diagnostic-failure",
+        Observation::WorkerFailed {
+            node: NodeId(0),
+            generation,
+            failure_class: "ValueError".into(),
+            failure_message: "sized briefs must declare their root files".into(),
+        },
+    )
+    .unwrap();
+    while c.drive_once().unwrap() {}
+}
+
+#[test]
+fn worker_failure_diagnostic_does_not_leak_into_later_incident() {
+    let mut db = support::Database::start();
+    let settings = db.create("failure_generation");
+    let root = tempfile::tempdir().unwrap();
+    let mut c = start_waiting_worker(&settings, root.path());
+    record_worker_failure(&mut c);
+    let generation = c.world().unwrap().nodes[0].generation;
+    c.observe(
+        "later-crash-without-diagnostic",
+        Observation::Kernel(tl3_kernel::Event::Reply {
+            node: NodeId(0),
+            generation,
+            reply: tl3_kernel::Reply::RunFailed,
+        }),
+    )
+    .unwrap();
+    while c.drive_once().unwrap() {}
+    let snapshot = c.snapshot().unwrap();
+    let incident = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "incidents")
+        .unwrap();
+    assert!(
+        !incident.value["summary"]
+            .as_str()
+            .unwrap()
+            .contains("Last worker failure:"),
+        "a new crash must not inherit an earlier generation's diagnostic"
+    );
+    db.stop();
+}
+
+#[test]
+fn successful_worker_reply_clears_failure_diagnostic() {
+    let mut db = support::Database::start();
+    let settings = db.create("failure_success");
+    let root = tempfile::tempdir().unwrap();
+    let mut c = start_waiting_worker(&settings, root.path());
+    record_worker_failure(&mut c);
+    assert!(
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "worker_failures")
+    );
+    let generation = c.world().unwrap().nodes[0].generation;
+    c.observe(
+        "successful-retry",
+        Observation::WorkerReply {
+            node: NodeId(0),
+            generation,
+            role: "ingest".into(),
+            reply: json!({"kind": "early_end", "outcome": "already_done", "reason": "Already fixed"}),
+        },
+    )
+    .unwrap();
+    while c.drive_once().unwrap() {}
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "worker_failures"),
+        "successful worker replies must retire the prior failure"
+    );
+    let mut reader = tl3_store::Reader::open(&settings).unwrap();
+    let status = tl3_controller::status::load(&mut reader).unwrap();
+    assert!(
+        !status.requests[0]
+            .details
+            .last_progress
+            .as_deref()
+            .unwrap_or("")
+            .contains("worker failure")
+    );
+    db.stop();
+}
+
+#[test]
+fn status_ignores_worker_diagnostic_from_another_generation() {
+    let mut db = support::Database::start();
+    let settings = db.create("failure_status");
+    let root = tempfile::tempdir().unwrap();
+    let mut c = start_waiting_worker(&settings, root.path());
+    let mut store = Store::open(&settings).unwrap();
+    let mut change = Commit::new("stale-diagnostic", json!(null), &store.load().unwrap());
+    change.rows.push(put(
+        "worker_failures",
+        "0",
+        json!({"node": 0, "generation": 99,
+        "failure_class": "ValueError", "failure_message": "stale failure"}),
+    ));
+    store.commit(&change).unwrap();
+    let mut reader = tl3_store::Reader::open(&settings).unwrap();
+    let status = tl3_controller::status::load(&mut reader).unwrap();
+    assert!(
+        !status.requests[0]
+            .details
+            .last_progress
+            .as_deref()
+            .unwrap_or("")
+            .contains("stale failure"),
+        "status must ignore diagnostics outside the current failure generation"
+    );
+    assert_eq!(c.world().unwrap().nodes[0].generation, 0);
+    db.stop();
+}

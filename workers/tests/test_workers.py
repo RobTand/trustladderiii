@@ -154,6 +154,7 @@ def test_model_settings_and_key_are_forwarded_without_network(tmp_path, request_
     assert model.openai_api_key.get_secret_value() == "fixture-only-not-a-real-secret"
     assert model.use_responses_api is False
     assert model.streaming is True
+    assert model.stream_usage is True
     assert model.max_retries == 0
     assert model._get_ls_params()["ls_provider"] == "tl3_proxy"
     assert "fixture-only-not-a-real-secret" not in repr(model)
@@ -195,7 +196,7 @@ def test_only_tl3_prompt_and_read_tools_reach_model(request_doc, role, monkeypat
     if role == "ingest":
         del proposal["oneOf"][0]["properties"]["forecast"]
         del proposal["$defs"]["forecast"]
-    assert system == expected + "\n\nReply with one JSON object matching this schema:\n" + json.dumps(proposal, ensure_ascii=False)
+    assert system == expected + "\n\nReply with one JSON object only: no prose, no code fences. It must match this schema:\n" + json.dumps(proposal, ensure_ascii=False)
     assert request_doc["key_file"] not in system
     assert "key_file" not in messages[1].text.replace(request_doc["inputs"]["issue"]["body"], "")
     assert json.loads(messages[1].text) == request_doc["inputs"]

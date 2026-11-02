@@ -1,0 +1,35 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+load("//tools/bazel:python.bzl", "py_library")
+
+py_binary(
+    name = "runner",
+    srcs = ["runner.py"],
+    imports = [".."],
+    visibility = ["//visibility:public"],
+    deps = ["@tl3_pip//pytest"],
+)
+
+py_binary(
+    name = "test_tool",
+    srcs = ["test_tool.py"],
+    imports = [".."],
+    visibility = ["//visibility:public"],
+)
+
+py_library(
+    name = "tl3_harness",
+    srcs = [
+        "__init__.py",
+        "execution.py",
+        "limits.py",
+        "model.py",
+        "node_ids.py",
+        "report.py",
+        "runner.py",
+        "test_tool.py",
+        "trees.py",
+    ],
+    imports = [".."],
+    visibility = ["//visibility:public"],
+    deps = ["@tl3_pip//pytest"],
+)

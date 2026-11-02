@@ -411,7 +411,9 @@ def test_os_error_does_not_expose_host_path(tree, monkeypatch):
         monkeypatch.setattr(os, "open", denied)
         result = invoke(tools["read"], "src/code.py")
     assert result.status == "error"
-    assert result.text == "Worktree tool rejected the path or operation."
+    # Q50: an environment failure carries an id a blocked reply can cite.
+    assert result.text == "Worktree tool rejected the path or operation. Tool error id: tool-error-1."
+    assert "/controller" not in result.text
 
 
 def test_new_tool_needs_only_a_factory_entry(tree, monkeypatch):

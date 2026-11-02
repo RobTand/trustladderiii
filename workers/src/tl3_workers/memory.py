@@ -108,7 +108,9 @@ class Summary:
                 self.save()
 
     def finish(self, reply, error):
+        from tl3_workers.tracing import failure_tags
+
         with self.lock:
             self.value.update(reply=reply, outcome="failed" if error else "succeeded",
-                              reason=type(error).__name__ if error else None)
+                              reason=failure_tags(error) if error else None)
             self.save()

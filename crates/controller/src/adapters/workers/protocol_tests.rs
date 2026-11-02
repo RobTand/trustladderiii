@@ -96,3 +96,41 @@ fn split_forecast_keys_are_the_union_of_piece_files() {
     reply["forecast"]["file_tokens"]["extra.py"] = json!(0);
     assert!(map_reply("planner", &reply).is_err());
 }
+
+#[test]
+fn blocked_maker_reply_needs_cited_evidence() {
+    // Worker code adds the class (and tool) it recorded; the controller cites only those.
+    for evidence in [
+        json!({"action_key": "c".repeat(64), "class": "test_infrastructure"}),
+        json!({"tool_error": "tool-error-1", "tool": "run_tests", "class": "test_submission"}),
+        json!({"tool_error": "tool-error-2", "tool": "write", "class": "EROFS"}),
+    ] {
+        let reply =
+            json!({"kind": "blocked", "evidence": evidence, "report": "PrismaBuild failed."});
+        assert!(
+            matches!(
+                map_reply("maker", &reply),
+                Ok(MappedReply::Kernel(Reply::RunFailed))
+            ),
+            "{reply}"
+        );
+    }
+    for evidence in [
+        json!(null),
+        json!({}),
+        json!({"action_key": "short", "class": "test_infrastructure"}),
+        json!({"action_key": "c".repeat(64)}),
+        json!({"action_key": "c".repeat(64), "class": "@octocat"}),
+        json!({"tool_error": "anything", "tool": "read", "class": "EIO"}),
+        json!({"tool_error": "tool-error-1", "class": "EIO"}),
+        json!({"tool_error": "tool-error-1", "tool": "shell", "class": "EIO"}),
+        json!({"tool_error": "tool-error-1", "tool": "read", "class": "ENOTDIR"}),
+        json!({"action_key": "c".repeat(64), "tool_error": "tool-error-1", "class": "EIO"}),
+    ] {
+        let mut reply = json!({"kind": "blocked", "report": "Broken."});
+        if !evidence.is_null() {
+            reply["evidence"] = evidence;
+        }
+        assert!(map_reply("maker", &reply).is_err(), "{reply}");
+    }
+}

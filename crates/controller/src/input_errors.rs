@@ -121,6 +121,8 @@ impl Controller {
             signature,
             effect: None,
             post_key: Some(format!("incident:{id}")),
+            // Reading or translating upstream input failed.
+            cause: Some(crate::looks::Cause::Upstream),
             input_failure: Some(InputFailure {
                 scope: scope.into(),
                 target,
@@ -282,6 +284,7 @@ pub(crate) fn observation_context(
     let node = match observation {
         Observation::ScratchSaved { node, .. }
         | Observation::WorkerReply { node, .. }
+        | Observation::WorkerFailed { node, .. }
         | Observation::CiFailed { node, .. }
         | Observation::WorktreePrepared { node, .. }
         | Observation::CheckPlan { node, .. }
