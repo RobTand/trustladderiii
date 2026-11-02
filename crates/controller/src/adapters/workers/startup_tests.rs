@@ -76,6 +76,136 @@ fn planner_protected_paths_follow_the_request_repository() {
 }
 
 #[test]
+fn maker_input_stays_bounded_after_five_review_rounds() {
+    use crate::git_tests::{Repo, documents, support::Database};
+    let f = Repo::new();
+    let mut db = Database::start();
+    let mut config =
+        tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+    config.store = db.create("bounded_feedback");
+    config.workers.runs = f.root.path().join("runs");
+    let supervisor = Supervisor::new(&config, &f.root.path().join("records")).unwrap();
+    let mut store = Store::open(&config.store).unwrap();
+    store
+        .put_worker_materials(
+            "0",
+            &json!({"maker": {
+                "brief": "Return hello.",
+                "goals": [{"id": "greeting", "description": "Return hello.", "verification": "test"}],
+                "plan": {"files": ["README.md"], "checks": [{"name": "hello", "kind": "demonstrating",
+                    "tests": ["test_greeting.py::test_hello"], "goal_ids": ["greeting"]}]},
+            }}),
+        )
+        .unwrap();
+    // Five review rounds at the controller's own caps, and a check failure at its caps
+    // after every round, as in a long fix loop.
+    use crate::findings::{
+        MAX_FAILED_TESTS, MAX_MESSAGE_CHARS, MAX_REPORT_CHARS, MAX_REVIEW_FINDINGS, clipped,
+    };
+    let finding_chars = MAX_REPORT_CHARS / MAX_REVIEW_FINDINGS;
+    let shas: Vec<String> = (1..=5).map(|n| format!("{n:040x}")).collect();
+    let mut stored = Vec::new();
+    for (round, sha) in shas.iter().enumerate() {
+        for index in 0..MAX_REVIEW_FINDINGS {
+            let report = format!(
+                "Round {round} finding {index}: {}",
+                "x".repeat(finding_chars)
+            );
+            stored.push(json!({
+                "kind": "review_finding", "id": format!("review-{round}-{index}"), "reviewed_sha": sha,
+                "report": clipped(&report, finding_chars),
+                "goal_ids": ["greeting"],
+            }));
+        }
+        let report = format!("Check failure {round}: {}", "y".repeat(MAX_REPORT_CHARS));
+        stored.push(json!({
+            "kind": "failed_check", "report": clipped(&report, MAX_REPORT_CHARS),
+            "goal_ids": ["greeting"],
+            "failed_tests": (0..MAX_FAILED_TESTS).map(|n| json!({"test": format!("test_{round}_{n}"), "message": "m".repeat(MAX_MESSAGE_CHARS)})).collect::<Vec<_>>(),
+            "outside_paths_total": 0,
+        }));
+    }
+    let snapshot = documents(&mut store, &[("maker_findings", json!(stored))]);
+    let mut delivery = f.delivery();
+    delivery.round = 1;
+    delivery.attempt = 1;
+    delivery.head_sha = Some(shas[4].clone());
+    let request = supervisor
+        .request(&delivery, "maker", &mut store, &snapshot)
+        .unwrap();
+    let inputs = &request["inputs"];
+    let sent = serde_json::to_string(inputs).unwrap().len();
+    let limit = config.limits.context_tokens as usize;
+    assert!(
+        sent / 4 * 100 < limit * 30,
+        "the maker input is {sent} characters, about {} of {limit} context tokens",
+        sent / 4
+    );
+    // No finding is lost: every stored finding is still named, and the reviewed head's
+    // findings keep their whole text, sent once.
+    let feedback = inputs["feedback"].as_array().unwrap();
+    assert_eq!(feedback.len(), stored.len());
+    let open = MAX_REVIEW_FINDINGS + 1;
+    for (index, (sent, original)) in feedback.iter().zip(&stored).enumerate() {
+        assert_eq!(sent["kind"], original["kind"]);
+        assert_eq!(sent["id"], original["id"]);
+        assert_eq!(sent["goal_ids"], original["goal_ids"]);
+        if index >= stored.len() - open {
+            assert_eq!(sent, original, "the latest review and check stay whole");
+            continue;
+        }
+        // Each review and each check failure is one feedback event, and the review of
+        // the next round supersedes both the findings and the check that followed them.
+        let round = index / open;
+        assert_eq!(sent["resolved_round"], 2 * round + 3, "{sent}");
+        let title: String = original["report"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .take(crate::findings::TITLE_CHARS)
+            .collect();
+        assert_eq!(sent["report"], title, "a collapsed item keeps its title");
+        assert!(sent.get("failed_tests").is_none());
+    }
+    let current = crate::findings::current_review(
+        &inputs["feedback"],
+        delivery.round,
+        inputs["reviewed_sha"].as_str(),
+    );
+    let ids: Vec<_> = current.findings.iter().map(|f| f["id"].clone()).collect();
+    assert_eq!(ids.len(), 20);
+    for finding in &current.findings {
+        assert!(
+            stored.contains(finding),
+            "an open finding keeps its full text"
+        );
+    }
+    let refs = inputs["current_review_findings"].as_array().unwrap();
+    assert_eq!(
+        refs.iter().map(|r| r["id"].clone()).collect::<Vec<_>>(),
+        ids
+    );
+    assert!(
+        refs.iter().all(|r| r.get("report").is_none()),
+        "the text of a current finding is sent once, in feedback"
+    );
+    // The reply check still maps every open finding id to its full report.
+    let reply = json!({"reproductions": ids.iter().map(|id| json!({"finding_id": id, "reason": "Review by hand."})).collect::<Vec<_>>()});
+    let fixes = super::reproducing::check(&reply, current).unwrap();
+    assert_eq!(fixes.evidence["findings"].as_array().unwrap().len(), 20);
+    // The store, and so the reviewer, keeps the whole history.
+    assert_eq!(
+        store
+            .worker_document("0", "maker_findings")
+            .unwrap()
+            .unwrap(),
+        json!(stored)
+    );
+    drop(supervisor);
+    db.stop();
+}
+
+#[test]
 fn worker_credentials_survive_controller_credential_removal_and_expose_only_model_key() {
     let root = tempfile::tempdir().unwrap();
     let inherited = root.path().join("systemd-credentials");

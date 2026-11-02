@@ -62,3 +62,9 @@ py_binary(
         "@tl3_pip//protobuf",
     ],
 )
+
+py_binary(
+    name = "cant_meet_audit",
+    srcs = ["cant_meet_audit.py"],
+    visibility = ["//visibility:public"],
+)
