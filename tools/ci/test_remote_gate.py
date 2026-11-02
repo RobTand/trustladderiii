@@ -72,6 +72,18 @@ class WaitTests(unittest.TestCase):
 
 
 class CancellationTests(unittest.TestCase):
+    def test_cancel_uses_the_service_rpc_with_an_in_process_key(self):
+        with patch.object(remote_gate.urllib.request, 'urlopen',
+                          return_value=io.BytesIO(b'{}')) as request:
+            remote_gate.BuildBuddy('synthetic-fixture').call(
+                'CancelExecutions', {'invocation_id': 'recorded-id'}, timeout=2)
+        sent = request.call_args.args[0]
+        self.assertEqual(sent.full_url,
+                         'https://app.buildbuddy.io/rpc/BuildBuddyService/CancelExecutions')
+        self.assertEqual(json.loads(sent.data), {'invocation_id': 'recorded-id'})
+        self.assertEqual(sent.get_header('X-buildbuddy-api-key'), 'synthetic-fixture')
+        self.assertNotIn('synthetic-fixture', sent.full_url + sent.data.decode())
+
     def test_wait_cancels_on_sigint_and_sigterm_then_exits(self):
         for signum in (signal.SIGINT, signal.SIGTERM):
             with self.subTest(signum=signum):
