@@ -81,6 +81,40 @@ class ParityTests(unittest.TestCase):
 
 
 
+class ShardedReceiptTests(unittest.TestCase):
+    def receipts(self, root, parts):
+        for index, names in enumerate(parts):
+            outputs = root / f'shard_{index}/test.outputs'
+            outputs.mkdir(parents=True)
+            (outputs / 'inventory.json').write_text(json.dumps({
+                'rust': {'controller/workers': names},
+                'shard': {'index': index, 'total': 2}}))
+
+    def test_disjoint_shards_merge_into_one_binary_inventory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.receipts(root, [['first'], ['second']])
+            try:
+                found = bazel_parity.bazel_receipts(root)['rust']
+            except RuntimeError as error:
+                self.fail(f'disjoint complete shards must be accepted: {error}')
+            self.assertEqual(found, {'controller/workers': ['first', 'second']})
+
+    def test_missing_shard_fails(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.receipts(root, [['first']])
+            with self.assertRaisesRegex(RuntimeError, 'missing.*shard'):
+                bazel_parity.bazel_receipts(root)
+
+    def test_duplicate_scenario_across_shards_fails(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.receipts(root, [['same'], ['same']])
+            with self.assertRaisesRegex(RuntimeError, 'duplicate.*scenario'):
+                bazel_parity.bazel_receipts(root)
+
+
 class ReceiptTests(unittest.TestCase):
     def test_unzipped_and_zipped_receipts_are_both_read(self):
         import io

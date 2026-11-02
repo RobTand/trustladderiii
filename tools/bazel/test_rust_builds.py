@@ -133,6 +133,11 @@ class RustDependencyTests(unittest.TestCase):
                               self.dependencies("test_test_" + name))
         self.assertIn("//workers/src:role_files", self.dependencies("test_test_hindsight"))
 
+    def test_heavy_scenarios_use_bazel_shards(self):
+        for name in ["workers", "publishing"]:
+            with self.subTest(name=name):
+                self.assertEqual(self.rules[":test_test_" + name].get("shard_count"), 4)
+
     def test_github_notices_do_not_pull_in_the_flow_group_workers(self):
         self.assertNotIn("//tools/bazel:worker_python",
                          self.dependencies("test_test_github-notices"))
