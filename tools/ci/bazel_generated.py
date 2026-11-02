@@ -6,11 +6,18 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 FIX = 'tools/bazel/generate.sh'
-CHECKS = [
-    [sys.executable, 'tools/bazel/requirements.py', '--check'],
-    [sys.executable, 'tools/bazel/rust_builds.py', '--check'],
-    ['bazel', 'run', '//:gazelle', '--', '-mode=diff'],
-]
+
+
+def commands(bazel='bazel'):
+    """Every derived-input check. The gate runs these on each head tree."""
+    return [
+        [sys.executable, 'tools/bazel/requirements.py', '--check'],
+        [sys.executable, 'tools/bazel/rust_builds.py', '--check'],
+        [bazel, 'run', '//:gazelle', '--', '-mode=diff'],
+    ]
+
+
+CHECKS = commands()
 
 
 def check(commands=CHECKS, root=ROOT):
