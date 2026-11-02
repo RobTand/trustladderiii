@@ -70,21 +70,23 @@ explicit command replaces role ladders, preserves the endpoint and key path,
 and saves a 0600 backup. Normal preparation never resets tuned ladders.
 The deployed `~/.config/tl3/tl3.toml` remains the operator's runtime config.
 
-The maker ladder uses GPT-6.1 Sol twice, then Claude Fable 5.1. Attempt 2 uses
-`max` effort and 128,000 output tokens. GPT makers get Claude Opus 5.5 review;
-Claude makers get GPT-6.1 Sol review. The planner and rebaser use GPT-6.1 Sol.
-Ingest, audit, comment classification and writer use Claude Sonnet 5.5.
-The writer field is optional for older configs and defaults to ingest.
+Rob moved the ladders off GPT-6.1 Sol, which was out of quota, to Anthropic
+models on 2026-11-01. The maker ladder uses Claude Sonnet 5.5 twice, then Claude
+Opus 5.5. Attempt 2 uses `max` effort and 128,000 output tokens. Families are
+labelled per model line (`claude-sonnet`, `claude-opus`, `claude-fable`), so
+Q22 still forces a different model to review: Sonnet makers get Opus 5.5 review,
+and the Opus maker gets Sonnet 5.5 review. The planner uses Opus 5.5, then Fable
+5.1. The rebaser, ingest, audit, comment classification and writer use Sonnet
+5.5. The writer field is optional for older configs and defaults to ingest.
+`crates/config/tests/config.rs` validates these defaults, so a ladder that
+breaks Q22 fails CI. For a new config, `--primary` renames Sonnet 5.5 and
+`--alternate` renames Opus 5.5 in every role.
 Production registration uses the configured ladders, including writer.
 
 Provider limits checked on 2026-10-30:
 
-- [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol):
-  1,050,000 context tokens and 128,000 maximum output tokens.
 - [Claude models](https://platform.claude.com/docs/en/models/overview):
   Fable 5.1, Opus 5.5 and Sonnet 5.5 each have 1M context and 128K maximum output.
-- [GPT effort](https://developers.openai.com/api/docs/guides/latest-model):
-  GPT-6.1 Sol supports `max`.
 
 All configured budgets also fit TL3's 150,000-token context setting. The proxy's
 catalog lists IDs without limits, so these limits come from provider docs.
@@ -92,7 +94,7 @@ Run the explicit proxy smoke from the session, as Rob authorized for this task:
 `python3 deploy/dl380g10/smoke-models.py ~/.config/tl3/tl3.toml`.
 It loads the key in-process and prints only model IDs, HTTP status and token
 counts. It sends one 16-token Chat Completions request per distinct configured
-model, using attempt 2's effort for GPT-6.1 Sol. It never prints response bodies
+model, using attempt 2's effort for a model listed twice. It never prints response bodies
 or credentials. TL3 code tests still run only through PrismaBuild.
 The published PrismaBuild client runs `python3 .../tools/pbrun.py` directly.
 The config points to that published tools directory.
