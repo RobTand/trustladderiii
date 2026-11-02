@@ -1,0 +1,6 @@
+{
+ "maker_replies": {
+  "kind": "cant_meet",
+  "report": "The change needs the cache directory to be configurable, but the only setting the plan allows me to edit is read at import time, before configuration loads.\n\nShould the cache directory become a constructor argument instead of a module-level setting?"
+ }
+}

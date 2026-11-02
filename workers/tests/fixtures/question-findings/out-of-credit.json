@@ -1,0 +1,6 @@
+{
+ "maker_findings": [
+  {"kind": "failed_check", "goal_ids": [], "outside_paths_total": 0, "report": "check-1 failed: base passed, head passed for the new timeout test, so it did not show the change."},
+  {"kind": "review_finding", "goal_ids": [], "outside_paths_total": 0, "report": "The retry loop still sleeps a fixed 5 seconds between attempts, so the request's backoff goal is unmet."}
+ ]
+}

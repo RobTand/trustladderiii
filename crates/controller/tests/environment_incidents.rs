@@ -396,6 +396,10 @@ fn new_release_clears_a_tl3_side_look_incident_that_holds_an_effect() {
         .max_by_key(|r| r.id.rsplit(':').next().unwrap().parse::<u64>().unwrap())
         .unwrap()
         .id;
+    // #356: failed looks count once per silence allowance; let each look count.
+    let mut allowances = tl3_config::Allowances::default();
+    allowances.agent_worker.silence_secs = 0;
+    c.set_allowances(allowances);
     c.look_key(&key).unwrap();
     c.look_key(&key).unwrap();
     let incidents = open_incidents(&mut c);

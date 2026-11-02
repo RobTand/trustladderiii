@@ -25,8 +25,12 @@ pub enum Error {
     IllegalTransition { from: EffectState, to: EffectState },
     #[error("effect missing or its delivery state changed")]
     EffectConflict,
-    #[error("event key already has a different payload")]
-    EventKeyReused,
+    #[error("event key {key} already has a different payload (stored md5 {stored}, new md5 {new})")]
+    EventKeyReused {
+        key: String,
+        stored: String,
+        new: String,
+    },
     #[error("credit key already has a different root or amount")]
     CreditConflict,
     #[error("active effect deliveries must drain before an upgrade")]
@@ -483,11 +487,33 @@ impl Store {
         let mut tx = self.client.transaction()?;
         let (revision, epoch) = metadata(&mut tx, true)?;
         if let Some(row) = tx.query_opt(
-            "SELECT revision, epoch, result, payload = $2 FROM tl3_events WHERE event_key = $1",
+            // Only a differing replay reads the stored payload and digests.
+            "SELECT revision, epoch, result, payload = $2,
+                CASE WHEN payload = $2 THEN NULL ELSE md5(payload::text) END,
+                CASE WHEN payload = $2 THEN NULL ELSE md5($2::jsonb::text) END,
+                CASE WHEN payload = $2 THEN NULL ELSE payload END
+             FROM tl3_events WHERE event_key = $1",
             &[&change.event_key, &change.event],
         )? {
             if !row.get::<_, bool>(3) {
-                return Err(Error::EventKeyReused);
+                let (key, stored, new) = (
+                    &change.event_key,
+                    row.get::<_, String>(4),
+                    row.get::<_, String>(5),
+                );
+                if !same_fact(&row.get(6), &change.event) {
+                    eprintln!(
+                        "event key {key} reused for a different fact: stored payload md5 {stored}, new payload md5 {new}"
+                    );
+                    return Err(Error::EventKeyReused {
+                        key: key.clone(),
+                        stored,
+                        new,
+                    });
+                }
+                eprintln!(
+                    "event key {key} replayed in a newer shape; keeping the stored receipt: stored payload md5 {stored}, new payload md5 {new}"
+                );
             }
             return receipt(row);
         }
@@ -1219,6 +1245,30 @@ fn metadata(tx: &mut Transaction<'_>, lock: bool) -> Result<(Revision, Epoch)> {
     ))
 }
 
+/// #371: a later release may add object members to the payload of the same
+/// fact. A null member reads as absent. Any changed or dropped value is a
+/// different fact.
+fn same_fact(stored: &serde_json::Value, new: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match (stored, new) {
+        (Value::Object(stored), Value::Object(new)) => stored
+            .iter()
+            .filter(|(_, value)| !value.is_null())
+            .all(|(key, value)| new.get(key).is_some_and(|new| same_fact(value, new))),
+        (Value::Array(stored), Value::Array(new)) => {
+            stored.len() == new.len() && stored.iter().zip(new).all(|(s, n)| same_fact(s, n))
+        }
+        // JSONB compares numbers by value; a stored 1.0e18 may read back as an
+        // integer. Two integers compare exactly, so values above 2^53 stay distinct.
+        (Value::Number(stored), Value::Number(new)) => {
+            stored == new
+                || ((stored.is_f64() || new.is_f64())
+                    && stored.as_f64().is_some_and(|s| Some(s) == new.as_f64()))
+        }
+        _ => stored == new,
+    }
+}
+
 fn receipt(row: Row) -> Result<CommitReceipt> {
     Ok(CommitReceipt {
         revision: Revision::try_from(row.get::<_, i64>(0))?,
@@ -1237,4 +1287,45 @@ fn decode_effect(row: Row) -> Result<Effect> {
         created_revision: Revision::try_from(row.get::<_, i64>(5))?,
         updated_revision: Revision::try_from(row.get::<_, i64>(6))?,
     })
+}
+
+#[cfg(test)]
+mod same_fact_tests {
+    use super::same_fact;
+    use serde_json::json;
+
+    #[test]
+    fn integers_compare_exactly_and_floats_by_value() {
+        let big = 1_u64 << 53;
+        assert!(!same_fact(&json!(big), &json!(big + 1)));
+        assert!(!same_fact(
+            &json!({"reset_ms": big}),
+            &json!({"reset_ms": big + 1})
+        ));
+        assert!(same_fact(
+            &json!(1_000_000_000_000_000_000_u64),
+            &json!(1.0e18)
+        ));
+        assert!(same_fact(
+            &json!(1.0e18),
+            &json!(1_000_000_000_000_000_000_u64)
+        ));
+        assert!(!same_fact(&json!(1), &json!(2.0)));
+    }
+
+    #[test]
+    fn later_members_extend_the_same_fact() {
+        let stored = json!({"WorkerReply": {"generation": 3, "reply": {"kind": "done"}}});
+        assert!(same_fact(
+            &stored,
+            &json!({"WorkerReply": {"generation": 3, "reply": {"kind": "done"}, "model": "m"}})
+        ));
+        assert!(same_fact(&json!({"a": 1, "model": null}), &json!({"a": 1})));
+        assert!(!same_fact(&json!({"a": 1, "model": "m"}), &json!({"a": 1})));
+        assert!(!same_fact(&json!({"a": [1, 2]}), &json!({"a": [1, 2, 3]})));
+        assert!(!same_fact(
+            &stored,
+            &json!({"WorkerReply": {"generation": 4, "reply": {"kind": "done"}}})
+        ));
+    }
 }

@@ -132,7 +132,9 @@ a list of `Violation` values. Only a successful check exposes rendered text.
 question-only fields.
 The draft supplies the original issue title and an exact request quote, a one- or
 two-sentence obstacle, two or three actions with outcomes, a recommendation index
-and reason, and answer instructions. The original title comes from the issue,
+and reason, and answer instructions. An optional decision follows the obstacle:
+the one decision Rob is asked to make, as a single question ending in a
+question mark (#322). The original title comes from the issue,
 not from the message-writing agent.
 
 The checker scans only TL3-written fields. It rejects exactly these vocabulary

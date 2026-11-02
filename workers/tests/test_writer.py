@@ -350,3 +350,104 @@ def test_scope_removals_reach_writer_as_facts(tmp_path, writer_request):
     result = start_worker(tmp_path, writer_request, [{"content": json.dumps(SUMMARY)}])
     assert result.exit_code == 0, result.stderr
     assert result.events[-1]["reply"] == SUMMARY
+
+
+FINDINGS_LAUNCH = """
+import json
+from pathlib import Path
+import runpy
+import socket
+import sys
+from unittest.mock import patch
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+from langchain_core.messages import AIMessage
+from tl3_workers import runtime
+
+reply, seen, model_key = json.loads(Path(sys.argv[1]).read_text()), Path(sys.argv[2]), sys.argv[3]
+class WriterModel(FakeMessagesListChatModel):
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+    def _generate(self, messages, **kwargs):
+        seen.write_text(messages[1].text)
+        self.responses = [AIMessage(content=json.dumps(reply))]
+        return super()._generate(messages, **kwargs)
+
+def no_network(*args, **kwargs):
+    raise AssertionError('network forbidden in writer tests')
+
+def create_model(request):
+    # As runtime.create_model does, record the loaded key; tracing is off here.
+    from tl3_workers.tracing import record_model_key
+    record_model_key(model_key)
+    return WriterModel(responses=[])
+
+with patch.object(runtime, 'create_model', create_model), \\
+     patch.object(socket.socket, 'connect', no_network), \\
+     patch.object(socket.socket, 'connect_ex', no_network), \\
+     patch.object(socket, 'getaddrinfo', no_network):
+    sys.argv = ['tl3_workers', 'run']
+    runpy.run_module('tl3_workers', run_name='__main__')
+"""
+MODEL_KEY = "correct-horse-battery-staple-4417"
+FIXTURES = Path(__file__).parent / "fixtures" / "question-findings"
+DECISION = "May I also update the recorded checksum for that file in its test?"
+
+
+def run_with_findings(tmp_path, request, reply):
+    script, seen = tmp_path / "reply.json", tmp_path / "seen.json"
+    script.write_text(json.dumps(reply))
+    result = subprocess.run(
+        [sys.executable, "-c", FINDINGS_LAUNCH, str(script), str(seen), MODEL_KEY],
+        input=json.dumps(request), text=True, capture_output=True, timeout=45,
+        env={**os.environ, "LANGSMITH_TRACING": "false", "LANGCHAIN_TRACING_V2": "false"},
+    )
+    assert result.returncode == 0, result.stderr
+    events = [json.loads(line) for line in result.stdout.splitlines()]
+    return json.loads(seen.read_text()), events[-1]
+
+
+def test_question_findings_are_redacted_before_the_model(tmp_path, writer_request):
+    # #322: prismaquant#2662's planner report, with planted secrets, as #302 redacts MLflow content.
+    report = json.loads((FIXTURES / "prismaquant-2662-planner-cant-meet-b.json").read_text())["report"]
+    planted = ("password=Zq8vLm2pRt6wXy4nB9kD", "ghp_aB3dE5fG7hJ9kL1mN3pQ5rS7tV9wX1yZ3aB5",
+               writer_request["key_file"], MODEL_KEY,
+               "sk-proj-Q7w9Lm3Zp8Rt2Xv6Nb4Kd1Hs5Jf0aa")
+    findings = {
+        "source": "planner",
+        "report": report + "\n\nThe run used " + " and ".join(planted) + ".",
+        "decision": "May this leaf also edit the `prismaquant/digests.py` entry in `CURRENT_SOURCE_BLOBS`?",
+    }
+    writer_request["inputs"]["facts"]["findings"] = findings
+    seen, reply = run_with_findings(tmp_path, writer_request, {**QUESTION, "decision": DECISION})
+    shown = seen["facts"]["findings"]
+    assert "CURRENT_SOURCE_BLOBS" in shown["report"], "the cause reaches the writer"
+    assert shown["decision"] == findings["decision"], "the planner's question reaches the writer"
+    assert "[REDACTED]" in shown["report"]
+    for secret in planted:
+        assert secret not in json.dumps(seen), secret
+        assert secret not in json.dumps(reply), secret
+    assert reply == {"event": "reply", "role": "writer", "reply": {**QUESTION, "decision": DECISION}}
+
+
+def test_question_reply_may_state_its_decision(tmp_path, writer_request):
+    reply = {**QUESTION, "decision": DECISION}
+    result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1]["reply"] == reply
+
+
+def test_prompt_turns_findings_into_a_cause_and_one_decision():
+    prompt = " ".join(files("tl3_workers").joinpath("prompts", "writer.md").read_text().split())
+    assert "facts.findings" in prompt
+    assert "Summarise the findings; never paste the report" in prompt
+    assert "decision: the one decision Rob must make, as a single question" in prompt
+    assert "what each option does with that decision" in prompt
+
+
+@pytest.mark.parametrize("field,limit", [("obstacle", 600), ("decision", 400)])
+def test_question_body_has_a_hard_cap(tmp_path, writer_request, field, limit):
+    reply = {**QUESTION, "decision": DECISION}
+    reply[field] = "x" * limit + " exceeds the cap" + ("?" if field == "decision" else ".")
+    result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}] * 2)
+    assert result.exit_code != 0, "an oversized draft must not leave the worker"

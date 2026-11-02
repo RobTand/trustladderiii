@@ -211,8 +211,29 @@ fn atomic_commit_and_idempotency(settings: &tl3_config::Store) {
     change.result = json!("different redelivery result");
     assert_eq!(store.commit(&change).unwrap(), receipt);
     assert_eq!(store.load().unwrap(), committed);
+    // #371: a newer release may add members to the same fact. The replay keeps
+    // the stored receipt and changes nothing.
+    let original = change.event.clone();
+    change.event =
+        json!({"request": 1, "large_number": 1.0e18, "model": "newer-field", "extra": null});
+    assert_eq!(store.commit(&change).unwrap(), receipt);
+    assert_eq!(store.load().unwrap(), committed);
+    // A different fact under the key still stops the commit, and names the key.
     change.event = json!({"request": 2});
-    assert!(matches!(store.commit(&change), Err(Error::EventKeyReused)));
+    let error = store.commit(&change).unwrap_err();
+    assert!(
+        matches!(&error, Error::EventKeyReused { key, stored, new }
+            if key == "event-1" && stored.len() == 32 && new.len() == 32 && stored != new),
+        "{error}"
+    );
+    assert!(error.to_string().contains("event-1"));
+    // Dropping a member the stored fact had is a different fact too.
+    change.event = json!({"request": 1});
+    assert!(matches!(
+        store.commit(&change),
+        Err(Error::EventKeyReused { .. })
+    ));
+    change.event = original;
     assert_eq!(store.load().unwrap(), committed);
     let events = store.events_after(Revision::ZERO, 100).unwrap();
     assert_eq!(events.len(), 1);

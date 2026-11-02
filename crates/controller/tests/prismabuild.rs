@@ -208,12 +208,12 @@ fn harness_error_is_named_tl3_side() {
         );
     }
 }
-fn checks_use_the_base_the_head_descends_from() {
-    // #326: a restarted request's plan kept the replaced request's base B0, but its
-    // worktree branch starts at B1, after main changed conftest.py.
-    let root = tempfile::tempdir().unwrap();
-    let mut delivery = run(root.path(), false);
-    let repo = root.path().join("restarted");
+/// #326: a restarted request's plan kept the replaced request's base B0, but its
+/// worktree branch starts at B1, after main changed conftest.py. Returns the delivery,
+/// its head and B1.
+fn moved_base(root: &Path) -> (Delivery, String, String) {
+    let mut delivery = run(root, false);
+    let repo = root.join("restarted");
     fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "--quiet", "-b", "main", "--template="]);
     fs::write(
@@ -244,6 +244,12 @@ fn checks_use_the_base_the_head_descends_from() {
     run.repository = repo;
     run.base_sha = tl3_worktrees::CommitId::new(&pinned).unwrap();
     delivery.head_sha = Some(head.clone());
+    (delivery, head, main)
+}
+
+fn checks_use_the_base_the_head_descends_from() {
+    let root = tempfile::tempdir().unwrap();
+    let (delivery, head, main) = moved_base(root.path());
     let mut adapter = fixture(root.path(), "done");
     adapter.execute(&delivery).unwrap();
     let staged: Vec<_> = fs::read_dir(root.path().join("queue"))
@@ -273,6 +279,103 @@ fn checks_use_the_base_the_head_descends_from() {
         Observation::Checks { base_sha, .. } if *base_sha == main))
     );
 }
+/// #378: a completion whose staging moved the base carries CheckPlan and Checks. The source
+/// must send them under distinct, stable keys, so the controller commits both, a replay
+/// after a crash before `.done` is idempotent, and a stored pre-#350 `Checks` row still
+/// deduplicates.
+fn base_moved_completion_keys_each_observation(
+    settings: &tl3_config::Store,
+    legacy: &tl3_config::Store,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let (delivery, head, main) = moved_base(root.path());
+    let mut adapter = fixture(root.path(), "pending");
+    adapter.execute(&delivery).unwrap();
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
+    finish(root.path(), key.as_str(), "done");
+    let delivered = |mode: &str| {
+        let (sender, receiver) = mpsc::channel();
+        // The source stops when its adapter's channel closes; keep the adapter alive.
+        let adapter = fixture(root.path(), mode);
+        let running = adapter.source().spawn(sender);
+        let inputs = [(); 2].map(|()| receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+        drop(running);
+        inputs
+    };
+    let open = |settings: &tl3_config::Store| {
+        Controller::open(
+            tl3_store::Store::open(settings).unwrap(),
+            adapters::simulation(&root.path().join("fakes")).unwrap(),
+            Bootstrap {
+                operations: None,
+                repos: vec![repository()],
+                rob: 1,
+                slots: 1,
+                pool: 1,
+            },
+        )
+        .unwrap()
+    };
+    let crash_before_done = || {
+        for entry in fs::read_dir(root.path().join("records/0")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "done") {
+                fs::remove_file(path).unwrap();
+            }
+        }
+    };
+
+    let inputs = delivered("done");
+    let mut controller = open(settings);
+    for input in inputs.clone() {
+        tl3_controller::ingress::apply(&mut controller, input)
+            .expect("tl3d keeps running after a base-moved completion");
+    }
+    let keys: Vec<_> = inputs
+        .iter()
+        .map(|input| match input {
+            tl3_controller::cli::Input::Observation { key, observation } => {
+                (key.clone(), observation.clone())
+            }
+            _ => panic!("PrismaBuild sends observations"),
+        })
+        .collect();
+    assert_eq!(keys[0].0, format!("pb:{key}:plan"));
+    assert!(matches!(&keys[0].1, Observation::CheckPlan { sha, run, .. }
+        if *sha == head && run.base_sha.as_str() == main));
+    assert_eq!(
+        keys[1].0,
+        format!("pb:{key}"),
+        "Checks keeps its pre-#350 key"
+    );
+    assert!(matches!(&keys[1].1, Observation::Checks { base_sha, .. } if *base_sha == main));
+
+    crash_before_done();
+    let replayed = delivered("done");
+    assert_eq!(
+        serde_json::to_value(&replayed).unwrap(),
+        serde_json::to_value(&inputs).unwrap(),
+        "a replay sends the same keys and payloads"
+    );
+    let before = controller.snapshot().unwrap();
+    for input in replayed.clone() {
+        tl3_controller::ingress::apply(&mut controller, input)
+            .expect("a replay after a crash before .done is idempotent");
+    }
+    assert_eq!(controller.snapshot().unwrap(), before);
+    drop(controller);
+
+    // A pre-#350 release stored this action's Checks alone under `pb:{key}`.
+    let mut controller = open(legacy);
+    controller
+        .observe(&format!("pb:{key}"), keys[1].1.clone())
+        .unwrap();
+    for input in replayed {
+        tl3_controller::ingress::apply(&mut controller, input)
+            .expect("an old-shape stored Checks row replays cleanly");
+    }
+}
+
 fn bounded_failure_details() {
     let root = tempfile::tempdir().unwrap();
     let mut delivery = run(root.path(), false);
@@ -1892,8 +1995,13 @@ fn main() {
     println!("test controller_recovers_failed_publication ... ok");
     through_controller(&database.create("pb_cancel_sealed"), false, true, true);
     println!("test cancelling_never_published_seal_starts_no_work ... ok");
+    base_moved_completion_keys_each_observation(
+        &database.create("pb_observation_keys"),
+        &database.create("pb_observation_keys_legacy"),
+    );
+    println!("test base_moved_completion_keys_each_observation ... ok");
     database.stop();
-    println!("38 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("39 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {

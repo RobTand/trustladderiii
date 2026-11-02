@@ -20,6 +20,8 @@ pub struct Draft {
     pub recommended_option: Option<usize>,
     pub recommendation_reason: String,
     pub how_to_answer: String,
+    /// The one decision Rob is asked to make, as a single question (#322).
+    pub decision: Option<String>,
 }
 
 /// Add current internal identifiers and names, including request and operation ids.
@@ -52,6 +54,8 @@ pub enum Violation {
     MissingRecommendation,
     MissingRecommendationReason,
     MissingAnswerInstructions,
+    MissingDecision,
+    DecisionNotOneQuestion,
     InternalVocabulary,
     InternalNameOrId,
     FilePath,
@@ -60,6 +64,10 @@ pub enum Violation {
     ForeignReference(String),
     HtmlEntity(String),
 }
+
+/// Hard caps on a question's prose, in characters.
+pub const MAX_OBSTACLE_CHARS: usize = 600;
+pub const MAX_DECISION_CHARS: usize = 400;
 
 #[derive(Clone, Debug)]
 pub struct CheckedMessage(String);
@@ -135,8 +143,27 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
     if is_blank(&draft.how_to_answer) {
         errors.push(Violation::MissingAnswerInstructions);
     }
+    // A summary, never a pasted report (#322).
+    if normalize(&draft.obstacle).chars().count() > MAX_OBSTACLE_CHARS {
+        errors.push(Violation::ObstacleTooLong);
+    }
+    if let Some(decision) = &draft.decision {
+        let decision = normalize(&without_title_quotes(decision, &policy));
+        let decision = decision.trim();
+        if decision.chars().count() > MAX_DECISION_CHARS
+            || !decision.ends_with('?')
+            || decision.matches('?').count() != 1
+            || decision.contains(". ")
+            || decision.contains("! ")
+        {
+            errors.push(Violation::DecisionNotOneQuestion);
+        }
+    }
     let request_prefix = format!("You asked for \"{}\".\n\n", draft.request_quote);
     let mut rendered = format!("{request_prefix}{}\n", draft.obstacle);
+    if let Some(decision) = &draft.decision {
+        rendered.push_str(&format!("\n{decision}\n"));
+    }
     for (i, option) in draft.options.iter().enumerate() {
         rendered.push_str(&format!(
             "\n{}. {}: {}\n",
@@ -154,6 +181,7 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
     }
     rendered.push_str(&format!("\n{}", draft.how_to_answer));
     let mut written = vec![draft.obstacle.as_str()];
+    written.extend(draft.decision.as_deref());
     for option in &draft.options {
         written.extend([option.action.as_str(), option.outcome.as_str()]);
     }

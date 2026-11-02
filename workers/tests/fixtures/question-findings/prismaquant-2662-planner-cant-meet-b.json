@@ -1,0 +1,26 @@
+{
+ "kind": "cant_meet",
+ "report": "I can't plan this as a leaf: two of the requirements contradict each other. Any edit to `prismaquant/digests.py` breaks a test that already exists, and the only fix is in a file the diff is not allowed to touch. Rob needs to decide the scope first.\n\nWhy any edit breaks it: `tests/test_guarded_read_digest_retention_2637.py` stores a hash of the whole current `prismaquant/digests.py` file in `CURRENT_SOURCE_BLOBS` (lines 42-60). The pair is Git blob `65c98d3bdeb16035ef4b104dc159e986e2279897` and SHA-256 `732c5e8e8774491f190eb866f6005ed3014d4fe16c1f2d837f22a39215e90f18`. `_manifest_calls()` (around lines 138-170) re-hashes each file listed in `MANIFEST_SOURCE_BLOBS`, and `digests.py` is one of them. If the hash differs it fails with \"stale manifest source: prismaquant/digests.py\". Goals 0, 1 and 6 all require edits to `digests.py`: new functions, a new `JsonProfile` constant and a docstring update. Each edit changes the file's hash.\n\nTests that would then fail, checked on the base:\n- `test_retained_sites_keep_raw_hashlib`\n- `test_manifest_records_no_exact_owner`\n- `test_manifest_keeps_gap_dispositions`\n- `test_retention_pin_rejects_recipe_gaps`\n- `test_retention_pin_rejects_unbound_evidence`\n- `test_manifest_refuses_stale_caller_or_owner`: it calls `_manifest_calls()` before appending a byte, so it fails at that first call.\n\nThe brief lists the retention-pin checks among the tests that must pass with unchanged outcomes, but doesn't name them, so I can't confirm these are the same tests. This was #2637/#2638 work, and it is very likely they are. There is a precedent for handling this. When #2638 added to `prismaquant/tensor_digests.py`, it updated that file's entry in `CURRENT_SOURCE_BLOBS` (the comment says \"additive token recipe; existing owner profiles unchanged\"). `tests/test_tensor_digest_owner_recipes_2638.py::test_token_route_has_a_reviewed_current_owner_pin` enforces that pattern for that file.\n\nThe brief and goal 5 say the diff may touch only `prismaquant/digests.py` and `tests/test_digest_profiles_1301.py`. The test above can't pass unchanged under that rule.\n\nQuestion for Rob: may this leaf also edit the `prismaquant/digests.py` entry in `CURRENT_SOURCE_BLOBS` in `tests/test_guarded_read_digest_retention_2637.py`? The edit would set it to the new file's (Git blob, SHA-256), add a comment saying the change is additive, and leave `MANIFEST_SOURCE_BLOBS` and the census JSON alone, as #2638 did. That file is not a protected path. If he says yes, the plan is one leaf of about 3 files:\n- Files: `prismaquant/digests.py`, `tests/test_digest_profiles_1301.py` and `tests/test_guarded_read_digest_retention_2637.py`.\n- New tests in `tests/test_digest_profiles_1301.py` that must fail first: raw SHA-256/blake2b pins, a monkeypatch check that `bytes_sha256` calls `hashlib.sha256`, a check against `json.dumps` with `default=repr`, and new pairs in `test_profiles_are_not_interchangeable`.\n- Existing tests to keep passing:\n  - `test_profile_names_are_unique`, after its count changes from 11 to 12.\n  - `test_digests_imports_only_the_standard_library`, after it is extended to cover the new names.\n  - `test_profile_bytes_are_pinned`.\n  - `test_round_trip_keeps_its_bytes`.\n  - `test_site_keeps_its_bytes_and_refusals`.\n  - `test_binding_is_the_profile_method`.\n  - The tests in `tests/test_duplication_baseline.py` and `tests/test_guarded_read_digest_retention_2637.py`.\n\nIf he says no, goals 0, 1 and 6 can't be done without breaking those retention tests.\n\nOne item from the brief is now checked. `prismaquant/dev_mode.py::_shown` (around line 125) calls `json.dumps(value, sort_keys=True, default=repr).encode()`. Python's default separators for that call are `(\", \", \": \")`, and its defaults are `ensure_ascii=True` and `allow_nan=True`. That matches the proposed `DIRECT_ASCII_SPACED_LAX_DEFAULT_REPR` options.\n\nStill unchecked:\n- Whether the current `digests.py` actually matches the stored hash. I had no way to compute hashes.\n- Everything the brief marks as unverified from the issue: PR #3139, the `tl3-pilot` label, and the six unnamed tests.\n\nAlso relevant for the reviewer: no `def bytes_sha256(` exists anywhere in the repo yet, and `tests/test_duplication_baseline.py` does not track raw hash calls inside `prismaquant/digests.py`.",
+ "files": [
+  "prismaquant/digests.py",
+  "tests/test_digest_profiles_1301.py",
+  "tests/test_guarded_read_digest_retention_2637.py",
+  "prismaquant/dev_mode.py"
+ ],
+ "forecast": {
+  "tokenizer": "o200k_base",
+  "brief_tokens": 2140,
+  "file_tokens": {
+   "prismaquant/dev_mode.py": 2290,
+   "prismaquant/digests.py": 6361,
+   "tests/test_digest_profiles_1301.py": 4926,
+   "tests/test_guarded_read_digest_retention_2637.py": 3623
+  },
+  "overhead_tokens": 30000,
+  "tokens": 49340,
+  "fit_tokens": 100000,
+  "context_tokens": 150000,
+  "fits": true
+ },
+ "violations": []
+}

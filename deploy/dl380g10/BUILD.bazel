@@ -47,3 +47,13 @@ tl3_py_test(
     name = "test_mlflow_deploy",
     srcs = ["test_mlflow_deploy.py"],
 )
+
+py_library(
+    name = "trial-reasoning-usage",
+    srcs = ["trial-reasoning-usage.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+    ],
+)

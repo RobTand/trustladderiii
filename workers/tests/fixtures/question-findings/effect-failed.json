@@ -1,0 +1,7 @@
+{
+ "incidents": [
+  {"id": "inc-closed", "node": 0, "open": false, "summary": "An earlier push was refused and later succeeded."},
+  {"id": "inc-open", "node": 0, "open": true, "needs_rob": true, "summary": "Opening the pull request failed: GitHub refused the push because branch protection requires signed commits."},
+  {"id": "inc-other-node", "node": 1, "open": true, "summary": "Another request's incident."}
+ ]
+}

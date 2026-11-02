@@ -110,6 +110,9 @@ impl Delivery {
 }
 
 /// External values are interned by the controller before entering the kernel.
+/// Observations are event payloads, and a release replays those an older one
+/// stored (#371). A field added later must be optional and skip serializing
+/// when absent; `observation_shapes` enforces this.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
     ScratchSaved {
@@ -127,7 +130,7 @@ pub enum Observation {
         key: String,
         reset_ms: u64,
         /// The model that reported quota; absent in waits recorded before Q53.
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
     },
     Classified {
@@ -157,7 +160,7 @@ pub enum Observation {
         role: String,
         reply: serde_json::Value,
         /// The model that ran, so review can stay a different family (Q53).
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
     },
     Kernel(Event),
@@ -500,5 +503,89 @@ pub(crate) fn runtime() -> Result<&'static tokio::runtime::Runtime> {
     match &*RUNTIME {
         Ok(runtime) => Ok(runtime),
         Err(error) => Err(std::io::Error::new(error.kind(), error.to_string()).into()),
+    }
+}
+
+#[cfg(test)]
+mod observation_shapes {
+    use super::*;
+    use serde_json::json;
+
+    /// #371: observations are event payloads, and a release replays the ones an
+    /// older release stored. A field added later must serialize like the older
+    /// shape when absent, so it needs `skip_serializing_if` with its default.
+    #[test]
+    fn absent_later_fields_serialize_like_the_older_shape() {
+        assert_eq!(
+            json!(Observation::Quota {
+                key: "effect:0:5".into(),
+                reset_ms: 7,
+                model: None,
+            }),
+            json!({"Quota": {"key": "effect:0:5", "reset_ms": 7}})
+        );
+        assert_eq!(
+            json!(Observation::WorkerReply {
+                node: NodeId(0),
+                generation: 3,
+                role: "maker".into(),
+                reply: json!({"kind": "done"}),
+                model: None,
+            }),
+            json!({"WorkerReply": {"node": 0, "generation": 3, "role": "maker",
+                "reply": {"kind": "done"}}})
+        );
+    }
+
+    #[test]
+    fn every_optional_observation_field_skips_its_default() {
+        let body = include_str!("executor.rs")
+            .split_once("pub enum Observation {")
+            .unwrap()
+            .1
+            .split_once("\n}\n")
+            .unwrap()
+            .0;
+        // Shipped serialized before the rule; skipping now would change stored shapes.
+        let grandfathered = [("Classified", "reply"), ("Checks", "results")];
+        let mut variant = "";
+        let mut attributes: Vec<&str> = Vec::new();
+        let mut checked = 0;
+        for line in body.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("#[") {
+                attributes.push(trimmed);
+                continue;
+            }
+            if trimmed.is_empty() || trimmed.starts_with("//") {
+                continue;
+            }
+            if !line.starts_with("        ") {
+                variant = trimmed
+                    .split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .next()
+                    .unwrap();
+                attributes.clear();
+                continue;
+            }
+            let Some((field, kind)) = trimmed.split_once(':') else {
+                attributes.clear();
+                continue;
+            };
+            let defaulted = attributes
+                .iter()
+                .any(|a| a.starts_with("#[serde(") && a.contains("default"));
+            if (defaulted || kind.trim_start().starts_with("Option<"))
+                && !attributes.iter().any(|a| a.contains("skip_serializing_if"))
+            {
+                assert!(
+                    grandfathered.contains(&(variant, field)),
+                    "observation field {variant}.{field} needs skip_serializing_if, so its absence serializes like the older shape"
+                );
+            }
+            checked += 1;
+            attributes.clear();
+        }
+        assert!(checked > 20, "the guard must see the Observation fields");
     }
 }

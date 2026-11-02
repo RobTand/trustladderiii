@@ -18,6 +18,8 @@ from tl3_workers.memory import current
 
 
 READ_TOOLS = frozenset({"list", "read", "glob", "grep"})
+# Files larger than this are read by range and changed with edit (#321).
+LARGE_FILE_BYTES = 65_536
 WRITE_TOOLS = frozenset({"write", "edit"})
 # Payload budgets leave room for pagination metadata and truncation notices.
 OUTPUT_LIMITS = {
@@ -385,6 +387,10 @@ class Worktree:
         """Write UTF-8 text, creating parent directories as needed."""
         content.encode("utf-8")
         with self._file(path, write=True, create=True) as stream:
+            size = os.fstat(stream.fileno()).st_size
+            if size > LARGE_FILE_BYTES:
+                # A page read from a large file must not replace the whole file.
+                raise ValueError(f"{path} is {size} bytes; change part of it with edit instead of write")
             stream.write(content)
             stream.truncate()
         return "File written."
