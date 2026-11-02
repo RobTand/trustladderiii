@@ -91,6 +91,8 @@ pub struct CheckRun {
     pub name: String,
     pub head_sha: String,
     pub external_id: Option<String>,
+    #[serde(default)]
+    pub details_url: Option<String>,
     pub status: String,
     pub conclusion: Option<String>,
     #[serde(default)]
@@ -99,6 +101,12 @@ pub struct CheckRun {
     pub output: Option<CheckOutput>,
     #[serde(default)]
     pub check_suite: Option<CheckSuiteId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JobLogTail {
+    pub text: String,
+    pub truncated: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
