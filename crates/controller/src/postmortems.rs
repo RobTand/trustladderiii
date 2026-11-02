@@ -401,7 +401,7 @@ fn failure_class(failure: Option<&str>) -> &'static str {
 }
 
 /// Failed runs in a row, since tl3d started, that pause the runner (#486).
-const PAUSE_AFTER_FAILURES: u32 = 3;
+const PAUSE_AFTER_FAILURES: usize = 3;
 
 /// A postmortem the controller stopped for making no progress failed with
 /// `no_progress`, whatever the stopped worker's record says (#486).
@@ -475,6 +475,7 @@ impl crate::Controller {
         if self
             .store
             .postmortem_failure_streak(self.postmortem_since)?
+            .len()
             >= PAUSE_AFTER_FAILURES
         {
             if !self.postmortem_paused {

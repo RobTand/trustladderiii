@@ -2702,8 +2702,15 @@ fn postmortem_retries_and_pace(settings: &tl3_config::Store) {
     );
     assert!(store.owed_postmortem().unwrap().is_none());
     assert_eq!(store.postmortem_claims_today().unwrap(), 4);
-    assert_eq!(store.postmortem_failure_streak(start).unwrap(), 3);
-    assert_eq!(store.postmortem_failure_streak(middle).unwrap(), 1);
+    assert_eq!(
+        store.postmortem_failure_streak(start).unwrap(),
+        ["worker_failed", "deadline", "invalid_reply"],
+        "the failed runs since the last success, newest first, up to 3"
+    );
+    assert_eq!(
+        store.postmortem_failure_streak(middle).unwrap(),
+        ["worker_failed"]
+    );
     raw(settings)
         .execute(
             "UPDATE tl3_postmortem_claims SET claimed_at = claimed_at - interval '1 day' WHERE run_key = 'postmortem:1:a'",
@@ -2721,9 +2728,34 @@ fn postmortem_retries_and_pace(settings: &tl3_config::Store) {
     store.commit(&change).unwrap();
     let third = store.owed_postmortem().unwrap().unwrap();
     run(&mut store, third.id, "postmortem:3:a", None);
-    assert_eq!(
-        store.postmortem_failure_streak(start).unwrap(),
-        0,
+    assert!(
+        store.postmortem_failure_streak(start).unwrap().is_empty(),
         "a success ends the streak"
     );
+    // A run that succeeds after a retried failure shows no stale failure.
+    let snapshot = store.load().unwrap();
+    let mut change = Commit::new("fourth", json!("fourth"), &snapshot);
+    change.postmortems = vec![owed("rob:8")];
+    store.commit(&change).unwrap();
+    let fourth = store.owed_postmortem().unwrap().unwrap();
+    run(
+        &mut store,
+        fourth.id,
+        "postmortem:4:a",
+        Some("worker_failed"),
+    );
+    run(&mut store, fourth.id, "postmortem:4:b", None);
+    let done = store.postmortem(fourth.id).unwrap().unwrap();
+    assert_eq!(
+        (done.record.status.as_str(), done.failure.as_deref()),
+        ("done", None)
+    );
+    let failed_at: bool = raw(settings)
+        .query_one(
+            "SELECT failed_at IS NULL FROM tl3_postmortems WHERE id = $1",
+            &[&fourth.id],
+        )
+        .unwrap()
+        .get(0);
+    assert!(failed_at, "done clears failed_at");
 }

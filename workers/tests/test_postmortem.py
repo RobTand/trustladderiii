@@ -408,6 +408,10 @@ def test_a_recommendation_must_edit_text_its_target_holds_exactly_once(tmp_path,
     monkeypatch.setattr(postmortem, "SOURCE", lambda settings: FakeTraces([]))
     reply, _ = run(request(tmp_path))
     assert reply["postmortem"]["recommendations"] == [RECOMMENDATION]
+    assert reply["postmortem"]["notes"] == (
+        "Dropped recommendation 1, workers/src/tl3_workers/prompts/planner.md: "
+        "before appears 2 times. Dropped recommendation 2, "
+        "crates/controller/src/lib.rs: not a file in the release.")
     logged = capsys.readouterr().err
     assert "workers/src/tl3_workers/prompts/planner.md: before appears 2 times" in logged
     assert "crates/controller/src/lib.rs: not a file in the release" in logged
@@ -425,3 +429,17 @@ def test_a_recommendation_must_edit_text_its_target_holds_exactly_once(tmp_path,
 def test_unusable_names_why_a_recommendation_cannot_apply(release, item, reason):
     (release.parent / "outside.md").write_text("Run the tests.\n")
     assert postmortem.unusable(item, release) == reason
+
+
+def test_drop_reasons_follow_the_notes_within_their_cap(tmp_path, model, monkeypatch):
+    model.postmortem = written(0)
+    model.postmortem["notes"] = "The judge's note. " * 110
+    model.postmortem["recommendations"] = [
+        dict(RECOMMENDATION, before="Not in the prompt.")]
+    monkeypatch.setattr(postmortem, "SOURCE", lambda settings: FakeTraces([]))
+    reply, _ = run(request(tmp_path))
+    notes = reply["postmortem"]["notes"]
+    assert len(notes) == 2000
+    assert notes.startswith("The judge's note. ")
+    assert notes.endswith(f"Dropped recommendation 1, {MAKER_PROMPT}: before appears 0 times.")
+    validate("postmortem-reply", reply)

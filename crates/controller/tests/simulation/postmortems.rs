@@ -450,6 +450,30 @@ pub(super) fn failed_runs_retry_then_pause(settings: &tl3_config::Store) {
         "three failed runs in a row pause the runner"
     );
     assert_eq!(judge.borrow().launched.len(), 3);
+    // The pause is an incident the coordinator sees, naming the failures, once.
+    let incidents = |controller: &mut Controller| -> Vec<serde_json::Value> {
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .filter(|row| row.table == "incidents")
+            .map(|row| row.value.clone())
+            .collect()
+    };
+    let paused = incidents(&mut controller);
+    assert_eq!(paused.len(), 1, "{paused:?}");
+    assert_eq!(paused[0]["open"], true);
+    assert_eq!(paused[0]["blocking"], false);
+    let summary = paused[0]["summary"].as_str().unwrap();
+    assert!(
+        summary.contains("worker_failed, worker_failed, worker_failed"),
+        "{summary}"
+    );
+    assert!(summary.contains("paused"), "{summary}");
+    controller.intake(issue(44)).unwrap();
+    drain(&mut controller);
+    assert_eq!(incidents(&mut controller).len(), 1, "raised once");
 
     restart(controller, settings);
     let mut controller = start(settings, root.path(), &judge);

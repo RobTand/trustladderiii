@@ -788,17 +788,19 @@ impl Store {
         Ok(u32::try_from(count).unwrap_or(u32::MAX))
     }
 
-    /// Failed postmortem runs since the last one that succeeded, counting only
-    /// claims committed after revision `since`, up to 3 (#486).
-    pub fn postmortem_failure_streak(&mut self, since: i64) -> Result<u32> {
+    /// The failure classes of postmortem runs since the last one that
+    /// succeeded, newest first and up to 3, counting only claims committed
+    /// after revision `since` (#486).
+    pub fn postmortem_failure_streak(&mut self, since: i64) -> Result<Vec<String>> {
         let outcomes = self.client.query(
             "SELECT outcome FROM tl3_postmortem_claims WHERE revision > $1 AND outcome IN ('done', 'failed') ORDER BY revision DESC LIMIT 3",
             &[&since],
         )?;
         Ok(outcomes
             .iter()
-            .take_while(|row| row.get::<_, &str>(0) == "failed")
-            .count() as u32)
+            .map(|row| row.get::<_, String>(0))
+            .take_while(|outcome| outcome == "failed")
+            .collect())
     }
 
     /// Postmortems claimed by a runner and not yet finished.
