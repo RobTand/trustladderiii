@@ -48,6 +48,9 @@ _CONTROLLER_TEST_DATA = [
     "//crates/mergify:sources",
     "//crates/store:sources",
 ]
+_CONTROLLER_TEST_COMPILE_DATA = {
+    "tests/writer_blocker.rs": ["//workers/tests:fixtures"],
+}
 # Only these scenarios execute tl3_workers. Its imports include tl3_harness.
 _CONTROLLER_WORKERS = [
     "lib_test_tl3_controller",
@@ -276,7 +279,7 @@ def _crate_test(kind, package, name, source, harness, options):
         )
         native.filegroup(name = kind + "_sources_" + name, srcs = sources)
         sources = [":" + kind + "_sources_" + name]
-        compile_data = compile_data + _CONTROLLER_TEST_DATA
+        compile_data = compile_data + _CONTROLLER_TEST_DATA + _CONTROLLER_TEST_COMPILE_DATA.get(source, [])
         if kind == "lib":
             compile_data = compile_data + _CONTROLLER_RUNTIME.get("lib_test_" + name, [])
     for group in _GATE_GROUPS.get(binary, [""]):
