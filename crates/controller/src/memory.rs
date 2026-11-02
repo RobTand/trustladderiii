@@ -866,29 +866,66 @@ fn verify(worktree: &Path, evidence: &Value) -> std::result::Result<Value, &'sta
         "quote": clip_chars(&safe_text(quote), 500)}))
 }
 
-/// Words that name no subject, so sharing one ties nothing together.
-const COMMON_WORDS: &[&str] = &[
-    "the", "and", "for", "not", "but", "are", "was", "were", "has", "have", "had", "its", "this",
-    "that", "these", "those", "with", "from", "into", "onto", "than", "then", "when", "where",
-    "which", "what", "who", "how", "why", "all", "any", "each", "every", "some", "can", "could",
-    "will", "would", "should", "must", "may", "might", "does", "did", "done", "use", "uses",
-    "used", "using", "via", "per", "only", "also", "always", "never", "now", "new", "old", "one",
-    "two", "def", "fn", "let", "var", "const", "return", "returns", "returned", "true", "false",
-    "none", "null", "self", "import", "from", "class", "pub", "mut", "else", "elif", "while",
-    "pass", "raise", "raises", "async", "await", "yield", "lambda", "print", "earlier", "file",
-    "files", "line", "lines", "code", "value", "values", "test", "tests", "function", "method",
+/// File extensions that make a token in a memory name a file.
+const FILE_EXTENSIONS: &[&str] = &[
+    "py", "rs", "md", "toml", "json", "yaml", "yml", "ts", "tsx", "js", "jsx", "sh", "txt", "cfg",
+    "ini", "lock", "sql", "go", "java", "c", "h", "cc", "cpp", "hpp", "cs", "rb", "html", "css",
+    "bzl", "bazel", "proto", "xml", "ipynb",
 ];
 
-fn subject_words(text: &str) -> std::collections::BTreeSet<String> {
-    text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .filter(|word| word.chars().count() >= 3)
-        .map(str::to_lowercase)
-        .filter(|word| !COMMON_WORDS.contains(&word.as_str()))
+/// Code-shaped tokens: words, dotted and `::` names, and paths.
+fn tokens(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '.' | ':' | '/' | '-')))
+        .map(|token| token.trim_matches(|c| matches!(c, '.' | ':' | '/' | '-')))
+        .filter(|token| !token.is_empty())
+}
+
+/// A name only code uses: at least 5 characters, a letter, and an underscore, a
+/// digit, internal mixed case, `::`, `.` or `/`. Plain words like `database` or
+/// `error` appear in too many lines to tie evidence to a claim.
+fn identifier_like(token: &str) -> bool {
+    token.chars().count() >= 5
+        && token.chars().any(char::is_alphabetic)
+        && (token.contains('_')
+            || token.chars().any(|c| c.is_ascii_digit())
+            || token.contains("::")
+            || token.contains('.')
+            || token.contains('/')
+            || (token.chars().skip(1).any(char::is_uppercase)
+                && token.chars().any(char::is_lowercase)))
+}
+
+/// Identifier-like tokens, with the identifier-like parts of dotted, `::` and
+/// path names, so `module._helper` in a claim matches `_helper` in the code.
+fn identifiers(text: &str) -> std::collections::BTreeSet<&str> {
+    let mut found = std::collections::BTreeSet::new();
+    for token in tokens(text).filter(|token| identifier_like(token)) {
+        found.insert(token);
+        found.extend(
+            token
+                .split(['.', ':', '/'])
+                .filter(|part| identifier_like(part)),
+        );
+    }
+    found
+}
+
+/// Files a memory names, by path or by a known extension.
+fn named_files(text: &str) -> Vec<&str> {
+    tokens(text)
+        .filter(|token| !token.contains("://"))
+        .filter(|token| {
+            token.contains('/')
+                || token.rsplit_once('.').is_some_and(|(stem, extension)| {
+                    !stem.is_empty() && FILE_EXTENSIONS.contains(&extension)
+                })
+        })
         .collect()
 }
 
-/// A flag shows a memory wrong only when it quotes the memory's own claim and the
-/// repo evidence is about that claim: a real but unrelated line proves nothing.
+/// A flag shows a memory wrong only when it quotes the memory's own claim, and
+/// the repo evidence is about that claim: it shares an identifier with the claim,
+/// and comes from the file the memory names, if it names one.
 fn contradicts(
     memory: &Value,
     claim: &str,
@@ -899,13 +936,22 @@ fn contradicts(
     if wanted.chars().count() < 8 {
         return Err("the flag does not quote the memory's claim");
     }
-    if !normalized(memory["content"].as_str().unwrap_or("")).contains(&wanted) {
+    let content = memory["content"].as_str().unwrap_or("");
+    if !normalized(content).contains(&wanted) {
         return Err("the claim is not in the memory");
     }
     let evidence = verify(worktree, evidence)?;
-    if subject_words(&wanted).is_disjoint(&subject_words(evidence["quote"].as_str().unwrap_or("")))
+    if identifiers(&wanted).is_disjoint(&identifiers(evidence["quote"].as_str().unwrap_or(""))) {
+        return Err("the evidence shares no identifier with the claim");
+    }
+    let files = named_files(content);
+    let path = evidence["path"].as_str().unwrap_or("");
+    if !files.is_empty()
+        && !files
+            .iter()
+            .any(|file| path == *file || path.ends_with(&format!("/{file}")))
     {
-        return Err("the evidence is not about the claim's subject");
+        return Err("the evidence is not from the file the memory names");
     }
     Ok(evidence)
 }

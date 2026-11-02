@@ -1086,13 +1086,21 @@ planner and reviewer launch, so recall is the first thing those roles see.
   contacting Hindsight. The breaker closes when Hindsight next acknowledges a
   delivery, such as the next retained run record. Then the next launch tries
   again. No timer is involved.
+- Retain can succeed while recall still hangs. Then each acknowledged retain
+  closes the breaker, and the next launch pays one recall timeout (about 8 s)
+  before it opens again. The cost is bounded by the retain rate, which is at
+  most one per retired worker run.
 
 **Wrong memories.** Ingest and planner runs read a pinned base checkout, so
 their flags are evidence about the repo. Each flag must:
 
 - quote the memory's claim verbatim from its content;
-- quote the repo at most 40 cited lines that share a subject word with the
-  claim, so a real but unrelated line proves nothing.
+- quote the repo, at most 40 cited lines, sharing an identifier with the claim.
+  An identifier is a name only code uses: at least 5 characters, with an
+  underscore, a digit, internal mixed case, `::`, `.` or `/`. A plain word like
+  `database` or `error` matches too many lines to tie evidence to a claim.
+- come from the file the memory names, when it names one by path or
+  extension.
 
 The flagged memory must also be cited, tagged with the run's repo, and not a
 decision. Code checks every condition at run retirement against the run's own
