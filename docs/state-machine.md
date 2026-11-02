@@ -202,7 +202,7 @@ Agreed (Q31). The report is the interface between levels:
 
 ## After merge
 
-Agreed (Q32); the judge's postmortem and the model trials arrive in slice three. Rob asked on 2026-10-29 for two steps after a merge: delete the git worktree, and run a postmortem. The postmortem should:
+Agreed (Q32); the model trials arrive in slice three. The judge's postmortem was pulled forward (#403). Rob asked on 2026-10-29 for two steps after a merge: delete the git worktree, and run a postmortem. The postmortem should:
 
 - grade work against a rubric;
 - suggest system prompt changes and point out issues that could have been avoided;
@@ -211,7 +211,7 @@ Agreed (Q32); the judge's postmortem and the model trials arrive in slice three.
 
 **Cleanup runs first and right away.** A merge moves the leaf to Stopping. Teardown stops anything still running, removes the worktree and deletes the branch, checking before each step so that a rerun does nothing. Only then does the leaf close and its parent hear about it. The code is already on main and the transcripts are in MLflow, so the postmortem doesn't need the worktree.
 
-**The postmortem runs in the background.** It never holds up delivery. Code grades are recorded when the node closes, starting in slice one. The judge's postmortem arrives in slice three. It is recorded as owed work, so a crash can't lose it, and it runs at low priority on spare quota.
+**The postmortem runs in the background.** It never holds up delivery. Code grades are recorded when the node closes (#403). The judge's postmortem runs on the workers' `postmortem` role (#403). It is recorded as owed work, so a crash can't lose it, and it runs at low priority on spare quota.
 
 **Port TL1's postmortem rather than redesigning it.** Start from TL1's rubric (`src/trustladder/rubric.toml`, version 1) and its judge prompt (`prompts/judge.md`):
 

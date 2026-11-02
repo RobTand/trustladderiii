@@ -92,7 +92,10 @@ fn start(settings: &tl3_config::Store, root: &Path, judge: &Rc<RefCell<Judge>>) 
             judge: judge.clone(),
         },
     );
-    Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap()
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    controller.run_postmortems();
+    controller
 }
 
 fn restart(controller: Controller, settings: &tl3_config::Store) {

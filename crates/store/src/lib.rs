@@ -766,18 +766,77 @@ impl Store {
 
     /// The oldest owed postmortem, which the runner claims next (#403).
     pub fn owed_postmortem(&mut self) -> Result<Option<PostmortemRecord>> {
-        todo!("#403: the oldest owed postmortem")
+        Ok(self
+            .client
+            .query_opt(
+                &format!("SELECT {POSTMORTEM_RECORD} FROM tl3_postmortems WHERE status = 'owed' ORDER BY owed_at, id LIMIT 1"),
+                &[],
+            )?
+            .as_ref()
+            .map(postmortem_record))
     }
 
     /// Postmortems claimed by a runner and not yet finished.
     pub fn running_postmortems(&mut self) -> Result<Vec<PostmortemRecord>> {
-        todo!("#403: running postmortems")
+        Ok(self
+            .client
+            .query(
+                &format!("SELECT {POSTMORTEM_RECORD} FROM tl3_postmortems WHERE status = 'running' ORDER BY id"),
+                &[],
+            )?
+            .iter()
+            .map(postmortem_record)
+            .collect())
     }
 
     /// One postmortem with its stored result and recommendations.
     pub fn postmortem(&mut self, id: i64) -> Result<Option<PostmortemDetail>> {
-        let _ = id;
-        todo!("#403: a postmortem's result")
+        let mut tx = read_transaction(&mut self.client)?;
+        let Some(row) = tx.query_opt(
+            &format!("SELECT {POSTMORTEM_RECORD}, repo, issue, title, model, rubric_version, failure, cause, summary, timeline, process_failures, grades, notes, assessment_ids FROM tl3_postmortems WHERE id = $1"),
+            &[&id],
+        )?
+        else {
+            tx.commit()?;
+            return Ok(None);
+        };
+        let recommendations = tx
+            .query(
+                "SELECT fingerprint, rank, phase, kind, target, operation, before, after, evidence, effect FROM tl3_postmortem_recommendations WHERE postmortem_id = $1 ORDER BY rank",
+                &[&id],
+            )?
+            .iter()
+            .map(|row| Recommendation {
+                fingerprint: row.get(0),
+                rank: row.get(1),
+                phase: row.get(2),
+                kind: row.get(3),
+                target: row.get(4),
+                operation: row.get(5),
+                before: row.get(6),
+                after: row.get(7),
+                evidence: row.get(8),
+                effect: row.get(9),
+            })
+            .collect();
+        tx.commit()?;
+        Ok(Some(PostmortemDetail {
+            record: postmortem_record(&row),
+            repo: row.get(7),
+            issue: row.get(8),
+            title: row.get(9),
+            model: row.get(10),
+            rubric_version: row.get(11),
+            failure: row.get(12),
+            cause: row.get(13),
+            summary: row.get(14),
+            timeline: row.get(15),
+            process_failures: row.get(16),
+            grades: row.get(17),
+            notes: row.get(18),
+            assessment_ids: row.get(19),
+            recommendations,
+        }))
     }
 
     /// A node's code grades, oldest first.
@@ -1086,8 +1145,65 @@ fn apply_postmortem(
     update: &PostmortemUpdate,
     revision: i64,
 ) -> Result<()> {
-    let _ = (tx, update, revision);
-    todo!("#403: apply a postmortem update")
+    const AT: &str = "(SELECT committed_at FROM tl3_events WHERE revision = $3)";
+    match update {
+        PostmortemUpdate::Claim {
+            id,
+            run_key,
+            rubric_version,
+        } => {
+            let claimed = tx.execute(
+                &format!("UPDATE tl3_postmortems SET status = 'running', run_key = $2, started_at = {AT}, rubric_version = $4 WHERE id = $1 AND status = 'owed'"),
+                &[id, run_key, &revision, rubric_version],
+            )?;
+            if claimed != 1 {
+                return Err(Error::Invalid("the postmortem is no longer owed"));
+            }
+        }
+        PostmortemUpdate::Done {
+            id,
+            run_key,
+            result,
+        } => {
+            let done = tx.execute(
+                &format!("UPDATE tl3_postmortems SET status = 'done', finished_at = {AT}, cause = $4, summary = $5, timeline = $6, process_failures = $7, grades = $8, notes = $9, assessment_ids = $10, model = $11 WHERE id = $1 AND status = 'running' AND run_key = $2"),
+                &[id, run_key, &revision, &result.cause, &result.summary, &result.timeline, &result.process_failures, &result.grades, &result.notes, &result.assessment_ids, &result.model],
+            )?;
+            // A stale run's result changes nothing.
+            if done != 1 {
+                return Ok(());
+            }
+            for item in &result.recommendations {
+                tx.execute("INSERT INTO tl3_postmortem_recommendations (postmortem_id, fingerprint, rank, phase, kind, target, operation, before, after, evidence, effect) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                    &[id, &item.fingerprint, &item.rank, &item.phase, &item.kind, &item.target, &item.operation, &item.before, &item.after, &item.evidence, &item.effect])?;
+            }
+            for grade in &result.code_grades {
+                insert_grade(tx, grade, revision)?;
+            }
+            if let Some((operation, item)) = &result.memory {
+                tx.batch_execute("LOCK TABLE tl3_memory_outbox IN SHARE ROW EXCLUSIVE MODE")?;
+                tx.execute("INSERT INTO tl3_memory_outbox (operation_id, item) VALUES ($1, $2) ON CONFLICT (operation_id) DO NOTHING", &[operation, item])?;
+                tx.execute("UPDATE tl3_memory_outbox SET parked_reason = 'capacity', parked_at = CURRENT_TIMESTAMP WHERE sequence IN (SELECT sequence FROM tl3_memory_outbox WHERE parked_reason IS NULL ORDER BY sequence DESC OFFSET 10000)", &[])?;
+            }
+        }
+        PostmortemUpdate::Failed {
+            id,
+            run_key,
+            failure,
+        } => {
+            tx.execute(
+                &format!("UPDATE tl3_postmortems SET status = 'failed', failed_at = {AT}, failure = $4 WHERE id = $1 AND status = 'running' AND run_key = $2"),
+                &[id, run_key, &revision, failure],
+            )?;
+        }
+        PostmortemUpdate::Release { id, run_key } => {
+            tx.execute(
+                "UPDATE tl3_postmortems SET status = 'owed', run_key = NULL, started_at = NULL, model = NULL, rubric_version = NULL WHERE id = $1 AND status = 'running' AND run_key = $2",
+                &[id, run_key],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// Create or update a login that may read TL3's tables, now and after later

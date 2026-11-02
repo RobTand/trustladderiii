@@ -247,6 +247,23 @@ Each table notifies `tl3_changes`. `grant_reader`'s default privileges give the
 console's login SELECT on them, and migration 13 grants existing reader logins
 explicitly.
 
+Migration 14 adds `assessment_ids`: the MLflow assessments a postmortem's
+judges logged on the node's traces. `Commit.postmortem_updates` changes a
+postmortem in the same transaction as the rest of the commit, so its status
+reaches the console through `tl3_changes` with the commit:
+
+- `Claim` sets an `owed` row `running` with its `run_key` and the commit's time,
+  and fails the commit if the row is no longer owed.
+- `Done` stores the result, its recommendations, its later code grades and its
+  Hindsight lessons, only while the row is `running` under that run key. A stale
+  result changes nothing; the table's rank check refuses a fourth
+  recommendation, and the whole commit with it.
+- `Failed` keeps a fixed failure class, under the same run-key rule.
+- `Release` makes a `running` row under that run key `owed` again.
+
+`owed_postmortem` reads the oldest owed row, `running_postmortems` the running
+ones, and `postmortem` one row with its result and recommendations.
+
 ## MVP and Hindsight upgrades
 
 Migration 6 is `0006_worker_wait.sql`. Its deployed SQL remains unchanged.

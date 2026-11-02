@@ -2,7 +2,9 @@
 escalation ensemble.
 
 Judges return MLflow Feedback in memory. Nothing in this module logs a
-feedback or acts on a verdict.
+feedback or acts on a verdict. MLflow's judges import numpy and pandas, which
+mlflow-skinny doesn't depend on; pyproject.toml pins them, and `tracing`
+imports them.
 """
 
 from contextlib import contextmanager
@@ -68,11 +70,6 @@ def configure(base_url, key):
     MLflow's gateway adapter reads the key from the environment of this process
     only; it is never written anywhere else."""
     global _endpoint
-    # MLflow's judges import these lazily, and mlflow-skinny doesn't depend on
-    # them. Importing them here declares them for Bazel too.
-    import numpy  # noqa: F401
-    import pandas  # noqa: F401
-
     if not key:
         raise ValueError("empty model key")
     os.environ["OPENAI_API_KEY"] = key
@@ -94,33 +91,62 @@ def judge(name, instructions, model, value_type):
 
 def needs_rob_judge(model):
     """Whether a case needed Rob, as Feedback with value "yes" or "no"."""
-    raise NotImplementedError("#403")
+    return judge("needs_rob", NEEDS_ROB, model, Literal["yes", "no"])
 
 
 def unanimity(feedbacks):
     """The shared value when every judge agrees and none failed; otherwise
     "no consensus". A failed judge's error is in its own Feedback."""
-    raise NotImplementedError("#403")
+    from mlflow.entities.assessment import Feedback
+
+    values = [None if feedback.error is not None else feedback.value for feedback in feedbacks]
+    if values and all(value is not None for value in values) and len(set(values)) == 1:
+        return Feedback(value=values[0], rationale=f"unanimous over {len(values)} judges")
+    return Feedback(value="no consensus", rationale=f"split: {values}")
 
 
 def unanimous(*judges, name="unanimous"):
     """An ensemble over judges that returns Feedback; it logs nothing."""
-    raise NotImplementedError("#403")
+    from mlflow.genai.scorers import make_scorer_ensemble
+
+    return make_scorer_ensemble(name=name, scorers=list(judges), ensemble_fn=unanimity)
 
 
 def grade_judges(rubric, model):
     """One judge per judge-graded dimension of TL3's rubric."""
-    raise NotImplementedError("#403")
+    built = {}
+    for dimension, spec in rubric["dimensions"].items():
+        if spec.get("grader") != "judge":
+            continue
+        grades = "\n".join(f"- {grade}: {text}" for grade, text in sorted(spec["grades"].items(),
+                                                                          reverse=True))
+        built[dimension] = judge(dimension.replace(" ", "_"),
+                                 GRADE.replace("{dimension}", dimension).replace("{grades}", grades),
+                                 model, int | None)
+    return built
 
 
 def postmortem_judge(prompt, model):
     """The postmortem's judge. Its value is the postmortem as JSON text."""
-    raise NotImplementedError("#403")
+    return judge("postmortem", PREAMBLE + prompt, model, str)
 
 
 def failed(feedback):
     """A judge failed when its Feedback, or any ensemble member's, has an error."""
-    raise NotImplementedError("#403")
+    if feedback is None or feedback.error is not None:
+        return True
+    members = (feedback.metadata or {}).get("mlflow.ensemble.sub_feedbacks")
+    if isinstance(members, str):
+        import json
+        try:
+            members = json.loads(members)
+        except ValueError:
+            return True
+    for member in members or []:
+        inner = member.get("feedback") if isinstance(member.get("feedback"), dict) else member
+        if inner.get("error"):
+            return True
+    return False
 
 
 def bound(text, redactor, cap=TOOL_RESULT_CAP):
@@ -128,7 +154,11 @@ def bound(text, redactor, cap=TOOL_RESULT_CAP):
 
     The redactor sees the text just past the cap too, so a secret cut by the cap
     is still found."""
-    raise NotImplementedError("#403")
+    shown = redactor.window(text, 0, min(len(text), cap))[:cap]
+    if len(text) > cap:
+        shown += (f"\n[tool result truncated from {len(text)} characters; narrow the query "
+                  "or lower max_content_length]")
+    return shown
 
 
 @contextmanager
@@ -137,4 +167,21 @@ def guarded_tools(redactor, progress=None):
 
     MLflow 3.17.2 has no hook for tool results, so this wraps the gateway
     adapter's own call, as the calibration spike did."""
-    raise NotImplementedError("#403")
+    from mlflow.genai.judges.adapters import gateway_adapter
+
+    real = gateway_adapter._process_tool_calls
+
+    def process(tool_calls, trace):
+        messages = real(tool_calls=tool_calls, trace=trace)
+        for message in messages:
+            if isinstance(message.content, str):
+                message.content = bound(message.content, redactor)
+        if progress is not None:
+            progress()
+        return messages
+
+    gateway_adapter._process_tool_calls = process
+    try:
+        yield
+    finally:
+        gateway_adapter._process_tool_calls = real

@@ -2,11 +2,16 @@
 //! commit that makes them owed, outside the kernel. The runner then judges one
 //! postmortem at a time on spare agent-pool capacity (Q39).
 
-use crate::Result;
-use crate::executor::Delivery;
+use crate::executor::{CommentKind, Delivery, Output};
+use crate::steering::Task;
+use crate::{Error, Result};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tl3_kernel::{Node, NodeId, Outcome, Phase, World};
-use tl3_store::{CodeGrade, Commit, OwedPostmortem, PostmortemResult, RowChange, Snapshot, Store};
+use tl3_store::{
+    CodeGrade, Commit, OwedPostmortem, PostmortemResult, PostmortemUpdate, Recommendation,
+    RowChange, Snapshot, Store,
+};
 
 /// The world table that keeps a claimed postmortem's delivery live.
 pub(crate) const JOBS: &str = "postmortem_jobs";
@@ -22,22 +27,69 @@ pub(crate) const MAX_RECOMMENDATIONS: usize = 3;
 /// that runs while new work starts uses one model session beyond the pool.
 /// #417's priority-first pool can order this test with its own.
 pub(crate) fn spare_pool_capacity(world: &World, running: usize) -> bool {
-    let _ = (world, running);
-    todo!("#403: spare pool capacity")
+    let waiting = world
+        .nodes
+        .iter()
+        .any(|node| node.ticket.is_some() && !node.pool);
+    let holders = world.nodes.iter().filter(|node| node.pool).count();
+    !waiting && holders + running < usize::from(world.pool_capacity)
 }
 
 /// `rec-` and 16 hex digits of sha256 over the normalised target, operation,
 /// before and after: the same change counts the same in every postmortem.
 pub(crate) fn fingerprint(target: &str, operation: &str, before: &str, after: &str) -> String {
-    let _ = (target, operation, before, after);
-    todo!("#403: recommendation fingerprints")
+    let words = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut digest = Sha256::new();
+    for field in [
+        words(target).to_lowercase(),
+        words(operation).to_lowercase(),
+        words(before),
+        words(after),
+    ] {
+        digest.update((field.len() as u64).to_be_bytes());
+        digest.update(field.as_bytes());
+    }
+    let hex: String = digest.finalize()[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("rec-{hex}")
 }
 
 /// A postmortem reply as the worker protocol accepts it: the role's schema,
 /// and at most three recommendations, which code checks as well.
 pub(crate) fn check_reply(reply: &Value) -> Result<()> {
-    let _ = reply;
-    todo!("#403: check a postmortem reply")
+    crate::adapters::workers::protocol::validate_reply("postmortem", reply)?;
+    recommendations(reply).map(|_| ())
+}
+
+fn recommendations(reply: &Value) -> Result<&Vec<Value>> {
+    let recommendations = reply["postmortem"]["recommendations"]
+        .as_array()
+        .ok_or(Error::Invalid("a postmortem needs its recommendations"))?;
+    if recommendations.len() > MAX_RECOMMENDATIONS {
+        return Err(Error::Invalid(
+            "a postmortem recommends at most three changes",
+        ));
+    }
+    Ok(recommendations)
+}
+
+/// Redact every string in a JSON value, as TL3 stores and retains it.
+fn redacted(value: &Value) -> Value {
+    match value {
+        Value::String(text) => json!(crate::memory::redact(text)),
+        Value::Array(items) => items.iter().map(redacted).collect(),
+        Value::Object(items) => items
+            .iter()
+            .map(|(key, item)| (key.clone(), redacted(item)))
+            .collect(),
+        other => other.clone(),
+    }
+}
+
+fn text(value: &Value) -> String {
+    crate::memory::redact(value.as_str().unwrap_or_default())
 }
 
 /// The postmortem a run claimed, as its result is stored.
@@ -54,8 +106,147 @@ pub(crate) struct Claimed {
 /// recommendations, tokens and cache rate as later code grades, and the
 /// lessons for Hindsight. A fourth recommendation is refused here too.
 pub(crate) fn result(claimed: &Claimed, reply: &Value) -> Result<PostmortemResult> {
-    let _ = (claimed, reply);
-    todo!("#403: a postmortem's stored result")
+    let written = &reply["postmortem"];
+    let mut ranked = Vec::new();
+    for (rank, item) in recommendations(reply)?.iter().enumerate() {
+        let [
+            phase,
+            kind,
+            target,
+            operation,
+            before,
+            after,
+            evidence,
+            effect,
+        ] = [
+            "phase",
+            "kind",
+            "target",
+            "operation",
+            "before",
+            "after",
+            "evidence",
+            "effect",
+        ]
+        .map(|field| text(&item[field]));
+        ranked.push(Recommendation {
+            fingerprint: fingerprint(&target, &operation, &before, &after),
+            rank: i16::try_from(rank + 1).map_err(|_| Error::Invalid("recommendation rank"))?,
+            phase,
+            kind,
+            target,
+            operation,
+            before,
+            after,
+            evidence,
+            effect,
+        });
+    }
+    // Grades keep their MLflow assessment ids as written: they are ids, not text.
+    let grades: Vec<Value> = reply["grades"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|grade| {
+            let mut grade = grade.clone();
+            grade["rationale"] = json!(text(&grade["rationale"]));
+            grade
+        })
+        .collect();
+    let notes = [text(&written["went_wrong"]), text(&written["notes"])]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let usage = &reply["usage"];
+    let count = |field: &str| usage[field].as_u64().unwrap_or(0);
+    let later = |dimension: &str, fact: Value| CodeGrade {
+        node: claimed.node.clone(),
+        trigger: format!("postmortem:{}", claimed.id),
+        rubric_version: RUBRIC_VERSION,
+        dimension: dimension.into(),
+        grade: None,
+        fact,
+    };
+    let (input, cached) = (count("input_tokens"), count("cache_read_input_tokens"));
+    let rate = if input > 0 {
+        Some(cached as f64 / input as f64)
+    } else {
+        None
+    };
+    let code_grades = vec![
+        later(
+            "tokens",
+            json!({"traces": count("traces"), "input_tokens": input,
+                "output_tokens": count("output_tokens"), "cache_read_input_tokens": cached,
+                "cache_creation_input_tokens": count("cache_creation_input_tokens")}),
+        ),
+        later(
+            "cache_rate",
+            json!({"rate": rate,
+                "input_tokens": input, "cache_read_input_tokens": cached}),
+        ),
+    ];
+    let cause = text(&written["cause"]);
+    let summary = text(&written["summary"]);
+    let memory = lessons(claimed, &cause, &summary, written, &ranked);
+    Ok(PostmortemResult {
+        model: text(&reply["models"]["postmortem"]),
+        cause,
+        summary,
+        timeline: redacted(&written["timeline"]),
+        process_failures: redacted(&written["process_failures"]),
+        grades: Value::Array(grades),
+        notes,
+        assessment_ids: reply["assessment_ids"].clone(),
+        recommendations: ranked,
+        code_grades,
+        memory: Some(memory),
+    })
+}
+
+/// The postmortem's lessons as one Hindsight record, tagged `postmortem`, with
+/// an operation id that is the same on every replay.
+fn lessons(
+    claimed: &Claimed,
+    cause: &str,
+    summary: &str,
+    written: &Value,
+    recommendations: &[Recommendation],
+) -> (String, Value) {
+    let mut hash = Sha256::digest(
+        json!(["postmortem", claimed.id, claimed.node, claimed.repo])
+            .to_string()
+            .as_bytes(),
+    );
+    hash[6] = (hash[6] & 0x0f) | 0x50;
+    hash[8] = (hash[8] & 0x3f) | 0x80;
+    let h: String = hash[..16].iter().map(|b| format!("{b:02x}")).collect();
+    let operation = format!(
+        "{}-{}-{}-{}-{}",
+        &h[..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..]
+    );
+    let record = json!({
+        "repo": claimed.repo, "issue": claimed.issue,
+        "title": crate::memory::redact(&claimed.title), "cause": cause, "summary": summary,
+        "lessons": redacted(&written["lessons"]),
+        "recommendations": recommendations.iter().map(|item| json!({
+            "fingerprint": item.fingerprint, "target": item.target,
+            "operation": item.operation, "effect": item.effect})).collect::<Vec<_>>(),
+    });
+    let item = json!({
+        "content": record.to_string(),
+        "document_id": format!("tl3-postmortem-{}", claimed.id),
+        "context": "TL3 postmortem lessons",
+        "tags": ["postmortem", format!("repo:{}", claimed.repo),
+            format!("request:{}", claimed.node), format!("cause:{cause}")],
+        "metadata": {"source": "tl3", "postmortem": claimed.id.to_string()},
+    });
+    (operation, item)
 }
 
 /// The simulated worker's reply: a fixed, valid postmortem.
@@ -94,16 +285,200 @@ pub(crate) fn case_file(
     id: i64,
     models: &tl3_config::Models,
 ) -> Result<Value> {
-    let _ = (store, snapshot, delivery, id, models);
-    todo!("#403: a postmortem's case file")
+    let node = delivery.node();
+    let key = node.0.to_string();
+    let record = store
+        .postmortem(id)?
+        .ok_or(Error::Invalid("the claimed postmortem is missing"))?
+        .record;
+    let request = crate::request(snapshot, node)?;
+    let repo = format!("{}/{}", request.repo.owner, request.repo.name);
+    let world = crate::snapshot::decode(snapshot)?;
+    let outcome = match world
+        .nodes
+        .get(node.0 as usize)
+        .ok_or(Error::Invalid("postmortem node missing"))?
+        .phase
+    {
+        Phase::Closed(outcome) => format!("{outcome:?}"),
+        phase => format!("{phase:?}"),
+    };
+    let grades: Vec<Value> = store
+        .code_grades(&key)?
+        .into_iter()
+        .map(|grade| {
+            json!({"trigger": grade.trigger, "dimension": grade.dimension,
+                "grade": grade.grade, "fact": grade.fact})
+        })
+        .collect();
+    let phases: Vec<Value> = store
+        .phase_history(&key)?
+        .into_iter()
+        .map(|(phase, since)| json!({"phase": phase_name(&phase), "since_ms": since}))
+        .collect();
+    let rows = |table: &str| -> Vec<Value> {
+        snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == table && row.value["node"] == json!(node))
+            .map(|row| bounded(&row.value))
+            .collect()
+    };
+    let document = |table: &str| {
+        snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == table && row.id == key)
+            .map_or(Value::Null, |row| bounded(&row.value))
+    };
+    let release = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "releases" && row.id == "tl3d")
+        .and_then(|row| row.value["id"].as_str().map(str::to_owned))
+        .unwrap_or_else(crate::release::id);
+    let grade_model = models
+        .postmortem
+        .get(1)
+        .or(models.postmortem.first())
+        .ok_or(Error::Invalid("models.postmortem is empty"))?;
+    Ok(json!({
+        "record": {"id": id, "trigger": record.trigger, "reason": record.reason},
+        "case": {
+            "request": {"node": node.0, "repo": repo, "issue": request.issue,
+                "title": request.title, "text": request.source.as_deref().map(bounded_text)},
+            "outcome": outcome,
+            "grades": grades,
+            "phases": phases,
+            "questions": rows("question_context"),
+            "incidents": rows("incidents"),
+            "plan": document("plans"),
+            "brief": document("briefs"),
+            "audit": document("audits"),
+            "findings": document("findings"),
+            "release": release,
+        },
+        "rubric": serde_json::from_str::<Value>(include_str!("rubric.json"))?,
+        "release": release,
+        "grade_model": grade_model.name,
+        "trace_tags": {"node": key, "request": key, "repo": repo,
+            "issue": request.issue.to_string()},
+    }))
+}
+
+/// Case-file documents stay readable but bounded; the judge reads the rest in traces.
+const DOCUMENT_BYTES: usize = 64 * 1024;
+
+fn bounded(value: &Value) -> Value {
+    let encoded = value.to_string();
+    if encoded.len() <= DOCUMENT_BYTES {
+        value.clone()
+    } else {
+        json!({"truncated": true, "summary": bounded_text(&encoded)})
+    }
+}
+
+fn bounded_text(text: &str) -> String {
+    let mut end = text.len().min(DOCUMENT_BYTES / 2);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_owned()
+}
+
+/// A postmortem failure class from the fixed set; anything else is a worker failure.
+fn failure_class(failure: Option<&str>) -> &'static str {
+    match failure {
+        Some("invalid_reply") => "invalid_reply",
+        Some("launch_failed") => "launch_failed",
+        Some("no_progress") => "no_progress",
+        _ => "worker_failed",
+    }
 }
 
 impl crate::Controller {
+    /// Judge owed postmortems from now on. tl3d turns this on as it starts;
+    /// embedders and tests whose workers run no postmortem role leave it off,
+    /// and owed rows then wait.
+    pub fn run_postmortems(&mut self) {
+        self.postmortems = true;
+    }
+
     /// Claim the oldest owed postmortem when the pool has spare capacity, in
     /// the commit that creates its worker delivery.
     pub(crate) fn start_postmortem(&mut self, snapshot: &Snapshot) -> Result<bool> {
-        let _ = snapshot;
-        Ok(false)
+        let running = snapshot.rows.iter().filter(|row| row.table == JOBS).count();
+        if !self.postmortems || running > 0 {
+            return Ok(false);
+        }
+        let world = crate::snapshot::decode(snapshot)?;
+        if !spare_pool_capacity(&world, running) {
+            return Ok(false);
+        }
+        let Some(owed) = self.store.owed_postmortem()? else {
+            return Ok(false);
+        };
+        let node = NodeId(
+            owed.node
+                .parse()
+                .map_err(|_| Error::Invalid("invalid postmortem node"))?,
+        );
+        let n = world
+            .nodes
+            .get(node.0 as usize)
+            .ok_or(Error::Invalid("postmortem node missing"))?;
+        let request = crate::request(snapshot, node)?;
+        let key = format!("postmortem:{}:{}", owed.id, snapshot.revision.get());
+        let delivery = Delivery {
+            key: key.clone(),
+            epoch: snapshot.epoch.get(),
+            output: Output::Comment {
+                node,
+                kind: CommentKind::Postmortem,
+            },
+            generation: n.generation,
+            head_sha: None,
+            repository: request.repo,
+            issue: request.issue,
+            pull_request: None,
+            paths: vec![],
+            attempt: 1,
+            round: 0,
+            replanned: n.replanned,
+            checks: None,
+            job_generation: None,
+            question: None,
+            marker_key: None,
+            note: None,
+            scope_removals: None,
+            question_context: None,
+            request_text: None,
+            proposed: None,
+            steering: Some(Task::Postmortem {
+                id: owed.id,
+                run_key: key.clone(),
+            }),
+        };
+        let mut commit = Commit::new(
+            format!("postmortem:claim:{key}"),
+            json!({"postmortem_claim": owed.id, "run_key": key}),
+            snapshot,
+        );
+        commit.rows.push(self.allowance_row(delivery.clone()));
+        commit
+            .rows
+            .push(crate::put(JOBS, key.clone(), json!(delivery)));
+        commit
+            .rows
+            .push(crate::put("watches", key.clone(), json!(delivery)));
+        commit.effects.push(delivery.into_effect());
+        commit.postmortem_updates.push(PostmortemUpdate::Claim {
+            id: owed.id,
+            run_key: key,
+            rubric_version: RUBRIC_VERSION,
+        });
+        self.store.commit(&commit)?;
+        Ok(true)
     }
 
     /// Store a postmortem's result, or its failure, for the claim's run key only.
@@ -115,8 +490,50 @@ impl crate::Controller {
         failure: Option<String>,
         commit: &mut Commit,
     ) -> Result<()> {
-        let _ = (snapshot, key, reply, failure, commit);
-        todo!("#403: store a postmortem's result")
+        let Some(job) = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == JOBS && row.id == key)
+        else {
+            // A result for a finished or released claim changes nothing.
+            return Ok(());
+        };
+        let delivery: Delivery = crate::decode_stored(job.value.clone())?;
+        let Some(Task::Postmortem { id, run_key }) = delivery.steering.clone() else {
+            return Err(Error::Invalid("invalid postmortem job"));
+        };
+        retire_job(commit, key);
+        let judged = reply.map(|reply| {
+            let request = crate::request(snapshot, delivery.node())?;
+            let claimed = Claimed {
+                id,
+                node: delivery.node().0.to_string(),
+                repo: format!("{}/{}", request.repo.owner, request.repo.name),
+                issue: request.issue,
+                title: request.title,
+            };
+            check_reply(&reply)?;
+            result(&claimed, &reply)
+        });
+        commit.postmortem_updates.push(match judged {
+            Some(Ok(result)) => PostmortemUpdate::Done {
+                id,
+                run_key,
+                result: Box::new(result),
+            },
+            Some(Err(Error::Store(error))) => return Err(Error::Store(error)),
+            Some(Err(_)) => PostmortemUpdate::Failed {
+                id,
+                run_key,
+                failure: "invalid_reply".into(),
+            },
+            None => PostmortemUpdate::Failed {
+                id,
+                run_key,
+                failure: failure_class(failure.as_deref()).into(),
+            },
+        });
+        Ok(())
     }
 
     /// A postmortem whose launch failed permanently fails; it raises no incident.
@@ -127,13 +544,75 @@ impl crate::Controller {
         class: &str,
         commit: &mut Commit,
     ) -> Result<()> {
-        let _ = (snapshot, delivery, class, commit);
-        todo!("#403: fail a postmortem")
+        let _ = snapshot;
+        let Some(Task::Postmortem { id, run_key }) = &delivery.steering else {
+            return Err(Error::Invalid("invalid postmortem delivery"));
+        };
+        retire_job(commit, &delivery.key);
+        commit.postmortem_updates.push(PostmortemUpdate::Failed {
+            id: *id,
+            run_key: run_key.clone(),
+            failure: failure_class(Some(class)).into(),
+        });
+        Ok(())
     }
 
     /// At startup, a `running` postmortem with no live delivery is owed again.
     pub(crate) fn recover_postmortems(&mut self) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let has = |table: &str, key: &str| {
+            snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == table && row.id == key)
+        };
+        // A claim is live while its effect is pending, its watch reads the
+        // worker's record, or its result waits in the inbox.
+        let live = |key: &str| {
+            snapshot
+                .pending_effects
+                .iter()
+                .any(|effect| effect.key == key)
+                || has("watches", key)
+                || snapshot
+                    .rows
+                    .iter()
+                    .any(|row| row.table == "inbox" && row.value["Postmortem"]["key"] == key)
+        };
+        let mut commit = Commit::new(
+            format!("postmortem:recover:{}", snapshot.revision.get()),
+            json!({"postmortem_recovery": snapshot.revision.get()}),
+            &snapshot,
+        );
+        for job in snapshot.rows.iter().filter(|row| row.table == JOBS) {
+            if !live(&job.id) {
+                retire_job(&mut commit, &job.id);
+            }
+        }
+        for record in self.store.running_postmortems()? {
+            let Some(run_key) = record.run_key else {
+                continue;
+            };
+            if !(has(JOBS, &run_key) && live(&run_key)) {
+                commit.postmortem_updates.push(PostmortemUpdate::Release {
+                    id: record.id,
+                    run_key,
+                });
+            }
+        }
+        if !commit.rows.is_empty() || !commit.postmortem_updates.is_empty() {
+            self.store.commit(&commit)?;
+        }
         Ok(())
+    }
+}
+
+fn retire_job(commit: &mut Commit, key: &str) {
+    for table in [JOBS, "watches"] {
+        commit.rows.push(RowChange::Delete {
+            table: table.into(),
+            id: key.into(),
+        });
     }
 }
 

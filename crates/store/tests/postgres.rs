@@ -2359,6 +2359,7 @@ fn recommendation(rank: i16) -> Recommendation {
 
 fn judged(recommendations: i16) -> PostmortemResult {
     PostmortemResult {
+        model: "claude-opus-5-5".into(),
         cause: "tl3".into(),
         summary: "The maker needed a fix round.".into(),
         timeline: json!([{"at": "Making", "event": "The maker ran."}]),
@@ -2421,7 +2422,6 @@ fn postmortem_results(settings: &tl3_config::Store) {
         id,
         run_key: run_key.into(),
         rubric_version: 1,
-        model: "claude-opus-5-5".into(),
     };
     update(&mut store, "claim-1", claim(first.id, "postmortem:1:a")).unwrap();
     assert!(listener.wait().unwrap().contains("tl3_postmortems"));

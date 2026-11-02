@@ -232,6 +232,8 @@ pub struct Recommendation {
 /// What a judged postmortem stores, in the commit that consumes its reply.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PostmortemResult {
+    /// The model that wrote the postmortem; a quota can move it down the ladder.
+    pub model: String,
     /// tl3 or outside.
     pub cause: String,
     pub summary: String,
@@ -258,7 +260,6 @@ pub enum PostmortemUpdate {
         id: i64,
         run_key: String,
         rubric_version: i32,
-        model: String,
     },
     /// running -> done, only while the row is running under this run key.
     Done {

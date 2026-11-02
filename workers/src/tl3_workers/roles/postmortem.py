@@ -17,7 +17,7 @@ from tl3_workers.contracts import read_reply
 from tl3_workers.roles.base import Role
 
 
-# The newest runs are judged; older ones still count toward usage.
+# The newest runs are judged, and their tokens counted; the reply says how many.
 MAX_TRACES = 24
 MAX_RECOMMENDATIONS = 3
 # Trace attributes that hold structure rather than content.
@@ -88,7 +88,7 @@ def redactor_for(request):
 
 def redact_case(inputs, request):
     """The case file reaches a judge only through #302's redaction."""
-    raise NotImplementedError("#403")
+    return {**inputs, "case": scrub(inputs["case"], redactor_for(request))}
 
 
 def _b64(nbytes):
@@ -116,16 +116,78 @@ def case_trace(traces, redactor, case):
 
     Span content is redacted again here; events and status messages, which can
     hold raw exception text, are dropped."""
-    raise NotImplementedError("#403")
+    from mlflow.entities import Trace, TraceData, TraceInfo, TraceLocation, TraceState
+    from mlflow.entities.span import Span
+
+    raw = secrets.token_bytes(16)
+    otel_trace = base64.b64encode(raw).decode()
+    request_id = "tr-" + raw.hex()
+    root_id = _b64(8)
+    spans, starts, ends, runs = [], [], [], []
+    for trace in reversed(traces):
+        source = trace.info.trace_id
+        tags = trace.info.tags
+        for span in trace.data.spans:
+            data = span.to_dict()
+            data["trace_id"] = otel_trace
+            data["events"] = []
+            data["status"] = {"code": data["status"]["code"], "message": ""}
+            data["links"] = []
+            data["name"] = redactor.text(data["name"])[:256]
+            data["attributes"] = _redacted_attributes(data["attributes"], request_id, source,
+                                                      redactor)
+            if not data.get("parent_span_id"):
+                data["parent_span_id"] = root_id
+                data["name"] = (f"{data['name']} [{source} role={tags.get('role')} "
+                                f"model={tags.get('model')} outcome={tags.get('outcome')}]")
+            starts.append(int(data["start_time_unix_nano"]))
+            ends.append(int(data["end_time_unix_nano"]))
+            spans.append(data)
+        runs.append({"trace_id": source, **{key: tags.get(key) for key in
+                                             ("role", "model", "outcome", "attempt", "round")},
+                     "spans": len(trace.data.spans)})
+    now = time.time_ns()
+    start, end = min(starts, default=now), max(ends, default=now)
+    root = {
+        "trace_id": otel_trace, "span_id": root_id, "parent_span_id": None,
+        "name": f"case {case}", "start_time_unix_nano": start, "end_time_unix_nano": end,
+        "events": [], "status": {"code": "STATUS_CODE_OK", "message": ""}, "links": [],
+        "attributes": {
+            "mlflow.traceRequestId": json.dumps(request_id),
+            "mlflow.spanType": json.dumps("CHAIN"),
+            "mlflow.spanInputs": json.dumps({"case": case}),
+            "mlflow.spanOutputs": json.dumps(
+                {"runs": runs} if runs else {"runs": [], "note": "no traces were found"}),
+        },
+    }
+    info = TraceInfo(trace_id=request_id, trace_location=TraceLocation.from_experiment_id("0"),
+                     request_time=start // 1_000_000, state=TraceState.OK,
+                     execution_duration=(end - start) // 1_000_000, tags={})
+    return Trace(info=info, data=TraceData(spans=[Span.from_dict(root)]
+                                           + [Span.from_dict(span) for span in spans]))
 
 
 def usage(traces):
     """Tokens from the runs' trace tags, which tracing records per run."""
-    raise NotImplementedError("#403")
+    totals = {"traces": len(traces), **{key: 0 for key in USAGE}}
+    for trace in traces:
+        for key in USAGE:
+            value = trace.info.tags.get(key)
+            if isinstance(value, str) and value.isdigit():
+                totals[key] += int(value)
+    return totals
 
 
 def check_reply(inputs, reply):
-    raise NotImplementedError("#403")
+    recommendations = reply["postmortem"]["recommendations"]
+    if len(recommendations) > MAX_RECOMMENDATIONS:
+        raise ValueError("at most three recommendations")
+    for item in recommendations:
+        before, after = item["before"], item["after"]
+        if (item["operation"] == "add" and (before or not after)) or (
+                item["operation"] == "remove" and (after or not before)) or (
+                item["operation"] == "replace" and not (before and after)):
+            raise ValueError("a recommendation's before and after must fit its operation")
 
 
 def _load(path):
@@ -149,7 +211,62 @@ def _judge(run):
 
 
 def run(model, request, worktree, emit):
-    raise NotImplementedError("#403")
+    del model, worktree  # The judges call the proxy through MLflow, not LangChain.
+    workdir = Path(request["worktree"])
+    if (cached := _load(workdir / "reply.json")) is not None:
+        return cached
+    inputs = request["inputs"]
+    redactor = redactor_for(request)
+    settings = tracing.mlflow_settings(request)
+    source = SOURCE(settings)
+    traces = source.find(inputs["trace_tags"], MAX_TRACES)
+    postmortem_model = request["model"]["name"]
+    grade_model = inputs["grade_model"]
+    judged = _load(workdir / "judged.json")
+    if judged is None:
+        judges.configure(request["model"]["base_url"], tracing.model_key.get())
+        trace = case_trace(traces, redactor, inputs["record"]["id"])
+        case = inputs["case"]
+
+        def progress():
+            emit({"event": "progress", "unit": "model_turn"})
+
+        grades = []
+        with judges.guarded_tools(redactor, progress):
+            for dimension, grader in judges.grade_judges(inputs["rubric"], grade_model).items():
+                feedback = _judge(lambda: grader(inputs=case, trace=trace))
+                value = feedback.value
+                grade = value if type(value) is int and 1 <= value <= 5 else None
+                grades.append({"dimension": dimension, "grade": grade,
+                               "rationale": redactor.text(feedback.rationale or "", 4000)[:4000],
+                               "judge_model": grade_model})
+            prompt = run_prompt()
+            feedback = _judge(lambda: judges.postmortem_judge(prompt, postmortem_model)(
+                inputs=case, trace=trace))
+        written = feedback.value if isinstance(feedback.value, dict) else read_reply(
+            str(feedback.value))
+        judged = {"postmortem": scrub(written, redactor), "grades": grades}
+        _save(workdir / "judged.json", judged)
+    logged = _load(workdir / "assessments.json") or {}
+    target = traces[0].info.trace_id if traces else None
+    tags = inputs["trace_tags"]
+    for grade in judged["grades"]:
+        dimension = grade["dimension"]
+        if target and grade["grade"] is not None and dimension not in logged:
+            logged[dimension] = source.log(target, dimension, grade["grade"], grade["rationale"],
+                                           grade["judge_model"], {
+                **{key: str(tags[key]) for key in ("node", "request", "repo", "issue")},
+                "release": inputs["release"],
+                "rubric_version": str(inputs["rubric"]["version"]),
+                "dimension": dimension, "judge_model": grade["judge_model"]})
+            _save(workdir / "assessments.json", logged)
+        grade["assessment_id"] = logged.get(dimension)
+    reply = {"postmortem": judged["postmortem"], "grades": judged["grades"],
+             "assessment_ids": [logged[key] for key in sorted(logged)],
+             "usage": usage(traces),
+             "models": {"postmortem": postmortem_model, "grades": grade_model}}
+    _save(workdir / "reply.json", reply)
+    return reply
 
 
 def run_prompt():

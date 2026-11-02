@@ -163,6 +163,15 @@ fn validator(role: &str, direction: &str) -> Result<&'static jsonschema::Validat
         .ok_or(Error::Invalid("unsupported worker role"))
 }
 
+/// A reply checked against its role's schema alone, for replies no kernel role maps.
+pub(crate) fn validate_reply(role: &str, reply: &Value) -> Result<()> {
+    if validator(role, "reply")?.is_valid(reply) {
+        Ok(())
+    } else {
+        Err(Error::Invalid("worker reply breaks role schema"))
+    }
+}
+
 pub(super) fn validate_inputs(role: &str, inputs: &Value) -> Result<()> {
     if validator(role, "input")?.is_valid(inputs) {
         Ok(())

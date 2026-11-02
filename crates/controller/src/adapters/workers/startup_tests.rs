@@ -321,3 +321,94 @@ fn maker_checks_against_the_worktree_base(database: &str, stored_on: &str, resta
         f.head
     );
 }
+
+/// #403: a claimed postmortem's request carries a case file its schema accepts,
+/// with the postmortem ladder's models and the node's MLflow tags.
+#[test]
+fn a_postmortem_request_carries_a_valid_case_file() {
+    use crate::git_tests::{Repo, support::Database};
+    let f = Repo::new();
+    let mut db = Database::start();
+    let mut config =
+        tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+    config.store = db.create("postmortem_case");
+    config.workers.runs = f.root.path().join("runs");
+    let registry = crate::adapters::simulation(&f.root.path().join("fakes")).unwrap();
+    let mut controller = crate::Controller::open(
+        Store::open(&config.store).unwrap(),
+        registry,
+        crate::Bootstrap::from_config(&config).unwrap(),
+    )
+    .unwrap();
+    controller.run_postmortems();
+    let mut store = Store::open(&config.store).unwrap();
+    postgres::Config::new()
+        .host(&config.store.host)
+        .port(config.store.port)
+        .user(&config.store.user)
+        .dbname(&config.store.database)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap()
+        .execute(
+            "UPDATE tl3_settings SET value = '1' WHERE key = 'postmortem_sample_share'",
+            &[],
+        )
+        .unwrap();
+    controller
+        .intake(crate::LabelledIssue {
+            delivery: "postmortem-case".into(),
+            owner: "RobTand".into(),
+            repo: "tl3-sandbox".into(),
+            installation: 1,
+            number: 42,
+            title: "Fix the sandbox build".into(),
+            actor: config.github.rob.id,
+            label: "tl3".into(),
+        })
+        .unwrap();
+    let mut delivery = None;
+    for _ in 0..300 {
+        assert!(
+            controller.drive_once().unwrap(),
+            "no postmortem was claimed"
+        );
+        if let Some(effect) = store
+            .effects()
+            .unwrap()
+            .into_iter()
+            .find(|effect| effect.key.starts_with("postmortem:"))
+        {
+            delivery = Some(serde_json::from_value::<Delivery>(effect.payload).unwrap());
+            break;
+        }
+    }
+    let delivery = delivery.unwrap();
+    assert!(delivery.is_postmortem());
+    let snapshot = store.load().unwrap();
+    let supervisor = Supervisor::new(&config, &f.root.path().join("records")).unwrap();
+    let request = supervisor
+        .request(&delivery, "postmortem", &mut store, &snapshot)
+        .unwrap();
+    assert_eq!(request["role"], "postmortem");
+    assert_eq!(request["model"]["name"], config.models.postmortem[0].name);
+    let inputs = &request["inputs"];
+    assert_eq!(inputs["grade_model"], config.models.postmortem[1].name);
+    assert_eq!(inputs["record"]["trigger"], "close");
+    assert_eq!(
+        inputs["trace_tags"],
+        json!({"node": "0", "request": "0", "repo": "RobTand/tl3-sandbox", "issue": "42"})
+    );
+    assert_eq!(inputs["case"]["outcome"], "Merged");
+    assert_eq!(inputs["case"]["request"]["title"], "Fix the sandbox build");
+    assert_eq!(inputs["rubric"]["version"], 1);
+    assert_eq!(inputs["release"], inputs["case"]["release"]);
+    assert!(
+        inputs["case"]["grades"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|grade| grade["dimension"] == "reliability")
+    );
+    assert!(inputs["case"]["phases"].as_array().unwrap().len() > 1);
+}

@@ -235,6 +235,8 @@ pub struct Controller {
     clock: Box<dyn clock::Clock>,
     held_effects: BTreeMap<executor::Upstream, BTreeMap<String, String>>,
     allowances: tl3_config::Allowances,
+    /// tl3d judges owed postmortems (#403); see `run_postmortems`.
+    postmortems: bool,
 }
 impl Controller {
     pub fn open(store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
@@ -300,6 +302,7 @@ impl Controller {
             clock: Box::new(clock),
             held_effects: BTreeMap::new(),
             allowances: tl3_config::Allowances::default(),
+            postmortems: false,
         };
         controller.reconcile_capacity()?;
         controller.cleanup_ended_looks()?;

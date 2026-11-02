@@ -47,8 +47,10 @@ py_binary(
         "@tl3_pip//httpx",
         "@tl3_pip//jsonschema",
         "@tl3_pip//mlflow_skinny",
+        "@tl3_pip//numpy",
         "@tl3_pip//opentelemetry_proto",
         "@tl3_pip//opentelemetry_sdk",
+        "@tl3_pip//pandas",
         "@tl3_pip//sqlparse",  # keep: imported dynamically by MLflow tracing
     ],
 )
