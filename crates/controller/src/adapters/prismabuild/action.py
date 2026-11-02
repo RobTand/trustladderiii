@@ -8,7 +8,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "trusted"))
 from tl3_harness import Check, Container, Forcing, HarnessInputError, Kind, run_checks
 from tl3_harness.execution import require_admission, result_json
 from tl3_harness.trees import git
-from tl3_harness.node_ids import validate_always_tests
 
 
 def decode(request):
@@ -24,7 +23,8 @@ def decode(request):
         if selected is not None and (type(selected) is not int or selected < 1):
             raise ValueError("selected_tests must be a positive limit")
         always = request.get("always_tests", [])
-        validate_always_tests(always)
+        if not isinstance(always, list):
+            raise ValueError("always_tests must list pytest files or node IDs")
         return (plan, Container(request["image"], exec_scratch=request.get("exec_scratch", False)),
                 tuple(protected), selected, tuple(always))
     except (KeyError, TypeError, ValueError) as error:
