@@ -66,7 +66,7 @@ class GateTests(unittest.TestCase):
                                          True, cpu_details=details)
             self.assertEqual(set(details['cpu_fallbacks']), {'fixture::database'})
 
-    def test_receipt_counts_a_live_postmaster_and_its_reaped_backend_cpu(self):
+    def test_live_postmaster_and_reaped_backend_cpu_reach_budget_enforcement(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             fixture = root / 'tl3-store-pg-budget'
@@ -88,13 +88,24 @@ class GateTests(unittest.TestCase):
                                           + 'print("1 fixture scenarios passed", flush=True)\n')
                     cpu, details = {}, {}
                     with patch.dict(os.environ, {'TMPDIR': temporary}):
-                        rust_gate.execute_binary({'name': 'tl3-controller/publishing',
-                                                  'command': [sys.executable, str(executable)]},
-                                                 True, cpu_seconds=cpu, cpu_details=details)
+                        wall = rust_gate.execute_binary({'name': 'tl3-controller/publishing',
+                                                         'command': [sys.executable, str(executable)]},
+                                                        True, cpu_seconds=cpu, cpu_details=details)
                     self.assertGreaterEqual(sum(cpu.values()), .3)
                     self.assertGreaterEqual(sum(details['postgres_cpu_seconds'].values()), .3)
                     self.assertFalse(details['cpu_fallbacks'])
                     self.assertIsNone(postmaster.poll(), 'server must still be alive and unreaped')
+                    key = 'tl3-controller/publishing::query'
+                    server_cpu = details['postgres_cpu_seconds'][key]
+                    test_cpu = cpu[key] - server_cpu
+                    policy = self.cpu_policy()
+                    policy['seconds'] = max(wall[key], 1) * 2
+                    policy['cpu']['seconds'] = test_cpu + server_cpu / 2
+                    rust_gate.check_budget({key: wall[key]}, policy, policy,
+                                           cpu_seconds={key: test_cpu})
+                    with self.assertRaisesRegex(RuntimeError, 'Per-test time budget exceeded:.*\n.*CPU'):
+                        rust_gate.check_budget({key: wall[key]}, policy, policy, cpu_seconds=cpu,
+                                               cpu_fallbacks=details['cpu_fallbacks'])
                 finally:
                     postmaster.communicate('\n')
 

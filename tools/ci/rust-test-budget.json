@@ -454,7 +454,9 @@
       "tl3-controller/github-notices::operations_messages_and_missed_delivery_recovery": 1
     }
   },
-  "wall_only": {},
+  "wall_only": {
+    "tl3-controller/workers::*": "Bootstrap only: no complete CPU receipt; retain wall budgets until #454 shards workers, then calibrate per shard and remove this exception in a follow-up."
+  },
   "wall_only_platforms": {
     "darwin": "Linux procfs task CPU counters are unavailable.",
     "win32": "Linux procfs task CPU counters are unavailable."

@@ -28,12 +28,25 @@ Bazel's target timeout still stops binaries that never finish.
 The fixture startup diagnostic tells the runner that a server is expected.
 An unavailable postmaster PID after startup, an unreadable fixture sample,
 or a previously sampled server disappearing makes that scenario wall-only.
-Scenarios that never start a server retain CPU enforcement. `cpu_fallbacks` records the reason for every such
+Scenarios that never start a server retain CPU enforcement. A server started
+by a child process has a different fixture owner PID. Its CPU is uncounted,
+and it has no fallback unless its startup diagnostic reaches this runner. `cpu_fallbacks` records the reason for every such
 scenario, including setup or cleanup markers without a live server. Its
 original effective wall limit applies. Calibration excludes these partial
-CPU samples. The policy's static `wall_only` scenario list is empty. Darwin
+CPU samples. The static `wall_only` list covers `tl3-controller/workers::*` during bootstrap.
+Workers has no complete CPU receipt, so its 28 explicit CPU caps and default
+remain uncalibrated and inactive. After #454 splits the target into eight
+shards, a follow-up must collect per-shard receipts, calibrate those caps and
+remove the exception. Darwin
 and Windows retain wall limits because Linux procfs is unavailable. Other
 platforms and missing or invalid test-process CPU samples fail closed.
+
+A single-target PrismaBuild store probe retained CPU enforcement for 34 of
+37 timing entries. Only `durability_settings`, `reader_restart` and the tail
+fell back when a server ended between markers. Store therefore has no blanket
+wall-only exception. The receipt and a real Postgres CPU-failure check are
+recorded in `docs/bazel-budget-calibration.json`; this fleet receipt does not
+calibrate the BuildBuddy caps.
 
 CPU overruns and wall-only budget overruns can receive the Gate's one
 budget-only rerun. A wall-backstop overrun starts with
@@ -50,7 +63,8 @@ previous limit.
 The default uses twice the nearest-rank p95 of measured scenario maxima,
 excluding tails, with the same rounding, floor and shrink-only rule.
 Unmeasured explicit caps retain their previous numerical limits and are
-listed as uncalibrated. An empirical p95 from this small sample does not
+listed as uncalibrated. The prismabuild receipt has 34 of 45 timings under
+conservative fallback/default coverage rather than calibrated CPU caps. An empirical p95 from this small sample does not
 establish a population percentile.
 
 The coordinator explicitly authorized one reset of measured caps inside
