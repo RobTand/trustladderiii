@@ -52,7 +52,6 @@ fn bootstrap() -> Bootstrap {
         slots: 1,
         pool: 1,
         fail_fast: false,
-        fail_fast: false,
     }
 }
 fn fixture(name: &str, part: &str) -> Value {
