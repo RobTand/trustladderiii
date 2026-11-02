@@ -248,6 +248,12 @@ class FailFastTests(unittest.TestCase):
         self.assertEqual(watcher.failure, {'label': '//a:broken', 'reason': 'BUILD_FAILURE'})
         self.assertTrue(watcher.should_cancel(2))
 
+    def test_build_failure_uses_proto_default_when_false_is_omitted(self):
+        watcher = bazel_gate.FailFast('batch-draft')
+        watcher.event({'id': {'targetCompleted': {'label': '//a:broken'}}, 'completed': {}}, 0)
+        self.assertEqual(watcher.failure, {'label': '//a:broken', 'reason': 'BUILD_FAILURE'})
+        self.assertTrue(watcher.should_cancel(0))
+
     def test_stream_reads_only_complete_new_lines(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, 'bep.json')
