@@ -550,6 +550,7 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(workers["launcher"][:3], ["/usr/bin/systemd-run", "--user", "--scope"])
         self.assertIn("--slice=tl3-workers.slice", workers["launcher"])
         self.assertEqual(workers["python"], str(deploy.paths(self.home)[0] / "current/workers/.venv/bin/python"))
+        self.assertTrue((deploy.HERE / "units" / deploy.WORKER_SLICE).is_file())
         unit = (deploy.HERE / "units/tl3d.service").read_text().splitlines()
         self.assertIn("KillMode=control-group", unit, "tl3d's own cgroup still stops on its own")
 
