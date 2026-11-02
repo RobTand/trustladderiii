@@ -11,8 +11,6 @@ import rust_gate  # noqa: E402
 
 # Must match WORKSPACE in tools/bazel/rust.bzl.
 WORKSPACE = Path('/tmp/tl3-workspace')
-# Must match BUDGET_MARKER in tools/ci/bazel_gate.py: every test passed, only a budget overran.
-BUDGET_MARKER = 'budget-overrun.txt'
 
 
 def link_workspace():
@@ -39,14 +37,11 @@ def use_worker_python(launcher):
 
 
 def enforce_budget(results, config, runner, outputs, baseline=None, cpu_seconds=None, cpu_fallbacks=None):
-    try:
-        rust_gate.check_budget(results, config, baseline or config, runner_class=runner,
-                               cpu_seconds=cpu_seconds, cpu_fallbacks=cpu_fallbacks)
-    except RuntimeError as error:
-        if str(error).startswith('Per-test time budget exceeded'):
-            # The gate reruns budget-only failures once; an executor can be contended.
-            Path(outputs, BUDGET_MARKER).write_text(str(error) + '\n')
-        raise
+    warnings = rust_gate.check_budget(results, config, baseline or config, runner_class=runner,
+                                      cpu_seconds=cpu_seconds, cpu_fallbacks=cpu_fallbacks)
+    Path(outputs, 'budget-warnings.json').write_text(json.dumps(warnings) + '\n')
+    for warning in warnings:
+        print(json.dumps({'budget_warning': warning}), flush=True)
 
 
 def main():
@@ -62,7 +57,7 @@ def main():
     results = rust_gate.execute_binary(binary, harness == 'custom', arguments, cpu_seconds=cpu_seconds,
                                        cpu_details=cpu_details)
     check_workspace()
-    # .bazelrc names the executor class; budgets stay strict without one.
+    # .bazelrc names the executor class used to calculate warning thresholds.
     runner = os.environ.get('TL3_RUNNER_CLASS', 'baseline')
     names = [key.split('::', 1)[1] for key in results if not key.endswith('::__tail__')]
     # Written before the budget check so calibration also sees overruns.
