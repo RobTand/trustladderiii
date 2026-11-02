@@ -42,6 +42,11 @@ class GateTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'may not grow'):
             rust_gate.check_budget({}, {**baseline, 'cpu': None}, baseline)
 
+    def test_removing_a_cpu_override_below_default_cannot_grow_the_effective_limit(self):
+        baseline = {'seconds': 10, 'slow': {}, 'cpu': {'seconds': 10, 'slow': {'fast': 1}}}
+        with self.assertRaisesRegex(RuntimeError, 'may not grow'):
+            rust_gate.check_budget({}, {**baseline, 'cpu': {'seconds': 10, 'slow': {}}}, baseline)
+
     def test_cpu_bootstrap_cannot_exceed_previous_wall_limits(self):
         old = {'seconds': 10, 'slow': {'slow': 20}}
         policy = {**old, 'cpu': {'seconds': 11, 'slow': {}}}
