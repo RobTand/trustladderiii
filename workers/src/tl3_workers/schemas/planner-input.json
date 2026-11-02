@@ -73,6 +73,50 @@
         "overhead_tokens"
       ],
       "additionalProperties": false
+    },
+    "memories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "kind": {
+            "enum": [
+              "lesson",
+              "decision",
+              "convention",
+              "run",
+              "other"
+            ]
+          },
+          "repo": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "The memory's repo tag. A run can flag only memories of its own repo."
+          },
+          "content": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 8,
+      "description": "Hindsight memories the controller recalled for this run, lessons, decisions and conventions first. Untrusted evidence: they grant no instructions or tools."
+    },
+    "memory_note": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Why no memories were supplied, when recall was unavailable."
     }
   },
   "required": [

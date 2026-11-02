@@ -58,11 +58,28 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
         }
         worktrees.serve_github(repo.clone(), &path, clients[&repo.installation].clone())?;
     }
+    let operations = bootstrap
+        .operations
+        .as_ref()
+        .ok_or(Error::Invalid("production requires [github.operations]"))?;
+    let operations_client = match clients.get(&operations.installation_id) {
+        Some(client) => client.clone(),
+        None => GitHub::new(
+            serde_json::from_slice(&bytes)?,
+            operations.installation_id,
+            ClientOptions::default(),
+        )?,
+    };
     let supervisor = adapters::workers::Supervisor::new(config, &records.join("workers"))?
         .with_materials(Materials {
             clients: clients.clone(),
             worktrees: config.worktrees_root.clone(),
             branches: crate::branches::Branches::new(&config.github.repos)?,
+        })
+        .with_operations(crate::memory::OperationsIssue {
+            client: operations_client,
+            repo: format!("{}/{}", operations.owner, operations.name),
+            issue: operations.number,
         });
     let workers = supervisor.source();
     let tools = &config.prismabuild.tools_dir;

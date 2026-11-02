@@ -109,7 +109,7 @@ container_image = "sha256:000000000000000000000000000000000000000000000000000000
 
 [hindsight]
 # Set a private, owner-only file containing the raw API key when authentication is enabled.
-# The controller reads it only during background memory delivery.
+# The controller reads it for memory delivery and for recall before worker runs.
 # api_key_file = "/run/tl3/hindsight-key"
 # Hindsight listens locally on dl380g10 at 8890; 8888 is celestia's tunnel.
 endpoint = "http://127.0.0.1:8890"
