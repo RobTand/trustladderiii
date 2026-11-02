@@ -60,6 +60,7 @@ pub(crate) fn check(reply: &Value, current: crate::findings::CurrentReview<'_>) 
                 name: format!("reproducing/{id}"),
                 kind: Kind::Reproducing,
                 tests,
+                forcing: None,
             });
         } else {
             item["reason"] = mapping["reason"].clone();

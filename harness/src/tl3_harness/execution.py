@@ -10,7 +10,8 @@ import time
 from typing import Protocol
 
 from .limits import MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, validate_check_plan
-from .model import Check, FailureNotes, HarnessInputError, Kind, Outcome, Result, TestResult, Verdict, judge
+from .model import (Check, FailureNotes, Forcing, HarnessInputError, Kind, Outcome, Result, TestResult, Verdict,
+                    judge)
 from .node_ids import selects
 from .report import InvalidReport, decode, parse
 from . import selection
@@ -100,7 +101,7 @@ class Progress:
 
 def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: Path,
              progress: Progress, additions: frozenset[tuple[str, str]] = frozenset(), *,
-             messages: dict[str, str] | None = None) -> dict[str, Outcome]:
+             messages: dict[str, str] | None = None, forcing: Forcing | None = None) -> dict[str, Outcome]:
     missing = {test for test in tests if not (tree / test.split("::")[0]).is_file()}
     records = []
     invalid = False
@@ -110,7 +111,9 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
     # The container gets no writable report mount or PB token. Its event stream
     # is journalled and parsed by this host process, outside the checkout.
     with report.open("wb") as journal, tempfile.TemporaryFile() as errors, tempfile.TemporaryFile() as selection:
-        selection.write(json.dumps(tests).encode())
+        # The forcing travels with the selection to the read-only runner, outside the checkout (#393).
+        selection.write(json.dumps(tests if forcing is None else
+                                   {"tests": tests, "forcing": forcing.as_json()}).encode())
         selection.seek(0)
         with subprocess.Popen(container_command(tree, container, tests), stdin=selection,
                               stdout=subprocess.PIPE, stderr=errors) as child:
@@ -210,7 +213,7 @@ class TestTool(Protocol):
 
     def run(self, tree: Path, container: Container, tests: tuple[str, ...], report: Path,
             progress: Progress, additions: frozenset[tuple[str, str]] = frozenset(), *,
-            messages: dict[str, str] | None = None) -> dict[str, Outcome]: ...
+            messages: dict[str, str] | None = None, forcing: Forcing | None = None) -> dict[str, Outcome]: ...
 
 
 class Pytest:
@@ -237,8 +240,11 @@ class Pytest:
     def select(self, tree, changed, config):
         return selection.select(tree, changed, lambda name: is_test(name, config["test-files"]))
 
-    def run(self, tree, container, tests, report, progress, additions=frozenset(), *, messages=None):
-        return run_tree(tree, container, tests, report, progress, additions, messages=messages)
+    def run(self, tree, container, tests, report, progress, additions=frozenset(), *, messages=None, forcing=None):
+        # Test seams stand in for run_tree without a forcing parameter; pass it only when set.
+        if forcing is None:
+            return run_tree(tree, container, tests, report, progress, additions, messages=messages)
+        return run_tree(tree, container, tests, report, progress, additions, messages=messages, forcing=forcing)
 
 
 PYTEST = Pytest()
@@ -358,12 +364,13 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         if invalid:
             outcomes = dict.fromkeys(tests, Outcome.UNCOLLECTED)
             messages = dict.fromkeys(tests, "The plan names a test outside the configured test files.")
-            return tuple(judge(check, outcomes, outcomes, messages=messages) for check in plan)
+            return tuple(judge(replace(check, forcing=None), outcomes, outcomes, messages=messages) for check in plan)
         ordinary = tuple(dict.fromkeys(test for check in plan
                                        if check.kind not in (Kind.DEMONSTRATING, Kind.REPRODUCING)
                                        for test in check.tests))
         changed = tool.changed_existing_tests(old, new, ordinary)
-        demonstrating = tuple(dict.fromkeys(test for check in plan if check.kind == Kind.DEMONSTRATING
+        demonstrating = tuple(dict.fromkeys(test for check in plan
+                                            if check.kind == Kind.DEMONSTRATING and check.forcing is None
                                             for test in check.tests))
         candidates = (selected_candidates(repo, tool, old, new, config, base, head, plan, selected_tests)
                       if selected_tests else ())
@@ -403,12 +410,27 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             reproduced = tool.run(round_tree, container, reproducing,
                                   root / "reproducing.jsonl", progress, additions,
                                   messages=base_notes[Kind.REPRODUCING])
+        # A forced check runs the old test on the original base and the new test on the
+        # head, both under its forcing; the ordinary head run is the unforced one (#393).
+        forced = {}
+        for index, check in enumerate(check for check in plan if check.forcing is not None):
+            notes, head_messages = FailureNotes(), {}
+            forced_base = tool.run(old, container, check.tests, root / f"forced-base-{index}.jsonl", progress,
+                                   messages=notes, forcing=check.forcing)
+            forced_head = tool.run(new, container, check.tests, root / f"forced-head-{index}.jsonl", progress,
+                                   messages=head_messages, forcing=check.forcing)
+            forced[check.name] = forced_base, notes, forced_head, head_messages
         messages = {}
         after = tool.run(new, container, tests, root / "head.jsonl", progress, messages=messages)
         comparisons = {Kind.DEMONSTRATING: demonstrated, Kind.REPRODUCING: reproduced,
                        Kind.REGRESSION: before, Kind.BEHAVIOR_PRESERVING: before}
         results = []
         for check in plan:
+            if check.name in forced:
+                forced_base, notes, forced_head, head_messages = forced[check.name]
+                results.append(judge(check, forced_base, after, messages=messages, base_notes=notes,
+                                     forced=forced_head, forced_messages=head_messages))
+                continue
             result = judge(check, comparisons[check.kind], after, messages=messages,
                            base_notes=base_notes.get(check.kind))
             if check.kind in (Kind.REGRESSION, Kind.BEHAVIOR_PRESERVING):
@@ -426,8 +448,15 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
 def result_json(results: tuple[Result, ...]) -> str:
     reports = [asdict(result) for result in results]
     detailed = 0
-    for report in reports:
+    for result, report in zip(results, reports):
+        # Unforced results keep their earlier shape; a forced one carries its forcing for review (#393).
+        if result.forcing is None:
+            del report['forcing']
+        else:
+            report['forcing'] = result.forcing.as_json()
         for test in report['tests']:
+            if test['head_forced'] is None:
+                del test['head_forced']
             # A passing test carries a message only when a selected rerun found it flaky.
             if (not test['passed'] or test['message']) and detailed < MAX_DETAILED_FAILURES:
                 test['message'] = test['message'][:MAX_MESSAGE_CHARS].encode(errors='backslashreplace').decode()[:MAX_MESSAGE_CHARS]

@@ -79,11 +79,34 @@ pub struct Adapter {
     runtime: &'static tokio::runtime::Runtime,
     records: Records,
     operations: Option<tl3_config::OperationsIssue>,
+    /// Each served repository's PR-body policy (#447).
+    body_lines: Vec<(crate::Repository, Vec<tl3_config::BodyLine>)>,
 }
 impl Adapter {
     pub fn with_repositories(mut self, repos: &[tl3_config::Repository]) -> Result<Self> {
         self.branches = crate::branches::Branches::new(repos)?;
+        self.body_lines = repos
+            .iter()
+            .map(|repo| {
+                (
+                    crate::Repository {
+                        owner: repo.owner.clone(),
+                        name: repo.name.clone(),
+                        installation: repo.installation_id,
+                    },
+                    repo.pr_body_lines.clone(),
+                )
+            })
+            .collect();
         Ok(self)
+    }
+
+    /// The repository's PR-body policy; empty when it has none.
+    pub(crate) fn body_lines(&self, repo: &crate::Repository) -> &[tl3_config::BodyLine] {
+        self.body_lines
+            .iter()
+            .find(|(served, _)| served == repo)
+            .map_or(&[], |(_, rules)| rules)
     }
 
     pub fn new(
@@ -109,6 +132,7 @@ impl Adapter {
             runtime: crate::executor::runtime()?,
             records: Records::new(simulation),
             operations,
+            body_lines: Vec::new(),
         })
     }
     fn fence(&mut self, delivery: &Delivery) -> Result<()> {
@@ -1220,5 +1244,57 @@ mod question_findings_tests {
         );
         assert!(message.contains("1. Try again with guidance: "));
         assert!(!message.contains("digests"), "{message}");
+    }
+
+    #[test]
+    fn three_generic_drafts_still_post_the_worker_blocker() {
+        let reply: Value = serde_json::from_str(include_str!(
+            "../../../../workers/tests/fixtures/question-findings/prismabuild-2636-planner-cant-meet.json"
+        )).unwrap();
+        for source in ["planner", "maker"] {
+            let delivery = ask(
+                QKind::CantMeet,
+                Cont::Planning { must_split: false },
+                json!({"source":source, "outcome":"cant_meet", "report":reply["report"],
+                    "decision":"May I edit the protected file?"}),
+            );
+            let mut writer = Scripted(vec![Some("What should I change?"); 3], vec![]);
+            let message =
+                question_draft(&mut writer, &delivery, input(&delivery), &Policy::default())
+                    .unwrap();
+            assert_eq!(writer.1.len(), 3);
+            assert!(message.contains("tools/ci/bazel_gate.py"), "{message}");
+            assert!(message.contains("protected"), "{message}");
+            assert!(message.contains("1. Try again with guidance:"));
+            assert!(message.contains("2. Change the request:"));
+            assert!(message.contains("3. Stop:"));
+        }
+    }
+
+    #[test]
+    fn fallback_redacts_secrets_and_clips_report_sentences() {
+        for report in [
+            format!(
+                "The controller forbids tools/ci/bazel_gate.py with password=secret123. {}",
+                "Extra detail. ".repeat(100)
+            ),
+            "The leaf cannot edit tools/ci/bazel_gate.py because of owner/repo#42 with password=secret123.".into(),
+            format!("The controller forbids {} tools/ci/bazel_gate.py.", "changes ".repeat(100)),
+        ] {
+            let delivery = ask(
+                QKind::CantMeet,
+                Cont::Planning { must_split: false },
+                json!({"source":"planner", "outcome":"cant_meet", "report":report,
+                    "decision":"May I edit the protected file?"}),
+            );
+            let mut writer = Scripted(vec![Some("What should I change?"); 3], vec![]);
+            let message =
+                question_draft(&mut writer, &delivery, input(&delivery), &Policy::default()).unwrap();
+            assert!(message.contains("tools/ci/bazel_gate.py"), "{message}");
+            for omitted in ["secret123", "Extra detail", "owner/repo#42", "leaf"] {
+                assert!(!message.contains(omitted), "{message}");
+            }
+            assert!(message.chars().count() < 2_000);
+        }
     }
 }

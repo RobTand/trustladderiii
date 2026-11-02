@@ -949,6 +949,18 @@ impl GitHub {
     }
 
     /// An uncertain POST must be reconciled through run_attempt before another write.
+    /// Rerun only a workflow run's failed jobs, and the jobs that depend on them.
+    pub async fn rerun_failed_jobs(&self, repo: &str, run: u64) -> Result<(), Error> {
+        self.request::<Value>(
+            Method::POST,
+            format!("{}/actions/runs/{run}/rerun-failed-jobs", repo_path(repo)?),
+            vec![],
+            Some(json!({})),
+        )
+        .await?;
+        Ok(())
+    }
+
     pub async fn rerun_workflow_run(&self, repo: &str, run: u64) -> Result<(), Error> {
         self.request::<Value>(
             Method::POST,
@@ -1010,6 +1022,22 @@ impl GitHub {
             format!("{}/pulls", repo_path(repo)?),
             vec![],
             Some(serde_json::to_value(pull).map_err(|_| Error::Response)?),
+        )
+        .await
+    }
+
+    /// Replace a pull request's body. The same body twice is the same request.
+    pub async fn update_pull_request_body(
+        &self,
+        repo: &str,
+        number: u64,
+        body: &str,
+    ) -> Result<PullRequest, Error> {
+        self.request(
+            Method::PATCH,
+            format!("{}/pulls/{number}", repo_path(repo)?),
+            vec![],
+            Some(json!({"body": body})),
         )
         .await
     }

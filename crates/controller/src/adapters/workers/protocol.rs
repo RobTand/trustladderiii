@@ -433,6 +433,14 @@ mod reply_defects {
                 ))
                 .unwrap(),
             ),
+            (
+                // maker-input.json takes a forced check's forcing from here (#393).
+                "planner-reply.json".into(),
+                serde_json::from_str(include_str!(
+                    "../../../../../workers/src/tl3_workers/schemas/planner-reply.json"
+                ))
+                .unwrap(),
+            ),
         ];
         let validators = schemas_from(schemas).unwrap();
         assert!(

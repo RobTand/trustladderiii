@@ -54,6 +54,9 @@ struct CheckResult {
     verdict: Verdict,
     custody: Custody,
     tests: Vec<TestResult>,
+    /// A forced check echoes its forcing so review can judge it (#393).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    forcing: Option<serde_json::Value>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -79,6 +82,8 @@ struct TestResult {
     passed: bool,
     #[serde(default)]
     message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    head_forced: Option<Outcome>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -347,6 +352,16 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             }
         }
         if matches!(result.verdict, Verdict::Pass) != result.tests.iter().all(|t| t.passed) {
+            return None;
+        }
+        // A forced check passes only on evidence from its forced head run (#393).
+        if result.forcing.is_some() != check.forcing.is_some()
+            || (check.forcing.is_some()
+                && result
+                    .tests
+                    .iter()
+                    .any(|t| t.passed && !matches!(t.head_forced, Some(Outcome::Passed))))
+        {
             return None;
         }
     }
