@@ -20,6 +20,7 @@ import tempfile
 import time
 import urllib.request
 
+import bazel_generated
 import rust_gate
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,6 +36,7 @@ FALLBACK = [
     'BUILD.bazel', 'Cargo.toml', 'Cargo.lock', 'crates/*/Cargo.toml', 'crates/*/build.rs',
     '**/uv.lock', '**/pyproject.toml', 'tools/bazel/*', 'rust-toolchain', 'rust-toolchain.toml',
     '.python-version', '.github/workflows/*', 'tools/ci/bazel_gate.py', 'tools/ci/remote_gate.py',
+    'gazelle_python.yaml',
 ]
 # Files no build or test reads. Only these may change without selecting a target.
 IRRELEVANT = [
@@ -85,7 +87,7 @@ def plan(changed, deleted, impacted, used_sources, tests):
     forced = fallback_files(changed | deleted)
     if forced:
         return {'selection': 'fallback', 'reason': forced, 'selected': sorted(tests),
-                'scopes': [], 'all_scopes': True}
+                'build': ['//...'], 'scopes': [], 'all_scopes': True}
     unmapped = sorted(path for path in changed - deleted
                       if path not in used_sources and not irrelevant(path))
     if unmapped:
@@ -97,7 +99,9 @@ def plan(changed, deleted, impacted, used_sources, tests):
     selected = sorted(set(impacted) & set(tests))
     scopes = sorted({label.split(':', 1)[0] for label in impacted if label.startswith('//')})
     selection = 'impacted' if impacted else 'irrelevant'
-    return {'selection': selection, 'reason': [], 'selected': selected,
+    # Impacted targets no test depends on would otherwise never be built.
+    build = sorted(set(impacted) - set(tests))
+    return {'selection': selection, 'reason': [], 'selected': selected, 'build': build,
             'scopes': scopes, 'all_scopes': False}
 
 
@@ -212,6 +216,17 @@ class Workspace:
                  capture=False, check=False)
         return test_statuses(bep)
 
+    def build(self, targets, config, metadata, log_name):
+        """Build targets; True when every one built."""
+        if not targets:
+            return True
+        patterns = Path(tempfile.gettempdir(), f'{log_name}-build-targets.txt')
+        patterns.write_text('\n'.join(targets) + '\n')
+        return not self.run(self.bazel, 'build', f'--config={config}', '--config=ci', '--keep_going',
+                            f'--target_pattern_file={patterns}',
+                            *[f'--build_metadata={key}={value}' for key, value in metadata.items()],
+                            capture=False, check=False)
+
     def budget_check(self, base):
         """Light checks refused PRs that grow test budgets; so does this gate."""
         policy = 'tools/ci/rust-test-budget.json'
@@ -234,8 +249,7 @@ class Workspace:
         os.environ['CARGO'] = str(shim)
         problems = []
         for command in [[sys.executable, 'tools/ci/bazel_parity.py', 'static', '--bazel', self.bazel],
-                        [self.bazel, 'run', '//:gazelle', '--', '-mode=diff'],
-                        [sys.executable, 'tools/bazel/rust_builds.py', '--check']]:
+                        *bazel_generated.commands(self.bazel)]:
             if self.run(*command, capture=False, check=False):
                 problems.append(shlex.join(map(str, command)))
         return problems
@@ -266,6 +280,9 @@ def gate_pr(workspace, base, head, metadata):
     statuses = workspace.test(decision['selected'], CONFIGS['amd64'], metadata, 'pr')
     verdicts, failed = classify(decision['selected'], statuses, rust)
     inputs = workspace.inputs_check() + workspace.budget_check(base)
+    if not workspace.build(decision['build'], CONFIGS['amd64'], metadata, 'pr'):
+        # Reported like stale inputs, so both checks fail.
+        inputs.append('bazel build of impacted targets failed: ' + ' '.join(decision['build']))
     return {**decision, 'verdicts': verdicts, 'failed': failed, 'inputs': inputs,
             'changed': sorted(changed | deleted),
             'durations': {'selection': round(selected_seconds, 1),

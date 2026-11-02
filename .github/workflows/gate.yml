@@ -52,9 +52,20 @@ jobs:
           HEAD: ${{ steps.refs.outputs.head }}
           BRANCH: ${{ github.head_ref }}
         run: python3 tools/ci/remote_gate.py pr --base "$BASE" --head "$HEAD" --branch "$BRANCH"
+      - id: token
+        name: Require the Mergify token
+        if: always() && steps.gate.outputs.scopes_ready == 'true'
+        env:
+          MERGIFY_TOKEN: ${{ secrets.MERGIFY_TOKEN }}
+        # gha-mergify-ci skips scopes-upload and only warns when its token is empty.
+        run: |
+          if ! test -n "$MERGIFY_TOKEN"; then
+            echo "::error::MERGIFY_TOKEN is empty; scopes cannot reach Mergify."
+            exit 1
+          fi
       - id: upload
         name: Upload scopes
-        if: always() && steps.gate.outputs.scopes_ready == 'true'
+        if: always() && steps.token.outcome == 'success'
         uses: Mergifyio/gha-mergify-ci@392d123d84a27960993927aec1f2cbb059fb95c1 # v27
         with:
           action: scopes-upload
@@ -214,6 +225,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
         run: |
+          set -o pipefail
           prs=$(git rev-list "$BEFORE..$AFTER" | while read -r sha; do
             gh api "repos/${GITHUB_REPOSITORY}/commits/$sha/pulls" --jq '.[].number'
           done | sort -nu | paste -sd, -)

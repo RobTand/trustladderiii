@@ -7,6 +7,7 @@ timed-out or disconnected run, or a missing or malformed result, fails here.
 import argparse
 import json
 import os
+import shlex
 from pathlib import Path
 import sys
 import time
@@ -44,13 +45,15 @@ class BuildBuddy:
 
 
 def run_request(args):
+    if not args.base or not args.head:
+        raise RemoteError('empty base or head: the queue-aware refs were unavailable')
     command = ['python3', 'tools/ci/bazel_gate.py', args.mode, '--base', args.base,
                '--head', args.head, '--branch', args.branch]
     return {
         'repo': args.repo,
         'branch': args.branch,
         'commit_sha': args.head,
-        'steps': [{'run': ' '.join(command)}],
+        'steps': [{'run': shlex.join(command)}],
         'env': {'GIT_REPO_DEFAULT_BRANCH': 'main'},
         'platform_properties': {
             # The runner hosts only the Bazel client; actions go to remote execution.
@@ -66,11 +69,22 @@ def run_request(args):
     }
 
 
-def wait(client, invocation_id, deadline, interval=15, clock=time.monotonic, sleep=time.sleep):
+def wait(client, invocation_id, deadline, interval=15, clock=time.monotonic, sleep=time.sleep,
+         retries=3):
     """Wait for the run's own terminal status. Returns the invocation record."""
+    errors = 0
     while True:
-        found = client.call('GetInvocation', {'selector': {'invocation_id': invocation_id},
-                                              'include_artifacts': True}).get('invocation', [])
+        try:
+            found = client.call('GetInvocation', {'selector': {'invocation_id': invocation_id},
+                                                  'include_artifacts': True}).get('invocation', [])
+            errors = 0
+        except RemoteError:
+            # One API blip must not fail a whole merge-queue batch.
+            errors += 1
+            if errors > retries or clock() > deadline:
+                raise
+            sleep(interval)
+            continue
         invocation = found[0] if found else {}
         status = invocation.get('invocationStatus')
         if status == DONE:
@@ -206,8 +220,6 @@ def main():
     started = time.monotonic()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     try:
-        if not args.base:
-            raise RemoteError('empty base: the queue-aware refs were unavailable')
         client = BuildBuddy(os.environ['BUILDBUDDY_API_KEY'])
         invocation_id = client.call('Run', run_request(args), timeout=600).get('invocationId')
         if not invocation_id:

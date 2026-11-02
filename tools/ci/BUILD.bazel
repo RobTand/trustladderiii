@@ -130,7 +130,10 @@ py_binary(
     name = "bazel_gate",
     srcs = ["bazel_gate.py"],
     visibility = ["//visibility:public"],
-    deps = [":rust_gate"],
+    deps = [
+        ":bazel_generated",
+        ":rust_gate",
+    ],
 )
 
 py_binary(
