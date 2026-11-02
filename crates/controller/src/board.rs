@@ -28,6 +28,7 @@ pub enum Column {
     Merging,
     NeedsRob,
     Done,
+    Cancelled,
 }
 
 impl Column {
@@ -69,6 +70,7 @@ impl Column {
             Column::Merging => "Merging",
             Column::NeedsRob => "Needs Rob",
             Column::Done => "Done",
+            Column::Cancelled => "Cancelled",
         }
     }
 }
@@ -115,6 +117,7 @@ pub enum Badge {
     MakerBlocked,
     NeedsRob,
     WaitingForCapacity,
+    Stopped,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
