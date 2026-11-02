@@ -121,8 +121,7 @@ pub(super) async fn read_checks(
             }
         }
         let parsed = failures(&text);
-        // A check without test IDs may hide another, related failure.
-        details.complete &= !parsed.is_empty() && parsed.len() <= findings::MAX_FAILED_TESTS;
+        details.complete &= parsed.len() <= findings::MAX_FAILED_TESTS;
         let log_lines = parsed
             .iter()
             .map(|test| test.message.as_str())
@@ -207,6 +206,12 @@ pub(super) async fn read_queue(
 fn test_path(repo: &Repository, id: &str) -> Option<String> {
     let path = if let Some(label) = id.strip_prefix("//") {
         let (package, target) = label.split_once(':')?;
+        if !target
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        {
+            return None;
+        }
         if repo.owner.eq_ignore_ascii_case("RobTand")
             && repo.name.eq_ignore_ascii_case("prismabuild")
             && package == "tests"
@@ -216,6 +221,7 @@ fn test_path(repo: &Repository, id: &str) -> Option<String> {
         } else if repo.owner.eq_ignore_ascii_case("RobTand")
             && repo.name.eq_ignore_ascii_case("trustladderiii")
             && package.starts_with("crates/")
+            && package.split('/').count() == 2
         {
             format!("{package}/tests/{}.rs", target.strip_prefix("test_test_")?)
         } else {
@@ -241,7 +247,7 @@ pub(crate) fn outside_change(
     details: &QueueCiEvidence,
     plan: Option<&crate::adapters::prismabuild::CheckRun>,
 ) -> bool {
-    let Some(paths) = &details.changed_paths else {
+    let (Some(paths), Some(run)) = (&details.changed_paths, plan) else {
         return false;
     };
     details.complete
@@ -255,18 +261,16 @@ pub(crate) fn outside_change(
                     || path
                         .strip_suffix(".rs")
                         .is_some_and(|path| changed == &format!("{path}/main.rs"))
-            }) && plan.is_none_or(|run| {
-                run.plan.iter().all(|check| {
-                    !details
-                        .checks
-                        .iter()
-                        .any(|failed| failed.name == check.name)
-                        && check.tests.iter().all(|named| {
-                            named != &test.test
-                                && named.split("::").next() != Some(path.as_str())
-                                && test_path(repo, named).as_ref() != Some(&path)
-                        })
-                })
+            }) && run.plan.iter().all(|check| {
+                !details
+                    .checks
+                    .iter()
+                    .any(|failed| failed.name == check.name)
+                    && check.tests.iter().all(|named| {
+                        named != &test.test
+                            && named.split("::").next() != Some(path.as_str())
+                            && test_path(repo, named).as_ref() != Some(&path)
+                    })
             })
         })
 }

@@ -2222,6 +2222,7 @@ impl Controller {
                     ..
                 } = &mut fact.evidence
                 {
+                    *details = adapters::mergify::ci_evidence::bounded(details.clone());
                     let plan = check_run(snapshot, node, Some(head))?;
                     let outside = adapters::mergify::ci_evidence::outside_change(
                         &fact.repository,
@@ -2251,6 +2252,16 @@ impl Controller {
                     if outside || repeated {
                         *infra = outside && !repeated;
                     }
+                    details.decision = Some(
+                        if repeated {
+                            "repeated_test"
+                        } else if outside {
+                            "outside_change"
+                        } else {
+                            "upstream_classification"
+                        }
+                        .into(),
+                    );
                 }
                 let value = json!(&fact);
                 if let Evidence::CiFailed { head, .. }
@@ -3067,22 +3078,7 @@ impl Controller {
                 Some((
                     node,
                     findings::Kind::FailedCheck,
-                    format!(
-                        "{}{}",
-                        findings::ci_report(&ci_checks),
-                        if failed_tests.is_empty() {
-                            String::new()
-                        } else {
-                            format!(
-                                "\n{}",
-                                failed_tests
-                                    .iter()
-                                    .map(|test| format!("{}: {}", test.test, test.message))
-                                    .collect::<Vec<_>>()
-                                    .join("\n")
-                            )
-                        }
-                    ),
+                    findings::ci_report(&ci_checks, &failed_tests),
                 ))
             }
             _ => None,

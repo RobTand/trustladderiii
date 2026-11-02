@@ -24,6 +24,8 @@ pub struct QueueCiEvidence {
     pub changed_paths: Option<Vec<String>>,
     #[serde(default)]
     pub complete: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -51,7 +53,7 @@ pub(crate) struct Finding {
     pub ci_checks: Vec<CiFailure>,
 }
 
-pub(crate) fn ci_report(checks: &[CiFailure]) -> String {
+pub(crate) fn ci_report(checks: &[CiFailure], tests: &[FailedTest]) -> String {
     if checks.is_empty() {
         return "CI failed for the queued change. The upstream supplied no check details.".into();
     }
@@ -65,6 +67,11 @@ pub(crate) fn ci_report(checks: &[CiFailure]) -> String {
                 .unwrap_or_default();
             format!("CI check {} failed{link}: {}", check.name, check.summary)
         })
+        .chain(
+            tests
+                .iter()
+                .map(|test| format!("{}: {}", test.test, test.message)),
+        )
         .collect::<Vec<_>>()
         .join("\n")
 }
