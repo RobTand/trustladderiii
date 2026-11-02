@@ -22,9 +22,9 @@
     ]
   },
   "figures": {
-    "loc_u_pct": 30.719095548824036,
+    "loc_u_pct": 30.586039117079057,
     "scc_max": 1,
-    "u_pct": 31.16271832574785
+    "u_pct": 31.068524970963995
   },
   "reach_budget": 173,
   "schema": "graph-impact.v1",

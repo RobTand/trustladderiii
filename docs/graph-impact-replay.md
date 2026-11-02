@@ -2,6 +2,12 @@
 
 Old rules fail 23/30; revised rules fail 2/30.
 
+The [clean harvest](https://app.buildbuddy.io/invocation/9d2d765e-9989-44d6-8f83-c99482667400)
+verifies each source against its revision's Git tree. The
+[fixed-core replay](https://app.buildbuddy.io/invocation/82563b9a-4485-4ba5-b743-938f45542566)
+finds no masked SCC growth or mergers. The frozen ranges end at main commit
+`e94fc728a107de6763d666390393fc15bbcb0a30`.
+
 Old core comes from TL3 `81fe2fec027f2f91aa433a10e8206904e38d86c2`. Revised core: `RobTand/prismaquant@fb6555514e2f43727ab73d056f82d8ad34ab64e3:tools/ci/graph_impact.py`.
 
 Each range compares immutable base and head graphs. New rules use package base ceilings and typed edge differences. The JSON artifact retains every full diagnostic and edge.
