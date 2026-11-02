@@ -1,0 +1,62 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+
+py_binary(
+    name = "inventory",
+    srcs = ["inventory.py"],
+    visibility = ["//visibility:public"],
+    deps = ["//harness/src/tl3_harness"],
+)
+
+py_binary(
+    name = "prepare_image",
+    srcs = ["prepare_image.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "verify",
+    srcs = ["verify.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":verify_reproducing",
+        ":verify_scratch",
+        "//harness/src/tl3_harness",
+    ],
+)
+
+py_binary(
+    name = "verify_exec_scratch",
+    srcs = ["verify_exec_scratch.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":verify_reproducing",
+        ":verify_scratch",
+        "//harness/src/tl3_harness",
+    ],
+)
+
+py_binary(
+    name = "verify_reproducing",
+    srcs = ["verify_reproducing.py"],
+    visibility = ["//visibility:public"],
+    deps = ["//harness/src/tl3_harness"],
+)
+
+py_binary(
+    name = "verify_scratch",
+    srcs = ["verify_scratch.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":verify_reproducing",
+        "//harness/src/tl3_harness",
+    ],
+)
+
+filegroup(
+    name = "sources",
+    srcs = glob([
+        "*.py",
+        "images/**",
+    ]),
+    visibility = ["//visibility:public"],
+)

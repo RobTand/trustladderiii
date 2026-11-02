@@ -70,21 +70,23 @@ explicit command replaces role ladders, preserves the endpoint and key path,
 and saves a 0600 backup. Normal preparation never resets tuned ladders.
 The deployed `~/.config/tl3/tl3.toml` remains the operator's runtime config.
 
-The maker ladder uses GPT-6.1 Sol twice, then Claude Fable 5.1. Attempt 2 uses
-`max` effort and 128,000 output tokens. GPT makers get Claude Opus 5.5 review;
-Claude makers get GPT-6.1 Sol review. The planner and rebaser use GPT-6.1 Sol.
-Ingest, audit, comment classification and writer use Claude Sonnet 5.5.
-The writer field is optional for older configs and defaults to ingest.
+Rob moved the ladders off GPT-6.1 Sol, which was out of quota, to Anthropic
+models on 2026-11-01. The maker ladder uses Claude Sonnet 5.5 twice, then Claude
+Opus 5.5. Attempt 2 uses `max` effort and 128,000 output tokens. Families are
+labelled per model line (`claude-sonnet`, `claude-opus`, `claude-fable`), so
+Q22 still forces a different model to review: Sonnet makers get Opus 5.5 review,
+and the Opus maker gets Sonnet 5.5 review. The planner uses Opus 5.5, then Fable
+5.1. The rebaser, ingest, audit, comment classification and writer use Sonnet
+5.5. The writer field is optional for older configs and defaults to ingest.
+`crates/config/tests/config.rs` validates these defaults, so a ladder that
+breaks Q22 fails CI. For a new config, `--primary` renames Sonnet 5.5 and
+`--alternate` renames Opus 5.5 in every role.
 Production registration uses the configured ladders, including writer.
 
 Provider limits checked on 2026-10-30:
 
-- [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol):
-  1,050,000 context tokens and 128,000 maximum output tokens.
 - [Claude models](https://platform.claude.com/docs/en/models/overview):
   Fable 5.1, Opus 5.5 and Sonnet 5.5 each have 1M context and 128K maximum output.
-- [GPT effort](https://developers.openai.com/api/docs/guides/latest-model):
-  GPT-6.1 Sol supports `max`.
 
 All configured budgets also fit TL3's 150,000-token context setting. The proxy's
 catalog lists IDs without limits, so these limits come from provider docs.
@@ -92,7 +94,7 @@ Run the explicit proxy smoke from the session, as Rob authorized for this task:
 `python3 deploy/dl380g10/smoke-models.py ~/.config/tl3/tl3.toml`.
 It loads the key in-process and prints only model IDs, HTTP status and token
 counts. It sends one 16-token Chat Completions request per distinct configured
-model, using attempt 2's effort for GPT-6.1 Sol. It never prints response bodies
+model, using attempt 2's effort for a model listed twice. It never prints response bodies
 or credentials. TL3 code tests still run only through PrismaBuild.
 The published PrismaBuild client runs `python3 .../tools/pbrun.py` directly.
 The config points to that published tools directory.
@@ -192,8 +194,13 @@ The UI and write API bind to `192.168.1.107:5033`, reachable from the LAN at
 `http://192.168.1.107:5033`. Rob asked for a UI he can open from the LAN
 (#101). This HTTP endpoint has no authentication. Any host on the LAN can read,
 write or delete traces and experiments through its API. It has no public
-tunnel. The unit restricts allowed Host and browser origin values to this
-address and local health clients. Those restrictions are not authentication.
+tunnel. The launcher allows this address, loopback, the machine hostname and
+its `.local` name in both Host and browser CORS origins. The UI and API accept
+`dl380g10:5033` and `dl380g10.local:5033` after installing the launcher update.
+These restrictions are not authentication. The server is LAN-only with no login.
+Traces now contain repository text, prompts, model replies and tool I/O.
+Redaction is best effort; it cannot recognize every possible secret.
+`workers/README.md` lists what it covers and what it misses.
 
 The backend is database `tl3_mlflow` in TL3's user-level Postgres. Connections
 use `~/.local/share/tl3/postgres/socket`, port 5543. TCP stays disabled on
@@ -221,8 +228,11 @@ observability installation, because that command also starts the controller.
 
 **Retention.** Nothing prunes traces yet. Every agent run adds one trace of
 up to 4,096 spans to `tl3_mlflow` and keeps it, so the database grows with the
-number of runs. Spans keep only types, ids, times and token counts, not
-prompts or replies. To reclaim space, delete old traces in the UI or through
+number of runs. Spans include bounded prompts, replies, repository text and
+tool arguments/results, plus names and token counts. Each export has a 1 MiB
+trace budget. The root keeps its inputs and final reply, the newest model and
+tool spans keep the most content, and older spans shrink to a floor.
+To reclaim space, delete old traces in the UI or through
 MLflow's API, then run `mlflow gc` with the same backend store to remove the
 deleted rows and their artifacts. A retention window is an open decision in
 the slice-one PRD (#1).
