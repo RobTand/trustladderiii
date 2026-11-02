@@ -73,6 +73,15 @@ class ResultTests(unittest.TestCase):
         parsed = remote_gate.parse_result(remote_gate.fetch(client, invocation, remote_gate.RESULT), HEAD)
         self.assertEqual(parsed['scopes'], ['//crates/kernel'])
 
+    def test_every_diagnostic_log_artifact_is_saved(self):
+        files = {name: b'x' for name in ['pr-bazel-remote-grpc.log', 'main-arm64-execution_log.binpb.zst',
+                                          'bazel-remote-grpc.log', remote_gate.RESULT]}
+        invocation = remote_gate.wait(FakeClient([remote_gate.DONE], files), 'id', 10, clock=lambda: 0,
+                                      sleep=print)
+        names = [name for name, _ in remote_gate.diagnostics(FakeClient([], files), invocation)]
+        self.assertEqual(sorted(names), ['bazel-remote-grpc.log', 'main-arm64-execution_log.binpb.zst',
+                                         'pr-bazel-remote-grpc.log'])
+
     def test_missing_malformed_or_foreign_results_fail(self):
         for raw in [None, b'not json', json.dumps(result(head='c' * 40)).encode(),
                     json.dumps({**result(), 'schema': 'other'}).encode()]:

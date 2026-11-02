@@ -85,9 +85,12 @@ class AutomaticTestDiscoveryTests(unittest.TestCase):
 class BuildBuddySuggestionsTests(unittest.TestCase):
     def test_remote_configs_use_compression_and_chunking(self):
         config = (ROOT / '.bazelrc').read_text().splitlines()
-        for mode in ['remote', 'remote-arm64']:
-            for flag in ['--remote_cache_compression', '--experimental_remote_cache_chunking']:
-                self.assertIn(f'build:{mode} {flag}', config)
+        # common, not per config: bazel-diff's queries, Gazelle and the cargo wrapper also
+        # stream to BuildBuddy from the Remote Bazel runner, and its Suggestions flag them.
+        for flag in ['--remote_cache_compression', '--experimental_remote_cache_chunking',
+                     '--remote_grpc_log=bazel-remote-grpc.log',
+                     '--execution_log_compact_file=execution_log.binpb.zst']:
+            self.assertIn(f'common {flag}', config)
         self.assertIn('build:remote --jobs=80', config)
         self.assertNotIn('build --jobs=80', config)
         for mode in ['remote', 'remote-arm64']:
@@ -110,14 +113,12 @@ class BuildBuddySuggestionsTests(unittest.TestCase):
                      '--experimental_profile_include_primary_output']:
             self.assertIn(f'build {flag}', config)
         for flag in ['--remote_download_regex=.*/test\\.outputs/.*',
-                     '--remote_grpc_log=bazel-remote-grpc.log',
-                     '--execution_log_compact_file=execution_log.binpb.zst',
                      '--build_metadata=ROLE=CI',
                      '--build_metadata=REPO_URL=https://github.com/RobTand/trustladderiii']:
             self.assertIn(f'build:ci {flag}', config)
         ignored = (ROOT / '.gitignore').read_text().splitlines()
-        self.assertIn('/bazel-remote-grpc.log', ignored)
-        self.assertIn('/execution_log.binpb.zst', ignored)
+        self.assertIn('/*bazel-remote-grpc.log', ignored)
+        self.assertIn('/*execution_log.binpb.zst', ignored)
 
 
 if __name__ == '__main__':
