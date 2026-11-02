@@ -300,7 +300,7 @@ pub(super) fn label_present(settings: &tl3_config::Store, lag: bool) {
         // the no-progress allowance each look counts as a failed look, a burst
         // of webhook looks counts once, and the second counted look raises the
         // usual incident. It's open and doesn't yet need Rob.
-        let mut look = |controller: &mut Controller, burst: usize| {
+        let look = |controller: &mut Controller, burst: usize| {
             clock.0.set(clock.0.get() + Duration::from_secs(100_000));
             for _ in 0..burst {
                 controller.look_now().unwrap();
