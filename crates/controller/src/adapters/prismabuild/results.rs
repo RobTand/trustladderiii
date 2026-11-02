@@ -262,22 +262,33 @@ fn completion(
     results: Vec<serde_json::Value>,
     failed_tests: Vec<FailedTest>,
 ) -> Result<Completion> {
-    Ok(Completion::confirmed(vec![Observation::Checks {
+    let head = job
+        .delivery
+        .head_sha
+        .clone()
+        .ok_or(Error::Invalid("missing check head"))?;
+    let mut observations = vec![];
+    if job.delivery.checks.as_ref() != Some(&job.run) {
+        // Staging moved the plan to the base the head descends from; keep it.
+        observations.push(Observation::CheckPlan {
+            node: job.delivery.node(),
+            sha: head.clone(),
+            run: job.run.clone(),
+        });
+    }
+    observations.push(Observation::Checks {
         node: job.delivery.node(),
         generation: job.delivery.generation,
         action_key: job.action.to_string(),
         base_sha: job.run.base_sha.as_str().to_owned(),
-        sha: job
-            .delivery
-            .head_sha
-            .clone()
-            .ok_or(Error::Invalid("missing check head"))?,
+        sha: head,
         changed_paths: job.changed_paths.clone(),
         failed_tests,
         report,
         pass,
         results,
-    }]))
+    });
+    Ok(Completion::confirmed(observations))
 }
 
 fn parse(raw: &[u8], job: &Job) -> Option<Report> {
