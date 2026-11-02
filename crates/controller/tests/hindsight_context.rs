@@ -16,7 +16,7 @@ use wiremock::{
 };
 
 const KEY: &str = "fixture-recall-authentication";
-const QUOTE: &str = "def greet(): return 'hello'";
+const QUOTE: &str = "def greet_user(): return 'hello'";
 
 #[derive(Clone, Default)]
 struct Bank {
@@ -161,6 +161,16 @@ impl Fixture {
             format!("{QUOTE}\n\n\ndef wave():\n    return 'bye'\n"),
         )
         .unwrap();
+        fs::write(
+            worktree.join("settings.py"),
+            "database = connect()\ndef handler(): raise error\n",
+        )
+        .unwrap();
+        fs::write(
+            worktree.join("measure_served_gold.py"),
+            "import hashlib\ndef _sha256_file(path):\n    return hashlib.sha256(open(path, 'rb').read()).hexdigest()\n",
+        )
+        .unwrap();
         let attempt = root.join("attempt-00000000");
         fs::create_dir_all(&attempt).unwrap();
         fs::write(
@@ -196,13 +206,12 @@ fn result(id: &str, text: &str, tags: &[&str]) -> Value {
     json!({"id": id, "text": text, "type": "world", "tags": tags})
 }
 
-const CLAIM: &str = "greet() returns 'hi'";
+const CLAIM: &str = "greet_user() returns 'hi'";
 const REPO: &str = "RobTand/tl3-sandbox";
 
 /// A supplied memory as recall leaves it in the run's inputs, with its repo tag.
 fn supplied(id: &str, kind: &str, repo: Option<&str>) -> Value {
-    let mut memory =
-        json!({"id": id, "kind": kind, "content": "Earlier: greet() returns 'hi' to callers."});
+    let mut memory = json!({"id": id, "kind": kind, "content": "Earlier: greet_user() returns 'hi' to callers."});
     if let Some(repo) = repo {
         memory["repo"] = json!(repo);
     }
@@ -468,8 +477,11 @@ fn one_verified_flag_hides_and_a_second_run_retires() {
     assert_eq!(curations[0]["evidence"]["quote"], QUOTE);
 
     // Hidden at once from TL3's recall; Hindsight is not told yet.
-    *f.bank.general.lock().unwrap() =
-        vec![result("wrong-1", "Earlier: greet() returns 'hi'.", &[])];
+    *f.bank.general.lock().unwrap() = vec![result(
+        "wrong-1",
+        "Earlier: greet_user() returns 'hi'.",
+        &[],
+    )];
     assert_eq!(f.recall(context())["memories"], json!([]));
     memory::flush(&mut f.store(), &f.hindsight()).unwrap();
     assert!(
@@ -567,7 +579,7 @@ fn unverified_flags_are_recorded_as_rejected_and_never_hide() {
             json!(["wrong-1"]),
             "wrong-1",
             CLAIM,
-            lines(1, 2, "def greet(): return 'hi'"),
+            lines(1, 2, "def greet_user(): return 'hi'"),
         ),
         (
             "wrong-lines",
@@ -693,6 +705,63 @@ fn unverified_flags_are_recorded_as_rejected_and_never_hide() {
         0,
         "rejections are not posted"
     );
+}
+
+#[test]
+fn generic_claims_and_other_files_never_hide_but_identifiers_do() {
+    let f = Fixture::new();
+    let at = |path: &str, start: u64, end: u64, quote: &str| json!({"path": path, "start_line": start, "end_line": end, "quote": quote});
+    let memory = |content: &str| json!([{"id": "wrong-1", "kind": "lesson", "repo": REPO, "content": content}]);
+    let generic = "Requests fail when the database is down, and the error handler retries.";
+    let cases = [
+        // A generic word pairs with any line that happens to contain it.
+        (
+            "database",
+            memory(generic),
+            "when the database is down",
+            at("settings.py", 1, 1, "database = connect()"),
+        ),
+        (
+            "error",
+            memory(generic),
+            "the error handler retries",
+            at("settings.py", 2, 2, "def handler(): raise error"),
+        ),
+        // The memory names its file; evidence from another file proves nothing.
+        (
+            "other-file",
+            memory("farewell.py: greet_user() returns 'hi'."),
+            CLAIM,
+            evidence(),
+        ),
+    ];
+    for (case, supplied, claim, evidence) in cases {
+        let attempt = f.attempt_in(
+            case,
+            "planner",
+            case,
+            supplied,
+            json!({"kind": "cant_meet", "report": "x", "files": [], "memory_ids": ["wrong-1"],
+                   "memory_flags": [flag("wrong-1", claim, evidence)]}),
+        );
+        memory::queue_attempt(&mut f.store(), &format!("run:{case}"), &attempt).unwrap();
+    }
+    let curations = f.curations();
+    assert_eq!(curations.len(), 3);
+    for curation in &curations {
+        assert_eq!(curation["verdict"], "rejected", "{curation}");
+    }
+
+    let claim = "measure_served_gold._sha256_file hashes with md5";
+    let attempt = f.attempt_in("identifier", "planner", "identifier",
+        memory("measure_served_gold._sha256_file hashes with md5, so pins drift."),
+        json!({"kind": "cant_meet", "report": "x", "files": [], "memory_ids": ["wrong-1"],
+               "memory_flags": [flag("wrong-1", claim, at("measure_served_gold.py", 2, 3,
+                   "def _sha256_file(path): return hashlib.sha256(open(path, 'rb').read()).hexdigest()"))]}));
+    memory::queue_attempt(&mut f.store(), "run:identifier", &attempt).unwrap();
+    let last = f.curations().pop().unwrap();
+    assert_eq!(last["verdict"], "accepted", "{last}");
+    assert_eq!(last["state"], "hidden");
 }
 
 #[test]

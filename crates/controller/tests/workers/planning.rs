@@ -256,7 +256,7 @@ pub(super) fn memories(settings: &tl3_config::Store) {
                 let body: Value = request.body_json().unwrap();
                 recalled.send(body.clone()).unwrap();
                 let results = if body.get("tags").is_some() {
-                    json!([{"id": "lesson-greeting", "text": "greet() returns 'hi'.", "tags": ["kind:lesson", "repo:RobTand/tl3-sandbox"]}])
+                    json!([{"id": "lesson-greeting", "text": "greet_user() returns 'hi'.", "tags": ["kind:lesson", "repo:RobTand/tl3-sandbox"]}])
                 } else {
                     json!([{"id": "run-earlier", "text": "An earlier run read greeting.py.", "tags": ["role:maker"]}])
                 };
@@ -290,6 +290,10 @@ pub(super) fn memories(settings: &tl3_config::Store) {
     config.hindsight.endpoint = server.uri().parse().unwrap();
     let mut store = Store::open(settings).unwrap();
     materials(&mut store);
+    // Evidence must share an identifier with the claim; `greet` alone is too generic.
+    let mut inputs = store.worker_materials("0").unwrap().unwrap();
+    inputs["repo"]["materials"][0]["content"] = json!("def greet_user(): return 'hello'\n");
+    store.put_worker_materials("0", &inputs).unwrap();
     let (registry, mut source) =
         worker_simulation(&root.path().join("fakes"), &config, false).unwrap();
     let mut controller = Controller::open(
@@ -315,7 +319,7 @@ pub(super) fn memories(settings: &tl3_config::Store) {
             .clone()
     };
     let expected = json!([
-        {"id": "lesson-greeting", "kind": "lesson", "repo": "RobTand/tl3-sandbox", "content": "greet() returns 'hi'."},
+        {"id": "lesson-greeting", "kind": "lesson", "repo": "RobTand/tl3-sandbox", "content": "greet_user() returns 'hi'."},
         {"id": "run-earlier", "kind": "run", "content": "An earlier run read greeting.py."},
     ]);
     let ingest = role("ingest");
