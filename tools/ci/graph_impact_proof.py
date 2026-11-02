@@ -23,29 +23,30 @@ OLD_SHA256 = '0170b70fe2f24477ab056c11f5c3240d8b45a1dca5ab73ad252c096679c5500c'
 def planted(workspace):
     base = workspace._graphs['head']
     deps = workspace._deps['head']
-    tests, sources = sorted(base.tests), sorted(base.loc)
-    policy = graph_impact.baseline(base)
+    tests, sources = sorted(base['reach']), sorted(base['loc'])
+    policy = bazel_graph_impact.baseline(base)
     cases = {
         'broad new test': ({**deps, '//graph-impact-proof:wide': sources},
                            tests + ['//graph-impact-proof:wide'], {'//graph-impact-proof:wide'}, 'reach'),
-        'test-to-test': ({**deps, tests[0]: deps[tests[0]] + [tests[-1]]}, tests, set(), 'forbidden edge'),
+        'test-to-test': ({**deps, tests[0]: deps[tests[0]] + [tests[-1]]}, tests, set(), 'new test_to_test edge'),
         'conftest import': ({**deps, '//graph-impact-proof:conftest.py': [sources[0]]},
-                            tests, set(), 'forbidden edge'),
+                            tests, set(), 'new conftest_source edge'),
         'uniform regression': ({**deps, **{test: deps[test] + sources for test in tests}},
-                               tests, set(), 'U worsened'),
+                               tests, set(), 'u_pct rose'),
         'cycle': ({**deps, '//graph-impact-proof:a': ['//graph-impact-proof:b'],
                    '//graph-impact-proof:b': ['//graph-impact-proof:a']}, tests, set(), 'SCC grew or merged'),
     }
     records = {}
     for name, (edges, roots, changed, message) in cases.items():
-        head = graph_impact.from_deps(edges, roots, sources, base.loc)
-        result = graph_impact.check(base, head, changed, policy)
+        head = bazel_graph_impact.from_deps(edges, roots, sources, base['loc'])
+        result = bazel_graph_impact.check(base, head, changed, policy)
         if not any(message in error for error in result['errors']):
             raise RuntimeError(f'planted {name} did not fail as expected: {result["errors"]}')
         records[name] = {'summary': result['summary'], 'errors': result['errors']}
-    head = graph_impact.Graph({test: set() for test in tests}, base.edges, base.loc)
-    result = graph_impact.check(base, head, set(), policy)
-    if not any('record gain' in error for error in result['errors']):
+    head = graph_impact.measure({test: set() for test in tests}, base['edges'], base['loc'])
+    head['edge_groups'] = base['edge_groups']
+    result = bazel_graph_impact.check(base, head, set(), policy)
+    if not any('record the gain' in error for error in result['errors']):
         raise RuntimeError('unrecorded gain did not fail')
     records['unrecorded gain'] = {'summary': result['summary'], 'errors': result['errors']}
     for name, result in records.items():
@@ -63,12 +64,12 @@ def historical(workspace, name, base, head):
     changed, deleted = workspace.changes(base, head)
     changed_tests = bazel_graph_impact.changed_tests(old, new, workspace._typed_hashes['base'],
                                                     workspace._typed_hashes['head'], changed | deleted)
-    result = graph_impact.check(old, new, changed_tests, graph_impact.baseline(old))
+    result = bazel_graph_impact.check(old, new, changed_tests, bazel_graph_impact.baseline(old))
     result['mermaid'] = {}
     for target in result['explain_targets'][:2]:
         result['mermaid'][target] = workspace.run(workspace._executable, 'explain',
             '--startingHashes', workspace._hashes['base'], '--finalHashes', workspace._hashes['head'],
-            '--depEdgesFile', workspace._edges['head'], '--target', target, '--format', 'mermaid')
+            '--depEdgesFile', workspace._source_edges['head'], '--target', target, '--format', 'mermaid')
     directory = Path(tempfile.mkdtemp(prefix='tl3-v42-parity-'))
     jar = directory / 'bazel-diff.jar'
     with urllib.request.urlopen(OLD_URL, timeout=120) as response:
@@ -76,13 +77,14 @@ def historical(workspace, name, base, head):
     if hashlib.sha256(data).hexdigest() != OLD_SHA256:
         raise ValueError('v42 checksum mismatch')
     jar.write_bytes(data)
+    java = Path(workspace.run(workspace.bazel, 'info', 'java-home').strip(), 'bin/java')
     for revision, sha in [('base', base), ('head', head)]:
         workspace.checkout(sha)
-        workspace.run('java', '-jar', jar, 'generate-hashes', '--workspacePath', workspace.root,
+        workspace.run(java, '-jar', jar, 'generate-hashes', '--workspacePath', workspace.root,
                       '--bazelPath', workspace.bazel, '--excludeExternalTargets', '--includeTargetType',
                       directory / f'{revision}.json')
     output = directory / 'impacted.txt'
-    workspace.run('java', '-jar', jar, 'get-impacted-targets', '--workspacePath', workspace.root,
+    workspace.run(java, '-jar', jar, 'get-impacted-targets', '--workspacePath', workspace.root,
                   '--bazelPath', workspace.bazel, '--startingHashes', directory / 'base.json',
                   '--finalHashes', directory / 'head.json', '--targetType', 'Rule', '--output', output)
     legacy = bazel_graph_impact.impacted_labels(output.read_text())

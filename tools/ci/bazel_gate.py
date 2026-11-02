@@ -24,7 +24,6 @@ import zipfile
 
 import bazel_generated
 import bazel_graph_impact
-import graph_impact
 import rust_gate
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -217,6 +216,7 @@ class Workspace:
         directory = Path(self._diff_directory.name)
         self._hashes = {name: directory / f'{name}-hashes.json' for name in ('base', 'head')}
         self._edges = {name: directory / f'{name}-deps.json' for name in ('base', 'head')}
+        self._source_edges = {name: directory / f'{name}-deps-with-sources.json' for name in ('base', 'head')}
         self._impacted = directory / 'impacted.json'
         self._executable = executable
         generate, self._query_impacted = diff_commands(executable, self.root, self.bazel,
@@ -226,13 +226,23 @@ class Workspace:
             for name, sha in [('base', base), ('head', head)]:
                 self.checkout(sha)
                 self.run(*generate(self._hashes[name], self._edges[name]))
+                raw_deps = json.loads(self._edges[name].read_text())
+                sources = bazel_graph_impact.source_labels(json.loads(self._hashes[name].read_text()))
+                if bazel_graph_impact.needs_source_edges(raw_deps, sources):
+                    print('bazel-diff omits source edges; supplementing from one streamed Bazel query', flush=True)
+                    query = (f'deps({TESTS} except attr(tags, "\\bmanual\\b", //...)) '
+                             'intersect //...:all-targets')
+                    stream = self.run(self.bazel, 'query', query, '--output=streamed_jsonproto',
+                                      '--keep_going=false')
+                    raw_deps = bazel_graph_impact.add_source_edges(raw_deps, stream)
+                self._source_edges[name].write_text(json.dumps(raw_deps, sort_keys=True) + '\n')
                 graph, deps, hashes = bazel_graph_impact.load(
-                    self._edges[name], self._hashes[name], self.tests(), self.root)
+                    self._source_edges[name], self._hashes[name], self.tests(), self.root)
                 self._graphs[name], self._deps[name], self._typed_hashes[name] = graph, deps, hashes
                 self._crates[name] = set(map(canonical, self.query('kind("rust_library rule", //crates/...)')))
                 artifacts = os.environ.get('BUILDBUDDY_ARTIFACTS_DIRECTORY')
                 if artifacts:
-                    for file in (self._hashes[name], self._edges[name]):
+                    for file in (self._hashes[name], self._edges[name], self._source_edges[name]):
                         shutil.copy2(file, Path(artifacts) / file.name)
         except (ValueError, OSError, KeyError) as error:
             raise GateError(f'graph-impact export failed: {error}') from error
@@ -252,7 +262,7 @@ class Workspace:
         previous = bazel_graph_impact.policy_at(self.root, base, bazel_graph_impact.POLICY, None)
         try:
             if write:
-                policy = graph_impact.write_baseline(new, previous)
+                policy = bazel_graph_impact.write_baseline(new, previous)
                 policy_path.write_text(json.dumps(policy, indent=2, sort_keys=True) + '\n')
             else:
                 policy = json.loads(policy_path.read_text())
@@ -261,14 +271,14 @@ class Workspace:
             changed, deleted = self.changes(base, head)
             changed_tests = bazel_graph_impact.changed_tests(old, new, self._typed_hashes['base'],
                                                            self._typed_hashes['head'], changed | deleted)
-            result = graph_impact.check(old, new, changed_tests, policy, allowlist, prior_allowlist, previous)
-            result['crates'] = bazel_graph_impact.crate_report(self._deps['head'], new.tests, self._crates['head'])
+            result = bazel_graph_impact.check(old, new, changed_tests, policy, allowlist, prior_allowlist, previous)
+            result['crates'] = bazel_graph_impact.crate_report(self._deps['head'], new['reach'], self._crates['head'])
             result['mermaid'] = {}
             for target in result['explain_targets'][:5]:
                 # Explain reads the same exports; it runs no additional Bazel query.
                 result['mermaid'][target] = self.run(str(self._executable), 'explain',
                     '--startingHashes', self._hashes['base'], '--finalHashes', self._hashes['head'],
-                    '--depEdgesFile', self._edges['head'], '--target', target, '--format', 'mermaid')
+                    '--depEdgesFile', self._source_edges['head'], '--target', target, '--format', 'mermaid')
             print(result['summary'], flush=True)
             return result
         except (ValueError, OSError, KeyError) as error:

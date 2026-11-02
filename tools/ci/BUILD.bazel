@@ -9,7 +9,7 @@ exports_files(["rust-test-budget.json"])
 tl3_py_test(
     name = "test_graph_impact",
     srcs = ["test_graph_impact.py"],
-    deps = [":graph_impact"],
+    deps = [":bazel_graph_impact"],
 )
 
 tl3_py_test(
@@ -145,7 +145,6 @@ py_binary(
     deps = [
         ":bazel_generated",
         ":bazel_graph_impact",
-        ":graph_impact",
         ":rust_gate",
     ],
 )

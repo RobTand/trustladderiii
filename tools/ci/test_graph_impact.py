@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import unittest
 
-import graph_impact as impact
+import bazel_graph_impact as impact
 
 
 def graph(deps=None, tests=('//tests:small', '//tests:other'), sources=('//pkg:a.py', '//pkg:b.py'),
@@ -17,18 +17,18 @@ class GraphImpactTests(unittest.TestCase):
     def test_metrics_include_unused_sources_and_loc_weighting(self):
         current = graph(sources=('//pkg:a.py', '//pkg:b.py', '//pkg:unused.py'),
                         loc={'//pkg:a.py': 8, '//pkg:b.py': 1, '//pkg:unused.py': 1})
-        measured = impact.metrics(current)
-        self.assertAlmostEqual(measured['uniform'], 1 / 3)
-        self.assertAlmostEqual(measured['loc_uniform'], .45)
-        self.assertEqual(measured['reach'], {'median': 1, 'p90': 1, 'max': 1})
-        self.assertEqual(measured['scc_max'], 0)
+        measured = current
+        self.assertAlmostEqual(measured['u_pct'], 100 / 3)
+        self.assertAlmostEqual(measured['loc_u_pct'], 45)
+        self.assertEqual([measured[key] for key in ('reach_median', 'reach_p90', 'reach_max')], [1, 1, 1])
+        self.assertEqual(measured['scc_max'], 1)
 
     def test_closure_handles_diamonds_and_cycles_without_double_counting(self):
         current = graph({'//tests:small': ['//pkg:lib'], '//tests:other': ['//pkg:b.py'],
                          '//pkg:lib': ['//pkg:a.py', '//pkg:hub'],
                          '//pkg:hub': ['//pkg:lib', '//pkg:a.py']})
-        self.assertEqual(current.tests['//tests:small'], {'//pkg:a.py'})
-        self.assertEqual(impact.metrics(current)['scc_members'], [['//pkg:hub', '//pkg:lib']])
+        self.assertEqual(set(current['reach']['//tests:small']), {'//pkg:a.py'})
+        self.assertEqual(current['scc_members'], ['//pkg:hub', '//pkg:lib'])
 
     def test_new_broad_test_fails_and_names_a_hub_and_added_edge(self):
         base = graph()
@@ -36,7 +36,7 @@ class GraphImpactTests(unittest.TestCase):
                       '//tests:new': ['//pkg:hub'], '//pkg:hub': ['//pkg:a.py', '//pkg:b.py']},
                      tests=('//tests:small', '//tests:other', '//tests:new'))
         result = impact.check(base, head, {'//tests:new'}, impact.baseline(base))
-        self.assertTrue(any('reach 2 > budget 1' in error for error in result['errors']))
+        self.assertTrue(any('reach 2 exceeds budget 1' in error for error in result['errors']))
         self.assertIn('//tests:new', result['explain_targets'])
         self.assertIn(['//tests:new', '//pkg:hub'], result['added_edges'])
         self.assertIn('new tests 1', result['summary'])
@@ -47,7 +47,7 @@ class GraphImpactTests(unittest.TestCase):
         policy = impact.baseline(current)
         policy['reach_budget'] = 1
         self.assertFalse(impact.check(current, current, set(), policy)['errors'])
-        self.assertTrue(any('reach 2 > budget 1' in error for error in
+        self.assertTrue(any('reach 2 exceeds budget 1' in error for error in
                             impact.check(current, current, {'//tests:small'}, policy)['errors']))
 
     def test_new_test_to_test_and_conftest_edges_fail(self):
@@ -57,25 +57,33 @@ class GraphImpactTests(unittest.TestCase):
             head = graph({'//tests:small': ['//pkg:a.py'], '//tests:other': ['//pkg:b.py'],
                           source: [target]})
             result = impact.check(base, head, set(), impact.baseline(base))
-            self.assertTrue(any('forbidden edge' in error for error in result['errors']), result)
+            self.assertTrue(any(('new test_to_test edge' in error or 'new conftest_source edge' in error) for error in result['errors']), result)
 
     def test_conftest_rule_dependency_is_an_import_even_when_source_is_a_leaf(self):
         base = graph({'//tests:small': ['//pkg:a.py'], '//tests:other': ['//pkg:b.py'],
                       '//tests:conftest': ['//tests:conftest.py'], '//pkg:lib': ['//pkg:a.py']})
         deps = {}
-        for source, target in base.edges:
+        for source, target in base['edges']:
             deps.setdefault(source, []).append(target)
         deps['//tests:conftest'].append('//pkg:lib')
         head = graph(deps)
         result = impact.check(base, head, set(), impact.baseline(base))
-        self.assertTrue(any('forbidden edge' in error for error in result['errors']), result)
+        self.assertTrue(any(('new test_to_test edge' in error or 'new conftest_source edge' in error) for error in result['errors']), result)
+
+    def test_packaged_conftest_data_does_not_turn_a_test_into_a_conftest_import(self):
+        deps = {'//tests:small': ['//pkg:a.py', '//tests:conftest.py'],
+                '//tests:other': ['//pkg:b.py']}
+        base = graph(deps)
+        head = graph({**deps, '//tests:small': deps['//tests:small'] + ['//pkg:b.py']})
+        result = impact.check(base, head, set(), impact.baseline(base))
+        self.assertFalse(any(('new test_to_test edge' in error or 'new conftest_source edge' in error) for error in result['errors']), result)
 
     def test_uniform_regression_reports_added_edge_and_fanout_growth(self):
         base = graph()
         head = graph({'//tests:small': ['//pkg:a.py', '//pkg:b.py'],
                       '//tests:other': ['//pkg:b.py']})
         result = impact.check(base, head, set(), impact.baseline(base))
-        self.assertTrue(any('U worsened' in error for error in result['errors']))
+        self.assertTrue(any('u_pct rose' in error for error in result['errors']))
         self.assertEqual(result['fanout_growth'][0], ['//pkg:b.py', 1])
         self.assertIn(['//tests:small', '//pkg:b.py'], result['added_edges'])
 
@@ -94,10 +102,10 @@ class GraphImpactTests(unittest.TestCase):
         base = graph()
         head = graph({'//tests:small': [], '//tests:other': ['//pkg:b.py']})
         policy = impact.baseline(base)
-        self.assertTrue(any('record gain' in error for error in
+        self.assertTrue(any('record the gain' in error for error in
                             impact.check(base, head, set(), policy)['errors']))
         improved = impact.write_baseline(head, policy)
-        self.assertEqual(improved['uniform'], .25)
+        self.assertEqual(improved['figures']['u_pct'], 25)
         with self.assertRaisesRegex(ValueError, 'refuses losses'):
             impact.write_baseline(base, improved)
         self.assertFalse(impact.check(base, head, set(), improved)['errors'])
@@ -105,8 +113,8 @@ class GraphImpactTests(unittest.TestCase):
     def test_allowlist_requires_reasons_and_only_shrinks(self):
         base = graph()
         policy = impact.baseline(base)
-        with self.assertRaisesRegex(ValueError, 'reason'):
-            impact.check(base, base, set(), policy, {'reach://tests:small': ''})
+        missing_reason = impact.check(base, base, set(), policy, {'reach://tests:small': ''})
+        self.assertTrue(any('reason' in error for error in missing_reason['errors']))
         result = impact.check(base, base, set(), policy, {'reach://tests:small': 'integration'}, {})
         self.assertTrue(any('allowlist may only shrink' in error for error in result['errors']))
 

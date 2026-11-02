@@ -1,5 +1,5 @@
 {
-  "sha256": "c5b598de19bb4d173990ab416013ced8cc73c87e44e778e1cb25c4f66f29d24a",
-  "source": "TL3 fallback; PrismaQuant core not published as of 2026-11-02",
-  "contract": "tests, edges, loc; Bazel-native deps.json adapter"
+  "sha256": "af07c62a1bd54c9fcacb698481f6b333d1c0bf399932e568fbc8b9fb422fcf60",
+  "source": "RobTand/prismaquant@e29127ae55d78e486266340db2d4a43c22d06e42:tools/ci/graph_impact.py",
+  "contract": "tests, edges, loc; byte-identical shared core"
 }

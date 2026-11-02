@@ -5,6 +5,17 @@ import bazel_graph_impact as adapter
 
 
 class BazelGraphTests(unittest.TestCase):
+    def test_leaf_keys_do_not_prove_source_edges_are_present(self):
+        deps = {'//pkg:lib': [], '//pkg:src/lib.rs': []}
+        self.assertTrue(adapter.needs_source_edges(deps, {'//pkg:src/lib.rs'}))
+        stream = '\n'.join([
+            '{"type":"RULE","rule":{"name":"//pkg:lib","ruleInput":["//pkg:src/lib.rs"]}}',
+            '{"type":"SOURCE_FILE","sourceFile":{"name":"//pkg:src/lib.rs"}}',
+        ])
+        completed = adapter.add_source_edges(deps, stream)
+        self.assertEqual(completed['//pkg:lib'], ['//pkg:src/lib.rs'])
+        self.assertFalse(adapter.needs_source_edges(completed, {'//pkg:src/lib.rs'}))
+
     def test_typed_source_labels_are_taken_from_hash_export(self):
         hashes = {'hashes': {'@@//pkg:lib': {'type': 'Rule', 'hash': 'a'},
                              '@@//pkg:src/lib.rs': {'type': 'SourceFile', 'hash': 'b'},
