@@ -4,6 +4,8 @@ import shlex
 import subprocess
 import sys
 
+from child_env import child_env
+
 ROOT = Path(__file__).resolve().parents[2]
 FIX = 'tools/bazel/generate.sh'
 
@@ -20,10 +22,11 @@ def commands(bazel='bazel'):
 CHECKS = commands()
 
 
-def check(commands=CHECKS, root=ROOT):
+def check(commands=CHECKS, root=ROOT, bazel='bazel'):
     failures = []
     for command in commands:
-        result = subprocess.run(command, cwd=root, capture_output=True, text=True)
+        result = subprocess.run(command, cwd=root, capture_output=True, text=True,
+                                env=None if command[0] == bazel else child_env())
         if result.returncode:
             failures.append(f'$ {shlex.join(map(str, command))}\n{result.stdout}{result.stderr}')
     if failures:

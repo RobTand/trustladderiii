@@ -8,11 +8,14 @@ import argparse
 import json
 import os
 import shlex
+import subprocess
 from pathlib import Path
 import sys
 import time
 import urllib.error
 import urllib.request
+
+from child_env import child_env
 
 API = 'https://app.buildbuddy.io/api/v1/'
 IMAGE = ('docker://gcr.io/flame-public/rbe-ubuntu24-04@sha256:'
@@ -66,8 +69,8 @@ def run_request(args):
         'repo': args.repo,
         'branch': args.branch,
         'commit_sha': args.head,
-        'steps': [{'run': INSTALL_UV},
-                  {'run': 'export PATH="$HOME/.local/bin:$PATH" && ' + shlex.join(command)}],
+        'steps': [{'run': 'python3 tools/ci/child_env.py bash -c ' + shlex.quote(INSTALL_UV)},
+                  {'run': 'export PATH="$HOME/.local/bin:$PATH" && python3 tools/ci/child_env.py ' + shlex.join(command)}],
         'env': {'GIT_REPO_DEFAULT_BRANCH': 'main'},
         'platform_properties': {
             # The runner hosts only the Bazel client; actions go to remote execution.
@@ -218,7 +221,28 @@ def write_github(path_variable, text):
             handle.write(text)
 
 
+
+def merged_prs():
+    # Consume the GitHub credential in this controller. Neither git nor a gh
+    # child should inherit it, even when a command fails and logs its env.
+    commits = subprocess.check_output(
+        ['git', 'rev-list', f"{os.environ['BEFORE']}..{os.environ['AFTER']}"],
+        text=True, env=child_env()).split()
+    numbers = set()
+    for commit in commits:
+        request = urllib.request.Request(
+            f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/commits/{commit}/pulls",
+            headers={'Authorization': f"Bearer {os.environ['GH_TOKEN']}",
+                     'Accept': 'application/vnd.github+json'})
+        with urllib.request.urlopen(request, timeout=120) as response:
+            numbers.update(pr['number'] for pr in json.load(response))
+    write_github('GITHUB_OUTPUT', 'prs=' + ','.join(map(str, sorted(numbers))) + '\n')
+
+
 def main():
+    if sys.argv[1:2] == ['merged-prs']:
+        merged_prs()
+        return 0
     if sys.argv[1:2] == ['aggregate']:
         try:
             aggregate(sys.argv[2], json.loads(os.environ['NEEDS_JSON']))

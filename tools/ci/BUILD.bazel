@@ -11,7 +11,10 @@ py_binary(
     name = "bazel_parity",
     srcs = ["bazel_parity.py"],
     visibility = ["//visibility:public"],
-    deps = [":check"],
+    deps = [
+        ":check",
+        "//tools/ci:child_env",
+    ],
 )
 
 py_binary(
@@ -30,33 +33,44 @@ py_binary(
     name = "check",
     srcs = ["check.py"],
     visibility = ["//visibility:public"],
-    deps = [":rust_gate"],
+    deps = [
+        ":rust_gate",
+        "//tools/ci:child_env",
+    ],
 )
 
 py_binary(
     name = "feature_gate",
     srcs = ["feature_gate.py"],
     visibility = ["//visibility:public"],
+    deps = ["//tools/ci:child_env"],
 )
 
 py_binary(
     name = "fixture_costs",
     srcs = ["fixture_costs.py"],
     visibility = ["//visibility:public"],
-    deps = [":rust_gate"],
+    deps = [
+        ":rust_gate",
+        "//tools/ci:child_env",
+    ],
 )
 
 py_binary(
     name = "gate_mutants",
     srcs = ["gate_mutants.py"],
     visibility = ["//visibility:public"],
+    deps = ["//tools/ci:child_env"],
 )
 
 py_binary(
     name = "rust_gate",
     srcs = ["rust_gate.py"],
     visibility = ["//visibility:public"],
-    deps = [":shards"],
+    deps = [
+        ":shards",
+        "//tools/ci:child_env",
+    ],
 )
 
 py_library(
@@ -69,6 +83,7 @@ py_library(
     name = "worker_contract_container",
     srcs = ["worker_contract_container.py"],
     visibility = ["//visibility:public"],
+    deps = ["//tools/ci:child_env"],
 )
 
 tl3_py_test(
@@ -101,7 +116,10 @@ tl3_py_test(
 tl3_py_test(
     name = "test_check",
     srcs = ["test_check.py"],
-    deps = [":check"],
+    deps = [
+        ":before_upload",
+        ":check",
+    ],
 )
 
 tl3_py_test(
@@ -128,6 +146,7 @@ py_binary(
     name = "bazel_generated",
     srcs = ["bazel_generated.py"],
     visibility = ["//visibility:public"],
+    deps = ["//tools/ci:child_env"],
 )
 
 py_binary(
@@ -137,6 +156,7 @@ py_binary(
     deps = [
         ":bazel_generated",
         ":rust_gate",
+        "//tools/ci:child_env",
     ],
 )
 
@@ -144,6 +164,7 @@ py_binary(
     name = "remote_gate",
     srcs = ["remote_gate.py"],
     visibility = ["//visibility:public"],
+    deps = ["//tools/ci:child_env"],
 )
 
 tl3_py_test(
@@ -162,7 +183,10 @@ py_binary(
     name = "seeded_breaks",
     srcs = ["seeded_breaks.py"],
     visibility = ["//visibility:public"],
-    deps = [":bazel_gate"],
+    deps = [
+        ":bazel_gate",
+        "//tools/ci:child_env",
+    ],
 )
 
 tl3_py_test(
@@ -185,4 +209,26 @@ tl3_py_test(
     name = "test_bazel_budget_calibration",
     srcs = ["test_bazel_budget_calibration.py"],
     deps = [":bazel_budget_calibration"],
+)
+
+py_binary(
+    name = "child_env",
+    srcs = ["child_env.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "before_upload",
+    srcs = ["before_upload.py"],
+    data = [
+        "check_no_secret_leak.py",
+        "check_no_secret_leak.sha256",
+    ],  # keep
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "check_no_secret_leak",
+    srcs = ["check_no_secret_leak.py"],
+    visibility = ["//visibility:public"],
 )

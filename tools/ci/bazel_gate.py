@@ -23,6 +23,7 @@ import zipfile
 
 import bazel_generated
 import rust_gate
+from child_env import child_env
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = 'tl3.bazel-gate.v1'
@@ -157,7 +158,8 @@ class Workspace:
     def run(self, *command, capture=True, check=True):
         print('$ ' + shlex.join(map(str, command)), flush=True)
         result = subprocess.run(list(map(str, command)), cwd=self.root, text=True,
-                                stdout=subprocess.PIPE if capture else None)
+                                stdout=subprocess.PIPE if capture else None,
+                                env=None if command[0] == self.bazel else child_env())
         if check and result.returncode:
             raise GateError(f'{shlex.join(map(str, command))} exited {result.returncode}')
         return result.stdout if capture else result.returncode
@@ -166,7 +168,7 @@ class Workspace:
         if not sha:
             raise GateError('empty base or head; the queue-aware refs were unavailable')
         present = subprocess.run(['git', 'cat-file', '-e', f'{sha}^{{commit}}'], cwd=self.root,
-                                 stderr=subprocess.DEVNULL)
+                                 stderr=subprocess.DEVNULL, env=child_env())
         if present.returncode:
             self.run('git', 'fetch', '--quiet', '--no-tags', 'origin', sha)
 
@@ -263,7 +265,7 @@ class Workspace:
         policy = 'tools/ci/rust-test-budget.json'
         current = json.loads((self.root / policy).read_text())
         previous = subprocess.run(['git', 'show', f'{base}:{policy}'], cwd=self.root,
-                                  capture_output=True, text=True)
+                                  capture_output=True, text=True, env=child_env())
         try:
             rust_gate.check_budget({}, current, json.loads(previous.stdout) if not previous.returncode
                                    else current)

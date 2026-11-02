@@ -50,7 +50,7 @@ def tl3_py_test(name, srcs, main = None, deps = [], data = [], **kwargs):
         main = "//tools/bazel:python_runner.py",
         srcs = srcs + ["//tools/bazel:python_runner.py", "//tools/bazel:runtime.py"],
         args = [package + "/" + module],
-        deps = _unique_labels(deps + _PACKAGE_DEPS.get(package, []) + [requirement("pytest")]),
+        deps = _unique_labels(deps + _PACKAGE_DEPS.get(package, []) + ["//tools/ci:child_env", requirement("pytest")]),
         data = data + _PACKAGE_DATA.get(package, []) + native.glob(
             ["**"],
             exclude = ["BUILD.bazel", "**/__pycache__/**"],

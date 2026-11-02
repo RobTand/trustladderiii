@@ -20,6 +20,7 @@ import tomllib
 import zipfile
 
 import check
+from child_env import child_env
 
 ROOT = Path(__file__).resolve().parents[2]
 FIX = 'tools/bazel/generate.sh'
@@ -226,7 +227,7 @@ def cargo_metadata():
     cargo = os.environ.get('CARGO') or shutil.which('cargo') or str(Path.home() / '.cargo/bin/cargo')
     output = subprocess.check_output([cargo, 'metadata', '--no-deps', '--format-version', '1',
                                       '--locked', '--manifest-path', str(ROOT / 'Cargo.toml')],
-                                     cwd=ROOT)
+                                     cwd=ROOT, env=child_env())
     return json.loads(output)
 
 

@@ -11,6 +11,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+from child_env import child_env
+
 ROOT = Path(__file__).resolve().parents[2]
 STEERING = 'crates/controller/src/steering.rs'
 WRITER = 'crates/controller/src/adapters/workers/writer.rs'
@@ -44,7 +46,7 @@ MUTANTS = {
 def build(target):
     command = ['cargo', 'test', '--locked', '-p', 'tl3-controller', '--test', target,
                '--no-run', '--message-format=json']
-    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
+    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, env=child_env())
     if result.returncode:
         for line in result.stdout.splitlines():
             event = json.loads(line)
@@ -75,7 +77,7 @@ def run_mutant(name):
                     '--gate-case=' + case)
             with tempfile.TemporaryFile(mode='w+') as log:
                 result = subprocess.run([binary, flag], cwd=ROOT, stdout=log,
-                                        stderr=subprocess.STDOUT, timeout=120)
+                                        stderr=subprocess.STDOUT, timeout=120, env=child_env())
                 log.seek(0)
                 output = log.read()
             assertions = []
@@ -97,7 +99,7 @@ def main():
     parser.add_argument('mutant', choices=['all', *MUTANTS])
     args = parser.parse_args()
     subprocess.run(['uv', 'sync', '--locked', '--python', '3.14+gil', '--project', 'workers'],
-                   cwd=ROOT, check=True)
+                   cwd=ROOT, check=True, env=child_env())
     for name in MUTANTS if args.mutant == 'all' else [args.mutant]:
         run_mutant(name)
 

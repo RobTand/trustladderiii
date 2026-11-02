@@ -78,6 +78,9 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
         "progress survives retirement while waiting for Rob, and is removed on closure"
     );
     if mode == "normal" {
+        // #422: Hindsight is down in this fixture, so recall degrades and work proceeds.
+        assert_eq!(requests[0]["inputs"]["memories"], json!([]));
+        assert!(requests[0]["inputs"]["memory_note"].is_string());
         assert!(n.phase.is_closed());
         assert_eq!(requests.len(), 1);
         assert_eq!(plan["kind"], "leaf");
@@ -237,5 +240,144 @@ pub(super) fn stop(settings: &tl3_config::Store) {
                 .split_whitespace()
                 .next()
                 == Some("Z")
+    );
+}
+
+/// #422: a seeded bank reaches ingest and the planner, and a planner's verified
+/// flag hides a wrong memory from later recall.
+pub(super) fn memories(settings: &tl3_config::Store) {
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path, path_regex},
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let server = runtime.block_on(MockServer::start());
+    let (recalled, recalls) = std::sync::mpsc::channel();
+    runtime.block_on(
+        Mock::given(method("POST"))
+            .and(path("/v1/default/banks/tl3/memories/recall"))
+            .respond_with(move |request: &wiremock::Request| {
+                let body: Value = request.body_json().unwrap();
+                recalled.send(body.clone()).unwrap();
+                let results = if body.get("tags").is_some() {
+                    json!([{"id": "lesson-greeting", "text": "greet_user() returns 'hi'.", "tags": ["kind:lesson", "repo:RobTand/tl3-sandbox"]}])
+                } else {
+                    json!([{"id": "run-earlier", "text": "An earlier run read greeting.py.", "tags": ["role:maker"]}])
+                };
+                ResponseTemplate::new(200).set_body_json(json!({"results": results}))
+            })
+            .mount(&server),
+    );
+    let (curated, sent) = std::sync::mpsc::channel();
+    runtime.block_on(
+        Mock::given(method("PATCH"))
+            .and(path_regex("^/v1/default/banks/tl3/memories/[^/]+$"))
+            .respond_with(move |request: &wiremock::Request| {
+                let body: Value = request.body_json().unwrap();
+                curated.send((request.url.path().to_owned(), body)).unwrap();
+                ResponseTemplate::new(200).set_body_json(json!({}))
+            })
+            .mount(&server),
+    );
+    runtime.block_on(
+        Mock::given(method("POST"))
+            .and(path("/v1/default/banks/tl3/memories"))
+            .respond_with(|request: &wiremock::Request| {
+                let body: Value = request.body_json().unwrap();
+                ResponseTemplate::new(200).set_body_json(json!({"success": true, "async": true,
+                    "bank_id": "tl3", "items_count": 1, "operation_id": body["operation_id"]}))
+            })
+            .mount(&server),
+    );
+    let root = tempfile::tempdir().unwrap();
+    let mut config = config(settings, root.path(), "plan-memories");
+    config.hindsight.endpoint = server.uri().parse().unwrap();
+    let mut store = Store::open(settings).unwrap();
+    materials(&mut store);
+    // Evidence must share an identifier with the claim; `greet` alone is too generic.
+    let mut inputs = store.worker_materials("0").unwrap().unwrap();
+    inputs["repo"]["materials"][0]["content"] = json!("def greet_user(): return 'hello'\n");
+    store.put_worker_materials("0", &inputs).unwrap();
+    let (registry, mut source) =
+        worker_simulation(&root.path().join("fakes"), &config, false).unwrap();
+    let mut controller = Controller::open(
+        Store::open(settings).unwrap(),
+        registry,
+        Bootstrap::from_config(&config).unwrap(),
+    )
+    .unwrap();
+    controller.intake(labelled()).unwrap();
+    wait(|| {
+        drive(&mut controller, &mut source, &mut store);
+        controller.world().unwrap().nodes[0].phase.is_closed()
+    });
+    let requests: Vec<Value> = recorded_runs(root.path())
+        .into_iter()
+        .map(|value| value["request"].clone())
+        .collect();
+    let role = |name: &str| {
+        requests
+            .iter()
+            .find(|r| r["role"] == name)
+            .unwrap_or_else(|| panic!("no {name} run"))
+            .clone()
+    };
+    let expected = json!([
+        {"id": "lesson-greeting", "kind": "lesson", "repo": "RobTand/tl3-sandbox", "content": "greet_user() returns 'hi'."},
+        {"id": "run-earlier", "kind": "run", "content": "An earlier run read greeting.py."},
+    ]);
+    let ingest = role("ingest");
+    assert_eq!(ingest["inputs"]["memories"], expected);
+    assert!(ingest["inputs"].get("memory_note").is_none());
+    let planner = role("planner");
+    assert_eq!(planner["inputs"]["memories"], expected);
+    let brief = store.worker_document("0", "briefs").unwrap().unwrap();
+    assert_eq!(
+        brief["memory_ids"],
+        json!(["lesson-greeting"]),
+        "ingest cites what it was given"
+    );
+    let plan = store.worker_document("0", "plans").unwrap().unwrap();
+    assert_eq!(plan["memory_ids"], json!(["lesson-greeting"]));
+
+    let bodies: Vec<Value> = recalls.try_iter().collect();
+    let queries: Vec<&str> = bodies
+        .iter()
+        .map(|b| b["query"].as_str().unwrap())
+        .collect();
+    assert!(
+        queries
+            .iter()
+            .any(|q| q.contains("Fix greeting") && q.contains("Return hello.")),
+        "ingest recalls on the issue: {queries:?}"
+    );
+    assert!(
+        queries
+            .iter()
+            .any(|q| q.contains(brief["brief"].as_str().unwrap())
+                && q.contains(brief["goals"][0]["description"].as_str().unwrap())
+                && q.contains("RobTand/tl3-sandbox")),
+        "the planner recalls on the brief, goals and repo: {queries:?}"
+    );
+    for request in &requests {
+        assert!(!request["inputs"].to_string().contains("hindsight_key"));
+    }
+
+    assert_retired(&config, &mut store);
+    // One verified flag hides the memory from TL3 at once; retiring it in
+    // Hindsight waits for a second, independent signal.
+    let curations = store.memory_curations().unwrap();
+    assert_eq!(curations.len(), 1);
+    assert_eq!(curations[0]["memory_id"], "lesson-greeting");
+    assert_eq!(curations[0]["source"], "planner");
+    assert_eq!(curations[0]["verdict"], "accepted");
+    assert_eq!(curations[0]["state"], "hidden");
+    assert!(
+        sent.try_recv().is_err(),
+        "one signal never retires the memory"
     );
 }
