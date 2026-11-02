@@ -4,4 +4,5 @@ mod database;
 pub use database::Database;
 pub mod executor_probe;
 pub mod github;
+pub mod scenario_shard;
 pub mod workers;

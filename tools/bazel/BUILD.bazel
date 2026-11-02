@@ -133,3 +133,10 @@ tl3_py_test(
     srcs = ["test_rust_builds.py"],
     deps = [":rust_builds"],
 )
+
+py_binary(
+    name = "selection_replay",
+    srcs = ["selection_replay.py"],
+    visibility = ["//visibility:public"],
+    deps = ["//tools/ci:bazel_gate"],
+)
