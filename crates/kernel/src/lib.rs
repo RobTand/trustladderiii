@@ -2740,6 +2740,7 @@ fn slot_free(w: &World, i: usize) -> bool {
 
 /// Tickets of seniority that one priority level is worth in the pool (Q39).
 pub const POOL_AGING_TICKETS: u64 = 8;
+const _: () = assert!(POOL_AGING_TICKETS == 1 << 3);
 
 /// A pool waiter's score (Q39): its ticket plus POOL_AGING_TICKETS per level
 /// below P0. A better priority passes only waiters fewer than that many tickets
@@ -2747,7 +2748,8 @@ pub const POOL_AGING_TICKETS: u64 = 8;
 /// two waiters never swap places, and it reads no world counter, which keeps
 /// the settled-world assumption in every apply proof cheap for Kani.
 pub fn pool_score(priority: Priority, ticket: u64) -> u64 {
-    ticket.saturating_add(POOL_AGING_TICKETS * u64::from(priority.rank()))
+    // POOL_AGING_TICKETS is 8: a shift, which Kani encodes as wiring.
+    ticket.saturating_add(u64::from(priority.rank()) << 3)
 }
 
 /// A node's place in the agent pool's line (Q39), lowest first: its score, then
@@ -2762,11 +2764,15 @@ pub fn pool_key(n: &Node) -> Option<(u64, u64)> {
 fn first_in_line(w: &World, i: usize) -> bool {
     let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };
-    if let Some(key) = pool_key(me) {
-        return !w
-            .nodes
-            .iter()
-            .any(|n| pool_key(n).is_some_and(|theirs| theirs < key));
+    if !matches!(me.phase, Phase::Ready(_)) {
+        let score = pool_score(me.priority, mine);
+        return !w.nodes.iter().any(|n| {
+            !matches!(n.phase, Phase::Ready(_))
+                && n.ticket.is_some_and(|theirs| {
+                    let their_score = pool_score(n.priority, theirs);
+                    their_score < score || (their_score == score && theirs < mine)
+                })
+        });
     }
     let mut first_runnable = mine;
     for (j, waiter) in w.nodes.iter().enumerate() {
