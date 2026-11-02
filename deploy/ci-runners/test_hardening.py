@@ -43,7 +43,7 @@ class Hardening(unittest.TestCase):
         self.stub("uname", "echo x86_64")
         self.stub("hostname", "echo dl380g10")
         self.stub("gh", 'printf "synthetic-jit-input\\n"')
-        self.stub("podman", 'printf "podman %s\\n" "$*" >> "$EVENTS"')
+        self.stub("podman", 'cat >/dev/null\nprintf "podman %s\\n" "$*" >> "$EVENTS"')
         self.stub("systemd-notify", 'printf "notify %s\\n" "$*" >> "$EVENTS"')
 
     def test_ten_quick_exits_and_backoff_reset(self):
