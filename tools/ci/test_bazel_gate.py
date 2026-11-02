@@ -1,4 +1,6 @@
 """Selection must fail closed: any doubt about what to test fails the gate."""
+# rust_runner is loaded by path from the //tools/bazel:sources data, not as a py dependency.
+# gazelle:ignore rust_runner
 import json
 from pathlib import Path
 import tempfile
