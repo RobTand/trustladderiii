@@ -18,8 +18,11 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::time::{Duration, Instant};
-use tl3_kernel::{NodeId, Phase, QKind, Question};
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::{Duration, Instant},
+};
+use tl3_kernel::{NodeId, Phase, Question};
 use tl3_store::{Commit, Snapshot, Transaction};
 use ts_rs::TS;
 
@@ -176,106 +179,15 @@ pub fn recent(tx: &mut Transaction<'_>, limit: i64) -> Result<Vec<CommandRecord>
         .collect())
 }
 
-/// Recommendations are fixed today: the first option, with the reason the
-/// GitHub question gives.
-const RECOMMENDED: usize = 0;
-const RECOMMENDATION_REASON: &str = "This option gives your request a clear next step.";
-
-/// A question's prompt and options, in the order and words the GitHub
-/// question uses (`adapters::github::writer_input`).
-fn options(kind: QKind) -> (&'static str, Vec<QuestionOption>) {
-    use AnswerKind::*;
-    let option = |answer, label: &str, outcome: &str, detail| QuestionOption {
-        answer,
-        label: label.into(),
-        outcome: outcome.into(),
-        detail,
-    };
-    let change = |outcome| {
-        option(
-            ChangeRequest,
-            "Change the request",
-            outcome,
-            Some(Detail::Text),
-        )
-    };
-    let stop = || option(Stop, "Stop", "I will stop this work.", None);
-    match kind {
-        QKind::AuditDisagreement => (
-            "Two readings of your request still disagree.",
-            vec![
-                option(
-                    Continue,
-                    "Continue with the original reading",
-                    "I will continue with the original understanding of your request.",
-                    None,
-                ),
-                change("I will stop this work and start from your new request."),
-                stop(),
-            ],
-        ),
-        QKind::NeedsSplitting => (
-            "This request needs more than one change, so I need you to narrow it.",
-            vec![
-                change("I will start again from the smaller request you provide."),
-                stop(),
-            ],
-        ),
-        QKind::CantMeet => (
-            "I could not finish your request with the approach I tried.",
-            vec![
-                option(
-                    TryAgain,
-                    "Try again with guidance",
-                    "I will try again using the guidance you provide.",
-                    Some(Detail::Guidance),
-                ),
-                change("I will stop this work and start from your new request."),
-                stop(),
-            ],
-        ),
-        QKind::OutOfCredit => (
-            "This request has used its agreed allowance for further attempts.",
-            vec![
-                option(
-                    AddCredit,
-                    "Add credit",
-                    "I will continue with the extra allowance you provide.",
-                    Some(Detail::Amount),
-                ),
-                change("I will stop this work and start from your new request."),
-                stop(),
-            ],
-        ),
-        QKind::EffectFailed => (
-            "A required action needs your help before work can continue.",
-            vec![
-                option(
-                    Continue,
-                    "Continue after fixing the cause",
-                    "I will continue once you confirm the cause is fixed.",
-                    None,
-                ),
-                stop(),
-            ],
-        ),
-        QKind::CleanupFailed => (
-            "I need your help to finish cleaning up this work.",
-            vec![
-                option(
-                    Retry,
-                    "Retry after fixing the cause",
-                    "I will try the cleanup again.",
-                    None,
-                ),
-                option(
-                    MarkHandled,
-                    "Mark the step handled",
-                    "I will accept that you have handled this cleanup step.",
-                    None,
-                ),
-            ],
-        ),
+/// What an answer needs from Rob before it can apply.
+fn detail_of(answer: AnswerKind) -> Option<Detail> {
+    match answer {
+        AnswerKind::ChangeRequest => Some(Detail::Text),
+        AnswerKind::TryAgain => Some(Detail::Guidance),
+        AnswerKind::AddCredit => Some(Detail::Amount),
+        AnswerKind::Continue | AnswerKind::Stop | AnswerKind::Retry | AnswerKind::MarkHandled => {
+            None
+        }
     }
 }
 
@@ -287,30 +199,92 @@ fn detail_words(detail: Detail) -> &'static str {
     }
 }
 
-/// The open question with its options, for the board.
-pub fn card_question(question: Question, _context: Option<&Value>) -> CardQuestion {
-    let (prompt, options) = options(question.kind);
-    let recommended = &options[RECOMMENDED];
+/// The open question with its options, for the board. The words, the
+/// recommendation and the deciding worker's findings come from the facts the
+/// GitHub question is written from (`adapters::github::writer_input`), so the
+/// card and the issue can't disagree.
+pub fn card_question(question: Question, context: Option<&Value>) -> CardQuestion {
+    let ask = tl3_kernel::Notice::Ask {
+        question: question.id,
+    };
+    // Only the question, its context and the request text shape a question's facts.
+    let delivery = Delivery {
+        key: String::new(),
+        epoch: 0,
+        output: Output::Notice {
+            node: NodeId(0),
+            notice: ask,
+        },
+        generation: 0,
+        head_sha: None,
+        repository: crate::Repository {
+            owner: String::new(),
+            name: String::new(),
+            installation: 0,
+        },
+        issue: 0,
+        pull_request: None,
+        proposed: None,
+        paths: vec![],
+        attempt: 0,
+        round: 0,
+        replanned: false,
+        checks: None,
+        job_generation: None,
+        question: Some(question),
+        note: None,
+        scope_removals: None,
+        marker_key: None,
+        question_context: context.cloned(),
+        steering: None,
+        request_text: None,
+    };
+    let facts = crate::adapters::github::writer_input(&delivery, Some(ask), "", "")
+        .expect("a question's own notice always has facts")
+        .facts;
+    let (_, answers) = crate::steering::question(question.kind);
+    let options: Vec<_> = facts["options"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .zip(answers)
+        .map(|(option, answer)| {
+            let answer: AnswerKind =
+                serde_json::from_value(json!(answer)).expect("classifier answers are answer kinds");
+            QuestionOption {
+                answer,
+                label: option["action"].as_str().unwrap_or_default().into(),
+                outcome: option["outcome"].as_str().unwrap_or_default().into(),
+                detail: detail_of(answer),
+            }
+        })
+        .collect();
+    let recommended = facts["recommended_option"].as_u64().unwrap_or(0) as usize;
+    let findings = facts.get("findings").cloned();
     CardQuestion {
         id: question.id,
-        prompt: if question.clarified {
-            "I could not tell which option you chose. Could you clarify your answer?"
-        } else {
-            prompt
-        }
-        .into(),
-        defer_blocked: recommended.detail.map(|detail| {
-            format!(
-                "TL3's recommended option, \"{}\", needs {} from you.",
-                recommended.label,
-                detail_words(detail)
-            )
-        }),
-        recommended: RECOMMENDED as u32,
-        reason: RECOMMENDATION_REASON.into(),
+        prompt: facts["obstacle"].as_str().unwrap_or_default().into(),
+        defer_blocked: options
+            .get(recommended)
+            .and_then(|option| option.detail.map(|detail| (option, detail)))
+            .map(|(option, detail)| {
+                format!(
+                    "TL3's recommended option, \"{}\", needs {} from you.",
+                    option.label,
+                    detail_words(detail)
+                )
+            }),
+        recommended: recommended as u32,
+        reason: facts["recommendation_reason"]
+            .as_str()
+            .unwrap_or_default()
+            .into(),
+        decision: findings
+            .as_ref()
+            .and_then(|findings| findings["decision"].as_str())
+            .map(str::to_owned),
+        findings,
         options,
-        decision: None,
-        findings: None,
     }
 }
 
@@ -689,7 +663,7 @@ fn open_option(
     answer: AnswerKind,
 ) -> std::result::Result<(String, Question), Refused> {
     let current = open_question(n, question)?;
-    let (_, offered) = options(current.kind);
+    let offered = card_question(current, None).options;
     match offered.into_iter().find(|option| option.answer == answer) {
         Some(option) => Ok((option.label, current)),
         None => refuse(format!("Question {question} doesn't offer that option.")),
@@ -744,18 +718,21 @@ fn clear_incident(
 /// Coalesces wakes: rung when a wake goes out, answered when the controller
 /// drains, so a burst of commands sends one wake.
 #[derive(Default)]
-pub(crate) struct Doorbell(std::sync::atomic::AtomicBool);
+pub(crate) struct Doorbell(AtomicBool);
 
 impl Doorbell {
     /// Whether to send a wake now.
     pub(crate) fn ring(&self) -> bool {
-        todo!()
+        !self.0.swap(true, Ordering::SeqCst)
     }
 
     pub(crate) fn answer(&self) {
-        todo!()
+        self.0.store(false, Ordering::SeqCst);
     }
 }
+
+/// tl3d's doorbell; it runs one controller per process.
+static DOORBELL: Doorbell = Doorbell(AtomicBool::new(false));
 
 /// Wakes tl3d when the console files a command. Commands filed while no
 /// listener was open are drained on the wake each new session sends first.
@@ -775,7 +752,7 @@ impl Wakes {
 
     /// The controller is draining ingress; the next filed command wakes it again.
     pub fn answered() {
-        todo!()
+        DOORBELL.answer();
     }
 }
 
@@ -786,11 +763,15 @@ impl crate::ingress::Source for Wakes {
             let opened = Instant::now();
             match tl3_store::Listener::ingress(&self.settings) {
                 Ok(mut listener) => {
+                    // Commands filed while no session listened drain on this wake.
+                    DOORBELL.ring();
                     if sender.send(crate::cli::Input::Wake).is_err() {
                         return Ok(());
                     }
                     let error = loop {
                         match listener.wait() {
+                            // A wake already waiting for the drain covers this one.
+                            Ok(_) if !DOORBELL.ring() => {}
                             Ok(_) => {
                                 if sender.send(crate::cli::Input::Wake).is_err() {
                                     return Ok(());

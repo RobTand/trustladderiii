@@ -1036,7 +1036,11 @@ impl Listener {
     }
 
     fn listen(settings: &tl3_config::Store, statement: &str) -> Result<Self> {
-        let mut client = connect(settings, true)?;
+        let mut config = config(settings, true)?;
+        // A LISTEN session idles for hours. Keepalives find a dead peer, so
+        // the session ends and its owner reconnects and drains.
+        config.keepalives_idle(LISTEN_KEEPALIVE_IDLE);
+        let mut client = config.connect(NoTls)?;
         client.batch_execute(statement)?;
         Ok(Self { client })
     }
@@ -1152,7 +1156,13 @@ fn check_schema(tx: &mut Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
+const LISTEN_KEEPALIVE_IDLE: Duration = Duration::from_secs(60);
+
 fn connect(settings: &tl3_config::Store, read_only: bool) -> Result<Client> {
+    Ok(config(settings, read_only)?.connect(NoTls)?)
+}
+
+fn config(settings: &tl3_config::Store, read_only: bool) -> Result<postgres::Config> {
     settings.validate()?;
     let mut connection = postgres::Config::new();
     connection
@@ -1170,7 +1180,7 @@ fn connect(settings: &tl3_config::Store, read_only: bool) -> Result<Client> {
     if read_only {
         connection.options("-c default_transaction_read_only=on");
     }
-    Ok(connection.connect(NoTls)?)
+    Ok(connection)
 }
 
 fn read_transaction(client: &mut Client) -> Result<Transaction<'_>> {

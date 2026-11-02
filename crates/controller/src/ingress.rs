@@ -266,6 +266,8 @@ fn drain_on_wake(controller: &mut Controller) -> Result<bool> {
 }
 
 fn drain_pending(controller: &mut Controller) -> Result<bool> {
+    // Before reading ingress, so a command filed from here on wakes it again.
+    crate::console::Wakes::answered();
     let mut deferred = false;
     let names: Vec<_> = controller
         .github_translators

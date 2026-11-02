@@ -1,4 +1,5 @@
 use super::*;
+use tl3_kernel::QKind;
 
 const KINDS: [QKind; 6] = [
     QKind::AuditDisagreement,
