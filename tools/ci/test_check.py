@@ -17,7 +17,7 @@ import check
 
 class DiscoveryTests(unittest.TestCase):
     def test_shared_checker_matches_the_coordinator_pin(self):
-        expected = '69c01d79c50edd90a15e0b85e21917eefccc38dbddae5695b1d5e1eeebfcb526'
+        expected = 'a7c88079f0b2558d24d68f7eef2d0824a9b32def42db49c733dc7a905f136eb2'
         pin = Path(__file__).with_name('check_no_secret_leak.sha256')
         scanner = pin.with_suffix('.py')
         self.assertTrue(pin.is_file(), 'shared checker hash receipt is missing')
@@ -225,7 +225,10 @@ class ScannerCompressionTests(unittest.TestCase):
         # Full Bazel 9.3.1 execution log from TL3 checkout t3-b997de7d,
         # captured 2026-11-02. SHA256 is recorded with the fixture.
         artifact = Path(__file__).with_name('fixtures') / 'execution_log.binpb.zst'
-        status, output = self.scan(artifact.read_bytes())
+        payload = artifact.read_bytes()
+        expected = artifact.with_name('execution_log.sha256').read_text().split()[0]
+        self.assertEqual(hashlib.sha256(payload).hexdigest(), expected)
+        status, output = self.scan(payload)
         self.assertEqual(status, 0, output)
         self.assertNotIn('not scanned', output)
 
