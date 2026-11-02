@@ -599,6 +599,18 @@ def test_prompt_distinguishes_excused_regressions_and_unverified_evidence():
     assert "A failing check your change caused is never unverified." in prompt
 
 
+def test_prompt_requires_reds_the_harness_accepts():
+    # #340: a module-level import of a new name errors on the base, and a flaky
+    # test can pass there; neither demonstrates the change.
+    prompt = " ".join(files("tl3_workers").joinpath("prompts", "maker.md").read_text().split())
+    assert "must fail by assertion on the base" in prompt
+    assert "Import names the change adds inside the test body, or reach them through their module" in prompt
+    assert "a test failure, not a collection error" in prompt
+    assert "Prefer new test files where the plan allows" in prompt
+    assert "force the bad interleaving or timing deterministically with injected clocks, events or barriers" in prompt
+    assert "Confirm the base outcome with run_tests and its base comparison before replying done" in prompt
+
+
 def test_fix_round_inputs_and_test_settings_reach_their_destinations(tmp_path, maker_request, monkeypatch):
     observed = []
     settings = []
