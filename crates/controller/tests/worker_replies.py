@@ -25,6 +25,16 @@ def scripted_reply(request, mode, marker):
         marker.with_suffix(".quota").write_text("announced")
         response = httpx.Response(429, headers={"retry-after": "600"}, request=httpx.Request("POST", "http://model.invalid/v1"))
         raise RateLimitError("private provider text", response=response, body=None)
+    if mode == "quota-ladder":
+        limits = marker.with_suffix(".quota-models")
+        seconds = (json.loads(limits.read_text()) if limits.exists() else {}).get(
+            request["role"], {}).get(request["model"]["name"])
+        if seconds is not None:
+            import httpx
+            from openai import RateLimitError
+            response = httpx.Response(429, headers={"retry-after": str(seconds)},
+                                      request=httpx.Request("POST", "http://model.invalid/v1"))
+            raise RateLimitError("private provider text", response=response, body=None)
     if mode == "blocked" or (mode in {"audit-blocked", "steering-commands", "steering-replacement"} and request["role"] == "audit") or (mode == "plan-blocked" and request["role"] == "planner"):
         while not marker.with_suffix(".release").exists():
             time.sleep(0.01)

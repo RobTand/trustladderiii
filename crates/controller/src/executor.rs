@@ -125,6 +125,9 @@ pub enum Observation {
     Quota {
         key: String,
         reset_ms: u64,
+        /// The model that reported quota; absent in waits recorded before Q53.
+        #[serde(default)]
+        model: Option<String>,
     },
     Classified {
         key: String,
@@ -152,6 +155,9 @@ pub enum Observation {
         generation: u64,
         role: String,
         reply: serde_json::Value,
+        /// The model that ran, so review can stay a different family (Q53).
+        #[serde(default)]
+        model: Option<String>,
     },
     Kernel(Event),
     CiFailed {
@@ -381,6 +387,11 @@ pub trait Executor {
     /// Resume an owner-confirmed quota ending under the same operation key.
     fn resume_after_quota(&mut self, _delivery: &Delivery) -> Result<Option<Completion>> {
         Ok(None)
+    }
+    /// Q53: when a quota-limited operation can resume. An adapter whose step has
+    /// another model left resumes it now; otherwise the announced reset stands.
+    fn quota_resume_ms(&mut self, _delivery: &Delivery, announced: u64, _now: u64) -> Result<u64> {
+        Ok(announced)
     }
     /// Success proves that the exact stalled attempt has ended.
     fn stop_stalled(&mut self, _delivery: &Delivery) -> Result<Completion> {

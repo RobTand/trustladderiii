@@ -685,6 +685,7 @@ fn progress_releases_nothing(settings: &tl3_config::Store) {
         Observation::Quota {
             key,
             reset_ms: clock.0.get() + 1000,
+            model: None,
         },
     )
     .unwrap();
