@@ -427,8 +427,10 @@ bounds the cost without a clock:
   lookaround, a nested repeat, an alternation inside a repeat, a repeat count
   above 100, more than four unbounded repeats, or two adjacent unbounded
   repeats where one is on `.`, is refused with the reason and `literal=true`.
-- A regular expression sees each line's first 2,048 characters, so a long
-  line costs a bounded amount. `literal=true` still searches a whole line.
+- A pattern with no regular-expression syntax is searched as text, whole
+  line, as before. A regular expression sees each line's first 2,048
+  characters, so a long line costs a bounded amount. `literal=true` still
+  searches a whole line.
 - A pattern that is not a valid regular expression, such as `def f(`, is
   searched as literal text and the `message` says so.
 - A regular expression that finds nothing and contains characters like `(`,

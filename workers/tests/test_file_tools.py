@@ -755,9 +755,10 @@ def test_grep_regex_looks_only_at_the_first_characters_of_a_long_line(tmp_path):
     cap = OUTPUT_LIMITS["line_bytes"]
     (tmp_path / "wide.txt").write_text("x" * cap + "needle\nneedle at the start\n")
     with Worktree(tmp_path) as worktree:
-        assert lines(worktree.grep("need.e")) == [2]
+        assert lines(worktree.grep("need[l]e")) == [2]
         assert lines(worktree.grep("needle", literal=True)) == [1, 2]
-        assert lines(worktree.grep("needle")) == [2]
+        # Text with no regex syntax is searched whole-line, as before.
+        assert lines(worktree.grep("needle")) == [1, 2]
 
 
 def test_grep_regex_keeps_paging_and_truncation(tmp_path):

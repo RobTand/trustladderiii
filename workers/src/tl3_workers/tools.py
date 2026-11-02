@@ -488,7 +488,9 @@ class Worktree:
 
     def grep(self, pattern: str, path: str = ".", offset: int = 0, literal: bool = False) -> dict:
         """Find bounded matches of a regular expression, or of literal text with literal=true. Offset counts matches."""
-        regex, note = (None, "") if literal else _regex(pattern)
+        # Text with no regex syntax reads the same either way, so it keeps the exact
+        # whole-line search; only a pattern that needs a regular expression pays for one.
+        regex, note = _regex(pattern) if not literal and REGEX_SYNTAX.search(pattern) else (None, "")
 
         def in_file(relative):
             with self._file(relative) as stream:
@@ -512,7 +514,7 @@ class Worktree:
         else:
             with self._directory(parts) as directory:
                 result = _page(below(directory), offset, OUTPUT_LIMITS["grep_matches"], "matches")
-        if regex is not None and not offset and not result["matches"] and REGEX_SYNTAX.search(pattern):
+        if regex is not None and not offset and not result["matches"]:
             # The same text may have been meant as written: vars(digests) is a regex group.
             note = "No matches for the regular expression. To search for the text as written, set literal=true."
         result["message"] = " ".join(filter(None, [note, result["message"]]))
