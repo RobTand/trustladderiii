@@ -89,6 +89,49 @@ def imported_names(path: str, source: bytes) -> set[str]:
     return names
 
 
+def path_literals(source: bytes) -> set[str]:
+    """Strings a file could use as a path: its string constants, plus the consecutive string
+    operands of each `/` chain and of each call, joined with `/`, as in
+    `Path(__file__).parent / "fixtures" / "x.json"` or `os.path.join("fixtures", "x.json")`."""
+    try:
+        module = ast.parse(source)
+    except UNREADABLE:
+        return set()
+    found, inner = set(), set()
+
+    def joined(operands):
+        run = []
+        for operand in [*operands, None]:
+            if isinstance(operand, ast.Constant) and isinstance(operand.value, str):
+                run.append(operand.value)
+                continue
+            if len(run) > 1:
+                found.add("/".join(part.strip("/") for part in run))
+            run = []
+
+    for node in ast.walk(module):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            found.add(node.value)
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div) and id(node) not in inner:
+            operands = []
+            while isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+                inner.add(id(node))
+                operands.append(node.right)
+                node = node.left
+            joined([node, *reversed(operands)])
+        elif isinstance(node, ast.Call):
+            joined(node.args)
+    return found
+
+
+def names_path(literal: str, path: str) -> bool:
+    """Whether a literal names a repository-relative path: the path itself, the path under
+    some prefix, or a suffix of the path of at least two components."""
+    literal = literal.removeprefix("./")
+    return (literal == path or literal.endswith("/" + path)
+            or "/" in literal and path.endswith("/" + literal))
+
+
 def select(tree: Path, changed: list[str], is_test) -> Iterator[str]:
     """Existing test selectors in `tree` whose files reach a changed Python file through
     imports, closest first: by import distance, then path, then source order. Lazy: each
@@ -102,7 +145,17 @@ def select(tree: Path, changed: list[str], is_test) -> Iterator[str]:
             sources[name] = (tree / name).read_bytes()
         return sources[name]
 
-    frontier = sorted({name for name in changed if name.endswith(".py")})
+    # Distance 0: the changed Python files, and every file that names a changed file of any
+    # type by a path literal, such as a test hashing a fixture it reads by path (#424).
+    frontier = {name for name in changed if name.endswith(".py")}
+    basenames = {PurePosixPath(name).name.encode() for name in changed}
+    for name in sorted(files - frontier):
+        text = source(name)
+        if not any(basename in text for basename in basenames):
+            continue
+        if any(names_path(literal, path) for literal in path_literals(text) for path in changed):
+            frontier.add(name)
+    frontier = sorted(frontier)
     seen = set(frontier)
     while frontier:
         for name in frontier:
