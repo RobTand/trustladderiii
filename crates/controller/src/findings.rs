@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FailedTest {
@@ -125,12 +126,77 @@ pub(crate) fn current_review<'a>(
     CurrentReview { head, findings }
 }
 
-/// What the maker's fix round is sent of the accumulated feedback (#316).
-pub(crate) fn bounded_feedback(
-    feedback: Vec<serde_json::Value>,
-    _head: Option<&str>,
-) -> Vec<serde_json::Value> {
+const TITLE_CHARS: usize = 120;
+
+/// What a maker fix round is sent of the accumulated feedback (#316). Findings that a
+/// later review or check superseded shrink to a one-line record: kind, id, title and the
+/// round that resolved them. The latest review, the reviewed head's findings and the
+/// check failure no review has superseded keep their full text. The store keeps it all.
+///
+/// A round is one feedback event: a review (all its findings) or a check failure.
+pub(crate) fn bounded_feedback(feedback: Vec<Value>, head: Option<&str>) -> Vec<Value> {
+    let reviewed = |item: &Value| {
+        (item["kind"] == "review_finding")
+            .then(|| item["reviewed_sha"].as_str())
+            .flatten()
+    };
+    let last_review = feedback.iter().rposition(|item| reviewed(item).is_some());
+    let last_sha = last_review.and_then(|index| reviewed(&feedback[index]));
+    let last_check = feedback
+        .iter()
+        .rposition(|item| item["kind"] == "failed_check");
+    let mut review_rounds: Vec<(&str, u64)> = Vec::new();
+    let mut round = 0u64;
+    let rounds: Vec<u64> = feedback
+        .iter()
+        .map(|item| match reviewed(item) {
+            Some(sha) => match review_rounds.iter().find(|(seen, _)| *seen == sha) {
+                Some((_, round)) => *round,
+                None => {
+                    round += 1;
+                    review_rounds.push((sha, round));
+                    round
+                }
+            },
+            None => {
+                round += u64::from(item["kind"] == "failed_check");
+                round
+            }
+        })
+        .collect();
     feedback
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let open = match reviewed(item) {
+                Some(sha) => Some(sha) == last_sha || Some(sha) == head,
+                None => {
+                    item["kind"] != "failed_check"
+                        || last_check == Some(index) && last_check > last_review
+                }
+            };
+            if open {
+                return item.clone();
+            }
+            let title = item["report"]
+                .as_str()
+                .unwrap_or_default()
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty());
+            let mut record = serde_json::json!({
+                "kind": item["kind"], "goal_ids": item["goal_ids"],
+                "report": clipped(title.unwrap_or("(no text)"), TITLE_CHARS),
+                "resolved_round": rounds[index],
+            });
+            for field in ["id", "reviewed_sha"] {
+                if !item[field].is_null() {
+                    record[field] = item[field].clone();
+                }
+            }
+            record
+        })
+        .collect()
 }
 
 #[cfg(test)]
