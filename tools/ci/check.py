@@ -9,6 +9,7 @@ import sys
 import tomllib
 
 import rust_gate
+from child_env import child_env
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,7 +19,7 @@ def run(*command, cwd=ROOT, capture=False):
     print(f"{cwd.relative_to(ROOT) or '.'}: {shlex.join(map(str, command))}", flush=True)
     result = subprocess.run(
         list(map(str, command)), cwd=cwd, check=True, text=True,
-        stdout=subprocess.PIPE if capture else None,
+        stdout=subprocess.PIPE if capture else None, env=child_env(),
     )
     return result.stdout
 

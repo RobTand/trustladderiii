@@ -9,6 +9,8 @@ import subprocess
 import sys
 import tempfile
 
+from child_env import child_env
+
 root = Path(__file__).resolve().parents[2]
 image = sys.argv[1]
 repetitions = int(sys.argv[2]) if len(sys.argv) > 2 else 1
@@ -38,4 +40,4 @@ with tempfile.TemporaryDirectory(prefix='tl3-contract-home-') as home:
         '  cargo test --locked -p tl3-controller --test workers -- --maker-reproducing-rebase\n'
         'done',
     ]
-    subprocess.run(command, check=True)
+    subprocess.run(command, check=True, env=child_env())

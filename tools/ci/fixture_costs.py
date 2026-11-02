@@ -5,7 +5,9 @@ import os
 from pathlib import Path
 import subprocess
 
+
 import rust_gate
+from child_env import child_env
 
 
 def main():
@@ -35,7 +37,7 @@ def main():
         if target != 'tl3_controller':
             command.append(target)
         result = subprocess.run([*command, '--no-run', '--message-format=json'],
-                                text=True, stdout=subprocess.PIPE, check=True)
+                                text=True, stdout=subprocess.PIPE, check=True, env=child_env())
         for line in result.stdout.splitlines():
             row = json.loads(line)
             if (row.get('reason') == 'compiler-artifact' and row.get('executable')
