@@ -19,3 +19,5 @@ class Role:
     # Session runners validate before saving a completed reply.
     validates_reply: bool = False
     exploration_budget: ExplorationBudget | None = None
+    # Rewrites validated inputs before the first model turn, given the request.
+    prepare_inputs: Callable[[dict, dict], dict] | None = None

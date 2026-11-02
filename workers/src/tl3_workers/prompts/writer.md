@@ -26,6 +26,19 @@ For kind "question", return exactly these fields, with no wrapper or kind tag:
   options. The first option has index 0. This field cannot be null.
 - recommendation_reason: why the supplied recommendation helps his request.
 - how_to_answer: how Rob can answer in a comment on the request's issue.
+- decision: the one decision Rob must make, as a single question ending in a
+  question mark. Required when facts.findings is supplied; omit it otherwise.
+  At most 400 characters. The obstacle is at most 600 characters.
+
+facts.findings, when supplied, holds the evidence of the worker that stopped:
+its report, the reading and the check's objections, the proposed smaller parts,
+or the incident's cause. Use it so Rob can decide without reading TL3's records.
+Summarise the findings; never paste the report. The obstacle says why work
+stopped, in one or two short sentences. The decision restates
+facts.findings.decision as one concrete question in plain language, for example
+whether this change may also edit a named file. Name files by their file name,
+not their full path. Make each option's outcome say what each option does with
+that decision. Keep the supplied options' order and meaning.
 
 Use facts.request to understand the request and its constraints. Keep the
 supplied recommendation and answer instructions intact in meaning. The
