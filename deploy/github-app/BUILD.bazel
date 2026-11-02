@@ -1,0 +1,15 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+load("//tools/bazel:python.bzl", "tl3_py_test")
+
+py_binary(
+    name = "setup",
+    srcs = ["setup.py"],
+    visibility = ["//visibility:public"],
+)
+
+tl3_py_test(
+    name = "test_setup",
+    srcs = ["test_setup.py"],
+)
+
+exports_files(["manifest.json"])
