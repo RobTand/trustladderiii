@@ -32,13 +32,16 @@ order. `models.reviewer_for(maker_family)` returns the first
 reviewer whose family differs from the current attempt's maker, ignoring ASCII
 case, or `None` if none exists. Validation requires a different-family reviewer
 for every family in the maker ladder, including with an explicit reviewer ladder.
-Other role ladders must contain at least one model.
+Other role ladders must contain at least one model. No model names or effort
+vocabulary are built into the crate.
 
 `limits.priority_credit_reserve` sets a starting credit reserve by issue priority,
 for example `{ P0 = 5, P1 = 5 }`. Priority comes from a `[P0]`–`[P3]` title
-prefix or a `P0`–`P3` label. Keys are `P0` to `P3`, reserves 3 to 100. It is
-empty by default, which keeps the kernel's reserve of 3 for every request (#416). No model names or effort
-vocabulary are built into the crate.
+prefix or a `P0`–`P3` label, read once when the request is created. Keys are
+`P0` to `P3`, reserves 3 to 100. It is empty by default, which keeps the
+kernel's reserve of 3 for every request (#416). A request whose ingest proposes
+an early end keeps the base reserve: the kernel's early-end reply carries no
+size to raise.
 
 The optional writer ladder defaults to ingest for older configs. Deployment
 defaults, including the explicit writer choice, live in

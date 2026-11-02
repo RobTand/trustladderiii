@@ -206,7 +206,8 @@ pub struct LabelledIssue {
     pub actor: u64,
     pub label: String,
     /// The issue's labels when it was labelled, for its priority (#416, #417).
-    #[serde(default)]
+    /// Omitted when empty, so stored inputs keep their older shape (#375).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -220,8 +221,9 @@ struct Request {
     source: Option<String>,
     #[serde(default)]
     proposed: Option<adoption::ProposedPullRequest>,
-    /// P0–P3 from the issue at intake (#416); `None` for unranked and older rows.
-    #[serde(default)]
+    /// P0–P3 from the issue, read once at intake (#416); `None` for unranked
+    /// and older rows, and omitted then so the row keeps its older shape (#375).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     priority: Option<u8>,
 }
 

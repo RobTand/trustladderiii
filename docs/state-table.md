@@ -165,7 +165,7 @@ Workers report liveness, as a heartbeat, and progress, such as new tool results,
 
 Agreed with Rob on 2026-10-29, with the numbers below confirmed on 2026-10-30 and reviewed after the first 25 requests (Q6). Credit belongs to the request and lives on its root, as a ledger. Each entry is keyed by its node and its reason, so it applies only once.
 
-**Starting credit:** the request's measured size in leaves, plus a reserve of 3. Size in leaves is the root forecast divided by the fit limit, rounded up. Approved by Rob, 2026-11-02 (#416), off by default: `limits.priority_credit_reserve` can raise the reserve by issue priority, for example 5 for P0 and P1; the controller adds the excess to the size it reports.
+**Starting credit:** the request's measured size in leaves, plus a reserve of 3. Size in leaves is the root forecast divided by the fit limit, rounded up. Approved by Rob, 2026-11-02 (#416), off by default: `limits.priority_credit_reserve` can raise the reserve by issue priority, for example 5 for P0 and P1; the controller adds the excess to the size it reports. Priority is read once at intake. An early end's credit keeps the base reserve, because its reply carries no size.
 
 **Debits:**
 
