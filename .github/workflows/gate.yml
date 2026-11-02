@@ -164,8 +164,18 @@ jobs:
             python3 tools/ci/child_env.py cargo install --locked kani-verifier --version 0.68.0
           fi
           python3 tools/ci/child_env.py cargo kani setup
+      - name: Disk before feature builds
+        if: matrix.mode == 'features'
+        run: |
+          df -h .
+          if [ -d target ]; then du -sh target; fi
       - name: Compile test and proof targets without running them
         run: python3 tools/ci/child_env.py python3 tools/ci/feature_gate.py '${{ matrix.mode }}'
+      - name: Disk after feature builds
+        if: always() && matrix.mode == 'features'
+        run: |
+          df -h .
+          if [ -d target ]; then du -sh target; fi
 
   python-lint:
     name: Python lint and locks
