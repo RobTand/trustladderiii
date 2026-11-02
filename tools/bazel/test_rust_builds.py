@@ -81,7 +81,8 @@ class RustDependencyTests(unittest.TestCase):
             "load": lambda *args: None,
             "native": SimpleNamespace(package_name=lambda: "crates/controller",
                                       exports_files=lambda *args: None,
-                                      filegroup=record, glob=lambda *args, **kwargs: []),
+                                      filegroup=record, glob=lambda patterns, **kwargs: [
+                                          path for path in patterns if "*" not in path]),
             "all_crate_deps": lambda **kwargs: [],
             "aliases": lambda **kwargs: {},
             "nonhermetic": lambda name: ([], {}),
@@ -132,6 +133,12 @@ class RustDependencyTests(unittest.TestCase):
                 self.assertIn("//harness/src/tl3_harness",
                               self.dependencies("test_test_" + name))
         self.assertIn("//workers/src:role_files", self.dependencies("test_test_hindsight"))
+
+    def test_github_worker_fixtures_keep_their_shared_reply_module(self):
+        deps = self.dependencies("test_test_github-flow")
+        self.assertIn("tests/worker_model.py", deps)
+        self.assertIn("tests/worker_transport.py", deps)
+        self.assertIn("tests/worker_replies.py", deps)
 
     def test_measured_controller_shard_configuration(self):
         for name, count in [("workers", 8), ("publishing", 0)]:
