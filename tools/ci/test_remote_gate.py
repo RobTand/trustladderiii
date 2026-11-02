@@ -121,6 +121,9 @@ class ResultTests(unittest.TestCase):
         self.assertIn(f'releases/download/{remote_gate.UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz', install)
         self.assertIn(f'{remote_gate.UV_SHA256}  uv.tar.gz', install)
         self.assertIn('sha256sum -c', install)
+        # uv export needs an interpreter matching workers/.python-version (3.14+gil);
+        # the image only has 3.12, and uv cannot download a request spelled +gil.
+        self.assertIn('uv python install 3.14', install)
         self.assertTrue(gate.startswith('export PATH="$HOME/.local/bin:$PATH" && '))
         self.assertIn('tools/ci/bazel_gate.py', gate)
 
