@@ -58,10 +58,10 @@ payload returns `Error::EventKeyReused` without changes. The error names the
 key and both payloads' md5 digests, and so does the log line. One exception
 keeps upgrades running (#371): a payload that only adds object members to the
 stored fact, where a null member reads as absent, is the same fact in a newer
-shape. It returns the stored receipt and logs a diagnostic naming the key. New events require
-the loaded revision and epoch; `Error::Stale` tells the caller
-to reload and apply the event again. Independent writers cannot silently
-overwrite a world they loaded before another commit.
+shape. It returns the stored receipt and logs a diagnostic naming the key.
+New events require the loaded revision and epoch; `Error::Stale` tells the
+caller to reload and apply the event again. Independent writers cannot
+silently overwrite a world they loaded before another commit.
 
 The transaction inserts the append-only event, upserts or deletes only the
 changed rows, inserts new Intended effects, applies delivery transitions,

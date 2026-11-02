@@ -1216,7 +1216,9 @@ fn same_fact(stored: &serde_json::Value, new: &serde_json::Value) -> bool {
         // JSONB compares numbers by value; a stored 1.0e18 may read back as an
         // integer. Two integers compare exactly, so values above 2^53 stay distinct.
         (Value::Number(stored), Value::Number(new)) => {
-            stored == new || stored.as_f64().is_some_and(|s| Some(s) == new.as_f64())
+            stored == new
+                || ((stored.is_f64() || new.is_f64())
+                    && stored.as_f64().is_some_and(|s| Some(s) == new.as_f64()))
         }
         _ => stored == new,
     }
