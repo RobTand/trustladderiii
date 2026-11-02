@@ -18,6 +18,15 @@ API = 'https://app.buildbuddy.io/api/v1/'
 IMAGE = ('docker://gcr.io/flame-public/rbe-ubuntu24-04@sha256:'
          '5f0c01e5f6d79e58d7a996330de33aa38ce599bf8431eaf27521e7602daadf50')
 RESULT = 'gate-result.json'
+# The runner image has no uv; the gate's requirements check needs `uv export`.
+UV_VERSION = '0.10.10'
+UV_SHA256 = '3e1027f26ce8c7e4c32e2277a7fed2cb410f2f1f9320d3df97653d40e21f415b'
+INSTALL_UV = f'''set -euo pipefail
+cd "$(mktemp -d)"
+curl -fsSLo uv.tar.gz https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz
+echo "{UV_SHA256}  uv.tar.gz" | sha256sum -c -
+tar -xzf uv.tar.gz
+install -D -m 755 uv-x86_64-unknown-linux-gnu/uv "$HOME/.local/bin/uv"'''
 SCHEMA = 'tl3.bazel-gate.v1'
 ARTIFACTS = ['bazel-remote-grpc.log', 'execution_log.binpb.zst']
 DONE = 'COMPLETE_INVOCATION_STATUS'
@@ -53,7 +62,8 @@ def run_request(args):
         'repo': args.repo,
         'branch': args.branch,
         'commit_sha': args.head,
-        'steps': [{'run': shlex.join(command)}],
+        'steps': [{'run': INSTALL_UV},
+                  {'run': 'export PATH="$HOME/.local/bin:$PATH" && ' + shlex.join(command)}],
         'env': {'GIT_REPO_DEFAULT_BRANCH': 'main'},
         'platform_properties': {
             # The runner hosts only the Bazel client; actions go to remote execution.
