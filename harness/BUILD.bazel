@@ -1,0 +1,10 @@
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "project_files",
+    srcs = [
+        "pyproject.toml",
+        "//harness/tests:fixtures",
+        "//harness/tools:sources",
+    ] + glob(["test-vectors/**"]),
+)

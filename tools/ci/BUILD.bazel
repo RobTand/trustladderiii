@@ -1,0 +1,161 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
+
+# gazelle:python_root
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["rust-test-budget.json"])
+
+py_binary(
+    name = "bazel_parity",
+    srcs = ["bazel_parity.py"],
+    visibility = ["//visibility:public"],
+    deps = [":check"],
+)
+
+py_binary(
+    name = "budget_flakes",
+    srcs = ["budget_flakes.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "budget_variance",
+    srcs = ["budget_variance.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "check",
+    srcs = ["check.py"],
+    visibility = ["//visibility:public"],
+    deps = [":rust_gate"],
+)
+
+py_binary(
+    name = "feature_gate",
+    srcs = ["feature_gate.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "fixture_costs",
+    srcs = ["fixture_costs.py"],
+    visibility = ["//visibility:public"],
+    deps = [":rust_gate"],
+)
+
+py_binary(
+    name = "gate_mutants",
+    srcs = ["gate_mutants.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "hosted",
+    srcs = ["hosted.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":check",
+        ":shards",
+    ],
+)
+
+py_binary(
+    name = "rust_gate",
+    srcs = ["rust_gate.py"],
+    visibility = ["//visibility:public"],
+    deps = [":shards"],
+)
+
+py_library(
+    name = "shards",
+    srcs = ["shards.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_library(
+    name = "worker_contract_container",
+    srcs = ["worker_contract_container.py"],
+    visibility = ["//visibility:public"],
+)
+
+tl3_py_test(
+    name = "test_bazel_parity",
+    srcs = ["test_bazel_parity.py"],
+    deps = [":bazel_parity"],
+)
+
+tl3_py_test(
+    name = "test_bazel_workspace",
+    srcs = ["test_bazel_workspace.py"],
+    deps = [":rust_gate"],
+)
+
+tl3_py_test(
+    name = "test_budget_flakes",
+    srcs = ["test_budget_flakes.py"],
+    deps = [":budget_flakes"],
+)
+
+tl3_py_test(
+    name = "test_budget_variance",
+    srcs = ["test_budget_variance.py"],
+    deps = [":budget_variance"],
+)
+
+tl3_py_test(
+    name = "test_check",
+    srcs = ["test_check.py"],
+    deps = [":check"],
+)
+
+tl3_py_test(
+    name = "test_feature_gate",
+    srcs = ["test_feature_gate.py"],
+    deps = [":feature_gate"],
+)
+
+tl3_py_test(
+    name = "test_hosted",
+    srcs = ["test_hosted.py"],
+    deps = [
+        ":check",
+        ":hosted",
+        ":rust_gate",
+        ":shards",
+    ],
+)
+
+tl3_py_test(
+    name = "test_rust_gate",
+    srcs = ["test_rust_gate.py"],
+    deps = [":rust_gate"],
+)
+
+# gazelle:python_default_visibility //visibility:public
+
+tl3_py_test(
+    name = "test_bazel_generated",
+    srcs = ["test_bazel_generated.py"],
+    deps = [":bazel_generated"],
+)
+
+py_binary(
+    name = "bazel_generated",
+    srcs = ["bazel_generated.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "bazel_budget_calibration",
+    srcs = ["bazel_budget_calibration.py"],
+    visibility = ["//visibility:public"],
+    deps = [":bazel_parity"],
+)
+
+tl3_py_test(
+    name = "test_bazel_budget_calibration",
+    srcs = ["test_bazel_budget_calibration.py"],
+    deps = [":bazel_budget_calibration"],
+)
