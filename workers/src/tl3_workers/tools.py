@@ -7,11 +7,10 @@ import json
 import os
 from pathlib import PurePosixPath
 import re
-import re._constants as sre
-import re._parser as sre_parse
 import stat
 from threading import Lock
 
+import re2
 from langchain_core.tools import StructuredTool, ToolException, create_schema_from_function
 
 from tl3_workers.pb_tests import make_test_tool
@@ -76,11 +75,22 @@ def _parts(path):
     return parts
 
 
-def _matching_lines(stream, pattern, regex=None):
+def _matching_lines(stream, pattern, regex=None, cut=None):
+    """Yield (line number, preview, truncated) for matching lines.
+
+    A regex is tried against the line up to regex_line_chars; cut counts the lines
+    that ran past that.
+    """
     number = 1
-    prefix, tail = "", ""
-    length, found = 0, False
+    prefix, tail, window = "", "", []
+    length, kept, found = 0, 0, False
     cap = OUTPUT_LIMITS["line_bytes"]
+    limit = OUTPUT_LIMITS["regex_line_chars"]
+
+    def searched():
+        text = "".join(window).rstrip("\r\n")
+        return regex.search(text) is not None
+
     while chunk := stream.readline(cap + 1):
         # newline="" preserves CRLF, including when readline's cap splits it.
         if chunk.endswith("\r"):
@@ -94,18 +104,25 @@ def _matching_lines(stream, pattern, regex=None):
         if regex is None:
             found |= pattern in tail + chunk
             tail = (tail + chunk)[-(len(pattern) - 1):] if len(pattern) > 1 else ""
+        elif kept < limit:
+            window.append(chunk[:limit - kept])
+            kept += len(window[-1])
         if chunk.endswith(("\r", "\n")):
+            ending = len(chunk) - len(chunk.rstrip("\r\n"))
             if regex is not None:
-                found = regex.search(prefix.rstrip("\r\n")[:cap]) is not None
+                found = searched()
+                if cut is not None and length - ending > limit:
+                    cut.append(number)
             if found:
                 text = _clip(prefix.rstrip("\r\n"), cap)
-                ending = len(chunk) - len(chunk.rstrip("\r\n"))
                 yield number, text, length - ending > len(text)
             number += 1
-            prefix, tail = "", ""
-            length, found = 0, False
+            prefix, tail, window = "", "", []
+            length, kept, found = 0, 0, False
     if regex is not None and length:
-        found = regex.search(prefix[:cap]) is not None
+        found = searched()
+        if cut is not None and length > limit:
+            cut.append(number)
     if length and found:
         text = _clip(prefix, cap)
         yield number, text, length > len(text)
@@ -153,81 +170,32 @@ def _path_error(name, error, path):
             "Use list to check that the path exists and names what you meant.")
 
 
-# grep reads its pattern as a Python regular expression. Python's re has no timeout,
-# so a pattern that can backtrack catastrophically is refused before it runs, and a
-# line is searched only up to line_bytes characters, which bounds the polynomial cases.
-REGEX_LIMITS = {"pattern_chars": 500, "unbounded_repeats": 4, "repeat_count": 100}
+# grep reads its pattern as an RE2 regular expression. RE2 runs in time linear in the
+# line, so no pattern can backtrack catastrophically and nothing here needs a clock.
+# It has no backreferences or lookarounds, which are what make Python's re unsafe.
+RE2_OPTIONS = re2.Options()
+RE2_OPTIONS.log_errors = False
 # Characters that mean something else as a regular expression than as written. A bare
 # dot is left out: it matches itself too, so it cannot hide a literal match.
 REGEX_SYNTAX = re.compile(r"[\\\[\](){}*+?^$|]")
-_REPEATS = (sre.MAX_REPEAT, sre.MIN_REPEAT, sre.POSSESSIVE_REPEAT)
-_REFUSED = ("Pattern refused: {reason}, so it could take exponential or very long time. "
-            "Simplify it, or set literal=true to search the text as written.")
-
-
-def _regex_problem(parsed):
-    """Why a parsed pattern could backtrack catastrophically, or None."""
-    unbounded = 0
-
-    def visit(items, repeated):
-        nonlocal unbounded
-        previous = None  # an unbounded repeat just before this item: True if it matches anything
-        for op, value in items:
-            current = None
-            if op in (sre.GROUPREF, sre.GROUPREF_EXISTS):
-                return "it has a backreference"
-            if op in (sre.ASSERT, sre.ASSERT_NOT):
-                return "it has a lookaround"
-            if op is sre.BRANCH and repeated:
-                return "it has an alternation inside a repeat"
-            if op in _REPEATS:
-                low, high, body = value
-                if high != sre.MAXREPEAT and high > REGEX_LIMITS["repeat_count"]:
-                    return f"it has a repeat count above {REGEX_LIMITS['repeat_count']}"
-                if high > 1 and repeated:
-                    return "it has a nested repeat"
-                if high == sre.MAXREPEAT:
-                    unbounded += 1
-                    current = any(inner[0] is sre.ANY for inner in body)
-                    if previous is not None and (current or previous):
-                        return "it has two adjacent repeats, one of them on any character"
-                problem = visit(body, repeated or high > 1)
-            elif op is sre.SUBPATTERN:
-                problem = visit(value[3], repeated)
-            elif op is sre.ATOMIC_GROUP:
-                problem = visit(value, repeated)
-            elif op is sre.BRANCH:
-                problem = next(filter(None, (visit(branch, repeated) for branch in value[1])), None)
-            else:
-                problem = None
-            if problem:
-                return problem
-            previous = current
-        return None
-
-    problem = visit(parsed, False)
-    if problem is None and unbounded > REGEX_LIMITS["unbounded_repeats"]:
-        return f"it has too many repeats (more than {REGEX_LIMITS['unbounded_repeats']} unbounded ones)"
-    return problem
+_RE2_HINTS = (
+    ("invalid perl operator", "RE2 has no lookarounds."),
+    ("invalid repetition size", "RE2 limits repeat counts to 1,000."),
+)
 
 
 def _regex(pattern):
     """The compiled pattern and a note for the model; (None, note) means search it as text."""
-    if len(pattern) > REGEX_LIMITS["pattern_chars"]:
-        raise ValueError(_REFUSED.format(
-            reason=f"it is too long ({len(pattern)} characters; the limit is {REGEX_LIMITS['pattern_chars']})"))
     try:
-        compiled = re.compile(pattern)
-        problem = _regex_problem(sre_parse.parse(pattern))
-    except re.error as exc:
-        return None, (f"Pattern is not a valid regular expression ({exc}), so it was searched as literal "
-                      "text. Escape special characters with a backslash to search them as a regular "
-                      "expression, or set literal=true.")
-    except (OverflowError, RecursionError):
-        problem = "it has a repeat count or nesting that is too large"
-    if problem:
-        raise ValueError(_REFUSED.format(reason=problem))
-    return compiled, ""
+        return re2.compile(pattern, RE2_OPTIONS), ""
+    except re2.error as exc:
+        detail = exc.args[0].decode("utf-8", "replace") if isinstance(exc.args[0], bytes) else str(exc)
+    hint = next((hint for start, hint in _RE2_HINTS if detail.startswith(start)), None)
+    if hint is None and re.search(r"\\[1-9]", detail):
+        hint = "RE2 has no backreferences."
+    hint = hint or "Escape special characters with a backslash to search them as a regular expression."
+    return None, (f"Pattern is not a valid regular expression ({detail}), so it was searched as literal "
+                  f"text. {hint} To search text as written, set literal=true.")
 
 
 def _selectors_json(selectors):
@@ -493,10 +461,11 @@ class Worktree:
         # Text with no regex syntax reads the same either way, so it keeps the exact
         # whole-line search; only a pattern that needs a regular expression pays for one.
         regex, note = _regex(pattern) if not literal and REGEX_SYNTAX.search(pattern) else (None, "")
+        cut = []
 
         def in_file(relative):
             with self._file(relative) as stream:
-                for number, preview, truncated in _matching_lines(stream, pattern, regex):
+                for number, preview, truncated in _matching_lines(stream, pattern, regex, cut):
                     if truncated:
                         preview += f" [Truncated. Use read offset={number - 1}, column=0.]"
                     yield {"path": relative, "line": number, "text": preview}
@@ -519,6 +488,12 @@ class Worktree:
         if regex is not None and not offset and not result["matches"]:
             # The same text may have been meant as written: vars(digests) is a regex group.
             note = "No matches for the regular expression. To search for the text as written, set literal=true."
+            if cut:
+                limit = f"{OUTPUT_LIMITS['regex_line_chars']:,}"
+                searched = (f"{len(cut)} line longer than {limit} characters was searched only in its first {limit}"
+                            if len(cut) == 1 else
+                            f"{len(cut)} lines longer than {limit} characters were searched only in their first {limit}")
+                note += f" {searched} characters. literal=true searches whole lines."
         result["message"] = " ".join(filter(None, [note, result["message"]]))
         return result
 

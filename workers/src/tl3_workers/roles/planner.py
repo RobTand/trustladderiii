@@ -122,7 +122,7 @@ ROLE = Role(
         "list": "List worktree directories to locate material for the plan.",
         "read": "Read worktree text to identify files and checks for the goals.",
         "glob": "Find worktree paths using relative glob patterns for planning. The path must be a directory.",
-        "grep": "Find references in worktree text to check the plan. The pattern is a Python regular expression matched per line; set literal to true to search text as written. The path may be a file or a directory.",
+        "grep": "Find references in worktree text to check the plan. The pattern is an RE2 regular expression, with no backreferences or lookarounds, matched per line; set literal to true to search text as written. The path may be a file or a directory.",
     },
     check_reply=check_reply,
 )
