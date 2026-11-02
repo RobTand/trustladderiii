@@ -395,10 +395,10 @@ The available names and arguments are:
 
 | Tool | Arguments and result |
 |---|---|
-| `list` | `path="."`, `offset=0`. A page of direct children with relative `path` and `is_dir`. |
+| `list` | `path="."`, `offset=0`. A page of direct children with relative `path` and `is_dir`. `path` must be a directory. |
 | `read` | `path`, `offset=0`, `limit=200`, `column=0`. UTF-8 text, paged by zero-based lines and character columns. |
-| `glob` | `pattern`, `path="."`, `offset=0`. A page of relative file and directory paths. `*` matches one segment, `**` recurses, and dotfiles are included. |
-| `grep` | `pattern`, `path="."`, `offset=0`. A page of literal text matches below a directory, with relative paths, one-based line numbers, and matching text. Non-UTF-8 files are skipped. |
+| `glob` | `pattern`, `path="."`, `offset=0`. A page of relative file and directory paths. `*` matches one segment, `**` recurses, and dotfiles are included. `path` must be a directory; a file path is an error that says so. |
+| `grep` | `pattern`, `path="."`, `offset=0`. A page of literal text matches, with relative paths, one-based line numbers, and matching text. `path` may be one file or a directory. Below a directory, non-UTF-8 files are skipped; a named non-UTF-8 file is an error. |
 | `write` | `path`, `content`. Create or overwrite UTF-8 text, creating parents. |
 | `edit` | `path`, `old`, `new`, `replace_all=false`. Exact replacement. `old` must be nonempty and unique unless `replace_all` is true. |
 
@@ -408,6 +408,10 @@ creation. A rejected file operation returns an error tool result, so the agent
 can correct its call without changing protocol v1 progress events. TL3's static
 validation errors pass through, including non-unique edits and missing files.
 Operating system exception text stays hidden because it can reveal host paths.
+A path error the model causes (a file where a directory is needed, a directory
+where a file is needed, a link, an overlong path) names the path the model gave
+and the tool to use instead. Only environment failures (Q50) get the generic
+"Worktree tool rejected the path or operation" message with a tool error id.
 
 Output caps live in `OUTPUT_LIMITS`. Read returns at most 200 lines, 2,048
 UTF-8 bytes per line and 16,384 bytes in total, including its notice. A smaller

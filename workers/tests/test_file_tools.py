@@ -558,6 +558,7 @@ def test_a_file_inside_the_path_is_named(tree, name, args):
 
 
 @pytest.mark.parametrize("code,wording", [
+    (errno.ENOTDIR, "src/code.py is a file, not a directory"),
     (errno.EISDIR, "is a directory, not a file"),
     (errno.ELOOP, "symbolic link"),
     (errno.ENAMETOOLONG, "too long"),
@@ -605,3 +606,15 @@ def test_environment_errors_keep_the_infrastructure_message(tree, monkeypatch, c
         }
     assert result.status == "error"
     assert result.text == "Worktree tool rejected the path or operation. Tool error id: tool-error-1."
+
+
+@pytest.mark.parametrize("name", ["grep", "list", "glob"])
+def test_a_symlink_path_is_named_as_a_link(tree, name):
+    root, outside = tree
+    (root / "link").symlink_to(outside / "secret.txt")
+    args = {"grep": {"pattern": "x"}, "glob": {"pattern": "*"}, "list": {}}[name]
+    with Worktree(root) as worktree:
+        result = call(tools_for(worktree)[name], path="link", **args)
+    assert result.status == "error"
+    assert "link is or passes through a symbolic link" in result.text
+    assert "external fixture" not in result.text
