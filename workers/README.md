@@ -365,7 +365,7 @@ For example, to add `planner`:
            "list": "List the worktree directory to locate planning material.",
            "read": "Read worktree text needed to plan this request.",
            "glob": "Find source paths relevant to the plan with relative globs.",
-           "grep": "Find literal references in worktree text to check the plan.",
+           "grep": "Find references in worktree text to check the plan.",
        },
    )
    ```
@@ -398,7 +398,7 @@ The available names and arguments are:
 | `list` | `path="."`, `offset=0`. A page of direct children with relative `path` and `is_dir`. `path` must be a directory. |
 | `read` | `path`, `offset=0`, `limit=200`, `column=0`. UTF-8 text, paged by zero-based lines and character columns. |
 | `glob` | `pattern`, `path="."`, `offset=0`. A page of relative file and directory paths. `*` matches one segment, `**` recurses, and dotfiles are included. `path` must be a directory; a file path is an error that says so. |
-| `grep` | `pattern`, `path="."`, `offset=0`. A page of literal text matches, with relative paths, one-based line numbers, and matching text. `path` may be one file or a directory. Below a directory, non-UTF-8 files are skipped; a named non-UTF-8 file is an error. |
+| `grep` | `pattern`, `path="."`, `offset=0`, `literal=false`. A page of matching lines, with relative paths, one-based line numbers, and matching text. `pattern` is an RE2 regular expression tried against each line; `literal=true` searches the text as written. `path` may be one file or a directory. Below a directory, non-UTF-8 files are skipped; a named non-UTF-8 file is an error. |
 | `write` | `path`, `content`. Create or overwrite UTF-8 text, creating parents. |
 | `edit` | `path`, `old`, `new`, `replace_all=false`. Exact replacement. `old` must be nonempty and unique unless `replace_all` is true. |
 
@@ -417,6 +417,25 @@ Output caps live in `OUTPUT_LIMITS`. Read returns at most 200 lines, 2,048
 UTF-8 bytes per line and 16,384 bytes in total, including its notice. A smaller
 `limit` still applies. A truncated read reports the next line `offset` and
 character `column`. Use both to continue, including within a long line.
+
+Grep reads `pattern` as an RE2 regular expression (the `google-re2` package).
+Models write alternations and anchors (`a|b`, `^class `) and expect them to
+work, and a literal search that finds nothing reads as evidence of absence.
+Python's `re` can backtrack catastrophically and holds the GIL while it does, so
+grep does not use it. RE2 runs in time linear in the line, so no pattern can
+hang a worker and nothing needs a clock:
+
+- RE2 has no backreferences or lookarounds, and limits repeat counts to 1,000.
+  A pattern it cannot compile, such as `def f(` or `(?=a)a`, is searched as
+  literal text, and the `message` says why and how to escape it or set
+  `literal=true`.
+- A pattern with no regular-expression syntax is searched as text, whole line,
+  as before. A regular expression sees each line up to 1,048,576 characters
+  (`regex_line_chars`). When a regular expression finds nothing and cut lines,
+  `message` says how many; `literal=true` searches a line whole.
+- A regular expression that finds nothing and contains characters like `(`,
+  `[` or `|` says so in `message`, because `vars(digests)` is a group in a
+  regular expression and not the text a model may have meant.
 
 List and glob return `entries`, `next_offset` and `message`. Grep returns
 `matches`, `next_offset` and `message`. A null `next_offset` ends the results.

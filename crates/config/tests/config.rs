@@ -135,12 +135,11 @@ fn example_parses_with_sourced_numbers_and_different_reviewer_family() {
     assert_eq!(config.github.repos[0].name, "tl3-sandbox");
     assert_eq!(config.hindsight.endpoint.as_str(), "http://127.0.0.1:8890/");
     assert_eq!(config.hindsight.bank, "tl3");
-    for (maker, expected) in
-        config
-            .models
-            .maker
-            .iter()
-            .zip(["alternate-model", "alternate-model", "default-model"])
+    for (maker, expected) in config
+        .models
+        .maker
+        .iter()
+        .zip(["alternate-model", "default-model"])
     {
         let reviewer = config.models.reviewer_for(&maker.family).unwrap();
         assert!(!reviewer.family.eq_ignore_ascii_case(&maker.family));
@@ -149,19 +148,17 @@ fn example_parses_with_sourced_numbers_and_different_reviewer_family() {
 }
 
 #[test]
-fn omitted_and_empty_reviewer_ladders_default_to_maker_attempts_one_and_three() {
+fn omitted_and_empty_reviewer_ladders_default_to_the_first_and_last_maker_rungs() {
     for source in [
         EXAMPLE.to_string(),
         changed(&["models", "reviewer"], Value::Array(vec![])),
     ] {
         let config = Config::parse(&source).unwrap();
         assert_eq!(config.models.reviewer.len(), 2);
-        for (reviewer, maker) in config
-            .models
-            .reviewer
-            .iter()
-            .zip([&config.models.maker[0], &config.models.maker[2]])
-        {
+        for (reviewer, maker) in config.models.reviewer.iter().zip([
+            config.models.maker.first().unwrap(),
+            config.models.maker.last().unwrap(),
+        ]) {
             assert_eq!(reviewer.name, maker.name);
             assert_eq!(reviewer.family, maker.family);
             assert_eq!(reviewer.effort, maker.effort);
@@ -173,7 +170,7 @@ fn omitted_and_empty_reviewer_ladders_default_to_maker_attempts_one_and_three() 
 #[test]
 fn reviewer_ladder_must_cover_every_maker_family() {
     let document: Value = EXAMPLE.parse().unwrap();
-    for (role, maker_index) in [("ingest", 0), ("audit", 2)] {
+    for (role, maker_index) in [("ingest", 0), ("audit", 1)] {
         let mut reviewers = document["models"][role].clone();
         reviewers[0]["family"] = Value::String(
             reviewers[0]["family"]
@@ -439,35 +436,20 @@ fn maker_ladder_obeys_q22_and_budget_bounds() {
         ("name = \"default-model\"", "name = \" \"", ".name"),
         ("family = \"default\"", "family = \"\"", ".family"),
         ("effort = \"high\"", "effort = \"\"", ".effort"),
-        (
-            "family = \"alternate\"",
-            "family = \"DEFAULT\"",
-            "models.maker[2].family",
-        ),
-        (
-            "effort = \"xhigh\", budget_tokens = 64000",
-            "effort = \"xhigh\", budget_tokens = 16000",
-            "models.maker[1]",
-        ),
-        ("effort = \"xhigh\", ", "", "models.maker[1]"),
-        (
-            "name = \"default-model\", family = \"default\", effort = \"xhigh\"",
-            "name = \"other\", family = \"default\", effort = \"xhigh\"",
-            "models.maker[1]",
-        ),
     ] {
         let error = Config::parse(&EXAMPLE.replace(from, to))
             .unwrap_err()
             .to_string();
         assert!(error.contains(field), "{error}");
     }
+    // A one-rung ladder never escalates (#416).
     let mut document: Value = EXAMPLE.parse().unwrap();
     document["models"]["maker"].as_array_mut().unwrap().pop();
     assert!(
         Config::parse(&toml::to_string(&document).unwrap())
             .unwrap_err()
             .to_string()
-            .contains("length 3")
+            .contains("different model line")
     );
 }
 
@@ -518,12 +500,11 @@ fn explicit_reviewer_and_proxy_specific_efforts_are_supported() {
     document["limits"]["credit_reserve"] = Value::Integer(0);
     document["limits"]["free_rechecks"] = Value::Integer(0);
     let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
-    for (maker, expected) in
-        config
-            .models
-            .maker
-            .iter()
-            .zip(["alternate-model", "alternate-model", "default-model"])
+    for (maker, expected) in config
+        .models
+        .maker
+        .iter()
+        .zip(["alternate-model", "default-model"])
     {
         let reviewer = config
             .models
@@ -1102,6 +1083,107 @@ fn deployment_model_defaults_pass_validation() {
     for maker in &config.models.maker {
         let reviewer = config.models.reviewer_for(&maker.family).unwrap();
         assert_ne!(reviewer.name, maker.name, "Q22: a different model reviews");
+    }
+    // #416, approved by Rob 2026-11-02: Sonnet 5.5 high, then Opus 5.5 high.
+    let ladder: Vec<_> = config
+        .models
+        .maker
+        .iter()
+        .map(|model| (model.name.as_str(), model.effort.as_deref()))
+        .collect();
+    assert_eq!(
+        ladder,
+        [
+            ("claude-sonnet-5-5", Some("high")),
+            ("claude-opus-5-5", Some("high"))
+        ]
+    );
+}
+
+fn maker_ladder(rungs: &[(&str, &str, &str)]) -> String {
+    changed(
+        &["models", "maker"],
+        Value::Array(
+            rungs
+                .iter()
+                .map(|(name, family, effort)| {
+                    let mut model = toml::map::Map::new();
+                    model.insert("name".into(), Value::String((*name).into()));
+                    model.insert("family".into(), Value::String((*family).into()));
+                    model.insert("effort".into(), Value::String((*effort).into()));
+                    model.insert("budget_tokens".into(), Value::Integer(32000));
+                    Value::Table(model)
+                })
+                .collect(),
+        ),
+    )
+}
+
+#[test]
+fn maker_ladder_escalates_to_a_different_model_line_by_attempt_two() {
+    // #416 (Q22, Rob 2026-11-02): attempt 2 changes the model, not the effort.
+    let config = Config::parse(&maker_ladder(&[
+        ("default-model", "default", "high"),
+        ("alternate-model", "alternate", "high"),
+    ]))
+    .unwrap();
+    assert_eq!(config.models.maker.len(), 2);
+    for rungs in [
+        vec![
+            ("default-model", "default", "high"),
+            ("default-model", "default", "max"),
+        ],
+        vec![("default-model", "default", "high")],
+        vec![
+            ("default-model", "default", "high"),
+            ("other-model", "DEFAULT", "high"),
+            ("alternate-model", "alternate", "high"),
+        ],
+    ] {
+        let error = Config::parse(&maker_ladder(&rungs))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("models.maker"), "{error}");
+        assert!(error.contains("different model line"), "{error}");
+    }
+}
+
+#[test]
+fn priority_credit_reserve_is_off_by_default() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    assert!(config.limits.priority_credit_reserve.is_empty());
+    for priority in [None, Some(0), Some(1), Some(2), Some(3)] {
+        assert_eq!(config.limits.credit_reserve_for(priority), None);
+    }
+}
+
+#[test]
+fn priority_credit_reserve_applies_to_configured_priorities() {
+    let mut reserve = toml::map::Map::new();
+    reserve.insert("P0".into(), Value::Integer(5));
+    reserve.insert("P1".into(), Value::Integer(5));
+    let config = Config::parse(&changed(
+        &["limits", "priority_credit_reserve"],
+        Value::Table(reserve),
+    ))
+    .unwrap();
+    assert_eq!(config.limits.credit_reserve_for(Some(0)), Some(5));
+    assert_eq!(config.limits.credit_reserve_for(Some(1)), Some(5));
+    assert_eq!(config.limits.credit_reserve_for(Some(2)), None);
+    assert_eq!(config.limits.credit_reserve_for(None), None);
+    for (key, value) in [("P4", 5), ("high", 5), ("P0", 2), ("P1", 101)] {
+        let mut reserve = toml::map::Map::new();
+        reserve.insert(key.into(), Value::Integer(value));
+        let error = Config::parse(&changed(
+            &["limits", "priority_credit_reserve"],
+            Value::Table(reserve),
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("limits.priority_credit_reserve"),
+            "{key} {value}: {error}"
+        );
     }
 }
 

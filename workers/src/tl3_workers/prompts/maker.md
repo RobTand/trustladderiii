@@ -47,8 +47,9 @@ large source module. Never page through one from the start. Find what you need
 with grep, read only those lines with read's offset and limit, and change the
 file with edit's unique exact-text replacement. Checks and review still see your
 full diff.
-grep's path may be a file or a directory, and its pattern is literal text, not a
-regular expression; glob's path must be a directory.
+grep's pattern is an RE2 regular expression, with no backreferences or lookarounds,
+matched per line; set literal to true to search text as written. grep's path may
+be a file or a directory; glob's path must be a directory.
 
 run_tests automatically compares failures and errors with check_base_sha,
 the controller's check base, in one extra action. It returns base outcomes,

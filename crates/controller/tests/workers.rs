@@ -102,6 +102,7 @@ fn labelled() -> LabelledIssue {
         title: "Fix greeting".into(),
         actor: 24923402,
         label: "tl3".into(),
+        labels: Vec::new(),
     }
 }
 fn delivery() -> Delivery {
@@ -650,6 +651,7 @@ print(json.dumps({"event": "reply", "role": "writer", "reply": {"text": "The cha
         kind: MessageKind::Summary,
         facts: json!({"issue_title": "A change", "request": "Make a change", "outcome": "Delivered"}),
         violations: vec![],
+        request: None,
     };
     let mut writer = ProcessWriter::new(&config, &root.path().join("writer"))
         .unwrap()

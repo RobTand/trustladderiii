@@ -78,6 +78,7 @@ fn labelled() -> LabelledIssue {
         title: "Add a blue button".into(),
         actor: 42,
         label: "tl3".into(),
+        labels: Vec::new(),
     }
 }
 fn client(uri: &str) -> GitHub {
@@ -1205,6 +1206,7 @@ fn writer_checks() {
         "options": [{"action": "Choose another image", "outcome": "I can finish using a free image."}, {"action": "Grant permission", "outcome": "I can finish with the original image."}],
         "recommended_option": 0, "recommendation_reason": "The free image avoids a delay.", "how_to_answer": "Reply with option one or two."}),
         violations: vec![],
+        request: None,
     };
     let calls = Arc::new(Mutex::new(vec![]));
     let mut writer = ScriptWriter {

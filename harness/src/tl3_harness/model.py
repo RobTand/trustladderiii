@@ -35,6 +35,22 @@ class Verdict(StrEnum):
 
 
 @dataclass(frozen=True)
+class Failure:
+    """What a failed test showed: the phase, the exception (type and first line), and the report text."""
+    phase: str
+    exception: str
+    message: str
+
+
+class FailureNotes(dict):
+    """Failure messages by test, plus the `Failure` behind each, for a run whose evidence `judge` quotes."""
+
+    def __init__(self):
+        super().__init__()
+        self.details: dict[str, Failure] = {}
+
+
+@dataclass(frozen=True)
 class Check:
     name: str
     kind: Kind
@@ -72,8 +88,40 @@ class Result:
     custody: Custody = field(default=Custody.IN_PROCESS, init=False)
 
 
+MESSAGE_LIMIT = 1000
+TRUNCATED = " [truncated]"
+WHEN = {"setup": "in setup", "call": "during the call", "teardown": "during teardown"}
+
+
+def base_refusal(check: Check, test: str, before: Outcome, notes: FailureNotes | None) -> str:
+    """Why a demonstrating or reproducing test's base run did not count; empty when it did (Q40, Q42)."""
+    verb = "demonstrate" if check.kind == Kind.DEMONSTRATING else "reproduce"
+    if before == Outcome.PASSED:
+        return (f"This test passed on the base. A {check.kind} test must fail by an assertion on the base, "
+                f"or lack a name this change adds, so it does not {verb} the change. "
+                "Make it assert the behavior the change adds.")
+    failure = (notes.details if notes is not None else {}).get(test)
+    if before != Outcome.ERROR or failure is None:
+        return ""
+    what = f"`{failure.exception}`" if failure.exception else "an error"
+    match failure.phase:
+        case "collection":
+            return (f"On the base this test file could not be collected: {what}. An import failure counts only "
+                    f"when it names a module or name this change adds, and this one does not, so the test does "
+                    f"not {verb} the change. Import the new name inside the test body, or make the base run "
+                    "fail by an assertion.")
+        case "setup":
+            return (f"On the base this test failed in setup with {what}. A setup or fixture error is not an "
+                    f"assertion failure, so it does not {verb} the change. "
+                    "Make the base run fail by an assertion in the test body.")
+        case phase:
+            return (f"On the base this test raised {what} {WHEN.get(phase, 'in the test')}. That is neither an "
+                    f"assertion failure nor a missing name this change adds, so it does not {verb} the change. "
+                    "Make the base run fail by an assertion, or import the new name inside the test body.")
+
+
 def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
-          messages: dict[str, str] | None = None) -> Result:
+          messages: dict[str, str] | None = None, base_notes: FailureNotes | None = None) -> Result:
     tests = []
     infrastructure = False
     for test in check.tests:
@@ -91,9 +139,14 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
             case Kind.BEHAVIOR_PRESERVING:
                 passed = before == after == Outcome.PASSED
         message = "" if passed else (messages or {}).get(test, "")
+        if not passed and check.kind in (Kind.DEMONSTRATING, Kind.REPRODUCING) and (
+                refusal := base_refusal(check, test, before, base_notes)):
+            message = refusal + (f"\nOn the head: {message}" if message else "")
+            if len(message) > MESSAGE_LIMIT:
+                message = message[:MESSAGE_LIMIT - len(TRUNCATED)] + TRUNCATED
         if not passed and not message:
             message = f"Check {check.kind}: base {before}, head {after}."
-        tests.append(TestResult(test, before, after, pre_existing, passed, message[:1000]))
+        tests.append(TestResult(test, before, after, pre_existing, passed, message[:MESSAGE_LIMIT]))
     verdict = (Verdict.INFRASTRUCTURE_FAILURE if infrastructure else
                Verdict.PASS if all(test.passed for test in tests) else Verdict.FAIL)
     return Result(check.name, check.kind, verdict, tuple(tests))
