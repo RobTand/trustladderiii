@@ -907,3 +907,129 @@ mod scope_summary_tests {
         assert!(rendered.ends_with(saved));
     }
 }
+
+#[cfg(test)]
+mod question_findings_tests {
+    use super::super::workers::writer::{QuestionDraft, WriterReply};
+    use super::*;
+    use serde_json::Value;
+    use tl3_kernel::{Cont, NodeId, Question, Resume};
+
+    fn ask(kind: QKind, cont: Cont, findings: Value) -> Delivery {
+        let question = Question {
+            id: 10,
+            kind,
+            cont,
+            cost: 1,
+            clarified: false,
+        };
+        serde_json::from_value(json!({
+            "key":"ask:10", "epoch":1,
+            "output":Out::Notice {node:NodeId(0), notice:Notice::Ask {question:10}},
+            "generation":1, "repository":{"owner":"RobTand","name":"sandbox","installation":1},
+            "issue":42, "paths":[], "attempt":1, "round":0, "question":question,
+            "question_context":{"node":0, "question":10, "findings":findings}
+        }))
+        .unwrap()
+    }
+
+    fn input(delivery: &Delivery) -> WriteRequest {
+        writer_input(
+            delivery,
+            Some(Notice::Ask { question: 10 }),
+            "Add a blue button",
+            "Add a blue button",
+        )
+        .unwrap()
+    }
+
+    fn outcome(request: &WriteRequest, action: &str) -> String {
+        request.facts["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|option| option["action"] == action)
+            .unwrap_or_else(|| panic!("missing option {action}"))["outcome"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    #[test]
+    fn every_question_kind_passes_the_deciding_worker_findings_to_the_writer() {
+        for (kind, cont) in [
+            (QKind::AuditDisagreement, Cont::Unplanned),
+            (QKind::NeedsSplitting, Cont::Nowhere),
+            (QKind::CantMeet, Cont::Planning { must_split: false }),
+            (QKind::OutOfCredit, Cont::Ready(Resume::Making)),
+            (QKind::EffectFailed, Cont::Ready(Resume::Making)),
+        ] {
+            let findings = json!({"source":"planner",
+                "report":"The digest test pins the current file, so any edit fails six tests.",
+                "decision":"May this change also update the pinned digest entry?"});
+            let request = input(&ask(kind, cont, findings.clone()));
+            assert_eq!(request.facts["findings"], findings, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn options_say_what_they_do_with_the_decision() {
+        let request = input(&ask(
+            QKind::AuditDisagreement,
+            Cont::Unplanned,
+            json!({"source":"audit", "reading":"Add a JSON export.",
+                "objections":["The brief never says where the file is written."],
+                "decision":"Should I build this reading even though the check still has objections?"}),
+        ));
+        assert!(
+            outcome(&request, "Continue with the original reading").contains("objections"),
+            "continue must say what happens to the open objections"
+        );
+        let request = input(&ask(
+            QKind::CantMeet,
+            Cont::Planning { must_split: false },
+            json!({"source":"planner", "report":"The digest test pins the file.",
+                "decision":"May this change also update the pinned digest entry?"}),
+        ));
+        assert!(outcome(&request, "Try again with guidance").contains("question"));
+    }
+
+    struct Scripted(Vec<Option<&'static str>>, Vec<WriteRequest>);
+    impl Writer for Scripted {
+        fn draft(&mut self, _: &str, input: &WriteRequest) -> Result<WriterReply> {
+            self.1.push(input.clone());
+            Ok(WriterReply::Question(QuestionDraft {
+                request_quote: "Add a blue button".into(),
+                obstacle: "A test records the exact contents of the file you asked me to change, so every edit breaks it.".into(),
+                options: serde_json::from_value(input.facts["options"].clone()).unwrap(),
+                recommended_option: 0,
+                recommendation_reason: "This lets the change land as you asked.".into(),
+                how_to_answer: "Reply on the issue with your chosen option.".into(),
+                decision: self.0.remove(0).map(str::to_owned),
+            }))
+        }
+    }
+
+    #[test]
+    fn a_question_with_findings_must_state_its_decision() {
+        let decision = "May I also update the recorded checksum for that file in its test?";
+        let mut writer = Scripted(vec![None, Some(decision)], vec![]);
+        let request = input(&ask(
+            QKind::CantMeet,
+            Cont::Planning { must_split: false },
+            json!({"source":"planner", "report":"The digest test pins the file.",
+                "decision":"May this change also update the pinned digest entry?"}),
+        ));
+        let message = checked_draft(&mut writer, "ask:10", request, &Policy::default()).unwrap();
+        assert_eq!(writer.1.len(), 2, "a draft without the decision is redone");
+        assert!(
+            writer.1[1]
+                .violations
+                .iter()
+                .any(|violation| violation.contains("decision")),
+            "{:?}",
+            writer.1[1].violations
+        );
+        assert!(message.contains(decision), "{message}");
+    }
+}

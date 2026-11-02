@@ -29,6 +29,8 @@ pub struct QuestionDraft {
     pub recommended_option: usize,
     pub recommendation_reason: String,
     pub how_to_answer: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -161,6 +163,7 @@ impl Writer for FakeWriter {
                     .as_str()
                     .ok_or(Error::Invalid("missing answer instructions"))?
                     .into(),
+                decision: None,
             })),
             MessageKind::Clarification => Ok(WriterReply::Text(TextDraft {
                 text: format!(
@@ -244,6 +247,7 @@ pub fn checked_draft(
                     recommended_option: Some(question.recommended_option),
                     recommendation_reason: question.recommendation_reason.clone(),
                     how_to_answer: question.how_to_answer.clone(),
+                    decision: None,
                 };
                 message::check(&draft, &policy).map(|checked| checked.as_str().to_owned())
             }

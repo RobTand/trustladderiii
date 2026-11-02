@@ -100,6 +100,15 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
         let context = store.question_context(question.id).unwrap().unwrap();
         assert_eq!(context["pieces"], plan["pieces"]);
         assert_eq!(context["pieces"][0]["brief"], "Fix greeting.");
+        // #322: the question carries the planner's split as findings for Rob.
+        assert_eq!(context["findings"]["source"], "planner");
+        assert_eq!(context["findings"]["pieces"][0]["brief"], "Fix greeting.");
+        assert!(
+            context["findings"]["decision"]
+                .as_str()
+                .unwrap()
+                .ends_with('?')
+        );
         assert_eq!(
             snapshot
                 .rows
@@ -130,6 +139,13 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
             "rejected plans must open a decision question"
         );
         assert_eq!(n.question.unwrap().kind, tl3_kernel::QKind::CantMeet);
+        // #322: the question carries the planner's last report for Rob.
+        let context = store
+            .question_context(n.question.unwrap().id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(context["findings"]["source"], "planner");
+        assert!(context["findings"]["report"].as_str().is_some());
         assert_eq!(requests.len(), 2, "the kernel retries a rejected plan once");
         let retry = requests
             .iter()

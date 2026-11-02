@@ -1,0 +1,18 @@
+{
+ "briefs": {
+  "kind": "brief",
+  "brief": "Add a compact JSON export of the rung table so the dashboard can read it without parsing logs. Keep the existing text export unchanged.",
+  "goals": [
+   {"text": "The export writes one JSON object per rung with its status and reason."},
+   {"text": "The existing text export keeps its current format."}
+  ],
+  "memory_ids": []
+ },
+ "audits": {
+  "verdict": "disagree",
+  "objections": [
+   "The request asks for the dashboard to read the export, but the brief never says where the file is written, so the dashboard cannot find it.",
+   "The brief keeps the text export unchanged, but the request says to replace the log parsing, which the text export feeds."
+  ]
+ }
+}

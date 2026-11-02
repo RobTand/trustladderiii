@@ -20,6 +20,8 @@ pub struct Draft {
     pub recommended_option: Option<usize>,
     pub recommendation_reason: String,
     pub how_to_answer: String,
+    /// The one decision Rob is asked to make, as a single question (#322).
+    pub decision: Option<String>,
 }
 
 /// Add current internal identifiers and names, including request and operation ids.
