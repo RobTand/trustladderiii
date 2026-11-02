@@ -440,12 +440,16 @@ impl Supervisor {
         store: &mut Store,
         snapshot: &Snapshot,
     ) -> Result<Vec<&tl3_config::Model>> {
-        let world = crate::snapshot::decode(snapshot)?;
-        let n = &world.nodes[delivery.node().0 as usize];
-        let rung = if role == "planner" {
-            usize::from(n.plan_retries)
+        // Only planners and reviewers need the world; other roles may run before it exists.
+        let node = if matches!(role, "planner" | "reviewer") {
+            let world = crate::snapshot::decode(snapshot)?;
+            Some(world.nodes[delivery.node().0 as usize])
         } else {
-            usize::from(delivery.attempt.saturating_sub(1))
+            None
+        };
+        let rung = match &node {
+            Some(n) if role == "planner" => usize::from(n.plan_retries),
+            _ => usize::from(delivery.attempt.saturating_sub(1)),
         };
         // Review stays a different family from the maker that actually ran.
         let maker = if role == "reviewer" {
@@ -463,7 +467,7 @@ impl Supervisor {
             &self.models,
             role,
             rung,
-            role == "reviewer" && n.review_restarted,
+            role == "reviewer" && node.is_some_and(|n| n.review_restarted),
             maker.as_deref(),
         )
     }
