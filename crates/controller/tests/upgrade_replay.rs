@@ -92,6 +92,13 @@ fn startup_rereads_a_finished_run_in_the_newer_shape_and_the_loop_survives() {
     let reply =
         json!({"kind": "early_end", "outcome": "duplicate", "reason": "Already requested."});
     let key = format!("{}:worker:0:0", run.key);
+    // Opening initializes the world; the older release's records come after it.
+    let mut controller = Controller::open(
+        Store::open(&settings).unwrap(),
+        adapters::simulation(root.path()).unwrap(),
+        bootstrap(),
+    )
+    .unwrap();
     // The release before #351 observed this reply without a model, and still watches the run.
     commit(
         &settings,
@@ -116,12 +123,6 @@ fn startup_rereads_a_finished_run_in_the_newer_shape_and_the_loop_survives() {
         store.commit(&change).unwrap();
     }
     finished_attempt(&config.workers.runs, &run, &reply);
-    let mut controller = Controller::open(
-        Store::open(&settings).unwrap(),
-        adapters::simulation(root.path()).unwrap(),
-        bootstrap(),
-    )
-    .unwrap();
     let before = controller.snapshot().unwrap().revision;
     // Start-up: the new release's worker source rescans watched runs.
     let supervisor = Supervisor::new(&config, &root.path().join("records")).unwrap();
