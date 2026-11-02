@@ -713,23 +713,77 @@ its first 1,024 and last 3,072; the root counts the rest in
 The MLflow server is LAN-only with no login; anyone on the LAN can read these
 prompts and repository contents. See the deployment README for access limits.
 
-One child exports the sanitized protobuf to the configured experiment. It uses
-no retries, one-second HTTP timeouts and a five-second process alarm. The worker
-never waits for that child. Export failures and initialization failures log a
-fixed diagnostic to stderr, without exception details, and preserve the role's
-result. Traces can be lost during an outage or if the supervisor kills a run.
-There is no retry backlog. Deep Agents remains the engine. Stored traces aren't
+### Live traces (#430)
+
+A run shows in MLflow while it works, marked `IN_PROGRESS`.
+
+- **Durable first.** Each ended span is redacted and appended to a span log
+  before any network call. The controller puts the log in the attempt
+  directory as `trace.jsonl`, through the request's `trace.log`. Without one,
+  the log is an unlinked temporary file. Each record is one JSON line written
+  in one append and synced: a `start` record with the trace and root span IDs,
+  settings and tags, then `span` records, an `end` record with the run's
+  outcome and final tags, and a `final` record that holds the end-of-run
+  packet. A final packet that is too large even without child content holds
+  the root alone.
+- **Shipped right away.** One shipper child reads the log and sends each new
+  record over OTLP, woken by one byte per record on a pipe. Records are
+  decoded once and queued; a failed send stays queued for the next span, or
+  the end. After a send that works following a failure, and after its first
+  send, the shipper writes the request's `trace.wake` file, so the controller
+  retries held logs once MLflow answers. Batches carry the run's tags as
+  resource attributes, which MLflow stores as trace tags before the root span
+  arrives. A zero-length `tl3.run_started` span makes the trace appear before
+  the first model turn ends.
+- **Same end state.** The final packet is the export described above. It
+  upserts the live spans by span ID and adds the root, which sets the trace's
+  state once and its outcome and token tags. Live content draws on its own
+  1 MiB budget; later live spans keep metadata and token usage only, until the
+  final packet gives the newest spans their content. Only the first 1,024
+  spans are sent live: in a longer run the final packet decides which later
+  spans stay, so MLflow never holds a live copy the final omits.
+- **Ended runs.** When an attempt ends or is stopped, the controller starts
+  `python -I -m tl3_workers.tracing flush <log>` with the log on stdin, unless
+  `trace.jsonl.shipped` exists. It starts flushers through `workers.launcher`,
+  so a tl3d restart or deploy leaves them running. The flusher sends the log
+  again and closes a trace the worker didn't:
+  - with an `end` record, by the run's own outcome and tags, so a finished run
+    never reads as crashed;
+  - after a deliberate stop of a live worker, which leaves `stopped.json`, as
+    `ERROR` with `outcome = stopped` and `failure_class = WorkerStopped` (Q49);
+  - otherwise as `ERROR` with `outcome = crashed`, `failure_class =
+    WorkerCrashed`, the exit code from `exit.json` and token sums over the
+    logged spans.
+
+  Span IDs make every resend idempotent. One flusher runs per log: it claims
+  `trace.jsonl.flushing` with its process identity, and the controller
+  replaces only a claim whose process has died.
+- **Retired runs.** Retirement removes the run root, but first moves an
+  unshipped log, with its `exit.json`, `launch.json` and `stopped.json`, to
+  `workers.runs/.traces/<run>-<attempt>/`. The model key isn't kept. Held logs
+  are flushed again on events only: tl3d opening, any attempt ending, and the
+  wake file. A held log whose release deploy removed is flushed with the
+  configured worker Python. Shipped held logs are removed. Held logs beyond
+  256 MiB are dropped oldest first, and the controller raises one operations
+  incident (`worker-trace-logs`) while it stays open.
+
+The shipper and flusher use one-second HTTP timeouts. The shipper's last sends
+after the worker ends have a five-second alarm, and the flusher has ten
+seconds. The worker never waits for either. Export failures and initialization
+failures log a fixed diagnostic to stderr, without exception details, and
+preserve the role's result. Deep Agents remains the engine. Stored traces aren't
 pruned yet; `deploy/dl380g10/README.md` gives their growth and how to reclaim
-space.
+space. `workers/tools/trial_live_traces.py` checks all of this against a real
+server, in the scratch experiment `tl3-430-scratch`, through PrismaBuild.
 
 ## Postmortems
 
 The `postmortem` role (#403) judges a finished request on MLflow 3.17.2's GenAI
 judges. Its dependency is `mlflow-skinny`, which has the judges; MLflow's
 judges also import `numpy` and `pandas`, which skinny leaves out, so the
-project pins them too. With skinny installed, MLflow's LangChain autolog loads
-its model flavor as well, so every traced run imports them. The role runs no
-Deep Agents graph.
+project pins them too, and `judges.py`'s Gazelle annotations add them to the
+Bazel targets. Skinny makes `import mlflow` take about 0.96 s and 134 MB, up
+from 0.45 s and 67 MB with `mlflow-tracing`. The role runs no Deep Agents graph.
 
 - **Inputs.** The controller writes the case file (see `crates/controller`'s
   README). `prepare_inputs` passes its `case` through #302's `Redactor`, with
@@ -748,6 +802,18 @@ Deep Agents graph.
   80,000 characters, because one search over a 2 MB trace overflowed the
   model's context in the calibration spike. A judge whose Feedback, or any
   ensemble member's, carries an error fails the run.
+- **Bounds (#486).** `make_judge` ignores effort and token budgets, so
+  `judges.configure` sets `MLFLOW_JUDGE_MAX_ITERATIONS` to 12 model turns per
+  judge. The whole run, every judge and MLflow call, gets the case file's
+  `deadline_secs` of wall clock (`limits.postmortem_deadline_secs`, 20 minutes
+  by default). Past it, a `SIGALRM` raises `PostmortemDeadline`, and the
+  controller fails the run with the `deadline` class.
+- **Recommendations (#486).** TL1's rule holds: a recommendation's `target` is a
+  file the release ships, as a path from the repository root, and its `before`
+  text appears there exactly once. The role drops any other recommendation and
+  logs why on stderr, so slice C's curator never sees an edit that can't apply.
+  The worker release ships `workers/` and `harness/` (#372), so a
+  recommendation for Rust code is dropped too.
 - **Results.** The postmortem is redacted again. Each graded dimension is
   logged as an MLflow assessment on the node's newest trace, with metadata
   `node`, `request`, `repo`, `issue`, `release`, `rubric_version`, `dimension`

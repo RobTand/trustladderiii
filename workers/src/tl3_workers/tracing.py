@@ -1,4 +1,5 @@
 """Observational MLflow capture with bounded, redacted content and detached export."""
+import base64
 from collections import deque
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -929,7 +930,12 @@ class Capture:
                 with capture.lock:
                     for span in spans:
                         try:
-                            capture.add(span_entry(span, capture.redactor, capture.role, capture.model))
+                            entry = span_entry(span, capture.redactor, capture.role, capture.model)
+                            try:
+                                capture.live_record(entry)
+                            except Exception:
+                                failure()
+                            capture.add(entry)
                         except Exception:
                             # Children of a lost span are attached to the root at export.
                             failure()
@@ -955,6 +961,61 @@ class Capture:
                          effort=request['model']['effort'] or 'default',
                          prompt_version=str(request.get('prompt', {}).get('version', 'packaged')))
         self.settings = request['mlflow']
+        # #430: live spans are redacted when they end, by their own redactor so
+        # the final trace's truncation flag is unchanged. Secrets are shared.
+        self.live = Redactor(None)
+        self.live.secrets, self.live.calls = self.redactor.secrets, self.redactor.calls
+        self.live_bytes = self.live_spans = 0
+        self.log = None
+        try:
+            self.log = SpanLog(trace.get('log'), trace.get('wake'))
+            self.log.append(self.header())
+            from opentelemetry.proto.trace.v1.trace_pb2 import Span
+            # A trace appears once one of its spans is stored, so the run shows
+            # before its first model turn ends.
+            context, start = self.root._span.context, self.root._span.start_time
+            started = Span(trace_id=context.trace_id.to_bytes(16, 'big'), span_id=os.urandom(8),
+                           parent_span_id=context.span_id.to_bytes(8, 'big'), name='tl3.run_started',
+                           start_time_unix_nano=start, end_time_unix_nano=start)
+            started.status.code = 1
+            started.attributes.add(key='mlflow.spanType').value.string_value = 'CHAIN'
+            self.log.append({'kind': 'span', 'otlp': encode(started)})
+            self.log.start_shipper()
+        except Exception:
+            failure()
+
+    def header(self):
+        """The span log's first record: what a flush needs to close the trace."""
+        context = self.root._span.context
+        return {'kind': 'start', 'v': 1, 'trace_id': context.trace_id.to_bytes(16, 'big').hex(),
+                'root_span_id': context.span_id.to_bytes(8, 'big').hex(), 'role': self.role,
+                'start_ns': self.root._span.start_time,
+                'settings': {key: self.settings.get(key) for key in ('tracking_uri', 'experiment')},
+                'tags': self.live_tags()}
+
+    def live_tags(self):
+        return {key: self.live.text(value)[:512] for key, value in self.tags.items()}
+
+    def live_record(self, entry):
+        """Append an ended span to the span log, redacted now within the live budget."""
+        # Past the first spans, the final packet decides which spans a long run
+        # keeps; a live copy of a span it omits would stay in MLflow.
+        if self.log is None or not entry.proto.parent_span_id or self.live_spans >= FIRST_SPANS:
+            return
+        from opentelemetry.proto.trace.v1.trace_pb2 import Span
+        from mlflow.tracing.utils.otlp import _set_otel_proto_anyvalue
+
+        proto = Span()
+        proto.CopyFrom(entry.proto)
+        proto.name = self.live.text(entry.name)[:256]
+        for content in entry.contents:
+            limit = min(PAYLOAD_BYTES, TRACE_BYTES - self.live_bytes)
+            value = (self.live.clean(content.value, limit) if limit >= 512
+                     else {'truncated': True, 'note': 'trace content budget exhausted'})
+            self.live_bytes += size(value)
+            _set_otel_proto_anyvalue(proto.attributes.add(key=content.key).value, value)
+        self.live_spans += 1
+        self.log.append({'kind': 'span', 'otlp': encode(proto)})
 
     def add(self, entry):
         if len(self.first) < FIRST_SPANS:
@@ -984,6 +1045,17 @@ class Capture:
                     self.shaped += content.size
 
     def finish(self, outcome):
+        try:
+            self.close(outcome)
+        finally:
+            if self.log is not None:
+                self.log.finish()
+
+    def close(self, outcome):
+        if self.log is None:
+            # Live setup failed; an unlinked log still hands the final to a shipper.
+            self.log = SpanLog(None)
+            self.log.append(self.header())
         self.context.__exit__(None, None, None)
         from mlflow.tracing.trace_manager import InMemoryTraceManager
         from mlflow.tracing.utils.otlp import _set_otel_proto_anyvalue
@@ -1007,6 +1079,10 @@ class Capture:
                         usage[item.key] = usage.get(item.key, 0) + item.value.int_value
         self.tags.update(outcome=outcome, **{key: str(value) for key, value in usage.items()})
         root.proto.status.code = 1 if outcome == 'succeeded' else 2
+        # The outcome is known before the final packet is built, so a failure
+        # below still closes the trace with it, never as a crash.
+        with self.lock:
+            self.log.append({'kind': 'end', 'status': root.proto.status.code, 'tags': self.live_tags()})
         for key, value in self.tags.items():
             root.proto.attributes.add(key='mlflow.traceTag.' + key).value.string_value = \
                 self.redactor.text(value)[:512]
@@ -1022,7 +1098,9 @@ class Capture:
             root.proto.attributes.add(key='tl3.trace.truncated').value.bool_value = True
         from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
         packet = ExportTraceServiceRequest()
-        spans = packet.resource_spans.add().scope_spans.add().spans
+        resource = packet.resource_spans.add()
+        add_tags(resource, self.live_tags())
+        spans = resource.scope_spans.add().spans
         spans.extend(entry.proto for entry in entries)
         # Encoding differs from the JSON sizes the budget uses. Drop the oldest
         # child content until the packet fits.
@@ -1035,16 +1113,16 @@ class Capture:
                 if attr.key in {'mlflow.spanInputs', 'mlflow.spanOutputs'}:
                     spans[index].attributes.remove(attr)
         if packet.ByteSize() > TRACE_BYTES:
+            # The root alone still closes the trace; live copies keep the children.
             failure()
-            return
-        # An unlinked file bounds handoff and avoids pipe backpressure. The export
-        # child owns network waits; the worker never waits for it, even at shutdown.
-        with tempfile.TemporaryFile() as payload:
-            payload.write(json.dumps(self.settings).encode() + b'\n')
-            payload.write(packet.SerializeToString())
-            payload.seek(0)
-            subprocess.Popen([sys.executable, str(Path(__file__))], stdin=payload,
-                             stdout=subprocess.DEVNULL, stderr=sys.stderr, close_fds=True)
+            del resource.scope_spans[:]
+            only = resource.scope_spans.add().spans.add()
+            only.CopyFrom(root.proto)
+            for attr in list(only.attributes):
+                if attr.key in {'mlflow.spanInputs', 'mlflow.spanOutputs'}:
+                    only.attributes.remove(attr)
+        with self.lock:
+            self.log.append({'kind': 'final', 'otlp': encode(packet)})
 
     def allocate(self, root, entries):
         """Give the root its content, then the newest model and tool spans, then
@@ -1219,48 +1297,366 @@ def observe(request):
         active.reset(token)
 
 
-def export():
+def encode(proto):
+    return base64.b64encode(proto.SerializeToString()).decode()
+
+
+def add_tags(resource_spans, tags):
+    # MLflow stores a batch's resource attributes as tags of its traces, root or
+    # not, so a trace carries its tags while it is still in progress.
+    for key, value in tags.items():
+        resource_spans.resource.attributes.add(key=key).value.string_value = value
+
+
+class SpanLog:
+    """The durable copy of a run's trace (#430): JSON lines, each appended in one
+    write and synced before the shipper is woken. Without a path from the
+    controller, an unlinked file only bounds handoff to the shipper."""
+
+    def __init__(self, path, wake=None):
+        self.path, self.wake_path = path, wake
+        if path:
+            self.fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_CLOEXEC, 0o600)
+        else:
+            self.file = tempfile.TemporaryFile()
+            self.fd = self.file.fileno()
+        self.wake = self.shipper = None
+
+    def append(self, record):
+        line = memoryview(json.dumps(record, separators=(',', ':')).encode() + b'\n')
+        while line:
+            line = line[os.write(self.fd, line):]
+        os.fdatasync(self.fd)
+        if self.wake is not None:
+            try:
+                os.write(self.wake, b'\n')
+            except (BlockingIOError, BrokenPipeError):
+                pass  # A full pipe already holds a wake-up; a dead shipper leaves the log.
+
+    def start_shipper(self):
+        # The shipper owns every network wait; the worker never waits for it.
+        read, self.wake = os.pipe()
+        os.set_blocking(self.wake, False)
+        options = [*(['--log', self.path] if self.path else []),
+                   *(['--wake', self.wake_path] if self.wake_path else [])]
+        try:
+            self.shipper = subprocess.Popen(
+                [sys.executable, str(Path(__file__)), 'ship', str(self.fd), *options],
+                stdin=read, stdout=subprocess.DEVNULL, stderr=sys.stderr, close_fds=True, pass_fds=(self.fd,))
+        finally:
+            os.close(read)
+
+    def finish(self):
+        if self.shipper is None or self.shipper.poll() is not None:
+            # A shipper that never started or died reads the log from the start.
+            if self.wake is not None:
+                os.close(self.wake)
+            self.start_shipper()
+        os.close(self.wake)
+        self.wake = None
+
+
+def records(data):
+    """Complete records in order, with the offset after each. A torn last line
+    from a killed worker is not a record."""
+    offset = 0
+    while (end := data.find(b'\n', offset)) != -1:
+        try:
+            record = json.loads(data[offset:end])
+        except ValueError:
+            record = None
+        offset = end + 1
+        if isinstance(record, dict):
+            yield record, offset
+
+
+class Shipper:
+    """Sends span log records in order. Records are decoded once, as they
+    arrive; a failed send keeps them queued for the next wake."""
+
+    def __init__(self, log=None, wake=None, fd=None):
+        import httpx
+        self.client = httpx.Client(timeout=1, trust_env=False)
+        self.log, self.wake, self.fd = log, wake, fd
+        self.header, self.experiment, self.failed, self.reported = None, None, False, False
+        self.queue, self.end, self.final, self.sent_final = [], None, None, False
+        self.buffer = b''
+
+    def feed(self, data):
+        """Decode the complete records in data, keeping a torn tail for later."""
+        from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
+        from opentelemetry.proto.trace.v1.trace_pb2 import Span
+
+        self.buffer += data
+        consumed = 0
+        for record, offset in records(self.buffer):
+            consumed = offset
+            kind = record.get('kind')
+            if kind == 'start':
+                self.header = record
+            elif kind == 'span':
+                self.queue.append(Span.FromString(base64.b64decode(record['otlp'])))
+            elif kind == 'end':
+                self.end = record
+            elif kind == 'final':
+                self.final = ExportTraceServiceRequest.FromString(base64.b64decode(record['otlp']))
+        self.buffer = self.buffer[consumed:] if consumed else self.buffer
+
+    def resolve(self):
+        if self.experiment is not None:
+            return self.experiment
+        import httpx
+        settings = self.header['settings']
+        base = settings['tracking_uri'].rstrip('/')
+        response = self.client.get(base + '/api/2.0/mlflow/experiments/get-by-name',
+                                   params={'experiment_name': settings['experiment']})
+        if response.status_code == 404:
+            response = self.client.post(base + '/api/2.0/mlflow/experiments/create',
+                                        json={'name': settings['experiment']})
+            # Another run may have created this experiment concurrently.
+            if response.status_code == 400:
+                response = self.client.get(base + '/api/2.0/mlflow/experiments/get-by-name',
+                                           params={'experiment_name': settings['experiment']})
+        response.raise_for_status()
+        data = response.json()
+        experiment = data.get('experiment', data)['experiment_id']
+        try:
+            self.client.post(base + '/api/2.0/mlflow/experiments/set-experiment-tag',
+                             json={'experiment_id': experiment, 'key': 'mlflow.experimentKind',
+                                   'value': 'genai_development'})
+        except httpx.HTTPError:
+            pass  # Cosmetic UI tag must not discard a trace.
+        self.experiment = experiment
+        return experiment
+
+    def post(self, packet):
+        response = self.client.post(self.header['settings']['tracking_uri'].rstrip('/') + '/v1/traces',
+                                    content=packet.SerializeToString(),
+                                    headers={'Content-Type': 'application/x-protobuf',
+                                             'x-mlflow-experiment-id': self.resolve()})
+        response.raise_for_status()
+
+    def spans(self, protos):
+        """Send spans in packets within the trace bound, tagged with the run's tags."""
+        from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
+
+        def packet():
+            packet = ExportTraceServiceRequest()
+            resource = packet.resource_spans.add()
+            add_tags(resource, self.header['tags'])
+            return packet, resource.scope_spans.add().spans
+
+        current, spans = packet()
+        for proto in list(protos):
+            if spans and current.ByteSize() + proto.ByteSize() + 16 > TRACE_BYTES:
+                self.post(current)
+                del protos[:len(spans)]
+                current, spans = packet()
+            spans.append(proto)
+        if spans:
+            self.post(current)
+            del protos[:len(spans)]
+
+    def send(self, closing=None):
+        """Send queued spans, then the final packet, or else a closing root.
+        Returns whether the trace is closed in MLflow."""
+        if self.header is None:
+            return False
+        try:
+            self.spans(self.queue)
+            if self.final is not None and not self.sent_final:
+                self.post(self.final)
+                self.sent_final = True
+            elif self.final is None and closing is not None:
+                root = closing(self.header, self.end)
+                self.spans([root])
+                self.sent_final = True
+        except Exception:
+            if not self.reported:
+                failure()
+            self.failed = self.reported = True
+            return False
+        if self.failed and self.wake:
+            # MLflow is back: held logs of ended runs can ship too. A write, not
+            # a touch, so the controller's inotify watch sees it.
+            try:
+                os.close(os.open(self.wake, os.O_WRONLY | os.O_CREAT | os.O_CLOEXEC, 0o600))
+            except OSError:
+                pass
+        self.failed = False
+        return self.sent_final
+
+    def shipped(self):
+        """Mark the log shipped where it lives now. Retirement may have moved it
+        while this process held it open; /proc names the open file's current path."""
+        if not self.log:
+            return
+        log = self.log
+        if self.fd is not None:
+            try:
+                current = os.readlink(f'/proc/self/fd/{self.fd}')
+            except OSError:
+                current = None
+            if current is None or current.endswith(' (deleted)'):
+                return  # Removed with its run; nothing is left to resend.
+            log = current
+        try:
+            Path(log + '.shipped').touch()
+        except OSError:
+            pass
+
+
+def options(args):
+    found, args = {}, list(args)
+    while len(args) >= 2 and args[0] in ('--log', '--wake'):
+        found[args[0][2:]] = args[1]
+        del args[:2]
+    if args:
+        raise ValueError('unexpected arguments')
+    return found
+
+
+def ship(fd, log=None, wake=None):
+    """Send the span log as the worker appends it, waking once per record."""
     import signal
-    import httpx
 
     def expired(*_):
         raise TimeoutError
 
-    signal.signal(signal.SIGALRM, expired)
-    signal.alarm(5)
+    offset, closed = 0, False
     try:
-        settings = json.loads(sys.stdin.buffer.readline())
-        packet = sys.stdin.buffer.read()
-        with httpx.Client(base_url=settings['tracking_uri'], timeout=1, trust_env=False) as client:
-            response = client.get('/api/2.0/mlflow/experiments/get-by-name',
-                                  params={'experiment_name': settings['experiment']})
-            if response.status_code == 404:
-                response = client.post('/api/2.0/mlflow/experiments/create',
-                                       json={'name': settings['experiment']})
-                # Another run may have created this experiment concurrently.
-                if response.status_code == 400:
-                    response = client.get('/api/2.0/mlflow/experiments/get-by-name',
-                                          params={'experiment_name': settings['experiment']})
-            response.raise_for_status()
-            data = response.json()
-            experiment = data.get('experiment', data)['experiment_id']
-            try:
-                client.post('/api/2.0/mlflow/experiments/set-experiment-tag',
-                            json={'experiment_id': experiment, 'key': 'mlflow.experimentKind',
-                                  'value': 'genai_development'})
-            except httpx.HTTPError:
-                pass  # Cosmetic UI tag must not discard a trace.
-            response = client.post('/v1/traces', content=packet,
-                                   headers={'Content-Type': 'application/x-protobuf',
-                                            'x-mlflow-experiment-id': experiment})
-            response.raise_for_status()
+        # The first successful send also wakes held flushes.
+        shipper = Shipper(log, wake, fd)
+        shipper.failed = True
+        while True:
+            ended = not os.read(0, 4096)
+            if ended:
+                # The worker has ended. Bound the last sends, as before #430.
+                signal.signal(signal.SIGALRM, expired)
+                signal.alarm(5)
+            size = os.fstat(fd).st_size
+            shipper.feed(os.pread(fd, size - offset, offset))
+            offset = size
+            closed = shipper.send()
+            if ended:
+                break
+        if closed:
+            shipper.shipped()
+            return 0
+    except Exception:
+        failure()
+    finally:
+        signal.alarm(0)
+    return 1
+
+
+def identity():
+    stat = Path(f'/proc/{os.getpid()}/stat').read_text().rsplit(')', 1)[1].split()
+    return {'pid': os.getpid(), 'machine': Path('/etc/machine-id').read_text().strip(), 'start': int(stat[19]),
+            'boot': Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
+
+
+def claim(path):
+    """One flusher per attempt: a link publishes the claim atomically. The
+    controller clears a claim whose process has died."""
+    temporary = Path(f'{path}.{os.getpid()}.tmp')
+    temporary.write_text(json.dumps(identity()))
+    try:
+        os.link(temporary, path)
+        return True
+    except FileExistsError:
+        return False
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def flush(path):
+    """Run by the controller when an attempt has ended: send the span log, and
+    close the trace of a worker that never wrote its final packet."""
+    import signal
+
+    def expired(*_):
+        raise TimeoutError
+
+    claimed = Path(path + '.flushing')
+    try:
+        if not claim(claimed):
+            return 0
+    except OSError:
+        claimed = None  # Retirement moved the attempt; send without a claim.
+    signal.signal(signal.SIGALRM, expired)
+    signal.alarm(10)
+    try:
+        shipper = Shipper(path, fd=0)
+        shipper.feed(sys.stdin.buffer.read())
+        if shipper.header is None:
+            shipper.shipped()  # Nothing was traced, so there is nothing to retry.
+            return 0
+        logged = list(shipper.queue)
+        if not shipper.send(lambda header, end: closing_root(header, end, logged, path)):
+            return 1
+        shipper.shipped()
         return 0
     except Exception:
         failure()
         return 1
     finally:
         signal.alarm(0)
+        if claimed is not None:
+            claimed.unlink(missing_ok=True)
+
+
+def closing_root(header, end, spans, path):
+    """The root span of a worker that ended before sending its final packet.
+    Its end is the last logged evidence of work, never the time of this flush.
+    A worker that recorded its outcome closes with it; otherwise it was stopped
+    by the controller or crashed."""
+    from opentelemetry.proto.trace.v1.trace_pb2 import Span
+
+    start = header['start_ns']
+    root = Span(trace_id=bytes.fromhex(header['trace_id']), span_id=bytes.fromhex(header['root_span_id']),
+                name='tl3_' + header['role'], start_time_unix_nano=start,
+                end_time_unix_nano=max([start, *(span.end_time_unix_nano for span in spans)]))
+    root.attributes.add(key='mlflow.spanType').value.string_value = 'AGENT'
+    root.attributes.add(key='tl3.role').value.string_value = header['role']
+    if end is not None:
+        root.status.code = 1 if end.get('status') == 1 else 2
+        tags = end['tags']
+    else:
+        root.status.code = 2
+        usage = {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0}
+        for span in spans:
+            for attr in span.attributes:
+                if attr.key == 'mlflow.chat.tokenUsage':
+                    for item in attr.value.kvlist_value.values:
+                        usage[item.key] = usage.get(item.key, 0) + item.value.int_value
+        attempt = Path(path).parent
+        if (attempt / 'stopped.json').exists():
+            tags = {'outcome': 'stopped', 'failure_class': 'WorkerStopped',
+                    'failure_message': 'stopped by the controller'}
+        else:
+            message = 'worker ended without an exit record'
+            try:
+                code = json.loads((attempt / 'exit.json').read_text())['code']
+                if type(code) is int:
+                    message = f'worker exited with code {code}'
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+            tags = {'outcome': 'crashed', 'failure_class': 'WorkerCrashed', 'failure_message': message}
+        tags = {**header['tags'], **tags, **{key: str(value) for key, value in usage.items()}}
+    for key, value in tags.items():
+        root.attributes.add(key='mlflow.traceTag.' + key).value.string_value = value
+    return root
+
+
+def main(args):
+    if args[:1] == ['ship'] and len(args) >= 2:
+        return ship(int(args[1]), **options(args[2:]))
+    if args[:1] == ['flush'] and len(args) == 2:
+        return flush(args[1])
+    print('usage: tracing.py ship FD [--log LOG] [--wake WAKE] | flush LOG', file=sys.stderr)
+    return 2
 
 
 if __name__ == '__main__':
-    raise SystemExit(export())
+    raise SystemExit(main(sys.argv[1:]))

@@ -78,7 +78,7 @@ fn recommendations(reply: &Value) -> Result<&Vec<Value>> {
 /// Redact every string in a JSON value, as TL3 stores and retains it.
 fn redacted(value: &Value) -> Value {
     match value {
-        Value::String(text) => json!(crate::memory::redact(text)),
+        Value::String(text) => json!(crate::memory::redact_text(text)),
         Value::Array(items) => items.iter().map(redacted).collect(),
         Value::Object(items) => items
             .iter()
@@ -89,7 +89,7 @@ fn redacted(value: &Value) -> Value {
 }
 
 fn text(value: &Value) -> String {
-    crate::memory::redact(value.as_str().unwrap_or_default())
+    crate::memory::redact_text(value.as_str().unwrap_or_default())
 }
 
 /// The postmortem a run claimed, as its result is stored.
@@ -232,7 +232,7 @@ fn lessons(
     );
     let record = json!({
         "repo": claimed.repo, "issue": claimed.issue,
-        "title": crate::memory::redact(&claimed.title), "cause": cause, "summary": summary,
+        "title": crate::memory::redact_text(&claimed.title), "cause": cause, "summary": summary,
         "lessons": redacted(&written["lessons"]),
         "recommendations": recommendations.iter().map(|item| json!({
             "fingerprint": item.fingerprint, "target": item.target,

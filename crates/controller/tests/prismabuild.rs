@@ -128,6 +128,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
                 name: "value".into(),
                 kind: Kind::Demonstrating,
                 tests: vec!["test_value.py::test_value".into()],
+                forcing: None,
             }],
         }),
     }
@@ -563,6 +564,74 @@ fn reproducing_check_plan_and_verdict() {
         assert!(report);
         assert_eq!(pass, expected, "a failed reproducer is a failed round");
     }
+}
+
+/// #393: a forced demonstrating check stages its forcing for the harness, and its
+/// result reaches review with the forcing and the forced head outcome. A forced
+/// check's result without `head_forced` is an invalid report.
+fn forced_check_is_staged_and_reaches_review() {
+    let forcing = serde_json::json!({
+        "symptom": "A real, unrelated process holds PID 4242.", "environment": {},
+        "patches": [{"target": "sampler.process_in_scope", "raises": "ValueError"}]});
+    let ended = |head_forced: bool| {
+        let root = tempfile::tempdir().unwrap();
+        let mut delivery = run(root.path(), false);
+        let mut value = serde_json::to_value(delivery.checks.as_ref().unwrap()).unwrap();
+        value["plan"][0]["forcing"] = forcing.clone();
+        delivery.checks = Some(serde_json::from_value::<CheckRun>(value).unwrap());
+        let planned = &delivery.checks.as_ref().unwrap().plan[0];
+        let mut test = serde_json::json!({"test": planned.tests[0], "base": "assertion",
+            "head": "passed", "pre_existing": false, "passed": true});
+        if head_forced {
+            test["head_forced"] = "passed".into();
+        }
+        let mut adapter = fixture(root.path(), "done");
+        fs::write(
+            root.path().join("queue/recorded_results.json"),
+            serde_json::to_vec(&serde_json::json!([
+                {"name": planned.name, "kind": "demonstrating", "custody": "in-process",
+                 "verdict": "pass", "forcing": forcing, "tests": [test]}]))
+            .unwrap(),
+        )
+        .unwrap();
+        adapter.execute(&delivery).unwrap();
+        let staged = fs::read_dir(root.path().join("queue"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().is_some_and(|e| e == "request"))
+            .unwrap();
+        let request: serde_json::Value =
+            serde_json::from_slice(&fs::read(staged).unwrap()).unwrap();
+        (request, completion(&mut adapter, &delivery))
+    };
+    let (request, ended_with) = ended(true);
+    assert_eq!(
+        request["plan"][0]["forcing"], forcing,
+        "the harness receives the forcing"
+    );
+    match &ended_with.observations[..] {
+        [
+            Observation::Checks {
+                report,
+                pass,
+                results,
+                ..
+            },
+        ] => {
+            assert!(*report && *pass);
+            assert_eq!(results[0]["forcing"], forcing, "review sees the forcing");
+            assert_eq!(results[0]["tests"][0]["head_forced"], "passed");
+        }
+        other => panic!("expected one check observation, got {other:?}"),
+    }
+    let (_, ended_without) = ended(false);
+    assert!(
+        matches!(
+            &ended_without.observations[..],
+            [Observation::Checks { report: false, .. }]
+        ),
+        "a forced check needs its forced head outcome"
+    );
 }
 
 fn pending_and_withdrawal() {
@@ -2145,6 +2214,10 @@ fn main() {
             "reproducing_check_plan_and_verdict",
             reproducing_check_plan_and_verdict,
         ),
+        (
+            "forced_check_is_staged_and_reaches_review",
+            forced_check_is_staged_and_reaches_review,
+        ),
         ("source_skips_bad_waits", source_skips_bad_waits as fn()),
         (
             "live_waits_do_not_look_on_bell_reset",
@@ -2244,7 +2317,7 @@ fn main() {
     quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
     println!("test unreadable_job_record_is_a_failed_read ... ok");
     database.stop();
-    println!("44 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("45 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
@@ -2643,6 +2716,7 @@ fn result_budget_rejects_repeated_checks() {
             name: format!("check-{i}"),
             kind: Kind::Regression,
             tests: vec!["test_value.py::test_value".into()],
+            forcing: None,
         })
         .collect();
     let mut adapter = fixture(root.path(), "pending");

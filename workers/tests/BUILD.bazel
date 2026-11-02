@@ -336,6 +336,21 @@ tl3_py_test(
 )
 
 tl3_py_test(
+    name = "test_live_traces",
+    srcs = ["test_live_traces.py"],
+    deps = [
+        ":conftest",
+        ":test_workers",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//mlflow_tracing",
+        "@tl3_pip//opentelemetry_proto",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
     name = "test_cant_meet_guidance",
     srcs = ["test_cant_meet_guidance.py"],
     deps = [

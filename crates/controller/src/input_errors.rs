@@ -315,6 +315,7 @@ pub(crate) fn observation_context(
             .transpose()?
             .map(|state| state.delivery.node()),
         Observation::ScratchPruned { .. }
+        | Observation::TraceLogsCapped { .. }
         | Observation::GitHubComment { .. }
         | Observation::Kernel(Event::NewRequest { .. } | Event::NewAdoption { .. }) => None,
     };

@@ -1,7 +1,7 @@
 use super::{
     ActiveRuns, inspect, latest,
     process::{self, read},
-    protocol, remove_ready, run_root, watched_deliveries,
+    protocol, remove_ready, run_root, trace, watched_deliveries,
 };
 use crate::sync::mpsc::Sender;
 use crate::{
@@ -43,6 +43,14 @@ pub struct WorkerOutputSource {
     overflows: u64,
     runs: BTreeMap<PathBuf, Run>,
     watches: BTreeMap<i32, PathBuf>,
+    /// #430: span logs of ended attempts, and held logs of retired runs, are
+    /// flushed on events: tl3d opening, attempts ending, and writes to the
+    /// held directory, which a shipper makes when MLflow answers again.
+    launcher: Vec<String>,
+    python: PathBuf,
+    held_watch: i32,
+    held_dirty: bool,
+    ended: Vec<PathBuf>,
 }
 
 impl crate::ingress::Source for WorkerOutputSource {
@@ -66,7 +74,18 @@ impl WorkerOutputSource {
             overflows: 0,
             runs: BTreeMap::new(),
             watches: BTreeMap::new(),
+            launcher: Vec::new(),
+            python: PathBuf::new(),
+            held_watch: -1,
+            held_dirty: false,
+            ended: Vec::new(),
         }
+    }
+
+    pub(super) fn with_flusher(mut self, launcher: Vec<String>, python: PathBuf) -> Self {
+        self.launcher = launcher;
+        self.python = python;
+        self
     }
 
     pub fn active_runs(&self) -> usize {
@@ -130,6 +149,9 @@ impl WorkerOutputSource {
             inotify::CreateFlags::CLOEXEC | inotify::CreateFlags::NONBLOCK,
         ))?);
         self.root_watch = self.watch(&self.root.join(".ready"))?;
+        fs::create_dir_all(self.root.join(trace::HELD))?;
+        self.held_watch = self.watch(&self.root.join(trace::HELD))?;
+        self.held_dirty = true;
         self.rescan(store, true)?;
         Ok(self.runs.keys().cloned().collect())
     }
@@ -188,6 +210,10 @@ impl WorkerOutputSource {
                     {
                         dirty.insert(root.clone());
                     }
+                    if event.wd() == self.held_watch {
+                        self.held_dirty = true;
+                        continue;
+                    }
                     let Some(name) = event.file_name() else {
                         continue;
                     };
@@ -208,6 +234,7 @@ impl WorkerOutputSource {
             }
         }
         if overflow {
+            self.held_dirty = true;
             self.overflows += 1;
             self.rescan(store, false)?;
             dirty.extend(self.runs.keys().cloned());
@@ -238,6 +265,36 @@ impl WorkerOutputSource {
             } else {
                 self.retire(run)?;
             }
+        }
+        self.sweep_traces(sender)
+    }
+
+    fn sweep_traces(&mut self, sender: &Sender<Input>) -> Result<()> {
+        if !self.held_dirty && self.ended.is_empty() {
+            return Ok(());
+        }
+        self.held_dirty = false;
+        let ended = std::mem::take(&mut self.ended);
+        let flusher = trace::Flusher {
+            launcher: &self.launcher,
+            python: &self.python,
+        };
+        match trace::sweep(&self.root, &flusher, &ended, trace::HELD_BYTES) {
+            Ok(0) => {}
+            Ok(evicted) => sender
+                .send(Input::Observation {
+                    key: format!(
+                        "trace-logs-capped:{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_nanos()
+                    ),
+                    observation: Observation::TraceLogsCapped { evicted },
+                })
+                .map_err(|_| Error::Invalid("worker ingress receiver closed"))?,
+            // Tracing never stops the source; the next event sweeps again.
+            Err(error) => eprintln!("held span logs were not swept: {error}"),
         }
         Ok(())
     }
@@ -393,7 +450,11 @@ impl WorkerOutputSource {
                 }
             }
         }
-        match inspect(attempt, delivery)? {
+        let ended = inspect(attempt, delivery)?;
+        if !matches!(ended, Reconciliation::Pending) {
+            self.ended.push(attempt.clone());
+        }
+        match ended {
             Reconciliation::Found(completion) => {
                 for (index, observation) in completion.observations.into_iter().enumerate() {
                     sender

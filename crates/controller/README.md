@@ -940,8 +940,21 @@ clipped to 6,000 characters, and pieces, files and items to 600 and to eight.
 The writer worker redacts findings with the MLflow redactor (#302), including
 the run's loaded model key, before the model turn. A question with findings must
 state its decision as one question. The obstacle is capped at 600 characters and
-the decision at 400. If every draft is rejected, the question still posts, with
-the fixed obstacle, the options and the kind's fixed decision.
+the decision at 400. Explicit planner and maker refusals carry
+`outcome: "cant_meet"`. Their questions must name at least one reported path or
+rule in the obstacle. Those exact paths are allowed in that question, while
+other paths and internal vocabulary remain subject to the usual checks. The
+writer explains the worker's proposed decisions within the three standard
+answers, including any required permission and a smaller request. When the report
+names no path or rule, the obstacle must share a distinctive word of at least
+five letters with its first sentence. When the report proposes an action, at
+least one option must name a reported blocker or proposed action.
+
+If every draft is rejected, the controller still posts a fixed question. For a
+can't-meet report, it redacts secrets and clips the first sentence naming the
+blocker to the obstacle's limit. If that sentence fails the message checks, the
+controller uses a fixed sentence naming a safe reported blocker. Unsafe details
+cannot suppress the question or bypass the message checks.
 
 Run `bash crates/controller/tools/verify-planning.sh` through PrismaBuild once
 with each host tag, `dl380g10`, `sparky` and `sparklina`. It runs controller and
@@ -1005,7 +1018,14 @@ it holds no pool grant, and no delivery work waits on it.
   priority-first pool (#417) orders postmortems last. The kernel never sees a
   postmortem, so one that runs while new work starts can use one model session
   beyond the pool.
-- **Claim.** The oldest owed row becomes `running` with a `run_key`, which is
+- **Pace (#486).** Spare slots aren't spare quota. `start_postmortem` asks the
+  store for an owed row first and decodes the world only when one exists. It
+  claims nothing while a model in the postmortem ladder (`PostmortemPace`, from
+  `models.postmortem`) has a `model_quotas` row, and at most
+  `limits.postmortems_per_day` (default 10) a UTC day, counted by claim time in
+  `tl3_postmortem_claims`. A day's limit or an ended quota is noticed on the
+  next drive pass, so owed rows drain over days, not in one burst.
+- **Claim.** The oldest owed row, first runs before retries, becomes `running` with a `run_key`, which is
   also its delivery's key (`postmortem:<id>:<revision>`), in the commit that
   writes the delivery: its effect, its watch, its allowance and its
   `postmortem_jobs` row. `PostmortemUpdate::Claim` fails that commit if the row
@@ -1016,7 +1036,8 @@ it holds no pool grant, and no delivery work waits on it.
   no incident. The case file is written at launch from stored records: the
   request and outcome, the code grades, phase times, questions with their #322
   findings, incidents, plan, brief, audit and findings, the release tl3d
-  started with, the rubric, the grade judges' model and the node's MLflow tags.
+  started with, the rubric, the grade judges' model, the node's MLflow tags and
+  the run's wall-clock allowance (`limits.postmortem_deadline_secs`).
 - **Result.** The worker's reply is checked against the role's schema and, in
   code, for at most three recommendations. It is stored only for the claim's
   run key, in the commit that consumes it: the row becomes `done` with its
@@ -1026,7 +1047,12 @@ it holds no pool grant, and no delivery work waits on it.
   tagged `postmortem`. Stored and retained text passes through the memory
   redaction first. A failed run, a refused launch or an invalid reply marks the
   row `failed` with a fixed class: `worker_failed`, `launch_failed`,
-  `invalid_reply` or `no_progress`.
+  `invalid_reply`, `no_progress` (the controller stopped it as stalled) or
+  `deadline` (the run passed its allowance). A `worker_failed` or `deadline`
+  row is owed again instead, twice at most, behind rows owed since (#486).
+  Three failed runs in a row since tl3d started pause claims until a run
+  succeeds or tl3d starts again, and the pause writes one journal line. With
+  one postmortem at a time, a pause lasts until tl3d starts again.
 - **Recovery.** At startup, a `running` row whose delivery isn't live (no pending
   effect, watch or queued result) is owed again, and a `postmortem_jobs` row
   with no live delivery is removed. A live delivery finishes as it would have:
