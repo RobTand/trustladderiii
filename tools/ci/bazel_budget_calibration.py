@@ -64,7 +64,7 @@ def summarize(testlogs, policy, runner):
             'overruns': overruns}
 
 
-def calibrate_cpu(paths, policy):
+def calibrate_cpu(paths, policy, bootstrap_postmaster=False):
     """Initialize measured CPU caps, or tighten existing ones, from at least two receipts."""
     if len(paths) < 2:
         raise ValueError('need at least two CPU receipts')
