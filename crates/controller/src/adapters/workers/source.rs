@@ -553,6 +553,41 @@ mod tests {
         assert!(!progress(&checkpoint));
     }
 
+    /// #372: a run outlives the tl3d that started it, so a worker from release N
+    /// may reply to the controller of release N+1. These lines are pinned as
+    /// release d8e4f2a8's workers emit them; a change that rejects them breaks
+    /// every run in flight across a deploy.
+    #[test]
+    fn replies_from_the_previous_release_still_parse() {
+        let fixture = include_str!("../../../tests/fixtures/worker-replies-d8e4f2a8.jsonl");
+        for case in fixture.lines() {
+            let case: Value = serde_json::from_str(case).unwrap();
+            let delivery: Delivery = serde_json::from_value(serde_json::json!({
+                "key": "release-n-minus-one", "epoch": 1, "generation": 3,
+                "output": {"Effect": {"node": 0, "kind": {"StartRun": case["start"]}, "seq": 1, "head": null}},
+                "head_sha": null, "repository": {"owner": "RobTand", "name": "tl3-sandbox", "installation": 1},
+                "issue": 42, "pull_request": null, "paths": ["greeting.py"], "attempt": 1, "round": 0, "checks": null,
+            }))
+            .unwrap();
+            let mut stdout = String::new();
+            for event in case["stdout"].as_array().unwrap() {
+                stdout.push_str(&event.to_string());
+                stdout.push('\n');
+            }
+            let observation = parse_reply(stdout.as_bytes(), &delivery, &serde_json::json!({}))
+                .unwrap_or_else(|error| panic!("{case}: {error}"));
+            let last = case["stdout"].as_array().unwrap().last().unwrap();
+            match observation {
+                Observation::WorkerReply { reply, generation, .. } => {
+                    assert_eq!(reply, last["reply"]);
+                    assert_eq!(generation, 3);
+                }
+                Observation::Quota { reset_ms, .. } => assert_eq!(Some(reset_ms), last["reset_ms"].as_u64()),
+                other => panic!("{case}: unexpected {other:?}"),
+            }
+        }
+    }
+
     #[test]
     fn only_evidence_files_dirty_an_attempt() {
         for name in ["claim.json", "process.json", "stdout.jsonl", "exit.json"] {
