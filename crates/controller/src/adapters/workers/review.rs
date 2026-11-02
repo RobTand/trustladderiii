@@ -327,6 +327,57 @@ mod hostile_tests {
     }
 
     #[test]
+    fn review_inputs_carry_the_makers_test_evidence_for_this_head() {
+        // #408: receipts the maker cited reach the reviewer, for the head it made.
+        let f = Repo::new();
+        let mut db = Database::start();
+        let evidence = json!([{"tests": ["test_value.py::test_value"], "base": false, "repeat": 5,
+            "parallel": 0, "status": "completed",
+            "totals": {"passed": 1, "failed": 0, "error": 0, "skipped": 0},
+            "receipts": [{"action_key": "a".repeat(64), "status": "executed", "exit_code": 0,
+                "receipt_sha256": "b".repeat(64), "log_sha256": "c".repeat(64)}]}]);
+        for (index, (head, expected)) in [
+            (f.head.clone(), evidence.clone()),
+            ("d".repeat(40), Value::Null),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            // documents() commits under one event key, so each case needs its own store.
+            let mut store = Store::open(&db.create(&format!("review_evidence_{index}"))).unwrap();
+            store.put_worker_materials("0", &json!({})).unwrap();
+            let mut snapshot = documents(
+                &mut store,
+                &[
+                    (
+                        "goals",
+                        json!([{"description":"Run it five times", "verification":"review"}]),
+                    ),
+                    ("check_reports", json!({})),
+                    (
+                        "maker_replies",
+                        json!({"kind": "done", "head": head,
+                        "self_check": [{"goal_id": "g", "status": "met", "evidence": "five runs"}],
+                        "test_evidence": evidence}),
+                    ),
+                ],
+            );
+            let report = snapshot
+                .rows
+                .iter_mut()
+                .find(|r| r.table == "check_reports")
+                .unwrap();
+            report.id = format!("0:{}", f.head);
+            report.value = json!({"base_sha":f.base,"results":[]});
+            let value = inputs(&f.delivery(), &mut store, &snapshot, None).unwrap();
+            assert_eq!(
+                value.get("test_evidence").cloned().unwrap_or(Value::Null),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn hostile_review_checkout() {
         crate::git_tests::hostile(
             "adapters::workers::review::hostile_tests::hostile_review_checkout",

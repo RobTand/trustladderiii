@@ -117,6 +117,10 @@ def run_current(tree, container, tests):
         return summary.result
 
 
+def run(tree, container, tests, *, repeat=1, parallel=0):
+    raise NotImplementedError("#408")
+
+
 def main():
     # This file is copied with the trusted harness, outside the served tree.
     parser = argparse.ArgumentParser()

@@ -1333,3 +1333,38 @@ def test_maker_budget_exhaustion_finishes_without_claiming_unmade_changes(maker_
     assert len(observed) <= 65, 'maker allows at most 64 tool turns and one final answer'
     assert events[-1]['reply'] == {'kind': 'cant_meet', 'report':
                                   'no code change was made' if final_done else 'The work is incomplete.'}
+
+
+def test_done_reply_carries_the_run_tests_receipts(maker_request, monkeypatch):
+    # #408: the evidence the maker cites lands in its reply for the reviewer.
+    receipt = {"action_key": "a" * 64, "status": "executed", "exit_code": 0,
+               "receipt_sha256": "b" * 64, "log_sha256": "c" * 64}
+
+    def factory(worktree):
+        def run_tests(tests: list[str] | None = None, base: bool = False, repeat: int = 1,
+                      parallel: int = 0, priority: int | None = None) -> dict:
+            return {"status": "completed", "totals": {"passed": 1, "failed": 0, "error": 0, "skipped": 0},
+                    "tests": [], "note": "", "action_key": "a" * 64, "receipts": [receipt],
+                    "repeat": repeat, "runs": [{"run": n + 1, "status": "completed",
+                                                "totals": {"passed": 1, "failed": 0, "error": 0, "skipped": 0},
+                                                "failed": []} for n in range(repeat)]}
+        return run_tests
+
+    fake = FakeMessagesListChatModel(responses=[
+        AIMessage(**turn(calls=[{"name": "run_tests", "id": "test", "type": "tool_call",
+                                 "args": {"tests": ["test_greeting.py::test_hello"], "repeat": 5}}])),
+        AIMessage(**write_turn()),
+        AIMessage(**write_turn("test_greeting.py", "def test_hello(): pass\n")),
+        AIMessage(**turn(DONE)),
+    ])
+    monkeypatch.setitem(TOOL_FACTORIES, "run_tests", factory)
+    monkeypatch.setattr(runtime, "create_model", lambda request: fake)
+    events = []
+    runtime.run(maker_request, events.append)
+    reply = events[-1]["reply"]
+    assert reply["kind"] == "done"
+    [evidence] = reply["test_evidence"]
+    assert evidence["tests"] == ["test_greeting.py::test_hello"]
+    assert evidence["repeat"] == 5 and len(evidence["runs"]) == 5
+    assert evidence["receipts"] == [receipt]
+    validate("maker-reply", reply)

@@ -223,6 +223,9 @@ class Evidence:
     def cites(self, evidence):
         return self.detail(evidence) is not None
 
+    def test_evidence(self):
+        raise NotImplementedError("#408")
+
 
 class Worktree:
     def __init__(self, root):

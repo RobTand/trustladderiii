@@ -65,7 +65,7 @@ def call(submission, response, tests=None, override=None):
     with Worktree(root) as tree:
         tree.test_settings = TestSettings(IMAGE, scripts)
         tool = build_tools(tree, {"run_tests": "Run worktree tests through PrismaBuild."})[0]
-        assert set(tool.args) == {"tests", "base"}
+        assert set(tool.args) == {"tests", "base", "repeat", "parallel", "priority"}
         return tool.invoke({} if tests is None else {"tests": tests})
 
 
@@ -480,3 +480,73 @@ def test_comparison_truncation_keeps_failures_before_passes(submission):
     assert [item["test"] for item in result["tests"] if item["outcome"] == "failed"] == failures
     assert sum(item["outcome"] == "passed" for item in result["tests"]) < 60
     assert result["totals"] == summary.result["totals"]
+
+
+def invoke(submission, response, arguments):
+    root, scripts = submission
+    (scripts / "response.json").write_text(json.dumps(response))
+    with Worktree(root) as tree:
+        tree.test_settings = TestSettings(IMAGE, scripts, cpus=1, mem_gb=2)
+        tool = build_tools(tree, {"run_tests": "Run worktree tests through PrismaBuild."})[0]
+        return tool.invoke(arguments), tree
+
+
+def submitted(submission):
+    return json.loads((submission[1] / "submitted.json").read_text())
+
+
+def test_default_submission_keeps_its_action_identity(submission):
+    summary = Summary()
+    summary.add("tests/test_code.py::test_value", "passed")
+    invoke(submission, summary.result, {"tests": ["tests/test_code.py::test_value"]})
+    args = submitted(submission)
+    assert "--priority" not in args
+    action = args[args.index("--") + 1:]
+    assert "--repeat" not in action and "--parallel" not in action
+
+
+def test_repeat_parallel_and_priority_reach_the_action_and_reservation(submission):
+    # #408: five fresh runs, one xdist run, at the request's priority.
+    summary = Summary()
+    summary.add("tests/test_code.py::test_value", "passed")
+    invoke(submission, summary.result, {"tests": ["tests/test_code.py::test_value"],
+                                        "repeat": 5, "parallel": 2, "priority": -10})
+    args = submitted(submission)
+    assert args[args.index("--priority") + 1] == "-10"
+    assert args[args.index("--cpus") + 1] == "2", "each xdist worker reserves a core"
+    assert args[args.index("--demand") + 1] == "mem_gb=4"
+    action = args[args.index("--") + 1:]
+    assert action[action.index("--repeat") + 1] == "5"
+    assert action[action.index("--parallel") + 1] == "2"
+    assert "--timeout-s" not in args, "repeat stays inside PrismaBuild's progress contract"
+
+
+@pytest.mark.parametrize("arguments", [
+    {"repeat": 0}, {"repeat": 11}, {"repeat": True}, {"parallel": 1}, {"parallel": 5},
+    {"priority": 1}, {"priority": -11},
+])
+def test_options_are_bounded(submission, arguments):
+    with pytest.raises(Exception, match="repeat|parallel|priority"):
+        invoke(submission, Summary().result, arguments)
+    assert not (submission[1] / "submitted.json").exists()
+
+
+def test_results_carry_receipts(submission):
+    summary = Summary()
+    summary.add("tests/test_code.py::test_value", "passed")
+    result, tree = invoke(submission, summary.result, {"tests": ["tests/test_code.py::test_value"],
+                                                      "repeat": 2})
+    log = (submission[1] / "action.log").read_bytes()
+    assert result["receipts"] == [{
+        "action_key": KEY, "status": "executed", "exit_code": 0,
+        "receipt_sha256": "b" * 64,
+        "log_sha256": __import__("hashlib").sha256(log).hexdigest(),
+    }]
+    # The maker cites them and the reviewer sees them.
+    evidence = tree.evidence.test_evidence()
+    assert evidence == [{"tests": ["tests/test_code.py::test_value"], "base": False,
+                         "repeat": 2, "parallel": 0, "status": "completed",
+                         "totals": summary.result["totals"], "receipts": result["receipts"]}]
+    restored = type(tree.evidence)()
+    restored.restore(tree.evidence.state())
+    assert restored.test_evidence() == evidence
