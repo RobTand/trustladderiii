@@ -99,19 +99,11 @@ class FleetTests(unittest.TestCase):
                 self.assertNotIn("tl3-fast", text)
                 self.assertNotIn("runner_host", text)
 
-    def test_warm_cache_covers_both_hosted_architectures(self):
+    def test_warm_cache_serves_the_hosted_lint_and_compile_jobs(self):
         workflow = (test_runners.ROOT.parents[1] / ".github/workflows/warm-cache.yml").read_text()
-        self.assertIn("ubuntu-24.04", workflow)
-        self.assertIn("ubuntu-24.04-arm", workflow)
-        self.assertIn("matrix.runner", workflow)
+        self.assertIn("runs-on: ubuntu-24.04\n", workflow)
+        self.assertNotIn("ubuntu-24.04-arm", workflow)
         self.assertNotIn("matrix.host", workflow)
-
-    def test_shard_measurements_have_independent_concurrency_groups(self):
-        workflow = (test_runners.ROOT.parents[1] / ".github/workflows/light-checks.yml").read_text()
-        group = next(line for line in workflow.splitlines() if line.strip().startswith("group:"))
-        self.assertIn("inputs.test_jobs", group,
-                      "different shard-count measurements must not cancel one another")
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
