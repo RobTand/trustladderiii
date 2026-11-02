@@ -99,7 +99,16 @@ fn named_edits(body: &str, patterns: &[String]) -> BTreeSet<String> {
         Regex::new(r"(?i)\b(add|change|edit|update|modify|delete|remove|create|write|implement|extend|regenerate|replace|rename|move|fix)\b").unwrap()
     });
     static NEGATED: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)\b(no|not|never|without|avoid|exclude|unchanged|unmodified|untouched|read.only|out.of.scope)\b|n't\b|n’t\b").unwrap()
+        Regex::new(r"(?i)\b(no|not|never|without|avoid|exclude|unchanged|unmodified|untouched|read.only|out.of.scope|possibly|maybe|optional|if.needed)\b|n't\b|n’t\b").unwrap()
+    });
+    static TARGET: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)\b(add|change|edit|update|modify|delete|remove|create|write|implement|extend|regenerate|replace|rename|move|fix)(?:\s+(?:the|file|directory))*\s+`?$").unwrap()
+    });
+    static LOCATION: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)\b(in|to|into|from|at)\s+`?$").unwrap()
+    });
+    static LEADING_LOCATION: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)^(?:[-*]|[0-9]+\.)\s+in\s+`?$").unwrap()
     });
     let mut footprint = false;
     let mut goals = false;
@@ -136,12 +145,17 @@ fn named_edits(body: &str, patterns: &[String]) -> BTreeSet<String> {
             continue;
         }
         for found in PATH.find_iter(line) {
-            if goals
-                && PATH
-                    .find(line)
-                    .is_some_and(|first| first.start() != found.start())
-            {
-                continue;
+            if goals {
+                let before = &line[..found.start()];
+                let after = &line[found.end()..];
+                // Associate edit intent with this target. "Read X and edit Y"
+                // and "add tests for X" do not request edits to X.
+                if !(TARGET.is_match(before)
+                    || LOCATION.is_match(before) && EDIT.is_match(before)
+                    || LEADING_LOCATION.is_match(before) && EDIT.is_match(after))
+                {
+                    continue;
+                }
             }
             let path = found
                 .as_str()
