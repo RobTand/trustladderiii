@@ -217,6 +217,17 @@ pub struct Limits {
     pub w: u32,
     #[serde(default = "default_agent_pool")]
     pub agent_pool: u8,
+    /// Starting credit reserve by priority, keyed P0 to P3 (#416). Empty, the
+    /// default, keeps the kernel's reserve of 3 for every request.
+    #[serde(default)]
+    pub priority_credit_reserve: BTreeMap<String, u8>,
+}
+
+impl Limits {
+    /// The configured reserve for a P0–P3 priority, if any.
+    pub fn credit_reserve_for(&self, _priority: Option<u8>) -> Option<u8> {
+        None
+    }
 }
 
 fn default_agent_pool() -> u8 {
@@ -302,7 +313,7 @@ pub struct Models {
     pub ingest: Vec<Model>,
     pub audit: Vec<Model>,
     pub planner: Vec<Model>,
-    pub maker: [Model; 3],
+    pub maker: Vec<Model>,
     #[serde(default)]
     pub reviewer: Vec<Model>,
     pub rebaser: Vec<Model>,
@@ -485,10 +496,15 @@ impl Config {
             Error::Parse(format!("{}{position}", error.message()))
         })?;
         if config.models.reviewer.is_empty() {
-            config.models.reviewer = vec![
-                config.models.maker[0].clone(),
-                config.models.maker[2].clone(),
-            ];
+            // The first and last maker rungs; validation then rejects an empty ladder.
+            config.models.reviewer = config
+                .models
+                .maker
+                .first()
+                .into_iter()
+                .chain(config.models.maker.last())
+                .cloned()
+                .collect();
         }
         if config.models.writer.is_empty() {
             config.models.writer = config.models.ingest.clone();
@@ -692,7 +708,9 @@ impl Config {
                 "add a second model: a plan that can't meet re-runs with the next model on the planner's ladder",
             ));
         }
-        let [first, second, third] = &self.models.maker;
+        let [first, second, third] = self.models.maker.as_slice() else {
+            return Err(invalid("models.maker", "must have length 3 (Q22)"));
+        };
         if first.name != second.name || first.family != second.family {
             return Err(invalid(
                 "models.maker[1]",

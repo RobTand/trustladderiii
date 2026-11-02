@@ -78,6 +78,8 @@ fn labelled() -> LabelledIssue {
         title: "Add a blue button".into(),
         actor: 42,
         label: "tl3".into(),
+        labels: Vec::new(),
+        labels: Vec::new(),
     }
 }
 fn client(uri: &str) -> GitHub {

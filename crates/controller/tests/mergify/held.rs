@@ -43,6 +43,8 @@ fn request(number: u64) -> LabelledIssue {
         title: "change".into(),
         actor: 42,
         label: "tl3".into(),
+        labels: Vec::new(),
+        labels: Vec::new(),
     }
 }
 

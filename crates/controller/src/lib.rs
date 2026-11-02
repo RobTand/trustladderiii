@@ -27,6 +27,7 @@ pub mod looks;
 mod loom_tests;
 pub mod memory;
 mod notices;
+pub mod priority;
 pub mod production;
 pub mod prompts;
 mod question_findings;
@@ -204,6 +205,9 @@ pub struct LabelledIssue {
     pub title: String,
     pub actor: u64,
     pub label: String,
+    /// The issue's labels when it was labelled, for its priority (#416, #417).
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Request {
@@ -216,6 +220,9 @@ struct Request {
     source: Option<String>,
     #[serde(default)]
     proposed: Option<adoption::ProposedPullRequest>,
+    /// P0–P3 from the issue at intake (#416); `None` for unranked and older rows.
+    #[serde(default)]
+    priority: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -234,6 +241,8 @@ pub struct Controller {
     clock: Box<dyn clock::Clock>,
     held_effects: BTreeMap<executor::Upstream, BTreeMap<String, String>>,
     allowances: tl3_config::Allowances,
+    /// Starting credit reserve by priority, P0 first (#416). Empty keeps the kernel's.
+    priority_reserve: BTreeMap<u8, u8>,
 }
 impl Controller {
     pub fn open(store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
@@ -299,6 +308,7 @@ impl Controller {
             clock: Box::new(clock),
             held_effects: BTreeMap::new(),
             allowances: tl3_config::Allowances::default(),
+            priority_reserve: BTreeMap::new(),
         };
         controller.reconcile_capacity()?;
         controller.cleanup_ended_looks()?;
@@ -420,6 +430,9 @@ impl Controller {
     pub fn world(&mut self) -> Result<World> {
         snapshot::decode(&self.store.load()?)
     }
+
+    /// The starting credit reserve by priority (#416). Off by default.
+    pub fn set_priority_credit_reserve(&mut self, _limits: &tl3_config::Limits) {}
 
     pub fn intake(&mut self, issue: LabelledIssue) -> Result<bool> {
         self.intake_proposed(issue, None)
@@ -597,6 +610,7 @@ impl Controller {
                     issue_id,
                     source,
                     proposed,
+                    priority: priority::issue_priority(&issue.title, &issue.labels),
                 }),
             ));
             return Ok(Some(event));

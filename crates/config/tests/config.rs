@@ -1071,6 +1071,107 @@ fn deployment_model_defaults_pass_validation() {
         let reviewer = config.models.reviewer_for(&maker.family).unwrap();
         assert_ne!(reviewer.name, maker.name, "Q22: a different model reviews");
     }
+    // #416, approved by Rob 2026-11-02: Sonnet 5.5 high, then Opus 5.5 high.
+    let ladder: Vec<_> = config
+        .models
+        .maker
+        .iter()
+        .map(|model| (model.name.as_str(), model.effort.as_deref()))
+        .collect();
+    assert_eq!(
+        ladder,
+        [
+            ("claude-sonnet-5-5", Some("high")),
+            ("claude-opus-5-5", Some("high"))
+        ]
+    );
+}
+
+fn maker_ladder(rungs: &[(&str, &str, &str)]) -> String {
+    changed(
+        &["models", "maker"],
+        Value::Array(
+            rungs
+                .iter()
+                .map(|(name, family, effort)| {
+                    let mut model = toml::map::Map::new();
+                    model.insert("name".into(), Value::String((*name).into()));
+                    model.insert("family".into(), Value::String((*family).into()));
+                    model.insert("effort".into(), Value::String((*effort).into()));
+                    model.insert("budget_tokens".into(), Value::Integer(32000));
+                    Value::Table(model)
+                })
+                .collect(),
+        ),
+    )
+}
+
+#[test]
+fn maker_ladder_escalates_to_a_different_model_line_by_attempt_two() {
+    // #416 (Q22, Rob 2026-11-02): attempt 2 changes the model, not the effort.
+    let config = Config::parse(&maker_ladder(&[
+        ("default-model", "default", "high"),
+        ("alternate-model", "alternate", "high"),
+    ]))
+    .unwrap();
+    assert_eq!(config.models.maker.len(), 2);
+    for rungs in [
+        vec![
+            ("default-model", "default", "high"),
+            ("default-model", "default", "max"),
+        ],
+        vec![("default-model", "default", "high")],
+        vec![
+            ("default-model", "default", "high"),
+            ("other-model", "DEFAULT", "high"),
+            ("alternate-model", "alternate", "high"),
+        ],
+    ] {
+        let error = Config::parse(&maker_ladder(&rungs))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("models.maker"), "{error}");
+        assert!(error.contains("different model line"), "{error}");
+    }
+}
+
+#[test]
+fn priority_credit_reserve_is_off_by_default() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    assert!(config.limits.priority_credit_reserve.is_empty());
+    for priority in [None, Some(0), Some(1), Some(2), Some(3)] {
+        assert_eq!(config.limits.credit_reserve_for(priority), None);
+    }
+}
+
+#[test]
+fn priority_credit_reserve_applies_to_configured_priorities() {
+    let mut reserve = toml::map::Map::new();
+    reserve.insert("P0".into(), Value::Integer(5));
+    reserve.insert("P1".into(), Value::Integer(5));
+    let config = Config::parse(&changed(
+        &["limits", "priority_credit_reserve"],
+        Value::Table(reserve),
+    ))
+    .unwrap();
+    assert_eq!(config.limits.credit_reserve_for(Some(0)), Some(5));
+    assert_eq!(config.limits.credit_reserve_for(Some(1)), Some(5));
+    assert_eq!(config.limits.credit_reserve_for(Some(2)), None);
+    assert_eq!(config.limits.credit_reserve_for(None), None);
+    for (key, value) in [("P4", 5), ("high", 5), ("P0", 2), ("P1", 101)] {
+        let mut reserve = toml::map::Map::new();
+        reserve.insert(key.into(), Value::Integer(value));
+        let error = Config::parse(&changed(
+            &["limits", "priority_credit_reserve"],
+            Value::Table(reserve),
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("limits.priority_credit_reserve"),
+            "{key} {value}: {error}"
+        );
+    }
 }
 
 #[test]

@@ -102,6 +102,8 @@ fn labelled() -> LabelledIssue {
         title: "Fix greeting".into(),
         actor: 24923402,
         label: "tl3".into(),
+        labels: Vec::new(),
+        labels: Vec::new(),
     }
 }
 fn delivery() -> Delivery {

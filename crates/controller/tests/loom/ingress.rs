@@ -22,6 +22,7 @@ impl Source for Labels {
                 title: "Loom request".into(),
                 actor: 42,
                 label: "tl3".into(),
+                labels: Vec::new(),
             };
             if !self.first {
                 issue.number = 43;

@@ -148,6 +148,32 @@ mod tests {
     }
 
     #[test]
+    fn maker_attempt_two_runs_the_next_model_line() {
+        // #416 (Q22, Rob 2026-11-02): Sonnet 5.5 high, then Opus 5.5 high.
+        let mut config =
+            tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+        let rung = |name: &str, family: &str| tl3_config::Model {
+            name: name.into(),
+            family: family.into(),
+            effort: Some("high".into()),
+            budget_tokens: 32000,
+        };
+        // deploy/dl380g10/models.toml; the config tests pin it to this ladder.
+        config.models.maker = vec![
+            rung("claude-sonnet-5-5", "claude-sonnet"),
+            rung("claude-opus-5-5", "claude-opus"),
+        ];
+        let first = candidates(&config.models, "maker", 0, false, None).unwrap();
+        assert_eq!(first[0].name, "claude-sonnet-5-5");
+        let second = candidates(&config.models, "maker", 1, false, None).unwrap();
+        assert_eq!(second[0].name, "claude-opus-5-5");
+        assert_eq!(second[0].effort.as_deref(), Some("high"));
+        // Attempts past the ladder use its last rung.
+        let third = candidates(&config.models, "maker", 2, false, None).unwrap();
+        assert_eq!(third[0].name, "claude-opus-5-5");
+    }
+
+    #[test]
     fn reviewer_stays_a_different_family_from_the_maker_that_ran() {
         let models = models();
         let configured = candidates(&models, "reviewer", 0, false, None).unwrap();

@@ -776,6 +776,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         title: "Fix the value".into(),
         actor: 1,
         label: "tl3".into(),
+        labels: Vec::new(),
     })
     .unwrap();
     if mode.starts_with("q46-") {
@@ -1671,6 +1672,7 @@ fn publication_404_look(settings: &tl3_config::Store, case: &str) {
             title: "Fix the value".into(),
             actor: 1,
             label: "tl3".into(),
+            labels: Vec::new(),
         })
         .unwrap();
     let attempts = std::cell::Cell::new(0);

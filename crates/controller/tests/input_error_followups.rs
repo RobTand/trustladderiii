@@ -48,6 +48,8 @@ fn issue() -> LabelledIssue {
         title: "Fix greeting".into(),
         actor: 42,
         label: "tl3".into(),
+        labels: Vec::new(),
+        labels: Vec::new(),
     }
 }
 fn sql(settings: &tl3_config::Store, statement: &str) {
