@@ -277,6 +277,11 @@ impl Adapter {
         self
     }
 
+    /// Red scaffold for #390: the global protected paths do not reach the harness yet.
+    pub fn with_protected_paths(self, _global: &[String]) -> Self {
+        self
+    }
+
     pub fn new(client: PrismaBuild, settings: Settings) -> Result<Self> {
         if !settings.records.is_absolute()
             || !settings.harness.is_absolute()
