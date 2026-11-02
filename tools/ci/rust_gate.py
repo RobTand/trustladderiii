@@ -52,8 +52,8 @@ def check_budget(results, config, baseline, runner_class='baseline', cpu_seconds
     if baseline.get('cpu') and not cpu:
         raise RuntimeError('CPU budgets may not grow or be removed')
     if cpu is not None:
-        # On the migration PR, the target branch's wall caps bound the new CPU caps.
-        validate_limits(cpu, baseline.get('cpu') or baseline)
+        # CPU seconds include parallel children; initialize in CPU units, then only shrink.
+        validate_limits(cpu, baseline.get('cpu') or cpu)
         for key in ['wall_only', 'wall_only_platforms']:
             fallbacks = config.get(key, {})
             if (not isinstance(fallbacks, dict) or not all(fallbacks.values())

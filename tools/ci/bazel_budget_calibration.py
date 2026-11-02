@@ -6,8 +6,8 @@ testlogs directory. The method matches docs/hosted-budget-tolerance.md: take
 each complete run's largest elapsed / base-budget ratio, use the nearest-rank
 p99 of those maxima, add 10% and round up to the next 0.05, floor 1.0.
 
-For CPU migration, --cpu-receipts FILE FILE [...] keeps the existing ceilings
-and tightens observed slow caps to ceil(2 * maximum CPU), with a one second
+For CPU migration, --cpu-receipts FILE FILE [...] initializes CPU caps
+and tightens existing CPU caps to ceil(2 * maximum CPU), with a one second
 floor. It requires two receipts and does not claim a population percentile.
 """
 import argparse
@@ -64,7 +64,7 @@ def summarize(testlogs, policy, runner):
 
 
 def calibrate_cpu(paths, policy):
-    """Tighten observed slow caps from two or more CPU receipts; leave unmeasured caps alone."""
+    """Initialize measured CPU caps, or tighten existing ones, from at least two receipts."""
     if len(paths) < 2:
         raise ValueError('need at least two CPU receipts')
     maxima, records = {}, []
@@ -85,11 +85,16 @@ def calibrate_cpu(paths, policy):
                                                    for name in wall)})
     previous = policy.get('cpu') or policy
     limits = dict(previous['slow'])
+    default = previous['seconds']
+    if 'cpu' not in policy:
+        default = max(default, math.ceil(2 * max(
+            (seconds for name, seconds in maxima.items() if name not in limits), default=0)))
     for name in limits.keys() & maxima.keys():
         # Two runs cannot establish a percentile. Allow 2x observed CPU, rounded to seconds.
-        limits[name] = min(limits[name], max(1, math.ceil(maxima[name] * 2)))
-    return {'cpu': {'seconds': previous['seconds'], 'slow': limits},
-            'method': 'existing caps; observed slow caps shrink to ceil(2 * max CPU), floor 1s',
+        measured = max(1, math.ceil(maxima[name] * 2))
+        limits[name] = min(limits[name], measured) if 'cpu' in policy else measured
+    return {'cpu': {'seconds': default, 'slow': limits},
+            'method': 'bootstrap CPU units from ceil(2 * max CPU), floor 1s; existing CPU caps only shrink',
             'receipts': records, 'max_cpu_seconds': dict(sorted(maxima.items()))}
 
 
