@@ -641,3 +641,34 @@ Rob approved three Publishing rows for a required check that never reports on th
 TL3 decides on the check-suite and check-run webhooks it already receives, with no timers or polling. A completed check suite triggers the same look as a check run on the approved head. The controller implements the rows with its existing setup-incident machinery; the kernel is unchanged. An incident is raised once per head, context and app, so a clear stands for that head. A requirement with no expected app accepts a check run or a legacy status from any source.
 
 A pending or missing required check is a legitimate wait, not a stall. The held enqueue arms no allowance timer, and a look at it never spends a retry. An incident clears when its head stops being the node's head or approved head, or the node closes, because that kernel result is evidence the head no longer matters.
+
+## Q57: requests that require protected paths
+
+Rob, 2026-11-02, issue #451:
+
+> "ok, i guess for now things that attempt to hit protected paths should be tossed out and handled exogenously."
+> "give the work to PB worker, I guess. It should throw that stuff out early too, I guess."
+
+A request whose goals require changes to protected paths is not actionable by
+TL3. The effective list combines the defaults, `[planning].protected_paths`
+and that repository's additions. Before starting ingest, a deterministic check
+closes requests with declared protected edits, without launching a model.
+Ingest or audit closes as soon as exploration provides further evidence.
+Only definite footprint entries or edits named in the goals count. Context, excluded edits
+and ordinary unprotected test files do not count. Workers can identify required
+paths discovered during exploration. A planner reports them through the optional
+`cant_meet.protected_paths` list. The controller verifies the concrete paths
+against the effective list before reporting the blocker to the kernel.
+
+The kernel accepts `ProtectedPaths` only in Ingesting, Auditing and Planning.
+It enters Stopping(NotActionable) without a retry, question or credit charge,
+regardless of `fail_fast`. Normal teardown finishes before Closed. The controller
+records reason `protected_paths` and the paths. The issue summary names the paths
+and says the work belongs outside TL3. It leaves the issue open for its owner,
+or for a narrower request followed by `restart`, as in Q49. A durable one-line
+note links the request and names the paths on the configured operations issue.
+Both posts use code-written text, so no writer run can omit the paths.
+
+A useful unprotected leaf is allowed only when it meets all goals on its own.
+An unusable half is not a substitute. PB #2636's runner-only marker had no reader
+without the protected CI gate change, so the whole request belongs outside TL3.
