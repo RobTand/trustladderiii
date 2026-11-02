@@ -93,7 +93,7 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/mergify.rs": ["tests/support/**"],
     "tests/core_defects.rs": ["tests/worktree_fixture/**"],
     "tests/crash_safety.rs": ["tests/crash/**"],
-    "tests/github.rs": ["tests/support/**", "tests/fixtures/steering/**", "tests/worker_model.py", "tests/worker_transport.py"],
+    "tests/github.rs": ["tests/support/**", "tests/fixtures/steering/**", "tests/worker_model.py", "tests/worker_replies.py", "tests/worker_transport.py"],
     "tests/looks.rs": ["tests/fixtures/bell/**", "tests/fixtures/waits/**", "tests/worktree_fixture/**"],
     "tests/prismabuild.rs": ["tests/support/**", "tests/fixtures/bell/**", "tests/fixtures/pb.py", "tests/prismabuild_fixture/**"],
     "tests/publishing.rs": ["tests/support/**", "tests/fixtures/pb.py", "tests/prismabuild_fixture/**", "tests/worktree_fixture/**"],
