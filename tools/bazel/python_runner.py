@@ -10,6 +10,15 @@ sys.path.insert(0, str(Path(__file__).parent))
 from runtime import prepare  # noqa: E402
 
 
+def run_unittest(name):
+    suite = unittest.defaultTestLoader.loadTestsFromName(name)
+    if not suite.countTestCases():
+        # Match pytest's exit 5: a module that runs nothing must not pass parity.
+        print(f'{name} defines no tests', file=sys.stderr)
+        return 5
+    return 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
+
+
 def main():
     prepare()
     relative = sys.argv[1]
@@ -23,8 +32,7 @@ def main():
         os.chdir(relative.split('/')[0])
         status = pytest.main([str(module), '-v'])
     else:
-        suite = unittest.defaultTestLoader.loadTestsFromName(module.stem)
-        status = 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
+        status = run_unittest(module.stem)
     if status:
         return int(status)
     Path(os.environ['TEST_UNDECLARED_OUTPUTS_DIR'], 'inventory.json').write_text(
