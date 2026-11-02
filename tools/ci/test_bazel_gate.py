@@ -19,9 +19,11 @@ def plan(changed, impacted=(), deleted=()):
 class FakeWorkspace:
     """Records calls; answers from canned git and Bazel facts."""
 
-    def __init__(self, changed, impacted, statuses, diff_error=None, build_ok=True):
+    def __init__(self, changed, impacted, statuses, diff_error=None, build_ok=True, budget=None):
         self.changed, self.impacted, self.statuses = changed, impacted, statuses
         self.diff_error, self.ran, self.built, self.build_ok = diff_error, [], [], build_ok
+        # label -> status of its one budget rerun; only these failures are budget-only.
+        self.budget = budget or {}
 
     def ensure_commit(self, sha):
         if not sha:
@@ -47,8 +49,14 @@ class FakeWorkspace:
     def used_sources(self):
         return set(USED)
 
-    def test(self, targets, config, metadata, log_name):
+    def budget_only(self, labels):
+        return {label for label in labels if label in self.budget}
+
+    def test(self, targets, config, metadata, log_name, extra=()):
         self.ran.append((config, list(targets)))
+        if log_name.endswith('budget-rerun'):
+            assert '--nocache_test_results' in extra
+            return {label: self.budget[label] for label in targets}
         return {label: self.statuses.get(label, 'PASSED') for label in targets}
 
     def build(self, targets, config, metadata, log_name):
@@ -237,6 +245,68 @@ class GateTests(unittest.TestCase):
         workspace.query = lambda expression: answers[expression]
         self.assertEqual(workspace.used_sources(), {'workers/tests/test_turns.py', 'workers/tests/BUILD.bazel',
                                                     'tools/bazel/python.bzl'})
+
+    def test_a_budget_only_failure_is_rerun_once_and_can_pass(self):
+        label = '//crates/kernel:lib_test_tl3_kernel'
+        workspace = FakeWorkspace(['crates/kernel/src/lib.rs'], [label], {label: 'FAILED'},
+                                  budget={label: 'PASSED'})
+        result = bazel_gate.gate_pr(workspace, 'a' * 40, 'b' * 40, {})
+        self.assertEqual(workspace.ran, [('remote', [label]), ('remote', [label])])
+        self.assertEqual(result['verdicts']['rust'], 'pass')
+        self.assertEqual(result['budget_reruns'], {label: 'PASSED'})
+
+    def test_a_confirmed_budget_overrun_still_fails(self):
+        label = '//crates/kernel:lib_test_tl3_kernel'
+        workspace = FakeWorkspace(['crates/kernel/src/lib.rs'], [label], {label: 'FAILED'},
+                                  budget={label: 'FAILED'})
+        result = bazel_gate.gate_pr(workspace, 'a' * 40, 'b' * 40, {})
+        self.assertEqual(result['verdicts']['rust'], 'fail')
+
+    def test_real_failures_are_never_retried(self):
+        label = '//crates/kernel:lib_test_tl3_kernel'
+        workspace = FakeWorkspace(['crates/kernel/src/lib.rs'], [label], {label: 'FAILED'})
+        result = bazel_gate.gate_pr(workspace, 'a' * 40, 'b' * 40, {})
+        self.assertEqual(len(workspace.ran), 1)
+        self.assertEqual(result['budget_reruns'], {})
+
+    def test_post_merge_runs_rerun_budget_only_failures_per_architecture(self):
+        label = '//crates/store:test_test_postgres'
+        workspace = FakeWorkspace(['crates/kernel/src/lib.rs'], ['//crates/kernel:lib_test_tl3_kernel'],
+                                  {label: 'FAILED'}, budget={label: 'PASSED'})
+        result = bazel_gate.gate_main(workspace, 'a' * 40, 'b' * 40, {})
+        self.assertEqual(result['architectures']['amd64']['missed'], [])
+        self.assertEqual(result['architectures']['amd64']['budget_reruns'], {label: 'PASSED'})
+        self.assertTrue(bazel_gate.passed({**result, 'mode': 'main', 'error': None}))
+
+    def test_budget_markers_are_read_from_plain_or_zipped_test_outputs(self):
+        import zipfile
+        with tempfile.TemporaryDirectory() as root:
+            plain = Path(root, 'bazel-testlogs/crates/a/t/test.outputs')
+            plain.mkdir(parents=True)
+            (plain / bazel_gate.BUDGET_MARKER).write_text('Per-test time budget exceeded')
+            zipped = Path(root, 'bazel-testlogs/crates/a/z/test.outputs')
+            zipped.mkdir(parents=True)
+            with zipfile.ZipFile(zipped / 'outputs.zip', 'w') as archive:
+                archive.writestr(bazel_gate.BUDGET_MARKER, 'Per-test time budget exceeded')
+            Path(root, 'bazel-testlogs/crates/a/real/test.outputs').mkdir(parents=True)
+            workspace = bazel_gate.Workspace(root=Path(root))
+            self.assertEqual(workspace.budget_only(['//crates/a:t', '//crates/a:z', '//crates/a:real']),
+                             {'//crates/a:t', '//crates/a:z'})
+
+    def test_runner_marks_only_budget_overruns(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'bazel'))
+        import rust_runner
+        config = {'seconds': 10.0, 'slow': {}}
+        with tempfile.TemporaryDirectory() as outputs:
+            with self.assertRaisesRegex(RuntimeError, 'budget exceeded'):
+                rust_runner.enforce_budget({'b::slow': 48.0}, config, 'baseline', outputs)
+            self.assertTrue(Path(outputs, bazel_gate.BUDGET_MARKER).is_file())
+        with tempfile.TemporaryDirectory() as outputs:
+            with self.assertRaisesRegex(RuntimeError, 'may not grow'):
+                rust_runner.enforce_budget({'b::fast': 1.0}, {'seconds': 99.0, 'slow': {}}, 'baseline', outputs,
+                                           baseline=config)
+            self.assertFalse(Path(outputs, bazel_gate.BUDGET_MARKER).exists())
 
     def test_bazel_diff_error_fails_the_gate(self):
         workspace = FakeWorkspace(['crates/kernel/src/lib.rs'], [], {}, diff_error='bazel-diff exited 1')
