@@ -654,6 +654,13 @@ def test_prompt_distinguishes_excused_regressions_and_unverified_evidence():
     assert "A failing check your change caused is never unverified." in prompt
 
 
+def test_prompt_tells_history_records_from_open_feedback():
+    # #316: superseded findings arrive as one-line records with resolved_round.
+    prompt = " ".join(files("tl3_workers").joinpath("prompts", "maker.md").read_text().split())
+    assert "A feedback item with resolved_round is a one-line record of history that a later review or check superseded; it is not a task." in prompt
+    assert "The full-text items without resolved_round are the open ones to fix." in prompt
+
+
 def test_prompt_requires_reds_the_harness_accepts():
     # #340: a module-level import of a new name errors on the base, and a flaky
     # test can pass there; neither demonstrates the change.

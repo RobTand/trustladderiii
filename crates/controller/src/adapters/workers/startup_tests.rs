@@ -96,22 +96,31 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
             }}),
         )
         .unwrap();
-    // Five review rounds at the controller's own caps: 20 findings and 16,000 characters
-    // each. A check failure at the cap follows every round, as it does in a long fix loop.
+    // Five review rounds at the controller's own caps, and a check failure at its caps
+    // after every round, as in a long fix loop.
+    use crate::findings::{
+        MAX_FAILED_TESTS, MAX_MESSAGE_CHARS, MAX_REPORT_CHARS, MAX_REVIEW_FINDINGS, clipped,
+    };
+    let finding_chars = MAX_REPORT_CHARS / MAX_REVIEW_FINDINGS;
     let shas: Vec<String> = (1..=5).map(|n| format!("{n:040x}")).collect();
     let mut stored = Vec::new();
     for (round, sha) in shas.iter().enumerate() {
-        for index in 0..20 {
+        for index in 0..MAX_REVIEW_FINDINGS {
+            let report = format!(
+                "Round {round} finding {index}: {}",
+                "x".repeat(finding_chars)
+            );
             stored.push(json!({
                 "kind": "review_finding", "id": format!("review-{round}-{index}"), "reviewed_sha": sha,
-                "report": format!("Round {round} finding {index}: {}", "x".repeat(770)),
+                "report": clipped(&report, finding_chars),
                 "goal_ids": ["greeting"],
             }));
         }
+        let report = format!("Check failure {round}: {}", "y".repeat(MAX_REPORT_CHARS));
         stored.push(json!({
-            "kind": "failed_check", "report": format!("Check failure {round}: {}", "y".repeat(15900)),
-            "goal_ids": [],
-            "failed_tests": (0..20).map(|n| json!({"test": format!("test_{round}_{n}"), "message": "m".repeat(990)})).collect::<Vec<_>>(),
+            "kind": "failed_check", "report": clipped(&report, MAX_REPORT_CHARS),
+            "goal_ids": ["greeting"],
+            "failed_tests": (0..MAX_FAILED_TESTS).map(|n| json!({"test": format!("test_{round}_{n}"), "message": "m".repeat(MAX_MESSAGE_CHARS)})).collect::<Vec<_>>(),
             "outside_paths_total": 0,
         }));
     }
@@ -135,9 +144,27 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
     // findings keep their whole text, sent once.
     let feedback = inputs["feedback"].as_array().unwrap();
     assert_eq!(feedback.len(), stored.len());
-    for (sent, original) in feedback.iter().zip(&stored) {
+    let open = MAX_REVIEW_FINDINGS + 1;
+    for (index, (sent, original)) in feedback.iter().zip(&stored).enumerate() {
         assert_eq!(sent["kind"], original["kind"]);
         assert_eq!(sent["id"], original["id"]);
+        assert_eq!(sent["goal_ids"], original["goal_ids"]);
+        if index >= stored.len() - open {
+            assert_eq!(sent, original, "the latest review and check stay whole");
+            continue;
+        }
+        // Each review and each check failure is one feedback event, and the review of
+        // the next round supersedes both the findings and the check that followed them.
+        let round = index / open;
+        assert_eq!(sent["resolved_round"], 2 * round + 3, "{sent}");
+        let title: String = original["report"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .take(crate::findings::TITLE_CHARS)
+            .collect();
+        assert_eq!(sent["report"], title, "a collapsed item keeps its title");
+        assert!(sent.get("failed_tests").is_none());
     }
     let current = crate::findings::current_review(
         &inputs["feedback"],

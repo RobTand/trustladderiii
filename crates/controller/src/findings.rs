@@ -126,7 +126,7 @@ pub(crate) fn current_review<'a>(
     CurrentReview { head, findings }
 }
 
-const TITLE_CHARS: usize = 120;
+pub(crate) const TITLE_CHARS: usize = 120;
 
 fn reviewed(item: &Value) -> Option<&str> {
     if item["kind"] == "review_finding" {
@@ -261,9 +261,9 @@ mod bounded_feedback_defects {
         assert_eq!(sent.len(), 4, "no finding is dropped");
         assert_eq!(sent[3], feedback[3], "the open finding keeps its full text");
         for (item, id, sha, round, title) in [
-            (&sent[0], "review-1-0", "a", 1, "first problem"),
-            (&sent[1], "review-1-1", "a", 1, "second problem"),
-            (&sent[2], "review-3-0", "b", 2, "third problem"),
+            (&sent[0], "review-1-0", "a", 2, "first problem"),
+            (&sent[1], "review-1-1", "a", 2, "second problem"),
+            (&sent[2], "review-3-0", "b", 3, "third problem"),
         ] {
             one_line(item, "review_finding", round);
             assert_eq!(item["id"], id);
@@ -284,7 +284,7 @@ mod bounded_feedback_defects {
             failed(&long("new check")),
         ];
         let sent = bounded_feedback(feedback.clone(), None);
-        one_line(&sent[0], "failed_check", 1);
+        one_line(&sent[0], "failed_check", 2);
         assert!(sent[0].get("id").is_none());
         assert_eq!(sent[1], feedback[1], "the latest review is still open");
         assert_eq!(sent[2], feedback[2], "a check failure after it is open");
@@ -298,8 +298,8 @@ mod bounded_feedback_defects {
             failed(&long("last")),
         ];
         let sent = bounded_feedback(feedback.clone(), None);
-        one_line(&sent[0], "failed_check", 1);
-        one_line(&sent[1], "failed_check", 2);
+        one_line(&sent[0], "failed_check", 2);
+        one_line(&sent[1], "failed_check", 3);
         assert_eq!(sent[2], feedback[2]);
     }
 
