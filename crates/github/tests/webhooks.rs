@@ -92,6 +92,7 @@ fn recorded_payloads_parse_into_the_expected_variants() {
             }
             Event::PullRequestUpdated { .. }
             | Event::PullRequestLabeled { .. }
+            | Event::IssueChanged { .. }
             | Event::CheckRunUpdated { .. } => {
                 panic!("unexpected variant")
             }
@@ -214,7 +215,7 @@ fn bad_signatures_and_bad_payloads_do_not_consume_delivery_ids() {
         .unwrap_err(),
         WebhookError::Payload
     );
-    let ignored = br#"{"action":"edited"}"#;
+    let ignored = br#"{"action":"opened"}"#;
     assert!(
         verify_and_parse(
             b"throwaway",

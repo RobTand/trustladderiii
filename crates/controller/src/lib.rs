@@ -558,7 +558,53 @@ impl Controller {
     }
 
     /// Refresh an open request's priority from its issue's current title and labels.
-    pub fn issue_changed(&mut self, _change: &IssueChange) -> Result<()> {
+    pub fn issue_changed(&mut self, change: &IssueChange) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let Some(repo) = stored_repositories(&snapshot)?.into_iter().find(|r| {
+            r.owner.eq_ignore_ascii_case(&change.owner)
+                && r.name.eq_ignore_ascii_case(&change.repo)
+                && r.installation == change.installation
+        }) else {
+            return Ok(());
+        };
+        let Some(row) = latest_request(&snapshot, &repo, change.number) else {
+            return Ok(());
+        };
+        let node = NodeId(
+            row.id
+                .parse()
+                .map_err(|_| Error::Invalid("invalid request node"))?,
+        );
+        let world = snapshot::decode(&snapshot)?;
+        let priority = priority::pool_priority(&change.title, &change.labels);
+        if world
+            .nodes
+            .get(node.0 as usize)
+            .is_none_or(|n| n.phase.is_closed() || n.priority == priority)
+        {
+            return Ok(());
+        }
+        // The delivery's key makes a stale redelivery replay its stored receipt.
+        let mut commit = Commit::new(
+            format!("github-issue:{}", change.delivery),
+            json!({"issue_change": change}),
+            &snapshot,
+        );
+        let mut request: Request = decode_stored(row.value.clone())?;
+        request.priority = priority::issue_priority(&change.title, &change.labels);
+        commit
+            .rows
+            .push(put("requests", row.id.clone(), json!(request)));
+        self.apply(
+            &snapshot,
+            world,
+            Event::Fact {
+                node,
+                fact: Fact::Priority(priority),
+            },
+            &mut commit,
+        )?;
+        self.store.commit(&commit)?;
         Ok(())
     }
 
@@ -617,12 +663,12 @@ impl Controller {
                 Event::NewAdoption {
                     repo: tl3_kernel::RepoId(index as u64),
                     head: self.head(NodeId(world.nodes.len() as u64), &proposed.head)?,
-                    priority: tl3_kernel::Priority::Unranked,
+                    priority: priority::pool_priority(&issue.title, &issue.labels),
                 }
             } else {
                 Event::NewRequest {
                     repo: tl3_kernel::RepoId(index as u64),
-                    priority: tl3_kernel::Priority::Unranked,
+                    priority: priority::pool_priority(&issue.title, &issue.labels),
                 }
             };
             commit.rows.push(put(

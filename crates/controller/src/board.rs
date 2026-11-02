@@ -8,7 +8,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
 };
-use tl3_kernel::{EffectKind, Node, NodeId, Notice, Outcome, Phase, Role, Wait};
+use tl3_kernel::{EffectKind, Node, NodeId, Notice, Outcome, Phase, Priority, Role, Wait};
 use tl3_store::Transaction;
 use ts_rs::TS;
 
@@ -282,7 +282,15 @@ pub struct StoredIncident {
 pub fn project(input: Input<'_>) -> Board {
     let mut cards = Vec::with_capacity(input.requests.len());
     let mut expired = BTreeSet::new();
+    // Q39: the kernel grants the pool to the lowest key first.
+    let keys: Vec<_> = input
+        .requests
+        .iter()
+        .filter_map(|request| tl3_kernel::pool_key(input.next_ticket, &request.node))
+        .collect();
     for request in input.requests {
+        let pool_position = tl3_kernel::pool_key(input.next_ticket, &request.node)
+            .map(|key| 1 + keys.iter().filter(|theirs| **theirs < key).count() as u32);
         if matches!(request.node.phase, Phase::Closed(_))
             && request
                 .phase_since_ms
@@ -292,6 +300,7 @@ pub fn project(input: Input<'_>) -> Board {
         }
         cards.push(card(
             request,
+            pool_position,
             input.models,
             &input.quota_resets,
             input.now_ms,
@@ -350,6 +359,7 @@ impl From<StoredIncident> for CardIncident {
 
 fn card(
     request: Request,
+    pool_position: Option<u32>,
     models: Option<&tl3_config::Models>,
     quota_resets: &BTreeMap<String, u64>,
     now_ms: i64,
@@ -361,6 +371,13 @@ fn card(
         _ => None,
     };
     let wait = node.waiting_on();
+    let priority = match node.priority {
+        Priority::P0 => "P0",
+        Priority::P1 => "P1",
+        Priority::P2 => "P2",
+        Priority::P3 => "P3",
+        Priority::Unranked => "unranked",
+    };
     let role = role(node.phase);
     let model = role
         .zip(models)
@@ -419,17 +436,22 @@ fn card(
         column: Column::of(node.phase),
         phase: phase_label(node.phase, ending),
         ending,
-        priority: "unranked".into(),
-        pool_position: None,
+        priority: priority.into(),
+        pool_position,
         waiting_on: if request.question_post_failed {
-            "the question post that failed; the question was never posted"
+            "the question post that failed; the question was never posted".into()
         } else if node.effect.is_some_and(|effect| effect.cancelling) {
             // The node moved on; it waits only for the old delivery to settle.
-            "a cancelled step to settle"
+            "a cancelled step to settle".into()
+        } else if let Some(position) = pool_position.filter(|_| wait == Wait::AgentPool) {
+            format!(
+                "{} ({priority}, {} in line)",
+                waiting_on(wait, node.phase),
+                ordinal(position)
+            )
         } else {
-            waiting_on(wait, node.phase)
-        }
-        .into(),
+            waiting_on(wait, node.phase).into()
+        },
         role: role.map(|(_, label)| label.into()),
         model,
         attempt: node.attempt,
@@ -532,7 +554,7 @@ fn waiting_on(wait: Wait, phase: Phase) -> &'static str {
         Wait::CheckResults => "check results",
         Wait::MergeQueue => "merge queue",
         Wait::SlotOrFiles => "another change to finish using these files",
-        Wait::AgentPool => "a planner to become available",
+        Wait::AgentPool => "an agent slot",
         Wait::None => "none",
         Wait::UpstreamEvent => match phase {
             Phase::Ingesting => "the request to be read",
@@ -551,6 +573,18 @@ fn waiting_on(wait: Wait, phase: Phase) -> &'static str {
             Phase::Closed(_) => "none",
         },
     }
+}
+
+/// `1st`, `2nd`, `3rd`, `4th`, ..., `11th`, ..., `21st`.
+fn ordinal(n: u32) -> String {
+    let suffix = match (n % 10, n % 100) {
+        (_, 11..=13) => "th",
+        (1, _) => "st",
+        (2, _) => "nd",
+        (3, _) => "rd",
+        _ => "th",
+    };
+    format!("{n}{suffix}")
 }
 
 fn effect_wait(kind: EffectKind) -> &'static str {

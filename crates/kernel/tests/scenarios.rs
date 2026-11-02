@@ -1276,7 +1276,8 @@ fn running(w: &World) -> Vec<usize> {
     (0..w.nodes.len()).filter(|&i| w.nodes[i].pool).collect()
 }
 
-/// Finish node i's ingest run as a duplicate, releasing its pool grant for good.
+/// Finish node i's ingest run as a duplicate. It releases its pool grant and
+/// takes a new, younger ticket for its audit.
 fn end_ingest(w: World, i: usize) -> World {
     let generation = w.nodes[i].generation;
     let (next, _) = step(
@@ -1355,7 +1356,17 @@ fn a_priority_fact_refreshes_an_open_request_and_leaves_a_closed_one() {
     );
     assert!(next.valid() && next.is_settled());
     assert_eq!(next.nodes[1].priority, Priority::P0);
-    w = end_ingest(next, 0);
+    w = confirm_all(
+        step(
+            next,
+            Event::Command {
+                node: NodeId(0),
+                id: 1,
+                command: Command::Stop,
+            },
+        )
+        .0,
+    );
     let closed = w.nodes[0];
     assert!(closed.phase.is_closed());
     let (after, _) = step(

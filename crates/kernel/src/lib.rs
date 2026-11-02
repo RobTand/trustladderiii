@@ -2226,7 +2226,11 @@ fn effect_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
 
 fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
     match fact {
-        Fact::Priority(_) => {}
+        Fact::Priority(priority) => {
+            if !w.nodes[i].phase.is_closed() {
+                w.nodes[i].priority = priority;
+            }
+        }
         Fact::PrMerged {
             head,
             checks_passed,
@@ -2723,20 +2727,30 @@ fn slot_free(w: &World, i: usize) -> bool {
 /// Tickets issued after a pool waiter's own that raise it one level (Q39).
 pub const POOL_AGING_TICKETS: u64 = 8;
 
-/// A pool waiter's place in line (Q39). Stub: ticket order only.
-pub fn pool_level(_next_ticket: u64, _priority: Priority, _ticket: u64) -> u8 {
-    0
+/// A pool waiter's place in line (Q39): its priority's rank, raised one level
+/// per POOL_AGING_TICKETS tickets issued after its own, down to P0.
+pub fn pool_level(next_ticket: u64, priority: Priority, ticket: u64) -> u8 {
+    let aged = next_ticket.saturating_sub(ticket).saturating_sub(1) / POOL_AGING_TICKETS;
+    priority.rank().saturating_sub(aged.min(4) as u8)
+}
+
+/// A node's place in the agent pool's line (Q39), lowest first: best effective
+/// level, then the older ticket. None unless it waits for the pool.
+pub fn pool_key(next_ticket: u64, n: &Node) -> Option<(u8, u64)> {
+    let ticket = n.ticket.filter(|_| !matches!(n.phase, Phase::Ready(_)))?;
+    Some((pool_level(next_ticket, n.priority, ticket), ticket))
 }
 
 /// Older slot waiters block runnable or overlapping younger leaves.
-/// The agent pool retains strict ticket order.
+/// The agent pool goes priority first, with bounded aging (Q39).
 fn first_in_line(w: &World, i: usize) -> bool {
     let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };
-    if !matches!(me.phase, Phase::Ready(_)) {
-        return !w.nodes.iter().any(|n| {
-            !matches!(n.phase, Phase::Ready(_)) && n.ticket.is_some_and(|theirs| theirs < mine)
-        });
+    if let Some(key) = pool_key(w.next_ticket, me) {
+        return !w
+            .nodes
+            .iter()
+            .any(|n| pool_key(w.next_ticket, n).is_some_and(|theirs| theirs < key));
     }
     let mut first_runnable = mine;
     for (j, waiter) in w.nodes.iter().enumerate() {

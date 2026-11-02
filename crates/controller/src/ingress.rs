@@ -5,7 +5,7 @@ use crate::sync::{
     thread,
 };
 use crate::{
-    Bootstrap, Controller, Error, LabelledIssue, Repository, Result, cli::Input,
+    Bootstrap, Controller, Error, IssueChange, LabelledIssue, Repository, Result, cli::Input,
     executor::Observation,
 };
 use chrono::{DateTime, Utc};
@@ -192,6 +192,31 @@ fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<Input> {
                         title: issue.title.clone(),
                         actor: change.actor.id,
                         label: change.label.name,
+                        labels: issue
+                            .labels
+                            .iter()
+                            .map(|label| label.name.clone())
+                            .collect(),
+                    }));
+                }
+            }
+            // Catch-up sees each changed issue as it is now, so missed or
+            // reordered edits converge on its current priority (Q39).
+            for issue in &changes.issues {
+                if issue.pull_request.is_none() {
+                    result.push(Input::IssueChanged(IssueChange {
+                        delivery: format!(
+                            "catch-up-issue:{}/{}:{}:{}",
+                            repository.owner,
+                            repository.name,
+                            issue.number,
+                            issue.updated_at.to_rfc3339()
+                        ),
+                        owner: repository.owner.clone(),
+                        repo: repository.name.clone(),
+                        installation: repository.installation,
+                        number: issue.number,
+                        title: issue.title.clone(),
                         labels: issue
                             .labels
                             .iter()
@@ -450,17 +475,24 @@ fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
             label,
             actor,
         }) if issue.pull_request.is_none() => {
-            vec![Input::LabelledIssue(LabelledIssue {
-                delivery: id.into(),
-                owner: context.repository.owner.login,
-                repo: context.repository.name,
-                installation: context.installation_id,
-                number: issue.number,
-                title: issue.title,
-                actor: actor.id,
-                label: label.name,
-                labels: issue.labels.into_iter().map(|label| label.name).collect(),
-            })]
+            let change = issue_change(id, &context, &issue);
+            vec![
+                Input::LabelledIssue(LabelledIssue {
+                    delivery: id.into(),
+                    owner: context.repository.owner.login,
+                    repo: context.repository.name,
+                    installation: context.installation_id,
+                    number: issue.number,
+                    title: issue.title,
+                    actor: actor.id,
+                    label: label.name,
+                    labels: issue.labels.into_iter().map(|label| label.name).collect(),
+                }),
+                Input::IssueChanged(change),
+            ]
+        }
+        Some(Event::IssueChanged { context, issue, .. }) if issue.pull_request.is_none() => {
+            vec![Input::IssueChanged(issue_change(id, &context, &issue))]
         }
         Some(Event::CommentCreated {
             context,
@@ -484,6 +516,27 @@ fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
                 .collect()
         }
         _ => vec![],
+    }
+}
+
+/// The issue's current title and labels, which set its request's priority (Q39).
+fn issue_change(
+    delivery: &str,
+    context: &webhook::Context,
+    issue: &tl3_github::Issue,
+) -> IssueChange {
+    IssueChange {
+        delivery: delivery.into(),
+        owner: context.repository.owner.login.clone(),
+        repo: context.repository.name.clone(),
+        installation: context.installation_id,
+        number: issue.number,
+        title: issue.title.clone(),
+        labels: issue
+            .labels
+            .iter()
+            .map(|label| label.name.clone())
+            .collect(),
     }
 }
 

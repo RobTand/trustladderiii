@@ -672,11 +672,16 @@ A leaf gets its slot and all its files together. **Q48, Rob, 2026-11-01:** an ol
 
 ## Agent pool
 
-Slice one uses one account, and serves runs first come, first served.
+Slice one uses one account. Each agent run takes a ticket, then waits for a free grant. **Approved by Rob, 2026-11-02 (#417):** grants are priority-first, pulling this part of Q39 forward from slice two.
+
+- **Priority.** A request's priority comes from its issue: a `P0`–`P3` label, or else a `[P0]`–`[P3]` title prefix, both case-insensitive. A label wins over the title, and with several priority labels the most urgent wins. Unranked comes after P3. Intake reads it. An issue edit, a label change or catch-up refreshes it while the request is open; a closed request keeps its last priority. The credit reserve (#416) uses the same parser.
+- **Order.** A free grant goes to the waiter with the lowest (effective level, ticket). The effective level is the priority's rank, P0 = 0 to unranked = 4, lowered by one for every 8 tickets (`POOL_AGING_TICKETS`) issued after the waiter's own, down to 0. Ties go to the older ticket.
+- **Aging bound.** Rob approved priority-first, not aging. Aging is the smallest rule found that stops constant P0 or P1 work from starving P3 work. A waiter of rank r reaches level 0 once r × 8 later tickets exist, and from then on no younger ticket can pass it. So it is granted after at most K + r × 8 grants to others, where K counts the waiters older than it; an unranked waiter waits at most K + 32. Tickets come only from new runs, so the world's ticket counter already measures how much newer work has arrived, and no per-waiter counter is needed.
+- `tl3 status` and the console's cards show each waiting run's priority and place in line.
 
 From slice two on:
 
-- Runs are granted in the gate's order, by rank with ties going to the older run, within each account's capacity (Q39).
+- Runs are granted in the gate's order, by rank with ties going to the older run, within each account's capacity (Q39). How rank combines with priority is decided when slice two starts.
 - Postmortem runs come after every delivery run, so they use only spare capacity. Under constant load they wait (Q39).
 - A quota reset the provider announces is a wake-up event. When every model in a step's ladder is out, the earliest reset wakes it (Q53).
 
@@ -753,7 +758,7 @@ A newer kernel never replays older events. They stay for audit.
 - **Rank:** the number of other nodes waiting on a node, directly or through a chain of waits. Higher ranks go first, and ties go to the older node (Q36). The wait graph has no cycles, so the count is always finite.
 - **Wait reason:** what every open node is waiting on.
 
-There are no manual priorities in slices one and two. A label such as `tl3-urgent` could be added later if Rob finds he wants one (Q37). In slice one there are no dependencies between leaves. Leaves can wait on a file holder or an older gate ticket; the Q48 gate (Rob, 2026-11-01) protects older runnable or overlapping waiters. Ranking starts in slice two.
+Approved by Rob, 2026-11-02 (#416, #417), replacing "no manual priorities in slices one and two" (Q37): an issue's `P0`–`P3` priority orders agent-pool grants and can raise its starting credit. It doesn't change the gate's slot order. In slice one there are no dependencies between leaves. Leaves can wait on a file holder or an older gate ticket; the Q48 gate (Rob, 2026-11-01) protects older runnable or overlapping waiters. Ranking starts in slice two.
 
 File waits and pauses count in the wait graph, and neither can close a cycle:
 
