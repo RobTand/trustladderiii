@@ -1544,6 +1544,10 @@ fn console_command_caps(
              SELECT 'backlog-' || n, 1, '{\"kind\":\"pause\"}' FROM generate_series(1, 1000 - (SELECT count(*) FROM tl3_console_commands WHERE status = 'pending')::int) n",
         )
         .unwrap();
+    // A resend files nothing and isn't refused, even with the backlog full or
+    // an oversized action under the same id.
+    assert!(!commands.submit(fits, 1, &at).unwrap());
+    assert!(!commands.submit(fits, 1, &over).unwrap());
     let late = "3b9f3c3e-5f43-4a8e-9d1c-2f0e7c1d9a13";
     let error = commands
         .submit(late, 1, &json!({"kind": "pause"}))

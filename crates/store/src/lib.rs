@@ -1036,11 +1036,7 @@ impl Listener {
     }
 
     fn listen(settings: &tl3_config::Store, statement: &str) -> Result<Self> {
-        let mut config = config(settings, true)?;
-        // A LISTEN session idles for hours. Keepalives find a dead peer, so
-        // the session ends and its owner reconnects and drains.
-        config.keepalives_idle(LISTEN_KEEPALIVE_IDLE);
-        let mut client = config.connect(NoTls)?;
+        let mut client = listen_config(settings)?.connect(NoTls)?;
         client.batch_execute(statement)?;
         Ok(Self { client })
     }
@@ -1157,6 +1153,14 @@ fn check_schema(tx: &mut Transaction<'_>) -> Result<()> {
 }
 
 const LISTEN_KEEPALIVE_IDLE: Duration = Duration::from_secs(60);
+
+/// A LISTEN session idles for hours. Keepalives find a dead peer, so the
+/// session ends and its owner reconnects and drains.
+fn listen_config(settings: &tl3_config::Store) -> Result<postgres::Config> {
+    let mut config = config(settings, true)?;
+    config.keepalives_idle(LISTEN_KEEPALIVE_IDLE);
+    Ok(config)
+}
 
 fn connect(settings: &tl3_config::Store, read_only: bool) -> Result<Client> {
     Ok(config(settings, read_only)?.connect(NoTls)?)
@@ -1337,5 +1341,24 @@ mod same_fact_tests {
             &stored,
             &json!({"WorkerReply": {"generation": 4, "reply": {"kind": "done"}}})
         ));
+    }
+}
+
+#[cfg(test)]
+mod listen_tests {
+    use super::*;
+
+    /// The kernel's defaults would take minutes to give up on a dead peer;
+    /// the session names its own probe interval and count.
+    #[test]
+    fn listen_sessions_find_a_dead_peer_within_ninety_seconds() {
+        let config = listen_config(&tl3_config::Store::default()).unwrap();
+        assert_eq!(config.get_keepalives_idle(), Duration::from_secs(60));
+        assert_eq!(
+            config.get_keepalives_interval(),
+            Some(Duration::from_secs(10))
+        );
+        assert_eq!(config.get_keepalives_retries(), Some(3));
+        assert!(config.get_keepalives());
     }
 }
