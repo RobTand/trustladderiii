@@ -262,7 +262,10 @@ fn fake_hindsight_rejects_over_500_tokens_with_the_live_error() {
     let f = Fixture::new();
     let response = f._runtime.block_on(async {
         reqwest::Client::new()
-            .post(format!("{}/v1/default/banks/tl3/memories/recall", f.server.uri()))
+            .post(format!(
+                "{}/v1/default/banks/tl3/memories/recall",
+                f.server.uri()
+            ))
             .json(&json!({"query": vec!["x"; 1449].join(" ")}))
             .send()
             .await
@@ -270,21 +273,34 @@ fn fake_hindsight_rejects_over_500_tokens_with_the_live_error() {
     });
     assert_eq!(response.status(), 400);
     let body: Value = f._runtime.block_on(response.json()).unwrap();
-    assert_eq!(body, json!({"detail": "Query too long: 1449 tokens exceeds maximum of 500. Please shorten your query."}));
+    assert_eq!(
+        body,
+        json!({"detail": "Query too long: 1449 tokens exceeds maximum of 500. Please shorten your query."})
+    );
 }
 
 #[test]
 fn long_issue_recall_keeps_repo_title_and_body_start_within_the_query_limit() {
     let f = Fixture::new();
-    *f.bank.curated.lock().unwrap() = vec![result("lesson-1", "Keep greeting tests.", &["kind:lesson"])];
+    *f.bank.curated.lock().unwrap() =
+        vec![result("lesson-1", "Keep greeting tests.", &["kind:lesson"])];
     for body in ["x ".repeat(2000), "界🦀 ".repeat(2000)] {
         let query = format!("Fix greeting\nReturn hello. {body} END-OF-ISSUE");
         for recall in [
-            Recall::Context { repo: REPO, query: &query },
-            Recall::Conventions { repo: REPO, query: &query },
+            Recall::Context {
+                repo: REPO,
+                query: &query,
+            },
+            Recall::Conventions {
+                repo: REPO,
+                query: &query,
+            },
         ] {
             let value = f.recall(recall);
-            assert!(value.get("memory_note").is_none(), "long issue must recall memories: {value}");
+            assert!(
+                value.get("memory_note").is_none(),
+                "long issue must recall memories: {value}"
+            );
             assert_eq!(value["memories"][0]["id"], "lesson-1");
         }
     }
@@ -292,8 +308,15 @@ fn long_issue_recall_keeps_repo_title_and_body_start_within_the_query_limit() {
     assert_eq!(recalls.len(), 6);
     for body in recalls.iter() {
         let query = body["query"].as_str().unwrap();
-        assert!(query.starts_with(&format!("Repository {REPO}\nFix greeting\nReturn hello.")), "{query}");
-        assert!(query.len() <= 400, "query must leave margin under 500 tokens: {} bytes", query.len());
+        assert!(
+            query.starts_with(&format!("Repository {REPO}\nFix greeting\nReturn hello.")),
+            "{query}"
+        );
+        assert!(
+            query.len() <= 400,
+            "query must leave margin under 500 tokens: {} bytes",
+            query.len()
+        );
         assert!(!query.contains("END-OF-ISSUE"));
     }
 }
@@ -305,12 +328,20 @@ fn recall_bad_request_does_not_pause_the_next_request() {
     *f.bank.status.lock().unwrap() = 400;
     let value = memory::recall(&mut f.store(), &f.hindsight(), &breaker, context()).unwrap();
     assert_eq!(value["memories"], json!([]));
-    assert!(value["memory_note"].as_str().unwrap().contains("unavailable"));
+    assert!(
+        value["memory_note"]
+            .as_str()
+            .unwrap()
+            .contains("unavailable")
+    );
     assert_eq!(*f.bank.hits.lock().unwrap(), 1);
     *f.bank.status.lock().unwrap() = 0;
     *f.bank.general.lock().unwrap() = vec![result("run-1", "text", &[])];
     let value = memory::recall(&mut f.store(), &f.hindsight(), &breaker, context()).unwrap();
-    assert!(value.get("memory_note").is_none(), "a 400 must not open the breaker: {value}");
+    assert!(
+        value.get("memory_note").is_none(),
+        "a 400 must not open the breaker: {value}"
+    );
     assert_eq!(value["memories"][0]["id"], "run-1");
     assert_eq!(*f.bank.hits.lock().unwrap(), 3);
 }
@@ -323,16 +354,26 @@ fn recall_connection_failure_and_server_errors_pause_the_next_request() {
         let mut down = f.hindsight();
         let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         if status == 0 {
-            down.endpoint = format!("http://{}", closed.local_addr().unwrap()).parse().unwrap();
+            down.endpoint = format!("http://{}", closed.local_addr().unwrap())
+                .parse()
+                .unwrap();
         }
         drop(closed);
         *f.bank.status.lock().unwrap() = status;
         let value = memory::recall(&mut f.store(), &down, &breaker, context()).unwrap();
-        assert!(value["memory_note"].as_str().unwrap().contains("unavailable"));
+        assert!(
+            value["memory_note"]
+                .as_str()
+                .unwrap()
+                .contains("unavailable")
+        );
         let hits = *f.bank.hits.lock().unwrap();
         *f.bank.status.lock().unwrap() = 0;
         let value = memory::recall(&mut f.store(), &f.hindsight(), &breaker, context()).unwrap();
-        assert!(value["memory_note"].as_str().unwrap().contains("paused"), "status {status}: {value}");
+        assert!(
+            value["memory_note"].as_str().unwrap().contains("paused"),
+            "status {status}: {value}"
+        );
         assert_eq!(*f.bank.hits.lock().unwrap(), hits);
     }
 }
