@@ -109,6 +109,9 @@ impl Delivery {
 }
 
 /// External values are interned by the controller before entering the kernel.
+/// Observations are event payloads, and a release replays those an older one
+/// stored (#371). A field added later must be optional and skip serializing
+/// when absent; `observation_shapes` enforces this.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
     ScratchSaved {
@@ -126,7 +129,7 @@ pub enum Observation {
         key: String,
         reset_ms: u64,
         /// The model that reported quota; absent in waits recorded before Q53.
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
     },
     Classified {
@@ -156,7 +159,7 @@ pub enum Observation {
         role: String,
         reply: serde_json::Value,
         /// The model that ran, so review can stay a different family (Q53).
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
     },
     Kernel(Event),

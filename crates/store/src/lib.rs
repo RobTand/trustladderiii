@@ -486,15 +486,20 @@ impl Store {
         let mut tx = self.client.transaction()?;
         let (revision, epoch) = metadata(&mut tx, true)?;
         if let Some(row) = tx.query_opt(
-            "SELECT revision, epoch, result, payload = $2, md5(payload::text), md5($2::jsonb::text) FROM tl3_events WHERE event_key = $1",
+            "SELECT revision, epoch, result, payload = $2, md5(payload::text), md5($2::jsonb::text), payload FROM tl3_events WHERE event_key = $1",
             &[&change.event_key, &change.event],
         )? {
             if !row.get::<_, bool>(3) {
-                return Err(Error::EventKeyReused {
-                    key: change.event_key.clone(),
-                    stored: row.get(4),
-                    new: row.get(5),
-                });
+                let (key, stored, new) = (&change.event_key, row.get::<_, String>(4), row.get::<_, String>(5));
+                if !same_fact(&row.get(6), &change.event) {
+                    eprintln!("event key {key} reused for a different fact: stored payload md5 {stored}, new payload md5 {new}");
+                    return Err(Error::EventKeyReused {
+                        key: key.clone(),
+                        stored,
+                        new,
+                    });
+                }
+                eprintln!("event key {key} replayed in a newer shape; keeping the stored receipt: stored payload md5 {stored}, new payload md5 {new}");
             }
             return receipt(row);
         }
@@ -1180,6 +1185,27 @@ fn metadata(tx: &mut Transaction<'_>, lock: bool) -> Result<(Revision, Epoch)> {
         Revision::try_from(row.get::<_, i64>(0))?,
         Epoch::try_from(row.get::<_, i64>(1))?,
     ))
+}
+
+/// #371: a later release may add object members to the payload of the same
+/// fact. A null member reads as absent. Any changed or dropped value is a
+/// different fact.
+fn same_fact(stored: &serde_json::Value, new: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match (stored, new) {
+        (Value::Object(stored), Value::Object(new)) => stored
+            .iter()
+            .filter(|(_, value)| !value.is_null())
+            .all(|(key, value)| new.get(key).is_some_and(|new| same_fact(value, new))),
+        (Value::Array(stored), Value::Array(new)) => {
+            stored.len() == new.len() && stored.iter().zip(new).all(|(s, n)| same_fact(s, n))
+        }
+        // JSONB compares numbers by value; a stored 1.0e18 may read back as an integer.
+        (Value::Number(stored), Value::Number(new)) => {
+            stored == new || stored.as_f64().is_some_and(|s| Some(s) == new.as_f64())
+        }
+        _ => stored == new,
+    }
 }
 
 fn receipt(row: Row) -> Result<CommitReceipt> {
