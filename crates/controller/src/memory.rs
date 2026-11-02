@@ -577,16 +577,6 @@ pub fn recall(
     Ok(value)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RobCuration {
-    /// Retire a memory in Hindsight on Rob's word.
-    Invalidate,
-    /// Second signal for a memory a run hid: retire it in Hindsight.
-    Confirm,
-    /// Make a hidden or retired memory valid again.
-    Revert,
-}
-
 /// Recall stays off after a failed recall, so a hung Hindsight costs one launch
 /// rather than every launch. It closes again on evidence, never on a clock: the
 /// next delivery Hindsight acknowledges.
