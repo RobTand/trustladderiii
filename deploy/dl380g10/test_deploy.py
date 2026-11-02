@@ -280,6 +280,37 @@ class DeployTests(unittest.TestCase):
         self.assertFalse(any("tl3-cloudflared" in call for call in calls))
         self.assertIn("external webhook route", output.getvalue())
 
+    def test_tl3_leaves_the_console_to_its_own_repository(self):
+        # PRD #327: RobTand/tl3-console builds, installs and runs tl3-console.service.
+        # TL3 keeps the board projection and the console's read-only login.
+        self.assertFalse((deploy.HERE / "units/tl3-console.service").exists())
+        self.assertNotIn("tl3-console", (deploy.HERE / "build-release.sh").read_text())
+        self.assertFalse(hasattr(deploy, "build_console_assets"))
+        config, _ = self.config()
+        deploy.write_file(self.home / ".config/tl3/tl3.toml", config.read_bytes())
+        runtime, credentials = self.home / "runtime", self.home / "credentials"
+        with patch.dict(os.environ, {"RUNTIME_DIRECTORY": str(runtime), "CREDENTIALS_DIRECTORY": str(credentials)}), \
+             patch.object(os, "execv") as execv, self.assertRaises(RuntimeError):
+            deploy.service(self.home, "console")
+        execv.assert_not_called()
+        calls, probes = [], []
+
+        def command(argv, **kwargs):
+            calls.append(list(map(str, argv)))
+            return subprocess.CompletedProcess(argv, 0)
+
+        def connection(host, port, **kwargs):
+            probes.append(f"{host}:{port}")
+            return unittest.mock.MagicMock()
+
+        with patch.object(subprocess, "run", side_effect=command), \
+             patch.object(deploy.http.client, "HTTPConnection", side_effect=connection), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            deploy.check(self.home)
+        self.assertFalse(any("tl3-console" in part for call in calls for part in call))
+        self.assertNotIn("console", output.getvalue())
+        self.assertNotIn("192.168.1.107:8034", probes)
+
     def test_controller_stops_its_whole_process_group_and_preserves_gate(self):
         unit = (deploy.HERE / "units/tl3d.service").read_text().splitlines()
         self.assertIn("KillMode=control-group", unit)
