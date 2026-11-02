@@ -262,3 +262,16 @@ mod tests {
         }
     }
 }
+
+pub(crate) fn ingest_preflight(inputs: &Value) -> Option<Value> {
+    let patterns: Vec<String> = inputs["protected_paths"]
+        .as_array()?
+        .iter()
+        .map(|p| p.as_str().unwrap().to_owned())
+        .collect();
+    let paths = named_edits(inputs["issue"]["body"].as_str()?, &patterns);
+    (!paths.is_empty()).then(|| {
+        json!({"kind":"early_end", "outcome":"not_actionable",
+        "reason":"protected_paths", "protected_paths":paths})
+    })
+}

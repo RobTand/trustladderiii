@@ -695,6 +695,11 @@ impl Supervisor {
         let Some(role) = role else {
             return Err(Error::Invalid("unsupported worker role"));
         };
+        if let Reconciliation::Found(completion) =
+            super::record::Records::new(&self.records_root).reconcile(delivery)?
+        {
+            return Ok(completion);
+        }
         let root = self.root(&delivery.key);
         let previous = latest(&root)?;
         let result = match &previous {
@@ -724,6 +729,21 @@ impl Supervisor {
             Reconciliation::Absent => {}
         }
         let mut request = self.request(delivery, role, &mut store, &snapshot)?;
+        if role == "ingest"
+            && let Some(reply) = crate::protected_requests::ingest_preflight(&request["inputs"])
+        {
+            return super::record::Records::new(&self.records_root).deliver(
+                delivery,
+                Completion::confirmed(vec![Observation::WorkerReply {
+                    node: delivery.node(),
+                    generation: delivery.generation,
+                    role: role.into(),
+                    reply,
+                    model: None,
+                }]),
+            );
+        }
+
         let attempt_number = previous.map_or(0, |(n, _)| n + 1);
         request["prompt"] = crate::prompts::for_run(&mut store, &delivery.key, role)?;
         store.claim_worker(
@@ -958,6 +978,12 @@ impl Executor for Supervisor {
 
 impl Supervisor {
     fn reconcile_run(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        if let found @ Reconciliation::Found(_) =
+            super::record::Records::new(&self.records_root).reconcile(delivery)?
+        {
+            return Ok(found);
+        }
+
         let result = match latest(&self.root(&delivery.key))? {
             Some((_, attempt)) => inspect(&attempt, delivery)?,
             None => Reconciliation::Absent,
