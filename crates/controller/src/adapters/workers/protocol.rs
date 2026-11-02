@@ -122,7 +122,7 @@ pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
     }))
 }
 
-pub(super) fn relative_file(path: &str) -> bool {
+pub(crate) fn relative_file(path: &str) -> bool {
     !path.is_empty()
         && !path.starts_with('/')
         && !path.contains(['\\', '\0'])

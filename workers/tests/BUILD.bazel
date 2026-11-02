@@ -96,6 +96,7 @@ tl3_py_test(
         ":test_sizing",
         ":worker_process",
         "//workers/src",
+        "@tl3_pip//jsonschema",
         "@tl3_pip//pytest",
         "@tl3_pip//tiktoken",
     ],

@@ -1193,3 +1193,26 @@ fn publishing_ci_failure_before_enqueue_step_is_ignored() {
     });
     assert_eq!(run.node(), before);
 }
+
+#[test]
+fn protected_paths_close_from_ingest_audit_or_planning_without_credit_or_questions() {
+    for phase in ["Ingesting", "Auditing", "Planning"] {
+        let mut run = Run::new();
+        if phase != "Ingesting" {
+            run.reply(Reply::IngestDone { size: 1 });
+        }
+        if phase == "Planning" {
+            run.reply(Reply::AuditAgrees);
+        }
+        let before = run.node().credit;
+        run.reply(Reply::ProtectedPaths);
+        assert_eq!(run.phase(), Phase::Closed(Outcome::NotActionable));
+        assert_eq!(run.node().credit, before);
+        assert!(run.node().question.is_none());
+        assert!(!run.notices.iter().any(|n| matches!(n, Notice::Ask { .. })));
+        assert!(
+            run.notices
+                .contains(&Notice::Summary(Outcome::NotActionable))
+        );
+    }
+}

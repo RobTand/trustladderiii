@@ -26,6 +26,7 @@ manifest:
     distro: distro
     docstring_parser: docstring_parser
     dotenv: python_dotenv
+    execnet: execnet
     fastapi: fastapi
     filetype: filetype
     git: gitpython
@@ -140,10 +141,11 @@ manifest:
     uvicorn: uvicorn
     wcmatch: wcmatch
     websockets: websockets
+    xdist: pytest_xdist
     xxhash: xxhash
     yaml: pyyaml
     zipp: zipp
     zstandard: zstandard
   pip_repository:
     name: tl3_pip
-integrity: 4e5480c4cf31963eaf2889cccc2e23403f28cf01859941bf72e123bab522eb1f
+integrity: d332b146c0e5964191070cf105758be9c09285f1d7469130602f4a78a11c59c1

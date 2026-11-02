@@ -237,6 +237,7 @@ pub fn daemon() -> Result<()> {
     }
     controller.set_allowances(config.allowances.clone());
     controller.set_priority_credit_reserve(&config.limits);
+    controller.set_request_protection(&config);
     controller.start_release(&crate::release::id())?;
     controller.run_postmortems();
     crate::ingress::drain(&mut controller)?;
@@ -260,6 +261,7 @@ fn production(config: tl3_config::Config) -> Result<()> {
     )?;
     controller.set_allowances(config.allowances.clone());
     controller.set_priority_credit_reserve(&config.limits);
+    controller.set_request_protection(&config);
     controller.start_release(&crate::release::id())?;
     controller.run_postmortems();
     controller.register_github_translator("mergify", registration.mergify);

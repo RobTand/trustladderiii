@@ -10,7 +10,7 @@ artifacts retain raw seconds and record the selected class and multiplier.
 | --- | ---: | ---: | ---: | ---: | ---: |
 | hosted-x64 | 12 | 0 | 5,277 | 1.125107 | 1.25 |
 | hosted-arm64 | 10 | 2 | 5,604 | 1.022898 | 1.15 |
-| buildbuddy-amd64 | 10 | 0 | 18,310 | 1.486524 | 1.65 |
+| buildbuddy-amd64 | 10 | 0 | 18,310 | 1.486524 | 3.0 (stopgap; calibrated 1.65) |
 
 The sample is the latest 12 hosted light-check runs with timing artifacts at
 collection, spanning 2026-10-31 to 2026-11-01. It includes failed and cancelled
@@ -84,3 +84,11 @@ runs, with one `workers` run timing out at 900s and `publishing` scenarios at
 up to 4.5 times their budgets. Until ten complete runs exist, the arm64
 post-merge run sets `TL3_BUDGETS=record`: it enforces results and keeps each
 test's seconds in its receipt, but enforces no budget.
+
+## Stopgap (2026-11-02)
+
+`buildbuddy-amd64` is temporarily 3.0, not the calibrated 1.65, and Rust test targets
+use `timeout = "eternal"`. Under shared executor load on 2026-11-02 the same commit
+(`f79a3e58`) ran `//crates/controller:test_test_publishing` in 180.3 s and then
+574.9 s, and two merge-queue runs failed correct code on wall budgets.
+#452 replaces wall budgets with CPU budgets; restore 1.65 and the default timeout then.
