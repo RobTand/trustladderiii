@@ -501,3 +501,62 @@ pub(crate) fn runtime() -> Result<&'static tokio::runtime::Runtime> {
         Err(error) => Err(std::io::Error::new(error.kind(), error.to_string()).into()),
     }
 }
+
+#[cfg(test)]
+mod observation_shapes {
+    use super::*;
+    use serde_json::json;
+
+    /// #371: observations are event payloads, and a release replays the ones an
+    /// older release stored. A field added later must serialize like the older
+    /// shape when absent, so it needs `skip_serializing_if` with its default.
+    #[test]
+    fn absent_later_fields_serialize_like_the_older_shape() {
+        assert_eq!(
+            json!(Observation::Quota {
+                key: "effect:0:5".into(),
+                reset_ms: 7,
+                model: None,
+            }),
+            json!({"Quota": {"key": "effect:0:5", "reset_ms": 7}})
+        );
+        assert_eq!(
+            json!(Observation::WorkerReply {
+                node: NodeId(0),
+                generation: 3,
+                role: "maker".into(),
+                reply: json!({"kind": "done"}),
+                model: None,
+            }),
+            json!({"WorkerReply": {"node": 0, "generation": 3, "role": "maker",
+                "reply": {"kind": "done"}}})
+        );
+    }
+
+    #[test]
+    fn every_defaulted_observation_field_skips_its_default() {
+        let body = include_str!("executor.rs")
+            .split_once("pub enum Observation {")
+            .unwrap()
+            .1
+            .split_once("\n}\n")
+            .unwrap()
+            .0;
+        // Shipped serialized before the rule; skipping it now would itself change stored shapes.
+        let grandfathered = ["results"];
+        let lines: Vec<&str> = body.lines().map(str::trim).collect();
+        for (index, line) in lines.iter().enumerate() {
+            if line.starts_with("#[serde(default") && !line.contains("skip_serializing_if") {
+                let field = lines[index + 1..]
+                    .iter()
+                    .find(|l| !l.starts_with("#[") && !l.starts_with("///"))
+                    .and_then(|l| l.split(':').next())
+                    .unwrap();
+                assert!(
+                    grandfathered.contains(&field),
+                    "observation field `{field}` needs skip_serializing_if with its serde default"
+                );
+            }
+        }
+    }
+}

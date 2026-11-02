@@ -25,8 +25,12 @@ pub enum Error {
     IllegalTransition { from: EffectState, to: EffectState },
     #[error("effect missing or its delivery state changed")]
     EffectConflict,
-    #[error("event key already has a different payload")]
-    EventKeyReused,
+    #[error("event key {key} already has a different payload (stored md5 {stored}, new md5 {new})")]
+    EventKeyReused {
+        key: String,
+        stored: String,
+        new: String,
+    },
     #[error("credit key already has a different root or amount")]
     CreditConflict,
     #[error("active effect deliveries must drain before an upgrade")]
@@ -482,11 +486,15 @@ impl Store {
         let mut tx = self.client.transaction()?;
         let (revision, epoch) = metadata(&mut tx, true)?;
         if let Some(row) = tx.query_opt(
-            "SELECT revision, epoch, result, payload = $2 FROM tl3_events WHERE event_key = $1",
+            "SELECT revision, epoch, result, payload = $2, md5(payload::text), md5($2::jsonb::text) FROM tl3_events WHERE event_key = $1",
             &[&change.event_key, &change.event],
         )? {
             if !row.get::<_, bool>(3) {
-                return Err(Error::EventKeyReused);
+                return Err(Error::EventKeyReused {
+                    key: change.event_key.clone(),
+                    stored: row.get(4),
+                    new: row.get(5),
+                });
             }
             return receipt(row);
         }
