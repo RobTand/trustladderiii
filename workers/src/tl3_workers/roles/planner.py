@@ -2,12 +2,13 @@
 
 from pathlib import PurePosixPath
 import re
+import tomllib
 
 from tl3_workers.roles.base import Role
 from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES
 from tl3_harness import Check, Kind
 from tl3_harness.limits import validate_check_plan
-from tl3_harness.trees import test_function_source
+from tl3_harness.trees import is_test, test_function_source
 from tl3_workers.tools import Worktree
 
 
@@ -120,6 +121,49 @@ def base_definition(node_id):
     return False, test_function_source(source, node_id) is not None
 
 
+def test_files():
+    """The repository's harness test-file patterns, or None when the base doesn't configure them."""
+    try:
+        with Worktree(".") as tree, tree._file("pyproject.toml") as stream:
+            patterns = tomllib.loads(stream.read(HARD_CAP_BYTES))["tool"]["tl3"]["harness"]["test-files"]
+    except (OSError, ValueError, UnicodeError, KeyError, TypeError):
+        return None
+    if not isinstance(patterns, list) or not all(isinstance(pattern, str) for pattern in patterns):
+        return None
+    return patterns
+
+
+EDIT_VERBS = frozenset(("extend", "extends", "extending", "patch", "patches", "patching", "update", "updates",
+                        "updating", "modify", "modifies", "modifying", "rewrite", "rewrites", "rewriting",
+                        "change", "changes", "changing", "edit", "edits", "editing", "fix", "fixes", "fixing",
+                        "replace", "replaces", "replacing"))
+ADD_VERBS = frozenset(("add", "adds", "adding"))
+HOLDS = frozenset(("not", "never", "don't", "don’t", "dont", "nothing", "without", "unchanged", "keep",
+                   "keeps", "keeping", "leave", "leaves", "leaving", "preserve", "preserves", "preserving"))
+CLAUSES = frozenset(("so", "that", "until", "while", "and", "because", "when", "then", "but", "or", "if"))
+WORD = re.compile(r"[a-z][\w'’-]*")
+
+
+def mentions(text, test):
+    """Each mention of a test's name, as the words before and after it in its sentence.
+    A path such as `tests/<name>.py` isn't a mention."""
+    for sentence in re.split(r"[.;!?](?:\s|$)|\n", text):
+        for match in re.finditer(rf"(?<![\w/]){re.escape(test)}(?!\w|\.py)", sentence):
+            yield WORD.findall(sentence[:match.start()].lower()), WORD.findall(sentence[match.end():].lower())
+
+
+def asks_to_edit(before, after):
+    """An edit verb within seven words before the name, with no negation or new clause between them,
+    none just before the verb, and no "unchanged" just after the name. "Add" counts only as "add ... to"."""
+    for index in range(len(before) - 1, max(len(before) - 8, -1), -1):
+        word = before[index]
+        if word in HOLDS or word in CLAUSES:
+            return False
+        if word in EDIT_VERBS or word in ADD_VERBS and before[-1] in ("to", "into"):
+            return not HOLDS.intersection(before[max(index - 3, 0):index]) and "unchanged" not in after[:3]
+    return False
+
+
 def function(node_id):
     # The harness's edit guard compares a test's function source, so every case shares it.
     return node_id.split("[", 1)[0]
@@ -161,21 +205,28 @@ def edit_violations(goals, reply):
         if function(node_id) not in demonstrated:
             violations.append(f"`{node_id}` is in edits_tests but no demonstrating check names it. "
                               "Name it in a demonstrating check that fails on the base by an assertion.")
-    tests = {node_id.split("::")[0] for check in reply["checks"] for node_id in check["node_ids"]}
-    if edited and set(reply["files"]) <= tests | {node_id.split("::")[0] for node_id in edits}:
-        violations.append("This leaf changes only tests, so no check can show it: the base run applies the "
-                          "leaf's test edits, so base and head run the same test. Return can't meet and name "
-                          "#393, which asks Rob whether a forced reproduction counts as deflake evidence.")
-    # A heuristic: a goal that names a frozen test in a declared file probably edits it.
+    patterns = test_files()
+    # The base run applies every test-file edit, so a head that changes only test files is its own base.
+    test_only = bool(reply["files"]) and patterns is not None and all(
+        is_test(path, patterns) for path in reply["files"])
+    names_frozen = False
     for goal_id, goal in enumerate(goals):
         for key, (name, kind, node_id) in frozen.items():
+            if key in edited or node_id.split("::")[0] not in reply["files"]:
+                continue
             test = key.rsplit("::", 1)[-1]
-            if (key not in edited and node_id.split("::")[0] in reply["files"]
-                    and re.search(rf"(?<!\w){re.escape(test)}(?!\w)", goal["description"])):
+            found = list(mentions(goal["description"], test))
+            names_frozen = names_frozen or bool(found)
+            # A heuristic: an edit verb governing the name says the goal edits the test.
+            if any(asks_to_edit(before, after) for before, after in found):
                 violations.append(f"Goal {goal_id} names `{test}`, and {name} freezes `{node_id}` as a {kind} "
                                   "check. If the change edits that test, list it in edits_tests and name it only "
                                   "in a demonstrating check. If it leaves the test as written there, guard that "
                                   "behavior with other existing tests.")
+    if test_only and (edited or demonstrated or names_frozen):
+        violations.append("This leaf changes only tests, so no check can show it: the base run applies the "
+                          "leaf's test edits, so base and head run the same test. Return can't meet and name "
+                          "#393, which asks Rob whether a forced reproduction counts as deflake evidence.")
     return violations
 
 
