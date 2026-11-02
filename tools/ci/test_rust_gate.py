@@ -135,6 +135,29 @@ class GateTests(unittest.TestCase):
                 'wall_only': {'database': 'Work runs in a persistent server'},
                 'wall_only_platforms': {'darwin': 'No Linux procfs', 'win32': 'No Linux procfs'}}
 
+    def test_buildbuddy_stopgap_keeps_wall_only_scenarios_at_three_times_base(self):
+        policy = self.cpu_policy()
+        name = 'tl3-controller/workers::quota'
+        policy['wall_only'] = {'tl3-controller/workers::*': 'Awaiting shard calibration'}
+        for wall in [25, 30]:
+            with self.subTest(wall=wall):
+                rust_gate.check_budget({name: wall}, policy, policy,
+                                       runner_class='buildbuddy-amd64', cpu_seconds={name: 100})
+        with self.assertRaisesRegex(RuntimeError, 'wall 30.001s > 30.000s'):
+            rust_gate.check_budget({name: 30.001}, policy, policy,
+                                   runner_class='buildbuddy-amd64', cpu_seconds={name: 0})
+
+    def test_buildbuddy_stopgap_preserves_cpu_caps_and_tenfold_wall_backstop(self):
+        policy = self.cpu_policy()
+        with self.assertRaisesRegex(RuntimeError, 'CPU 2.001s > 2.000s'):
+            rust_gate.check_budget({'scenario': 25}, policy, policy,
+                                   runner_class='buildbuddy-amd64', cpu_seconds={'scenario': 2.001})
+        rust_gate.check_budget({'scenario': 300}, policy, policy,
+                               runner_class='buildbuddy-amd64', cpu_seconds={'scenario': 0})
+        with self.assertRaisesRegex(RuntimeError, 'wall backstop 300.001s > 300.000s'):
+            rust_gate.check_budget({'scenario': 300.001}, policy, policy,
+                                   runner_class='buildbuddy-amd64', cpu_seconds={'scenario': 0})
+
     def test_waiting_three_wall_budgets_passes_with_low_cpu(self):
         policy = self.cpu_policy()
         rust_gate.check_budget({'waiting': 30}, policy, policy, cpu_seconds={'waiting': 0.2})
