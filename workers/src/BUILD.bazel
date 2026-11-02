@@ -13,6 +13,18 @@ filegroup(
 )
 
 filegroup(
+    name = "prompts",
+    srcs = glob(["tl3_workers/prompts/*.md"]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "role_files",
+    srcs = glob(["tl3_workers/roles/*.py"]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
     name = "runtime_files",
     srcs = glob([
         "tl3_workers/prompts/*.md",
