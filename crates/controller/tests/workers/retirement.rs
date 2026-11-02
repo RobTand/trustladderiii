@@ -595,3 +595,60 @@ pub(super) fn memory_store_error_retries_retirement(settings: &tl3_config::Store
         "retry queues exactly one record"
     );
 }
+
+/// #430: retirement removes the run root, but an unshipped span log moves to
+/// `runs/.traces` until a flusher ships it.
+pub(super) fn retirement_keeps_an_unshipped_span_log(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "normal");
+    let mut store = Store::open(settings).unwrap();
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let run = seed(&mut store, &config, "span-log", EffectState::Confirmed);
+    let run_root = root_for(&config, &run.key);
+    let attempt = run_root.join("attempt-00000000");
+    fs::write(attempt.join("exit.json"), b"{\"code\":0}").unwrap();
+    fs::write(attempt.join("trace.jsonl"), b"{\"kind\":\"start\"}\n").unwrap();
+    supervisor.retire(&mut store).unwrap();
+    assert!(!run_root.exists());
+    let held = config.workers.runs.join(".traces").join(format!(
+        "{}-attempt-00000000",
+        run_root.file_name().unwrap().to_str().unwrap()
+    ));
+    assert_eq!(
+        fs::read(held.join("trace.jsonl")).unwrap(),
+        b"{\"kind\":\"start\"}\n"
+    );
+    assert!(held.join("exit.json").exists());
+}
+
+/// #430: hitting the held span-log cap raises one operations incident (#81).
+pub(super) fn trace_log_cap_raises_one_operations_incident(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "normal");
+    let mut controller = Controller::open(
+        Store::open(settings).unwrap(),
+        adapters::simulation(&root.path().join("fakes")).unwrap(),
+        Bootstrap::from_config(&config).unwrap(),
+    )
+    .unwrap();
+    for evicted in [2, 3] {
+        controller
+            .observe(
+                &format!("trace-logs:{evicted}"),
+                Observation::TraceLogsCapped { evicted },
+            )
+            .unwrap();
+    }
+    let incidents: Vec<Value> = controller
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|row| row.table == "incidents")
+        .map(|row| row.value)
+        .collect();
+    assert_eq!(incidents.len(), 1, "{incidents:?}");
+    assert_eq!(incidents[0]["input_failure"]["scope"], "worker-trace-logs");
+    assert_eq!(incidents[0]["open"], true);
+    assert_eq!(incidents[0]["node"], Value::Null);
+}
