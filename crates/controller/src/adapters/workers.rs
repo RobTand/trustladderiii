@@ -652,8 +652,13 @@ impl Supervisor {
 
 fn stop_attempt(root: &Path) -> Result<()> {
     if let Some((_, attempt)) = latest(root)? {
+        // #372: the supervisor's own scope also holds every process the worker started.
+        let scope = process::own_scope(&attempt.join("claim.json"))?;
         cancel(&attempt.join("claim.json"))?;
         cancel(&attempt.join("process.json"))?;
+        if let Some(scope) = &scope {
+            process::kill_scope(scope)?;
+        }
         process::kill_and_wait(&attempt.join("process.json"))?;
         process::kill_and_wait(&attempt.join("claim.json"))?;
     }

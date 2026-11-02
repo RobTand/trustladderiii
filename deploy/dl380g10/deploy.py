@@ -234,7 +234,8 @@ def add_fields(text, table, fields):
     header = re.search(r"(?m)^" + re.escape(table) + r"\s*(?:#.*)?$", text)
     additions = "".join(f"{key} = {value}\n" for key, value in fields.items())
     if header:
-        return text[:header.end()] + "\n" + additions + text[header.end():]
+        # Insert directly under the header, so every other line stays byte-identical.
+        return text[:header.end()] + "\n" + additions.rstrip("\n") + text[header.end():]
     return text + "\n" + table + "\n" + additions
 
 
@@ -275,6 +276,9 @@ def configure(home, listen, state, image=None, primary=None, alternate=None, con
     if data.get("workers", {}).get("python") == legacy:
         current = str(paths(home)[0] / "current/workers/.venv/bin/python")
         text = text.replace("python = " + json.dumps(legacy), "python = " + json.dumps(current), 1)
+        if tomllib.loads(text)["workers"]["python"] != current:
+            raise RuntimeError(f"{destination}: could not move workers.python from app/ to current/; "
+                               "edit it by hand before installing")
     if "installation_id" not in data["github"]["repos"][0]:
         text = add_fields(text, "[[github.repos]]", {"installation_id": state.get("installation_id", 1)})
     if "operations_issue" in state:
@@ -340,7 +344,7 @@ def install(args):
     postgres(home)
     checked_download(TOKENIZER_URL, TOKENIZER_SHA256, root / "tiktoken" / TOKENIZER_KEY)
     print("Tokenizer: pinned o200k_base installed and hash verified")
-    previous = install_release(home)
+    introduced = install_release(home)
     private_dir(root / "bin")
     for binary in ("tl3", "tl3d", "tl3-deploy", "tl3-console"):
         write_file(root / "bin" / binary, (args.binaries / binary).read_bytes(), 0o700)
@@ -365,7 +369,7 @@ def install(args):
     else:
         managed.unlink(missing_ok=True)
     run(["systemctl", "--user", "daemon-reload"])
-    collect_releases(home, previous)
+    collect_releases(home, introduced)
     print("Units installed; config parses. Run `deploy.py check` for Config::load and the credential checks.")
 
 
@@ -386,8 +390,8 @@ def install_release(home, source=SOURCE):
     """Install the workers into an immutable release directory and switch `current` to it.
 
     Running workers keep the release they started from (#372), because the
-    controller resolves `current` when it launches them. Returns the release
-    `current` named before, if any."""
+    controller resolves `current` when it launches them. Returns whether this
+    install introduced releases, replacing the pre-#372 app/ directory."""
     root = paths(home)[0]
     releases = root / "releases"
     private_dir(releases)
@@ -404,14 +408,22 @@ def install_release(home, source=SOURCE):
         write_file(target / ".installed", b"installed\n")
         sync_directory(target)
     current = root / "current"
-    previous = current.resolve() if current.is_symlink() else None
-    link = root / f"current.{os.getpid()}.tmp"
-    link.unlink(missing_ok=True)
-    link.symlink_to(target)
-    os.replace(link, current)
+    introduced = not current.is_symlink()
+    before = None if introduced else current.resolve()
+    _link(root / "current", target)
+    # A redeploy of the same code keeps the earlier `previous` for rollback.
+    if before is not None and before != target.resolve():
+        _link(root / "previous", before)
     sync_directory(root)
     print(f"Workers: release {target.name} installed; locked Python 3.14 venv synced")
-    return previous
+    return introduced
+
+
+def _link(path, target):
+    link = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    link.unlink(missing_ok=True)
+    link.symlink_to(target)
+    os.replace(link, path)
 
 
 def _alive(identity):
@@ -450,8 +462,15 @@ def live_pythons(runs):
     return found
 
 
-def collect_releases(home, previous=None):
-    """Keep the current release, the one before it and every release a live run uses."""
+def _workers_python(path):
+    try:
+        return tomllib.loads(path.read_text())["workers"]["python"]
+    except (OSError, KeyError, ValueError):
+        return None
+
+
+def collect_releases(home, introduced=False):
+    """Keep the current release, the previous one and every release a live run uses."""
     root, config, _ = paths(home)
     releases = root / "releases"
     try:
@@ -463,8 +482,8 @@ def collect_releases(home, previous=None):
         print("Releases: a live attempt's launch record is unreadable; nothing collected")
         return
     keep = {(root / "current").resolve()}
-    if previous is not None:
-        keep.add(Path(previous).resolve())
+    if (root / "previous").is_symlink():
+        keep.add((root / "previous").resolve())
     for python in live - {None}:
         path = Path(python)
         if path.is_relative_to(releases.resolve()):
@@ -474,15 +493,44 @@ def collect_releases(home, previous=None):
             shutil.rmtree(release)
             print(f"Releases: removed {release.name}")
     legacy = root / "app"
-    if legacy.is_dir() and not legacy.is_symlink() and None not in live:
-        shutil.rmtree(legacy)
-        print("Releases: removed the pre-#372 app directory")
+    if not legacy.is_dir() or legacy.is_symlink():
+        return
+    # The tl3d that runs during this install may still launch from app/ until
+    # it restarts, so app/ outlives the install that introduces releases.
+    runtime = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "tl3d/tl3.toml"
+    users = [reason for reason, used in (
+        ("this install introduced releases", introduced),
+        ("a run started before #372 is live", None in live),
+        ("tl3.toml does not run workers from current/ or releases/",
+         not str(_workers_python(config / "tl3.toml")).startswith((str(root / "current") + "/",
+                                                                    str(root / "releases") + "/"))),
+        ("the running tl3d launches workers from app/",
+         str(_workers_python(runtime)).startswith(str(legacy) + "/")),
+    ) if used]
+    if users:
+        print(f"Releases: kept the pre-#372 app/ directory: {'; '.join(users)}")
+        return
+    shutil.rmtree(legacy)
+    print("Releases: removed the pre-#372 app/ directory")
+
+
+def launcher_works():
+    """The user manager accepts the scope launch tl3d uses for each worker run (#372)."""
+    bus = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "bus"
+    if not bus.is_socket():
+        return False
+    result = subprocess.run([*LAUNCHER, "/bin/true"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return result.returncode == 0
 
 
 def stop_runs(home):
     """Stop every worker run. A tl3d stop or restart no longer does (#372)."""
+    if subprocess.run(["systemctl", "--user", "is-active", "--quiet", "tl3d.service"]).returncode == 0:
+        raise RuntimeError("Stop tl3d first (systemctl --user stop tl3d.service). A running tl3d "
+                           "starts a new attempt for each stopped run once it proves the run is gone.")
     run(["systemctl", "--user", "stop", WORKER_SLICE])
-    print("Stopped every TL3 worker run. tl3d records each as ended on its next look.")
+    print("Stopped every TL3 worker run. When tl3d starts, each counts as a failed run under the "
+          "usual retry rules.")
 
 
 def build_console_assets(source=SOURCE):
@@ -656,6 +704,9 @@ def check(home):
             ok = False
         print(f"{'OK' if ok else 'MISSING'} {label}")
         missing += not ok
+    ok = launcher_works()
+    print(f"{'OK' if ok else 'MISSING'} worker launcher: user bus and systemd-run --user --scope")
+    missing += not ok
     ready = (config / "production-ready").exists()
     print(f"{'OK' if ready else 'MISSING'} production startup marker after #20")
     missing += not ready

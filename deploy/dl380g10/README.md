@@ -115,10 +115,14 @@ that release. A redeploy of the same code reuses its release untouched.
 resolves the link when it launches a run and records the result in the
 attempt's `launch.json`, so a running worker keeps its own release's code
 across later deploys (#372). Each install keeps the current release, the one
-before it and every release a live run uses, and removes the rest. The
-pre-#372 `app/` directory is removed after its last run ends. Installs from
+before it and every release a live run uses, and removes the rest. A redeploy
+of the same code keeps the earlier `previous`. The pre-#372 `app/` directory
+stays through the install that introduces releases, because the tl3d running
+during it still launches from `app/`. A later install removes it once no live
+run, `tl3.toml` or running tl3d uses it, and says which one kept it otherwise. Installs from
 before #372 migrate the deploy-owned `app/` Python path in `tl3.toml`; an
-operator's own path is kept. It downloads o200k_base in a new empty directory,
+operator's own path is kept. If that line can't be rewritten, the install stops
+with an error before anything restarts. It downloads o200k_base in a new empty directory,
 checks SHA-256 `446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d`,
 and installs it under the URL's SHA-1 cache key in `~/.local/share/tl3/tiktoken`.
 The controller unit exports that directory as `TIKTOKEN_CACHE_DIR`.
@@ -172,15 +176,30 @@ supervisor, so a deploy, config apply or crash of tl3d leaves runs alive. The
 restarted controller reattaches to them and accepts their replies. A worker
 started under one release may reply to the next; reply shapes stay compatible
 across one release. If `systemd-run` fails, the launch fails; it never falls
-back to a supervisor inside tl3d's cgroup. To stop every run for maintenance:
+back to a supervisor inside tl3d's cgroup. `deploy.py check` runs the same
+scope launch once to show the user bus and `systemd-run` work.
+
+To stop every run for maintenance, stop tl3d first, then the runs:
 
 ```bash
+systemctl --user stop tl3d.service
 python3 ~/.local/share/tl3/deploy/deploy.py stop-runs
 ```
 
-That stops `tl3-workers.slice`. tl3d then records each stopped run as ended on
-its next look, as after any worker failure. Stop, Restart, pause and cancel
-still stop single runs through their supervisor.
+`stop-runs` refuses while tl3d is active, because a running tl3d starts a new
+attempt for each stopped run once it proves the run is gone. It stops
+`tl3-workers.slice`, which kills each run's supervisor, worker and their
+descendants. When tl3d starts again, each stopped run counts as a failed run
+under the usual retry rules. Stop, Restart, pause and cancel still stop single
+runs; stopping one kills its whole scope, so no process the worker started
+outlives it.
+
+Rolling back below #372 needs the config backup. An older tl3d rejects
+`workers.launcher` (`deny_unknown_fields`), and an older installer copies the
+workers into `app/` while `workers.python` names `current/`. Stop tl3d, restore
+the `tl3.toml.*.bak` the first #372 install wrote, then install the older
+release. Runs started under #372 keep running from their release until they
+end.
 Postgres starts before the controller and status.
 Each service restarts on failure. Postgres uses a fast, orderly shutdown.
 Status binds `192.168.1.107:8033` on `bond0`, never a wildcard. Change the explicit
