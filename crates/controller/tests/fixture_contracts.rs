@@ -280,3 +280,12 @@ fn scenario_shards_cover_every_group_once_and_balance_the_worker_fixture_groups(
         "fixture group sizes must inform the partition: {loads:?}"
     );
 }
+
+#[test]
+fn scenario_shard_summary_does_not_require_a_global_expected_count() {
+    let source = include_str!("support/scenario_shard.rs");
+    assert!(
+        !source.contains("finish(self, expected: usize"),
+        "derive the shard summary from its executed groups; a global expected count races across PRs"
+    );
+}
