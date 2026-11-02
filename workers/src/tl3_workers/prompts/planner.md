@@ -56,8 +56,10 @@ those marked for review. Return exactly one of these proposals:
   not a node ID; to guard existing behavior, name the existing tests that cover it.
   List in edits_tests, by node ID, every existing test whose definition the
   change modifies, and declare its file; omit edits_tests when the change edits
-  no existing test. A goal that extends or patches an existing test needs it in
-  edits_tests. Name such a test in a demonstrating check, never in a regression
+  no existing test. A goal that asks the maker to change an existing test, for
+  example to extend, patch, update, fix or rewrite it, needs that test in
+  edits_tests; code refuses a plan whose goal asks that of a test a regression
+  or behavior-preserving check names. Name such a test in a demonstrating check, never in a regression
   or behavior-preserving check: those run tests exactly as the base wrote them,
   so the harness refuses an edit to a test they name. If the change edits only
   tests, such as a deflake that patches the flaky test, no check can show it,

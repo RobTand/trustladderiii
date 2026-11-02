@@ -760,7 +760,7 @@ def test_test_only_leaf_whose_goal_names_a_frozen_test_answers_cant_meet(planner
         f'Identify the cause of the intermittent failure of {NAME} and reproduce it deterministically.')
     digests_plan['files'] = [DIGESTS]
     digests_plan['checks'] = [{'kind': 'regression', 'node_ids': [FROZEN, SIBLING], 'goal_ids': [0, 1]}]
-    violations = planned(planner_request, digests_plan)
+    violations = planned(planner_request, copy.deepcopy(digests_plan))
     assert any('changes only tests' in item and '#393' in item for item in violations), violations
     digests_plan['files'] = ['digests.py', DIGESTS]
     assert planned(planner_request, digests_plan) == []
