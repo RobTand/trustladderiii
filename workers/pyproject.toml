@@ -16,6 +16,7 @@ dependencies = [
     "httpx==0.28.1",
     "jsonschema==4.26.0",
     "tiktoken==0.14.0",
+    "google-re2==1.1.20251105",
     "tl3-harness",
 ]
 

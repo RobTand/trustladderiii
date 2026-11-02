@@ -1,7 +1,11 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+import errno
 import json
 import os
+import subprocess
+import sys
+import time
 
 import pytest
 
@@ -467,3 +471,397 @@ def test_concurrent_enumerations_each_see_every_entry(tree):
                 assert listed == sorted(names + ["src"])
                 assert globbed == names
                 assert grepped == set(names)
+
+
+def call(tool, **args):
+    """A failing call, as the model sees it: a ToolMessage with status error."""
+    return tool.invoke({"name": tool.name, "args": args, "id": "fixture", "type": "tool_call"})
+
+
+def test_grep_searches_a_single_file_given_as_path(tree):
+    # prismaquant#2629: 16 grep calls with a file as path were all rejected.
+    root, _ = tree
+    (root / "src/other.py").write_text("hello elsewhere\n")
+    with Worktree(root) as worktree:
+        tool = tools_for(worktree)["grep"]
+        assert tool.invoke({"pattern": "hello", "path": "src/code.py"}) == {
+            "matches": [{"path": "src/code.py", "line": 1, "text": "hello"},
+                        {"path": "src/code.py", "line": 2, "text": "hello again"}],
+            "next_offset": None, "message": "",
+        }
+        assert tool.invoke({"pattern": "absent", "path": "src/code.py"})["matches"] == []
+        assert tool.invoke({"pattern": "again", "path": "src/code.py", "offset": 0})["matches"] == [
+            {"path": "src/code.py", "line": 2, "text": "hello again"},
+        ]
+
+
+def test_grep_on_a_file_pages_and_truncates_like_a_directory(tree):
+    root, _ = tree
+    total = OUTPUT_LIMITS["grep_matches"] + 5
+    (root / "many.txt").write_text("hit\n" * total)
+    cap = OUTPUT_LIMITS["line_bytes"]
+    (root / "wide.txt").write_text("needle " + "x" * (cap * 2) + "\n")
+    with Worktree(root) as worktree:
+        first = worktree.grep("hit", "many.txt")
+        assert len(first["matches"]) == OUTPUT_LIMITS["grep_matches"]
+        assert first["next_offset"] == OUTPUT_LIMITS["grep_matches"]
+        second = worktree.grep("hit", "many.txt", offset=first["next_offset"])
+        assert [match["line"] for match in second["matches"]] == list(range(101, total + 1))
+        assert second["next_offset"] is None
+        wide, = worktree.grep("needle", "wide.txt")["matches"]
+        assert wide["path"] == "wide.txt"
+        assert wide["text"].endswith("[Truncated. Use read offset=0, column=0.]")
+
+
+def test_grep_on_a_file_reports_non_utf8_instead_of_an_empty_result(tree):
+    root, _ = tree
+    (root / "binary.dat").write_bytes(b"\xff\xfe needle\n")
+    with Worktree(root) as worktree:
+        tool = tools_for(worktree)["grep"]
+        assert tool.invoke({"pattern": "needle", "path": "."})["matches"] == []
+        result = call(tool, pattern="needle", path="binary.dat")
+    assert result.status == "error"
+    assert result.text == "Expected valid UTF-8 text."
+
+
+def test_grep_on_a_missing_path_is_still_not_found(tree):
+    root, _ = tree
+    with Worktree(root) as worktree:
+        result = call(tools_for(worktree)["grep"], pattern="x", path="src/missing.py")
+    assert result.status == "error"
+    assert result.text == "File or directory not found."
+
+
+@pytest.mark.parametrize("name,args", [
+    ("glob", {"pattern": "*"}), ("list", {}),
+])
+def test_directory_tools_name_the_file_they_were_given(tree, name, args):
+    root, _ = tree
+    with Worktree(root) as worktree:
+        result = call(tools_for(worktree)[name], path="src/code.py", **args)
+    assert result.status == "error"
+    assert "src/code.py is a file, not a directory" in result.text
+    assert "grep" in result.text and "read" in result.text
+    assert "rejected" not in result.text
+
+
+@pytest.mark.parametrize("name,args", [
+    ("read", {"path": "src/code.py/x"}),
+    ("write", {"path": "src/code.py/x", "content": "z"}),
+    ("grep", {"pattern": "hello", "path": "src/code.py/x"}),
+])
+def test_a_file_inside_the_path_is_named(tree, name, args):
+    root, _ = tree
+    with Worktree(root) as worktree:
+        result = call(tools_for(worktree)[name], **args)
+        assert not worktree.evidence.tool_errors
+    assert result.status == "error"
+    assert "src/code.py/x" in result.text
+    assert "a file, not a directory" in result.text
+    assert "rejected" not in result.text
+
+
+@pytest.mark.parametrize("code,wording", [
+    (errno.ENOTDIR, "src/code.py is a file, not a directory"),
+    (errno.EISDIR, "is a directory, not a file"),
+    (errno.ELOOP, "symbolic link"),
+    (errno.ENAMETOOLONG, "too long"),
+    (errno.EINVAL, "EINVAL"),
+    (None, "could not be used"),
+])
+def test_model_caused_os_errors_name_the_path_and_the_fix(tree, monkeypatch, code, wording):
+    root, _ = tree
+
+    def factory(worktree):
+        def read(path: str) -> str:
+            """Fail like the model's own input."""
+            raise OSError(code, "detail /controller/private") if code else OSError("no errno")
+        return read
+
+    monkeypatch.setitem(TOOL_FACTORIES, "read", factory)
+    with Worktree(root) as worktree:
+        result = call(build_tools(worktree, {"read": "Read."})[0], path="src/code.py")
+        assert not worktree.evidence.tool_errors
+    assert result.status == "error"
+    assert "src/code.py" in result.text
+    assert wording in result.text
+    assert "rejected" not in result.text
+    assert "/controller" not in result.text
+
+
+@pytest.mark.parametrize("code", [
+    errno.EACCES, errno.EPERM, errno.EROFS, errno.ENOSPC, errno.EDQUOT,
+    errno.EIO, errno.EMFILE, errno.ENFILE, errno.ENOMEM,
+])
+def test_environment_errors_keep_the_infrastructure_message(tree, monkeypatch, code):
+    root, _ = tree
+
+    def factory(worktree):
+        def read(path: str) -> str:
+            """Fail like the environment."""
+            raise OSError(code, "detail /controller/private")
+        return read
+
+    monkeypatch.setitem(TOOL_FACTORIES, "read", factory)
+    with Worktree(root) as worktree:
+        result = call(build_tools(worktree, {"read": "Read."})[0], path="src/code.py")
+        assert worktree.evidence.tool_errors == {
+            "tool-error-1": {"tool": "read", "class": errno.errorcode[code], "selectors": None},
+        }
+    assert result.status == "error"
+    assert result.text == "Worktree tool rejected the path or operation. Tool error id: tool-error-1."
+
+
+@pytest.mark.parametrize("name", ["grep", "list", "glob"])
+def test_a_symlink_path_is_named_as_a_link(tree, name):
+    root, outside = tree
+    (root / "link").symlink_to(outside / "secret.txt")
+    args = {"grep": {"pattern": "x"}, "glob": {"pattern": "*"}, "list": {}}[name]
+    with Worktree(root) as worktree:
+        result = call(tools_for(worktree)[name], path="link", **args)
+    assert result.status == "error"
+    assert "link is or passes through a symbolic link" in result.text
+    assert "external fixture" not in result.text
+
+
+# grep reads its pattern as a regular expression unless literal is true (#414).
+@pytest.fixture
+def code_tree(tmp_path):
+    root = tmp_path / "worktree"
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg/mod.py").write_text(
+        "class SupplierRevision(unittest.TestCase):\n"
+        "    def test_one(self):\n"
+        "        vars(digests)\n"
+        "def rung_speed(a):\n"
+        "x = foo.bar\n"
+        "tab\there\n"
+        "last line without newline",
+    )
+    return root
+
+
+def lines(result):
+    return [match["line"] for match in result["matches"]]
+
+
+@pytest.mark.parametrize("pattern,expected", [
+    ("rung_speed|SupplierRevision|absent_name", [1, 4]),
+    ("^class |    def test_", [1, 2]),
+    ("here$", [6]),
+    ("line without newline$", [7]),
+    (r"\bvars\b", [3]),
+    (r"def \w+\(\w\):", [4]),
+    (r"\d", []),
+    (r"foo\.bar", [5]),
+    (r"tab\s+here", [6]),
+    ("(?i)SUPPLIERREVISION", [1]),
+    ("Supplier[A-Z]evision|x = foo", [1, 5]),
+])
+def test_grep_reads_the_pattern_as_a_regular_expression(code_tree, pattern, expected):
+    with Worktree(code_tree) as worktree:
+        assert lines(worktree.grep(pattern, "pkg/mod.py")) == expected
+        assert lines(worktree.grep(pattern, "pkg")) == expected
+
+
+def test_grep_regex_is_case_sensitive_and_matches_within_a_line(code_tree):
+    with Worktree(code_tree) as worktree:
+        assert lines(worktree.grep("supplierrevision")) == []
+        assert lines(worktree.grep("Revision")) == [1]
+
+
+def test_grep_literal_true_searches_the_text_as_written(code_tree):
+    with Worktree(code_tree) as worktree:
+        assert lines(worktree.grep("vars(digests)", literal=True)) == [3]
+        assert lines(worktree.grep("rung_speed|SupplierRevision", literal=True)) == []
+        assert lines(worktree.grep("^class ", literal=True)) == []
+        assert lines(worktree.grep("foo.bar", literal=True)) == [5]
+        assert worktree.grep("rung_speed|x", literal=True)["message"] == ""
+
+
+def test_grep_literal_defaults_to_false_in_the_tool_schema(code_tree):
+    with Worktree(code_tree) as worktree:
+        tool = tools_for(worktree)["grep"]
+        assert tool.args["literal"]["default"] is False
+        assert tool.invoke({"pattern": "rung_speed|SupplierRevision"})["matches"] != []
+        assert tool.invoke({"pattern": "rung_speed|SupplierRevision", "literal": True})["matches"] == []
+
+
+@pytest.mark.parametrize("pattern", ["def test_one(", "vars(digests", "x[0", "*start", "foo)"])
+def test_grep_searches_an_invalid_regex_as_literal_text_and_says_so(tmp_path, pattern):
+    (tmp_path / "f.py").write_text(f"before\n{pattern}\nafter\n")
+    with Worktree(tmp_path) as worktree:
+        result = worktree.grep(pattern)
+    assert lines(result) == [2]
+    assert "not a valid regular expression" in result["message"]
+    assert "searched as literal text" in result["message"]
+    assert "literal=true" in result["message"]
+
+
+def test_grep_says_when_a_regex_found_nothing_that_the_text_might_be_literal(code_tree):
+    with Worktree(code_tree) as worktree:
+        # vars(digests) is a valid regex whose group means something else.
+        empty = worktree.grep("vars(digests)")
+        assert empty["matches"] == []
+        assert "No matches for the regular expression" in empty["message"]
+        assert "literal=true" in empty["message"]
+        # Plain words and a bare dot cannot differ between the two readings.
+        assert worktree.grep("nothing_here")["message"] == ""
+        assert worktree.grep("no.thing")["message"] == ""
+        assert worktree.grep("rung_speed|nothing_here")["message"] == ""
+        # A page past the last match is not "no matches".
+        assert worktree.grep("rung_speed|SupplierRevision", offset=2)["matches"] == []
+        assert worktree.grep("rung_speed|SupplierRevision", offset=2)["message"] == ""
+
+
+@pytest.mark.parametrize("pattern,text,feature", [
+    ("(?=a)a", "see (?=a)a here", "lookarounds"),
+    ("(?<!a)b", "see (?<!a)b here", "lookarounds"),
+    (r"(a)\1", "see (a)\\1 here", "backreferences"),
+    ("a{1,5000}", "see a{1,5000} here", "repeat counts to 1,000"),
+])
+def test_grep_searches_a_pattern_the_engine_lacks_as_literal_text_and_says_which(tmp_path, pattern, text, feature):
+    # RE2 has no backreferences or lookarounds, and caps repeat counts at 1,000. The note names which one it was.
+    (tmp_path / "f.py").write_text(f"before\n{text}\nafter\n")
+    with Worktree(tmp_path) as worktree:
+        result = call(tools_for(worktree)["grep"], pattern=pattern)
+        direct = worktree.grep(pattern)
+    assert result.status != "error"
+    assert lines(direct) == [2]
+    assert "not a valid regular expression" in direct["message"]
+    assert "searched as literal text" in direct["message"]
+    assert feature in direct["message"]
+    assert "literal=true" in direct["message"]
+    others = {"lookarounds", "backreferences", "repeat counts to 1,000"} - {feature}
+    assert not any(other in direct["message"] for other in others)
+
+
+# Python's re hangs on every one of these for over 20 seconds, and holds the GIL while it does.
+ADVERSARIAL = {
+    "stars": ("a*a*a*a*b", "a" * 2048, []),
+    "classes": ("[a-z]+[a-z]+[a-z]+[a-z]+!", "a" * 2048, []),
+    "wildcards": (".*a.*a.*a.*b", "a" * 2048, []),
+    "alternations": ("(a|aa)" * 45 + "b", "a" * 2048, []),
+    "words": (r"\w+\s?\w+\s?\w+\s?\w+!", "a" * 2048, []),
+    "optionals": ("a?" * 120 + "a" * 120, "a" * 120, [1]),
+    "nested": ("(a+)+$", "a" * 2048 + "!", []),
+    "adjacent": (".*.*.*.*x", "a" * 2048, []),
+    "long pattern": ("a|" * 400 + "b", "a" * 2048, [1]),
+}
+# Only the test harness has a clock. The tool under test has none, and no pattern needs one.
+HARD_KILL_SECONDS = 20
+CHILD = """
+import json, sys
+from tl3_workers.tools import Worktree
+with Worktree(sys.argv[1]) as worktree:
+    result = worktree.grep(sys.argv[2])
+print(json.dumps([match["line"] for match in result["matches"]]))
+"""
+
+
+@pytest.fixture(scope="module")
+def adversarial_runs(tmp_path_factory):
+    started = time.monotonic()
+    children = {}
+    for name, (pattern, text, _) in ADVERSARIAL.items():
+        root = tmp_path_factory.mktemp(name.replace(" ", "-"))
+        (root / "line.txt").write_text(text + "\n")
+        children[name] = subprocess.Popen(
+            [sys.executable, "-c", CHILD, str(root), pattern],
+            env={**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p)},
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+    yield started, children
+    for child in children.values():
+        child.kill()
+        child.communicate()
+
+
+@pytest.mark.parametrize("name", sorted(ADVERSARIAL))
+def test_grep_finishes_catastrophic_looking_patterns_on_a_long_line(adversarial_runs, name):
+    started, children = adversarial_runs
+    try:
+        out, err = children[name].communicate(timeout=max(1, HARD_KILL_SECONDS - (time.monotonic() - started)))
+    except subprocess.TimeoutExpired:
+        children[name].kill()
+        pytest.fail(f"grep {ADVERSARIAL[name][0]!r} did not finish within {HARD_KILL_SECONDS} s and was killed")
+    assert children[name].returncode == 0, err
+    assert json.loads(out) == ADVERSARIAL[name][2]
+
+
+def test_grep_still_searches_a_catastrophic_looking_pattern_as_literal_text(tmp_path):
+    (tmp_path / "f.py").write_text("see (a+)+$ here\n")
+    with Worktree(tmp_path) as worktree:
+        assert lines(worktree.grep("(a+)+$", literal=True)) == [1]
+
+
+@pytest.mark.parametrize("pattern", [
+    r"^\s*def \w+\(.*\):", r"class \w+\(.*Test", r"foo(bar|baz)?qux", r"(?:ab)+c",
+    r"\w+\s*=\s*\d+", r"a{1,50}b", r"[a-z_]+\.py$", "x|y|z|w|v|u|t", r"(?P<name>rung)_speed", r"[[:alpha:]]+_speed",
+])
+def test_grep_accepts_ordinary_code_search_patterns(code_tree, pattern):
+    with Worktree(code_tree) as worktree:
+        result = worktree.grep(pattern)
+        assert "not a valid regular expression" not in result["message"]
+
+
+def test_grep_regex_searches_a_whole_long_line(tmp_path):
+    cap = OUTPUT_LIMITS["line_bytes"]
+    (tmp_path / "wide.txt").write_text("x" * (4 * cap) + "needle\nneedle at the start\n")
+    with Worktree(tmp_path) as worktree:
+        assert lines(worktree.grep("need[l]e")) == [1, 2]
+        assert lines(worktree.grep("needle", literal=True)) == [1, 2]
+        assert lines(worktree.grep("needle")) == [1, 2]
+        assert lines(worktree.grep("x$|nomatch")) == []
+        assert lines(worktree.grep("e$|nomatch")) == [1]
+
+
+@pytest.mark.parametrize("extra,said", [
+    (1, "1 line longer than 1,048,576 characters was searched only in its first 1,048,576 characters"),
+    (2, "2 lines longer than 1,048,576 characters were searched only in their first 1,048,576 characters"),
+])
+def test_grep_says_when_a_regex_found_nothing_in_lines_it_cut(tmp_path, extra, said):
+    cap = OUTPUT_LIMITS["regex_line_chars"]
+    (tmp_path / "bundle.js").write_text(("x" * cap + "needle\n") * extra + "short line\n")
+    with Worktree(tmp_path) as worktree:
+        result = worktree.grep("need[l]e")
+        assert result["matches"] == []
+        assert said in result["message"]
+        assert "literal=true" in result["message"]
+        # The note replaces nothing: the hint about text meant as written still appears.
+        assert "No matches for the regular expression" in result["message"]
+        # A match elsewhere, a plain-text search and literal=true need no note.
+        assert "longer than" not in worktree.grep("need[l]e|short")["message"]
+        assert worktree.grep("needle")["message"] == ""
+        assert lines(worktree.grep("needle", literal=True)) == list(range(1, extra + 1))
+        assert "longer than" not in worktree.grep("needle", literal=True)["message"]
+
+
+def test_grep_does_not_mention_cut_lines_when_none_were_cut(tmp_path):
+    (tmp_path / "f.txt").write_text("x" * 5000 + "\nshort\n")
+    with Worktree(tmp_path) as worktree:
+        assert "longer than" not in worktree.grep("need[l]e")["message"]
+
+
+def test_grep_regex_keeps_paging_and_truncation(tmp_path):
+    total = OUTPUT_LIMITS["grep_matches"] + 5
+    cap = OUTPUT_LIMITS["line_bytes"]
+    (tmp_path / "many.txt").write_text("hit one\nmiss\n" * total)
+    (tmp_path / "wide.txt").write_text("needle " + "x" * (cap * 2) + "\n")
+    with Worktree(tmp_path) as worktree:
+        first = worktree.grep("^hit|never", "many.txt")
+        assert len(first["matches"]) == OUTPUT_LIMITS["grep_matches"]
+        assert first["next_offset"] == OUTPUT_LIMITS["grep_matches"]
+        second = worktree.grep("^hit|never", "many.txt", offset=first["next_offset"])
+        assert lines(second) == [2 * n + 1 for n in range(100, total)]
+        assert second["next_offset"] is None
+        wide, = worktree.grep("^needle", "wide.txt")["matches"]
+        assert wide["text"].endswith("[Truncated. Use read offset=0, column=0.]")
+
+
+def test_grep_regex_handles_crlf_line_endings(tmp_path):
+    (tmp_path / "f.txt").write_bytes(b"one\r\ntwo$\r\nthree\r\n")
+    with Worktree(tmp_path) as worktree:
+        assert lines(worktree.grep("^one$")) == [1]
+        assert lines(worktree.grep("^three$")) == [3]
+        assert lines(worktree.grep(r"two\$$")) == [2]

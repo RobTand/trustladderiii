@@ -135,12 +135,11 @@ fn example_parses_with_sourced_numbers_and_different_reviewer_family() {
     assert_eq!(config.github.repos[0].name, "tl3-sandbox");
     assert_eq!(config.hindsight.endpoint.as_str(), "http://127.0.0.1:8890/");
     assert_eq!(config.hindsight.bank, "tl3");
-    for (maker, expected) in
-        config
-            .models
-            .maker
-            .iter()
-            .zip(["alternate-model", "alternate-model", "default-model"])
+    for (maker, expected) in config
+        .models
+        .maker
+        .iter()
+        .zip(["alternate-model", "default-model"])
     {
         let reviewer = config.models.reviewer_for(&maker.family).unwrap();
         assert!(!reviewer.family.eq_ignore_ascii_case(&maker.family));
@@ -149,19 +148,17 @@ fn example_parses_with_sourced_numbers_and_different_reviewer_family() {
 }
 
 #[test]
-fn omitted_and_empty_reviewer_ladders_default_to_maker_attempts_one_and_three() {
+fn omitted_and_empty_reviewer_ladders_default_to_the_first_and_last_maker_rungs() {
     for source in [
         EXAMPLE.to_string(),
         changed(&["models", "reviewer"], Value::Array(vec![])),
     ] {
         let config = Config::parse(&source).unwrap();
         assert_eq!(config.models.reviewer.len(), 2);
-        for (reviewer, maker) in config
-            .models
-            .reviewer
-            .iter()
-            .zip([&config.models.maker[0], &config.models.maker[2]])
-        {
+        for (reviewer, maker) in config.models.reviewer.iter().zip([
+            config.models.maker.first().unwrap(),
+            config.models.maker.last().unwrap(),
+        ]) {
             assert_eq!(reviewer.name, maker.name);
             assert_eq!(reviewer.family, maker.family);
             assert_eq!(reviewer.effort, maker.effort);
@@ -173,7 +170,7 @@ fn omitted_and_empty_reviewer_ladders_default_to_maker_attempts_one_and_three() 
 #[test]
 fn reviewer_ladder_must_cover_every_maker_family() {
     let document: Value = EXAMPLE.parse().unwrap();
-    for (role, maker_index) in [("ingest", 0), ("audit", 2)] {
+    for (role, maker_index) in [("ingest", 0), ("audit", 1)] {
         let mut reviewers = document["models"][role].clone();
         reviewers[0]["family"] = Value::String(
             reviewers[0]["family"]
@@ -439,35 +436,20 @@ fn maker_ladder_obeys_q22_and_budget_bounds() {
         ("name = \"default-model\"", "name = \" \"", ".name"),
         ("family = \"default\"", "family = \"\"", ".family"),
         ("effort = \"high\"", "effort = \"\"", ".effort"),
-        (
-            "family = \"alternate\"",
-            "family = \"DEFAULT\"",
-            "models.maker[2].family",
-        ),
-        (
-            "effort = \"xhigh\", budget_tokens = 64000",
-            "effort = \"xhigh\", budget_tokens = 16000",
-            "models.maker[1]",
-        ),
-        ("effort = \"xhigh\", ", "", "models.maker[1]"),
-        (
-            "name = \"default-model\", family = \"default\", effort = \"xhigh\"",
-            "name = \"other\", family = \"default\", effort = \"xhigh\"",
-            "models.maker[1]",
-        ),
     ] {
         let error = Config::parse(&EXAMPLE.replace(from, to))
             .unwrap_err()
             .to_string();
         assert!(error.contains(field), "{error}");
     }
+    // A one-rung ladder never escalates (#416).
     let mut document: Value = EXAMPLE.parse().unwrap();
     document["models"]["maker"].as_array_mut().unwrap().pop();
     assert!(
         Config::parse(&toml::to_string(&document).unwrap())
             .unwrap_err()
             .to_string()
-            .contains("length 3")
+            .contains("different model line")
     );
 }
 
@@ -518,12 +500,11 @@ fn explicit_reviewer_and_proxy_specific_efforts_are_supported() {
     document["limits"]["credit_reserve"] = Value::Integer(0);
     document["limits"]["free_rechecks"] = Value::Integer(0);
     let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
-    for (maker, expected) in
-        config
-            .models
-            .maker
-            .iter()
-            .zip(["alternate-model", "alternate-model", "default-model"])
+    for (maker, expected) in config
+        .models
+        .maker
+        .iter()
+        .zip(["alternate-model", "default-model"])
     {
         let reviewer = config
             .models
@@ -782,18 +763,13 @@ fn webhooks_require_a_loopback_address_and_fixed_port() {
 }
 
 #[test]
-fn planning_cannot_remove_protection_or_overhead_evidence() {
+fn planning_cannot_remove_overhead_evidence() {
     let config = Config::parse(EXAMPLE).unwrap();
     assert_eq!(
         config.planning.overhead_tokens.values().sum::<u32>(),
         30_000
     );
     let mut config = config;
-    config
-        .planning
-        .protected_paths
-        .retain(|p| p != "**/conftest.py");
-    assert!(config.validate().is_err());
     config.planning = tl3_config::Planning::default();
     config.planning.overhead_tokens.clear();
     assert!(config.validate().is_err());
@@ -1018,6 +994,38 @@ fn repository_exec_scratch_is_an_optional_boolean() {
 }
 
 #[test]
+fn repository_selected_tests_is_an_optional_bounded_limit() {
+    let with = |value: Value| {
+        let mut document: Value = EXAMPLE.parse().unwrap();
+        document["github"]["repos"][0]
+            .as_table_mut()
+            .unwrap()
+            .insert("selected_tests".into(), value);
+        Config::parse(&toml::to_string(&document).unwrap())
+    };
+    assert_eq!(
+        Config::parse(EXAMPLE).unwrap().github.repos[0].selected_tests,
+        None
+    );
+    for limit in [1, 200, 1000] {
+        assert_eq!(
+            with(Value::Integer(limit)).unwrap().github.repos[0].selected_tests,
+            Some(limit as u32)
+        );
+    }
+    for invalid in [
+        Value::Integer(0),
+        Value::Integer(1001),
+        Value::Boolean(true),
+    ] {
+        assert!(
+            with(invalid.clone()).is_err(),
+            "reject selected_tests={invalid}"
+        );
+    }
+}
+
+#[test]
 fn console_is_optional_and_needs_a_fixed_unicast_port_and_absolute_assets() {
     let config = Config::parse(EXAMPLE).unwrap();
     let console = config.console.as_ref().unwrap();
@@ -1077,6 +1085,20 @@ fn deployment_model_defaults_pass_validation() {
         let reviewer = config.models.reviewer_for(&maker.family).unwrap();
         assert_ne!(reviewer.name, maker.name, "Q22: a different model reviews");
     }
+    // #416, approved by Rob 2026-11-02: Sonnet 5.5 high, then Opus 5.5 high.
+    let ladder: Vec<_> = config
+        .models
+        .maker
+        .iter()
+        .map(|model| (model.name.as_str(), model.effort.as_deref()))
+        .collect();
+    assert_eq!(
+        ladder,
+        [
+            ("claude-sonnet-5-5", Some("high")),
+            ("claude-opus-5-5", Some("high"))
+        ]
+    );
     // #403: Opus writes postmortems and Sonnet grades; never Fable.
     let postmortem: Vec<_> = config
         .models
@@ -1110,6 +1132,116 @@ fn postmortem_models_default_to_the_reviewer_and_the_writer() {
     assert_ne!(three, EXAMPLE);
     let error = Config::parse(&three).err().unwrap().to_string();
     assert!(error.contains("models.postmortem"), "{error}");
+}
+
+fn maker_ladder(rungs: &[(&str, &str, &str)]) -> String {
+    changed(
+        &["models", "maker"],
+        Value::Array(
+            rungs
+                .iter()
+                .map(|(name, family, effort)| {
+                    let mut model = toml::map::Map::new();
+                    model.insert("name".into(), Value::String((*name).into()));
+                    model.insert("family".into(), Value::String((*family).into()));
+                    model.insert("effort".into(), Value::String((*effort).into()));
+                    model.insert("budget_tokens".into(), Value::Integer(32000));
+                    Value::Table(model)
+                })
+                .collect(),
+        ),
+    )
+}
+
+#[test]
+fn maker_ladder_escalates_to_a_different_model_line_by_attempt_two() {
+    // #416 (Q22, Rob 2026-11-02): attempt 2 changes the model, not the effort.
+    let config = Config::parse(&maker_ladder(&[
+        ("default-model", "default", "high"),
+        ("alternate-model", "alternate", "high"),
+    ]))
+    .unwrap();
+    assert_eq!(config.models.maker.len(), 2);
+    for rungs in [
+        vec![
+            ("default-model", "default", "high"),
+            ("default-model", "default", "max"),
+        ],
+        vec![("default-model", "default", "high")],
+        vec![
+            ("default-model", "default", "high"),
+            ("other-model", "DEFAULT", "high"),
+            ("alternate-model", "alternate", "high"),
+        ],
+    ] {
+        let error = Config::parse(&maker_ladder(&rungs))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("models.maker"), "{error}");
+        assert!(error.contains("different model line"), "{error}");
+    }
+}
+
+#[test]
+fn priority_credit_reserve_is_off_by_default() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    assert!(config.limits.priority_credit_reserve.is_empty());
+    for priority in [None, Some(0), Some(1), Some(2), Some(3)] {
+        assert_eq!(config.limits.credit_reserve_for(priority), None);
+    }
+}
+
+#[test]
+fn priority_credit_reserve_applies_to_configured_priorities() {
+    let mut reserve = toml::map::Map::new();
+    reserve.insert("P0".into(), Value::Integer(5));
+    reserve.insert("P1".into(), Value::Integer(5));
+    let config = Config::parse(&changed(
+        &["limits", "priority_credit_reserve"],
+        Value::Table(reserve),
+    ))
+    .unwrap();
+    assert_eq!(config.limits.credit_reserve_for(Some(0)), Some(5));
+    assert_eq!(config.limits.credit_reserve_for(Some(1)), Some(5));
+    assert_eq!(config.limits.credit_reserve_for(Some(2)), None);
+    assert_eq!(config.limits.credit_reserve_for(None), None);
+    for (key, value) in [("P4", 5), ("high", 5), ("P0", 2), ("P1", 101)] {
+        let mut reserve = toml::map::Map::new();
+        reserve.insert(key.into(), Value::Integer(value));
+        let error = Config::parse(&changed(
+            &["limits", "priority_credit_reserve"],
+            Value::Table(reserve),
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("limits.priority_credit_reserve"),
+            "{key} {value}: {error}"
+        );
+    }
+}
+
+// Rob, 2026-11-02: "Limit to Opus and Sonnet for now, please. In addition to
+// Sol 6.1". Sol is out of quota, so the defaults use Opus and Sonnet only.
+// The example config only has placeholder names, so it is not checked.
+#[test]
+fn deployment_model_defaults_use_only_active_models() {
+    let defaults: Value = include_str!("../../../deploy/dl380g10/models.toml")
+        .parse()
+        .unwrap();
+    for name in tl3_config::ACTIVE_MODELS {
+        assert!(tl3_config::ALLOWED_MODELS.contains(name), "{name}");
+    }
+    for (role, ladder) in defaults["models"].as_table().unwrap() {
+        for model in ladder.as_array().unwrap() {
+            let name = model["name"].as_str().unwrap();
+            assert!(
+                tl3_config::ACTIVE_MODELS.contains(&name),
+                "models.toml {role} uses {name}; active: {:?}",
+                tl3_config::ACTIVE_MODELS
+            );
+        }
+    }
 }
 
 #[test]
@@ -1153,4 +1285,73 @@ fn console_connects_as_its_own_reader_when_configured() {
         .unwrap_or_default();
         assert!(error.contains(field), "{fields}: {error}");
     }
+}
+
+fn without_planning_paths(keep: impl Fn(&str) -> bool) -> String {
+    let mut document: Value = EXAMPLE.parse().unwrap();
+    let paths = document["planning"]["protected_paths"]
+        .as_array_mut()
+        .unwrap();
+    paths.retain(|path| keep(path.as_str().unwrap()));
+    toml::to_string(&document).unwrap()
+}
+
+#[test]
+fn config_missing_a_newer_default_loads_and_the_default_stays_protected() {
+    // #388: a live file written before .pytest.ini became a default.
+    let config = Config::parse(&without_planning_paths(|path| path != ".pytest.ini")).unwrap();
+    assert!(
+        !config
+            .planning
+            .protected_paths
+            .contains(&".pytest.ini".into())
+    );
+    assert_eq!(config.planning.defaults_not_listed(), [".pytest.ini"]);
+    assert!(
+        config
+            .planning
+            .effective_protected_paths()
+            .contains(&".pytest.ini".into())
+    );
+    assert!(
+        tl3_config::protected_paths(&config.planning.protected_paths, &[])
+            .contains(&".pytest.ini".into())
+    );
+}
+
+#[test]
+fn nothing_removes_a_default_protected_path() {
+    let config = Config::parse(&without_planning_paths(|_| false)).unwrap();
+    assert!(config.planning.protected_paths.is_empty());
+    let effective = config.planning.effective_protected_paths();
+    for default in tl3_config::Planning::default().protected_paths {
+        assert!(effective.contains(&default), "{default}");
+        assert!(
+            tl3_config::protected_paths(&[], &[]).contains(&default),
+            "{default}"
+        );
+    }
+}
+
+#[test]
+fn configured_extra_paths_are_protected() {
+    let mut config = Config::parse(EXAMPLE).unwrap();
+    config.planning.protected_paths.push("fleet/**".into());
+    config.validate().unwrap();
+    assert!(
+        config
+            .planning
+            .effective_protected_paths()
+            .contains(&"fleet/**".into())
+    );
+    let paths =
+        tl3_config::protected_paths(&config.planning.protected_paths, &["CHANGELOG.md".into()]);
+    for expected in ["fleet/**", "CHANGELOG.md", ".pytest.ini", ".github/**"] {
+        assert!(paths.contains(&expected.into()), "{expected}");
+    }
+    // Sorted and deduplicated, so every consumer sees one list.
+    let mut sorted = paths.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(paths, sorted);
 }

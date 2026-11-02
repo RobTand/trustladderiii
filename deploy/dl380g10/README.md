@@ -69,24 +69,41 @@ use it. To apply those defaults deliberately to an existing deployment, run
 explicit command replaces role ladders, preserves the endpoint and key path,
 and saves a 0600 backup. Normal preparation never resets tuned ladders.
 The deployed `~/.config/tl3/tl3.toml` remains the operator's runtime config.
+Its `planning.protected_paths` only adds to the built-in defaults, which always
+apply. A release that adds a default needs no edit to the live file:
+`tl3-deploy parse` and tl3d print a note naming any defaults the file doesn't
+list, and those paths stay protected (#388). `tl3 status` shows each served
+repository's effective list.
 
 Rob moved the ladders off GPT-6.1 Sol, which was out of quota, to Anthropic
-models on 2026-11-01. The maker ladder uses Claude Sonnet 5.5 twice, then Claude
-Opus 5.5. Attempt 2 uses `max` effort and 128,000 output tokens. Families are
-labelled per model line (`claude-sonnet`, `claude-opus`, `claude-fable`), so
+models on 2026-11-01. On 2026-11-02 (#416) he approved the maker ladder Claude
+Sonnet 5.5 high, then Claude Opus 5.5 high: attempt 2 escalates the model, not
+the effort, and attempt 3 reuses Opus. Families are
+labelled per model line (`claude-sonnet`, `claude-opus`), so
 Q22 still forces a different model to review: Sonnet makers get Opus 5.5 review,
-and the Opus maker gets Sonnet 5.5 review. The planner uses Opus 5.5, then Fable
-5.1. The rebaser, ingest, audit, comment classification and writer use Sonnet
+and the Opus maker gets Sonnet 5.5 review. The planner uses Opus 5.5, then
+Sonnet 5.5, both at `high` effort and 32,000 output tokens. The rebaser, ingest, audit, comment classification and writer use Sonnet
 5.5. The writer field is optional for older configs and defaults to ingest.
 `crates/config/tests/config.rs` validates these defaults, so a ladder that
 breaks Q22 fails CI. For a new config, `--primary` renames Sonnet 5.5 and
 `--alternate` renames Opus 5.5 in every role.
 Production registration uses the configured ladders, including writer.
 
+Rob, 2026-11-02: Fable is not used. The allowed models are Claude Opus 5.5,
+Claude Sonnet 5.5 and GPT-6.1 Sol. Sol is out of quota on both accounts, so the
+defaults in `models.toml` use only Opus and Sonnet. `ALLOWED_MODELS` and
+`ACTIVE_MODELS` in `crates/config/src/lib.rs` list the two sets. A test in
+`crates/config/tests/config.rs` fails if `models.toml` names a model outside
+`ACTIVE_MODELS`, and checks that `ACTIVE_MODELS` is within `ALLOWED_MODELS`.
+Config loading does not enforce either list. Put Sol back in the defaults only
+when its quota returns, and add it to `ACTIVE_MODELS` in the same change.
+
 Provider limits checked on 2026-10-30:
 
+- [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol):
+  1,050,000 context tokens and 128,000 maximum output tokens.
 - [Claude models](https://platform.claude.com/docs/en/models/overview):
-  Fable 5.1, Opus 5.5 and Sonnet 5.5 each have 1M context and 128K maximum output.
+  Opus 5.5 and Sonnet 5.5 each have 1M context and 128K maximum output.
 
 All configured budgets also fit TL3's 150,000-token context setting. The proxy's
 catalog lists IDs without limits, so these limits come from provider docs.
@@ -119,7 +136,9 @@ before it and every release a live run uses, and removes the rest. A redeploy
 of the same code keeps the earlier `previous`. The pre-#372 `app/` directory
 stays through the install that introduces releases, because the tl3d running
 during it still launches from `app/`. A later install removes it once no live
-run, `tl3.toml` or running tl3d uses it, and says which one kept it otherwise. Installs from
+run, `tl3.toml` or running tl3d uses it, and says which one kept it otherwise.
+A tl3d that is starting or running without a readable runtime config keeps it
+too. Installs from
 before #372 migrate the deploy-owned `app/` Python path in `tl3.toml`; an
 operator's own path is kept. If that line can't be rewritten, the install stops
 with an error before anything restarts. It downloads o200k_base in a new empty directory,
@@ -176,8 +195,11 @@ supervisor, so a deploy, config apply or crash of tl3d leaves runs alive. The
 restarted controller reattaches to them and accepts their replies. A worker
 started under one release may reply to the next; reply shapes stay compatible
 across one release. If `systemd-run` fails, the launch fails; it never falls
-back to a supervisor inside tl3d's cgroup. `deploy.py check` runs the same
-scope launch once to show the user bus and `systemd-run` work.
+back to a supervisor inside tl3d's cgroup. `deploy.py check` probes the
+`workers.launcher` that `tl3.toml` configures, bounded at 20 s. A throwaway
+probe must land in a scope of its own, outside the caller's cgroup, and
+`cgroup.kill` must end it, the same stop tl3d uses for a run. On failure the
+check names the cause, such as the launcher's last stderr line.
 
 To stop every run for maintenance, stop tl3d first, then the runs:
 
@@ -186,8 +208,9 @@ systemctl --user stop tl3d.service
 python3 ~/.local/share/tl3/deploy/deploy.py stop-runs
 ```
 
-`stop-runs` refuses while tl3d is active, because a running tl3d starts a new
-attempt for each stopped run once it proves the run is gone. It stops
+`stop-runs` refuses unless tl3d is `inactive` or `failed`, because a running or
+starting tl3d starts a new attempt for each stopped run once it proves the run
+is gone. It stops
 `tl3-workers.slice`, which kills each run's supervisor, worker and their
 descendants. When tl3d starts again, each stopped run counts as a failed run
 under the usual retry rules. Stop, Restart, pause and cancel still stop single

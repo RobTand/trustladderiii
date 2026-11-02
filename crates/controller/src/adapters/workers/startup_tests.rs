@@ -33,6 +33,7 @@ fn planner_protected_paths_follow_the_request_repository() {
             title: "Protect only this repo".into(),
             actor: config.github.rob.id,
             label: "tl3".into(),
+            labels: Vec::new(),
         })
         .unwrap();
     let mut store = Store::open(&config.store).unwrap();

@@ -12,6 +12,19 @@ pub enum MessageKind {
     Summary,
 }
 
+/// The request a draft is written for. It names the writer run's operation and
+/// trace tags like any other worker run's (#427); it isn't writer-input.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WriteFor {
+    pub node: u64,
+    pub generation: u64,
+    /// `owner/name`, as the other roles' traces tag it.
+    pub repo: String,
+    pub issue: u64,
+    pub attempt: u8,
+    pub round: u8,
+}
+
 /// Protocol v1 writer-input. The run key belongs to the supervisor, not role input.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WriteRequest {
@@ -19,6 +32,9 @@ pub struct WriteRequest {
     pub facts: Value,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub violations: Vec<String>,
+    /// `None` for a write that belongs to no request.
+    #[serde(skip)]
+    pub request: Option<WriteFor>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -92,7 +108,21 @@ impl Writer for ProcessWriter {
             .writer
             .first()
             .ok_or(Error::Invalid("writer ladder is empty"))?;
-        let mut request = json!({"protocol":1,"operation":{"node":0,"generation":0,"kind":"writer"},
+        // #427: the run carries its request's operation and trace tags, like
+        // every other worker run; a write for no request says so explicitly.
+        let (operation, trace) = match &input.request {
+            Some(at) => (
+                json!({"node": at.node, "generation": at.generation, "kind": "writer"}),
+                json!({"repo": at.repo, "issue": at.issue, "request": at.node,
+                    "attempt": at.attempt, "round": at.round}),
+            ),
+            None => (
+                json!({"node": 0, "generation": 0, "kind": "writer"}),
+                json!({"repo": "none", "issue": "none", "request": "none",
+                    "attempt": "none", "round": "none"}),
+            ),
+        };
+        let mut request = json!({"protocol":1,"operation":operation,"trace":trace,
             "role":"writer","model":self.config.models.worker_model(model), "key_file":self.config.models.key_file,
             "inputs":input,"worktree":root});
         if self.prompts {

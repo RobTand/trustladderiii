@@ -118,6 +118,7 @@ manifest:
     pydantic_core: pydantic_core
     pygments: pygments
     pytest: pytest
+    re2: google_re2
     referencing: referencing
     regex: regex
     requests: requests
@@ -145,4 +146,4 @@ manifest:
     zstandard: zstandard
   pip_repository:
     name: tl3_pip
-integrity: 6b9a73f2ffad8760ce818b425bb31ad386329bb7ab7b87435e060a55f9edde5b
+integrity: 4e5480c4cf31963eaf2889cccc2e23403f28cf01859941bf72e123bab522eb1f

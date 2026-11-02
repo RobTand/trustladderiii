@@ -43,6 +43,7 @@ fn labelled() -> LabelledIssue {
         title: "Fix the sandbox build".into(),
         actor: 24923402,
         label: "tl3".into(),
+        labels: Vec::new(),
     }
 }
 fn open(settings: &tl3_config::Store, root: &Path) -> Controller {
@@ -1134,7 +1135,14 @@ fn status_page_and_command(settings: &tl3_config::Store, database: &mut Database
         ready.contains(&address.to_string()),
         "server failed to start: {ready}"
     );
-    assert_eq!(cli_status(&config), expected_text);
+    // #388: the CLI follows the table with each repository's effective protected paths.
+    let protected = status::render_protected_paths(&tl3_config::Config::load(&config).unwrap());
+    assert!(
+        protected.starts_with("Protected paths for RobTand/tl3-sandbox: ")
+            && protected.contains(".pytest.ini"),
+        "{protected}"
+    );
+    assert_eq!(cli_status(&config), format!("{expected_text}{protected}"));
     let (headers, body) = http(address, "GET", "/");
     assert!(headers.starts_with("http/1.1 200"), "{headers}");
     assert!(!headers.contains("www-authenticate") && !headers.contains("set-cookie"));
@@ -1180,7 +1188,10 @@ fn status_page_and_command(settings: &tl3_config::Store, database: &mut Database
         http(address, "GET", "/").1,
         status::render_html(&final_model)
     );
-    assert_eq!(cli_status(&config), status::render_text(&final_model));
+    assert_eq!(
+        cli_status(&config),
+        format!("{}{protected}", status::render_text(&final_model))
+    );
     status_socket_limits(address);
     let mut large = labelled();
     large.delivery = "large-status-delivery".into();

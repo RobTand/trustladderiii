@@ -10,6 +10,7 @@ import re
 import stat
 from threading import Lock
 
+import re2
 from langchain_core.tools import StructuredTool, ToolException, create_schema_from_function
 
 from tl3_workers.pb_tests import make_test_tool
@@ -29,6 +30,8 @@ OUTPUT_LIMITS = {
     "grep_matches": 100,
     "glob_entries": 200,
     "list_entries": 200,
+    # A regular expression sees this many characters of a line.
+    "regex_line_chars": 1_048_576,
 }
 
 
@@ -72,11 +75,22 @@ def _parts(path):
     return parts
 
 
-def _matching_lines(stream, pattern):
+def _matching_lines(stream, pattern, regex=None, cut=None):
+    """Yield (line number, preview, truncated) for matching lines.
+
+    A regex is tried against the line up to regex_line_chars; cut counts the lines
+    that ran past that.
+    """
     number = 1
-    prefix, tail = "", ""
-    length, found = 0, False
+    prefix, tail, window = "", "", []
+    length, kept, found = 0, 0, False
     cap = OUTPUT_LIMITS["line_bytes"]
+    limit = OUTPUT_LIMITS["regex_line_chars"]
+
+    def searched():
+        text = "".join(window).rstrip("\r\n")
+        return regex.search(text) is not None
+
     while chunk := stream.readline(cap + 1):
         # newline="" preserves CRLF, including when readline's cap splits it.
         if chunk.endswith("\r"):
@@ -87,16 +101,28 @@ def _matching_lines(stream, pattern):
                 stream.seek(position)
         prefix = (prefix + chunk)[:cap + 1]
         length += len(chunk)
-        found |= pattern in tail + chunk
-        tail = (tail + chunk)[-(len(pattern) - 1):] if len(pattern) > 1 else ""
+        if regex is None:
+            found |= pattern in tail + chunk
+            tail = (tail + chunk)[-(len(pattern) - 1):] if len(pattern) > 1 else ""
+        elif kept < limit:
+            window.append(chunk[:limit - kept])
+            kept += len(window[-1])
         if chunk.endswith(("\r", "\n")):
+            ending = len(chunk) - len(chunk.rstrip("\r\n"))
+            if regex is not None:
+                found = searched()
+                if cut is not None and length - ending > limit:
+                    cut.append(number)
             if found:
                 text = _clip(prefix.rstrip("\r\n"), cap)
-                ending = len(chunk) - len(chunk.rstrip("\r\n"))
                 yield number, text, length - ending > len(text)
             number += 1
-            prefix, tail = "", ""
-            length, found = 0, False
+            prefix, tail, window = "", "", []
+            length, kept, found = 0, 0, False
+    if regex is not None and length:
+        found = searched()
+        if cut is not None and length > limit:
+            cut.append(number)
     if length and found:
         text = _clip(prefix, cap)
         yield number, text, length > len(text)
@@ -118,6 +144,58 @@ def environment_class(error):
         return "EACCES" if isinstance(error, PermissionError) else None
     name = errno.errorcode.get(error.errno)
     return name if name in ENVIRONMENT_ERRNOS else None
+
+
+def _path_error(name, error, path):
+    """Say what the model's own path did wrong and what to call instead."""
+    path = _clip(str(path), 200)
+    code = errno.errorcode.get(error.errno)
+    if code == "ENOTDIR":
+        # The component the walk named, when it is part of this call's path.
+        file = error.filename if isinstance(error.filename, str) else ""
+        file = file if path == file or path.startswith(file + "/") else path
+        subject = f"{file} is a file, not a directory"
+        if file != path:
+            subject += f", so {path} is not a valid path"
+        return (f"{subject}. To search a file, pass it to grep as path. To read part of it, "
+                "use read with offset and limit. To see what a directory holds, use list.")
+    if code == "EISDIR":
+        return (f"{path} is a directory, not a file. Use list to see its entries, glob to match "
+                "paths below it, or grep with it as path to search below it.")
+    if code == "ELOOP":
+        return f"{path} is or passes through a symbolic link. Tools never follow links; use a path that avoids it."
+    if code == "ENAMETOOLONG":
+        return f"{path} is too long. Use a shorter path."
+    return (f"{name} could not be used on {path} ({code or 'no error code'}). "
+            "Use list to check that the path exists and names what you meant.")
+
+
+# grep reads its pattern as an RE2 regular expression. RE2 runs in time linear in the
+# line, so no pattern can backtrack catastrophically and nothing here needs a clock.
+# It has no backreferences or lookarounds, which are what make Python's re unsafe.
+RE2_OPTIONS = re2.Options()
+RE2_OPTIONS.log_errors = False
+# Characters that mean something else as a regular expression than as written. A bare
+# dot is left out: it matches itself too, so it cannot hide a literal match.
+REGEX_SYNTAX = re.compile(r"[\\\[\](){}*+?^$|]")
+_RE2_HINTS = (
+    ("invalid perl operator", "RE2 has no lookarounds."),
+    ("invalid repetition size", "RE2 limits repeat counts to 1,000."),
+)
+
+
+def _regex(pattern):
+    """The compiled pattern and a note for the model; (None, note) means search it as text."""
+    try:
+        return re2.compile(pattern, RE2_OPTIONS), ""
+    except re2.error as exc:
+        detail = exc.args[0].decode("utf-8", "replace") if isinstance(exc.args[0], bytes) else str(exc)
+    hint = next((hint for start, hint in _RE2_HINTS if detail.startswith(start)), None)
+    if hint is None and re.search(r"\\[1-9]", detail):
+        hint = "RE2 has no backreferences."
+    hint = hint or "Escape special characters with a backslash to search them as a regular expression."
+    return None, (f"Pattern is not a valid regular expression ({detail}), so it was searched as literal "
+                  f"text. {hint} To search text as written, set literal=true.")
 
 
 def _selectors_json(selectors):
@@ -219,15 +297,21 @@ class Worktree:
         # tool calls would steal each other's entries. Open the root afresh.
         fd = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=self._root)
         try:
-            for part in parts:
+            for depth, part in enumerate(parts, 1):
                 if create:
                     try:
                         os.mkdir(part, dir_fd=fd)
                     except FileExistsError:
                         pass
-                child = os.open(
-                    part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd,
-                )
+                try:
+                    child = os.open(
+                        part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd,
+                    )
+                except NotADirectoryError:
+                    # Name the component, so the tool guard can tell the model which one.
+                    link = stat.S_ISLNK(os.stat(part, dir_fd=fd, follow_symlinks=False).st_mode)
+                    code = errno.ELOOP if link else errno.ENOTDIR
+                    raise OSError(code, os.strerror(code), "/".join(parts[:depth])) from None
                 os.close(fd)
                 fd = child
             yield fd
@@ -365,23 +449,53 @@ class Worktree:
                 offset, OUTPUT_LIMITS["glob_entries"], "entries",
             )
 
-    def grep(self, pattern: str, path: str = ".", offset: int = 0) -> dict:
-        """Find bounded literal matches. Offset counts matches; text previews may truncate."""
-        def matches(directory):
+    def _is_file(self, parts):
+        if not parts:
+            return False
+        with self._directory(parts[:-1]) as parent:
+            # Never follow a link: a symlink takes the directory path and fails there.
+            return stat.S_ISREG(os.stat(parts[-1], dir_fd=parent, follow_symlinks=False).st_mode)
+
+    def grep(self, pattern: str, path: str = ".", offset: int = 0, literal: bool = False) -> dict:
+        """Find bounded matches of a regular expression, or of literal text with literal=true. Offset counts matches."""
+        # Text with no regex syntax reads the same either way, so it keeps the exact
+        # whole-line search; only a pattern that needs a regular expression pays for one.
+        regex, note = _regex(pattern) if not literal and REGEX_SYNTAX.search(pattern) else (None, "")
+        cut = []
+
+        def in_file(relative):
+            with self._file(relative) as stream:
+                for number, preview, truncated in _matching_lines(stream, pattern, regex, cut):
+                    if truncated:
+                        preview += f" [Truncated. Use read offset={number - 1}, column=0.]"
+                    yield {"path": relative, "line": number, "text": preview}
+
+        def below(directory):
             for name, is_dir in self._walk(directory):
                 if is_dir:
                     continue
-                relative = str(PurePosixPath(path) / name)
                 try:
-                    with self._file(relative) as stream:
-                        for number, preview, truncated in _matching_lines(stream, pattern):
-                            if truncated:
-                                preview += f" [Truncated. Use read offset={number - 1}, column=0.]"
-                            yield {"path": relative, "line": number, "text": preview}
+                    yield from in_file(str(PurePosixPath(path) / name))
                 except UnicodeDecodeError:
                     continue
-        with self._directory(_parts(path)) as directory:
-            return _page(matches(directory), offset, OUTPUT_LIMITS["grep_matches"], "matches")
+        parts = _parts(path)
+        if self._is_file(parts):
+            # A named file that is not text is an error, not an empty result.
+            result = _page(in_file(path), offset, OUTPUT_LIMITS["grep_matches"], "matches")
+        else:
+            with self._directory(parts) as directory:
+                result = _page(below(directory), offset, OUTPUT_LIMITS["grep_matches"], "matches")
+        if regex is not None and not offset and not result["matches"]:
+            # The same text may have been meant as written: vars(digests) is a regex group.
+            note = "No matches for the regular expression. To search for the text as written, set literal=true."
+            if cut:
+                limit = f"{OUTPUT_LIMITS['regex_line_chars']:,}"
+                searched = (f"{len(cut)} line longer than {limit} characters was searched only in its first {limit}"
+                            if len(cut) == 1 else
+                            f"{len(cut)} lines longer than {limit} characters were searched only in their first {limit}")
+                note += f" {searched} characters. literal=true searches whole lines."
+        result["message"] = " ".join(filter(None, [note, result["message"]]))
+        return result
 
     def write(self, path: str, content: str) -> str:
         """Write UTF-8 text, creating parent directories as needed."""
@@ -460,12 +574,14 @@ def build_tools(worktree, descriptions):
                 except FileNotFoundError as exc:
                     raise ToolException("File or directory not found.") from exc
                 except OSError as exc:
-                    message = "Worktree tool rejected the path or operation."
                     cls = environment_class(exc)
                     if cls is None:
-                        raise ToolException(message) from exc
+                        path = kwargs.get("path", ".") if _name in READ_TOOLS | WRITE_TOOLS else "the call's input"
+                        raise ToolException(_path_error(_name, exc, path)) from exc
                     error = worktree.evidence.tool_error(_name, cls)
-                    raise ToolException(f"{message} Tool error id: {error}.") from exc
+                    raise ToolException(
+                        f"Worktree tool rejected the path or operation. Tool error id: {error}."
+                    ) from exc
 
         tools.append(StructuredTool.from_function(
             func=guarded, name=name, description=description,

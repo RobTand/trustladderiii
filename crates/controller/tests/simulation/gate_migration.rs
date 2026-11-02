@@ -78,6 +78,7 @@ fn seed_with_look(
                 title: format!("Disjoint leaf {number}"),
                 actor: 42,
                 label: "tl3".into(),
+                labels: Vec::new(),
             })
             .unwrap()
         );
@@ -321,6 +322,7 @@ fn seed_agents(settings: &tl3_config::Store, root: &Path, slots: u8, pool: u8) -
             title: format!("Agent waiter {number}"),
             actor: 42,
             label: "tl3".into(),
+            labels: Vec::new(),
         })
         .unwrap();
         drain(&mut c);
@@ -480,6 +482,7 @@ pub(super) fn q48_ticket_order(settings: &tl3_config::Store) {
             title: format!("Ticket order {number}"),
             actor: 42,
             label: "tl3".into(),
+            labels: Vec::new(),
         })
         .unwrap();
         drain(&mut c);

@@ -247,7 +247,7 @@ Each table notifies `tl3_changes`. `grant_reader`'s default privileges give the
 console's login SELECT on them, and migration 13 grants existing reader logins
 explicitly.
 
-Migration 14 adds `assessment_ids`: the MLflow assessments a postmortem's
+Migration 15 adds `assessment_ids`: the MLflow assessments a postmortem's
 judges logged on the node's traces. `Commit.postmortem_updates` changes a
 postmortem in the same transaction as the rest of the commit, so its status
 reaches the console through `tl3_changes` with the commit:

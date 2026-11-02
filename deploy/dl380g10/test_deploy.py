@@ -9,6 +9,7 @@ import socket
 import stat
 import subprocess
 import tempfile
+import time
 import tomllib
 import unittest
 from unittest.mock import patch
@@ -237,7 +238,9 @@ class DeployTests(unittest.TestCase):
         defaults = tomllib.loads((deploy.HERE / "models.toml").read_text())["models"]
         for role, ladder in defaults.items():
             self.assertEqual(actual[role], ladder)
-        self.assertEqual(actual["maker"][1]["effort"], "max")
+        # #416: attempt 2 escalates to Opus 5.5 at high effort.
+        self.assertEqual(actual["maker"][1]["name"], "claude-opus-5-5")
+        self.assertEqual(actual["maker"][1]["effort"], "high")
         self.assertEqual(actual["maker"][1]["budget_tokens"], 128000)
 
     def test_check_reports_both_bad_credentials_as_missing(self):
@@ -605,35 +608,115 @@ class DeployTests(unittest.TestCase):
             deploy.configure(self.home, "192.168.1.107:8033", {"installation_id": 987, "operations_issue": 123})
         self.assertEqual(destination.read_text(), original)
 
-    def test_stop_runs_requires_tl3d_stopped_then_stops_the_worker_slice(self):
-        for active, expected in ((True, []), (False, [["systemctl", "--user", "stop", "tl3-workers.slice"]])):
+    def test_stop_runs_refuses_unless_tl3d_is_inactive_or_failed(self):
+        for state, allowed in (("active", False), ("activating", False), ("reloading", False),
+                               ("deactivating", False), ("inactive", True), ("failed", True)):
             calls = []
-            with self.subTest(active=active), \
-                 patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0 if active else 3)), \
+            with self.subTest(state=state), patch.object(deploy, "_tl3d_state", return_value=state), \
                  patch.object(deploy, "run", side_effect=lambda argv, **kwargs: calls.append([str(p) for p in argv])), \
                  contextlib.redirect_stdout(io.StringIO()):
-                if active:
+                if allowed:
+                    deploy.stop_runs(self.home)
+                else:
                     with self.assertRaisesRegex(RuntimeError, "Stop tl3d first"):
                         deploy.stop_runs(self.home)
-                else:
-                    deploy.stop_runs(self.home)
-            self.assertEqual(calls, expected)
+            self.assertEqual(calls, [["systemctl", "--user", "stop", "tl3-workers.slice"]] if allowed else [])
 
-    def test_check_runs_the_worker_launcher_through_the_user_bus(self):
+    def test_app_is_kept_while_tl3d_runs_without_a_readable_runtime_config(self):
+        root = deploy.paths(self.home)[0]
+        (root / "app/workers").mkdir(parents=True)
+        self.install_release(self.release_source(1))
+        self.migrated_config(str(root / "current/workers/.venv/bin/python"))
         runtime = self.home / "runtime"
-        runtime.mkdir()
-        with patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(runtime)}):
-            self.assertFalse(deploy.launcher_works(), "no user bus")
-            bus = socket.socket(socket.AF_UNIX)
-            self.addCleanup(bus.close)
-            bus.bind(str(runtime / "bus"))
-            for code in (0, 1):
-                launched = []
-                with self.subTest(code=code), patch.object(
-                        subprocess, "run",
-                        side_effect=lambda argv, **kwargs: launched.append(argv) or subprocess.CompletedProcess(argv, code)):
-                    self.assertEqual(deploy.launcher_works(), code == 0)
-                self.assertEqual(launched, [[*deploy.LAUNCHER, "/bin/true"]])
+        (runtime / "tl3d").mkdir(parents=True)
+        for state in ("activating", "active", "reloading"):
+            for content in (None, "not = [toml"):
+                path = runtime / "tl3d/tl3.toml"
+                path.unlink(missing_ok=True)
+                if content is not None:
+                    path.write_text(content)
+                with self.subTest(state=state, content=content), \
+                     patch.object(deploy, "_tl3d_state", return_value=state):
+                    self.assertIn("tl3d is running without a readable runtime config", self.collect(runtime=runtime))
+                    self.assertTrue((root / "app").is_dir())
+        (runtime / "tl3d/tl3.toml").unlink()
+        with patch.object(deploy, "_tl3d_state", return_value="inactive"):
+            self.collect(runtime=runtime)
+        self.assertFalse((root / "app").exists(), "a stopped tl3d launches nothing from app/")
+
+    def probe_config(self, launcher):
+        _, config_dir, _ = deploy.paths(self.home)
+        config, _ = self.config()
+        text = config.read_text().replace("launcher = " + deploy.toml_value(deploy.LAUNCHER),
+                                          "launcher = " + deploy.toml_value(launcher))
+        deploy.write_file(config_dir / "tl3.toml", text.encode())
+
+    def probe(self, *, timeout=20):
+        runtime = self.home / "runtime"
+        runtime.mkdir(exist_ok=True)
+        bus = runtime / "bus"
+        if not bus.exists():
+            server = socket.socket(socket.AF_UNIX)
+            self.addCleanup(server.close)
+            server.bind(str(bus))
+        with patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(runtime)}), \
+             patch.object(deploy, "PROBE_TIMEOUT", timeout, create=True):
+            return deploy.launcher_works(self.home)
+
+    def fake_launcher(self, body):
+        script = self.home / "fake-launcher"
+        script.write_text("#!/bin/sh\n" + body + "\n")
+        script.chmod(0o700)
+        return [str(script)]
+
+    def test_launcher_probe_runs_the_configured_launcher_and_reports_why_it_failed(self):
+        self.probe_config(self.fake_launcher('echo "Failed to connect to user scope bus" >&2; exit 1'))
+        ok, detail = self.probe()
+        self.assertFalse(ok)
+        self.assertIn("Failed to connect to user scope bus", detail, "the configured launcher ran, not the constant")
+
+    def test_launcher_probe_is_bounded(self):
+        self.probe_config(self.fake_launcher("exec sleep 30"))
+        started = time.monotonic()
+        ok, detail = self.probe(timeout=1)
+        self.assertFalse(ok)
+        self.assertIn("timed out", detail)
+        self.assertLess(time.monotonic() - started, 15)
+
+    def test_launcher_probe_needs_a_scope_of_its_own_and_a_working_cgroup_kill(self):
+        # A launcher that runs the command in place leaves it in the caller's cgroup.
+        self.probe_config(["/usr/bin/env"])
+        ok, detail = self.probe()
+        self.assertFalse(ok)
+        self.assertIn("scope of its own", detail)
+        pid_file = self.home / "probe.pid"
+        self.probe_config(self.fake_launcher(
+            f'echo $$ > {pid_file}; echo "0::/user.slice/user@1000.service/tl3.slice/tl3-workers.slice/run-probe.scope"; '
+            "exec sleep 30"))
+        killed = []
+
+        def cgroup_kill(scope):
+            killed.append(scope)
+            os.kill(int(pid_file.read_text()), 9)
+
+        with patch.object(deploy, "_kill_cgroup", side_effect=cgroup_kill):
+            ok, detail = self.probe()
+        self.assertTrue(ok, detail)
+        self.assertEqual(killed, [Path("/sys/fs/cgroup/user.slice/user@1000.service/tl3.slice/tl3-workers.slice/run-probe.scope")])
+        with patch.object(deploy, "_kill_cgroup", side_effect=lambda scope: None):
+            ok, detail = self.probe(timeout=1)
+        self.assertFalse(ok)
+        self.assertIn("cgroup.kill", detail)
+
+    def test_launcher_probe_needs_the_user_bus_and_a_configured_launcher(self):
+        with patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(self.home / "nothing")}):
+            ok, detail = deploy.launcher_works(self.home)
+        self.assertFalse(ok)
+        self.assertIn("user bus", detail)
+        self.probe_config([])
+        ok, detail = self.probe()
+        self.assertFalse(ok)
+        self.assertIn("workers.launcher", detail)
 
     def test_command_failure_never_prints_child_output(self):
         with contextlib.redirect_stdout(io.StringIO()) as output:
