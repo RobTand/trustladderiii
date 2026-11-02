@@ -371,6 +371,10 @@ impl Supervisor {
                 .ok_or(Error::Invalid("worker materials must be an object"))?
                 .remove("standing_rules");
         }
+        // A narrowed request keeps the pristine issue for a later narrowing; no role reads it.
+        if let Some(inputs) = inputs.as_object_mut() {
+            inputs.remove("original_issue");
+        }
         if matches!(role, "ingest" | "audit") {
             // Cached simulation materials may still contain inline fixture text.
             if let Some(repo) = inputs["repo"].as_object_mut() {
