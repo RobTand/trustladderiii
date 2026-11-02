@@ -886,7 +886,10 @@ fn answered_question(
         .map(|row| &row.value);
     let mut question = json!({"id": open.id, "kind": question(open.kind).0});
     for field in ["pieces", "findings"] {
-        if let Some(value) = context.and_then(|context| context.get(field)).filter(|v| !v.is_null()) {
+        if let Some(value) = context
+            .and_then(|context| context.get(field))
+            .filter(|v| !v.is_null())
+        {
             question[field] = value.clone();
         }
     }

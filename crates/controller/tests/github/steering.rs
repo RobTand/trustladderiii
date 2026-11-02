@@ -446,7 +446,9 @@ fn replacement_assertions(d: &mut Daemon) {
         .unwrap();
     assert_eq!(ingest["inputs"]["issue"]["number"], 12);
     let body = ingest["inputs"]["issue"]["body"].as_str().unwrap();
-    assert!(body.starts_with("## Rob's answer (the new scope; it wins where it conflicts with the original issue)\n"));
+    assert!(body.starts_with(
+        "## Rob's answer (the new scope; it wins where it conflicts with the original issue)\n"
+    ));
     assert!(body.contains("Return goodbye instead of hello."));
     assert!(body.contains("## Original issue, narrowed by Rob's answer above\nTitle: Add a blue button\n\nReturn hello."));
     let snapshot = d.store.load().unwrap();

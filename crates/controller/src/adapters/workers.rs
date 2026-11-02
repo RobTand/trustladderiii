@@ -517,7 +517,9 @@ impl Supervisor {
                             &answer,
                             &title,
                             &original,
-                            narrowing.get("question").filter(|question| !question.is_null()),
+                            narrowing
+                                .get("question")
+                                .filter(|question| !question.is_null()),
                         );
                         Some(body)
                     } else {
@@ -575,7 +577,11 @@ impl Supervisor {
             }
         }
         let issue = root.get("issue").or_else(|| root["ingest"].get("issue"));
-        let text = |field: &str| issue.and_then(|issue| issue[field].as_str()).unwrap_or_default();
+        let text = |field: &str| {
+            issue
+                .and_then(|issue| issue[field].as_str())
+                .unwrap_or_default()
+        };
         (text("title").into(), text("body").into())
     }
 

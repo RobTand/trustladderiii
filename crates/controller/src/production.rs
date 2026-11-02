@@ -174,10 +174,12 @@ impl Materials {
         &self,
         delivery: &crate::executor::Delivery,
     ) -> Result<tl3_github::Issue> {
-        let client = self
-            .clients
-            .get(&delivery.repository.installation)
-            .ok_or(crate::Error::Invalid("no GitHub client for the installation"))?;
+        let client =
+            self.clients
+                .get(&delivery.repository.installation)
+                .ok_or(crate::Error::Invalid(
+                    "no GitHub client for the installation",
+                ))?;
         let name = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
         Ok(crate::executor::runtime()?.block_on(client.issue(&name, delivery.issue))?)
     }

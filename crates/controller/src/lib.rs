@@ -18,7 +18,6 @@ pub mod clock;
 pub mod console;
 pub mod executor;
 mod goals;
-mod narrowing;
 mod http;
 pub mod ingress;
 pub mod input_errors;
@@ -27,6 +26,7 @@ pub mod looks;
 #[path = "../tests/loom/mod.rs"]
 mod loom_tests;
 pub mod memory;
+mod narrowing;
 mod notices;
 pub mod priority;
 pub mod production;

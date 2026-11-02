@@ -284,7 +284,9 @@ fn narrowed_materials(settings: &tl3_config::Store, wrapped: bool) {
     .unwrap();
     let body = request["inputs"]["issue"]["body"].as_str().unwrap();
     assert!(
-        body.starts_with("## Rob's answer (the new scope; it wins where it conflicts with the original issue)\n"),
+        body.starts_with(
+            "## Rob's answer (the new scope; it wins where it conflicts with the original issue)\n"
+        ),
         "the answer leads as the scope: {body}"
     );
     assert!(body.contains(answer.trim()), "the answer is carried whole");
@@ -296,9 +298,14 @@ fn narrowed_materials(settings: &tl3_config::Store, wrapped: bool) {
         body.contains("## Protocol `prismabuild.gpu_lease.v1`") && body.contains("`TTL_S = 30`"),
         "the protocol section the answer refers to reaches ingest"
     );
-    assert!(body.contains("## Sections of the original issue that the answer refers to\n")
-            && body.contains("\n- Behaviour wanted\n"));
-    assert!(body.contains("## Question Rob answered\n"), "the answered question is named");
+    assert!(
+        body.contains("## Sections of the original issue that the answer refers to\n")
+            && body.contains("\n- Behaviour wanted\n")
+    );
+    assert!(
+        body.contains("## Question Rob answered\n"),
+        "the answered question is named"
+    );
     assert_eq!(request["inputs"]["issue"]["number"], 2626);
     assert_eq!(request["role"], "ingest");
     // Every later role reads the same narrowed issue, even if the GitHub issue changes.
@@ -594,7 +601,9 @@ fn main() {
             &database.create(&format!("narrowed_materials_{wrapped}")),
             wrapped,
         );
-        println!("test narrowed_request_ingest_carries_issue_scope_and_question_wrapped_{wrapped} ... ok");
+        println!(
+            "test narrowed_request_ingest_carries_issue_scope_and_question_wrapped_{wrapped} ... ok"
+        );
     }
     simulation(&database.create("workers_sim"));
     println!("test real_ingest_audit_reaches_unplanned_and_posts_goals ... ok");
