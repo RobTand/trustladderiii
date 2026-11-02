@@ -13,6 +13,7 @@ import sys
 import tiktoken
 
 from tl3_workers.tools import LARGE_FILE_BYTES, Worktree, _parts, environment_class
+from tl3_workers.turns import Unrepairable
 
 
 # Test sources the planner reads whole for test names.
@@ -32,7 +33,7 @@ def _fail(message):
     # The process boundary hides exception text, which may contain secrets.
     # These fixed diagnostics contain no repository or provider content.
     print(f"tl3_workers: planner: {message}", file=sys.stderr)
-    raise ValueError(message)
+    raise Unrepairable(message)
 
 
 def _encoding():

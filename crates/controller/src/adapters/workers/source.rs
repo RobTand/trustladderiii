@@ -469,6 +469,7 @@ pub(super) fn parse_reply(
             return Ok(Observation::Quota {
                 key: delivery.key.clone(),
                 reset_ms,
+                model: None,
             });
         }
         if !value.as_object().is_some_and(|o| o.len() == 3)
@@ -507,6 +508,7 @@ pub(super) fn parse_reply(
         generation: delivery.generation,
         role: role.into(),
         reply: reply.ok_or(Error::Invalid("worker reply is missing"))?,
+        model: None,
     })
 }
 

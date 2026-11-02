@@ -92,7 +92,8 @@ def test_invalid_replies_never_leave_worker(tmp_path, request_doc, role, reply):
         request_doc["inputs"]["ingest"] = BRIEF
     result = start_worker(tmp_path, request_doc, [{"content": json.dumps(reply)}])
     assert result.exit_code != 0
-    assert result.events == [{"event": "progress", "unit": "model_turn"}]
+    # The invalid reply gets one repair turn, which the fake answers the same way.
+    assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
     assert result.stderr.strip().endswith("tl3_workers: run failed")
 
 

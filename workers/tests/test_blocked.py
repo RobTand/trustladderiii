@@ -11,6 +11,7 @@ import pytest
 
 from tl3_workers import runtime
 from tl3_workers.tools import TOOL_FACTORIES, Worktree, build_tools
+from tl3_workers.turns import InvalidReply
 from test_maker import maker_request, turn  # noqa: F401
 
 KEY = "c" * 64
@@ -95,8 +96,10 @@ def test_completed_run_of_other_tests_keeps_the_evidence(maker_request, monkeypa
 
 def test_blocked_needs_structured_evidence(maker_request, monkeypatch):  # noqa: F811
     reply = {"kind": "blocked", "report": "The sandbox is broken."}
-    with pytest.raises(ValidationError):
+    # The schema-invalid reply gets one repair turn (#289), which the fake fails too.
+    with pytest.raises(InvalidReply) as raised:
         run_maker(maker_request, monkeypatch, [{**INFRASTRUCTURE, "action_key": KEY}], reply)
+    assert isinstance(raised.value.errors[0], ValidationError)
 
 
 @pytest.mark.parametrize("error,recorded", [
