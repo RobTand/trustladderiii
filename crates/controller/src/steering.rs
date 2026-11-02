@@ -26,6 +26,9 @@ pub enum Task {
         revert: bool,
         since: String,
         comment_issue: u64,
+        /// #449: the question Rob's answer replied to, for the replacement's ingest input.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        question: Option<Value>,
     },
     /// Q49: a restart files its request from the issue text read when it applies.
     Restart {
@@ -441,6 +444,7 @@ impl Controller {
                     .unwrap()
                     .into(),
                 comment_issue: comment.value["issue"].as_u64().unwrap(),
+                question: None,
             });
             queue_comment(self, commit, correction);
             return Ok(None);
@@ -551,6 +555,12 @@ impl Controller {
                     revert: false,
                     since: origin.since.clone(),
                     comment_issue: origin.issue,
+                    question: match command {
+                        Command::Answer { question, .. } => {
+                            answered_question(snapshot, n.question, question)
+                        }
+                        _ => None,
+                    },
                 }),
             ));
         }
@@ -861,6 +871,30 @@ pub(crate) fn replacement_issue(
         labels: vec![],
         pull_request: None,
     })
+}
+
+/// #449: what the ingest agent is told about the question an answer replied to.
+fn answered_question(
+    snapshot: &Snapshot,
+    open: Option<tl3_kernel::Question>,
+    answered: u64,
+) -> Option<Value> {
+    let open = open.filter(|open| open.id == answered)?;
+    let context = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "question_context" && row.id == answered.to_string())
+        .map(|row| &row.value);
+    let mut question = json!({"id": open.id, "kind": question(open.kind).0});
+    for field in ["pieces", "findings"] {
+        if let Some(value) = context
+            .and_then(|context| context.get(field))
+            .filter(|v| !v.is_null())
+        {
+            question[field] = value.clone();
+        }
+    }
+    Some(question)
 }
 
 /// The request state the classifier reads, and that console commands are checked against.

@@ -197,7 +197,8 @@ def test_model_receives_review_material_and_confined_read_results(review_request
     assert len(human) == 1
     assert json.loads(human[0].content) == review_request["inputs"]
     results = {message.name: message for message in observed[1] if message.type == "tool"}
-    for name in READ_TOOLS:
+    # diff needs a Git checkout; test_diff_tool.py covers it.
+    for name in READ_TOOLS - {"diff"}:
         assert results[name].status == "success"
         assert "greeting.py" in results[name].content or "goodbye" in results[name].content
     assert results["write"].status == "error"

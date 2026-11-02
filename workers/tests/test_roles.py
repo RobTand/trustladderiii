@@ -83,7 +83,7 @@ def test_registered_role_gets_exactly_its_tools_and_descriptions(tmp_path, monke
         args = {
             "recall": {"query": "greeting"}, "run_tests": {}, "list": {},
             "read": {"path": "hello.txt"}, "glob": {"pattern": "*.txt"},
-            "grep": {"pattern": "hello"}, "write": {"path": "new.txt", "content": "hello"},
+            "grep": {"pattern": "hello"}, "diff": {}, "write": {"path": "new.txt", "content": "hello"},
             "edit": {"path": "hello.txt", "old": "hello", "new": "edited"},
         }[name]
         calls.append({"name": name, "args": args, "id": name, "type": "tool_call"})
@@ -94,7 +94,9 @@ def test_registered_role_gets_exactly_its_tools_and_descriptions(tmp_path, monke
     assert len(observed) == 2
     results = [message for message in observed[-1] if message.type == "tool"]
     assert len(results) == len(names)
-    assert all(message.status == "success" for message in results)
+    # A role's run attaches the checkout diff reads; a bare fixture role has none.
+    assert all(message.status == "success" for message in results if message.name != "diff")
+    assert all(message.text == "diff is not available in this run." for message in results if message.name == "diff")
     assert events == [
         {"event": "progress", "unit": "model_turn"},
         *[{"event": "progress", "unit": "tool_result"} for _ in names],
