@@ -119,7 +119,9 @@ before it and every release a live run uses, and removes the rest. A redeploy
 of the same code keeps the earlier `previous`. The pre-#372 `app/` directory
 stays through the install that introduces releases, because the tl3d running
 during it still launches from `app/`. A later install removes it once no live
-run, `tl3.toml` or running tl3d uses it, and says which one kept it otherwise. Installs from
+run, `tl3.toml` or running tl3d uses it, and says which one kept it otherwise.
+A tl3d that is starting or running without a readable runtime config keeps it
+too. Installs from
 before #372 migrate the deploy-owned `app/` Python path in `tl3.toml`; an
 operator's own path is kept. If that line can't be rewritten, the install stops
 with an error before anything restarts. It downloads o200k_base in a new empty directory,
@@ -176,8 +178,11 @@ supervisor, so a deploy, config apply or crash of tl3d leaves runs alive. The
 restarted controller reattaches to them and accepts their replies. A worker
 started under one release may reply to the next; reply shapes stay compatible
 across one release. If `systemd-run` fails, the launch fails; it never falls
-back to a supervisor inside tl3d's cgroup. `deploy.py check` runs the same
-scope launch once to show the user bus and `systemd-run` work.
+back to a supervisor inside tl3d's cgroup. `deploy.py check` probes the
+`workers.launcher` that `tl3.toml` configures, bounded at 20 s. A throwaway
+probe must land in a scope of its own, outside the caller's cgroup, and
+`cgroup.kill` must end it, the same stop tl3d uses for a run. On failure the
+check names the cause, such as the launcher's last stderr line.
 
 To stop every run for maintenance, stop tl3d first, then the runs:
 
@@ -186,8 +191,9 @@ systemctl --user stop tl3d.service
 python3 ~/.local/share/tl3/deploy/deploy.py stop-runs
 ```
 
-`stop-runs` refuses while tl3d is active, because a running tl3d starts a new
-attempt for each stopped run once it proves the run is gone. It stops
+`stop-runs` refuses unless tl3d is `inactive` or `failed`, because a running or
+starting tl3d starts a new attempt for each stopped run once it proves the run
+is gone. It stops
 `tl3-workers.slice`, which kills each run's supervisor, worker and their
 descendants. When tl3d starts again, each stopped run counts as a failed run
 under the usual retry rules. Stop, Restart, pause and cancel still stop single
