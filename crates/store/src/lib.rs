@@ -1153,12 +1153,19 @@ fn check_schema(tx: &mut Transaction<'_>) -> Result<()> {
 }
 
 const LISTEN_KEEPALIVE_IDLE: Duration = Duration::from_secs(60);
+const LISTEN_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+const LISTEN_KEEPALIVE_RETRIES: u32 = 3;
 
-/// A LISTEN session idles for hours. Keepalives find a dead peer, so the
-/// session ends and its owner reconnects and drains.
+/// A LISTEN session idles for hours. Keepalives find a dead peer within
+/// 60 + 3 x 10 seconds, so the session ends and its owner reconnects and
+/// drains, instead of waiting on the kernel's default of minutes.
 fn listen_config(settings: &tl3_config::Store) -> Result<postgres::Config> {
     let mut config = config(settings, true)?;
-    config.keepalives_idle(LISTEN_KEEPALIVE_IDLE);
+    config
+        .keepalives(true)
+        .keepalives_idle(LISTEN_KEEPALIVE_IDLE)
+        .keepalives_interval(LISTEN_KEEPALIVE_INTERVAL)
+        .keepalives_retries(LISTEN_KEEPALIVE_RETRIES);
     Ok(config)
 }
 
