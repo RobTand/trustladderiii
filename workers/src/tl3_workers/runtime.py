@@ -24,6 +24,7 @@ from tl3_workers.contracts import read_json, read_reply, schema, validate
 from tl3_workers.roles import ROLES
 from tl3_workers.tools import Worktree, build_tools
 from tl3_workers.memory import Summary, current
+from tl3_workers.recall import redacted_memories
 from tl3_workers.exploration import ExplorationMiddleware
 from tl3_workers.turns import TurnControl, repaired
 from tl3_workers.session import is_unaccepted_session
@@ -194,6 +195,9 @@ def run(request, emit: Callable[[dict], None]):
 def _run(request, emit):
     role = ROLES[request["role"]]
     model = create_model(request)
+    if request["inputs"].get("memories"):
+        request = {**request, "inputs": {**request["inputs"],
+                                         "memories": redacted_memories(request["inputs"]["memories"])}}
     if role.prepare_inputs is not None:
         request = {**request, "inputs": role.prepare_inputs(request["inputs"], request)}
     with Worktree(request["worktree"]) if role.tools else nullcontext() as worktree:
