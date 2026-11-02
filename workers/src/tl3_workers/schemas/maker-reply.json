@@ -46,6 +46,7 @@
     },
     {
       "type": "object",
+      "description": "Only when no change within the declared files and your own tools can meet a goal, or the plan is defective. Not for unfinished steps your own tools can do.",
       "properties": {"kind": {"const": "cant_meet"}, "report": {"$ref": "#/$defs/text"}},
       "required": ["kind", "report"], "additionalProperties": false
     },

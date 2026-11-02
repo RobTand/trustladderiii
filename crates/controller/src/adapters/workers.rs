@@ -288,7 +288,9 @@ impl Supervisor {
                             .cloned(),
                     );
                 if !feedback.as_array().unwrap().is_empty() {
-                    inputs["feedback"] = feedback;
+                    let head = delivery.head_sha.as_deref().filter(|_| delivery.round == 1);
+                    let items = feedback.as_array_mut().map(std::mem::take).unwrap();
+                    inputs["feedback"] = json!(crate::findings::bounded_feedback(items, head));
                 }
             }
             if let Some(conflict) = snapshot
@@ -315,7 +317,14 @@ impl Supervisor {
             );
             let reviewed = current.head;
             let has_current = !current.findings.is_empty();
-            let current = json!(current.findings);
+            // The full text is in feedback; the maker maps these ids in done.reproductions.
+            let current = json!(
+                current
+                    .findings
+                    .iter()
+                    .map(|f| json!({"id": f["id"], "reviewed_sha": f["reviewed_sha"]}))
+                    .collect::<Vec<_>>()
+            );
             if has_current {
                 inputs["reviewed_sha"] = json!(reviewed);
             }
