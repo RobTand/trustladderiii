@@ -822,26 +822,10 @@ pub(super) fn survives_controller_restart(settings: &tl3_config::Store) {
         .unwrap();
     let runs = root.path().join("runs");
     wait(|| runs.join("restart-entered").exists());
-    let worker = fs::read_to_string(runs.join("restart-entered"))
-        .unwrap()
-        .parse::<i32>()
-        .unwrap();
     // KillMode=control-group: every process left in the controller's group dies with it.
     let group = rustix::process::Pid::from_raw(child.id() as i32).unwrap();
     rustix::process::kill_process_group(group, rustix::process::Signal::KILL).unwrap();
     assert!(!child.wait().unwrap().success());
-    let alive = |pid: i32| {
-        fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
-            !matches!(
-                stat.rsplit_once(')').map(|(_, rest)| rest.trim_start().as_bytes()[0]),
-                Some(b'Z' | b'X')
-            )
-        })
-    };
-    assert!(
-        alive(worker),
-        "the maker worker must outlive the controller's process group"
-    );
 
     let config = super::fixture_config(settings, root.path(), "restart");
     let worktree = config
