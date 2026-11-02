@@ -558,7 +558,7 @@ def test_prompt_states_forced_reproduction_for_deflakes():
     assert "fails by assertion on the base under the forcing" in prompt
     assert "passes on the change both with and without the forcing" in prompt
     assert "Repeating a test until it fails does not count" in prompt
-    assert "regression or behavior-preserving checks that fit the evidence" not in prompt
+    assert "A change to tests alone needs a forced reproduction (Q55, #393)" in prompt
 
 
 PID_FORCING = {
@@ -772,8 +772,14 @@ def test_corrected_plan_declares_its_edit(tmp_path, planner_request, digests_pla
     assert reply['violations'] == []
 
 
-def test_test_only_change_answers_cant_meet_naming_393(planner_request, digests_plan):
-    # PB #2625's shape: a deflake that patches only the flaky test can't demonstrate.
+TEST_ONLY = ("A change to tests alone needs a forced reproduction (Q55) on its demonstrating check; "
+             "if no forcing can be written, return can't meet.")
+FORCING = {'symptom': 'Another process holds the module lock while digests import.', 'environment': {},
+           'patches': [{'target': 'digests.LOCK_HELD', 'value': True}]}
+
+
+def test_test_only_change_without_a_forcing_needs_a_forced_reproduction(planner_request, digests_plan):
+    # PB #2625's shape: a deflake that patches only the flaky test can't demonstrate unforced (#444, Q55).
     digests_plan['files'] = [DIGESTS]
     digests_plan['edits_tests'] = [FROZEN]
     digests_plan['checks'] = [
@@ -781,8 +787,28 @@ def test_test_only_change_answers_cant_meet_naming_393(planner_request, digests_
         {'kind': 'regression', 'node_ids': [SIBLING], 'goal_ids': [1]},
     ]
     violations = planned(planner_request, digests_plan)
-    assert any('changes only tests' in item and "can't meet" in item and '#393' in item
-               for item in violations), violations
+    assert any('changes only tests' in item and TEST_ONLY in item for item in violations), violations
+    assert not any('#393' in item for item in violations), violations
+
+
+def test_test_only_change_with_a_forced_reproduction_is_accepted(planner_request, digests_plan):
+    # Q55: the same deflake with a forcing on its demonstrating check is a valid plan.
+    digests_plan['files'] = [DIGESTS]
+    digests_plan['edits_tests'] = [FROZEN]
+    digests_plan['checks'] = [
+        {'kind': 'demonstrating', 'node_ids': [FROZEN], 'goal_ids': [0], 'forcing': copy.deepcopy(FORCING)},
+        {'kind': 'regression', 'node_ids': [SIBLING], 'goal_ids': [1]},
+    ]
+    validate('planner-reply', digests_plan)
+    assert planned(planner_request, copy.deepcopy(digests_plan)) == []
+    # Every demonstrating check needs the forcing, and it must be valid.
+    digests_plan['checks'].append({'kind': 'demonstrating', 'node_ids': [SIBLING], 'goal_ids': [0]})
+    assert any(TEST_ONLY in item for item in planned(planner_request, copy.deepcopy(digests_plan)))
+    digests_plan['checks'].pop()
+    digests_plan['checks'][0]['forcing']['patches'][0] = {'target': 'digests.f', 'raises': 'AssertionError'}
+    violations = planned(planner_request, digests_plan)
+    assert any(TEST_ONLY in item for item in violations), violations
+    assert any(item.startswith('Invalid forcing:') for item in violations), violations
 
 
 def test_plan_schema_allows_edits_tests_only_on_a_leaf():
@@ -843,7 +869,7 @@ def test_test_only_leaf_whose_goal_names_a_frozen_test_answers_cant_meet(planner
     digests_plan['files'] = [DIGESTS]
     digests_plan['checks'] = [{'kind': 'regression', 'node_ids': [FROZEN, SIBLING], 'goal_ids': [0, 1]}]
     violations = planned(planner_request, copy.deepcopy(digests_plan))
-    assert any('changes only tests' in item and '#393' in item for item in violations), violations
+    assert any('changes only tests' in item and TEST_ONLY in item for item in violations), violations
     digests_plan['files'] = ['digests.py', DIGESTS]
     assert planned(planner_request, digests_plan) == []
 
@@ -856,7 +882,7 @@ def test_test_only_leaf_cannot_demonstrate(planner_request, digests_plan):
         {'kind': 'regression', 'node_ids': [SIBLING], 'goal_ids': [1]},
     ]
     violations = planned(planner_request, digests_plan)
-    assert any('changes only tests' in item and '#393' in item for item in violations), violations
+    assert any('changes only tests' in item and TEST_ONLY in item for item in violations), violations
 
 
 def test_test_only_regression_plan_is_accepted(planner_request, digests_plan):
