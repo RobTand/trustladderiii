@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -12,7 +13,7 @@ import tempfile
 
 from tl3_harness import execution
 from tl3_harness.node_ids import selects
-from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, infrastructure
+from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, infrastructure, options
 from tl3_harness.trees import export
 
 
@@ -52,6 +53,13 @@ def _selectors(tests):
                 or any(part in ("..", ".git") for part in PurePosixPath(path).parts)):
             raise ValueError("Use relative pytest paths or node IDs")
     return tuple(dict.fromkeys(tests))
+
+
+def _priority(priority):
+    # PrismaBuild runs a higher priority sooner. TL3's checks run at -10; requests stay at or below default.
+    if priority is not None and (type(priority) is not int or not -10 <= priority <= 0):
+        raise ValueError("Use priority -10 to 0, or leave it out for PrismaBuild's default")
+    return priority
 
 
 def _stage(worktree, root, base_sha=None):
@@ -99,6 +107,8 @@ def _stage(worktree, root, base_sha=None):
         commands.append(("commit", "--quiet", "-m", "Freeze test input"))
     for args in commands:
         _git(root, *args)
+    # The tested tree: the maker binds evidence to a head only when its tree matches.
+    return _git(root, "write-tree", "--prefix=checkout/").strip()
 
 
 def _git(root, *args):
@@ -108,12 +118,12 @@ def _git(root, *args):
                GIT_EDITOR="true", GIT_SEQUENCE_EDITOR="true",
                GIT_AUTHOR_NAME="TL3", GIT_AUTHOR_EMAIL="tl3@example.invalid",
                GIT_COMMITTER_NAME="TL3", GIT_COMMITTER_EMAIL="tl3@example.invalid")
-    subprocess.run(["git", "--no-replace-objects", "-c", "core.hooksPath=/dev/null",
-                    "-c", "credential.helper=", "-c", "protocol.allow=never",
-                    "-c", "protocol.file.allow=always", "-c", "core.fsmonitor=false",
-                    "-c", "commit.gpgsign=false", *args],
-                   cwd=root, env=env, check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return subprocess.run(["git", "--no-replace-objects", "-c", "core.hooksPath=/dev/null",
+                          "-c", "credential.helper=", "-c", "protocol.allow=never",
+                          "-c", "protocol.file.allow=always", "-c", "core.fsmonitor=false",
+                          "-c", "commit.gpgsign=false", *args],
+                         cwd=root, env=env, check=True, text=True,
+                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
 
 
 def _json_command(command):
@@ -148,7 +158,10 @@ def _summary(ending, key):
         raise ValueError("PrismaBuild returned no unique test summary")
     result = json.loads(records[0])
     result["action_key"] = key
-    if (result["status"] not in ("completed", "infrastructure_error")
+    # What a maker cites and a reviewer can check against PrismaBuild's own record.
+    result["receipts"] = [{"action_key": key, "status": ending["status"], "exit_code": ending["exit_code"],
+                           "receipt_sha256": evidence["receipt_sha256"], "log_sha256": log["sha256"]}]
+    if (result["status"] not in ("completed", "infrastructure_error", "not_available")
             or len(json.dumps(result).encode()) > SUMMARY_BYTES):
         raise ValueError("PrismaBuild returned an invalid test summary")
     return result
@@ -161,7 +174,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
     regressions = tuple(test for check in getattr(worktree, "test_checks", ())
                         if check["kind"] == "regression" for test in check["tests"])
 
-    def wait(key, base, base_sha):
+    def wait(key, base, base_sha, tree):
         # pbwait's observation allowance is not an execution deadline.
         # Reattach to the same action whenever that allowance expires.
         while True:
@@ -184,12 +197,16 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
                 result = _summary(endings[0], key)
                 if base:
                     result["base_sha"] = base_sha
+                if tree is not None:
+                    result["tree"] = tree
                 return result
             if endings[0]["status"] not in ("waiting", "executed", "cache_hit"):
                 raise ValueError("PrismaBuild could not verify completion")
 
-    def run(tests, base=False):
+    def run(tests, base=False, repeat=1, parallel=0, priority=None):
         selected = _selectors([] if tests is None else tests)
+        repeat, parallel = options(repeat, parallel)
+        priority = _priority(priority)
         key = None
         try:
             if not isinstance(settings, TestSettings):
@@ -200,15 +217,18 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
                          or getattr(worktree, "test_checkout", None) is None):
                 return infrastructure("The role did not supply a check base and checkout.")
             # A resumed maker visit waits on the action its interrupted call submitted.
-            key = getattr(worktree, "pb_reattach", {}).pop(base, None)
-            if key is not None:
-                return wait(key, base, base_sha)
+            reattach = getattr(worktree, "pb_reattach", {}).pop(base, None)
+            if reattach is not None:
+                key, tree = reattach
+                return wait(key, base, base_sha, tree)
             with tempfile.TemporaryDirectory(prefix="tl3-test-input-") as temporary:
                 root = Path(temporary)
-                _stage(worktree, root, base_sha)
+                tree = _stage(worktree, root, base_sha)
+                # Each xdist worker reserves a core and the image's memory.
                 command = [sys.executable, str(Path(settings.tools_path) / "pbrun.py"),
-                           "--cwd", str(root), "--anywhere", "--cpus", str(settings.cpus),
-                           "--demand", f"mem_gb={settings.mem_gb}",
+                           "--cwd", str(root), "--anywhere", "--cpus", str(max(settings.cpus, parallel)),
+                           "--demand", f"mem_gb={settings.mem_gb * max(1, parallel)}",
+                           *(("--priority", str(priority)) if priority is not None else ()),
                            "--container-image", settings.image,
                            "--progress-phase", f"tests={settings.quiet_seconds}",
                            "--env", "OMP_NUM_THREADS=1", "--env", "MKL_NUM_THREADS=1",
@@ -216,6 +236,14 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
                            "python3", "-I", "-B", "action.py", settings.image, json.dumps(selected)]
                 if settings.exec_scratch:
                     command.append("--exec-scratch")
+                # Defaults add nothing, so a default call keeps its action identity.
+                if repeat != 1:
+                    command.extend(["--repeat", str(repeat)])
+                if parallel:
+                    command.extend(["--parallel", str(parallel)])
+                # PrismaBuild replays a stored result for a known action key; repeats must run.
+                if repeat > 1:
+                    command.extend(["--fresh", secrets.token_hex(16)])
                 code, submitted = _json_command(command)
                 if code or submitted.get("schema") not in (
                         "prismabuild.submission.v1", "prismaquant.prismabuild.pbrun_detach.v1"):
@@ -224,23 +252,25 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
                 if not isinstance(key, str) or not re.fullmatch("[0-9a-f]{64}", key):
                     key = None
                     raise ValueError("PrismaBuild returned an invalid action key")
-                getattr(worktree, "pb_submitted", lambda key, base: None)(key, base)
-                return wait(key, base, base_sha)
+                getattr(worktree, "pb_submitted", lambda key, base, tree: None)(key, base, tree)
+                return wait(key, base, base_sha, tree)
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
             result = infrastructure("PrismaBuild submission, execution or verified result retrieval failed.")
             if key:
                 result["action_key"] = key
             return result
 
-    def run_tests(tests: list[str] | None = None, base: bool = False) -> dict:
+    def run_tests(tests: list[str] | None = None, base: bool = False, repeat: int = 1,
+                  parallel: int = 0, priority: int | None = None) -> dict:
         """Run pytest; automatically compare failures with the role's check base."""
-        result = run(tests, base)
+        result = run(tests, base, repeat, parallel, priority)
         if base or result["status"] != "completed":
             return result
         failed = [item for item in result["tests"] if item["outcome"] in ("failed", "error")]
         if not failed:
             return result
-        baseline = run([item["test"] for item in failed], True)
+        # One plain base run says whether a failure is new; it keeps the request's priority.
+        baseline = run([item["test"] for item in failed], True, priority=priority)
         result["base"] = {key: value for key, value in baseline.items() if key != "tests"}
         outcomes = {item["test"]: item for item in baseline["tests"]}
         for item in failed:

@@ -14,6 +14,18 @@ SUMMARY_BYTES = 16_384
 MESSAGE_CHARS = 1_000
 PREFIX = "TL3_TEST_SUMMARY "
 OUTCOMES = ("passed", "failed", "error", "skipped")
+# A repeated test reports its worst outcome across runs.
+WORST = ("passed", "skipped", "failed", "error")
+RUN_FAILURES = 20
+
+
+def options(repeat, parallel):
+    """#408's bounds: fresh pytest processes, and xdist workers per process."""
+    if type(repeat) is not int or not 1 <= repeat <= 10:
+        raise ValueError("Use repeat 1 to 10 fresh pytest runs")
+    if type(parallel) is not int or parallel and not 2 <= parallel <= 4:
+        raise ValueError("Use parallel 2 to 4 xdist workers, or 0 for one pytest process")
+    return repeat, parallel
 
 
 def infrastructure(message, origin=None):
@@ -31,10 +43,13 @@ class Summary:
         self.result = {"status": "completed", "tests": [],
                        "totals": dict.fromkeys(OUTCOMES, 0), "note": ""}
         self.omitted = False
+        # Every test's outcome, including entries the size bound drops; repeats aggregate these.
+        self.outcomes = {}
 
     def add(self, test, outcome, message="", truncated=False):
         self.result["totals"][outcome] += 1
         item = {"test": test, "outcome": outcome, "message": message[:MESSAGE_CHARS]}
+        self.outcomes[test] = item
         clipped = truncated or len(message) > MESSAGE_CHARS
         self.result["tests"].append(item)
         # Leave space for totals, the action key and the truncation notice.
@@ -45,17 +60,19 @@ class Summary:
             self.result["note"] = "Truncated: test entries or failure messages were cut. Totals include all results."
 
 
-def run_current(tree, container, tests):
+def run_current(tree, container, tests, parallel=0, summary=None):
     require_admission()
-    summary = Summary()
+    summary = Summary() if summary is None else summary
     missing = {test for test in tests if not (tree / test.split("::", 1)[0]).exists()}
     if missing:
         for test in sorted(missing):
             summary.add(test, "error", f"Selector not found: {test}")
         return summary.result
     progress = Progress()
-    command = container_command(tree, container, tests) + ["--summary"]
+    flags = [f"--parallel={parallel}"] if parallel else []
+    command = container_command(tree, container, tests) + flags + ["--summary"]
     started = finished = False
+    unavailable = None
     seen = set()
     collection_error = False
     with tempfile.TemporaryFile() as selection:
@@ -88,6 +105,9 @@ def run_current(tree, container, tests):
                         collection_error = True
                         summary.add(record["test"], "error", record["message"], record["truncated"])
                         progress.commit(record["test"])
+                    elif (record.get("event") == "unavailable" and parallel and unavailable is None
+                          and set(record) == {"event", "message"} and isinstance(record["message"], str)):
+                        unavailable = record["message"][:MESSAGE_CHARS]
                     elif record.get("event") == "finish" and set(record) == {"event", "exit_code"}:
                         finished = True
                         reported_exit = record["exit_code"]
@@ -100,6 +120,8 @@ def run_current(tree, container, tests):
                         or code == 0 and (summary.result["totals"]["failed"] or summary.result["totals"]["error"])
                         or code == 1 and not (summary.result["totals"]["failed"] or summary.result["totals"]["error"])):
                     raise ValueError("incomplete or inconsistent report")
+                if unavailable is not None and (code or seen or collection_error):
+                    raise ValueError("unavailable run reported tests")
             except (ValueError, KeyError, TypeError):
                 child.terminate()
                 code = child.wait()
@@ -109,6 +131,9 @@ def run_current(tree, container, tests):
                 return infrastructure("The test run ended without a complete report; the code under "
                                       "test may have stopped pytest. No test verdict is available.",
                                       origin="test_run")
+        if unavailable is not None:
+            return {"status": "not_available", "message": unavailable, "tests": [],
+                    "totals": dict.fromkeys(OUTCOMES, 0), "note": ""}
         if code == 4:
             for test in tests:
                 summary.add(test, "error", f"Selector not found: {test}")
@@ -117,15 +142,58 @@ def run_current(tree, container, tests):
         return summary.result
 
 
+def run(tree, container, tests, *, repeat=1, parallel=0):
+    """Run the tests `repeat` times, each a fresh pytest process, optionally under xdist."""
+    repeat, parallel = options(repeat, parallel)
+    extra = {"parallel": parallel} if parallel else {}
+    if repeat == 1:
+        return {**run_current(tree, container, tests, parallel), **extra}
+    runs, worst, notes = [], {}, []
+    for number in range(1, repeat + 1):
+        outcomes = Summary()
+        result = run_current(tree, container, tests, parallel, outcomes)
+        if result["status"] != "completed":
+            # No verdict from this run, so none for the repeat.
+            result["message"] = f"Run {number} of {repeat}: {result['message']}"
+            return {**result, "repeat": repeat, **extra, "runs": runs}
+        failed = [item["test"] for item in outcomes.outcomes.values() if item["outcome"] in ("failed", "error")]
+        runs.append({"run": number, "status": "completed", "totals": result["totals"],
+                     "failed": failed[:RUN_FAILURES]})
+        for item in outcomes.outcomes.values():
+            if item["test"] not in worst or WORST.index(item["outcome"]) > WORST.index(worst[item["test"]]["outcome"]):
+                worst[item["test"]] = item
+        notes.append(result["note"])
+    summary = Summary()
+    summary.result.update(repeat=repeat, **extra, runs=runs)
+    clipped = False
+    # Keep the run list within half the summary; later runs give up failure ids first.
+    for entry in reversed(runs):
+        while entry["failed"] and len(json.dumps(runs).encode()) > SUMMARY_BYTES // 2:
+            entry["failed"].pop()
+            clipped = True
+    for item in worst.values():
+        summary.add(item["test"], item["outcome"], item["message"])
+    note = summary.result["note"] or next((note for note in notes if note), "")
+    if clipped or any(note.startswith("Truncated") for note in notes):
+        note = "Truncated: test entries or failure messages were cut. Totals include all results."
+    summary.result["note"] = note
+    return summary.result
+
+
 def main():
     # This file is copied with the trusted harness, outside the served tree.
     parser = argparse.ArgumentParser()
     parser.add_argument("image")
     parser.add_argument("selectors")
     parser.add_argument("--exec-scratch", action="store_true")
+    parser.add_argument("--repeat", type=int, default=1)
+    parser.add_argument("--parallel", type=int, default=0)
+    # A per-call value that only makes the PrismaBuild action key unique, so repeats run fresh.
+    parser.add_argument("--fresh")
     args = parser.parse_args()
     try:
-        result = run_current(Path("checkout").resolve(), Container(args.image, exec_scratch=args.exec_scratch), tuple(json.loads(args.selectors)))
+        result = run(Path("checkout").resolve(), Container(args.image, exec_scratch=args.exec_scratch),
+                     tuple(json.loads(args.selectors)), repeat=args.repeat, parallel=args.parallel)
     except (OSError, RuntimeError, ValueError):
         result = infrastructure("Test infrastructure failed before a complete report was available.")
     print(PREFIX + json.dumps(result), flush=True)

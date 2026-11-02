@@ -67,6 +67,15 @@
         "overhead_tokens"
       ],
       "additionalProperties": false
+    },
+    "protected_paths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "description": "Effective defaults, global and repository protected-path patterns. These edits belong outside TL3."
     }
   },
   "required": [

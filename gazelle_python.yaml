@@ -21,6 +21,7 @@ manifest:
     deepagents: deepagents
     distro: distro
     docstring_parser: docstring_parser
+    execnet: execnet
     filetype: filetype
     google.auth: google_auth
     google.genai: google_genai
@@ -125,9 +126,10 @@ manifest:
     uuid_utils: uuid_utils
     wcmatch: wcmatch
     websockets: websockets
+    xdist: pytest_xdist
     xxhash: xxhash
     yaml: pyyaml
     zstandard: zstandard
   pip_repository:
     name: tl3_pip
-integrity: ae08d9bb3f03e0b16171378e3a7fc3fc276b2228cd6f9b39440df29d61e2a3f8
+integrity: 046355b9c6191a2011fa7fb5b6402634236726cf619b8044b922c9c14841da83

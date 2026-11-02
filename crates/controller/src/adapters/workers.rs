@@ -288,7 +288,9 @@ impl Supervisor {
                             .cloned(),
                     );
                 if !feedback.as_array().unwrap().is_empty() {
-                    inputs["feedback"] = feedback;
+                    let head = delivery.head_sha.as_deref().filter(|_| delivery.round == 1);
+                    let items = feedback.as_array_mut().map(std::mem::take).unwrap();
+                    inputs["feedback"] = json!(crate::findings::bounded_feedback(items, head));
                 }
             }
             if let Some(conflict) = snapshot
@@ -315,7 +317,14 @@ impl Supervisor {
             );
             let reviewed = current.head;
             let has_current = !current.findings.is_empty();
-            let current = json!(current.findings);
+            // The full text is in feedback; the maker maps these ids in done.reproductions.
+            let current = json!(
+                current
+                    .findings
+                    .iter()
+                    .map(|f| json!({"id": f["id"], "reviewed_sha": f["reviewed_sha"]}))
+                    .collect::<Vec<_>>()
+            );
             if has_current {
                 inputs["reviewed_sha"] = json!(reviewed);
             }
@@ -376,6 +385,10 @@ impl Supervisor {
             inputs.remove("original_issue");
         }
         if matches!(role, "ingest" | "audit") {
+            inputs["protected_paths"] = json!(
+                self.protected_paths
+                    .for_repository(&delivery.repository, &self.planning.protected_paths)?
+            );
             // Cached simulation materials may still contain inline fixture text.
             if let Some(repo) = inputs["repo"].as_object_mut() {
                 repo.remove("materials");
@@ -747,6 +760,11 @@ impl Supervisor {
         let Some(role) = role else {
             return Err(Error::Invalid("unsupported worker role"));
         };
+        if let Reconciliation::Found(completion) =
+            super::record::Records::new(&self.records_root).reconcile(delivery)?
+        {
+            return Ok(completion);
+        }
         let root = self.root(&delivery.key);
         let previous = latest(&root)?;
         let result = match &previous {
@@ -776,6 +794,21 @@ impl Supervisor {
             Reconciliation::Absent => {}
         }
         let mut request = self.request(delivery, role, &mut store, &snapshot)?;
+        if role == "ingest"
+            && let Some(reply) = crate::protected_requests::ingest_preflight(&request["inputs"])
+        {
+            return super::record::Records::new(&self.records_root).deliver(
+                delivery,
+                Completion::confirmed(vec![Observation::WorkerReply {
+                    node: delivery.node(),
+                    generation: delivery.generation,
+                    role: role.into(),
+                    reply,
+                    model: None,
+                }]),
+            );
+        }
+
         let attempt_number = previous.map_or(0, |(n, _)| n + 1);
         request["prompt"] = crate::prompts::for_run(&mut store, &delivery.key, role)?;
         store.claim_worker(
@@ -1010,6 +1043,12 @@ impl Executor for Supervisor {
 
 impl Supervisor {
     fn reconcile_run(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        if let found @ Reconciliation::Found(_) =
+            super::record::Records::new(&self.records_root).reconcile(delivery)?
+        {
+            return Ok(found);
+        }
+
         let result = match latest(&self.root(&delivery.key))? {
             Some((_, attempt)) => inspect(&attempt, delivery)?,
             None => Reconciliation::Absent,
