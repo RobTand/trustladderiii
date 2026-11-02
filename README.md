@@ -24,37 +24,28 @@ It does not rebase or force-push the branch. This repo's bootstrap queue follows
 [PrismaBuild's configuration](https://github.com/RobTand/prismabuild/blob/main/.mergify.yml).
 Served repos' exact-head approval policy is a separate controller integration.
 
-## Light CI checks
+## CI gate
 
-`.github/workflows/light-checks.yml` runs on GitHub-hosted Ubuntu runners for
-every PR and push to `main`. It needs only read access to repository contents.
-Branch protection should require the GitHub Actions checks `Rust` and `Python`.
-The coordinator applies branch protection after review.
+`.github/workflows/gate.yml` runs on every PR, every Mergify queue draft and
+every push to `main`. Branch protection and Mergify's `merge_conditions`
+require the checks `Rust` and `Python`.
 
-- `Rust` discovers every tracked `Cargo.toml` outside `spikes/` and `fixtures/`.
-  Cargo metadata groups members by workspace, so each workspace runs once.
-  It runs rustfmt, Clippy with warnings denied, and unit and integration tests
-  for all targets. Commit the lockfile for each standalone crate or workspace.
-  Adding the root workspace requires no workflow edit.
-- `Python` lints every tracked Python file outside `spikes/` and `fixtures/`
-  with Ruff's syntax and Pyflakes rules. It discovers every `pyproject.toml`
-  outside `spikes/` and `fixtures/`, requires a `[project]` table, installs each
-  project with uv, and runs pytest in it. Each file belongs to its nearest
-  ancestor project, so parent pytest runs exclude nested projects.
-  It uses `uv.lock` when present, default dependency groups, and the `test` extra
-  when declared. Other directories containing `test_*.py` run through unittest.
-  `tools/board.py` gets the same lint check as the packages.
+- **Bazel** runs on BuildBuddy: the client on a Remote Bazel runner, every
+  build and test action on remote execution. It diffs the queue-aware base and
+  head with bazel-diff, runs the impacted tests, and uploads the impacted
+  Bazel packages to Mergify as the PR's scopes. Build, lock and workflow
+  changes test everything. Detection that cannot say what to test fails.
+- **Rust** requires Bazel's Rust tests, rustfmt and Clippy with warnings
+  denied, and the feature and Kani compiles.
+- **Python** requires Bazel's Python tests, Ruff's syntax and Pyflakes rules,
+  and the lock checks.
+- **Post-merge full run**: each push to `main` runs every test on amd64 and
+  then on arm64, and records whether the merged PRs' own selection included
+  any failing test.
 
-New crates and Python packages need no CI list entry. Keep light Python tests
-in each package's normal pytest suite. Container or service verification belongs
-in separate fleet scripts, such as `harness/tools/verify.py`. Deliberately broken
-test fixtures and historical spikes are excluded from discovery and linting.
-The harness's ordinary unit suite runs here; its container verification and all
-Kani proofs stay outside these light checks. Ticket #8 adds proof CI.
-
-The runner calls `python tools/ci/check.py rust` and `python tools/ci/check.py python`.
-Development verification of these commands must run through PrismaBuild under
-Rob's execution policy. GitHub CI itself does not submit to PrismaBuild.
+[docs/bazel.md](docs/bazel.md) explains how to run tests and how to add one.
+New crates and test files are discovered; generated inputs and test parity
+fail CI with the one command that fixes them.
 
 If Mergify posts no check or comment on the first PR, open
 [Mergify's installation page](https://github.com/apps/mergify/installations/new),

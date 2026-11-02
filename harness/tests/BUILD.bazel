@@ -1,0 +1,103 @@
+load("//tools/bazel:python.bzl", "tl3_py_test")
+
+tl3_py_test(
+    name = "test_exec_scratch",
+    srcs = ["test_exec_scratch.py"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_git_environment",
+    srcs = ["test_git_environment.py"],
+    deps = ["//harness/src/tl3_harness"],
+)
+
+tl3_py_test(
+    name = "test_harness",
+    srcs = ["test_harness.py"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_inventory",
+    srcs = ["test_inventory.py"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_node_id_vectors",
+    srcs = ["test_node_id_vectors.py"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_parametrized_checks",
+    srcs = ["test_parametrized_checks.py"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_prepare_image",
+    srcs = ["test_prepare_image.py"],
+    deps = ["@tl3_pip//pytest"],
+)
+
+tl3_py_test(
+    name = "test_report_limits",
+    srcs = ["test_report_limits.py"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_review_fixes",
+    srcs = ["test_review_fixes.py"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_scratch",
+    srcs = ["test_scratch.py"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_test_tool",
+    srcs = ["test_test_tool.py"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+filegroup(
+    name = "fixtures",
+    srcs = glob(
+        ["fixtures/**"],
+        exclude = ["**/__pycache__/**"],
+    ),
+    visibility = ["//visibility:public"],
+)
