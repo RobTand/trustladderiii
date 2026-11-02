@@ -318,6 +318,8 @@ def run(command, **kwargs):
 
 def install(args):
     home = args.home
+    # An npm failure stops here, before any binary, config or service changes.
+    build_console_assets()
     root, config, _ = paths(home)
     private_dir(config)
     private_dir(root)
@@ -359,11 +361,16 @@ def install(args):
     print("Units installed; config parses. Run `deploy.py check` for Config::load and the credential checks.")
 
 
-def install_console_assets(home, source=SOURCE):
-    """Build the console's web app and swap it in whole. Rust builds never need Node."""
+def build_console_assets(source=SOURCE):
+    """Build the console's web app with npm. Rust builds never need Node."""
     web = source / "web"
     run(["npm", "ci", "--no-audit", "--no-fund"], cwd=web)
     run(["npm", "run", "build"], cwd=web)
+
+
+def install_console_assets(home, source=SOURCE):
+    """Swap the built web app in whole."""
+    web = source / "web"
     root = paths(home)[0]
     target = root / "console"
     staging = root / "console.new"
@@ -396,8 +403,10 @@ def service(home, name):
     cache = tomllib.loads(text)["workers"].get("tiktoken_cache_dir")
     if name == "controller" and cache:
         os.environ["TIKTOKEN_CACHE_DIR"] = cache
-    for source, filename in ((config / "secrets/postgres-password", "postgres-password"),
-                             (config / "secrets/console-postgres-password", "console-postgres-password"),
+    # Only the console's unit loads its credential. The database service reads it
+    # in place, so a missing file can't fail tl3-postgres.
+    console = ((config / "secrets/console-postgres-password", "console-postgres-password"),) if name == "console" else ()
+    for source, filename in ((config / "secrets/postgres-password", "postgres-password"), *console,
                              (config / "github-app.json", "github-app.json"),
                              (config / "secrets/model-key", "model-key"),
                              (config / "secrets/hindsight-key", "hindsight-key")):

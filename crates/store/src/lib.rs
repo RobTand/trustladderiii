@@ -963,6 +963,8 @@ pub fn grant_reader(
     }
     let mut client = connect(settings, false)?;
     let mut tx = client.transaction()?;
+    // The password is in the statement text below; a failure must not log it.
+    tx.batch_execute("SET LOCAL log_min_error_statement = panic")?;
     // Utility statements take no parameters, so Postgres quotes the password.
     let password: String = tx
         .query_one("SELECT quote_literal($1)", &[&password])?
@@ -977,7 +979,8 @@ pub fn grant_reader(
          GRANT USAGE ON SCHEMA public TO {role};
          REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {role};
          GRANT SELECT ON ALL TABLES IN SCHEMA public TO {role};
-         ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO {role};"
+         ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO {role};
+         ALTER ROLE {role} SET default_transaction_read_only = on;"
     ))?;
     tx.commit()?;
     Ok(())

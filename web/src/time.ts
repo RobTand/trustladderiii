@@ -12,14 +12,27 @@ export function elapsed(ms: number): string {
 }
 
 /**
- * The wall clock for relative times on screen, refreshed each minute. It only
- * redraws labels; board data changes arrive on the event stream.
+ * The wall clock for relative times on screen, refreshed each minute while
+ * the tab is visible. It only redraws labels; board data changes arrive on
+ * the event stream, which also pauses while the tab is hidden.
  */
 export function useNow(): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
-    return () => window.clearInterval(timer);
+    let timer: number | undefined;
+    const follow = () => {
+      window.clearInterval(timer);
+      timer = undefined;
+      if (document.hidden) return;
+      setNow(Date.now());
+      timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    };
+    follow();
+    document.addEventListener("visibilitychange", follow);
+    return () => {
+      document.removeEventListener("visibilitychange", follow);
+      window.clearInterval(timer);
+    };
   }, []);
   return now;
 }

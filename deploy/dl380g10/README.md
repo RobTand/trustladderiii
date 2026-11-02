@@ -192,17 +192,21 @@ event log, so it can restart at any time without touching `tl3d`.
 
 The installer creates the login's password at
 `~/.config/tl3/secrets/console-postgres-password` (0600, once, never
-replaced). Each start of `tl3-postgres.service` creates or updates the login
-and its grants (`tl3-deploy database`), and `deploy.py install` does the same
-right away when Postgres is already running (`tl3-deploy console-role`). Both
-are safe to repeat. The console's unit loads only that credential, not the
-store owner's. If any of the console's threads stops, the process exits and
+replaced). `deploy.py install` creates or updates the login and its grants
+when Postgres is running (`tl3-deploy console-role`), and fails if it can't.
+Each start of `tl3-postgres.service` does the same as a best effort
+(`tl3-deploy database`): it reads the file in place, and a missing file or a
+failed grant is logged as "console login not granted", never a failed start,
+because tl3d and the status page require Postgres. Both are safe to repeat.
+Only the console's unit loads that credential, and it never loads the store
+owner's. The login's sessions default to read-only transactions as well. If any of the console's threads stops, the process exits and
 systemd restarts it. It updates when Postgres
 reports a commit (`LISTEN tl3_changes`), never on a timer, and reconnects by
 itself after Postgres or `tl3d` restarts.
 
-`deploy.py install` builds the web app with `npm ci` and `npm run build` in
-`web/`, then swaps `web/dist` into `~/.local/share/tl3/console`. Node 22 or
+`deploy.py install` first builds the web app with `npm ci` and `npm run build`
+in `web/`, so an npm failure leaves the existing installation untouched. After
+the binaries and config, it swaps `web/dist` into `~/.local/share/tl3/console`. Node 22 or
 newer and npm must be on the PATH. Cargo builds never need Node. The installer
 adds a `[console]` section to an existing `tl3.toml` with `listen` on the status
 address at port 8034, `assets` at the installed directory, and the console's

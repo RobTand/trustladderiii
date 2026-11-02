@@ -280,7 +280,12 @@ pub fn project(input: Input<'_>) -> Board {
         {
             expired.insert(request.id.0);
         }
-        cards.push(card(request, input.models));
+        cards.push(card(
+            request,
+            input.models,
+            &input.quota_resets,
+            input.now_ms,
+        ));
     }
     cards.sort_by_key(|card| card.id);
     let merged_within = |window: i64| {
@@ -333,7 +338,12 @@ impl From<StoredIncident> for CardIncident {
     }
 }
 
-fn card(request: Request, models: Option<&tl3_config::Models>) -> Card {
+fn card(
+    request: Request,
+    models: Option<&tl3_config::Models>,
+    quota_resets: &BTreeMap<String, u64>,
+    now_ms: i64,
+) -> Card {
     let node = &request.node;
     let title = plain(&request.title);
     let ending = match node.phase {
@@ -350,17 +360,20 @@ fn card(request: Request, models: Option<&tl3_config::Models>) -> Card {
             } else {
                 node.attempt.saturating_sub(1)
             };
-            // The step's configured model; the worker adapter chooses the same way.
-            crate::adapters::workers::ladder::candidates(
+            // The worker adapter chooses with the same two functions.
+            let ladder = crate::adapters::workers::ladder::candidates(
                 models,
                 role,
                 usize::from(rung),
                 node.review_restarted,
-                None,
+                request.maker_model.as_deref(),
             )
-            .ok()?
-            .first()
-            .copied()
+            .ok()?;
+            Some(crate::adapters::workers::ladder::running(
+                &ladder,
+                quota_resets,
+                u64::try_from(now_ms).unwrap_or(0),
+            ))
         })
         .map(|model| model.name.clone());
     let mut badges = BTreeSet::new();
@@ -691,6 +704,7 @@ impl Rows {
             .into_iter()
             .map(|row| (row.get(0), row.get(1)))
             .collect();
+        let mut maker_sessions = BTreeMap::new();
         let mut failed_notices = Vec::new();
         let mut bindings = BTreeMap::new();
         let mut incidents = Vec::new();
@@ -700,6 +714,9 @@ impl Rows {
                     failed_notices.push(crate::decode_stored::<FailedNotice>(row.value.clone())?)
                 }
                 "incidents" => incidents.push(crate::decode_stored::<Incident>(row.value.clone())?),
+                "maker_session" => {
+                    maker_sessions.insert(row.id.as_str(), &row.value);
+                }
                 // A binding that doesn't decode never counts as an issue's newest request.
                 "requests" => {
                     if let Ok(id) = row.id.parse::<u64>() {
@@ -754,9 +771,17 @@ impl Rows {
                 progress: details.as_ref().and_then(|d| d.progress.clone()),
                 worker_failure: details.as_ref().and_then(|d| d.worker_failure.clone()),
                 incidents: details.map(|d| d.incidents).unwrap_or_default(),
-                maker_model: None,
+                // The worker adapter reads the same session for this attempt.
+                maker_model: maker_sessions
+                    .get(index.to_string().as_str())
+                    .filter(|session| {
+                        session["attempt"] == node.attempt && session["replanned"] == node.replanned
+                    })
+                    .and_then(|session| session["model"].as_str())
+                    .map(str::to_owned),
             });
         }
+        rows.quota_resets = crate::adapters::workers::ladder::quota_resets(&snapshot);
         rows.unassigned_incidents = incidents
             .into_iter()
             .filter(|incident| incident.open && incident.node.is_none())

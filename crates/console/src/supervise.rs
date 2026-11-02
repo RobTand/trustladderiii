@@ -52,7 +52,7 @@ mod tests {
     #[test]
     fn a_panicking_thread_ends_the_wait() {
         let supervisor = Supervisor::new();
-        supervisor.spawn("http", || thread::park()).unwrap();
+        supervisor.spawn("http", thread::park).unwrap();
         supervisor
             .spawn("board", || panic!("simulated board failure"))
             .unwrap();

@@ -6,7 +6,6 @@ Before=tl3d.service tl3-status.service
 Type=forking
 UMask=0077
 LoadCredential=postgres-password:%h/.config/tl3/secrets/postgres-password
-LoadCredential=console-postgres-password:%h/.config/tl3/secrets/console-postgres-password
 RuntimeDirectory=tl3-postgres
 RuntimeDirectoryMode=0700
 ExecStartPre=/usr/bin/python3 %h/.local/share/tl3/deploy/deploy.py initdb

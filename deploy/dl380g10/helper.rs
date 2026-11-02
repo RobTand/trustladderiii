@@ -88,7 +88,12 @@ fn database(config: &tl3_config::Config) -> Result<()> {
     }
     tl3_store::Store::open(settings)?;
     println!("Postgres: database exists, fsync on, migrations applied");
-    console_role(config)
+    // This runs on every tl3-postgres start, which tl3d and the status page
+    // require. A console fault must never stop the database.
+    if let Err(error) = console_role(config) {
+        println!("Postgres: console login not granted: {error}");
+    }
+    Ok(())
 }
 
 /// The console reads through its own login, which may only read, including

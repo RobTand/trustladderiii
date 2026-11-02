@@ -368,9 +368,11 @@ impl Supervisor {
             .unwrap_or_default()
             .as_millis() as u64;
         let resets = ladder::quota_resets(snapshot);
-        let model = ladder::choose(&self.candidates(delivery, role, store, snapshot)?, |name| {
-            resets.get(name).is_some_and(|reset| *reset > now)
-        });
+        let model = ladder::running(
+            &self.candidates(delivery, role, store, snapshot)?,
+            &resets,
+            now,
+        );
         let mut request = json!({
             "protocol": 1,
             "operation": {"node": delivery.node().0, "generation": delivery.generation, "kind": role},

@@ -62,6 +62,18 @@ pub(super) fn choose<'a>(candidates: &[&'a Model], limited: impl Fn(&str) -> boo
         .unwrap_or(&candidates[0])
 }
 
+/// The model a step runs now: its first candidate whose announced quota
+/// reset hasn't passed. The worker adapter and the console's board share it.
+pub(crate) fn running<'a>(
+    candidates: &[&'a Model],
+    resets: &std::collections::BTreeMap<String, u64>,
+    now_ms: u64,
+) -> &'a Model {
+    choose(candidates, |name| {
+        resets.get(name).is_some_and(|reset| *reset > now_ms)
+    })
+}
+
 /// Models that reported quota, by name, with their announced resets.
 pub(crate) fn quota_resets(
     snapshot: &tl3_store::Snapshot,
