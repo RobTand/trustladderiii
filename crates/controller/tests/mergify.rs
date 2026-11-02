@@ -127,6 +127,10 @@ struct State {
     annotations: Value,
     statuses: Value,
     queued_before_rerun: bool,
+    /// PrismaBuild's `gate.yml` failed on the head, before its body was fixed (#447).
+    stale_gate: bool,
+    body_patches: usize,
+    failed_job_reruns: Vec<u64>,
 }
 impl State {
     fn new() -> Self {
@@ -181,6 +185,9 @@ impl State {
             annotations: json!([]),
             statuses: json!([]),
             queued_before_rerun: false,
+            stale_gate: false,
+            body_patches: 0,
+            failed_job_reruns: vec![],
         }
     }
     fn checks(&self) -> Value {
@@ -245,6 +252,12 @@ impl support::github::Routes for State {
     fn suites(&self) -> Value {
         self.suites.clone()
     }
+    fn pull_mut(&mut self) -> Option<&mut Value> {
+        Some(&mut self.pull)
+    }
+    fn pull_patched(&mut self, body: &Value) {
+        self.body_patches += usize::from(body.get("body").is_some());
+    }
 }
 impl Respond for Api {
     fn respond(&self, request: &Request) -> ResponseTemplate {
@@ -294,7 +307,22 @@ impl Respond for Api {
             ("GET", path) if path.ends_with("/statuses") => ResponseTemplate::new(200).set_body_json(state.statuses.clone()),
             ("GET", "/repos/owner/sandbox/actions/runs") => {
                 assert!(request.url.query_pairs().any(|(key, value)| key == "head_sha" && value == state.pull["head"]["sha"].as_str().unwrap()));
-                ResponseTemplate::new(200).set_body_json(json!({"workflow_runs":state.workflow.iter().collect::<Vec<_>>()}))
+                let mut runs: Vec<Value> = state.workflow.iter().cloned().collect();
+                if state.stale_gate {
+                    let head = state.pull["head"]["sha"].clone();
+                    runs.push(json!({"id":701,"check_suite_id":801,"name":"Merge gate","head_sha":head,"run_attempt":1,
+                        "status":"completed","conclusion":"failure","event":"pull_request",
+                        "path":".github/workflows/gate.yml","html_url":"local"}));
+                    runs.push(json!({"id":702,"check_suite_id":802,"name":"Regression test","head_sha":head,"run_attempt":1,
+                        "status":"completed","conclusion":"failure","event":"pull_request_target",
+                        "path":".github/workflows/regression-test.yml","html_url":"local"}));
+                }
+                ResponseTemplate::new(200).set_body_json(json!({"workflow_runs":runs}))
+            }
+            ("POST", path) if path.ends_with("/rerun-failed-jobs") => {
+                let run = path.trim_end_matches("/rerun-failed-jobs").rsplit('/').next().unwrap();
+                state.failed_job_reruns.push(run.parse().unwrap());
+                ResponseTemplate::new(201).set_body_json(json!({}))
             }
             ("GET", "/repos/owner/sandbox/actions/runs/700") => ResponseTemplate::new(200).set_body_json(state.workflow.clone().unwrap()),
             ("GET", "/repos/owner/sandbox/check-runs/900/annotations" | "/repos/owner/sandbox/check-runs/901/annotations") => ResponseTemplate::new(200).set_body_json(state.annotations.clone()),
@@ -432,8 +460,21 @@ fn drain(controller: &mut Controller) {
     panic!("controller did not settle");
 }
 fn queued(settings: &tl3_config::Store, api: &Server, root: &Path, confirmed: bool) -> Controller {
+    queued_with(settings, api, root, confirmed, &[])
+}
+fn queued_with(
+    settings: &tl3_config::Store,
+    api: &Server,
+    root: &Path,
+    confirmed: bool,
+    repos: &[tl3_config::Repository],
+) -> Controller {
     let mut registry = adapters::simulation(root).unwrap();
-    registry.register(Upstream::Mergify, api.adapter(&root.join("mergify"), 0));
+    registry.register(
+        Upstream::Mergify,
+        api.adapter(&root.join("mergify"), 0)
+            .with_repositories(repos),
+    );
     let mut controller =
         Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
     controller.register_github_translator("mergify", Translator::new(api.clients()).unwrap());
@@ -552,6 +593,40 @@ fn queue_facts(controller: &mut Controller) -> Vec<Value> {
         .filter(|row| row.table == "queue_facts")
         .map(|row| row.value)
         .collect()
+}
+/// #447: the heal adds PrismaBuild's `Change type:` line once, then reruns the
+/// failed run of `gate.yml`, which never hears `edited`, once per head. The
+/// `pull_request_target` regression test reads the body itself and is left alone.
+fn body_heal_reruns_stale_gate(settings: &tl3_config::Store) {
+    let api = Server::new();
+    {
+        let mut state = api.state.lock().unwrap();
+        state.stale_gate = true;
+        state.pull["body"] = json!("Refs #12.\n\nThe change.\n");
+    }
+    let repo: tl3_config::Repository = serde_json::from_value(json!({
+        "owner": "owner", "name": "sandbox", "installation_id": 3,
+        "pr_body_lines": [{"label": "Change type", "values": ["test", "docs", "fix", "feature"],
+            "default": "fix"}],
+    }))
+    .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued_with(settings, &api, root.path(), true, &[repo]);
+    {
+        let state = api.state.lock().unwrap();
+        assert_eq!(state.body_patches, 1);
+        let body = state.pull["body"].as_str().unwrap();
+        assert_eq!(body.matches("Change type: ").count(), 1, "{body}");
+        assert!(body.starts_with("Refs #12.\nChange type: "), "{body}");
+        assert_eq!(state.failed_job_reruns, vec![701]);
+    }
+    let reads = api.state.lock().unwrap().pull_reads;
+    catch_up(settings, &api, &mut controller);
+    let state = api.state.lock().unwrap();
+    assert!(state.pull_reads > reads, "the catch-up read the PR again");
+    assert_eq!(state.body_patches, 1, "a healed body is left alone");
+    assert_eq!(state.failed_job_reruns, vec![701], "one rerun per head");
+    println!("test body_heal_reruns_stale_gate ... ok");
 }
 fn reused_check_dequeues_twice(settings: &tl3_config::Store, generic: bool) {
     let api = Server::new();
@@ -2836,6 +2911,7 @@ fn main() {
         false
     ));
     scenario!(watched_merge(&database.create("watched")));
+    scenario!(body_heal_reruns_stale_gate(&database.create("body_heal")));
     scenario!(terminal_before_enqueue_ack(
         &database.create("late_enqueue_ack")
     ));

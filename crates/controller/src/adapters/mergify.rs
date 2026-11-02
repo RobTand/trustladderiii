@@ -410,22 +410,62 @@ impl Adapter {
         if pull.state != "open" || pull.merged_at.is_some() {
             return Ok(());
         }
+        let github = &self.clients[&delivery.repository.installation];
+        let repo = full_name(&delivery.repository);
+        let head = &pull.head.sha;
+        // Keyed by PR, not by effect, so a later enqueue of the same head
+        // finds the heal and never reruns twice.
+        let path = self
+            .records
+            .path(&format!("body-heal:{repo}#{}", pull.number))
+            .with_extension("body-heal");
+        let mut heal: Option<BodyHeal> = match std::fs::read(&path) {
+            Ok(bytes) => Some(serde_json::from_slice(&bytes)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
         let body = pull.body.as_deref().unwrap_or_default();
         if let Some(healed) = crate::pr_body::healed(body, rules, &delivery.paths) {
-            self.runtime.block_on(
-                self.clients[&delivery.repository.installation].update_pull_request_body(
-                    &full_name(&delivery.repository),
-                    pull.number,
-                    &healed,
-                ),
-            )?;
+            // Record the intent first, so a crash after the PATCH still reruns.
+            let intent = BodyHeal {
+                head: head.clone(),
+                reran: false,
+            };
+            self.records.write(&path, &serde_json::to_vec(&intent)?)?;
+            self.runtime
+                .block_on(github.update_pull_request_body(&repo, pull.number, &healed))?;
             eprintln!(
-                "PR-body policy: added {:?} to {}#{} (#447)",
+                "PR-body policy: added {:?} to {repo}#{} (#447)",
                 crate::pr_body::gaps(body, rules),
-                full_name(&delivery.repository),
                 pull.number
             );
+            heal = Some(intent);
         }
+        // The edit's completion triggers the reruns, once per head. Closing and
+        // reopening the PR would also rerun them, but TL3 would read it as a
+        // person closing its PR.
+        let Some(heal) = heal.filter(|heal| heal.head == *head && !heal.reran) else {
+            return Ok(());
+        };
+        let runs = self
+            .runtime
+            .block_on(github.workflow_runs(&repo, head))
+            .map_err(Error::from)?;
+        for run in body_edit_reruns(&runs, head) {
+            if let Err(error) = self.runtime.block_on(github.rerun_failed_jobs(&repo, run)) {
+                // The next read of this PR retries; the heal stays pending.
+                eprintln!("PR-body policy: rerun of {repo} run {run} failed: {error}");
+                return Ok(());
+            }
+            eprintln!("PR-body policy: reran the failed jobs of {repo} run {run} (#447)");
+        }
+        self.records.write(
+            &path,
+            &serde_json::to_vec(&BodyHeal {
+                head: heal.head,
+                reran: true,
+            })?,
+        )?;
         Ok(())
     }
     fn fence(&mut self, delivery: &Delivery) -> Result<()> {
@@ -908,8 +948,35 @@ fn full_name(repo: &Repository) -> String {
 /// reruns on `opened`, `synchronize` and `reopened`; an edit doesn't rerun it, so
 /// its failed run stays failed. `pull_request_target` workflows, like
 /// PrismaBuild's regression-test, can listen for `edited` and rerun themselves.
-pub(crate) fn body_edit_reruns(_runs: &[tl3_github::WorkflowRun], _head: &str) -> Vec<u64> {
-    Vec::new()
+pub(crate) fn body_edit_reruns(runs: &[tl3_github::WorkflowRun], head: &str) -> Vec<u64> {
+    let mut latest: BTreeMap<&str, &tl3_github::WorkflowRun> = BTreeMap::new();
+    for run in runs
+        .iter()
+        .filter(|run| run.head_sha == head && run.event == "pull_request")
+    {
+        let entry = latest.entry(run.path.as_str()).or_insert(run);
+        if run.id > entry.id {
+            *entry = run;
+        }
+    }
+    latest
+        .into_values()
+        .filter(|run| {
+            run.status == "completed"
+                && matches!(
+                    run.conclusion.as_deref(),
+                    Some("failure" | "cancelled" | "timed_out" | "startup_failure")
+                )
+        })
+        .map(|run| run.id)
+        .collect()
+}
+
+/// A PR-body heal on one head: whether its stale runs have been rerun (#447).
+#[derive(Serialize, Deserialize)]
+struct BodyHeal {
+    head: String,
+    reran: bool,
 }
 
 /// #447: Mergify waits on queue conditions while every check suite on the head

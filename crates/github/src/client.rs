@@ -949,6 +949,18 @@ impl GitHub {
     }
 
     /// An uncertain POST must be reconciled through run_attempt before another write.
+    /// Rerun only a workflow run's failed jobs, and the jobs that depend on them.
+    pub async fn rerun_failed_jobs(&self, repo: &str, run: u64) -> Result<(), Error> {
+        self.request::<Value>(
+            Method::POST,
+            format!("{}/actions/runs/{run}/rerun-failed-jobs", repo_path(repo)?),
+            vec![],
+            Some(json!({})),
+        )
+        .await?;
+        Ok(())
+    }
+
     pub async fn rerun_workflow_run(&self, repo: &str, run: u64) -> Result<(), Error> {
         self.request::<Value>(
             Method::POST,
