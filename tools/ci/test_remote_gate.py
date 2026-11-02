@@ -100,14 +100,26 @@ class ResultTests(unittest.TestCase):
         request = remote_gate.run_request(Args)
         self.assertEqual(request['commit_sha'], HEAD)
         self.assertIn('@sha256:', request['platform_properties']['container-image'])
-        self.assertIn(f'--base {"a" * 40}', request['steps'][0]['run'])
+        self.assertIn(f'--base {"a" * 40}', request['steps'][-1]['run'])
 
+
+    def test_run_request_installs_a_checksummed_uv_before_the_gate(self):
+        # The runner image has no uv, and the gate's requirements check runs `uv export`.
+        class Args:
+            mode, base, head, branch = 'pr', 'a' * 40, HEAD, 'feature'
+            repo, cpu, memory, timeout = 'https://github.com/RobTand/trustladderiii', 8, '16GB', 60
+        install, gate = [step['run'] for step in remote_gate.run_request(Args)['steps']]
+        self.assertIn(f'releases/download/{remote_gate.UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz', install)
+        self.assertIn(f'{remote_gate.UV_SHA256}  uv.tar.gz', install)
+        self.assertIn('sha256sum -c', install)
+        self.assertTrue(gate.startswith('export PATH="$HOME/.local/bin:$PATH" && '))
+        self.assertIn('tools/ci/bazel_gate.py', gate)
 
     def test_run_request_quotes_the_branch_and_requires_both_commits(self):
         class Args:
             mode, base, head, branch = 'pr', 'a' * 40, HEAD, 'feature;touch pwned'
             repo, cpu, memory, timeout = 'https://github.com/RobTand/trustladderiii', 8, '16GB', 60
-        words = shlex.split(remote_gate.run_request(Args)['steps'][0]['run'])
+        words = shlex.split(remote_gate.run_request(Args)['steps'][-1]['run'].split('&& ', 1)[1])
         self.assertEqual(words[words.index('--branch') + 1], 'feature;touch pwned')
         for field in ['head', 'base']:
             with self.subTest(field=field):
