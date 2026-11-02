@@ -56,6 +56,10 @@ fn main() {
         ("prompt_history_and_limits", prompt_history_and_limits),
         ("prompt_session_liveness", prompt_session_liveness),
         (
+            "prompts_open_on_a_store_ahead",
+            prompts_open_on_a_store_ahead,
+        ),
+        (
             "prompt_version_recorded_for_a_run",
             prompt_version_recorded_for_a_run,
         ),
@@ -1677,6 +1681,33 @@ fn prompt_session_liveness(settings: &tl3_config::Store) {
         .unwrap();
     assert!(!prompts.is_live());
     assert!(Prompts::open(&login).unwrap().is_live());
+}
+
+/// The console judges migrations itself and serves a store ahead of the TL3 it
+/// pins, so the prompt session needs only the prompt tables.
+fn prompts_open_on_a_store_ahead(settings: &tl3_config::Store) {
+    assert!(
+        Prompts::open(settings).is_err(),
+        "a store without the prompt tables"
+    );
+    let mut store = Store::open(settings).unwrap();
+    store.seed_prompts(BUILTIN).unwrap();
+    raw(settings)
+        .execute(
+            "INSERT INTO tl3_schema_migrations VALUES (999, 'SELECT 1')",
+            &[],
+        )
+        .unwrap();
+    assert!(matches!(
+        Reader::open(settings),
+        Err(Error::SchemaVersion { .. })
+    ));
+    let mut prompts = Prompts::open(settings).unwrap();
+    let base = prompts.role("ingest").unwrap().unwrap().active.id;
+    prompts
+        .save("ingest", "Ingest v2.", "Ahead.", "Rob", base)
+        .unwrap()
+        .unwrap();
 }
 
 /// A run keeps the version it started with; later runs take the active one.
