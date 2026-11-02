@@ -283,6 +283,39 @@ mod hostile_tests {
         );
     }
     #[test]
+    fn review_names_edited_tests_that_failed_a_selected_check() {
+        // #409: a test that failed the selected check and that the change then edits is
+        // no longer selected, so review must judge the edit.
+        let f = Repo::new();
+        let mut db = Database::start();
+        let mut store = Store::open(&db.create("edited_selected")).unwrap();
+        store.put_worker_materials("0", &json!({})).unwrap();
+        let mut snapshot = documents(
+            &mut store,
+            &[
+                (
+                    "goals",
+                    json!([{"description":"Update the readme", "verification":"test"}]),
+                ),
+                ("check_reports", json!({})),
+            ],
+        );
+        let report = snapshot
+            .rows
+            .iter_mut()
+            .find(|r| r.table == "check_reports")
+            .unwrap();
+        report.id = format!("0:{}", f.head);
+        report.value = json!({"base_sha":f.base, "results":[], "selected_failures":
+            ["README.md::test_readme", "tests/test_other.py::test_other"]});
+        let value = inputs(&f.delivery(), &mut store, &snapshot, None).unwrap();
+        assert_eq!(
+            value["edited_selected_tests"],
+            json!(["README.md::test_readme"])
+        );
+    }
+
+    #[test]
     fn adopted_scope_evidence_excludes_main_only_progress() {
         use crate::git_tests::git;
         let f = Repo::new();

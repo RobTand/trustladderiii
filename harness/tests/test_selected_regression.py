@@ -121,3 +121,142 @@ def test_a_plan_cannot_use_the_reserved_name(repo):
     with pytest.raises(HarnessInputError):
         execution.run_checks(repo, base, head, (Check(SELECTED, Kind.REGRESSION, (OTHER,)),),
                              container=CONTAINER, selected_tests=50)
+
+
+def test_selection_expands_lazily_and_stops_at_the_limit(repo, monkeypatch):
+    # Review of #409: PrismaQuant's allocator.py reaches 10,908 tests in 1,003 files.
+    repo, base, runs, outcomes = repo
+    head = change_core(repo)
+    expanded, judged = [], []
+    node_ids, changed_existing_tests = execution.selection.node_ids, execution.Pytest.changed_existing_tests
+    monkeypatch.setattr(execution.selection, 'node_ids',
+                        lambda tree, name: expanded.append(name) or node_ids(tree, name))
+    monkeypatch.setattr(execution.Pytest, 'changed_existing_tests',
+                        lambda self, old, new, tests: judged.extend(tests) or changed_existing_tests(self, old, new, tests))
+    results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER, selected_tests=2)
+    assert [test.test for test in results[1].tests] == CORE
+    assert expanded == ['tests/test_core.py'], 'stop expanding files once the limit is reached'
+    assert set(judged) <= {OTHER, *CORE}, 'only judge edits of tests that can still be selected'
+
+
+def test_candidates_run_on_the_base_apart_from_the_plan(repo):
+    repo, base, runs, outcomes = repo
+    head = change_core(repo)
+    execution.run_checks(repo, base, head, PLAN, container=CONTAINER, selected_tests=50)
+    assert ('base', (OTHER,)) in runs, 'the plan base run is exactly as without selection'
+    assert ('base', tuple(CORE + FARTHER)) in runs
+    runs.clear()
+    write(repo, {'pkg/core.py': 'def value():\n    return 1  # changed again\n'})
+    newer = save(repo, 'a newer head')
+    execution.run_checks(repo, base, newer, PLAN, container=CONTAINER, selected_tests=50)
+    assert [tests for tree, tests in runs if tree == 'base'] == [], 'base results are cached per test'
+
+
+def test_a_candidate_crashing_the_base_leaves_the_plan_alone(repo, monkeypatch):
+    repo, base, runs, outcomes = repo
+    head = change_core(repo)
+    real = execution.run_tree
+
+    def crashing(tree, container, tests, *args, **kwargs):
+        observed = real(tree, container, tests, *args, **kwargs)
+        return dict.fromkeys(tests, Outcome.NO_REPORT) if CORE[0] in tests and tree.name == 'base' else observed
+
+    monkeypatch.setattr(execution, 'run_tree', crashing)
+    results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER, selected_tests=50)
+    assert [result.name for result in results] == ['other']
+    assert results[0].verdict == Verdict.PASS
+
+
+def test_a_head_failure_that_passes_alone_is_reported_as_flaky(repo):
+    repo, base, runs, outcomes = repo
+    head = change_core(repo)
+    calls = []
+
+    def once(tree, test):
+        calls.append(test)
+        return len(calls) == 1
+
+    real = execution.run_tree
+    execution.run_tree = lambda tree, container, tests, *args, **kwargs: {
+        test: (Outcome.ASSERTION if tree.name == 'head' and test == CORE[1] and once(tree, test) else outcome)
+        for test, outcome in real(tree, container, tests, *args, **kwargs).items()}
+    try:
+        results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER, selected_tests=50)
+    finally:
+        execution.run_tree = real
+    selected = results[1]
+    assert selected.verdict == Verdict.PASS
+    flaky = next(test for test in selected.tests if test.test == CORE[1])
+    assert flaky.passed and 'passed alone' in flaky.message
+    assert ('head', (CORE[1],)) in runs, 'the failing test reruns alone'
+    assert ('head', (OTHER,)) in runs, 'the plan head run is exactly as without selection'
+
+
+def test_a_test_crashing_the_head_fails_alone_without_infrastructure(repo, monkeypatch):
+    repo, base, runs, outcomes = repo
+    head = change_core(repo)
+    real = execution.run_tree
+
+    def crashing(tree, container, tests, *args, **kwargs):
+        observed = real(tree, container, tests, *args, **kwargs)
+        if tree.name == 'head' and CORE[0] in tests:
+            return dict.fromkeys(tests, Outcome.NO_REPORT)
+        return observed
+
+    monkeypatch.setattr(execution, 'run_tree', crashing)
+    results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER, selected_tests=50)
+    assert results[0].verdict == Verdict.PASS
+    selected = results[1]
+    assert selected.verdict == Verdict.FAIL
+    assert [test.test for test in selected.tests if not test.passed] == [CORE[0]]
+    assert selected.tests[0].head == Outcome.ERROR
+
+
+@pytest.mark.parametrize('pathological', ['a = ' + 'a+' * 200_000 + 'a\n', 'def broken(:\n'],
+                         ids=['200000-term-expression', 'syntax-error'])
+def test_a_pathological_base_file_never_fails_the_round(repo, pathological):
+    repo, base, runs, outcomes = repo
+    write(repo, {'pkg/huge.py': pathological, 'tests/test_huge.py': 'import pkg.huge\nimport pkg.core\n'
+                 'def test_huge():\n    assert True\n'})
+    base = save(repo, 'base with a pathological module')
+    head = change_core(repo)
+    results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER, selected_tests=50)
+    assert results[0].name == 'other'
+
+
+def selected(tmp_path, files, changed, tests_pattern='tests/*.py'):
+    from tl3_harness import selection
+    from tl3_harness.trees import is_test
+    write(tmp_path, files)
+    return list(selection.select(tmp_path, changed, lambda name: is_test(name, [tests_pattern])))
+
+
+def test_relative_imports_reach_their_package(tmp_path):
+    assert selected(tmp_path, {
+        'pkg/__init__.py': '', 'pkg/core.py': 'X = 1\n',
+        'pkg/sub/__init__.py': '', 'pkg/sub/user.py': 'from ..core import X\n',
+        'pkg/sub/other.py': 'from . import user\n',
+        'tests/test_other.py': 'from pkg.sub import other\ndef test_other():\n    pass\n',
+    }, ['pkg/core.py']) == ['tests/test_other.py::test_other']
+
+
+def test_src_layouts_import_without_src(tmp_path):
+    assert selected(tmp_path, {
+        'src/pkg/__init__.py': '', 'src/pkg/core.py': 'X = 1\n',
+        'tests/test_core.py': 'from pkg.core import X\ndef test_core():\n    pass\n',
+    }, ['src/pkg/core.py']) == ['tests/test_core.py::test_core']
+
+
+def test_import_cycles_terminate(tmp_path):
+    assert selected(tmp_path, {
+        'pkg/__init__.py': '', 'pkg/a.py': 'import pkg.b\n', 'pkg/b.py': 'import pkg.a\n',
+        'tests/test_b.py': 'import pkg.b\ndef test_b():\n    pass\n',
+    }, ['pkg/a.py']) == ['tests/test_b.py::test_b']
+
+
+def test_an_unparseable_file_is_skipped(tmp_path):
+    assert selected(tmp_path, {
+        'pkg/__init__.py': '', 'pkg/core.py': 'X = 1\n', 'pkg/broken.py': 'def broken(:\n',
+        'tests/test_broken.py': 'import pkg.core\ndef broken(:\n',
+        'tests/test_core.py': 'import pkg.core\ndef test_core():\n    pass\n',
+    }, ['pkg/core.py']) == ['tests/test_core.py::test_core']

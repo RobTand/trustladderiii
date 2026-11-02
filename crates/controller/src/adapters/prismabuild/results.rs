@@ -352,3 +352,33 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
     }
     Some(report)
 }
+
+/// Red scaffold for #409's review: earlier selected-check failures are not carried yet.
+pub(crate) fn selected_failures<'a>(
+    _previous: impl IntoIterator<Item = &'a serde_json::Value>,
+    _results: &[serde_json::Value],
+) -> Vec<String> {
+    vec![]
+}
+
+#[cfg(test)]
+mod selected_failure_tests {
+    use serde_json::json;
+
+    #[test]
+    fn selected_failures_accumulate_across_rounds() {
+        let earlier = json!({"base_sha": "b", "results": [], "selected_failures": ["tests/test_a.py::test_a"]});
+        let results = [
+            json!({"name": "planned", "kind": "regression", "tests": [
+                {"test": "tests/test_p.py::test_p", "passed": false}]}),
+            json!({"name": super::SELECTED_CHECK, "kind": "regression", "tests": [
+                {"test": "tests/test_b.py::test_b", "passed": false},
+                {"test": "tests/test_c.py::test_c", "passed": true}]}),
+        ];
+        assert_eq!(
+            super::selected_failures([&earlier], &results),
+            ["tests/test_a.py::test_a", "tests/test_b.py::test_b"],
+            "keep earlier failures and add this round's selected failures, not planned ones"
+        );
+    }
+}
