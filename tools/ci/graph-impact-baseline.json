@@ -1,0 +1,14 @@
+{
+  "figures": {
+    "loc_u_pct": 30.586039117079057,
+    "scc_max": 1,
+    "u_pct": 31.068524970963995
+  },
+  "reach_budget": 173,
+  "schema": "graph-impact.v1",
+  "tolerances": {
+    "loc_u_pct": 0.1,
+    "scc_max": 0,
+    "u_pct": 0.1
+  }
+}

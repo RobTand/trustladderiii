@@ -7,6 +7,18 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files(["rust-test-budget.json"])
 
+tl3_py_test(
+    name = "test_graph_impact",
+    srcs = ["test_graph_impact.py"],
+    deps = [":bazel_graph_impact"],
+)
+
+tl3_py_test(
+    name = "test_bazel_graph_impact",
+    srcs = ["test_bazel_graph_impact.py"],
+    deps = [":bazel_graph_impact"],
+)
+
 py_binary(
     name = "bazel_parity",
     srcs = ["bazel_parity.py"],
@@ -152,6 +164,7 @@ py_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":bazel_generated",
+        ":bazel_graph_impact",
         ":rust_gate",
         "//tools/ci:child_env",
     ],
@@ -217,6 +230,53 @@ tl3_py_test(
     name = "test_bazel_budget_calibration",
     srcs = ["test_bazel_budget_calibration.py"],
     deps = [":bazel_budget_calibration"],
+)
+
+py_library(
+    name = "graph_impact",
+    srcs = ["graph_impact.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_library(
+    name = "bazel_graph_impact",
+    srcs = ["bazel_graph_impact.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":graph_impact",
+        "//tools/ci:child_env",
+    ],
+)
+
+py_binary(
+    name = "graph_impact_check",
+    srcs = ["graph_impact_check.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":bazel_gate",
+        ":bazel_graph_impact",
+    ],
+)
+
+py_binary(
+    name = "graph_impact_proof",
+    srcs = ["graph_impact_proof.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":bazel_gate",
+        ":bazel_graph_impact",
+    ],
+)
+
+py_binary(
+    name = "graph_impact_replay",
+    srcs = ["graph_impact_replay.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":bazel_gate",
+        ":bazel_graph_impact",
+        "//tools/ci:child_env",
+    ],
 )
 
 py_binary(

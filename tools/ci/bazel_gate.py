@@ -23,6 +23,7 @@ import urllib.request
 import zipfile
 
 import bazel_generated
+import bazel_graph_impact
 import rust_gate
 from child_env import child_env
 
@@ -30,8 +31,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = 'tl3.bazel-gate.v1'
 RESULT = 'gate-result.json'
 
-BAZEL_DIFF_URL = 'https://github.com/Tinder/bazel-diff/releases/download/v42.0.0/bazel-diff_deploy.jar'
-BAZEL_DIFF_SHA256 = '0170b70fe2f24477ab056c11f5c3240d8b45a1dca5ab73ad252c096679c5500c'
+BAZEL_DIFF_URL = 'https://github.com/Tinder/bazel-diff/releases/download/v70.0.2/bazel-diff-rust-linux-amd64'
+BAZEL_DIFF_SHA256 = '44226a1d1d5239abc8bc6158de1f886fcbbf58e44479ec178df8c01e7e32102e'
 
 # A change to any of these can move every target: test everything.
 FALLBACK = [
@@ -79,16 +80,17 @@ def needs_no_diff(changed, deleted, used_sources):
     return not deleted and all(irrelevant(path) and path not in used_sources for path in changed)
 
 
-def diff_commands(java, jar, root, bazel, base_hashes, head_hashes, impacted):
-    """bazel-diff v42 command lines: a hash generator, then the impacted query."""
-    def generate(output):
-        return [str(java), '-jar', str(jar), 'generate-hashes', '--workspacePath', str(root),
+def diff_commands(executable, root, bazel, base_hashes, head_hashes, impacted, head_edges):
+    """One native bazel-diff pin for hashes, dependency edges, selection and blame."""
+    def generate(output, edges):
+        return [str(executable), 'generate-hashes', '--workspacePath', str(root),
                 '--bazelPath', str(bazel), '--excludeExternalTargets', '--includeTargetType',
-                str(output)]
-    return generate, [str(java), '-jar', str(jar), 'get-impacted-targets',
+                '--depEdgesFile', str(edges), str(output)]
+    return generate, [str(executable), 'get-impacted-targets',
                       '--workspacePath', str(root), '--bazelPath', str(bazel),
                       '--targetType', 'Rule', '--startingHashes', str(base_hashes),
-                      '--finalHashes', str(head_hashes), '--output', str(impacted)]
+                      '--finalHashes', str(head_hashes), '--depEdgesFile', str(head_edges),
+                      '--output', str(impacted)]
 
 
 def plan(changed, deleted, impacted, used_sources, tests):
@@ -153,8 +155,9 @@ def canonical(label):
 class Workspace:
     """Git and Bazel on the runner. Every failure raises GateError."""
 
-    def __init__(self, root=ROOT, bazel='bazel'):
+    def __init__(self, root=ROOT, bazel='bazel', graph_cache=None):
         self.root, self.bazel = root, bazel
+        self.graph_cache = graph_cache
 
     def run(self, *command, capture=True, check=True):
         print('$ ' + shlex.join(map(str, command)), flush=True)
@@ -200,25 +203,103 @@ class Workspace:
         return {label.removeprefix('//').replace(':', '/').lstrip('/') for label in map(canonical, labels)
                 if label.startswith('//')}
 
-    def bazel_diff(self, base, head):
-        jar = Path(tempfile.gettempdir(), 'bazel-diff-v42.0.0.jar')
-        if not jar.exists() or hashlib.sha256(jar.read_bytes()).hexdigest() != BAZEL_DIFF_SHA256:
+    def prepare_diff(self, base, head):
+        """Export once per revision, even when selection falls back to all tests."""
+        if getattr(self, '_diff_pair', None) == (base, head):
+            return
+        executable = Path(tempfile.gettempdir(), 'bazel-diff-v70.0.2-linux-amd64')
+        if not executable.exists() or hashlib.sha256(executable.read_bytes()).hexdigest() != BAZEL_DIFF_SHA256:
             with urllib.request.urlopen(BAZEL_DIFF_URL, timeout=120) as response:
                 data = response.read()
             if hashlib.sha256(data).hexdigest() != BAZEL_DIFF_SHA256:
-                raise GateError('bazel-diff jar checksum mismatch')
-            jar.write_bytes(data)
-        java = Path(self.run(self.bazel, 'info', 'java-home').strip(), 'bin/java')
-        hashes = {name: Path(tempfile.gettempdir(), f'{name}-hashes.json') for name in ['base', 'head']}
-        impacted = Path(tempfile.gettempdir(), 'impacted.txt')
-        impacted.unlink(missing_ok=True)
-        generate, query = diff_commands(java, jar, self.root, self.bazel,
-                                        hashes['base'], hashes['head'], impacted)
-        for name, sha in [('base', base), ('head', head)]:
-            self.checkout(sha)
-            self.run(*generate(hashes[name]))
-        self.run(*query)
-        return {canonical(line) for line in impacted.read_text().split() if line}
+                raise GateError('bazel-diff binary checksum mismatch')
+            executable.write_bytes(data)
+        executable.chmod(0o755)
+        self._diff_directory = tempfile.TemporaryDirectory(prefix='tl3-graph-impact-')
+        directory = Path(self._diff_directory.name)
+        self._hashes = {name: directory / f'{name}-hashes.json' for name in ('base', 'head')}
+        self._edges = {name: directory / f'{name}-deps.json' for name in ('base', 'head')}
+        self._source_edges = {name: directory / f'{name}-deps-with-sources.json' for name in ('base', 'head')}
+        self._impacted = directory / 'impacted.json'
+        self._executable = executable
+        generate, self._query_impacted = diff_commands(executable, self.root, self.bazel,
+            self._hashes['base'], self._hashes['head'], self._impacted, self._edges['head'])
+        self._graphs, self._deps, self._typed_hashes, self._crates = {}, {}, {}, {}
+        try:
+            for name, sha in [('base', base), ('head', head)]:
+                files = (self._hashes[name], self._edges[name], self._source_edges[name])
+                cached = self.graph_cache.get(sha) if self.graph_cache is not None else None
+                if cached:
+                    graph, deps, hashes, crates, contents = cached
+                    for file, data in zip(files, contents):
+                        file.write_bytes(data)
+                    self._graphs[name], self._deps[name], self._typed_hashes[name] = graph, deps, hashes
+                    self._crates[name] = crates
+                else:
+                    self.checkout(sha)
+                    self.run(*generate(self._hashes[name], self._edges[name]))
+                    raw_deps = json.loads(self._edges[name].read_text())
+                    sources = bazel_graph_impact.source_labels(json.loads(self._hashes[name].read_text()))
+                    if bazel_graph_impact.needs_source_edges(raw_deps, sources):
+                        print('bazel-diff omits source edges; supplementing from one streamed Bazel query', flush=True)
+                        query = (f'deps({TESTS} except attr(tags, "\\bmanual\\b", //...)) '
+                                 'intersect //...:all-targets')
+                        stream = self.run(self.bazel, 'query', query, '--output=streamed_jsonproto',
+                                          '--keep_going=false')
+                        raw_deps = bazel_graph_impact.add_source_edges(raw_deps, stream)
+                    self._source_edges[name].write_text(json.dumps(raw_deps, sort_keys=True) + '\n')
+                    graph, deps, hashes = bazel_graph_impact.load(
+                        self._source_edges[name], self._hashes[name], self.tests(), self.root)
+                    self._graphs[name], self._deps[name], self._typed_hashes[name] = graph, deps, hashes
+                    self._crates[name] = set(map(canonical, self.query('kind("rust_library rule", //crates/...)')))
+                    if self.graph_cache is not None:
+                        self.graph_cache[sha] = (graph, deps, hashes, self._crates[name],
+                                                 tuple(file.read_bytes() for file in files))
+                artifacts = os.environ.get('BUILDBUDDY_ARTIFACTS_DIRECTORY')
+                if artifacts:
+                    for file in (self._hashes[name], self._edges[name], self._source_edges[name]):
+                        shutil.copy2(file, Path(artifacts) / file.name)
+        except (ValueError, OSError, KeyError) as error:
+            raise GateError(f'graph-impact export failed: {error}') from error
+        finally:
+            self.checkout(head)
+        self._diff_pair = (base, head)
+
+    def bazel_diff(self, base, head):
+        self.prepare_diff(base, head)
+        self.run(*self._query_impacted)
+        return bazel_graph_impact.impacted_labels(self._impacted.read_text())
+
+    def graph_check(self, base, head, write=False):
+        self.prepare_diff(base, head)
+        old, new = self._graphs['base'], self._graphs['head']
+        policy_path = self.root / bazel_graph_impact.POLICY
+        previous = bazel_graph_impact.policy_at(self.root, base, bazel_graph_impact.POLICY, None)
+        try:
+            if write:
+                policy = bazel_graph_impact.write_baseline(new, previous)
+            else:
+                policy = json.loads(policy_path.read_text())
+            allowlist = json.loads((self.root / bazel_graph_impact.ALLOWLIST).read_text())
+            prior_allowlist = bazel_graph_impact.policy_at(self.root, base, bazel_graph_impact.ALLOWLIST, {})
+            changed, deleted = self.changes(base, head)
+            changed_tests = bazel_graph_impact.changed_tests(old, new, self._typed_hashes['base'],
+                                                           self._typed_hashes['head'], changed | deleted)
+            result = bazel_graph_impact.check(old, new, changed_tests, policy, allowlist, prior_allowlist, previous,
+                                              record_gains=write)
+            if write and not result['errors']:
+                policy_path.write_text(json.dumps(policy, indent=2, sort_keys=True) + '\n')
+            result['crates'] = bazel_graph_impact.crate_report(self._deps['head'], new['reach'], self._crates['head'])
+            result['mermaid'] = {}
+            for target in result['explain_targets'][:5]:
+                # Explain reads the same exports; it runs no additional Bazel query.
+                result['mermaid'][target] = self.run(str(self._executable), 'explain',
+                    '--startingHashes', self._hashes['base'], '--finalHashes', self._hashes['head'],
+                    '--depEdgesFile', self._source_edges['head'], '--target', target, '--format', 'mermaid')
+            print(result['summary'], flush=True)
+            return result
+        except (ValueError, OSError, KeyError) as error:
+            raise GateError(f'graph-impact check failed: {error}') from error
 
     def test(self, targets, config, metadata, log_name, extra=()):
         """Run targets; return per-label status. Build failures leave labels without status."""
@@ -358,6 +439,7 @@ def gate_pr(workspace, base, head, metadata):
         workspace.ensure_commit(sha)
     changed, deleted = workspace.changes(base, head)
     workspace.checkout(head)
+    graph = workspace.graph_check(base, head)
     used = workspace.used_sources()
     forced = fallback_files(changed | deleted)
     skip = forced or needs_no_diff(changed, deleted, used)
@@ -370,12 +452,12 @@ def gate_pr(workspace, base, head, metadata):
     statuses, reruns = rerun_budget_only(workspace, decision['selected'], statuses, CONFIGS['amd64'],
                                          metadata, 'pr')
     verdicts, failed = classify(decision['selected'], statuses, rust)
-    inputs = workspace.inputs_check() + workspace.budget_check(base)
+    inputs = workspace.inputs_check() + workspace.budget_check(base) + graph['errors']
     if not workspace.build(decision['build'], CONFIGS['amd64'], metadata, 'pr'):
         # Reported like stale inputs, so both checks fail.
         inputs.append('bazel build of impacted targets failed: ' + ' '.join(decision['build']))
     return {**decision, 'verdicts': verdicts, 'failed': failed, 'inputs': inputs, 'budget_reruns': reruns,
-            'changed': sorted(changed | deleted),
+            'changed': sorted(changed | deleted), 'graph_impact': graph,
             'durations': {'selection': round(selected_seconds, 1),
                           'total': round(time.monotonic() - started, 1)}}
 
