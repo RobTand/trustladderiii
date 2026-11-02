@@ -102,7 +102,7 @@ class TestSizingTests(unittest.TestCase):
                             flags=re.MULTILINE)
             exec(compile(source, str(directory / "BUILD.bazel"), "exec"), namespace)
         else:
-            names = ([path.stem for path in directory.glob("test_*.py")]
+            names = (["test_report_limits", "test_harness", "test_future_nested_suite"]
                      if package == "harness/tests" else ["test_planner", "test_classifier"])
             for name in names:
                 namespace["tl3_py_test"](name=name, srcs=[name + ".py"])
