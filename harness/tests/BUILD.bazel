@@ -90,6 +90,7 @@ tl3_py_test(
     deps = [
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
+        "@tl3_pip//pytest_xdist",  # keep: runner.py loads it in a subprocess (#408)
     ],
 )
 
