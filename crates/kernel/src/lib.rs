@@ -2750,8 +2750,7 @@ const _: () = assert!(POOL_AGING_TICKETS == 1 << 3);
 /// A pool waiter's score (Q39): its ticket plus POOL_AGING_TICKETS per level
 /// below P0. A better priority passes only waiters fewer than that many tickets
 /// per level older. The score is fixed while the waiter keeps its ticket, so
-/// two waiters never swap places, and it reads no world counter, which keeps
-/// the settled-world assumption in every apply proof cheap for Kani.
+/// two waiters never swap places.
 pub fn pool_score(priority: Priority, ticket: u64) -> u64 {
     // POOL_AGING_TICKETS is 8: a shift, which Kani encodes as wiring.
     ticket.saturating_add(u64::from(priority.rank()) << 3)

@@ -626,7 +626,9 @@ Credit costs and infrastructure retry limits are the same as in Queued.
 
 A free agent-pool grant goes to the waiter with the lowest score, then the older ticket. The score is the waiter's ticket plus 8 tickets (`POOL_AGING_TICKETS`) per level below P0, from P0 = 0 to unranked = 4 levels. A better priority passes a waiter only if that waiter is fewer than 8 tickets per level older. Rob approved priority-first, not aging; this seniority is the minimal rule that bounds starvation. A waiter of rank r is granted after at most K + r × 8 − 1 grants to others, where K counts older waiters. The gate's slot order (Q48) doesn't change.
 
-An aging rule that reads the world's ticket counter, raising a waiter one level per 8 later tickets, was tried first. It has the same bound, but it couples every pool comparison to that counter. Every apply proof assumes a settled world, which already decides who is first in the pool line, so twelve reply proofs ran out of memory at 44 GB. The fixed score costs one addition per waiter.
+An aging rule that read the world's ticket counter, raising a waiter one level per 8 later tickets, was tried first. The fixed score has the same bound, never reorders two waiters, and reads no world counter.
+
+`Event` has `#[repr(u8)]`. Without it, the new `Priority` field on `NewRequest` and `NewAdoption` let rustc hide the event's discriminant in that field's spare values. Kani then decoded it at every match, which took `apply_maker_done` from 15,166 VCCs to 19,549 and the reply proofs past 44 GB. With the plain tag it has 4,612, fewer than before Q39.
 
 Priority lives on the node and arrives with `NewRequest` or `NewAdoption`, so stored events without it replay as unranked. Unranked serializes as absent. `Fact::Priority` refreshes it on an open node and leaves a closed one unchanged.
 
