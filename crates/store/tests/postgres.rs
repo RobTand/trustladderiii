@@ -1774,7 +1774,7 @@ fn console_login_writes_only_prompts(settings: &tl3_config::Store) {
     let change = seed(&mut store);
     store.commit(&change).unwrap();
     store.seed_prompts(BUILTIN).unwrap();
-    store.run_prompt("effect:0:1", "ingest").unwrap();
+    let run = store.run_prompt("effect:0:1", "ingest").unwrap().unwrap();
     let (login, mut client) = console_login(settings, "tl3_console_prompts");
     let mut prompts = Prompts::open(&login).unwrap();
     let base = prompts.role("ingest").unwrap().unwrap().active.id;
@@ -1784,6 +1784,7 @@ fn console_login_writes_only_prompts(settings: &tl3_config::Store) {
         .unwrap()
         .active
         .id;
+    // Reverting leaves the saved version referenced by nothing.
     prompts
         .activate("ingest", base, "Rob", saved)
         .unwrap()
@@ -1805,25 +1806,45 @@ fn console_login_writes_only_prompts(settings: &tl3_config::Store) {
         .id;
     let kept = prompts.keep("reviewer", update).unwrap().unwrap();
     assert_eq!(kept.builtin_update, None);
-    for sql in [
-        "INSERT INTO tl3_world VALUES ('forbidden', '1', '{}', 1)",
-        "UPDATE tl3_meta SET revision = revision",
-        "INSERT INTO tl3_worker_materials VALUES ('9', '{}')",
-        "INSERT INTO tl3_prompt_versions (role, body, builtin, author, note) VALUES ('ingest', 'x', true, 'TL3 deploy', 'forged')",
-        "UPDATE tl3_prompt_versions SET body = 'rewritten'",
-        "DELETE FROM tl3_prompt_versions",
-        "DELETE FROM tl3_prompt_active",
-        "UPDATE tl3_prompt_active SET role = 'planner'",
-        "INSERT INTO tl3_prompt_active (role, version, builtin_seen, activated_by) SELECT 'planner', id, id, 'Rob' FROM tl3_prompt_versions LIMIT 1",
-        "INSERT INTO tl3_prompt_runs (run_key, role, version) VALUES ('forged', 'ingest', 1)",
-        "UPDATE tl3_prompt_runs SET version = version",
-        "DELETE FROM tl3_prompt_runs",
-    ] {
-        let result = client.batch_execute(&format!("BEGIN READ WRITE; {sql}; COMMIT"));
-        assert!(result.is_err(), "{sql}");
+    // A role with versions and no pointer, so a forged pointer breaks no constraint.
+    let mut owner = raw(settings);
+    let planner: i64 = owner
+        .query_one(
+            "INSERT INTO tl3_prompt_versions (role, body, author, note) VALUES ('planner', 'Plan.', 'TL3', 'Fixture.') RETURNING id",
+            &[],
+        )
+        .unwrap()
+        .get(0);
+    // Each statement would succeed for an owner; only the login's grants refuse it.
+    let statements = [
+        "INSERT INTO tl3_world VALUES ('forbidden', '1', '{}', (SELECT max(revision) FROM tl3_events))".to_string(),
+        "UPDATE tl3_meta SET revision = revision".into(),
+        "INSERT INTO tl3_worker_materials VALUES ('9', '{}')".into(),
+        "INSERT INTO tl3_prompt_versions (role, body, builtin, author, note) VALUES ('ingest', 'x', true, 'TL3 deploy', 'forged')".into(),
+        format!("UPDATE tl3_prompt_versions SET body = 'rewritten' WHERE id = {saved}"),
+        format!("DELETE FROM tl3_prompt_versions WHERE id = {saved}"),
+        "DELETE FROM tl3_prompt_active WHERE role = 'reviewer'".into(),
+        format!("INSERT INTO tl3_prompt_active (role, version, builtin_seen, activated_by) VALUES ('planner', {planner}, {planner}, 'Rob')"),
+        format!("UPDATE tl3_prompt_active SET role = 'planner', version = {planner}, builtin_seen = {planner} WHERE role = 'ingest'"),
+        format!("INSERT INTO tl3_prompt_runs (run_key, role, version) VALUES ('forged', 'ingest', {})", run.id),
+        "UPDATE tl3_prompt_runs SET version = version".into(),
+        "DELETE FROM tl3_prompt_runs".into(),
+    ];
+    for sql in &statements {
+        let mut tx = owner.transaction().unwrap();
+        tx.batch_execute(sql)
+            .unwrap_or_else(|error| panic!("the owner can run {sql}: {error}"));
+        tx.rollback().unwrap();
+        let error = client
+            .batch_execute(&format!("BEGIN READ WRITE; {sql}; COMMIT"))
+            .expect_err(sql);
+        assert_eq!(
+            error.code(),
+            Some(&postgres::error::SqlState::INSUFFICIENT_PRIVILEGE),
+            "{sql}: {error}"
+        );
         client.batch_execute("ROLLBACK").unwrap();
     }
-    let mut owner = raw(settings);
     assert_eq!(
         owner
             .query_one("SELECT count(*) FROM tl3_prompt_runs", &[])

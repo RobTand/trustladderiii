@@ -92,14 +92,12 @@ impl Writer for ProcessWriter {
         let mut request = json!({"protocol":1,"operation":{"node":0,"generation":0,"kind":"writer"},
             "role":"writer","model":self.config.models.worker_model(model), "key_file":self.config.models.key_file,
             "inputs":input,"worktree":root});
-        if self.prompts
-            && let Some(prompt) = crate::prompts::for_run(
+        if self.prompts {
+            request["prompt"] = crate::prompts::for_run(
                 &mut tl3_store::Store::open(&self.config.store)?,
                 key,
                 "writer",
-            )?
-        {
-            request["prompt"] = prompt;
+            )?;
         }
         let credentials = root.join("credentials");
         if credentials.exists() {

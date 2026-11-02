@@ -498,6 +498,8 @@ fn main() {
     println!("test fake_clock_stops_real_stalled_worker_before_retry ... ok");
     external_wait_survives_restart(&database.create("workers_external_wait"));
     println!("test external_wait_persists_across_source_and_controller_restart ... ok");
+    writer_prompt(&database.create("writer_prompt"));
+    println!("test process_writer_sends_the_active_writer_prompt ... ok");
     finish_fixture(database, "worker_waits");
     let mut database = Database::start();
     for wrapped in [false, true] {
@@ -600,7 +602,64 @@ fn main() {
     let mut database = Database::start();
     maker::run(&mut database);
     finish_fixture(database, "maker");
-    println!("80 worker supervisor, planning and maker scenarios passed; no skips");
+    println!("81 worker supervisor, planning and maker scenarios passed; no skips");
+}
+
+/// PRD #327, C5: the writer drafts with the writer's active prompt version and
+/// records it, like every other worker run.
+fn writer_prompt(settings: &tl3_config::Store) {
+    use tl3_controller::adapters::workers::writer::{
+        MessageKind, ProcessWriter, WriteRequest, Writer,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let mut config = config(settings, root.path(), "normal");
+    let script = root.path().join("writer.py");
+    fs::write(
+        &script,
+        r#"import json, pathlib, sys
+request = json.load(sys.stdin)
+pathlib.Path(sys.argv[1]).write_text(json.dumps(request))
+print(json.dumps({"event": "reply", "role": "writer", "reply": {"text": "The change is delivered."}}), flush=True)
+"#,
+    )
+    .unwrap();
+    let seen = root.path().join("seen.json");
+    config.workers.command = vec![
+        script.to_str().unwrap().into(),
+        seen.to_str().unwrap().into(),
+    ];
+    let mut store = Store::open(settings).unwrap();
+    tl3_controller::prompts::seed(&mut store).unwrap();
+    let mut prompts = tl3_store::Prompts::open(settings).unwrap();
+    let base = prompts.role("writer").unwrap().unwrap().active.id;
+    let robs = prompts
+        .save("writer", "Rob's writer prompt.", "Shorter.", "Rob", base)
+        .unwrap()
+        .unwrap()
+        .active
+        .id;
+    let input = WriteRequest {
+        kind: MessageKind::Summary,
+        facts: json!({"issue_title": "A change", "request": "Make a change", "outcome": "Delivered"}),
+        violations: vec![],
+    };
+    let mut writer = ProcessWriter::new(&config, &root.path().join("writer"))
+        .unwrap()
+        .with_prompts();
+    for key in ["notice:7", "notice:8"] {
+        writer.draft(key, &input).unwrap();
+        let request: Value = serde_json::from_slice(&fs::read(&seen).unwrap()).unwrap();
+        assert_eq!(
+            request["prompt"],
+            json!({"version": robs, "text": "Rob's writer prompt."}),
+            "{key}"
+        );
+        assert_eq!(
+            store.run_prompt(key, "writer").unwrap().unwrap().id,
+            robs,
+            "the draft's version is recorded"
+        );
+    }
 }
 
 fn quota_scenarios(database: &mut Database) {

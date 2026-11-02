@@ -716,9 +716,7 @@ impl Supervisor {
         }
         let mut request = self.request(delivery, role, &mut store, &snapshot)?;
         let attempt_number = previous.map_or(0, |(n, _)| n + 1);
-        if let Some(prompt) = crate::prompts::for_run(&mut store, &delivery.key, role)? {
-            request["prompt"] = prompt;
-        }
+        request["prompt"] = crate::prompts::for_run(&mut store, &delivery.key, role)?;
         store.claim_worker(
             &delivery.key,
             &delivery.node().0.to_string(),
