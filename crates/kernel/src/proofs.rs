@@ -1348,7 +1348,10 @@ fn check_publishing_ci_tests() {
             || n.review_stop.is_some()
     );
     kani::cover!(
-        before.fail_fast && b.round == 1 && n.review_stop == Some(ReviewStop::CiFailed),
+        before.fail_fast
+            && b.round == 1
+            && b.review_stop.is_none()
+            && n.review_stop == Some(ReviewStop::CiFailed),
         "fail_fast stops for TL3 review"
     );
     kani::cover!(b.round == 0 && n.round == 1, "a free fix round");
