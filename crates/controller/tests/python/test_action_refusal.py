@@ -14,7 +14,7 @@ TEST = "tests/test_value.py::test_value"
 PLAN = [{"name": "value", "kind": "regression", "tests": [TEST]}]
 
 
-def stage(root, *, plan=PLAN, conftest="# shared fixtures\n"):
+def stage(root, *, plan=PLAN, conftest="# shared fixtures\n", config=CONFIG, link=False):
     """Stage the real action and trusted harness for a head that sets conftest.py."""
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
@@ -27,7 +27,7 @@ def stage(root, *, plan=PLAN, conftest="# shared fixtures\n"):
     repo = root / "repo"
     (repo / "tests").mkdir(parents=True)
     git(repo, "init", "-q", "--template=", "-b", "main")
-    (repo / "pyproject.toml").write_text(CONFIG)
+    (repo / "pyproject.toml").write_text(config)
     (repo / "tests/conftest.py").write_text("# shared fixtures\n")
     (repo / "tests/test_value.py").write_text("def test_value(): assert True\n")
     git(repo, "add", ".")
@@ -35,6 +35,8 @@ def stage(root, *, plan=PLAN, conftest="# shared fixtures\n"):
     base = git(repo, "rev-parse", "HEAD")
     (repo / "tests/conftest.py").write_text(conftest)
     (repo / "README.md").write_text("maker\n")
+    if link:
+        (repo / "secret").symlink_to("/host-sentinel")
     git(repo, "add", ".")
     git(repo, "commit", "-qm", "maker")
     head = git(repo, "rev-parse", "HEAD")
@@ -67,7 +69,48 @@ def lines(output, prefix):
     return [json.loads(line.removeprefix(prefix)) for line in output.splitlines() if line.startswith(prefix)]
 
 
+def act(staged, env):
+    return subprocess.run([sys.executable, "-I", "-B", str(staged / "action.py")],
+                          env=env, capture_output=True, text=True)
+
+
 class ActionRefusalTests(unittest.TestCase):
+    def test_symlink_in_the_head_is_a_failing_check_naming_it(self):
+        # The maker's head is the maker's change: refuse it as a check, not an action error.
+        with tempfile.TemporaryDirectory() as directory:
+            staged, env = stage(Path(directory), link=True)
+            result = act(staged, env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(lines(result.stdout, "TL3_CHECKS_ERROR "), [])
+            reports = lines(result.stdout, "TL3_CHECKS ")
+            self.assertEqual([check["verdict"] for check in reports[0]["results"]], ["fail"])
+            self.assertIn("secret", reports[0]["results"][0]["tests"][0]["message"])
+
+    def test_repository_configuration_error_stays_upstream(self):
+        with tempfile.TemporaryDirectory() as directory:
+            staged, env = stage(Path(directory), config='[project]\nname = "served"\n')
+            result = act(staged, env)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("KeyError", result.stderr)
+            self.assertEqual(lines(result.stdout, "TL3_CHECKS_ERROR "), [])
+
+    def test_prismabuild_environment_error_stays_upstream(self):
+        with tempfile.TemporaryDirectory() as directory:
+            staged, env = stage(Path(directory))
+            Path(env["PRISMABUILD_ACTION_PROGRESS_PATH"]).write_text("not a progress record")
+            result = act(staged, env)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("JSONDecodeError", result.stderr)
+            self.assertEqual(lines(result.stdout, "TL3_CHECKS_ERROR "), [])
+
+    def test_malformed_check_plan_names_the_harness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            staged, env = stage(Path(directory), plan=[{"name": "value", "kind": "bogus", "tests": [TEST]}])
+            result = act(staged, env)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual([error["error"] for error in lines(result.stdout, "TL3_CHECKS_ERROR ")],
+                             ["HarnessInputError"])
+
     def test_changed_test_configuration_is_reported_not_raised(self):
         with tempfile.TemporaryDirectory() as directory:
             staged, env = stage(Path(directory),
@@ -87,7 +130,7 @@ class ActionRefusalTests(unittest.TestCase):
                                     env=env, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(lines(result.stdout, "TL3_CHECKS_ERROR "), [
-                {"schema": "tl3.checks.error.v1", "effect_key": "effect:89:7", "error": "ValueError"}])
+                {"schema": "tl3.checks.error.v1", "effect_key": "effect:89:7", "error": "HarnessInputError"}])
 
 
 if __name__ == "__main__":

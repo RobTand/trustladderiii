@@ -212,100 +212,112 @@ fn hostile_maker_head() {
 fn restarted_maker_checks_against_its_own_worktree_base() {
     crate::git_tests::hostile(
         "adapters::workers::startup_tests::restarted_maker_checks_against_its_own_worktree_base",
-        || {
-            use crate::git_tests::{Repo, git, support::Database};
-            // #326: a restart (Q49) links node 1 to node 0. Node 0 pinned its checks to the
-            // older main f.base; main has moved to f.head, where node 1's worktree starts.
-            let f = Repo::new();
-            let mut db = Database::start();
-            let settings = db.create("restarted_base");
-            let mut config =
-                tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
-            config.store = settings.clone();
-            config.github.repos[0].branch_template = "prismabuild-{issue}-tl3-{node}".into();
-            config.workers.runs = f.root.path().join("runs");
-            config.worktrees_root = f.root.path().join("worktrees");
-            let supervisor = Supervisor::new(&config, &f.root.path().join("records"))
-                .unwrap()
-                .with_materials(crate::production::Materials::fixture(
-                    config.worktrees_root.clone(),
-                ));
-            let mut value = serde_json::to_value(f.delivery()).unwrap();
-            value["output"]["Effect"]["node"] = json!(1);
-            value["checks"] = json!(null);
-            let delivery: Delivery = serde_json::from_value(value).unwrap();
-            let checkout =
-                super::super::worktrees::checkout_path(&config.worktrees_root, &delivery);
-            fs::create_dir_all(checkout.parent().unwrap()).unwrap();
-            git(
-                f.root.path(),
-                &[
-                    "clone",
-                    "--quiet",
-                    f.path.to_str().unwrap(),
-                    checkout.to_str().unwrap(),
-                ],
-            );
-            let branch = super::super::worktrees::Real::new(&config.worktrees_root, 0)
-                .unwrap()
-                .with_repositories(&config.github.repos)
-                .unwrap()
-                .branch_for(&delivery)
-                .unwrap();
-            assert_eq!(branch.as_str(), "prismabuild-42-tl3-1");
-            let main = CommitId::new(&f.head).unwrap();
-            Worktrees::open(&checkout, &checkout)
-                .unwrap()
-                .create_branch_from(&branch, &main, &main)
-                .unwrap();
-            git(&checkout, &["checkout", "--quiet", branch.as_str()]);
-            let mut store = Store::open(&settings).unwrap();
-            store
-                .put_worker_materials(
-                    "0",
-                    &json!({"check_run": {"repository": f.path, "base_sha": f.base, "plan": [
-                        {"name":"value","kind":"regression","tests":["test_value.py::test_value"]}]}}),
-                )
-                .unwrap();
-            let before = store.load().unwrap();
-            let mut commit = tl3_store::Commit::new("restart-fixture", json!(null), &before);
-            let rows = [
-                (
-                    "briefs",
-                    json!({"brief":"Read the intended repo","goals":[{"description":"Read it","verification":"test"}]}),
-                ),
-                (
-                    "plans",
-                    json!({"kind":"leaf","files":["README.md"],"checks":[{"kind":"regression","node_ids":["test_value.py::test_value"],"goal_ids":[0]}]}),
-                ),
-                (
-                    "request_links",
-                    json!({"original": 0, "authorized_by": "fixture", "issue": {
-                    "number": 42, "title": "Restarted", "body": "Restarted request", "state": "open",
-                    "updated_at": "2026-11-01T23:27:00Z", "labels": [], "pull_request": null}}),
-                ),
-            ];
-            commit.rows = rows
-                .into_iter()
-                .map(|(table, value)| tl3_store::RowChange::Put {
-                    table: table.into(),
-                    id: "1".into(),
-                    value,
-                })
-                .collect();
-            store.commit(&commit).unwrap();
-            let snapshot = store.load().unwrap();
-            let request = supervisor
-                .request(&delivery, "maker", &mut store, &snapshot)
-                .unwrap();
-            assert_eq!(
-                request["inputs"]["check_base_sha"], f.head,
-                "checks compare against the base the restarted worktree sits on"
-            );
-            assert_eq!(
-                store.worker_materials("1").unwrap().unwrap()["check_run"]["base_sha"],
-                f.head
-            );
-        },
+        // #326: a restart (Q49) links node 1 to node 0. Node 0 pinned its checks to the
+        // older main f.base; main has moved to f.head, where node 1's worktree starts.
+        || maker_checks_against_the_worktree_base("restarted_base", "0", true),
+    );
+}
+
+#[test]
+fn maker_heals_its_own_stale_check_base() {
+    crate::git_tests::hostile(
+        "adapters::workers::startup_tests::maker_heals_its_own_stale_check_base",
+        // #326: node 1 already stored checks pinned to f.base, before main moved to
+        // f.head and the worktree's recorded base followed it.
+        || maker_checks_against_the_worktree_base("stale_own_base", "1", false),
+    );
+}
+
+fn maker_checks_against_the_worktree_base(database: &str, stored_on: &str, restarted: bool) {
+    use crate::git_tests::{Repo, git, support::Database};
+    let f = Repo::new();
+    let mut db = Database::start();
+    let settings = db.create(database);
+    let mut config =
+        tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+    config.store = settings.clone();
+    config.github.repos[0].branch_template = "prismabuild-{issue}-tl3-{node}".into();
+    config.workers.runs = f.root.path().join("runs");
+    config.worktrees_root = f.root.path().join("worktrees");
+    let supervisor = Supervisor::new(&config, &f.root.path().join("records"))
+        .unwrap()
+        .with_materials(crate::production::Materials::fixture(
+            config.worktrees_root.clone(),
+        ));
+    let mut value = serde_json::to_value(f.delivery()).unwrap();
+    value["output"]["Effect"]["node"] = json!(1);
+    value["checks"] = json!(null);
+    let delivery: Delivery = serde_json::from_value(value).unwrap();
+    let checkout = super::super::worktrees::checkout_path(&config.worktrees_root, &delivery);
+    fs::create_dir_all(checkout.parent().unwrap()).unwrap();
+    git(
+        f.root.path(),
+        &[
+            "clone",
+            "--quiet",
+            f.path.to_str().unwrap(),
+            checkout.to_str().unwrap(),
+        ],
+    );
+    let branch = super::super::worktrees::Real::new(&config.worktrees_root, 0)
+        .unwrap()
+        .with_repositories(&config.github.repos)
+        .unwrap()
+        .branch_for(&delivery)
+        .unwrap();
+    assert_eq!(branch.as_str(), "prismabuild-42-tl3-1");
+    let main = CommitId::new(&f.head).unwrap();
+    Worktrees::open(&checkout, &checkout)
+        .unwrap()
+        .create_branch_from(&branch, &main, &main)
+        .unwrap();
+    git(&checkout, &["checkout", "--quiet", branch.as_str()]);
+    let mut store = Store::open(&settings).unwrap();
+    store
+        .put_worker_materials(
+            stored_on,
+            &json!({"check_run": {"repository": f.path, "base_sha": f.base, "plan": [
+                    {"name":"value","kind":"regression","tests":["test_value.py::test_value"]}]}}),
+        )
+        .unwrap();
+    let before = store.load().unwrap();
+    let mut commit = tl3_store::Commit::new("restart-fixture", json!(null), &before);
+    let rows = [
+        (
+            "briefs",
+            json!({"brief":"Read the intended repo","goals":[{"description":"Read it","verification":"test"}]}),
+        ),
+        (
+            "plans",
+            json!({"kind":"leaf","files":["README.md"],"checks":[{"kind":"regression","node_ids":["test_value.py::test_value"],"goal_ids":[0]}]}),
+        ),
+        (
+            "request_links",
+            json!({"original": 0, "authorized_by": "fixture", "issue": {
+                "number": 42, "title": "Restarted", "body": "Restarted request", "state": "open",
+                "updated_at": "2026-11-01T23:27:00Z", "labels": [], "pull_request": null}}),
+        ),
+    ];
+    commit.rows = rows
+        .into_iter()
+        .filter(|(table, _)| restarted || *table != "request_links")
+        .map(|(table, value)| tl3_store::RowChange::Put {
+            table: table.into(),
+            id: "1".into(),
+            value,
+        })
+        .collect();
+    store.commit(&commit).unwrap();
+    let snapshot = store.load().unwrap();
+    let request = supervisor
+        .request(&delivery, "maker", &mut store, &snapshot)
+        .unwrap();
+    assert_eq!(
+        request["inputs"]["check_base_sha"], f.head,
+        "checks compare against the base the restarted worktree sits on"
+    );
+    assert_eq!(
+        store.worker_materials("1").unwrap().unwrap()["check_run"]["base_sha"],
+        f.head
     );
 }

@@ -77,6 +77,22 @@ def test_head_configuration_change_is_a_failing_check_naming_every_file(repo):
     assert ran == [], 'changed test configuration must never run'
 
 
+def test_edited_existing_test_is_refused_beside_a_reproducing_check(repo):
+    # Every review fix round carries a reproducing check. Judging the reviewed tree's
+    # configuration must not hide an existing test the fix round edited to pass.
+    repo, pinned, ran = repo
+    (repo / 'product.py').write_text('def value(): return 2\n')
+    reviewed = save(repo, 'reviewed head')
+    (repo / 'tests/test_value.py').write_text('from product import value\ndef test_value(): assert value() == 2\n')
+    (repo / 'tests/test_fix.py').write_text('def test_fix(): assert True\n')
+    head = save(repo, 'fix round edits the existing test')
+    plan = (Check('reproducer', Kind.REPRODUCING, ('tests/test_fix.py::test_fix',)),
+            Check('value', Kind.REGRESSION, (TEST,)))
+    results = execution.run_checks(repo, pinned, head, plan, container=CONTAINER, reviewed=reviewed)
+    assert results[1].verdict == Verdict.FAIL
+    assert results[1].tests[0].message.startswith(f'Restore the existing test `{TEST}`')
+
+
 def test_reviewed_configuration_change_is_a_failing_check(repo):
     repo, pinned, ran = repo
     (repo / 'tests/conftest.py').write_text('def pytest_collection_modifyitems(items): items.clear()\n')
