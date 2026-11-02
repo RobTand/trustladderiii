@@ -664,6 +664,53 @@ def test_existing_test_in_a_large_file_is_defined_at_the_base(planner_request, m
     assert not any('test_large.py' in item for item in reply['violations']), reply['violations']
 
 
+# #422: memories recalled upfront for planning.
+MEMORIES = [{"id": "lesson-1", "kind": "lesson", "repo": "RobTand/tl3-sandbox",
+             "content": "greet() returns 'hi'."},
+            {"id": "run-1", "kind": "run", "content": "An earlier run read greeting.py."}]
+FLAG = {"id": "lesson-1", "claim": "greet() returns 'hi'", "reason": "greeting.py says hello world.",
+        "evidence": {"path": "greeting.py", "start_line": 1, "end_line": 1, "quote": "hello world"}}
+
+
+def test_planner_accepts_memories_cites_flags_and_conventions(tmp_path, planner_request):
+    planner_request["inputs"]["memories"] = MEMORIES
+    reply = {**CANT_MEET, "memory_ids": ["lesson-1"], "memory_flags": [FLAG],
+             "conventions": [{"text": "Greetings are plain text.", "evidence": FLAG["evidence"]}]}
+    result = run_reply(tmp_path, planner_request, reply)
+    assert result.exit_code == 0, result.stderr
+    final = next(event for event in result.events if event["event"] == "reply")["reply"]
+    assert final["memory_ids"] == ["lesson-1"]
+    assert final["memory_flags"] == [FLAG]
+
+
+def test_planner_inputs_may_note_a_recall_outage(tmp_path, planner_request):
+    planner_request["inputs"]["memories"] = []
+    planner_request["inputs"]["memory_note"] = "Hindsight recall was unavailable."
+    result = run_reply(tmp_path, planner_request, CANT_MEET)
+    assert result.exit_code == 0, result.stderr
+
+
+@pytest.mark.parametrize("reply,message", [
+    ({**CANT_MEET, "memory_ids": ["unknown"]}, "reply cites a memory it was not given"),
+    ({**CANT_MEET, "memory_ids": [], "memory_flags": [FLAG]}, "reply flags a memory it did not cite"),
+    ({**CANT_MEET, "memory_ids": ["lesson-1"], "memory_flags": [{**FLAG, "claim": "greet() raises errors"}]},
+     "a flag's claim is not in the memory it flags"),
+])
+def test_planner_memory_citations_are_checked(planner_request, monkeypatch, reply, message):
+    from tl3_workers.roles.planner import check_reply
+    planner_request["inputs"]["memories"] = MEMORIES
+    monkeypatch.chdir(planner_request["worktree"])
+    with pytest.raises(ValueError, match=message):
+        check_reply(planner_request["inputs"], copy.deepcopy(reply))
+
+
+@pytest.mark.parametrize("flags", [[FLAG] * 4, [{key: FLAG[key] for key in FLAG if key != "claim"}]])
+def test_planner_flags_are_bounded_by_schema(flags):
+    reply = {**CANT_MEET, "memory_ids": ["lesson-1"], "memory_flags": flags}
+    with pytest.raises(ValidationError):
+        validate("planner-reply", reply)
+
+
 def test_cant_meet_carries_required_protected_paths():
     reply = {**CANT_MEET, "protected_paths": ["tools/ci/bazel_gate.py"]}
     validate("planner-reply", reply)

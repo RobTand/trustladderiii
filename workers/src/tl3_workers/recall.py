@@ -60,3 +60,25 @@ def make_recall_tool(worktree):
         return recall(endpoint, bank, query, key_file)
 
     return recall_memory
+
+
+def check_citations(inputs, reply):
+    """A reply cites only supplied memories, and flags only memories it cites by their own words."""
+    supplied = {memory["id"] for memory in inputs.get("memories", [])}
+    cited = set(reply.get("memory_ids", []))
+    if not cited <= supplied:
+        raise ValueError("reply cites a memory it was not given")
+    if not {flag["id"] for flag in reply.get("memory_flags", [])} <= cited:
+        raise ValueError("reply flags a memory it did not cite")
+    contents = {memory["id"]: " ".join(memory["content"].split()) for memory in inputs.get("memories", [])}
+    for flag in reply.get("memory_flags", []):
+        if " ".join(flag["claim"].split()) not in contents[flag["id"]]:
+            raise ValueError("a flag's claim is not in the memory it flags")
+
+
+def redacted_memories(memories):
+    """Recalled text passes #302's redactor before any model turn, as trace content does."""
+    from tl3_workers.tracing import Redactor
+
+    redactor = Redactor(None)
+    return [{**memory, "content": redactor.text(memory["content"], 4096)} for memory in memories]

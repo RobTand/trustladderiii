@@ -108,7 +108,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (11, include_str!("../migrations/0011_console_commands.sql")),
     (12, include_str!("../migrations/0012_prompts.sql")),
     (13, include_str!("../migrations/0013_postmortems.sql")),
-    // 14 is #422's memory curations (#439), which lands first.
+    (14, include_str!("../migrations/0014_memory_curations.sql")),
     (
         15,
         include_str!("../migrations/0015_postmortem_results.sql"),
@@ -150,6 +150,132 @@ impl Store {
         let mut tx = self.client.transaction()?;
         queue_memory_in(&mut tx, operation_id, item)?;
         tx.commit()?;
+        Ok(())
+    }
+
+    /// #422: record one decision about a memory. A replayed operation is ignored.
+    pub fn record_memory_curation(
+        &mut self,
+        operation_id: &str,
+        curation: &MemoryCuration,
+    ) -> Result<()> {
+        self.client.execute(
+            "INSERT INTO tl3_memory_curations (operation_id, memory_id, state, verdict, source, request, run, claim, reason, evidence) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (operation_id) DO NOTHING",
+            &[&operation_id, &curation.memory_id, &curation.state, &curation.verdict, &curation.source,
+              &curation.request, &curation.run, &curation.claim, &curation.reason, &curation.evidence],
+        )?;
+        Ok(())
+    }
+
+    /// Every recorded memory curation, oldest first, for the audit trail.
+    pub fn memory_curations(&mut self) -> Result<Vec<serde_json::Value>> {
+        Ok(self.client.query(
+            "SELECT json_build_object('sequence', sequence, 'memory_id', memory_id, 'state', state, \
+             'verdict', verdict, 'source', source, 'request', request, 'run', run, 'claim', claim, \
+             'reason', reason, 'evidence', evidence, 'recorded_at', recorded_at, 'delivered_at', delivered_at, \
+             'http_status', http_status, 'announced_at', announced_at)::jsonb FROM tl3_memory_curations ORDER BY sequence",
+            &[],
+        )?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect())
+    }
+
+    /// Accepted curations Hindsight hasn't acknowledged, in decision order:
+    /// (sequence, memory id, state, reason).
+    pub fn pending_memory_curations(&mut self) -> Result<Vec<(i64, String, String, String)>> {
+        Ok(self.client.query(
+            "SELECT sequence, memory_id, state, reason FROM tl3_memory_curations \
+             WHERE verdict = 'accepted' AND state <> 'hidden' AND delivered_at IS NULL AND http_status IS NULL \
+             ORDER BY sequence LIMIT 64",
+            &[],
+        )?
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
+        .collect())
+    }
+
+    /// Hindsight acknowledged the curation, or refused it for good with `status`.
+    pub fn settle_memory_curation(&mut self, sequence: i64, status: Option<u16>) -> Result<()> {
+        let mut tx = self.client.transaction()?;
+        match status {
+            None => {
+                tx.execute(
+                    "UPDATE tl3_memory_curations SET delivered_at = CURRENT_TIMESTAMP WHERE sequence = $1",
+                    &[&sequence],
+                )?;
+                tx.execute("DELETE FROM tl3_memory_health WHERE singleton", &[])?;
+            }
+            Some(status) => {
+                tx.execute(
+                    "UPDATE tl3_memory_curations SET http_status = $2 WHERE sequence = $1",
+                    &[&sequence, &(status as i32)],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Of `ids`, those TL3 keeps out of recall: the latest accepted decision hides
+    /// the memory, or retires it before Hindsight has acknowledged. Delivered
+    /// retirements Hindsight filters itself.
+    pub fn withheld_memories(
+        &mut self,
+        ids: &[String],
+    ) -> Result<std::collections::BTreeSet<String>> {
+        Ok(self.client.query(
+            "SELECT memory_id FROM (SELECT DISTINCT ON (memory_id) memory_id, state, delivered_at \
+             FROM tl3_memory_curations WHERE verdict = 'accepted' AND memory_id = ANY($1) \
+             ORDER BY memory_id, sequence DESC) latest \
+             WHERE state = 'hidden' OR (state = 'invalidated' AND delivered_at IS NULL)",
+            &[&ids],
+        )?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect())
+    }
+
+    /// Accepted decisions about one memory since its last revert, oldest first:
+    /// (state, source, request).
+    pub fn memory_signals(
+        &mut self,
+        memory_id: &str,
+    ) -> Result<Vec<(String, String, Option<String>)>> {
+        Ok(self.client.query(
+            "SELECT state, source, request FROM tl3_memory_curations WHERE verdict = 'accepted' \
+             AND memory_id = $1 AND sequence > COALESCE((SELECT max(sequence) FROM tl3_memory_curations \
+             WHERE verdict = 'accepted' AND memory_id = $1 AND state = 'valid'), 0) ORDER BY sequence",
+            &[&memory_id],
+        )?
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2)))
+        .collect())
+    }
+
+    /// Hides and retirements not yet posted on the operations issue:
+    /// (sequence, operation id, row as in `memory_curations`).
+    pub fn unannounced_memory_curations(
+        &mut self,
+    ) -> Result<Vec<(i64, String, serde_json::Value)>> {
+        Ok(self.client.query(
+            "SELECT sequence, operation_id, json_build_object('memory_id', memory_id, 'state', state, \
+             'source', source, 'request', request, 'run', run, 'claim', claim, 'evidence', evidence)::jsonb \
+             FROM tl3_memory_curations WHERE verdict = 'accepted' AND state <> 'valid' AND announced_at IS NULL \
+             ORDER BY sequence LIMIT 64",
+            &[],
+        )?
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2)))
+        .collect())
+    }
+
+    pub fn announce_memory_curation(&mut self, sequence: i64) -> Result<()> {
+        self.client.execute(
+            "UPDATE tl3_memory_curations SET announced_at = CURRENT_TIMESTAMP WHERE sequence = $1",
+            &[&sequence],
+        )?;
         Ok(())
     }
 
