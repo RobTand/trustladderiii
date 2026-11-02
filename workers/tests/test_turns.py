@@ -430,3 +430,20 @@ def test_repair_prompt_caps_an_echoed_invalid_reply(tmp_path, monkeypatch):
     assert isinstance(repair, HumanMessage)
     assert len(repair.text.encode()) <= 2_048 + 512
     assert "oneOf" in repair.text
+
+
+def test_environment_evidence_survives_a_checkpoint_round_trip():
+    from tl3_workers.tools import Evidence
+
+    evidence = Evidence()
+    key = "c" * 64
+    head = (False, ("tests/test_a.py::test_one",))
+    evidence.test_result({"status": "infrastructure_error", "action_key": key}, head)
+    error = evidence.tool_error("read", "os_error", head)
+    restored = Evidence()
+    restored.restore(json.loads(json.dumps(evidence.state())))
+    assert restored.detail({"action_key": key}) == {"class": "test_infrastructure"}
+    assert restored.detail({"tool_error": error}) == {"tool": "read", "class": "os_error"}
+    # A later complete run of the same selectors still retires the restored entries.
+    restored.test_result({"status": "completed"}, head)
+    assert restored.detail({"action_key": key}) is None and restored.detail({"tool_error": error}) is None

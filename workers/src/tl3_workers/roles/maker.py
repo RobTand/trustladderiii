@@ -134,9 +134,6 @@ class _OutOfRoom(Exception):
 
 
 VISIT_VERSION = 1
-# Per-visit worktree attributes a resumed visit must keep, saved by name.
-# #308's worktree.evidence belongs here.
-RESUMED_WORKTREE_STATE = ()
 RESUME_NOTE = ("The worker restarted during your last tool call. That call may have run before "
                "the restart. Check the worktree before repeating it.")
 
@@ -256,6 +253,13 @@ def run(model, request, worktree, emit):
     needs_files = next(variant for variant in proposal["oneOf"]
                        if variant["properties"]["kind"]["const"] == "needs_files")
     del needs_files["properties"]["fits"]
+    blocked = next(variant for variant in proposal["oneOf"]
+                   if variant["properties"]["kind"]["const"] == "blocked")
+    for cited in blocked["properties"]["evidence"]["oneOf"]:
+        for name in ("tool", "class"):
+            cited["properties"].pop(name, None)
+            if name in cited["required"]:
+                cited["required"].remove(name)
     control = TurnControl()
     agent = build_agent(model, ROLE, worktree, reply_schema=proposal, context_size=inputs["context_size"],
                         control=control)
@@ -265,11 +269,18 @@ def run(model, request, worktree, emit):
     progress = session.with_suffix(".visit") if session else None
     visit = read_json(session.with_suffix(".head").read_text())["generation"] if session else None
     saved = _load_visit(progress, visit)
-    if saved is not None and allowance is not None:
+    if saved is not None:
+        fresh = (allowance.state() if allowance else None, worktree.evidence.state())
         try:
-            allowance.restore(saved["allowance"])
+            if allowance is not None:
+                allowance.restore(saved["allowance"])
+            # Environment failures this visit recorded stay citable by a blocked reply (Q50).
+            worktree.evidence.restore(saved["worktree"]["evidence"])
         except (ValueError, KeyError, TypeError):
             print("tl3_workers: maker: visit checkpoint unusable; starting the visit afresh", file=sys.stderr)
+            if allowance is not None:
+                allowance.restore(fresh[0])
+            worktree.evidence.restore(fresh[1])
             saved = None
     inflight = {}
     budget_exhausted = False
@@ -277,9 +288,6 @@ def run(model, request, worktree, emit):
         # A rerun after a worker failure continues this visit with its spent allowance.
         start, history = saved["start"], saved["messages"]
         budget_exhausted = saved["budget_exhausted"]
-        for name, value in saved["worktree"].items():
-            if name in RESUMED_WORKTREE_STATE:
-                setattr(worktree, name, value)
         pending = _pending_calls(history, start)
         if len(pending) == 1 and pending[0]["name"] == "run_tests" and saved["inflight"].get(pending[0]["id"]):
             # Wait on the test action the interrupted call submitted instead of submitting it again.
@@ -308,8 +316,7 @@ def run(model, request, worktree, emit):
             "version": VISIT_VERSION, "generation": visit, "start": start,
             "messages": messages_to_dict(history), "budget_exhausted": budget_exhausted,
             "allowance": allowance.state() if allowance else None, "inflight": inflight,
-            "worktree": {name: getattr(worktree, name) for name in RESUMED_WORKTREE_STATE
-                         if hasattr(worktree, name)}})
+            "worktree": {"evidence": worktree.evidence.state()}})
 
     def submitted(key, base):
         for call in _pending_calls(history, start):
@@ -366,6 +373,15 @@ def run(model, request, worktree, emit):
         Draft202012Validator(proposal).validate(reply)
         if reply["kind"] == "done" and any(check["status"] != "met" for check in reply["self_check"]):
             reply = {"kind": "cant_meet", "report": json.dumps(reply["self_check"], ensure_ascii=False)}
+        if reply["kind"] == "blocked":
+            # Free text alone cannot claim an environment failure (Q50). Worker
+            # code adds the recorded class; only that reaches the incident text.
+            detail = worktree.evidence.detail(reply["evidence"])
+            if detail is None:
+                reply = {"kind": "cant_meet", "report": "blocked cited no environment failure "
+                         "recorded in this run: " + reply["report"]}
+            else:
+                reply["evidence"] = {**reply["evidence"], **detail}
         _check_reply(inputs, reply)
         json.dumps(reply, ensure_ascii=False, allow_nan=False).encode("utf-8")
         return reply

@@ -1,6 +1,6 @@
 # TL3 state table
 
-Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47 and Q48. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
+Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47, Q48, Q50 and Q51. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
 
 **Changing the rules.** Any change to a rule in this file needs Rob's approval. That includes a new rule that comes from a bug Kani or a test finds. A clarification that changes no rule doesn't need it (Q27).
 
@@ -260,6 +260,27 @@ A job that produces no report never ran its tests, so it is an infrastructure fa
 
 Code computes a signature for each failure from the upstream's error class, and uses it only to group incidents.
 
+**Environment blockers,** as Rob approved on 2026-11-01 (Q50):
+
+- A maker that TL3's environment stopped replies `blocked`. Examples are a sandbox or permission error, a tool failure, or a test run whose summary is an infrastructure error.
+- The reply cites evidence that its worker checks within the same run: a `run_tests` action key whose summary status is `infrastructure_error`, or a tool error the run recorded. Free text alone isn't evidence. A `blocked` reply that cites nothing the run recorded becomes `cant_meet`, and one without evidence breaks the reply schema.
+- Only environment failures count. A tool error gets an id only for an environment errno, such as a permission, read-only, full-disk, I/O or descriptor error, never for a missing, overlong or looping path, a file used as a directory, or a tree nested too deeply to walk. A test run that the tested code could have cut short isn't evidence, and a later completed run of the same tests retires an earlier failure.
+- A `blocked` reply is an infrastructure failure. It retries in a new generation, every second failure raises an incident, and it spends no credit. When the blocked reply itself raises the incident, the incident text cites the worker-recorded evidence: the action key or tool-error id, the tool and the error class. The maker's own report never goes into the GitHub post.
+- `cant_meet` stays the reply for a change that can't meet a goal. Dropped connections and worker crashes keep their existing path.
+
+**Cause classes and releases,** as Rob approved on 2026-11-01 (Q51):
+
+- Every incident records its cause class. An upstream incident comes from an outside service: GitHub, Mergify, PrismaBuild, or a Git remote a worktree reaches. A TL3-side incident comes from TL3 itself: its code, prompts, tools or harness environment, including Q50 blockers and worker reply-validation failures.
+- A remote Git failure counts as upstream only when Git's stderr clearly shows a network or remote cause: an unresolved host, a refused or timed-out connection, an HTTP 5xx or 429 from the remote, or a remote that hung up. Ambiguous exits stay TL3-side, because a wasted release retry costs nothing and a missed one costs Rob a manual clear.
+- Known imprecision, tracked in #309. Each of these counts as TL3-side, so a release retries it once, and a cause that persists raises the incident again:
+  - an agent run that fails because the model proxy is down, which TL3 can't yet tell from a worker bug;
+  - a fetch that fails on a Git lock;
+  - a GitHub token request that fails in transport during a worktree effect.
+- tl3d knows its release identity and records the last one it started with.
+- On its first start under a new release, each open TL3-side incident that holds an operation clears once, through the same "incident cleared" event as Rob's clear. Its operation retries.
+- If the operation fails again on the new release, the failure rules above raise an incident, which stays open until the next release or Rob's `clear incident`.
+- A restart on the same release clears nothing. Upstream incidents keep the rules above.
+
 **Delivery failures** follow the same rule, counted per effect. Every second retryable failure raises an incident, and only Rob can clear the effect's second incident.
 
 **Work failures** are failed checks, review findings and CI test failures. They follow the rules for rounds and attempts under "A failed round".
@@ -372,6 +393,7 @@ The exact models come from what CLIProxyAPI serves. They are set in config, and 
 | Maker needs more files (a list) | Credit at least 1, and the forecast with the new files still fits | Ready(the same Making) | Spend 1; record the larger footprint; release the slot and files. The worktree and session stay. |
 | Maker needs more files | Otherwise | As for out of room | |
 | Maker can't meet, with a report | | The next attempt, as for a failed round 1 | |
+| Maker blocked, with evidence its worker checked (Q50, Rob, 2026-11-01) | | See "Failures": an infrastructure failure | Spend nothing |
 | Maker out of room | Credit at least 1 | Planning, which must split | Spend 1; release the slot and files |
 | Maker out of room | Credit 0 | AwaitingRob(out of credit, continue to Planning, which must split) | Release the slot and files |
 
@@ -541,7 +563,7 @@ Closed is final. It accepts only two kinds of event: a late merge, covered under
 | PR dequeued by a person | Record it | In Queued: release the slot and files, go to Ready(Publishing from step 4), and add a pause owned by Rob. Rob gets a note. Resuming puts the PR back in the queue. |
 | Effect permanently failed | Raise an incident | Outside Stopping: release any slot and files, and go to AwaitingRob(effect failed). The continuation retries the failed effect and carries on. A leaf that held a slot carries on through Ready; any other node returns to the same phase. For Stopping, see Stopping. |
 | Dependency delivered or abandoned | Mark it | Settle decides what follows |
-| Incident cleared | Clear the wait | The waiting operation runs again, first requesting a slot if it gave one back |
+| Incident cleared, by a probe, by Rob, or by a new release for a TL3-side incident (Q51) | Clear the wait | The waiting operation runs again, first requesting a slot if it gave one back |
 | Run failed | | See "Failures" |
 | Look | Read the upstream's record | What the look finds enters as replies, acknowledgements and facts |
 | Pause, with an owner | Add the pause | See "Pausing" below |

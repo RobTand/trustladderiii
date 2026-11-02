@@ -138,7 +138,7 @@ fits. When the controller reruns a maker after a worker failure, the run
 continues the same visit. After every update the maker saves a versioned
 `attempt-N.visit` checkpoint: history, the whole exploration allowance
 (spent input, turns, compaction and cache state), budget exhaustion, in-flight
-test actions and the worktree attributes named in `RESUMED_WORKTREE_STATE`.
+test actions and the environment evidence a blocked reply cites (Q50).
 A rerun resumes from the last complete tool result and keeps that state. A
 checkpoint that fails to decode, has the wrong shape or has another version
 starts the visit afresh with a fixed stderr note. run_tests records each
