@@ -112,11 +112,51 @@ pub(super) fn inputs(
             inputs["scope_diff"] = json!(scope_diff);
         }
     }
+    // #393: review judges a forcing against the issue's own symptom, not only the
+    // planner's description of it. The issue is the text ingest read, bounded.
+    let forced = report["results"]
+        .as_array()
+        .is_some_and(|results| results.iter().any(|r| r.get("forcing").is_some()));
+    if forced
+        && let Some(issue) = store
+            .worker_materials(&node)?
+            .and_then(|materials| materials.get("issue").cloned())
+    {
+        inputs["issue"] = json!({
+            "title": crate::findings::clipped(issue["title"].as_str().unwrap_or_default(), 1_000),
+            "body": crate::findings::clipped(issue["body"].as_str().unwrap_or_default(), 16_000),
+        });
+    }
     if let Some(mut fixes) = store.worker_document(&node, "review_fixes")?
         && fixes["head_sha"] == head
     {
         fixes.as_object_mut().unwrap().remove("head_sha");
         inputs["review_fixes"] = fixes;
+    }
+    // The run_tests receipts the maker cited for this head (#408). The worker attests each
+    // run's tree from the snapshot it staged; keep only runs on this head's tree, or on the
+    // check base's for base runs (#432).
+    if let Some(reply) = store.worker_document(&node, "maker_replies")?
+        && reply["head"] == head
+        && let Some(evidence) = reply["test_evidence"].as_array()
+    {
+        let head_tree = repository.tree(&head_id)?;
+        let base_tree = repository.tree(&run.base_sha)?;
+        let tested: Vec<Value> = evidence
+            .iter()
+            .filter(|entry| {
+                let expected = if entry["base"] == true {
+                    &base_tree
+                } else {
+                    &head_tree
+                };
+                entry["tree"].as_str() == Some(expected.as_str())
+            })
+            .cloned()
+            .collect();
+        if !tested.is_empty() {
+            inputs["test_evidence"] = json!(tested);
+        }
     }
     super::protocol::validate_inputs("reviewer", &inputs)?;
     Ok(inputs)
@@ -331,6 +371,63 @@ mod hostile_tests {
     }
 
     #[test]
+    fn forced_check_review_sees_the_issue() {
+        // #393 review: the reviewer judges a forcing against the issue's own symptom,
+        // not only the planner's description of it.
+        let f = Repo::new();
+        let mut db = Database::start();
+        let mut store = Store::open(&db.create("forced_issue")).unwrap();
+        let body = format!("PID 4242 may be live. {}", "x".repeat(20_000));
+        store
+            .put_worker_materials(
+                "0",
+                &json!({"issue": {"number": 2625, "title": "Stop depending on PID 4242",
+                    "body": body, "author": "unknown", "comments": []}}),
+            )
+            .unwrap();
+        let review = |store: &mut Store, forcing: Option<Value>| {
+            let mut snapshot = documents(
+                store,
+                &[
+                    (
+                        "goals",
+                        json!([{"description":"Update the readme", "verification":"test"}]),
+                    ),
+                    ("check_reports", json!({})),
+                ],
+            );
+            let report = snapshot
+                .rows
+                .iter_mut()
+                .find(|r| r.table == "check_reports")
+                .unwrap();
+            report.id = format!("0:{}", f.head);
+            let mut check = json!({"name": "check-1", "kind": "demonstrating", "verdict": "pass",
+                "custody": "in-process", "tests": [{"test": "tests/test_a.py::test_a",
+                "base": "assertion", "head": "passed", "pre_existing": false, "passed": true}]});
+            if let Some(forcing) = forcing {
+                check["forcing"] = forcing;
+                check["tests"][0]["head_forced"] = json!("passed");
+            }
+            report.value = json!({"base_sha": f.base, "results": [check]});
+            inputs(&f.delivery(), store, &snapshot, None).unwrap()
+        };
+        let forced = review(
+            &mut store,
+            Some(json!({"symptom": "PID 4242 is live.", "environment": {},
+                "patches": [{"target": "sampler.process_in_scope", "raises": "ValueError"}]})),
+        );
+        assert_eq!(forced["issue"]["title"], "Stop depending on PID 4242");
+        let shown = forced["issue"]["body"].as_str().unwrap();
+        assert!(shown.starts_with("PID 4242 may be live."));
+        assert!(shown.chars().count() <= 16_000, "the issue body is bounded");
+        assert!(
+            review(&mut store, None).get("issue").is_none(),
+            "only a forced check needs the issue"
+        );
+    }
+
+    #[test]
     fn adopted_scope_evidence_excludes_main_only_progress() {
         use crate::git_tests::git;
         let f = Repo::new();
@@ -372,6 +469,76 @@ mod hostile_tests {
             !scope.contains("main-only.txt"),
             "main progress must not become scope evidence: {scope}"
         );
+    }
+
+    #[test]
+    fn review_inputs_carry_the_makers_test_evidence_for_this_head() {
+        // #408: receipts the maker cited reach the reviewer, for the head it made.
+        // #432: only runs whose tested tree is the head's tree, or the check base's for base runs.
+        let f = Repo::new();
+        let head_tree =
+            crate::git_tests::git(&f.path, &["rev-parse", &format!("{}^{{tree}}", f.head)]);
+        let base_tree =
+            crate::git_tests::git(&f.path, &["rev-parse", &format!("{}^{{tree}}", f.base)]);
+        let run = |base: bool, tree: &str| {
+            json!({"tests": ["test_value.py::test_value"], "base": base, "repeat": 5,
+                "parallel": 0, "status": "completed", "tree": tree, "fresh": true,
+                "totals": {"passed": 1, "failed": 0, "error": 0, "skipped": 0},
+                "receipts": [{"action_key": "a".repeat(64), "status": "executed", "exit_code": 0,
+                    "receipt_sha256": "b".repeat(64), "log_sha256": "c".repeat(64)}]})
+        };
+        let all = json!([
+            run(false, &head_tree),
+            run(true, &base_tree),
+            run(false, &base_tree),
+            run(true, &head_tree)
+        ]);
+        let mut db = Database::start();
+        for (index, (head, evidence, expected)) in [
+            (
+                f.head.clone(),
+                all.clone(),
+                json!([run(false, &head_tree), run(true, &base_tree)]),
+            ),
+            ("d".repeat(40), all.clone(), Value::Null),
+            (f.head.clone(), json!([run(false, &base_tree)]), Value::Null),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            // documents() commits under one event key, so each case needs its own store.
+            let mut store = Store::open(&db.create(&format!("review_evidence_{index}"))).unwrap();
+            store.put_worker_materials("0", &json!({})).unwrap();
+            let mut snapshot = documents(
+                &mut store,
+                &[
+                    (
+                        "goals",
+                        json!([{"description":"Run it five times", "verification":"review"}]),
+                    ),
+                    ("check_reports", json!({})),
+                    (
+                        "maker_replies",
+                        json!({"kind": "done", "head": head,
+                        "self_check": [{"goal_id": "g", "status": "met", "evidence": "five runs"}],
+                        "test_evidence": evidence}),
+                    ),
+                ],
+            );
+            let report = snapshot
+                .rows
+                .iter_mut()
+                .find(|r| r.table == "check_reports")
+                .unwrap();
+            report.id = format!("0:{}", f.head);
+            report.value = json!({"base_sha":f.base,"results":[]});
+            let value = inputs(&f.delivery(), &mut store, &snapshot, None).unwrap();
+            assert_eq!(
+                value.get("test_evidence").cloned().unwrap_or(Value::Null),
+                expected,
+                "case {index}"
+            );
+        }
     }
 
     #[test]

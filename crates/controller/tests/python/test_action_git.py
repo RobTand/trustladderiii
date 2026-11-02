@@ -43,6 +43,7 @@ class ActionGitTests(unittest.TestCase):
             (trusted / "__init__.py").write_text('''from .trees import git
 Check = lambda *a: a
 Container = lambda image, *, exec_scratch=False: (image, exec_scratch)
+Forcing = None
 Kind = lambda x: x
 class HarnessInputError(ValueError): pass
 def run_checks(repo, *a, **kw):

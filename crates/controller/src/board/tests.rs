@@ -95,18 +95,66 @@ fn every_phase_maps_to_its_column_and_label() {
     }
 }
 
+/// Rob, 2026-11-02: stopped work isn't done, and cancelled work isn't a merge.
+const OUTCOME_COLUMNS: [(Outcome, Column); 6] = [
+    (Outcome::Merged, Column::Done),
+    (Outcome::AlreadyDone, Column::Done),
+    (Outcome::Replaced, Column::Done),
+    (Outcome::Stopped, Column::Backlog),
+    (Outcome::Duplicate, Column::Cancelled),
+    (Outcome::NotActionable, Column::Cancelled),
+];
+
 #[test]
-fn every_outcome_ends_in_done() {
+fn every_outcome_lands_in_its_column() {
+    for (outcome, column) in OUTCOME_COLUMNS {
+        assert_eq!(Column::of(Phase::Closed(outcome)), column, "{outcome:?}");
+        assert_eq!(Column::of(Phase::Stopping(outcome)), column, "{outcome:?}");
+    }
+}
+
+#[test]
+fn every_outcome_keeps_its_ending_and_phase_label() {
     for (outcome, ending, label) in OUTCOMES {
         let closed = card(request(0, Phase::Closed(outcome)));
-        assert_eq!(closed.column, Column::Done);
         assert_eq!(closed.ending, Some(ending));
         assert_eq!(closed.phase, format!("Closed: {label}"));
         let stopping = card(request(0, Phase::Stopping(outcome)));
-        assert_eq!(stopping.column, Column::Done);
         assert_eq!(stopping.ending, Some(ending));
         assert_eq!(stopping.phase, "Cleaning up");
+        let column = OUTCOME_COLUMNS
+            .iter()
+            .find(|(candidate, _)| *candidate == outcome)
+            .unwrap()
+            .1;
+        assert_eq!(closed.column, column);
+        assert_eq!(
+            stopping.column, column,
+            "a stop still cleaning up maps by its outcome"
+        );
     }
+}
+
+#[test]
+fn only_stopped_cards_carry_the_stopped_badge() {
+    for (outcome, ..) in OUTCOMES {
+        let expected: Vec<Badge> = if outcome == Outcome::Stopped {
+            vec![Badge::Stopped]
+        } else {
+            vec![]
+        };
+        assert_eq!(
+            card(request(0, Phase::Closed(outcome))).badges,
+            expected,
+            "{outcome:?}"
+        );
+        assert_eq!(
+            card(request(0, Phase::Stopping(outcome))).badges,
+            expected,
+            "{outcome:?} while cleaning up"
+        );
+    }
+    assert_eq!(card(request(0, Phase::Making)).badges, vec![]);
 }
 
 #[test]
@@ -129,6 +177,7 @@ fn columns_are_in_board_order_with_labels() {
             (Column::Merging, "Merging", 0),
             (Column::NeedsRob, "Needs Rob", 0),
             (Column::Done, "Done", 0),
+            (Column::Cancelled, "Cancelled", 0),
         ]
         .map(|(column, label, count)| (column, label.to_string(), count))
     );
@@ -360,6 +409,8 @@ fn flow_counts_stages_flight_and_recent_merges() {
     merged_long_ago.phase_since_ms = Some(NOW - 25 * 60 * MINUTE);
     let mut stopped_now = request(3, Phase::Closed(Outcome::Stopped));
     stopped_now.phase_since_ms = Some(NOW - MINUTE);
+    let mut duplicate_now = request(9, Phase::Closed(Outcome::Duplicate));
+    duplicate_now.phase_since_ms = Some(NOW - MINUTE);
     let flow = board(vec![
         merged_now,
         merged_today,
@@ -370,6 +421,8 @@ fn flow_counts_stages_flight_and_recent_merges() {
         request(6, Phase::Auditing),
         request(7, Phase::Making),
         request(8, Phase::AwaitingRob),
+        duplicate_now,
+        request(10, Phase::Stopping(Outcome::Stopped)),
     ])
     .flow;
     let counts: Vec<_> = flow
@@ -381,12 +434,15 @@ fn flow_counts_stages_flight_and_recent_merges() {
     assert_eq!(
         counts,
         [
+            (Column::Backlog, 2),
             (Column::Intake, 2),
             (Column::Making, 1),
             (Column::NeedsRob, 1),
-            (Column::Done, 5)
+            (Column::Done, 4),
+            (Column::Cancelled, 1),
         ]
     );
+    // Stopped and cancelled work isn't in flight.
     assert_eq!(flow.in_flight, 4);
     // The merge that is still cleaning up counts too.
     assert_eq!(flow.merged_last_hour, 2);
@@ -449,35 +505,101 @@ fn patch_carries_only_changed_cards() {
     assert!(after.patch_since(&after).upserts.is_empty());
 }
 
+fn closed(id: u64, outcome: Outcome, age_ms: i64) -> Request {
+    let mut request = request(id, Phase::Closed(outcome));
+    request.phase_since_ms = Some(NOW - age_ms);
+    request
+}
+
+const HOURS: i64 = 60 * MINUTE;
+const DAYS: i64 = 24 * HOURS;
+
 #[test]
-fn done_shows_the_last_day_and_counts_every_ending() {
-    let mut recent = request(0, Phase::Closed(Outcome::Merged));
-    recent.phase_since_ms = Some(NOW - 23 * 60 * MINUTE);
-    let mut old = request(1, Phase::Closed(Outcome::Stopped));
-    old.phase_since_ms = Some(NOW - 25 * 60 * MINUTE);
+fn done_and_cancelled_show_the_last_day_and_count_every_ending() {
     let mut unknown = request(2, Phase::Closed(Outcome::Duplicate));
     unknown.phase_since_ms = None;
-    let mut cleaning = request(3, Phase::Stopping(Outcome::Stopped));
-    cleaning.phase_since_ms = Some(NOW - 30 * 60 * MINUTE);
+    let mut cleaning = request(3, Phase::Stopping(Outcome::Merged));
+    cleaning.phase_since_ms = Some(NOW - 30 * HOURS);
     let board = board(vec![
-        recent,
-        old,
+        closed(0, Outcome::Merged, 23 * HOURS),
+        closed(1, Outcome::Merged, 25 * HOURS),
         unknown,
         cleaning,
         request(4, Phase::Making),
+        closed(5, Outcome::AlreadyDone, 25 * HOURS),
+        closed(6, Outcome::Duplicate, 23 * HOURS),
+        closed(7, Outcome::NotActionable, 25 * HOURS),
+        closed(8, Outcome::Replaced, 25 * HOURS),
     ]);
     assert_eq!(
         board.cards.iter().map(|card| card.id).collect::<Vec<_>>(),
-        [0, 3, 4],
-        "closed requests older than a day leave the board; cleanup stays"
+        [0, 3, 4, 6],
+        "done and cancelled requests older than a day leave the board; cleanup stays"
     );
-    let done = board
+    let count = |column| {
+        board
+            .flow
+            .columns
+            .iter()
+            .find(|count| count.column == column)
+            .unwrap()
+            .count
+    };
+    assert_eq!(count(Column::Done), 5, "the count includes every ending");
+    assert_eq!(
+        count(Column::Cancelled),
+        3,
+        "the count includes every ending"
+    );
+}
+
+#[test]
+fn stopped_requests_wait_in_the_backlog_for_a_week() {
+    let mut unknown = request(4, Phase::Closed(Outcome::Stopped));
+    unknown.phase_since_ms = None;
+    let mut cleaning = request(5, Phase::Stopping(Outcome::Stopped));
+    cleaning.phase_since_ms = Some(NOW - 30 * DAYS);
+    let board = board(vec![
+        closed(0, Outcome::Stopped, 2 * HOURS),
+        closed(1, Outcome::Stopped, 3 * DAYS),
+        closed(2, Outcome::Stopped, 7 * DAYS - HOURS),
+        closed(3, Outcome::Stopped, 7 * DAYS + HOURS),
+        unknown,
+        cleaning,
+    ]);
+    assert_eq!(
+        board.cards.iter().map(|card| card.id).collect::<Vec<_>>(),
+        [0, 1, 2, 5],
+        "a stopped request leaves the backlog a week after it closed; cleanup stays"
+    );
+    assert!(
+        board
+            .cards
+            .iter()
+            .all(|card| card.column == Column::Backlog && card.badges == [Badge::Stopped])
+    );
+    let backlog = board
         .flow
         .columns
         .iter()
-        .find(|count| count.column == Column::Done)
+        .find(|count| count.column == Column::Backlog)
         .unwrap();
-    assert_eq!(done.count, 4, "the count includes every ending");
+    assert_eq!(backlog.count, 4, "the backlog counts what it shows");
+}
+
+#[test]
+fn only_merges_count_as_merged() {
+    let board = board(vec![
+        closed(0, Outcome::Merged, MINUTE),
+        closed(1, Outcome::AlreadyDone, MINUTE),
+        closed(2, Outcome::Stopped, MINUTE),
+        closed(3, Outcome::Duplicate, MINUTE),
+        closed(4, Outcome::NotActionable, MINUTE),
+        closed(5, Outcome::Replaced, MINUTE),
+    ]);
+    assert_eq!(board.flow.merged_last_hour, 1);
+    assert_eq!(board.flow.merged_last_day, 1);
+    assert_eq!(board.flow.in_flight, 0);
 }
 
 #[test]

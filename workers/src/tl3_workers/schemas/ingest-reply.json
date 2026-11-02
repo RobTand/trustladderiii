@@ -57,6 +57,16 @@
           "uniqueItems": true,
           "description": "Files in the root scope used by the forecaster. Required when forecast settings are supplied."
         },
+        "protected_paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Concrete repository-relative paths that MUST change to meet the request's goals. Report only when the whole request cannot land usefully without these edits; never for inspected files, excluded edits, or an optional part. The controller verifies the effective protected-path list."
+        },
         "memory_flags": {
           "type": "array",
           "maxItems": 3,
@@ -146,6 +156,16 @@
         "reason": {
           "type": "string",
           "minLength": 1
+        },
+        "protected_paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Concrete repository-relative paths that MUST change to meet the request's goals. Report only when the whole request cannot land usefully without these edits; never for inspected files, excluded edits, or an optional part. The controller verifies the effective protected-path list."
         }
       },
       "required": [

@@ -66,6 +66,7 @@ fn check_plan(f: &Fixture, base: String) -> CheckRun {
             name: "value".into(),
             kind: Kind::Demonstrating,
             tests: vec!["test_value.py::test_value".into()],
+            forcing: None,
         }],
     }
 }

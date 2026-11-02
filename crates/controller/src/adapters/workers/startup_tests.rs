@@ -299,7 +299,7 @@ fn hostile_maker_head() {
                     ),
                     (
                         "plans",
-                        json!({"kind":"leaf","files":["README.md"],"checks":[{"kind":"regression","node_ids":["test_value.py::test_value"],"goal_ids":[0]}]}),
+                        json!({"kind":"leaf","files":["README.md"],"checks":[{"kind":"demonstrating","node_ids":["test_value.py::test_value"],"goal_ids":[0],"forcing":{"symptom":"The value is late.","environment":{"VALUE_LATE":"1"},"patches":[]}}]}),
                     ),
                     (
                         "maker_findings",
@@ -315,6 +315,12 @@ fn hostile_maker_head() {
             assert_eq!(
                 store.worker_materials("0").unwrap().unwrap()["check_run"]["base_sha"],
                 f.base
+            );
+            // #393: the harness gets the plan's forcing through the stored check run.
+            assert_eq!(
+                store.worker_materials("0").unwrap().unwrap()["check_run"]["plan"][0]["forcing"]["environment"]
+                    ["VALUE_LATE"],
+                "1"
             );
             // A fix round may start after commits and a rebase changed the check base.
             fs::write(checkout.join("README.md"), "earlier maker round\n").unwrap();
@@ -451,4 +457,65 @@ fn maker_checks_against_the_worktree_base(database: &str, stored_on: &str, resta
         store.worker_materials("1").unwrap().unwrap()["check_run"]["base_sha"],
         f.head
     );
+}
+
+#[test]
+fn ingest_preflight_refuses_a_declared_protected_edit_without_launching_a_worker() {
+    use crate::git_tests::{Repo, support::Database};
+    let f = Repo::new();
+    let mut db = Database::start();
+    let mut config =
+        tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+    config.store = db.create("protected_preflight");
+    config.workers.runs = f.root.path().join("runs");
+    config.workers.python = f.root.path().join("missing-runtime/python");
+    config.github.repos[0].protected_paths = vec!["tools/ci/**".into()];
+    let controller = crate::Controller::open(
+        Store::open(&config.store).unwrap(),
+        crate::adapters::simulation(&f.root.path().join("fakes")).unwrap(),
+        crate::Bootstrap::from_config(&config).unwrap(),
+    )
+    .unwrap();
+    let mut store = Store::open(&config.store).unwrap();
+    store.put_worker_materials("0", &json!({
+        "issue":{"number":2636,"title":"Retry gate budgets","body":"## Expected footprint\n- `tools/ci/bazel_gate.py`", "author":"owner","comments":[]},
+        "repo":{"readme":"Gate repository", "file_list":["tools/ci/bazel_gate.py"]}
+    })).unwrap();
+    let records = f.root.path().join("records");
+    let mut supervisor = Supervisor::new(&config, &records).unwrap();
+    let mut delivery = f.delivery();
+    delivery.epoch = store.load().unwrap().epoch.get();
+    delivery.output = Out::Effect {
+        node: tl3_kernel::NodeId(0),
+        seq: 1,
+        kind: EffectKind::StartRun(tl3_kernel::Role::Ingest),
+        head: None,
+    };
+    let completion = supervisor
+        .execute(&delivery)
+        .expect("declared protected edits need no runtime or model");
+    let encoded = serde_json::to_value(&completion).unwrap();
+    assert_eq!(
+        encoded["observations"][0]["WorkerReply"]["reply"]["protected_paths"],
+        json!(["tools/ci/bazel_gate.py"])
+    );
+    assert!(
+        !supervisor.root(&delivery.key).exists(),
+        "preflight creates no worker run"
+    );
+    drop(supervisor);
+    let mut restarted = Supervisor::new(&config, &records).unwrap();
+    assert!(
+        matches!(
+            restarted.reconcile(&delivery).unwrap(),
+            Reconciliation::Found(_)
+        ),
+        "preflight completion is durable"
+    );
+    assert_eq!(
+        serde_json::to_value(restarted.execute(&delivery).unwrap()).unwrap(),
+        encoded
+    );
+    drop(controller);
+    db.stop();
 }

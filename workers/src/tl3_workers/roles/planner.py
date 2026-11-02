@@ -6,7 +6,7 @@ import tomllib
 
 from tl3_workers.roles.base import Role
 from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES
-from tl3_harness import Check, Kind
+from tl3_harness import Check, Forcing, HarnessInputError, Kind
 from tl3_harness.limits import validate_check_plan
 from tl3_harness.trees import is_test, test_function_source
 from tl3_workers.tools import Worktree
@@ -30,7 +30,16 @@ def check_reply(inputs, reply):
         if not reply["lands_on_its_own"]:
             violations.append("A leaf must land on its own.")
         covered = set()
-        for check in reply["checks"]:
+        forcings = {}
+        for index, check in enumerate(reply["checks"]):
+            if "forcing" in check:
+                # #393: a forced reproduction is the red for a deflake.
+                if check["kind"] != "demonstrating":
+                    violations.append("Only a demonstrating check can carry a forcing.")
+                try:
+                    forcings[index] = Forcing.parse(check["forcing"])
+                except HarnessInputError as error:
+                    violations.append(f"Invalid forcing: {error}")
             if not check["node_ids"]:
                 violations.append("Every check must name at least one test.")
             if not check["goal_ids"]:
@@ -41,7 +50,8 @@ def check_reply(inputs, reply):
                 except ValueError:
                     violations.append("Checks must name exact pytest node IDs.")
                     continue
-                if check["kind"] in {"regression", "behavior-preserving"}:
+                # A forced check runs the old test on the base, so it must exist there too.
+                if check["kind"] in {"regression", "behavior-preserving"} or "forcing" in check:
                     path = node_id.split("::")[0]
                     oversized, exists = base_definition(node_id)
                     if oversized:
@@ -55,7 +65,8 @@ def check_reply(inputs, reply):
         violations.extend(edit_violations(inputs["ingest"]["goals"], reply))
         if "Checks must name exact pytest node IDs." not in violations:
             try:
-                validate_check_plan(tuple(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']))
+                validate_check_plan(tuple(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']),
+                                                (forcings.get(i) if check['kind'] == 'demonstrating' else None))
                                           for i, check in enumerate(reply['checks']) if check['node_ids']))
             except ValueError as error:
                 violations.append(str(error))
@@ -166,6 +177,13 @@ def asks_to_edit(before, after):
     return False
 
 
+def valid_forcing(check):
+    try:
+        return "forcing" in check and Forcing.parse(check["forcing"]) is not None
+    except HarnessInputError:
+        return False
+
+
 def function(node_id):
     # The harness's edit guard compares a test's function source, so every case shares it.
     return node_id.split("[", 1)[0]
@@ -225,10 +243,14 @@ def edit_violations(goals, reply):
                                   "check. If the change edits that test, list it in edits_tests and name it only "
                                   "in a demonstrating check. If it leaves the test as written there, guard that "
                                   "behavior with other existing tests.")
-    if test_only and (edited or demonstrated or names_frozen):
-        violations.append("This leaf changes only tests, so no check can show it: the base run applies the "
-                          "leaf's test edits, so base and head run the same test. Return can't meet and name "
-                          "#393, which asks Rob whether a forced reproduction counts as deflake evidence.")
+    # Q55: a forced reproduction recreates the flake outside the test, so it can show a test-only change.
+    demonstrating = [check for check in reply["checks"] if check["kind"] == "demonstrating"]
+    forced = bool(demonstrating) and all(valid_forcing(check) for check in demonstrating)
+    if test_only and (edited or demonstrated or names_frozen) and not forced:
+        violations.append("This leaf changes only tests, so an ordinary demonstrating check can't show it: the "
+                          "base run applies the leaf's test edits, so base and head run the same test. A change "
+                          "to tests alone needs a forced reproduction (Q55) on its demonstrating check; if no "
+                          "forcing can be written, return can't meet.")
     return violations
 
 

@@ -14,6 +14,9 @@ pub(crate) mod review;
 mod source;
 #[cfg(test)]
 mod startup_tests;
+mod trace;
+#[cfg(test)]
+mod trace_tests;
 pub use fake::Fake;
 pub use source::WorkerOutputSource;
 
@@ -197,6 +200,7 @@ impl Supervisor {
             self.store.clone(),
             self.active.clone(),
         )
+        .with_flusher(self.settings.launcher.clone(), self.settings.python.clone())
     }
 
     fn fence(&self, delivery: &Delivery) -> Result<(Store, Snapshot)> {
@@ -272,7 +276,13 @@ impl Supervisor {
                 .as_array()
                 .ok_or(Error::Invalid("maker plan needs checks"))?
                 .iter()
-                .map(|c| json!({"name":c["name"],"kind":c["kind"],"tests":c["tests"]}))
+                .map(|c| {
+                    let mut check = json!({"name":c["name"],"kind":c["kind"],"tests":c["tests"]});
+                    if let Some(forcing) = c.get("forcing") {
+                        check["forcing"] = forcing.clone();
+                    }
+                    check
+                })
                 .collect::<Vec<_>>();
             materials["check_run"] =
                 json!({"repository":checkout,"base_sha":base.as_str(),"plan":checks});
@@ -441,6 +451,10 @@ impl Supervisor {
             }
         }
         if matches!(role, "ingest" | "audit") {
+            inputs["protected_paths"] = json!(
+                self.protected_paths
+                    .for_repository(&delivery.repository, &self.planning.protected_paths)?
+            );
             // Cached simulation materials may still contain inline fixture text.
             if let Some(repo) = inputs["repo"].as_object_mut() {
                 repo.remove("materials");
@@ -668,8 +682,17 @@ impl Supervisor {
         if Store::open(&self.store)?.load()?.epoch.get() != epoch {
             return Err(Error::Invalid("worker stop epoch is fenced"));
         }
-        stop_attempt(&self.root(key))?;
+        if let Some(attempt) = stop_attempt(&self.root(key))? {
+            trace::flush(&attempt, &self.flusher());
+        }
         Ok(())
+    }
+
+    fn flusher(&self) -> trace::Flusher<'_> {
+        trace::Flusher {
+            launcher: &self.settings.launcher,
+            python: &self.settings.python,
+        }
     }
 
     fn retire_sessions(&self, store: &mut Store) -> Result<()> {
@@ -734,6 +757,8 @@ impl Supervisor {
                         }
                         Err(error) => return Err(error),
                     }
+                    // #430: an unshipped span log outlives the run root.
+                    trace::hold(&entry.path(), &self.settings.runs)?;
                 }
             }
         }
@@ -772,8 +797,15 @@ impl Supervisor {
     }
 }
 
-fn stop_attempt(root: &Path) -> Result<()> {
+fn stop_attempt(root: &Path) -> Result<Option<PathBuf>> {
     if let Some((_, attempt)) = latest(root)? {
+        // Q49: stopping a live worker is deliberate, so its trace closes as
+        // stopped rather than crashed (#430).
+        if attempt.join(trace::LOG).try_exists()?
+            && (alive(&attempt.join("claim.json"))? || alive(&attempt.join("process.json"))?)
+        {
+            write(&attempt.join("stopped.json"), &json!({}))?;
+        }
         // #372: the supervisor's own scope also holds every process the worker started.
         let scope = process::own_scope(&attempt.join("claim.json"))?;
         cancel(&attempt.join("claim.json"))?;
@@ -783,8 +815,9 @@ fn stop_attempt(root: &Path) -> Result<()> {
         }
         process::kill_and_wait(&attempt.join("process.json"))?;
         process::kill_and_wait(&attempt.join("claim.json"))?;
+        return Ok(Some(attempt));
     }
-    Ok(())
+    Ok(None)
 }
 
 impl Supervisor {
@@ -812,6 +845,11 @@ impl Supervisor {
         let Some(role) = role else {
             return Err(Error::Invalid("unsupported worker role"));
         };
+        if let Reconciliation::Found(completion) =
+            super::record::Records::new(&self.records_root).reconcile(delivery)?
+        {
+            return Ok(completion);
+        }
         let root = self.root(&delivery.key);
         let previous = latest(&root)?;
         let result = match &previous {
@@ -841,6 +879,21 @@ impl Supervisor {
             Reconciliation::Absent => {}
         }
         let mut request = self.request(delivery, role, &mut store, &snapshot)?;
+        if role == "ingest"
+            && let Some(reply) = crate::protected_requests::ingest_preflight(&request["inputs"])
+        {
+            return super::record::Records::new(&self.records_root).deliver(
+                delivery,
+                Completion::confirmed(vec![Observation::WorkerReply {
+                    node: delivery.node(),
+                    generation: delivery.generation,
+                    role: role.into(),
+                    reply,
+                    model: None,
+                }]),
+            );
+        }
+
         let attempt_number = previous.map_or(0, |(n, _)| n + 1);
         request["prompt"] = crate::prompts::for_run(&mut store, &delivery.key, role)?;
         store.claim_worker(
@@ -866,6 +919,8 @@ impl Supervisor {
             "repo": format!("{}/{}", delivery.repository.owner, delivery.repository.name),
             "issue": delivery.issue, "request": delivery.node().0.to_string(), "epoch": delivery.epoch,
         });
+        request["trace"]["log"] = json!(attempt.join(trace::LOG));
+        request["trace"]["wake"] = json!(self.settings.runs.join(trace::HELD).join(trace::WAKE));
         let python = release_python(&self.settings.python)?;
         // #372: the launcher moves the supervisor out of tl3d's cgroup, so a
         // restart or deploy leaves the run alive. A launcher failure fails the
@@ -1075,6 +1130,12 @@ impl Executor for Supervisor {
 
 impl Supervisor {
     fn reconcile_run(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        if let found @ Reconciliation::Found(_) =
+            super::record::Records::new(&self.records_root).reconcile(delivery)?
+        {
+            return Ok(found);
+        }
+
         let result = match latest(&self.root(&delivery.key))? {
             Some((_, attempt)) => inspect(&attempt, delivery)?,
             None => Reconciliation::Absent,

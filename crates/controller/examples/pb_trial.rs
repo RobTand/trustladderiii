@@ -98,6 +98,7 @@ fn fixture(root: &Path) -> Delivery {
                 name: "value changes".into(),
                 kind: Kind::Demonstrating,
                 tests: vec!["test_value.py::test_value".into()],
+                forcing: None,
             }],
         }),
     }

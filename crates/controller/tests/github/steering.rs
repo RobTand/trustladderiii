@@ -345,7 +345,14 @@ pub(super) fn commands(settings: &tl3_config::Store) {
                 .as_str()
                 .is_some_and(|id| id.ends_with("/10004"))
     }));
-    assert_eq!(fs::read_dir(&d.runs).unwrap().count(), 1);
+    // `.traces` holds span logs of retired runs until they ship (#430).
+    assert_eq!(
+        fs::read_dir(&d.runs)
+            .unwrap()
+            .filter(|entry| entry.as_ref().unwrap().file_name() != ".traces")
+            .count(),
+        1
+    );
     assert_eq!(fs::read_dir(d.runs.join(".ready")).unwrap().count(), 0);
     println!("test steering_commands_remark_authorization_and_dedup ... ok");
 }

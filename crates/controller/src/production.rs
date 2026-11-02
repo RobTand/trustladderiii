@@ -151,7 +151,9 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
     adapters.register(Upstream::PrismaBuild, pb);
     adapters.register(
         Upstream::Mergify,
-        adapters::mergify::Adapter::new(clients.clone(), epoch, &records.join("mergify"))?,
+        adapters::mergify::Adapter::new(clients.clone(), epoch, &records.join("mergify"))?
+            .with_repositories(&config.github.repos)?
+            .with_store(config.store.clone()),
     );
     let mergify = adapters::mergify::Translator::new(clients.clone())?;
     let adoption = crate::adoption::Translator::new(clients.clone(), bootstrap.clone())?;
@@ -241,7 +243,11 @@ pub(crate) fn maker_inputs(
         let ids = check["goal_ids"].as_array().ok_or(Error::Invalid("plan check needs goal indexes"))?.iter().map(|id| {
             id.as_u64().and_then(|id| usize::try_from(id).ok()).and_then(|id| goals.get(id)).map(|g| g["id"].clone()).ok_or(Error::Invalid("plan check names an unknown goal"))
         }).collect::<Result<Vec<_>>>()?;
-        Ok(json!({"name":format!("check-{}",index + 1), "kind":check["kind"], "tests":check["node_ids"], "goal_ids":ids}))
+        let mut planned = json!({"name":format!("check-{}",index + 1), "kind":check["kind"], "tests":check["node_ids"], "goal_ids":ids});
+        if let Some(forcing) = check.get("forcing") {
+            planned["forcing"] = forcing.clone();
+        }
+        Ok(planned)
     }).collect::<Result<Vec<Value>>>()?;
     Ok(
         json!({"brief":brief["brief"], "goals":goals, "plan":{"files":plan["files"], "checks":checks}}),
@@ -352,6 +358,19 @@ mod tests {
         );
         let invalid = json!({"kind":"leaf","files":[],"checks":[{"kind":"regression","node_ids":["test.py::test_it"],"goal_ids":[9]}]});
         assert!(maker_inputs(&brief, &invalid).is_err());
+    }
+
+    #[test]
+    fn forced_check_carries_its_forcing_to_the_maker() {
+        // #393: the maker sees the forcing its deflake must survive.
+        let brief = json!({"brief":"Deflake", "goals":[{"description":"State the departure","verification":"test"}]});
+        let forcing = json!({"symptom":"PID 4242 is live.","environment":{},"patches":[{"target":"sampler.process_in_scope","raises":"ValueError"}]});
+        let plan = json!({"kind":"leaf","files":["tests/test_sampler.py"],"checks":[
+            {"kind":"demonstrating","node_ids":["tests/test_sampler.py::test_departed"],"goal_ids":[0],"forcing":forcing},
+            {"kind":"regression","node_ids":["tests/test_sampler.py::test_other"],"goal_ids":[0]}]});
+        let inputs = maker_inputs(&brief, &plan).unwrap();
+        assert_eq!(inputs["plan"]["checks"][0]["forcing"], forcing);
+        assert!(inputs["plan"]["checks"][1].get("forcing").is_none());
     }
 
     #[test]

@@ -114,6 +114,18 @@ impl Worktrees {
         Ok(paths(&output.stdout))
     }
 
+    /// The id of the commit's root tree.
+    pub fn tree(&self, commit: &CommitId) -> Result<String, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        let tree = format!("{}^{{tree}}", commit.as_str());
+        let output = self.run(
+            &self.repo,
+            "commit tree",
+            ["rev-parse", "--verify", tree.as_str()],
+        )?;
+        Ok(commit_line(&output.stdout)?.as_str().to_owned())
+    }
+
     pub fn list_tree(&self, commit: &CommitId) -> Result<Vec<u8>, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
         Ok(self

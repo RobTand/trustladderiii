@@ -74,6 +74,21 @@ pub fn protected_paths(global: &[String], repository: &[String]) -> Vec<String> 
     paths
 }
 
+/// Match repository-relative paths with the same glob separators as scope trimming.
+pub fn path_is_protected(path: &str, patterns: &[String]) -> bool {
+    let options = glob::MatchOptions {
+        case_sensitive: true,
+        require_literal_separator: true,
+        require_literal_leading_dot: false,
+    };
+    patterns.iter().any(|pattern| {
+        let pattern = glob::Pattern::new(pattern).expect("validated protected path pattern");
+        pattern.matches_with(path, options)
+            || (path.ends_with('/')
+                && pattern.matches_with(&format!("{path}__tl3_path__"), options))
+    })
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Planning {
@@ -284,6 +299,25 @@ pub struct Repository {
     pub branch_template: String,
     #[serde(default = "default_base_branch")]
     pub base_branch: String,
+    /// Lines the repository's PR-body policy requires, such as PrismaBuild's
+    /// `Change type:` (#447). TL3 writes and keeps one valid line per rule.
+    #[serde(default)]
+    pub pr_body_lines: Vec<BodyLine>,
+    /// Workflow files, such as `gate.yml`, whose failed `pull_request` runs a
+    /// PR-body heal reruns because they don't rerun on `edited` (#447). Empty
+    /// means the heal reruns nothing.
+    #[serde(default)]
+    pub heal_rerun_workflows: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyLine {
+    /// The line's label, written as `label: value`.
+    pub label: String,
+    pub values: Vec<String>,
+    /// Used when TL3 can't tell the kind of change from its files.
+    pub default: String,
 }
 
 /// The harness's `MAX_SELECTED_TESTS`.
@@ -644,6 +678,36 @@ impl Config {
             github_name(&format!("{field}.owner"), &repo.owner, false)?;
             github_name(&format!("{field}.name"), &repo.name, true)?;
             validate_protected_paths(&format!("{field}.protected_paths"), &repo.protected_paths)?;
+            for (line, rule) in repo.pr_body_lines.iter().enumerate() {
+                let label = &rule.label;
+                if label.trim().is_empty()
+                    || label.contains([':', '\n', '\r'])
+                    || rule.values.is_empty()
+                    || rule
+                        .values
+                        .iter()
+                        .any(|value| value.trim().is_empty() || value.contains(['\n', '\r']))
+                    || !rule.values.contains(&rule.default)
+                {
+                    return Err(invalid(
+                        format!("{field}.pr_body_lines[{line}]"),
+                        "needs a label without a colon, nonempty values, and a default among them",
+                    ));
+                }
+            }
+            let mut workflows = BTreeSet::new();
+            for (entry, file) in repo.heal_rerun_workflows.iter().enumerate() {
+                if file.is_empty()
+                    || file.contains(['/', '\\'])
+                    || file.chars().any(char::is_whitespace)
+                    || !workflows.insert(file)
+                {
+                    return Err(invalid(
+                        format!("{field}.heal_rerun_workflows[{entry}]"),
+                        "needs a distinct workflow file name, such as gate.yml, without a directory",
+                    ));
+                }
+            }
             tl3_worktrees::branch_template::BranchTemplate::new(&repo.branch_template)
                 .map_err(|error| invalid(format!("{field}.branch_template"), error.to_string()))?;
             tl3_worktrees::BranchName::new(&repo.base_branch)

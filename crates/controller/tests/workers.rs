@@ -140,6 +140,15 @@ fn delivery() -> Delivery {
         proposed: None,
     }
 }
+/// Entries of the runs directory besides `.traces`, which holds span logs of
+/// retired runs until they ship (#430).
+fn run_entries(runs: &Path) -> usize {
+    fs::read_dir(runs)
+        .unwrap()
+        .filter(|entry| entry.as_ref().unwrap().file_name() != ".traces")
+        .count()
+}
+
 fn root_for(config: &tl3_config::Config, key: &str) -> PathBuf {
     config
         .workers
@@ -224,9 +233,12 @@ fn linked_materials(settings: &tl3_config::Store, wrapped: bool) {
         "linked issues must replace the selected role's original issue"
     );
     assert_eq!(request["inputs"]["issue"]["title"], "Correct the greeting");
+    let log = root_for(&config, &delivery.key).join("attempt-00000000/trace.jsonl");
+    let wake = config.workers.runs.join(".traces/.wake");
     assert_eq!(
         request["trace"],
-        json!({"repo": "RobTand/tl3-sandbox", "issue": 1000, "request": "1", "attempt": 1, "round": 0}),
+        json!({"repo": "RobTand/tl3-sandbox", "issue": 1000, "request": "1", "attempt": 1, "round": 0,
+               "log": log, "wake": wake}),
         "worker metadata must identify its request without changing role inputs"
     );
     assert_eq!(
@@ -657,6 +669,14 @@ fn main() {
     println!("test feed_retirement_end_to_end ... ok");
     retirement(&database.create("workers_retirement"));
     println!("test retirement_requires_terminal_unwatched_effect_and_recovers_from_sigkill ... ok");
+    retirement_review::retirement_keeps_an_unshipped_span_log(
+        &database.create("span_log_retirement"),
+    );
+    println!("test retirement_keeps_an_unshipped_span_log ... ok");
+    retirement_review::trace_log_cap_raises_one_operations_incident(
+        &database.create("span_log_cap"),
+    );
+    println!("test trace_log_cap_raises_one_operations_incident ... ok");
     finish_fixture(database, "worker_memory");
     let mut database = Database::start();
     retirement_review::summaries_and_states(&database.create("retirement_summaries"));
@@ -701,7 +721,7 @@ fn main() {
     let mut database = Database::start();
     maker::run(&mut database);
     finish_fixture(database, "maker");
-    println!("86 worker supervisor, planning and maker scenarios passed; no skips");
+    println!("88 worker supervisor, planning and maker scenarios passed; no skips");
 }
 
 /// PRD #327, C5: the writer drafts with the writer's active prompt version and
@@ -837,7 +857,7 @@ fn missing_prompt_holds_launch(settings: &tl3_config::Store) {
     );
     assert!(!root.path().join("entered").exists(), "no worker ran");
     assert_eq!(
-        fs::read_dir(&config.workers.runs).unwrap().count(),
+        run_entries(&config.workers.runs),
         1,
         "only the notification inbox exists"
     );
@@ -2006,7 +2026,7 @@ fn assert_retired(config: &tl3_config::Config, store: &mut Store) {
     assert!(store.worker_progress(None).unwrap().is_empty());
     assert!(store.worker_watches().unwrap().is_empty());
     assert_eq!(
-        fs::read_dir(&config.workers.runs).unwrap().count(),
+        run_entries(&config.workers.runs),
         1,
         "only the notification inbox remains"
     );

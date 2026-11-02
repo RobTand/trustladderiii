@@ -29,9 +29,11 @@ pub mod memory;
 mod narrowing;
 mod notices;
 mod postmortems;
+pub mod pr_body;
 pub mod priority;
 pub mod production;
 pub mod prompts;
+mod protected_requests;
 mod question_findings;
 pub mod release;
 mod scope;
@@ -247,6 +249,7 @@ pub struct Controller {
     allowances: tl3_config::Allowances,
     /// Starting credit reserve by priority, P0 first (#416). Empty keeps the kernel's.
     priority_reserve: BTreeMap<u8, u8>,
+    request_protection: Vec<(Repository, Vec<String>)>,
 }
 impl Controller {
     pub fn open(store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
@@ -313,6 +316,7 @@ impl Controller {
             held_effects: BTreeMap::new(),
             allowances: tl3_config::Allowances::default(),
             priority_reserve: BTreeMap::new(),
+            request_protection: Vec::new(),
         };
         controller.reconcile_capacity()?;
         controller.cleanup_ended_looks()?;
@@ -636,6 +640,30 @@ impl Controller {
     /// Upstream inbox keys must be stable across webhook redelivery and looks.
     pub fn observe(&mut self, key: &str, observation: Observation) -> Result<()> {
         let snapshot = self.store.load()?;
+        if let Observation::TraceLogsCapped { evicted } = observation {
+            // #430: an operations note (#81), once while it stays open.
+            let mut commit = Commit::new(
+                format!("trace-logs-capped:{key}:{}", snapshot.revision.get()),
+                json!({"trace_logs_capped": evicted}),
+                &snapshot,
+            );
+            self.input_failed(
+                &snapshot,
+                "worker-trace-logs",
+                None,
+                "Held worker span logs",
+                None,
+                executor::Upstream::Workers,
+                Error::Invalid(
+                    "held span logs reached their disk cap; the oldest unshipped ones were dropped",
+                ),
+                &mut commit,
+            )?;
+            if !commit.rows.is_empty() {
+                self.store.commit(&commit)?;
+            }
+            return Ok(());
+        }
         let news = observation_upstream(&snapshot, &observation)?;
         if let Observation::Queue(fact) = &observation {
             let identity = fact.identity();
@@ -1721,6 +1749,15 @@ impl Controller {
                     ));
                 }
             }
+            if matches!(
+                output,
+                Out::Notice {
+                    notice: tl3_kernel::Notice::Summary(tl3_kernel::Outcome::NotActionable),
+                    ..
+                }
+            ) {
+                protected_requests::closing_summary(self, snapshot, commit, &mut delivery)?;
+            }
             if let Out::Notice {
                 notice: tl3_kernel::Notice::Incident { needs_rob },
                 ..
@@ -2116,7 +2153,9 @@ impl Controller {
         let mut detailed_review = false;
         let event = match observation {
             // Older controllers queued ScratchSaved after writing it with completion.
-            Observation::ScratchSaved { .. } | Observation::ScratchPruned { .. } => {
+            Observation::ScratchSaved { .. }
+            | Observation::ScratchPruned { .. }
+            | Observation::TraceLogsCapped { .. } => {
                 return Ok(None);
             }
             Observation::Progress { key, checkpoint } => {
@@ -2200,6 +2239,30 @@ impl Controller {
                         if enqueue_pending && commit_sha(snapshot, current.approved) == Some(&head)
                         {
                             self.missing_check_incident(snapshot, commit, node, &head, &required)?;
+                            commit.rows.push(put("queue_facts", identity, value));
+                        }
+                        return Ok(None);
+                    }
+                    Evidence::QueueBlocked {
+                        head,
+                        conditions,
+                        failed,
+                    } => {
+                        let waiting = current.phase == tl3_kernel::Phase::Queued
+                            || current.phase == tl3_kernel::Phase::Publishing
+                                && current.effect.is_some_and(|effect| {
+                                    effect.kind == tl3_kernel::EffectKind::Enqueue
+                                        && !effect.cancelling
+                                });
+                        if waiting && commit_sha(snapshot, current.approved) == Some(&head) {
+                            self.queue_blocked_incident(
+                                snapshot,
+                                commit,
+                                node,
+                                &head,
+                                &conditions,
+                                &failed,
+                            )?;
                             commit.rows.push(put("queue_facts", identity, value));
                         }
                         return Ok(None);
@@ -2508,6 +2571,11 @@ impl Controller {
                         }));
                     }
                 };
+                if let Some(protected) =
+                    self.protected_reply(snapshot, commit, node, &role, &reply)?
+                {
+                    mapped = adapters::workers::protocol::MappedReply::Kernel(protected);
+                }
                 if role == "planner" && reply["kind"] == "leaf" {
                     let checks = reply["checks"]
                         .as_array()
@@ -2519,6 +2587,7 @@ impl Controller {
                                 name: format!("check-{}", index + 1),
                                 kind: serde_json::from_value(check["kind"].clone())?,
                                 tests: adapters::workers::protocol::reply_field(check, "node_ids")?,
+                                forcing: check.get("forcing").cloned(),
                             })
                         })
                         .collect::<Result<Vec<_>>>()?;
@@ -3160,6 +3229,7 @@ fn observation_upstream(
     Ok(match observation {
         Observation::Progress { .. }
         | Observation::Quota { .. }
+        | Observation::TraceLogsCapped { .. }
         | Observation::Kernel(Event::Fact {
             fact: Fact::UpstreamStalled,
             ..
