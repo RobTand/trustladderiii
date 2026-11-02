@@ -67,7 +67,7 @@ class RustBuildsTests(unittest.TestCase):
 class RustDependencyTests(unittest.TestCase):
     """Evaluate the macro and follow its declared edges, including the build script.
 
-    Bazel queries in selection_replay.py check the fully expanded graph as well.
+    Remote Bazel queries check the fully expanded graph as well.
     The recorder lets this contract run as an ordinary remote Python test.
     """
 

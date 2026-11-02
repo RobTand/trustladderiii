@@ -1,8 +1,6 @@
 """Run one Rust test binary with the existing gate's budgets and result checks."""
 import json
 import os
-import resource
-import time
 from pathlib import Path
 import sys
 
@@ -66,7 +64,6 @@ def main():
         if harness != 'custom' or name != 'tl3-controller/workers':
             raise RuntimeError('scenario sharding requires a shard-aware custom harness')
         Path(os.environ['TEST_SHARD_STATUS_FILE']).touch()
-    started = time.monotonic()
     results = rust_gate.execute_binary(binary, harness == 'custom', arguments)
     check_workspace()
     # .bazelrc names the executor class; budgets stay strict without one.
@@ -75,10 +72,7 @@ def main():
     # Written before the budget check so calibration also sees overruns.
     receipt = Path(os.environ['TEST_UNDECLARED_OUTPUTS_DIR'], 'inventory.json')
     receipt.write_text(json.dumps({'rust': {name: names}, 'seconds': results, 'runner_class': runner,
-                                  'shard': shard, 'wall_seconds': time.monotonic() - started,
-                                  'cpu_seconds': sum((usage.ru_utime + usage.ru_stime) for usage in
-                                                     [resource.getrusage(resource.RUSAGE_SELF),
-                                                      resource.getrusage(resource.RUSAGE_CHILDREN)])}))
+                                  'shard': shard}))
     if os.environ.get('TL3_BUDGETS') == 'record':
         # Uncalibrated executors (arm64) keep the seconds in the receipt only.
         return

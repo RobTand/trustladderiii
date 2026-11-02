@@ -1,5 +1,5 @@
 mod maker;
-use support::scenario_shard;
+use support::scenario_shard::{self, WorkerGroup};
 use tl3_controller::executor::Output as Out;
 #[path = "workers/planning.rs"]
 mod planning;
@@ -2541,14 +2541,14 @@ fn external_wait_survives_restart(settings: &tl3_config::Store) {
 
 fn run_default() {
     let mut shard = scenario_shard::Shard::from_env();
-    shard.run(2, || {
+    shard.run(WorkerGroup::Router, || {
         maker::router_regression(false);
         println!("test maker_router_retire ... ok");
         maker::router_regression(true);
         println!("test maker_router_look_retire ... ok");
     });
     prepare_workers();
-    shard.run(6, || {
+    shard.run(WorkerGroup::Waits, || {
         let mut database = Database::start();
         quota_resumes_same_operation(&database.create("workers_quota"));
         println!("test announced_quota_resumes_same_operation_without_failure ... ok");
@@ -2562,7 +2562,7 @@ fn run_default() {
         println!("test missing_prompt_holds_the_launch_without_claiming_a_worker ... ok");
         finish_fixture(database, "worker_waits");
     });
-    shard.run(6, || {
+    shard.run(WorkerGroup::IngestAudit, || {
         let mut database = Database::start();
         for wrapped in [false, true] {
             linked_materials(
@@ -2582,7 +2582,7 @@ fn run_default() {
         println!("test real_ingest_audit_reaches_unplanned_and_posts_goals ... ok");
         finish_fixture(database, "ingest_audit");
     });
-    shard.run(4, || {
+    shard.run(WorkerGroup::Launch, || {
         let mut database = Database::start();
         killed_worker(&database.create("workers_kill"));
         println!("test sigkill_worker_retry_is_idempotent_by_key ... ok");
@@ -2592,14 +2592,14 @@ fn run_default() {
         println!("test cancelled_late_launcher_cannot_start_a_second_copy ... ok");
         finish_fixture(database, "worker_launch");
     });
-    shard.run(2, || {
+    shard.run(WorkerGroup::Restart, || {
         let mut database = Database::start();
         killed_controller(&database.create("controller_kill"), "blocked");
         killed_controller(&database.create("planner_controller_kill"), "plan-blocked");
         println!("test sigkill_controller_reattaches_to_the_same_worker ... ok");
         finish_fixture(database, "worker_restart");
     });
-    shard.run(9, || {
+    shard.run(WorkerGroup::Reply, || {
         let mut database = Database::start();
         invalid_replies(&database.create("workers_invalid"));
         println!("test schema_missing_nonzero_and_duplicate_replies_fail ... ok");
@@ -2619,7 +2619,7 @@ fn run_default() {
         println!("test stop_run_reaches_fake_delivery_and_uses_active_node_index ... ok");
         finish_fixture(database, "worker_reply");
     });
-    shard.run(8, || {
+    shard.run(WorkerGroup::Memory, || {
         let mut database = Database::start();
         event_source(&database.create("workers_events"));
         println!("test source_run_wakes_on_new_run_output_and_exit_without_polling ... ok");
@@ -2641,7 +2641,7 @@ fn run_default() {
         );
         finish_fixture(database, "worker_memory");
     });
-    shard.run(3, || {
+    shard.run(WorkerGroup::Summaries, || {
         let mut database = Database::start();
         retirement_review::summaries_and_states(&database.create("retirement_summaries"));
         println!("test retirement_states_keep_one_summary_until_closure ... ok");
@@ -2649,7 +2649,7 @@ fn run_default() {
         println!("test retirement_skips_corrupt_and_foreign_identities_after_one_attempt ... ok");
         finish_fixture(database, "worker_summaries");
     });
-    shard.run(4, || {
+    shard.run(WorkerGroup::Sessions, || {
         let mut database = Database::start();
         for guard in ["inbox", "effect", "progress"] {
             retirement_review::session_guard(&database.create(&format!("session_{guard}")), guard);
@@ -2657,7 +2657,7 @@ fn run_default() {
         }
         finish_fixture(database, "worker_sessions");
     });
-    shard.run(5, || {
+    shard.run(WorkerGroup::Retirement, || {
         let mut database = Database::start();
         retirement_review::session_unlink_error(&database.create("session_unlink"));
         println!("test session_retirement_logs_retains_and_retries_unlink_error ... ok");
@@ -2669,7 +2669,7 @@ fn run_default() {
         println!("test inotify_overflow_rescans_active_runs_and_keeps_ingress_alive ... ok");
         finish_fixture(database, "worker_retirement");
     });
-    shard.run(7, || {
+    shard.run(WorkerGroup::Planning, || {
         let mut database = Database::start();
         for mode in [
             "normal",
@@ -2691,6 +2691,8 @@ fn run_default() {
     maker::run(&mut database, &mut shard);
     database.stop();
     drop(database);
-    shard.run(1, || println!("test maker_fixture_cleanup ... ok"));
-    shard.finish(85, "worker supervisor, planning and maker");
+    shard.run(WorkerGroup::MakerCleanup, || {
+        println!("test maker_fixture_cleanup ... ok")
+    });
+    shard.finish("worker supervisor, planning and maker");
 }
