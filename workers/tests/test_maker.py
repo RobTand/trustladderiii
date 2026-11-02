@@ -503,8 +503,12 @@ def test_mutations_and_tests_from_one_turn_do_not_overlap(maker_request, monkeyp
     assert [event["unit"] for event in events[:-1]].count("tool_result") == 2
 
 
+# Without reasoning details, the reply's characters bound the visible output.
+DONE_TOKENS = (len(json.dumps(DONE)) + 2) // 3
+
+
 @pytest.mark.parametrize("input_tokens,output_tokens,kind", [
-    (749, 100, "done"), (750, 100, "out_of_room"),
+    (849 - DONE_TOKENS, 100, "done"), (850 - DONE_TOKENS, 100, "out_of_room"),
     (0, 0, "out_of_room"), (None, None, "out_of_room"),
 ])
 def test_proxy_stream_requests_usage_and_serial_tools_and_uses_usage(
