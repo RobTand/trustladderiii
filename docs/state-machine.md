@@ -651,8 +651,10 @@ Rob, 2026-11-02, issue #451:
 
 A request whose goals require changes to protected paths is not actionable by
 TL3. The effective list combines the defaults, `[planning].protected_paths`
-and that repository's additions. Ingest or audit closes as soon as declared
-footprints or edits named in the goals provide evidence. Context, excluded edits
+and that repository's additions. Before starting ingest, a deterministic check
+closes requests with declared protected edits, without launching a model.
+Ingest or audit closes as soon as exploration provides further evidence.
+Only definite footprint entries or edits named in the goals count. Context, excluded edits
 and ordinary unprotected test files do not count. Workers can identify required
 paths discovered during exploration. A planner reports them through the optional
 `cant_meet.protected_paths` list. The controller verifies the concrete paths

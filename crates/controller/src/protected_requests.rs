@@ -104,12 +104,10 @@ fn named_edits(body: &str, patterns: &[String]) -> BTreeSet<String> {
     static TARGET: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)\b(add|change|edit|update|modify|delete|remove|create|write|implement|extend|regenerate|replace|rename|move|fix)(?:\s+(?:the|file|directory))*\s+`?$").unwrap()
     });
-    static LOCATION: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)\b(in|to|into|from|at)\s+`?$").unwrap()
-    });
-    static LEADING_LOCATION: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)^(?:[-*]|[0-9]+\.)\s+in\s+`?$").unwrap()
-    });
+    static LOCATION: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)\b(in|to|into|from|at)\s+`?$").unwrap());
+    static LEADING_LOCATION: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)^(?:[-*]|[0-9]+\.)\s+in\s+`?$").unwrap());
     let mut footprint = false;
     let mut goals = false;
     let mut paths = BTreeSet::new();
