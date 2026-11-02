@@ -165,7 +165,7 @@ Workers report liveness, as a heartbeat, and progress, such as new tool results,
 
 Agreed with Rob on 2026-10-29, with the numbers below confirmed on 2026-10-30 and reviewed after the first 25 requests (Q6). Credit belongs to the request and lives on its root, as a ledger. Each entry is keyed by its node and its reason, so it applies only once.
 
-**Starting credit:** the request's measured size in leaves, plus a reserve of 3. Size in leaves is the root forecast divided by the fit limit, rounded up.
+**Starting credit:** the request's measured size in leaves, plus a reserve of 3. Size in leaves is the root forecast divided by the fit limit, rounded up. Approved by Rob, 2026-11-02 (#416), off by default: `limits.priority_credit_reserve` can raise the reserve by issue priority, for example 5 for P0 and P1; the controller adds the excess to the size it reports.
 
 **Debits:**
 
@@ -380,11 +380,11 @@ A leaf waits here for a slot, holding nothing. Settle grants it a slot and its f
 
 The attempt picks the model and budget from the maker's ladder in config (Q22):
 
-- attempt 1 uses the default model and budget;
-- attempt 2 uses the same model at maximum effort and budget;
-- attempt 3 runs on the strongest model from a different family.
+- attempt 1 uses the first rung, the default model;
+- attempt 2 escalates to a different model line (Q22, approved by Rob, 2026-11-02);
+- attempts past the ladder's length use its last rung.
 
-Under quota (Q53), an attempt moves to the next eligible model in the maker's ladder. Attempts 1 and 2 share a model, so a quota-limited attempt 1 or 2 moves to the next different model, and the status view notes the limited model. The reviewer stays a different family from the model the maker actually ran on.
+Under quota (Q53), an attempt moves to the next eligible model in the maker's ladder, and the status view notes the limited model. The reviewer stays a different family from the model the maker actually ran on.
 
 The exact models come from what CLIProxyAPI serves. They are set in config, and model trials adjust them.
 
@@ -459,8 +459,8 @@ The missing-check rows decide on the check-suite and check-run webhooks TL3 alre
 
 - **Round 0:** go to Making(round 1), and resume the maker's session with the evidence.
 - **Round 1 fails, or the maker says it can't meet:** move to the next step below. Each step costs 1. Each new attempt runs in a fresh session, starting from the branch, with every finding so far.
-  - After attempt 1: Making(attempt 2, round 0), with a bigger budget.
-  - After attempt 2: Making(attempt 3, round 0), on the next model in the maker's ladder.
+  - After attempt 1: Making(attempt 2, round 0), on the next model line in the maker's ladder.
+  - After attempt 2: Making(attempt 3, round 0), on the ladder's next rung, or its last.
   - After attempt 3, if the leaf hasn't been re-planned: release the slot and files, and go to Planning with every finding in the planner's `findings` input. `must_split` is false unless the maker or the fresh reviewer ran out of room. The new plan starts again at attempt 1.
   - After attempt 3 of a re-planned leaf: release the slot and files, and go to AwaitingRob(can't meet, continue to Ready(Making, new attempt)).
 - **Not enough credit for the next step:** release the slot and files, and go to AwaitingRob(out of credit, continue to that step).

@@ -95,7 +95,7 @@ mod tests {
             tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
         config.models.reviewer = vec![
             config.models.maker[0].clone(),
-            config.models.maker[2].clone(),
+            config.models.maker[1].clone(),
         ];
         config.models
     }
@@ -132,7 +132,6 @@ mod tests {
     #[test]
     fn maker_attempt_one_under_quota_moves_to_the_next_eligible_model() {
         let models = models();
-        // Attempts 1 and 2 share a model, so the shared model is tried once.
         let first = candidates(&models, "maker", 0, false, None).unwrap();
         assert_eq!(
             names(&first),
@@ -143,7 +142,7 @@ mod tests {
         let second = candidates(&models, "maker", 1, false, None).unwrap();
         assert_eq!(
             names(&second),
-            ["default-model/64000", "alternate-model/64000"]
+            ["alternate-model/64000", "default-model/32000"]
         );
     }
 

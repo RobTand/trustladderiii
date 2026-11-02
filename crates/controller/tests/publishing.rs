@@ -700,7 +700,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
 
     config.store = settings.clone();
     if mode.starts_with("out-of-room") || mode.starts_with("review-reset") {
-        let mut primary = config.models.maker[2].clone();
+        let mut primary = config.models.maker.last().unwrap().clone();
         primary.name = "review-primary".into();
         let mut backup = config.models.maker[0].clone();
         backup.name = "review-backup".into();

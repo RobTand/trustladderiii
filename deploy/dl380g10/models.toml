@@ -11,9 +11,9 @@ planner = [
     { name = "claude-opus-5-5", family = "claude-opus", effort = "high", budget_tokens = 32000 },
     { name = "claude-fable-5-1", family = "claude-fable", effort = "high", budget_tokens = 32000 },
 ]
+# Rob, 2026-11-02 (#416): Sonnet 5.5 high, then Opus 5.5 high. Attempt 3 reuses Opus.
 maker = [
     { name = "claude-sonnet-5-5", family = "claude-sonnet", effort = "high", budget_tokens = 32000 },
-    { name = "claude-sonnet-5-5", family = "claude-sonnet", effort = "max", budget_tokens = 128000 },
     { name = "claude-opus-5-5", family = "claude-opus", effort = "high", budget_tokens = 128000 },
 ]
 # The first reviewer from a different family is selected for each maker.

@@ -1,8 +1,25 @@
 //! A request's priority, from its issue (#416, #417).
 
 /// P0–P3 as `Some(0..=3)`, or `None` when the issue is unranked.
-pub fn issue_priority<S: AsRef<str>>(_title: &str, _labels: &[S]) -> Option<u8> {
-    None
+/// A `P0`–`P3` label wins over a `[P0]`–`[P3]` title prefix; with several
+/// such labels, the most urgent wins. Both are case-insensitive.
+pub fn issue_priority<S: AsRef<str>>(title: &str, labels: &[S]) -> Option<u8> {
+    labels
+        .iter()
+        .filter_map(|label| level(label.as_ref()))
+        .min()
+        .or_else(|| {
+            let rest = title.trim_start().strip_prefix('[')?;
+            let (level_text, _) = rest.split_once(']')?;
+            level(level_text)
+        })
+}
+
+fn level(text: &str) -> Option<u8> {
+    match text.as_bytes() {
+        [b'P' | b'p', digit @ b'0'..=b'3'] => Some(digit - b'0'),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

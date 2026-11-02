@@ -432,7 +432,11 @@ impl Controller {
     }
 
     /// The starting credit reserve by priority (#416). Off by default.
-    pub fn set_priority_credit_reserve(&mut self, _limits: &tl3_config::Limits) {}
+    pub fn set_priority_credit_reserve(&mut self, limits: &tl3_config::Limits) {
+        self.priority_reserve = (0..=3)
+            .filter_map(|priority| Some((priority, limits.credit_reserve_for(Some(priority))?)))
+            .collect();
+    }
 
     pub fn intake(&mut self, issue: LabelledIssue) -> Result<bool> {
         self.intake_proposed(issue, None)
@@ -2968,7 +2972,39 @@ impl Controller {
                 .rows
                 .push(put("maker_findings", node.0.to_string(), findings));
         }
-        Ok(Some(event))
+        Ok(Some(self.priority_reserve(snapshot, event)?))
+    }
+
+    /// #416: the kernel starts credit at the ingest size plus its reserve of 3.
+    /// A configured priority reserve adds its excess to the size, so the kernel
+    /// stays unchanged; it reads the size only for starting credit.
+    fn priority_reserve(&self, snapshot: &Snapshot, event: Event) -> Result<Event> {
+        let Event::Reply {
+            node,
+            generation,
+            reply: Reply::IngestDone { size },
+        } = event
+        else {
+            return Ok(event);
+        };
+        if self.priority_reserve.is_empty() {
+            return Ok(event);
+        }
+        let Some(reserve) = request(snapshot, node)?
+            .priority
+            .and_then(|priority| self.priority_reserve.get(&priority))
+        else {
+            return Ok(event);
+        };
+        let extra = u8::try_from(u32::from(*reserve).saturating_sub(tl3_kernel::RESERVE))
+            .unwrap_or(u8::MAX);
+        Ok(Event::Reply {
+            node,
+            generation,
+            reply: Reply::IngestDone {
+                size: size.saturating_add(extra),
+            },
+        })
     }
     fn head(&mut self, node: NodeId, sha: &str) -> Result<HeadId> {
         tl3_worktrees::CommitId::new(sha)?;

@@ -76,8 +76,9 @@ list, and those paths stay protected (#388). `tl3 status` shows each served
 repository's effective list.
 
 Rob moved the ladders off GPT-6.1 Sol, which was out of quota, to Anthropic
-models on 2026-11-01. The maker ladder uses Claude Sonnet 5.5 twice, then Claude
-Opus 5.5. Attempt 2 uses `max` effort and 128,000 output tokens. Families are
+models on 2026-11-01. On 2026-11-02 (#416) he approved the maker ladder Claude
+Sonnet 5.5 high, then Claude Opus 5.5 high: attempt 2 escalates the model, not
+the effort, and attempt 3 reuses Opus. Families are
 labelled per model line (`claude-sonnet`, `claude-opus`, `claude-fable`), so
 Q22 still forces a different model to review: Sonnet makers get Opus 5.5 review,
 and the Opus maker gets Sonnet 5.5 review. The planner uses Opus 5.5, then Fable

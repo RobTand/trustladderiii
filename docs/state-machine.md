@@ -122,7 +122,7 @@ TL3 owns the test harness, and test configuration is protected, so the code unde
 3. **Second attempt.** If the fix fails review, the leaf tries again with a bigger budget for that attempt. This spends 1 progress credit.
 4. **Third attempt.** Rob said on 2026-10-29 that a failed review can also send the work back on a different model. If the second attempt fails, the third runs on the next model in the maker's ladder, which is set in config. It spends 1 more credit.
 
-The ladder (Q22): attempts 1 and 2 use the default maker model, with attempt 2 at maximum effort and budget. Attempt 3 switches to the strongest model from a different family. The exact models come from what CLIProxyAPI serves, and the model trials adjust them.
+The ladder (Q22): attempt 1 uses the default maker model, and attempt 2 escalates to a different model line. Approved by Rob, 2026-11-02 (#416): the maker ladder is Sonnet 5.5 high, then Opus 5.5 high, and attempt 3 reuses the last rung. The exact models come from what CLIProxyAPI serves, and the model trials adjust them.
 
 Proposed:
 
@@ -482,7 +482,8 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 
 - **Q8 Notes:** only when something changes a request's course, such as a stop, a pause, a merge TL3 didn't approve or a re-plan. Routine steps show only in the status view.
 - **Q17 Incidents:** they go to one pinned "TL3 operations" issue in TL3's repo until Discord exists. Questions about a request stay on its issue.
-- **Q22 Model ladder:** attempts 1 and 2 use the default maker model, attempt 2 at maximum effort and budget. Attempt 3 uses the strongest model from a different family. Reviewers default to a different family from the maker.
+- **Q22 Model ladder:** attempt 1 uses the default maker model, and attempt 2 escalates to a different model line; attempts past the ladder use its last rung. Reviewers default to a different family from the maker that ran. Approved by Rob, 2026-11-02 (#416), replacing "attempts 1 and 2 share a model at rising effort": MLflow showed Sonnet 5.5 max averaging about 94 minutes per run against about 7 for Opus 5.5 high, so the ladder is Sonnet 5.5 high, then Opus 5.5 high.
+- **Priority credit reserve (#416):** approved by Rob, 2026-11-02, to be switched on after the rule that TL3-side failures cost no credit. `limits.priority_credit_reserve` raises a request's starting reserve by its issue priority (a `[P0]`–`[P3]` title prefix or a `P0`–`P3` label, parsed once in `tl3_controller::priority` and shared with #417). It is off by default. The controller adds the excess to the ingest size, so the kernel is unchanged.
 - **Q53 Quota falls back down the ladder:** approved by Rob, 2026-11-01: "Fall back down the ladder." A step whose model reports quota moves at once to the next model in its role's ladder that hasn't reported quota since its announced reset, with no credit spent and no failure counted. TL3 records each model's quota with its reset, and waits for the earliest reset only when every model in the ladder is out. A wait for a model no longer configured ends when tl3d opens. The maker keeps the Q22 attempt ladder, and the reviewer stays a different family from the maker that ran. The controller and worker adapter implement this; the kernel is unchanged.
 - **Q31 Escalation reports:** only the impact on the parent's goals, at most about 2,000 tokens. The parent can pull the evidence for one goal per escalation.
 

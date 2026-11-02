@@ -225,8 +225,10 @@ pub struct Limits {
 
 impl Limits {
     /// The configured reserve for a P0–P3 priority, if any.
-    pub fn credit_reserve_for(&self, _priority: Option<u8>) -> Option<u8> {
-        None
+    pub fn credit_reserve_for(&self, priority: Option<u8>) -> Option<u8> {
+        self.priority_credit_reserve
+            .get(&format!("P{}", priority?))
+            .copied()
     }
 }
 
@@ -552,6 +554,17 @@ impl Config {
         }
         validate_protected_paths("planning.protected_paths", &self.planning.protected_paths)?;
         let limits = &self.limits;
+        for (priority, reserve) in &limits.priority_credit_reserve {
+            // The kernel's reserve is 3; a priority can only raise it.
+            if !matches!(priority.as_str(), "P0" | "P1" | "P2" | "P3")
+                || !(3..=100).contains(reserve)
+            {
+                return Err(invalid(
+                    "limits.priority_credit_reserve",
+                    "use keys P0 to P3 with reserves from 3 to 100",
+                ));
+            }
+        }
         if limits.context_tokens == 0 {
             return Err(invalid(
                 "limits.context_tokens",
@@ -708,25 +721,13 @@ impl Config {
                 "add a second model: a plan that can't meet re-runs with the next model on the planner's ladder",
             ));
         }
-        let [first, second, third] = self.models.maker.as_slice() else {
-            return Err(invalid("models.maker", "must have length 3 (Q22)"));
-        };
-        if first.name != second.name || first.family != second.family {
+        // Q22, amended by Rob on 2026-11-02 (#416): attempt 2 escalates the model
+        // line, not the effort. Attempts past the ladder use its last rung.
+        let maker = &self.models.maker;
+        if maker.len() < 2 || maker[1].family.eq_ignore_ascii_case(&maker[0].family) {
             return Err(invalid(
-                "models.maker[1]",
-                "attempts 1 and 2 must use the same model and family (Q22)",
-            ));
-        }
-        if second.budget_tokens < first.budget_tokens || second.effort.is_none() {
-            return Err(invalid(
-                "models.maker[1]",
-                "set the proxy's maximum effort and a budget at least as large as attempt 1 (Q22)",
-            ));
-        }
-        if first.family.eq_ignore_ascii_case(&third.family) {
-            return Err(invalid(
-                "models.maker[2].family",
-                "attempt 3 must use a different family from attempt 1 (Q22)",
+                "models.maker",
+                "the maker ladder must escalate to a different model line by attempt 2 (Q22)",
             ));
         }
         for (index, maker) in self.models.maker.iter().enumerate() {

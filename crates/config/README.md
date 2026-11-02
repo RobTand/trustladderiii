@@ -24,15 +24,20 @@ The proxy owns the supported models and efforts. Budget means the worker's
 per-response `max_completion_tokens`, including reasoning where supported.
 It must be positive and no larger than the configured context.
 
-The maker has exactly three attempts. Attempts 1 and 2 share a model and family,
-attempt 2 has an explicit effort and at least attempt 1's budget, and attempt 3
-uses a different family. The operator sets the proxy's maximum effort and budget
-for attempt 2. An omitted or empty reviewer ladder defaults to maker attempts 1
-and 3, in that order. `models.reviewer_for(maker_family)` returns the first
+The maker ladder escalates to a different model line by attempt 2: it needs at
+least two rungs, and attempt 2's family differs from attempt 1's (Q22, amended by
+Rob on 2026-11-02, #416). Attempts past the ladder use its last rung. An omitted
+or empty reviewer ladder defaults to the first and last maker rungs, in that
+order. `models.reviewer_for(maker_family)` returns the first
 reviewer whose family differs from the current attempt's maker, ignoring ASCII
 case, or `None` if none exists. Validation requires a different-family reviewer
 for every family in the maker ladder, including with an explicit reviewer ladder.
-Other role ladders must contain at least one model. No model names or effort
+Other role ladders must contain at least one model.
+
+`limits.priority_credit_reserve` sets a starting credit reserve by issue priority,
+for example `{ P0 = 5, P1 = 5 }`. Priority comes from a `[P0]`–`[P3]` title
+prefix or a `P0`–`P3` label. Keys are `P0` to `P3`, reserves 3 to 100. It is
+empty by default, which keeps the kernel's reserve of 3 for every request (#416). No model names or effort
 vocabulary are built into the crate.
 
 The optional writer ladder defaults to ingest for older configs. Deployment

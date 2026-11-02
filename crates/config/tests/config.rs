@@ -149,19 +149,17 @@ fn example_parses_with_sourced_numbers_and_different_reviewer_family() {
 }
 
 #[test]
-fn omitted_and_empty_reviewer_ladders_default_to_maker_attempts_one_and_three() {
+fn omitted_and_empty_reviewer_ladders_default_to_the_first_and_last_maker_rungs() {
     for source in [
         EXAMPLE.to_string(),
         changed(&["models", "reviewer"], Value::Array(vec![])),
     ] {
         let config = Config::parse(&source).unwrap();
         assert_eq!(config.models.reviewer.len(), 2);
-        for (reviewer, maker) in config
-            .models
-            .reviewer
-            .iter()
-            .zip([&config.models.maker[0], &config.models.maker[2]])
-        {
+        for (reviewer, maker) in config.models.reviewer.iter().zip([
+            config.models.maker.first().unwrap(),
+            config.models.maker.last().unwrap(),
+        ]) {
             assert_eq!(reviewer.name, maker.name);
             assert_eq!(reviewer.family, maker.family);
             assert_eq!(reviewer.effort, maker.effort);
@@ -173,7 +171,7 @@ fn omitted_and_empty_reviewer_ladders_default_to_maker_attempts_one_and_three() 
 #[test]
 fn reviewer_ladder_must_cover_every_maker_family() {
     let document: Value = EXAMPLE.parse().unwrap();
-    for (role, maker_index) in [("ingest", 0), ("audit", 2)] {
+    for (role, maker_index) in [("ingest", 0), ("audit", 1)] {
         let mut reviewers = document["models"][role].clone();
         reviewers[0]["family"] = Value::String(
             reviewers[0]["family"]
@@ -439,35 +437,20 @@ fn maker_ladder_obeys_q22_and_budget_bounds() {
         ("name = \"default-model\"", "name = \" \"", ".name"),
         ("family = \"default\"", "family = \"\"", ".family"),
         ("effort = \"high\"", "effort = \"\"", ".effort"),
-        (
-            "family = \"alternate\"",
-            "family = \"DEFAULT\"",
-            "models.maker[2].family",
-        ),
-        (
-            "effort = \"xhigh\", budget_tokens = 64000",
-            "effort = \"xhigh\", budget_tokens = 16000",
-            "models.maker[1]",
-        ),
-        ("effort = \"xhigh\", ", "", "models.maker[1]"),
-        (
-            "name = \"default-model\", family = \"default\", effort = \"xhigh\"",
-            "name = \"other\", family = \"default\", effort = \"xhigh\"",
-            "models.maker[1]",
-        ),
     ] {
         let error = Config::parse(&EXAMPLE.replace(from, to))
             .unwrap_err()
             .to_string();
         assert!(error.contains(field), "{error}");
     }
+    // A one-rung ladder never escalates (#416).
     let mut document: Value = EXAMPLE.parse().unwrap();
     document["models"]["maker"].as_array_mut().unwrap().pop();
     assert!(
         Config::parse(&toml::to_string(&document).unwrap())
             .unwrap_err()
             .to_string()
-            .contains("length 3")
+            .contains("different model line")
     );
 }
 
