@@ -571,6 +571,14 @@ fn main() {
     println!("test feed_retirement_end_to_end ... ok");
     retirement(&database.create("workers_retirement"));
     println!("test retirement_requires_terminal_unwatched_effect_and_recovers_from_sigkill ... ok");
+    retirement_review::retirement_keeps_an_unshipped_span_log(
+        &database.create("span_log_retirement"),
+    );
+    println!("test retirement_keeps_an_unshipped_span_log ... ok");
+    retirement_review::trace_log_cap_raises_one_operations_incident(
+        &database.create("span_log_cap"),
+    );
+    println!("test trace_log_cap_raises_one_operations_incident ... ok");
     finish_fixture(database, "worker_memory");
     let mut database = Database::start();
     retirement_review::summaries_and_states(&database.create("retirement_summaries"));
@@ -613,7 +621,7 @@ fn main() {
     let mut database = Database::start();
     maker::run(&mut database);
     finish_fixture(database, "maker");
-    println!("83 worker supervisor, planning and maker scenarios passed; no skips");
+    println!("85 worker supervisor, planning and maker scenarios passed; no skips");
 }
 
 /// PRD #327, C5: the writer drafts with the writer's active prompt version and

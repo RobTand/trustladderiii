@@ -1,48 +1,76 @@
 use super::*;
 use std::os::unix::fs::PermissionsExt;
 
-/// An attempt whose worker ended, with a stand-in for the release Python that
-/// records its arguments and the log it was handed.
-fn ended_attempt(root: &Path) -> PathBuf {
-    let attempt = root.join("attempt-00000000");
-    fs::create_dir(&attempt).unwrap();
+fn executable(path: &Path, body: &str) {
+    fs::write(path, body).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// A stand-in for the release Python. It records its arguments and the log it
+/// was handed, and ships the log only while `mlflow-up` exists beside it.
+fn fake_python(root: &Path) -> PathBuf {
     let python = root.join("python");
-    fs::write(
+    executable(
         &python,
-        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\ncat > \"$0.stdin\"\n",
+        "#!/bin/sh\nfor log; do :; done\nprintf '%s\\n' \"$@\" > \"$0.args\"\ncat > \"$0.stdin\"\n\
+         [ -e \"$(dirname \"$0\")/mlflow-up\" ] || exit 1\ntouch \"$log.shipped\"\n",
+    );
+    python
+}
+
+const LOGGED: &[u8] = b"{\"kind\":\"start\"}\n";
+
+/// `runs/<run>/attempt-00000000` after its worker ended, with an unshipped span log.
+fn ended_attempt(root: &Path) -> (PathBuf, PathBuf) {
+    let runs = root.join("runs");
+    let attempt = runs.join("72756e").join("attempt-00000000");
+    fs::create_dir_all(&attempt).unwrap();
+    write(
+        &attempt.join("launch.json"),
+        &json!({"python": fake_python(root)}),
     )
     .unwrap();
-    fs::set_permissions(&python, fs::Permissions::from_mode(0o755)).unwrap();
-    write(&attempt.join("launch.json"), &json!({"python": python})).unwrap();
     write(&attempt.join("exit.json"), &json!({"code": -9})).unwrap();
-    fs::write(attempt.join("trace.jsonl"), b"{\"kind\":\"start\"}\n").unwrap();
-    attempt
+    fs::write(attempt.join("trace.jsonl"), LOGGED).unwrap();
+    (runs, attempt)
 }
 
-fn started(attempt: &Path) -> Option<Child> {
+/// Wait for the flusher started for `directory`, if one was.
+fn flushed(directory: &Path) -> Option<std::process::ExitStatus> {
     let mut flushes = trace::FLUSHES.lock().unwrap();
-    let index = flushes.iter().position(|(path, _)| path == attempt)?;
-    Some(flushes.remove(index).1)
+    let index = flushes.iter().position(|(path, _)| path == directory)?;
+    let (_, mut child) = flushes.remove(index);
+    drop(flushes);
+    Some(child.wait().unwrap())
 }
 
-fn delivery() -> Delivery {
-    serde_json::from_value(json!({
-        "key":"trace-flush", "epoch":1,
-        "output":{"Effect":{"node":0,"kind":{"StartRun":"Ingest"},"seq":1,"head":null}},
-        "generation":1, "head_sha":null,
-        "repository":{"owner":"RobTand","name":"tl3-sandbox","installation":1},
-        "issue":42, "pull_request":null, "paths":[], "attempt":1, "round":0, "checks":null,
-    }))
-    .unwrap()
+fn held(runs: &Path) -> PathBuf {
+    runs.join(".traces").join("72756e-attempt-00000000")
 }
 
-fn assert_flushed(root: &Path, attempt: &Path, child: Option<Child>) {
-    let mut child = child.expect("an ended attempt with an unshipped span log starts the flusher");
-    assert!(child.wait().unwrap().success());
-    let args = fs::read_to_string(root.join("python.args")).unwrap();
+#[test]
+fn an_ended_attempt_ships_its_span_log() {
+    let root = tempfile::tempdir().unwrap();
+    let (runs, attempt) = ended_attempt(root.path());
+    fs::write(root.path().join("mlflow-up"), b"").unwrap();
+    trace::sweep(
+        &runs,
+        &[],
+        std::slice::from_ref(&attempt),
+        trace::HELD_BYTES,
+    )
+    .unwrap();
+    assert!(
+        flushed(&attempt)
+            .expect("the ending starts a flusher")
+            .success()
+    );
     let log = attempt.join("trace.jsonl");
     assert_eq!(
-        args.lines().collect::<Vec<_>>(),
+        fs::read_to_string(root.path().join("python.args"))
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
         [
             "-I",
             "-m",
@@ -51,48 +79,170 @@ fn assert_flushed(root: &Path, attempt: &Path, child: Option<Child>) {
             log.to_str().unwrap()
         ]
     );
-    assert_eq!(
-        fs::read(root.join("python.stdin")).unwrap(),
-        b"{\"kind\":\"start\"}\n"
-    );
+    assert_eq!(fs::read(root.path().join("python.stdin")).unwrap(), LOGGED);
+    trace::sweep(
+        &runs,
+        &[],
+        std::slice::from_ref(&attempt),
+        trace::HELD_BYTES,
+    )
+    .unwrap();
+    assert!(flushed(&attempt).is_none(), "a shipped log starts nothing");
 }
 
 #[test]
-fn an_ended_attempt_ships_its_span_log() {
+fn a_deliberate_stop_marks_the_attempt_stopped() {
     let root = tempfile::tempdir().unwrap();
-    let attempt = ended_attempt(root.path());
-    assert!(matches!(
-        inspect(&attempt, &delivery()).unwrap(),
-        Reconciliation::Found(_)
-    ));
-    assert_flushed(root.path(), &attempt, started(&attempt));
-}
-
-#[test]
-fn a_stopped_attempt_ships_its_log_even_after_retirement_deletes_it() {
-    let root = tempfile::tempdir().unwrap();
-    let attempt = ended_attempt(root.path());
+    let (runs, attempt) = ended_attempt(root.path());
     fs::remove_file(attempt.join("exit.json")).unwrap();
-    stop_attempt(root.path()).unwrap();
-    let child = started(&attempt);
-    // Retirement removes the run root; the flusher already holds the log open.
-    fs::remove_dir_all(&attempt).unwrap();
-    assert_flushed(root.path(), &attempt, child);
+    stop_attempt(&runs.join("72756e")).unwrap();
+    assert!(
+        attempt.join("stopped.json").exists(),
+        "Q49: a stop is not a crash"
+    );
+    let other = tempfile::tempdir().unwrap();
+    let finished = ended_attempt(other.path()).1;
+    stop_attempt(finished.parent().unwrap()).unwrap();
+    assert!(
+        !finished.join("stopped.json").exists(),
+        "a worker that already ended was not stopped"
+    );
+}
+
+/// Rob's case: MLflow is down when the run retires, and comes back later.
+#[test]
+fn retirement_holds_an_unshipped_log_until_mlflow_takes_it() {
+    let root = tempfile::tempdir().unwrap();
+    let (runs, attempt) = ended_attempt(root.path());
+    trace::hold(&attempt, &runs).unwrap();
+    fs::remove_dir_all(runs.join("72756e")).unwrap();
+    let held = held(&runs);
+    assert_eq!(fs::read(held.join("trace.jsonl")).unwrap(), LOGGED);
+    assert!(held.join("exit.json").exists() && held.join("launch.json").exists());
+    trace::sweep(&runs, &[], &[], trace::HELD_BYTES).unwrap();
+    assert!(!flushed(&held).expect("a held log is flushed").success());
+    assert!(
+        held.join("trace.jsonl").exists(),
+        "an unsent log stays held"
+    );
+    fs::write(root.path().join("mlflow-up"), b"").unwrap();
+    trace::sweep(&runs, &[], &[], trace::HELD_BYTES).unwrap();
+    assert!(flushed(&held).expect("the next event retries").success());
+    assert_eq!(fs::read(root.path().join("python.stdin")).unwrap(), LOGGED);
+    trace::sweep(&runs, &[], &[], trace::HELD_BYTES).unwrap();
+    assert!(flushed(&held).is_none());
+    assert!(!held.exists(), "a shipped held log is removed");
+}
+
+fn identity(pid: u32, start: u64) -> Value {
+    json!({"pid": pid, "start": start,
+        "machine": fs::read_to_string("/etc/machine-id").unwrap().trim(),
+        "boot": fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap().trim()})
+}
+
+/// tl3d restarts while a flusher runs in its own scope: no second flusher;
+/// a flusher that died leaves a claim the next event replaces.
+#[test]
+fn one_flusher_per_attempt_across_restarts() {
+    let root = tempfile::tempdir().unwrap();
+    let (runs, attempt) = ended_attempt(root.path());
+    fs::write(root.path().join("mlflow-up"), b"").unwrap();
+    let claim = attempt.join("trace.jsonl.flushing");
+    let stat = fs::read_to_string("/proc/self/stat").unwrap();
+    let start = stat.rsplit_once(')').unwrap().1.split_whitespace().nth(19);
+    write(
+        &claim,
+        &identity(std::process::id(), start.unwrap().parse().unwrap()),
+    )
+    .unwrap();
+    trace::sweep(
+        &runs,
+        &[],
+        std::slice::from_ref(&attempt),
+        trace::HELD_BYTES,
+    )
+    .unwrap();
+    assert!(
+        flushed(&attempt).is_none(),
+        "a live flusher keeps the attempt"
+    );
+    let mut gone = Command::new("true").spawn().unwrap();
+    gone.wait().unwrap();
+    write(&claim, &identity(gone.id(), 1)).unwrap();
+    trace::sweep(
+        &runs,
+        &[],
+        std::slice::from_ref(&attempt),
+        trace::HELD_BYTES,
+    )
+    .unwrap();
+    assert!(
+        flushed(&attempt)
+            .expect("a dead flusher is replaced")
+            .success()
+    );
+    assert!(
+        !claim.exists(),
+        "the stale claim is cleared for the new flusher"
+    );
 }
 
 #[test]
-fn a_shipped_or_absent_log_starts_nothing() {
+fn flushers_start_in_the_launcher_scope() {
     let root = tempfile::tempdir().unwrap();
-    let attempt = ended_attempt(root.path());
-    fs::write(attempt.join("trace.jsonl.shipped"), b"").unwrap();
-    assert!(trace::start_flush(&attempt).unwrap().is_none());
-    fs::remove_file(attempt.join("trace.jsonl.shipped")).unwrap();
-    fs::remove_file(attempt.join("trace.jsonl")).unwrap();
-    assert!(trace::start_flush(&attempt).unwrap().is_none());
-    fs::remove_file(attempt.join("launch.json")).unwrap();
-    fs::write(attempt.join("trace.jsonl"), b"").unwrap();
-    assert!(
-        trace::start_flush(&attempt).unwrap().is_none(),
-        "without a recorded Python there is no flusher to start"
+    let (runs, attempt) = ended_attempt(root.path());
+    fs::write(root.path().join("mlflow-up"), b"").unwrap();
+    let launcher = root.path().join("launcher");
+    executable(
+        &launcher,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\nexec \"$@\"\n",
     );
+    let launcher = vec![
+        launcher.to_str().unwrap().to_owned(),
+        "--scope-fixture".into(),
+    ];
+    trace::sweep(
+        &runs,
+        &launcher,
+        std::slice::from_ref(&attempt),
+        trace::HELD_BYTES,
+    )
+    .unwrap();
+    let args = fs::read_to_string(root.path().join("launcher.args")).unwrap();
+    let args: Vec<_> = args.lines().collect();
+    assert_eq!(args[0], "--scope-fixture");
+    assert_eq!(args[1], root.path().join("python").to_str().unwrap());
+    assert_eq!(args[2..6], ["-I", "-m", "tl3_workers.tracing", "flush"]);
+    assert!(flushed(&attempt).unwrap().success());
+}
+
+#[test]
+fn held_logs_beyond_the_cap_drop_oldest_first() {
+    let root = tempfile::tempdir().unwrap();
+    let runs = root.path().join("runs");
+    let base = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    for (index, name) in [
+        "b-attempt-00000000",
+        "a-attempt-00000000",
+        "c-attempt-00000000",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let directory = runs.join(".traces").join(name);
+        fs::create_dir_all(&directory).unwrap();
+        // Retirement order, not name order: b first, then a, then c.
+        fs::write(directory.join("trace.jsonl"), [b'x'; 100]).unwrap();
+        File::options()
+            .write(true)
+            .open(directory.join("trace.jsonl"))
+            .unwrap()
+            .set_modified(base + std::time::Duration::from_secs(index as u64))
+            .unwrap();
+    }
+    let evicted = trace::sweep(&runs, &[], &[], 250).unwrap();
+    assert_eq!(evicted, 1);
+    assert!(!runs.join(".traces/b-attempt-00000000").exists());
+    assert!(runs.join(".traces/a-attempt-00000000").exists());
+    assert!(runs.join(".traces/c-attempt-00000000").exists());
 }

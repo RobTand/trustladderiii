@@ -5,11 +5,13 @@ use super::process::read;
 use crate::Result;
 use std::{
     fs::File,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
 };
 
 pub(super) const LOG: &str = "trace.jsonl";
+pub(super) const HELD: &str = ".traces";
+pub(super) const HELD_BYTES: u64 = 256 << 20;
 
 /// Start the flusher for an ended attempt whose span log isn't marked shipped.
 /// It reads the log from stdin, so retirement may remove the attempt under it.
@@ -49,6 +51,19 @@ pub(super) fn flush(attempt: &Path) {
             attempt.display()
         ),
     }
+}
+
+pub(super) fn sweep(
+    _runs: &Path,
+    _launcher: &[String],
+    _ended: &[PathBuf],
+    _cap: u64,
+) -> Result<u64> {
+    todo!("#430 review")
+}
+
+pub(super) fn hold(_attempt: &Path, _runs: &Path) -> Result<()> {
+    todo!("#430 review")
 }
 
 #[cfg(not(test))]

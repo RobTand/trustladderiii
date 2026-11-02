@@ -1,6 +1,7 @@
 """Live worker traces (#430): visible while a run works, durable on disk first,
 and closed from the span log when the worker dies."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import base64
 import json
 import os
 from pathlib import Path
@@ -132,7 +133,9 @@ def two_turn_request(request_doc, tmp_path, uri):
     (tmp_path / 'greeting.py').write_text('def greet():\n    return "hello"\n')
     request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
     request_doc['trace'] = {'repo': 'RobTand/tl3-sandbox', 'issue': 101, 'request': '7',
-                            'attempt': 2, 'round': 1, 'log': str(tmp_path / 'attempt' / 'trace.jsonl')}
+                            'attempt': 2, 'round': 1, 'log': str(tmp_path / 'attempt' / 'trace.jsonl'),
+                            'wake': str(tmp_path / 'held' / '.wake')}
+    (tmp_path / 'held').mkdir()
     (tmp_path / 'attempt').mkdir()
     return [AIMessage(content='', tool_calls=[{'name': 'read', 'args': {'path': 'greeting.py'}, 'id': 'read1'}],
                       usage_metadata=USAGE),
@@ -193,6 +196,7 @@ def test_trace_is_visible_mid_run_and_final_after(request_doc, tmp_path, monkeyp
     log = Path(request_doc['trace']['log'])
     assert Path(str(log) + '.shipped').exists()
     assert b'never-read-this-key' not in log.read_bytes()
+    assert Path(request_doc['trace']['wake']).exists(), 'a send that works wakes held flushes'
 
 
 def test_mlflow_outage_mid_run_keeps_the_run_and_the_durable_log(request_doc, tmp_path, monkeypatch,
@@ -275,3 +279,129 @@ def test_killed_worker_leaves_a_complete_crash_marked_trace(request_doc, tmp_pat
                                stdin=records, capture_output=True, timeout=30)
     assert again.returncode == 0
     assert mlflow_server.only()['state'] == 'ERROR' and set(mlflow_server.only()['spans']) == spans
+
+
+def flush(log):
+    """What the controller starts when an attempt ends (#430)."""
+    with Path(log).open('rb') as records:
+        return subprocess.run([sys.executable, '-m', 'tl3_workers.tracing', 'flush', str(log)],
+                              stdin=records, capture_output=True, timeout=30)
+
+
+def run_to_end(request_doc, monkeypatch, children, turns):
+    monkeypatch.setattr(runtime, 'create_model', lambda _: FakeMessagesListChatModel(responses=turns))
+    events = []
+    runtime.run(request_doc, events.append)
+    return events
+
+
+def closed_after_exit(request_doc, server, code):
+    log = Path(request_doc['trace']['log'])
+    (log.parent / 'exit.json').write_text(json.dumps({'code': code}))
+    if not Path(str(log) + '.shipped').exists():
+        assert flush(log).returncode == 0
+    return server.only()
+
+
+def test_an_oversize_final_still_closes_a_finished_run_ok(request_doc, tmp_path, monkeypatch, children,
+                                                          mlflow_server):
+    from tl3_workers import tracing
+    turns = two_turn_request(request_doc, tmp_path, mlflow_server.uri)
+    monkeypatch.setattr(tracing, 'TRACE_BYTES', 1024)
+    assert run_to_end(request_doc, monkeypatch, children, turns)[-1]['reply'] == BRIEF
+    trace = closed_after_exit(request_doc, mlflow_server, 0)
+    assert trace['state'] == 'OK'
+    assert trace['tags']['outcome'] == 'succeeded' and trace['tags']['total_tokens'] == '36'
+
+
+def test_a_finish_that_fails_late_closes_with_the_real_outcome(request_doc, tmp_path, monkeypatch, children,
+                                                               mlflow_server):
+    from tl3_workers import tracing
+
+    def broken(*args):
+        raise RuntimeError('fixture failure while allocating the final packet')
+
+    turns = two_turn_request(request_doc, tmp_path, mlflow_server.uri)
+    monkeypatch.setattr(tracing.Capture, 'allocate', broken)
+    assert run_to_end(request_doc, monkeypatch, children, turns)[-1]['reply'] == BRIEF
+    trace = closed_after_exit(request_doc, mlflow_server, 0)
+    assert trace['state'] == 'OK'
+    assert {key: trace['tags'].get(key) for key in TAGS} == TAGS
+    assert trace['tags']['outcome'] == 'succeeded' and trace['tags']['total_tokens'] == '36'
+
+
+def test_live_copies_of_a_long_run_match_what_the_final_keeps(request_doc, tmp_path, monkeypatch, children,
+                                                              mlflow_server):
+    import mlflow
+    from tl3_workers import tracing
+    first, last, extra = 3, 4, 5
+    monkeypatch.setattr(tracing, 'FIRST_SPANS', first)
+    monkeypatch.setattr(tracing, 'LAST_SPANS', last)
+    two_turn_request(request_doc, tmp_path, mlflow_server.uri)
+    with tracing.observe(request_doc):
+        for index in range(first + last + extra):
+            with mlflow.start_span(name=f'read{index}', span_type='TOOL') as span:
+                span.set_inputs({'path': f'file{index}.py'})
+                span.set_outputs(f'content {index}')
+        tracing.record_reply({'kind': 'done'})
+    for child in children:
+        assert child.wait(timeout=15) == 0
+    from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
+    log = Path(request_doc['trace']['log'])
+    final = next(json.loads(line) for line in log.read_text().splitlines() if '"kind":"final"' in line)
+    packet = ExportTraceServiceRequest.FromString(base64.b64decode(final['otlp']))
+    kept = {span.span_id.hex() for span in packet.resource_spans[0].scope_spans[0].spans}
+    trace = mlflow_server.only()
+    stored = {key for key, span in trace['spans'].items() if span.name != 'tl3.run_started'}
+    assert stored == kept, 'MLflow must hold what the final keeps, not live copies it omitted'
+    root = next(span for span in trace['spans'].values() if not span.parent_span_id)
+    omitted = next(attr.value.int_value for attr in root.attributes if attr.key == 'tl3.trace.omitted_spans')
+    assert omitted == extra
+
+
+def crafted_log(directory, uri, spans=1):
+    """A span log as a worker leaves it when it dies after `spans` spans."""
+    from opentelemetry.proto.trace.v1.trace_pb2 import Span
+    from tl3_workers.tracing import encode
+    trace, root = os.urandom(16), os.urandom(8)
+    lines = [{'kind': 'start', 'v': 1, 'trace_id': trace.hex(), 'root_span_id': root.hex(), 'role': 'ingest',
+              'start_ns': 1_000_000, 'settings': {'tracking_uri': uri, 'experiment': 'tl3-test'}, 'tags': TAGS}]
+    for index in range(spans):
+        span = Span(trace_id=trace, span_id=os.urandom(8), parent_span_id=root, name=f'read{index}',
+                    start_time_unix_nano=2_000_000 + index, end_time_unix_nano=3_000_000 + index)
+        span.attributes.add(key='mlflow.spanType').value.string_value = 'TOOL'
+        lines.append({'kind': 'span', 'otlp': encode(span)})
+    directory.mkdir(exist_ok=True)
+    log = directory / 'trace.jsonl'
+    log.write_text(''.join(json.dumps(line) + '\n' for line in lines))
+    return log
+
+
+def test_a_deliberately_stopped_worker_is_closed_as_stopped(tmp_path, mlflow_server):
+    log = crafted_log(tmp_path / 'attempt', mlflow_server.uri)
+    # stop_attempt marks a run the controller stops (Q49) before it kills it.
+    (log.parent / 'stopped.json').write_text('{}')
+    assert flush(log).returncode == 0
+    trace = mlflow_server.only()
+    assert trace['state'] == 'ERROR'
+    assert trace['tags']['outcome'] == 'stopped'
+    assert trace['tags']['failure_class'] == 'WorkerStopped'
+
+
+def identity(pid):
+    stat = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
+    return {'pid': pid, 'machine': Path('/etc/machine-id').read_text().strip(), 'start': int(stat[19]),
+            'boot': Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
+
+
+def test_one_flusher_per_attempt(tmp_path, mlflow_server):
+    log = crafted_log(tmp_path / 'attempt', mlflow_server.uri)
+    claim = Path(str(log) + '.flushing')
+    # A flusher that outlived a tl3d restart still holds the attempt.
+    claim.write_text(json.dumps(identity(os.getpid())))
+    assert flush(log).returncode == 0
+    assert mlflow_server.posts == 0 and not Path(str(log) + '.shipped').exists()
+    claim.unlink()
+    assert flush(log).returncode == 0
+    assert mlflow_server.only()['tags']['outcome'] == 'crashed'
+    assert not claim.exists(), 'a flusher releases its claim when it ends'

@@ -627,6 +627,9 @@ impl Controller {
     /// Upstream inbox keys must be stable across webhook redelivery and looks.
     pub fn observe(&mut self, key: &str, observation: Observation) -> Result<()> {
         let snapshot = self.store.load()?;
+        if let Observation::TraceLogsCapped { .. } = observation {
+            return Ok(());
+        }
         let news = observation_upstream(&snapshot, &observation)?;
         if let Observation::Queue(fact) = &observation {
             let identity = fact.identity();
@@ -2088,7 +2091,9 @@ impl Controller {
         let mut detailed_review = false;
         let event = match observation {
             // Older controllers queued ScratchSaved after writing it with completion.
-            Observation::ScratchSaved { .. } | Observation::ScratchPruned { .. } => {
+            Observation::ScratchSaved { .. }
+            | Observation::ScratchPruned { .. }
+            | Observation::TraceLogsCapped { .. } => {
                 return Ok(None);
             }
             Observation::Progress { key, checkpoint } => {
@@ -3132,6 +3137,7 @@ fn observation_upstream(
     Ok(match observation {
         Observation::Progress { .. }
         | Observation::Quota { .. }
+        | Observation::TraceLogsCapped { .. }
         | Observation::Kernel(Event::Fact {
             fact: Fact::UpstreamStalled,
             ..
