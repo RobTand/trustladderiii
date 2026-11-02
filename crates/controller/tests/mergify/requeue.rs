@@ -306,16 +306,20 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         "restart must preserve command dispatch"
     );
     if mode == "no-acceptance" {
-        // #356, #373: the first look finds the command alive and waiting; the
-        // next counts one failed look; the third raises the usual incident,
-        // open and not yet needing Rob.
-        for look in 1..=3 {
+        // #356, #373, Q7: a wait, one counted failure, the first incident
+        // (cleared at once by the passing probe), one more counted failure,
+        // then the second incident, which needs Rob.
+        for look in 1..=5 {
             clock.0.set(clock.0.get() + Duration::from_secs(100_000));
             controller.look_now().unwrap();
             drain(&mut controller);
-            let expected: &[bool] = if look < 3 { &[] } else { &[false] };
+            let expected: &[(bool, bool)] = match look {
+                1 | 2 => &[],
+                3 | 4 => &[(false, false)],
+                _ => &[(false, false), (true, true)],
+            };
             assert_eq!(
-                super::head_checks::open_incidents(&mut controller),
+                super::head_checks::incidents(&mut controller),
                 expected,
                 "look {look}"
             );

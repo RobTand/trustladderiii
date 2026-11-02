@@ -560,11 +560,7 @@ impl Controller {
                 self.save_allowance(state)?;
                 return Ok(());
             }
-            // A stall isn't an outage: a reachable upstream doesn't end it. The
-            // look runs, and only progress clears its incident (#373).
-            if incident.effect.as_deref() == Some(&state.delivery.key)
-                && incident.signature.class != STALLED
-            {
+            if incident.effect.as_deref() == Some(&state.delivery.key) {
                 if !incident.needs_rob {
                     match self
                         .adapters
@@ -666,8 +662,6 @@ impl Controller {
         }
         match result {
             Ok(Look::Found(mut completion)) => {
-                // A found record is progress, which ends a stall incident too.
-                self.probe_passed(state)?;
                 let effect = self
                     .store
                     .effect(&state.delivery.key)?
@@ -786,9 +780,6 @@ impl Controller {
                 {
                     state.read_failures = 0;
                 }
-                if changed {
-                    self.probe_passed(state)?;
-                }
                 state.progress = Some(progress);
                 if self.look_alive(state, changed)? {
                     return Ok(());
@@ -865,7 +856,7 @@ impl Controller {
                 .map(|r| crate::decode_stored::<Incident>(r.value))
                 .transpose()?;
             if let Some(incident) = incident.filter(|i| i.open) {
-                if !incident.needs_rob && incident.signature.class != STALLED {
+                if !incident.needs_rob {
                     match self
                         .adapters
                         .adapter(&state.delivery)?
@@ -976,7 +967,7 @@ impl Controller {
                         self.look_failed(
                             state,
                             crate::Error::Permanent {
-                                class: STALLED,
+                                class: "queue_unfinished",
                                 source: "the upstream never acknowledged the request".into(),
                             },
                         )?;
@@ -1566,9 +1557,6 @@ pub(crate) fn quota_waiting(snapshot: &Snapshot, key: &str, _now: u64) -> Result
 
 /// The hold class of an enqueue that is waiting for required checks.
 pub(crate) const CHECKS_PENDING: &str = "checks_pending";
-
-/// The class of an operation alive but unacknowledged past its allowance.
-const STALLED: &str = "queue_unfinished";
 
 pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
     match error {

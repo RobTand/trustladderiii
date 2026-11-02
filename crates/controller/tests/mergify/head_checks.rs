@@ -296,10 +296,11 @@ pub(super) fn label_present(settings: &tl3_config::Store, lag: bool) {
             Phase::Publishing,
             "a label write alone never confirms queue acceptance"
         );
-        // #356, #373: the first look finds the enqueue alive and waiting. Past
-        // the no-progress allowance each look counts as a failed look, a burst
-        // of webhook looks counts once, and the second counted look raises the
-        // usual incident. It's open and doesn't yet need Rob.
+        // #356, #373, Q7: the first look finds the enqueue alive and waiting.
+        // Past the no-progress allowance each look counts as a failed look, and
+        // a burst of webhook looks counts once. The second counted look raises
+        // the first read incident, which the passing probe clears at once, as Q7
+        // allows. Two more counted looks raise the second, which needs Rob.
         let look = |controller: &mut Controller, burst: usize| {
             clock.0.set(clock.0.get() + Duration::from_secs(100_000));
             for _ in 0..burst {
@@ -309,19 +310,26 @@ pub(super) fn label_present(settings: &tl3_config::Store, lag: bool) {
         };
         look(&mut controller, 1);
         assert!(
-            open_incidents(&mut controller).is_empty(),
+            incidents(&mut controller).is_empty(),
             "the first look is a wait"
         );
         look(&mut controller, 4);
         assert!(
-            open_incidents(&mut controller).is_empty(),
+            incidents(&mut controller).is_empty(),
             "a burst past the allowance counts as one failed look"
         );
         look(&mut controller, 1);
         assert_eq!(
-            open_incidents(&mut controller),
-            [false],
-            "missing queue acceptance raises the usual incident on the third look"
+            incidents(&mut controller),
+            [(false, false)],
+            "the third look raises the first incident, and the probe clears it"
+        );
+        look(&mut controller, 1);
+        look(&mut controller, 1);
+        assert_eq!(
+            incidents(&mut controller),
+            [(false, false), (true, true)],
+            "the fifth look raises the second incident, which needs Rob"
         );
         assert_eq!(
             api.state.lock().unwrap().posts,
@@ -398,14 +406,16 @@ fn refused_then_retry(mode: &str) {
     println!("test head_check_{mode} ... ok");
 }
 
-/// #373: open read incidents, with whether each needs Rob.
-pub(super) fn open_incidents(controller: &mut Controller) -> Vec<bool> {
-    controller
+/// #373: incidents as (open, needs Rob), sorted.
+pub(super) fn incidents(controller: &mut Controller) -> Vec<(bool, bool)> {
+    let mut incidents: Vec<_> = controller
         .snapshot()
         .unwrap()
         .rows
         .iter()
-        .filter(|row| row.table == "incidents" && row.value["open"] == true)
-        .map(|row| row.value["needs_rob"] == true)
-        .collect()
+        .filter(|row| row.table == "incidents")
+        .map(|row| (row.value["open"] == true, row.value["needs_rob"] == true))
+        .collect();
+    incidents.sort();
+    incidents
 }
