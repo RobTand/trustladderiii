@@ -158,6 +158,26 @@ class GateTests(unittest.TestCase):
             rust_gate.check_budget({'scenario': 300.001}, policy, policy,
                                    runner_class='buildbuddy-amd64', cpu_seconds={'scenario': 0})
 
+    def test_cpu_floor_covers_recorded_short_scenario_noise(self):
+        policy = {'seconds': 10, 'slow': {}, 'cpu': {'seconds': 1, 'slow': {}}}
+        name = 'tl3-controller/prismabuild::recorded_records_reach_kernel'
+        for measured in [1.08, 1.14, 1.5, 1.56, 5]:
+            with self.subTest(measured=measured):
+                rust_gate.check_budget({name: 2}, policy, policy, cpu_seconds={name: measured})
+        with self.assertRaisesRegex(RuntimeError, 'CPU 5.001s > 5.000s'):
+            rust_gate.check_budget({name: 2}, policy, policy, cpu_seconds={name: 5.001})
+
+    def test_cpu_floor_keeps_regressions_and_larger_calibrated_caps_enforced(self):
+        for calibrated, effective in [(1, 5), (8, 8)]:
+            policy = {'seconds': 10, 'slow': {},
+                      'cpu': {'seconds': 1, 'slow': {'scenario': calibrated}}}
+            with self.subTest(calibrated=calibrated):
+                rust_gate.check_budget({'scenario': 2}, policy, policy,
+                                       cpu_seconds={'scenario': effective})
+                with self.assertRaisesRegex(RuntimeError, 'CPU'):
+                    rust_gate.check_budget({'scenario': 2}, policy, policy,
+                                           cpu_seconds={'scenario': 3 * effective})
+
     def test_waiting_three_wall_budgets_passes_with_low_cpu(self):
         policy = self.cpu_policy()
         rust_gate.check_budget({'waiting': 30}, policy, policy, cpu_seconds={'waiting': 0.2})
