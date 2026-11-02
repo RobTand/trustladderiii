@@ -389,7 +389,9 @@ fn check_fail_fast(before: &World, after: &World, event: Event) {
 /// stops for TL3 review instead. So with the flag off, the event does exactly
 /// what it did before the flag existed. The phase is the one that accepts the
 /// event; elsewhere the event never reaches a step that reads the flag.
-fn check_fail_fast_diverts(phase: Phase, event: Event) {
+/// `others` says whether the event has transitions other than the retry in
+/// that phase, such as a failed run; Planning's `cant_meet` has none.
+fn check_fail_fast_diverts(phase: Phase, event: Event, others: bool) {
     let mut off = any_settled_world(Some(phase));
     off.fail_fast = false;
     let mut on = off.clone();
@@ -402,10 +404,12 @@ fn check_fail_fast_diverts(phase: Phase, event: Event) {
     on.fail_fast = false;
     let diverted = on != off;
     kani::cover!(diverted, "fail_fast stops a retry for TL3 review");
-    kani::cover!(
-        !diverted && off.nodes[0] != b,
-        "the event's other transitions are the same with the flag on"
-    );
+    if others {
+        kani::cover!(
+            !diverted && off.nodes[0] != b,
+            "the event's other transitions are the same with the flag on"
+        );
+    }
     if diverted {
         let n = &on.nodes[0];
         let r = &off.nodes[0];
@@ -1377,7 +1381,8 @@ proof!(
         reply(Reply::PlanLeaf {
             footprint: kani::any(),
             fits: kani::any()
-        })
+        }),
+        true
     )
 );
 proof!(
@@ -1386,7 +1391,8 @@ proof!(
         Phase::Planning {
             must_split: kani::any()
         },
-        reply(Reply::PlanCantMeet)
+        reply(Reply::PlanCantMeet),
+        false
     )
 );
 proof!(
@@ -1396,16 +1402,17 @@ proof!(
         reply(Reply::MakerNeedsFiles {
             files: kani::any(),
             fits: kani::any()
-        })
+        }),
+        true
     )
 );
 proof!(
     fail_fast_maker_cant_meet,
-    check_fail_fast_diverts(Phase::Making, reply(Reply::MakerCantMeet))
+    check_fail_fast_diverts(Phase::Making, reply(Reply::MakerCantMeet), true)
 );
 proof!(
     fail_fast_maker_out_of_room,
-    check_fail_fast_diverts(Phase::Making, reply(Reply::MakerOutOfRoom))
+    check_fail_fast_diverts(Phase::Making, reply(Reply::MakerOutOfRoom), true)
 );
 proof!(
     fail_fast_checks_done,
@@ -1415,26 +1422,32 @@ proof!(
             report: kani::any(),
             pass: kani::any(),
             in_footprint: kani::any()
-        })
+        }),
+        true
     )
 );
 proof!(
     fail_fast_changes_requested,
-    check_fail_fast_diverts(Phase::Reviewing, reply(Reply::ChangesRequested))
+    check_fail_fast_diverts(Phase::Reviewing, reply(Reply::ChangesRequested), true)
 );
 proof!(
     fail_fast_reviewer_out_of_room,
-    check_fail_fast_diverts(Phase::Reviewing, reply(Reply::ReviewerOutOfRoom))
+    check_fail_fast_diverts(Phase::Reviewing, reply(Reply::ReviewerOutOfRoom), true)
 );
 proof!(
     fail_fast_ci_failed_queued,
-    check_fail_fast_diverts(Phase::Queued, fact(Fact::CiFailed { infra: kani::any() }))
+    check_fail_fast_diverts(
+        Phase::Queued,
+        fact(Fact::CiFailed { infra: kani::any() }),
+        true
+    )
 );
 proof!(
     fail_fast_ci_failed_publishing,
     check_fail_fast_diverts(
         Phase::Publishing,
-        fact(Fact::CiFailed { infra: kani::any() })
+        fact(Fact::CiFailed { infra: kani::any() }),
+        true
     )
 );
 
