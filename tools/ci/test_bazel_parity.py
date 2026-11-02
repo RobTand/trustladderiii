@@ -194,6 +194,7 @@ class NestedSuiteSizingTests(unittest.TestCase):
                 self.assertTrue(bazel_parity.has_nested_suite(source))
         for source in ['import pytest\npytest.raises(ValueError)',
                        'subprocess.run(["git", "status"])',
+                       'SCRIPT = "from unittest.mock import patch"\nsubprocess.run(["python", "-c", SCRIPT])',
                        'description = "subprocess.run([python, pytest])"']:
             self.assertFalse(bazel_parity.has_nested_suite(source))
 

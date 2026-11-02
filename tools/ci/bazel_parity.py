@@ -141,7 +141,7 @@ def has_nested_suite(source):
             command = node.args[0] if node.args else next(
                 (keyword.value for keyword in node.keywords if keyword.arg == 'args'), None)
             if command is not None and re.search(
-                    r'\b(?:pytest|unittest)\b|tl3_harness/runner\.py', command_text(command)):
+                    r"""(?:^|['\"\s/])(?:pytest|unittest)(?:['\"\s]|$)|tl3_harness/runner\.py""", command_text(command)):
                 return True
         if name == 'write_text':
             for literal in ast.walk(node):
