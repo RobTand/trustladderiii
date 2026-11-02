@@ -24,6 +24,9 @@ fit_tokens = 100000
 context_tokens = 150000
 # Q6, docs/state-table.md, "Progress credit": starting reserve and free rebases.
 credit_reserve = 3
+# #416: a starting credit reserve by issue priority ([P0]-[P3] title prefix or
+# P0-P3 label). Off unless set; unlisted priorities keep the kernel's 3.
+# priority_credit_reserve = { P0 = 5, P1 = 5 }
 free_rechecks = 3
 # Q29 amended: W may be 1 to 3; the approved slice-one deployment value is 3.
 w = 1
@@ -52,6 +55,8 @@ installation_id = 1
 # base_branch = "main"
 # Optional additions to the mandatory defaults and global planning.protected_paths.
 # protected_paths = ["CHANGELOG.md", "release/**"]
+# Optional: also run up to this many existing tests that import the change as a regression check.
+# selected_tests = 200
 # PrismaBuild: branch_template = "prismabuild-{issue}-tl3-{node}"
 
 [models]
@@ -75,12 +80,13 @@ planner = [
 # Q22: attempts 1 and 2 share a model; set attempt 2 to its maximum effort/budget.
 # The proxy decides its supported maximum. These sample values need calibration.
 # Attempt 3 uses the strongest available model from a different family.
+# Q22 (Rob, 2026-11-02, #416): attempt 2 escalates to a different model line.
+# Attempts past the ladder use its last rung.
 maker = [
     { name = "default-model", family = "default", effort = "high", budget_tokens = 32000 },
-    { name = "default-model", family = "default", effort = "xhigh", budget_tokens = 64000 },
     { name = "alternate-model", family = "alternate", effort = "high", budget_tokens = 64000 },
 ]
-# Q22: reviewer defaults to [maker[0], maker[2]]. Each attempt selects the first
+# Q22: reviewer defaults to the first and last maker rungs. Each attempt selects the first
 # reviewer from a different family than that attempt's maker. An explicit ladder
 # must offer a different-family reviewer for every maker family.
 # reviewer = [
@@ -152,6 +158,7 @@ command = ["-m", "tl3_workers", "run"]
 # launcher = ["/usr/bin/systemd-run", "--user", "--scope", "--quiet", "--collect", "--slice=tl3-workers.slice"]
 
 [planning]
+# Additions to the built-in defaults, which always apply and needn't be listed (#388).
 protected_paths = [".github/**", ".mergify.yml", ".mergify.yaml", "**/conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "noxfile.py", "setup.cfg", "pyproject.toml"]
 
 # Calibration seam for future MLflow measurements. Code sums these estimates.

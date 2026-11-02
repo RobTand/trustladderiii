@@ -204,6 +204,23 @@ pub fn render_text(status: &Status) -> String {
     output
 }
 
+/// The protected paths in force for each served repository (#388).
+pub fn render_protected_paths(config: &tl3_config::Config) -> String {
+    let mut text = String::new();
+    for repo in &config.github.repos {
+        let paths =
+            tl3_config::protected_paths(&config.planning.protected_paths, &repo.protected_paths);
+        let _ = writeln!(
+            text,
+            "Protected paths for {}/{}: {}",
+            repo.owner,
+            repo.name,
+            paths.join(", ")
+        );
+    }
+    text
+}
+
 pub fn render_html(status: &Status) -> String {
     let mut output = String::from(
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>TL3 status</title><style>body{font-family:system-ui,sans-serif;margin:2rem;color:#17252a;background:#f8fafb}table{border-collapse:collapse;width:100%;background:white}th,td{text-align:left;vertical-align:top;padding:.8rem;border-bottom:1px solid #ccd5da}th{background:#e8eef1}caption{text-align:left;padding:.8rem 0}main{overflow-x:auto}</style></head><body><main><h1>TL3 status</h1><p>Reload to refresh.</p><table><caption>Requests</caption><thead><tr>",
@@ -254,6 +271,24 @@ fn escape_html(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_shows_the_effective_protected_paths() {
+        let mut config =
+            tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+        // A file that predates a default and adds its own path.
+        config.planning.protected_paths = vec!["fleet/**".into()];
+        config.github.repos[0].protected_paths = vec!["CHANGELOG.md".into()];
+        let text = render_protected_paths(&config);
+        let repo = &config.github.repos[0];
+        let line = text
+            .lines()
+            .find(|line| line.contains(&format!("{}/{}", repo.owner, repo.name)))
+            .unwrap_or_else(|| panic!("no line for the repository: {text:?}"));
+        for path in ["fleet/**", "CHANGELOG.md", ".pytest.ini", ".github/**"] {
+            assert!(line.contains(path), "{path} missing from {line}");
+        }
+    }
 
     fn unescape(value: &str) -> String {
         value

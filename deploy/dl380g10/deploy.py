@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 import re
 import secrets
+import select
+import signal
 import shutil
 import socket
 import stat
@@ -212,7 +214,7 @@ def render_config(home, listen, installation=1, issue=None, image=None, primary=
     }
     if image:
         replacements['sha256:' + '0' * 64] = image
-    # Primary is maker attempts 1 and 2; alternate is attempt 3. Both rename every role that uses them.
+    # Primary is maker attempt 1; alternate is attempt 2 onward (#416). Both rename every role that uses them.
     if primary:
         replacements['claude-sonnet-5-5'] = primary
     if alternate:
@@ -502,6 +504,9 @@ def collect_releases(home, introduced=False):
                                                                     str(root / "releases") + "/"))),
         ("the running tl3d launches workers from app/",
          str(_workers_python(runtime)).startswith(str(legacy) + "/")),
+        # A tl3d that read tl3.toml but has no readable runtime copy could still use app/.
+        ("tl3d is running without a readable runtime config",
+         _workers_python(runtime) is None and _tl3d_state() in ("activating", "active", "reloading")),
     ) if used]
     if users:
         print(f"Releases: kept the pre-#372 app/ directory: {'; '.join(users)}")
@@ -510,20 +515,81 @@ def collect_releases(home, introduced=False):
     print("Releases: removed the pre-#372 app/ directory")
 
 
-def launcher_works():
-    """The user manager accepts the scope launch tl3d uses for each worker run (#372)."""
+def _tl3d_state():
+    """tl3d.service's ActiveState: active, activating, reloading, deactivating, inactive or failed."""
+    result = subprocess.run(["systemctl", "--user", "show", "tl3d.service", "-p", "ActiveState", "--value"],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    return result.stdout.strip() or "unknown"
+
+
+def _kill_cgroup(scope):
+    (scope / "cgroup.kill").write_text("1")
+
+
+PROBE_TIMEOUT = 20
+
+
+def launcher_works(home):
+    """Start a throwaway run through the configured launcher and stop it as tl3d does (#372, #394).
+
+    The probe must land in a scope of its own, outside this cgroup, and
+    cgroup.kill must end it. Returns whether it worked and a one-line reason."""
     bus = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "bus"
     if not bus.is_socket():
-        return False
-    result = subprocess.run([*LAUNCHER, "/bin/true"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return result.returncode == 0
+        return False, f"no user bus at {bus}"
+    try:
+        launcher = tomllib.loads((paths(home)[1] / "tl3.toml").read_text())["workers"].get("launcher") or []
+    except (OSError, KeyError, ValueError) as error:
+        return False, f"tl3.toml is unreadable ({type(error).__name__})"
+    if not launcher:
+        return False, "tl3.toml sets no workers.launcher, so runs would stay in tl3d's cgroup"
+    own = Path("/proc/self/cgroup").read_text()
+    with tempfile.TemporaryFile() as errors:
+        try:
+            # Print the cgroup the command lands in, then wait to be killed.
+            probe = subprocess.Popen([*launcher, "/bin/sh", "-c", f"cat /proc/self/cgroup; exec sleep {2 * PROBE_TIMEOUT}"],
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errors)
+        except OSError as error:
+            return False, f"{launcher[0]}: {error.strerror}"
+
+        def failed(reason):
+            if probe.poll() is None:
+                probe.kill()
+            probe.wait()
+            errors.seek(0)
+            output = errors.read(2048).decode(errors="replace").strip()
+            return False, reason + (f": {output.splitlines()[-1]}" if output else "")
+
+        line = b""
+        while not line.startswith(b"0::"):
+            if not select.select([probe.stdout], [], [], PROBE_TIMEOUT)[0]:
+                return failed(f"the launcher timed out after {PROBE_TIMEOUT} s")
+            line = probe.stdout.readline()
+            if not line:
+                return failed(f"the launcher exited {probe.wait()} before the probe ran")
+        cgroup = line.decode().strip()[3:]
+        if not cgroup.endswith(".scope") or f"0::{cgroup}" in own.splitlines():
+            return failed(f"the probe ran in {cgroup}, not a scope of its own")
+        scope = Path("/sys/fs/cgroup") / cgroup.lstrip("/")
+        try:
+            _kill_cgroup(scope)
+        except OSError as error:
+            return failed(f"cgroup.kill on {scope.name} failed ({error.strerror})")
+        try:
+            code = probe.wait(timeout=PROBE_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            return failed(f"cgroup.kill did not stop {scope.name}")
+        if code != -signal.SIGKILL:
+            return failed(f"the probe in {scope.name} ended with {code}, not by cgroup.kill")
+        return True, f"{scope.name} ran outside tl3d's cgroup and cgroup.kill stopped it"
 
 
 def stop_runs(home):
     """Stop every worker run. A tl3d stop or restart no longer does (#372)."""
-    if subprocess.run(["systemctl", "--user", "is-active", "--quiet", "tl3d.service"]).returncode == 0:
-        raise RuntimeError("Stop tl3d first (systemctl --user stop tl3d.service). A running tl3d "
-                           "starts a new attempt for each stopped run once it proves the run is gone.")
+    state = _tl3d_state()
+    if state not in ("inactive", "failed"):
+        raise RuntimeError(f"Stop tl3d first (systemctl --user stop tl3d.service; it is {state}). A running "
+                           "tl3d starts a new attempt for each stopped run once it proves the run is gone.")
     run(["systemctl", "--user", "stop", WORKER_SLICE])
     print("Stopped every TL3 worker run. When tl3d starts, each counts as a failed run under the "
           "usual retry rules.")
@@ -677,8 +743,8 @@ def check(home):
             ok = False
         print(f"{'OK' if ok else 'MISSING'} {label}")
         missing += not ok
-    ok = launcher_works()
-    print(f"{'OK' if ok else 'MISSING'} worker launcher: user bus and systemd-run --user --scope")
+    ok, detail = launcher_works(home)
+    print(f"{'OK' if ok else 'MISSING'} worker launcher: {detail}")
     missing += not ok
     ready = (config / "production-ready").exists()
     print(f"{'OK' if ready else 'MISSING'} production startup marker after #20")

@@ -114,6 +114,12 @@ def changed_configuration(base: Path, head: Path) -> list[str]:
                   != ((head / name).read_bytes() if (head / name).exists() else None))
 
 
+def changed_files(repo: Path, base: str, head: str) -> list[str]:
+    """Every file that differs between two commits; both sides of a rename."""
+    names = git(repo, "diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", base, head, "--")
+    return sorted(name.decode(errors="backslashreplace") for name in names.split(b"\x00") if name)
+
+
 def changed_protected(repo: Path, base: str, head: str, patterns: tuple[str, ...]) -> list[str]:
     """Files under the repository's protected paths that differ between two commits. Git's
     glob pathspecs match them exactly as the worktree adapter's scope trim does."""

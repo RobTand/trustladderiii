@@ -62,12 +62,41 @@ pub struct Operations {
     pub issue: u64,
 }
 
+/// The protected paths in force for one repository (#388): the slice-one
+/// defaults, plus `planning.protected_paths`, plus the repository's own list.
+/// The configured lists only add: nothing can remove a default.
+pub fn protected_paths(global: &[String], repository: &[String]) -> Vec<String> {
+    let mut paths = Planning::default().protected_paths;
+    paths.extend_from_slice(global);
+    paths.extend_from_slice(repository);
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Planning {
     /// Calibration seam: replace these named estimates with measured overheads later.
     pub overhead_tokens: BTreeMap<String, u32>,
     pub protected_paths: Vec<String>,
+}
+
+impl Planning {
+    /// The defaults plus this file's additions. Nothing removes a default.
+    pub fn effective_protected_paths(&self) -> Vec<String> {
+        protected_paths(&self.protected_paths, &[])
+    }
+
+    /// Defaults this file doesn't list. They stay protected; a newer release can
+    /// add a default without the live file repeating it.
+    pub fn defaults_not_listed(&self) -> Vec<String> {
+        Planning::default()
+            .protected_paths
+            .into_iter()
+            .filter(|path| !self.protected_paths.contains(path))
+            .collect()
+    }
 }
 
 impl Default for Planning {
@@ -188,6 +217,19 @@ pub struct Limits {
     pub w: u32,
     #[serde(default = "default_agent_pool")]
     pub agent_pool: u8,
+    /// Starting credit reserve by priority, keyed P0 to P3 (#416). Empty, the
+    /// default, keeps the kernel's reserve of 3 for every request.
+    #[serde(default)]
+    pub priority_credit_reserve: BTreeMap<String, u8>,
+}
+
+impl Limits {
+    /// The configured reserve for a P0–P3 priority, if any.
+    pub fn credit_reserve_for(&self, priority: Option<u8>) -> Option<u8> {
+        self.priority_credit_reserve
+            .get(&format!("P{}", priority?))
+            .copied()
+    }
 }
 
 fn default_agent_pool() -> u8 {
@@ -231,6 +273,10 @@ pub struct Repository {
     pub container_image: Option<String>,
     #[serde(default)]
     pub exec_scratch: bool,
+    /// Run up to this many existing tests that import the change, and pass on the base,
+    /// as one more regression check (#359). Absent means off.
+    #[serde(default)]
+    pub selected_tests: Option<u32>,
     pub owner: String,
     pub name: String,
     pub installation_id: u64,
@@ -239,6 +285,9 @@ pub struct Repository {
     #[serde(default = "default_base_branch")]
     pub base_branch: String,
 }
+
+/// The harness's `MAX_SELECTED_TESTS`.
+pub const MAX_SELECTED_TESTS: u32 = 1000;
 
 fn default_branch_template() -> String {
     tl3_worktrees::branch_template::DEFAULT_TEMPLATE.into()
@@ -273,7 +322,7 @@ pub struct Models {
     pub ingest: Vec<Model>,
     pub audit: Vec<Model>,
     pub planner: Vec<Model>,
-    pub maker: [Model; 3],
+    pub maker: Vec<Model>,
     #[serde(default)]
     pub reviewer: Vec<Model>,
     pub rebaser: Vec<Model>,
@@ -281,6 +330,14 @@ pub struct Models {
     #[serde(default)]
     pub writer: Vec<Model>,
 }
+
+/// Rob, 2026-11-02: Fable is not used. TL3's models are limited to these.
+/// Config loading does not enforce the list yet.
+pub const ALLOWED_MODELS: &[&str] = &["claude-opus-5-5", "claude-sonnet-5-5", "gpt-6.1-sol"];
+
+/// The allowed models the shipped defaults use now. Sol 6.1 is allowed but out
+/// of quota on both accounts (Rob, 2026-11-02), so TL3 is Anthropic-only.
+pub const ACTIVE_MODELS: &[&str] = &["claude-opus-5-5", "claude-sonnet-5-5"];
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -456,10 +513,15 @@ impl Config {
             Error::Parse(format!("{}{position}", error.message()))
         })?;
         if config.models.reviewer.is_empty() {
-            config.models.reviewer = vec![
-                config.models.maker[0].clone(),
-                config.models.maker[2].clone(),
-            ];
+            // The first and last maker rungs; validation then rejects an empty ladder.
+            config.models.reviewer = config
+                .models
+                .maker
+                .first()
+                .into_iter()
+                .chain(config.models.maker.last())
+                .cloned()
+                .collect();
         }
         if config.models.writer.is_empty() {
             config.models.writer = config.models.ingest.clone();
@@ -505,16 +567,19 @@ impl Config {
                 "must contain named overhead estimates",
             ));
         }
-        for required in Planning::default().protected_paths {
-            if !self.planning.protected_paths.contains(&required) {
+        validate_protected_paths("planning.protected_paths", &self.planning.protected_paths)?;
+        let limits = &self.limits;
+        for (priority, reserve) in &limits.priority_credit_reserve {
+            // The kernel's reserve is 3; a priority can only raise it.
+            if !matches!(priority.as_str(), "P0" | "P1" | "P2" | "P3")
+                || !(3..=100).contains(reserve)
+            {
                 return Err(invalid(
-                    "planning.protected_paths",
-                    "must retain the slice-one protected paths",
+                    "limits.priority_credit_reserve",
+                    "use keys P0 to P3 with reserves from 3 to 100",
                 ));
             }
         }
-        validate_protected_paths("planning.protected_paths", &self.planning.protected_paths)?;
-        let limits = &self.limits;
         if limits.context_tokens == 0 {
             return Err(invalid(
                 "limits.context_tokens",
@@ -590,6 +655,15 @@ impl Config {
                 return Err(invalid(
                     format!("{field}.container_image"),
                     "use sha256:<64 lowercase hex digits> or repository@sha256:<64 lowercase hex digits>, as harness.Container requires",
+                ));
+            }
+            if repo
+                .selected_tests
+                .is_some_and(|limit| !(1..=MAX_SELECTED_TESTS).contains(&limit))
+            {
+                return Err(invalid(
+                    format!("{field}.selected_tests"),
+                    format!("must be 1 to {MAX_SELECTED_TESTS}, the harness's limit"),
                 ));
             }
             if repo.installation_id == 0 {
@@ -671,23 +745,13 @@ impl Config {
                 "add a second model: a plan that can't meet re-runs with the next model on the planner's ladder",
             ));
         }
-        let [first, second, third] = &self.models.maker;
-        if first.name != second.name || first.family != second.family {
+        // Q22, amended by Rob on 2026-11-02 (#416): attempt 2 escalates the model
+        // line, not the effort. Attempts past the ladder use its last rung.
+        let maker = &self.models.maker;
+        if maker.len() < 2 || maker[1].family.eq_ignore_ascii_case(&maker[0].family) {
             return Err(invalid(
-                "models.maker[1]",
-                "attempts 1 and 2 must use the same model and family (Q22)",
-            ));
-        }
-        if second.budget_tokens < first.budget_tokens || second.effort.is_none() {
-            return Err(invalid(
-                "models.maker[1]",
-                "set the proxy's maximum effort and a budget at least as large as attempt 1 (Q22)",
-            ));
-        }
-        if first.family.eq_ignore_ascii_case(&third.family) {
-            return Err(invalid(
-                "models.maker[2].family",
-                "attempt 3 must use a different family from attempt 1 (Q22)",
+                "models.maker",
+                "the maker ladder must escalate to a different model line by attempt 2 (Q22)",
             ));
         }
         for (index, maker) in self.models.maker.iter().enumerate() {

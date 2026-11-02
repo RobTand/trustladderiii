@@ -51,7 +51,7 @@ mod results;
 mod source;
 pub(crate) use checks::validate_plan_size;
 pub use checks::{Check, CheckRun, Kind};
-pub(crate) use results::HARNESS;
+pub(crate) use results::{HARNESS, selected_failures};
 pub use source::{RunningSource, Source};
 
 use serde::{Deserialize, Serialize};
@@ -87,6 +87,9 @@ struct Job {
     delivery: Delivery,
     run: CheckRun,
     changed_paths: Vec<String>,
+    /// The harness may report one trailing selected regression check (#359).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    selected_tests: Option<u32>,
 }
 
 pub struct Adapter {
@@ -291,9 +294,7 @@ impl Adapter {
             .for_repository(repo, &self.global_protected)
             .unwrap_or_else(|_| {
                 // Only an adapter opened without repositories, such as a fixture's, lands here.
-                let mut paths = tl3_config::Planning::default().protected_paths;
-                paths.extend_from_slice(&self.global_protected);
-                paths
+                tl3_config::protected_paths(&self.global_protected, &[])
             })
     }
 
@@ -471,6 +472,7 @@ impl Adapter {
             .images
             .for_repository(&delivery.repository, &self.settings.image);
         let run = checks::descended_base(delivery)?;
+        let selected_tests = self.images.selected_tests(&delivery.repository);
         let mut staged = delivery.clone();
         staged.checks = Some(run.clone());
         let changed_paths = checks::stage(
@@ -480,6 +482,7 @@ impl Adapter {
             image,
             self.images.exec_scratch(&delivery.repository),
             &self.protected_paths(&delivery.repository),
+            selected_tests,
         )?;
         let mut command = self.settings.python.clone();
         command.extend(["-I".into(), "-B".into(), "action.py".into()]);
@@ -507,6 +510,7 @@ impl Adapter {
             delivery: delivery.clone(),
             changed_paths,
             run,
+            selected_tests,
         };
         // The sealed key reaches stable storage before PB may execute anything.
         write(&record_path(&self.settings.records, delivery, "job"), &job)?;
@@ -608,6 +612,47 @@ impl Executor for Adapter {
     }
     fn wait_record(&mut self, key: &str, checkout: &Path) -> Result<crate::executor::WaitRecord> {
         read_wait(&self.client, &self.runtime, key, checkout)
+    }
+    /// #369: a checks job its own record shows queued, claimed or moving is
+    /// alive, even with no test completed since the last look. TL3 sets no
+    /// deadline on it; PrismaBuild ends a quiet job itself. Only a read that
+    /// errors is a failed look.
+    fn look(&mut self, delivery: &Delivery) -> Result<crate::executor::Look> {
+        use crate::executor::Look;
+        if matches!(
+            delivery.output,
+            Out::Effect {
+                kind: EffectKind::SubmitChecks,
+                ..
+            }
+        ) && let Some(job) = self.job(delivery)?
+            && !record_path(&self.settings.records, &job.delivery, "done").try_exists()?
+        {
+            let record = self
+                .runtime
+                .block_on(self.client.read(&job.action))
+                .map_err(adapter_error)?;
+            let state = match &record {
+                RecordRead::Moving => Some("moving".to_owned()),
+                RecordRead::Present(record) if record.state == ActionState::Queued => {
+                    Some("queued".to_owned())
+                }
+                RecordRead::Present(record) if record.state == ActionState::Claimed => {
+                    Some("claimed".to_owned())
+                }
+                _ => None,
+            };
+            if let Some(state) = state {
+                return Ok(Look::Alive {
+                    progress: format!("prismabuild:{state}"),
+                });
+            }
+        }
+        Ok(match self.reconcile(delivery)? {
+            Reconciliation::Found(completion) => Look::Found(completion),
+            Reconciliation::Absent => Look::Absent,
+            Reconciliation::Pending => Look::Pending,
+        })
     }
     fn retire(&mut self, store: &mut tl3_store::Store) -> Result<()> {
         let snapshot = store.load()?;

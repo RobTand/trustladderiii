@@ -24,16 +24,24 @@ The proxy owns the supported models and efforts. Budget means the worker's
 per-response `max_completion_tokens`, including reasoning where supported.
 It must be positive and no larger than the configured context.
 
-The maker has exactly three attempts. Attempts 1 and 2 share a model and family,
-attempt 2 has an explicit effort and at least attempt 1's budget, and attempt 3
-uses a different family. The operator sets the proxy's maximum effort and budget
-for attempt 2. An omitted or empty reviewer ladder defaults to maker attempts 1
-and 3, in that order. `models.reviewer_for(maker_family)` returns the first
+The maker ladder escalates to a different model line by attempt 2: it needs at
+least two rungs, and attempt 2's family differs from attempt 1's (Q22, amended by
+Rob on 2026-11-02, #416). Attempts past the ladder use its last rung. An omitted
+or empty reviewer ladder defaults to the first and last maker rungs, in that
+order. `models.reviewer_for(maker_family)` returns the first
 reviewer whose family differs from the current attempt's maker, ignoring ASCII
 case, or `None` if none exists. Validation requires a different-family reviewer
 for every family in the maker ladder, including with an explicit reviewer ladder.
 Other role ladders must contain at least one model. No model names or effort
 vocabulary are built into the crate.
+
+`limits.priority_credit_reserve` sets a starting credit reserve by issue priority,
+for example `{ P0 = 5, P1 = 5 }`. Priority comes from a `[P0]`–`[P3]` title
+prefix or a `P0`–`P3` label, read once when the request is created. Keys are
+`P0` to `P3`, reserves 3 to 100. It is empty by default, which keeps the
+kernel's reserve of 3 for every request (#416). A request whose ingest proposes
+an early end keeps the base reserve: the kernel's early-end reply carries no
+size to raise.
 
 The optional writer ladder defaults to ingest for older configs. Deployment
 defaults, including the explicit writer choice, live in
@@ -126,7 +134,9 @@ wrapper exports it as `TIKTOKEN_CACHE_DIR` before launching the daemon.
 of 5,000 prompt tokens, 20,000 making tokens and 5,000 review tokens.
 `planning.overhead_tokens` is the calibration seam for later MLflow measurements.
 It must contain at least one named nonnegative estimate.
-`planning.protected_paths` can add patterns, but it must retain the defaults.
+`planning.protected_paths` adds patterns to the slice-one defaults, which always
+apply; nothing in the file removes one. The file needn't repeat the defaults. A
+load-time note names any defaults it doesn't list, and they stay protected (#388).
 Each `[[github.repos]]` entry may add `protected_paths = ["CHANGELOG.md"]`.
 A request protects the union of mandatory defaults, global patterns and its
 repository's patterns. Other repositories do not inherit that entry's additions.

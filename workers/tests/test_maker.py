@@ -1076,7 +1076,7 @@ def test_no_change_done_gets_one_feedback_turn(tmp_path, maker_request, monkeypa
     root = Path(maker_request['worktree'])
     before = git(root, 'rev-parse', 'HEAD')
     maker_request['inputs']['attempt'] = 3
-    maker_request['model']['name'] = 'claude-fable-5-1'
+    maker_request['model']['name'] = 'claude-opus-5-5'
     maker_request['inputs']['context_size'] = 150000
     maker_request['session_file'] = str(tmp_path / 'session.json')
     report = 'Cannot satisfy test_greeting.py::test_hello without changing the protected test.'
@@ -1111,7 +1111,7 @@ def test_no_change_done_gets_one_feedback_turn(tmp_path, maker_request, monkeypa
 def test_no_change_done_recovers_through_protocol(tmp_path, maker_request):
     before = git(maker_request['worktree'], 'rev-parse', 'HEAD')
     maker_request['inputs']['attempt'] = 3
-    maker_request['model']['name'] = 'claude-fable-5-1'
+    maker_request['model']['name'] = 'claude-opus-5-5'
     reply = {'kind': 'cant_meet', 'report': 'The named regression check does not exist at base.'}
     result = start_worker(tmp_path, maker_request, [turn(DONE), turn(reply)])
     assert result.exit_code == 0, result.stderr
