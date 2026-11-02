@@ -700,7 +700,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
 
     config.store = settings.clone();
     if mode.starts_with("out-of-room") || mode.starts_with("review-reset") {
-        let mut primary = config.models.maker[2].clone();
+        let mut primary = config.models.maker.last().unwrap().clone();
         primary.name = "review-primary".into();
         let mut backup = config.models.maker[0].clone();
         backup.name = "review-backup".into();
@@ -776,6 +776,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         title: "Fix the value".into(),
         actor: 1,
         label: "tl3".into(),
+        labels: Vec::new(),
     })
     .unwrap();
     if mode.starts_with("q46-") {
@@ -1298,7 +1299,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             },
             "check outcomes must name their own comparison base"
         );
-        assert_ne!(review["model"]["name"], config.models.maker[0].name);
+        // Q22: a different model from the maker of the reviewed attempt (#416:
+        // attempt 2 runs the next model line, so its reviewer changes too).
+        let attempt = review["trace"]["attempt"].as_u64().unwrap() as usize;
+        let maker = &config.models.maker[(attempt - 1).min(config.models.maker.len() - 1)];
+        assert_ne!(review["model"]["name"], maker.name);
         assert!(
             review["inputs"]["standing_rules"][1]["description"]
                 .as_str()
@@ -1671,6 +1676,7 @@ fn publication_404_look(settings: &tl3_config::Store, case: &str) {
             title: "Fix the value".into(),
             actor: 1,
             label: "tl3".into(),
+            labels: Vec::new(),
         })
         .unwrap();
     let attempts = std::cell::Cell::new(0);

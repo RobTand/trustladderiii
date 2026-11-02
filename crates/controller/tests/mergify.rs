@@ -447,6 +447,7 @@ fn queued(settings: &tl3_config::Store, api: &Server, root: &Path, confirmed: bo
             title: "change".into(),
             actor: 42,
             label: "tl3".into(),
+            labels: Vec::new(),
         })
         .unwrap();
     for _ in 0..300 {
@@ -2006,6 +2007,7 @@ fn rate_limited_read_defers_quota(settings: &tl3_config::Store, status: u16) {
             title: "change".into(),
             actor: 42,
             label: "tl3".into(),
+            labels: Vec::new(),
         })
         .unwrap();
     for _ in 0..300 {
@@ -2091,6 +2093,7 @@ fn permanent_github_read(settings: &tl3_config::Store, status: u16, class: &str,
             title: "change".into(),
             actor: 42,
             label: "tl3".into(),
+            labels: Vec::new(),
         })
         .unwrap();
     let attempts = std::cell::Cell::new(0);
@@ -2204,6 +2207,7 @@ fn failed_catch_up_retries_held_enqueue(settings: &tl3_config::Store) {
             title: "change".into(),
             actor: 42,
             label: "tl3".into(),
+            labels: Vec::new(),
         })
         .unwrap();
     let mut enqueue = None;

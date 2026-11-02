@@ -217,6 +217,19 @@ pub struct Limits {
     pub w: u32,
     #[serde(default = "default_agent_pool")]
     pub agent_pool: u8,
+    /// Starting credit reserve by priority, keyed P0 to P3 (#416). Empty, the
+    /// default, keeps the kernel's reserve of 3 for every request.
+    #[serde(default)]
+    pub priority_credit_reserve: BTreeMap<String, u8>,
+}
+
+impl Limits {
+    /// The configured reserve for a P0–P3 priority, if any.
+    pub fn credit_reserve_for(&self, priority: Option<u8>) -> Option<u8> {
+        self.priority_credit_reserve
+            .get(&format!("P{}", priority?))
+            .copied()
+    }
 }
 
 fn default_agent_pool() -> u8 {
@@ -309,7 +322,7 @@ pub struct Models {
     pub ingest: Vec<Model>,
     pub audit: Vec<Model>,
     pub planner: Vec<Model>,
-    pub maker: [Model; 3],
+    pub maker: Vec<Model>,
     #[serde(default)]
     pub reviewer: Vec<Model>,
     pub rebaser: Vec<Model>,
@@ -500,10 +513,15 @@ impl Config {
             Error::Parse(format!("{}{position}", error.message()))
         })?;
         if config.models.reviewer.is_empty() {
-            config.models.reviewer = vec![
-                config.models.maker[0].clone(),
-                config.models.maker[2].clone(),
-            ];
+            // The first and last maker rungs; validation then rejects an empty ladder.
+            config.models.reviewer = config
+                .models
+                .maker
+                .first()
+                .into_iter()
+                .chain(config.models.maker.last())
+                .cloned()
+                .collect();
         }
         if config.models.writer.is_empty() {
             config.models.writer = config.models.ingest.clone();
@@ -551,6 +569,17 @@ impl Config {
         }
         validate_protected_paths("planning.protected_paths", &self.planning.protected_paths)?;
         let limits = &self.limits;
+        for (priority, reserve) in &limits.priority_credit_reserve {
+            // The kernel's reserve is 3; a priority can only raise it.
+            if !matches!(priority.as_str(), "P0" | "P1" | "P2" | "P3")
+                || !(3..=100).contains(reserve)
+            {
+                return Err(invalid(
+                    "limits.priority_credit_reserve",
+                    "use keys P0 to P3 with reserves from 3 to 100",
+                ));
+            }
+        }
         if limits.context_tokens == 0 {
             return Err(invalid(
                 "limits.context_tokens",
@@ -716,23 +745,13 @@ impl Config {
                 "add a second model: a plan that can't meet re-runs with the next model on the planner's ladder",
             ));
         }
-        let [first, second, third] = &self.models.maker;
-        if first.name != second.name || first.family != second.family {
+        // Q22, amended by Rob on 2026-11-02 (#416): attempt 2 escalates the model
+        // line, not the effort. Attempts past the ladder use its last rung.
+        let maker = &self.models.maker;
+        if maker.len() < 2 || maker[1].family.eq_ignore_ascii_case(&maker[0].family) {
             return Err(invalid(
-                "models.maker[1]",
-                "attempts 1 and 2 must use the same model and family (Q22)",
-            ));
-        }
-        if second.budget_tokens < first.budget_tokens || second.effort.is_none() {
-            return Err(invalid(
-                "models.maker[1]",
-                "set the proxy's maximum effort and a budget at least as large as attempt 1 (Q22)",
-            ));
-        }
-        if first.family.eq_ignore_ascii_case(&third.family) {
-            return Err(invalid(
-                "models.maker[2].family",
-                "attempt 3 must use a different family from attempt 1 (Q22)",
+                "models.maker",
+                "the maker ladder must escalate to a different model line by attempt 2 (Q22)",
             ));
         }
         for (index, maker) in self.models.maker.iter().enumerate() {

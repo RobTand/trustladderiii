@@ -524,7 +524,10 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
                 serde_json::to_value(
                     config
                         .models
-                        .worker_model(&config.models.maker[attempt - 1])
+                        // Attempts past the ladder use its last rung (#416).
+                        .worker_model(
+                            &config.models.maker[(attempt - 1).min(config.models.maker.len() - 1)]
+                        )
                 )
                 .unwrap()
             );
