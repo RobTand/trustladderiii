@@ -122,6 +122,13 @@ fn question_text(question: &Value) -> String {
     text
 }
 
+/// The original issue's title and body from a request's stored materials: the pristine copy a
+/// narrowed request kept, else the issue as first ingested.
+pub(crate) fn stored_original(root: &Value) -> (String, String) {
+    let _ = root;
+    todo!("#449 round 2")
+}
+
 /// The issue body the ingest and audit agents read for a narrowed request.
 pub(crate) fn issue_body(
     answer: &str,
@@ -188,6 +195,48 @@ mod tests {
         assert!(
             body.contains("`TTL_S = 30`"),
             "the protocol's liveness rules survive"
+        );
+    }
+
+    #[test]
+    fn a_referred_section_past_the_cut_survives_and_the_tail_goes_first() {
+        let answer = "Just items 1-3 of \"Behaviour wanted\".";
+        let original = format!(
+            "## Problem\n{}\n## Behaviour wanted\n1. keep me\n2. and me\n## Out of scope\n{}",
+            "x".repeat(70_000),
+            "tail ".repeat(100)
+        );
+        let body = issue_body(answer, "Title", &original, None);
+        assert!(body.starts_with(&format!("## {ANSWER}\n{answer}")));
+        assert!(
+            body.contains("1. keep me\n2. and me"),
+            "the referred section is kept"
+        );
+        assert!(
+            body.ends_with("[truncated]"),
+            "the unreferred tail is what gets clipped"
+        );
+        assert!(
+            !body.contains("tail tail"),
+            "the unreferred tail is clipped"
+        );
+        assert!(body.chars().count() < 66_500, "{}", body.chars().count());
+    }
+
+    #[test]
+    fn a_second_narrowing_falls_back_to_the_pristine_issue_not_the_first_narrowed_body() {
+        let narrowed = json!({"issue": {"title": "T", "body": "## Rob's answer (nested)"},
+            "original_issue": {"title": "Original title", "body": "## Problem\nreal"}});
+        assert_eq!(
+            stored_original(&narrowed),
+            ("Original title".into(), "## Problem\nreal".into())
+        );
+        let first = json!({"issue": {"title": "T", "body": "plain body"}});
+        assert_eq!(stored_original(&first), ("T".into(), "plain body".into()));
+        let wrapped = json!({"ingest": {"issue": {"title": "W", "body": "wrapped body"}}});
+        assert_eq!(
+            stored_original(&wrapped),
+            ("W".into(), "wrapped body".into())
         );
     }
 

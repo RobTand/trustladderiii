@@ -82,3 +82,18 @@ def test_audit_objects_to_a_brief_missing_a_referred_section():
         "For each listed section, check that the brief carries what the kept goals depend on" in prompt
     )
     assert "or object" in prompt
+
+
+def test_ingest_lists_only_the_goals_the_answer_keeps():
+    # #456 review: the narrowing must not regrow the request Rob cut down.
+    prompt = prompt_text("ingest")
+    assert "every goal the answer keeps" in prompt
+    assert "List every requested goal" not in prompt
+
+
+def test_audit_objects_to_goals_the_answer_excludes():
+    prompt = prompt_text("audit")
+    assert (
+        'Return "disagree" if the brief carries goals or acceptance tests that '
+        "Rob's answer excludes or does not ask for" in prompt
+    )
