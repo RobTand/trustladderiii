@@ -2,6 +2,7 @@
 """Install and inspect TL3 on dl380g10 without printing credentials."""
 import argparse
 from datetime import datetime, timezone
+import fnmatch
 import hashlib
 import http.client
 import io
@@ -31,6 +32,12 @@ PG_SHA256 = "d9d216d3c1c119ad31b8a8de60b3cf2826516f711a04d3745ef4f1913f21a938"
 TOKENIZER_URL = "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken"
 TOKENIZER_SHA256 = "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d"
 TOKENIZER_KEY = hashlib.sha1(TOKENIZER_URL.encode()).hexdigest()
+# #372: each attempt's supervisor runs in its own scope under this slice, outside
+# tl3d's cgroup, so restarting or deploying tl3d leaves runs alive.
+WORKER_SLICE = "tl3-workers.slice"
+LAUNCHER = ["/usr/bin/systemd-run", "--user", "--scope", "--quiet", "--collect", f"--slice={WORKER_SLICE}"]
+RELEASE_PACKAGES = ("workers", "harness")
+RELEASE_IGNORED = (".venv", "__pycache__", ".pytest_cache", "*.egg-info")
 
 
 def paths(home):
@@ -199,7 +206,7 @@ def render_config(home, listen, installation=1, issue=None, image=None, primary=
         'listen = "127.0.0.1:8033"': f'listen = {json.dumps(listen)}',
         'listen = "127.0.0.1:8034"': f'listen = {json.dumps(console["listen"])}',
         '"/srv/tl3/console"': json.dumps(console["assets"]),
-        '"/srv/tl3/workers/.venv/bin/python"': json.dumps(str(root / "app/workers/.venv/bin/python")),
+        '"/srv/tl3/workers/.venv/bin/python"': json.dumps(str(root / "current/workers/.venv/bin/python")),
         '"/srv/tl3/worker-runs"': json.dumps(str(root / "worker-runs")),
         '# tiktoken_cache_dir = "/srv/tl3/tiktoken"': "tiktoken_cache_dir = " + json.dumps(str(root / "tiktoken")),
     }
@@ -217,6 +224,7 @@ def render_config(home, listen, installation=1, issue=None, image=None, primary=
         text = text.replace('[github]\n', '[github]\noperations = ' + toml_value({"owner": "RobTand", "name": "trustladderiii", "number": issue, "installation_id": installation}) + '\n')
         text += f'\n[operations]\nowner = "RobTand"\nrepo = "trustladderiii"\nissue = {issue}\n'
     text = add_fields(text, "[console]", {key: toml_value(console[key]) for key in ("user", "password_file")})
+    text = add_fields(text, "[workers]", {"launcher": toml_value(LAUNCHER)})
     tomllib.loads(text)
     return text
 
@@ -252,6 +260,7 @@ def configure(home, listen, state, image=None, primary=None, alternate=None, con
     for table, fields in (
         ("github", {"webhook_listen": "127.0.0.1:8081"}),
         ("workers", {"tiktoken_cache_dir": str(paths(home)[0] / "tiktoken")}),
+        ("workers", {"launcher": LAUNCHER}),
         ("hindsight", {"bank": tomllib.loads(defaults)["hindsight"]["bank"]}),
         ("models", {"writer": tomllib.loads(defaults)["models"]["writer"]}),
         ("hindsight", {"api_key_file": str(config / "secrets/hindsight-key")}),
@@ -261,6 +270,11 @@ def configure(home, listen, state, image=None, primary=None, alternate=None, con
                    if key not in data.get(table, {})}
         if missing:
             text = add_fields(text, f"[{table}]", missing)
+    # Before #372 workers ran from app/, which each install overwrote in place.
+    legacy = str(paths(home)[0] / "app/workers/.venv/bin/python")
+    if data.get("workers", {}).get("python") == legacy:
+        current = str(paths(home)[0] / "current/workers/.venv/bin/python")
+        text = text.replace("python = " + json.dumps(legacy), "python = " + json.dumps(current), 1)
     if "installation_id" not in data["github"]["repos"][0]:
         text = add_fields(text, "[[github.repos]]", {"installation_id": state.get("installation_id", 1)})
     if "operations_issue" in state:
@@ -326,14 +340,7 @@ def install(args):
     postgres(home)
     checked_download(TOKENIZER_URL, TOKENIZER_SHA256, root / "tiktoken" / TOKENIZER_KEY)
     print("Tokenizer: pinned o200k_base installed and hash verified")
-    app = root / "app"
-    private_dir(app)
-    for package in ("workers", "harness"):
-        shutil.copytree(SOURCE / package, app / package, dirs_exist_ok=True,
-                        ignore=shutil.ignore_patterns(".venv", "__pycache__", ".pytest_cache", "*.egg-info"))
-    uv = home / ".local/bin/uv"
-    run([uv, "sync", "--locked", "--no-dev", "--project", app / "workers", "--python", "3.14+gil"])
-    print("Workers: locked Python 3.14 venv synced; launches use Python directly")
+    previous = install_release(home)
     private_dir(root / "bin")
     for binary in ("tl3", "tl3d", "tl3-deploy", "tl3-console"):
         write_file(root / "bin" / binary, (args.binaries / binary).read_bytes(), 0o700)
@@ -349,7 +356,7 @@ def install(args):
     grant_console_reader(home)
     units = home / ".config/systemd/user"
     units.mkdir(parents=True, exist_ok=True)
-    for unit in (HERE / "units").glob("*.service"):
+    for unit in [*(HERE / "units").glob("*.service"), *(HERE / "units").glob("*.slice")]:
         if unit.name != "tl3-cloudflared.service" or args.managed_tunnel:
             shutil.copy2(unit, units / unit.name)
     managed = root / "deploy/managed-tunnel"
@@ -358,7 +365,124 @@ def install(args):
     else:
         managed.unlink(missing_ok=True)
     run(["systemctl", "--user", "daemon-reload"])
+    collect_releases(home, previous)
     print("Units installed; config parses. Run `deploy.py check` for Config::load and the credential checks.")
+
+
+def release_id(source=SOURCE):
+    """Name a worker release by its content, so redeploying the same code reuses it."""
+    digest = hashlib.sha256()
+    for package in RELEASE_PACKAGES:
+        for path in sorted((source / package).rglob("*")):
+            relative = path.relative_to(source)
+            if path.is_dir() or any(fnmatch.fnmatch(part, pattern)
+                                    for part in relative.parts for pattern in RELEASE_IGNORED):
+                continue
+            digest.update(str(relative).encode() + b"\0" + path.read_bytes() + b"\0")
+    return digest.hexdigest()[:16]
+
+
+def install_release(home, source=SOURCE):
+    """Install the workers into an immutable release directory and switch `current` to it.
+
+    Running workers keep the release they started from (#372), because the
+    controller resolves `current` when it launches them. Returns the release
+    `current` named before, if any."""
+    root = paths(home)[0]
+    releases = root / "releases"
+    private_dir(releases)
+    target = releases / release_id(source)
+    if not (target / ".installed").exists():
+        # Never rename a synced venv: it records its own absolute path.
+        shutil.rmtree(target, ignore_errors=True)
+        private_dir(target)
+        for package in RELEASE_PACKAGES:
+            shutil.copytree(source / package, target / package,
+                            ignore=shutil.ignore_patterns(*RELEASE_IGNORED))
+        run([home / ".local/bin/uv", "sync", "--locked", "--no-dev", "--project", target / "workers",
+             "--python", "3.14+gil"])
+        write_file(target / ".installed", b"installed\n")
+        sync_directory(target)
+    current = root / "current"
+    previous = current.resolve() if current.is_symlink() else None
+    link = root / f"current.{os.getpid()}.tmp"
+    link.unlink(missing_ok=True)
+    link.symlink_to(target)
+    os.replace(link, current)
+    sync_directory(root)
+    print(f"Workers: release {target.name} installed; locked Python 3.14 venv synced")
+    return previous
+
+
+def _alive(identity):
+    """The worker record's process is still the one that wrote it (see process.rs)."""
+    try:
+        if (Path("/etc/machine-id").read_text().strip() != identity["machine"]
+                or Path("/proc/sys/kernel/random/boot_id").read_text().strip() != identity["boot"]):
+            return False
+        fields = Path(f"/proc/{int(identity['pid'])}/stat").read_text().rsplit(")", 1)[1].split()
+    except (OSError, KeyError, TypeError, ValueError, IndexError):
+        return False
+    return fields[0] not in ("Z", "X") and int(fields[19]) == identity["start"]
+
+
+def live_pythons(runs):
+    """Worker Python paths of attempts whose supervisor or worker still runs.
+
+    None stands for a live attempt launched before #372, which ran from app/."""
+    found = set()
+    for attempt in runs.glob("*/attempt-*") if runs.is_dir() else ():
+        identities = []
+        for record in (attempt / "claim.json", attempt / "process.json"):
+            try:
+                identities.append(json.loads(record.read_text()))
+            except (OSError, ValueError):
+                continue
+        if not any(isinstance(item, dict) and not item.get("cancelled") and _alive(item) for item in identities):
+            continue
+        try:
+            found.add(json.loads((attempt / "launch.json").read_text())["python"])
+        except FileNotFoundError:
+            found.add(None)
+        except (OSError, ValueError, KeyError):
+            # An unreadable record could name any release; keep them all this time.
+            found.add("*")
+    return found
+
+
+def collect_releases(home, previous=None):
+    """Keep the current release, the one before it and every release a live run uses."""
+    root, config, _ = paths(home)
+    releases = root / "releases"
+    try:
+        runs = Path(tomllib.loads((config / "tl3.toml").read_text())["workers"]["runs"])
+    except (OSError, KeyError, ValueError):
+        runs = root / "worker-runs"
+    live = live_pythons(runs)
+    if "*" in live:
+        print("Releases: a live attempt's launch record is unreadable; nothing collected")
+        return
+    keep = {(root / "current").resolve()}
+    if previous is not None:
+        keep.add(Path(previous).resolve())
+    for python in live - {None}:
+        path = Path(python)
+        if path.is_relative_to(releases.resolve()):
+            keep.add(releases.resolve() / path.relative_to(releases.resolve()).parts[0])
+    for release in sorted(releases.iterdir()) if releases.is_dir() else ():
+        if release.resolve() not in keep and not release.name.startswith("."):
+            shutil.rmtree(release)
+            print(f"Releases: removed {release.name}")
+    legacy = root / "app"
+    if legacy.is_dir() and not legacy.is_symlink() and None not in live:
+        shutil.rmtree(legacy)
+        print("Releases: removed the pre-#372 app directory")
+
+
+def stop_runs(home):
+    """Stop every worker run. A tl3d stop or restart no longer does (#372)."""
+    run(["systemctl", "--user", "stop", WORKER_SLICE])
+    print("Stopped every TL3 worker run. tl3d records each as ended on its next look.")
 
 
 def build_console_assets(source=SOURCE):
@@ -541,7 +665,8 @@ def check(home):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["install", "initdb", "start", "check", "service", "model-defaults", "install-mlflow"])
+    parser.add_argument("command", choices=["install", "initdb", "start", "check", "service", "model-defaults", "install-mlflow",
+                                            "stop-runs"])
     parser.add_argument("--home", type=Path, default=Path.home())
     parser.add_argument("--binaries", type=Path, default=SOURCE / "target/release")
     parser.add_argument("--status-listen", default="192.168.1.107:8033")
@@ -562,6 +687,8 @@ def main():
         model_defaults(args.home)
     elif args.command == "install":
         install(args)
+    elif args.command == "stop-runs":
+        stop_runs(args.home)
     else:
         globals()[args.command](args.home)
     return 0

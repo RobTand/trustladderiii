@@ -3,6 +3,7 @@ import importlib.util
 import io
 import contextlib
 import hashlib
+import json
 import os
 from pathlib import Path
 import stat
@@ -114,7 +115,7 @@ class DeployTests(unittest.TestCase):
     def test_unit_syntax_and_ordering(self):
         units = self.home / "units"
         units.mkdir()
-        for source in (deploy.HERE / "units").glob("*.service"):
+        for source in [*(deploy.HERE / "units").glob("*.service"), *(deploy.HERE / "units").glob("*.slice")]:
             lines = []
             for line in source.read_text().replace("%h", str(self.home)).splitlines():
                 key, _, command = line.partition("=")
@@ -132,7 +133,8 @@ class DeployTests(unittest.TestCase):
         runtime = self.home / "runtime"
         runtime.mkdir(mode=0o700)
         environment = os.environ | {"XDG_RUNTIME_DIR": str(runtime)}
-        result = subprocess.run(["systemd-analyze", "--user", "--man=no", "verify", *map(str, units.glob("*.service"))], capture_output=True, env=environment)
+        result = subprocess.run(["systemd-analyze", "--user", "--man=no", "verify", *map(str, units.glob("*.service")),
+                                 *map(str, units.glob("*.slice"))], capture_output=True, env=environment)
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         controller = (units / "tl3d.service").read_text()
         self.assertIn("KillMode=control-group", controller)
@@ -436,6 +438,147 @@ class DeployTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "npm ci failed"):
                 deploy.install(args)
         self.assertEqual(touched, [])
+
+    def release_source(self, version):
+        source = self.home / f"source-{version}"
+        (source / "workers/src/tl3_workers").mkdir(parents=True, exist_ok=True)
+        (source / "harness").mkdir(exist_ok=True)
+        (source / "workers/pyproject.toml").write_text("[project]\nname = 'tl3-workers'\n")
+        (source / "workers/src/tl3_workers/__init__.py").write_text(f"VERSION = {version}\n")
+        (source / "harness/runner.py").write_text("# harness\n")
+        # Ignored build products never change a release's identity.
+        (source / "workers/.venv").mkdir(exist_ok=True)
+        (source / "workers/.venv/marker").write_text(str(version))
+        return source
+
+    def install_release(self, source):
+        synced = []
+
+        def fake_sync(argv, **kwargs):
+            project = Path(argv[argv.index("--project") + 1])
+            (project / ".venv/bin").mkdir(parents=True)
+            (project / ".venv/bin/python").symlink_to("/usr/bin/python3")
+            synced.append(project)
+
+        with patch.object(deploy, "run", side_effect=fake_sync), contextlib.redirect_stdout(io.StringIO()):
+            previous = deploy.install_release(self.home, source)
+        return previous, synced
+
+    def live_attempt(self, python, *, launch=True):
+        runs = deploy.paths(self.home)[0] / "worker-runs"
+        attempt = runs / f"run{len(list(runs.glob('*')))}" / "attempt-00000000"
+        attempt.mkdir(parents=True)
+        stat = Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()
+        (attempt / "claim.json").write_text(json.dumps({
+            "pid": os.getpid(), "start": int(stat[19]),
+            "machine": Path("/etc/machine-id").read_text().strip(),
+            "boot": Path("/proc/sys/kernel/random/boot_id").read_text().strip()}))
+        if launch:
+            (attempt / "launch.json").write_text(json.dumps({"python": str(python)}))
+        return attempt
+
+    def test_running_worker_keeps_its_release_across_deploys(self):
+        root = deploy.paths(self.home)[0]
+        root.mkdir(parents=True)
+        self.assertIsNone(self.install_release(self.release_source(1))[0])
+        first = (root / "current").resolve()
+        python = first / "workers/.venv/bin/python"
+        self.live_attempt(python)
+        previous, _ = self.install_release(self.release_source(2))
+        second = (root / "current").resolve()
+        self.assertEqual(previous, first)
+        self.assertNotEqual(second, first)
+        # The running worker's release is untouched; only `current` moved.
+        self.assertEqual((first / "workers/src/tl3_workers/__init__.py").read_text(), "VERSION = 1\n")
+        self.assertEqual((second / "workers/src/tl3_workers/__init__.py").read_text(), "VERSION = 2\n")
+        self.assertFalse((second / "workers/.venv/marker").exists())
+        third, _ = self.install_release(self.release_source(3))
+        with contextlib.redirect_stdout(io.StringIO()):
+            deploy.collect_releases(self.home, third)
+        self.assertEqual({path.resolve() for path in (root / "releases").iterdir()},
+                         {first, second, (root / "current").resolve()},
+                         "keep current, previous and the live run's release")
+        for record in (root / "worker-runs").glob("*/attempt-*/claim.json"):
+            record.unlink()
+        previous, _ = self.install_release(self.release_source(4))
+        with contextlib.redirect_stdout(io.StringIO()):
+            deploy.collect_releases(self.home, previous)
+        self.assertEqual({path.resolve() for path in (root / "releases").iterdir()},
+                         {previous, (root / "current").resolve()})
+
+    def test_redeploying_the_same_code_reuses_its_release_untouched(self):
+        root = deploy.paths(self.home)[0]
+        root.mkdir(parents=True)
+        source = self.release_source(1)
+        _, synced = self.install_release(source)
+        release = (root / "current").resolve()
+        before = (release / ".installed").stat().st_mtime_ns
+        previous, synced = self.install_release(source)
+        self.assertEqual(previous, release)
+        self.assertEqual(synced, [], "no copy or sync over a running release")
+        self.assertEqual((root / "current").resolve(), release)
+        self.assertEqual((release / ".installed").stat().st_mtime_ns, before)
+
+    def test_unfinished_release_is_rebuilt_not_used(self):
+        root = deploy.paths(self.home)[0]
+        root.mkdir(parents=True)
+        source = self.release_source(1)
+        partial = root / "releases" / deploy.release_id(source)
+        (partial / "workers").mkdir(parents=True)
+        (partial / "workers/stale.py").write_text("partial copy\n")
+        _, synced = self.install_release(source)
+        self.assertEqual(synced, [partial / "workers"])
+        self.assertFalse((partial / "workers/stale.py").exists())
+        self.assertTrue((partial / ".installed").exists())
+
+    def test_pre_372_app_directory_waits_for_its_last_run(self):
+        root = deploy.paths(self.home)[0]
+        (root / "app/workers").mkdir(parents=True)
+        self.install_release(self.release_source(1))
+        legacy = self.live_attempt(root / "app/workers/.venv/bin/python", launch=False)
+        with contextlib.redirect_stdout(io.StringIO()):
+            deploy.collect_releases(self.home)
+        self.assertTrue((root / "app").is_dir(), "a run started before #372 still uses app/")
+        (legacy / "claim.json").unlink()
+        with contextlib.redirect_stdout(io.StringIO()):
+            deploy.collect_releases(self.home)
+        self.assertFalse((root / "app").exists())
+
+    def test_supervisors_launch_outside_tl3d_from_the_current_release(self):
+        config, _ = self.config()
+        workers = tomllib.loads(config.read_text())["workers"]
+        self.assertEqual(workers["launcher"][:3], ["/usr/bin/systemd-run", "--user", "--scope"])
+        self.assertIn("--slice=tl3-workers.slice", workers["launcher"])
+        self.assertEqual(workers["python"], str(deploy.paths(self.home)[0] / "current/workers/.venv/bin/python"))
+        unit = (deploy.HERE / "units/tl3d.service").read_text().splitlines()
+        self.assertIn("KillMode=control-group", unit, "tl3d's own cgroup still stops on its own")
+
+    def test_config_migration_moves_workers_to_releases_and_keeps_operator_paths(self):
+        root, config_dir, _ = deploy.paths(self.home)
+        config, _ = self.config()
+        text = config.read_text()
+        launcher = "launcher = " + deploy.toml_value(deploy.LAUNCHER) + "\n"
+        current = json.dumps(str(root / "current/workers/.venv/bin/python"))
+        legacy = text.replace(launcher, "").replace(current, json.dumps(str(root / "app/workers/.venv/bin/python")))
+        custom = legacy.replace(json.dumps(str(root / "app/workers/.venv/bin/python")), '"/opt/tl3/python"')
+        destination = config_dir / "tl3.toml"
+        for original, python in ((legacy, str(root / "current/workers/.venv/bin/python")),
+                                 (custom, "/opt/tl3/python")):
+            with self.subTest(python=python), contextlib.redirect_stdout(io.StringIO()):
+                deploy.write_file(destination, original.encode())
+                deploy.configure(self.home, "192.168.1.107:8033", {"installation_id": 987, "operations_issue": 123})
+                workers = tomllib.loads(destination.read_text())["workers"]
+                self.assertEqual(workers["python"], python)
+                self.assertEqual(workers["launcher"], deploy.LAUNCHER)
+                for backup in config_dir.glob("tl3.toml.*.bak"):
+                    backup.unlink()
+
+    def test_stop_runs_stops_the_worker_slice(self):
+        calls = []
+        with patch.object(deploy, "run", side_effect=lambda argv, **kwargs: calls.append([str(p) for p in argv])), \
+             contextlib.redirect_stdout(io.StringIO()):
+            deploy.stop_runs(self.home)
+        self.assertEqual(calls, [["systemctl", "--user", "stop", "tl3-workers.slice"]])
 
     def test_command_failure_never_prints_child_output(self):
         with contextlib.redirect_stdout(io.StringIO()) as output:
