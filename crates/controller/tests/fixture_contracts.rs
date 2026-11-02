@@ -300,3 +300,61 @@ fn scenario_shards_reject_a_missing_group_without_a_global_total() {
     shard.run(support::scenario_shard::WorkerGroup::Router, || {});
     shard.finish("fixture");
 }
+
+#[test]
+fn controller_restart_waits_for_the_old_postgres_session_and_releases_its_probe() {
+    use std::{sync::mpsc, thread, time::Duration, time::Instant};
+
+    let mut database = support::Database::start();
+    let settings = database.create("restart_ownership");
+    let connect = || {
+        postgres::Config::new()
+            .host(&settings.host)
+            .port(settings.port)
+            .user(&settings.user)
+            .dbname(&settings.database)
+            .password("tl3-disposable-test-password")
+            .connect(postgres::NoTls)
+            .unwrap()
+    };
+    let mut old_owner = Store::open(&settings).unwrap();
+    old_owner.claim_controller().unwrap();
+    let mut observer = connect();
+    let mut waiter = connect();
+    let waiter_pid: i32 = waiter
+        .query_one("SELECT pg_backend_pid()", &[])
+        .unwrap()
+        .get(0);
+    let (finished, completion) = mpsc::channel();
+    let waiting = thread::spawn(move || {
+        support::controller_restart::wait_for_owner_release(&mut waiter);
+        finished.send(()).unwrap();
+        waiter
+    });
+    let started = Instant::now();
+    let returned_early = loop {
+        if completion.try_recv().is_ok() {
+            break true;
+        }
+        let blockers: Vec<i32> = observer
+            .query_one("SELECT pg_blocking_pids($1)", &[&waiter_pid])
+            .unwrap()
+            .get(0);
+        if !blockers.is_empty() {
+            break false;
+        }
+        assert!(started.elapsed() < Duration::from_secs(90));
+        thread::sleep(Duration::from_millis(10));
+    };
+    drop(old_owner);
+    let waiter = waiting.join().unwrap();
+    let claim = Store::open(&settings).and_then(|mut store| store.claim_controller());
+    drop(waiter);
+    drop(observer);
+    database.stop();
+    assert!(
+        !returned_early,
+        "restart continued while the old PostgreSQL session still owned the controller"
+    );
+    claim.expect("the synchronization probe must release ownership before restarting");
+}
