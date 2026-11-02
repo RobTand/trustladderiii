@@ -5,6 +5,10 @@ and --config=ci, so Bazel keeps each run's receipt, then point this at the
 testlogs directory. The method matches docs/hosted-budget-tolerance.md: take
 each complete run's largest elapsed / base-budget ratio, use the nearest-rank
 p99 of those maxima, add 10% and round up to the next 0.05, floor 1.0.
+
+For CPU migration, --cpu-receipts FILE FILE [...] keeps the existing ceilings
+and tightens observed slow caps to ceil(2 * maximum CPU), with a one second
+floor. It requires two receipts and does not claim a population percentile.
 """
 import argparse
 from collections import defaultdict

@@ -40,6 +40,7 @@ def validate_limits(config, baseline):
     seconds, slow = config['seconds'], config['slow']
     if (not isinstance(seconds, (int, float)) or not math.isfinite(seconds) or seconds <= 0
             or seconds > baseline['seconds'] or not slow.keys() <= baseline['slow'].keys()
+            or any(slow.get(name, seconds) > limit for name, limit in baseline['slow'].items())
             or any(not isinstance(limit, (int, float)) or not math.isfinite(limit) or limit <= 0
                    or limit > baseline['slow'][name] for name, limit in slow.items())):
         raise RuntimeError('Test budgets and the explicit slow list may not grow')
