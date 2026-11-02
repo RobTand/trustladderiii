@@ -16,9 +16,10 @@ def package(root, name, targets, manifest=''):
                         for kind, target, source in targets]}
 
 
-def rule(name, main, args):
+def rule(name, main, args, tags=()):
     return json.dumps({'type': 'RULE', 'rule': {'name': name, 'attribute': [
-        {'name': 'main', 'stringValue': main}, {'name': 'args', 'stringListValue': args}]}})
+        {'name': 'main', 'stringValue': main}, {'name': 'args', 'stringListValue': args},
+        {'name': 'tags', 'stringListValue': list(tags)}]}})
 
 
 class ParityTests(unittest.TestCase):
@@ -130,6 +131,23 @@ class StaticParityTests(unittest.TestCase):
         ])
         self.assertEqual(rust, {'tl3-controller/nested': 'libtest'})
         self.assertEqual(python, ['workers/tests/test_maker.py'])
+
+    def test_manual_runner_targets_fail_because_the_gate_never_selects_them(self):
+        with self.assertRaisesRegex(RuntimeError, r'manual[\s\S]*workers/tests/test_maker.py'):
+            bazel_parity.bazel_tests([
+                rule('//workers/tests:test_maker', bazel_parity.PYTHON_RUNNER,
+                     ['workers/tests/test_maker.py'], tags=['manual']),
+            ])
+
+    def test_pytest_suffix_files_are_refused_unless_pytest_skips_them(self):
+        # Light checks' pytest also collects *_test.py; Gazelle and parity only know test_*.py.
+        files = ['harness/pyproject.toml', 'harness/tests/test_harness.py',
+                 'harness/tests/chunk_test.py', 'harness/tests/fixtures/chunked_test.py']
+        with self.assertRaisesRegex(RuntimeError, r'harness/tests/chunk_test\.py[\s\S]*test_\*\.py') as failure:
+            bazel_parity.python_modules(files)
+        self.assertNotIn('fixtures', str(failure.exception))
+        self.assertEqual(bazel_parity.python_modules(files[:2] + files[3:]),
+                         ['harness/tests/test_harness.py'])
 
     def test_missing_rust_file_is_named_with_the_fix(self):
         with tempfile.TemporaryDirectory() as root:

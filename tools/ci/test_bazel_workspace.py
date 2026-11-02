@@ -99,6 +99,11 @@ class BuildBuddySuggestionsTests(unittest.TestCase):
             self.assertIn(f'build:remote-arm64 {flag}=//tools/bazel:linux_arm64', config)
         self.assertFalse([line for line in config if 'bes_upload_mode' in line])
 
+    def test_ci_refuses_a_stale_module_lockfile(self):
+        # Otherwise a runner silently rewrites MODULE.bazel.lock and CI never flags the drift.
+        config = (ROOT / '.bazelrc').read_text().splitlines()
+        self.assertIn('common:ci --lockfile_mode=error', config)
+
     def test_profiles_and_ci_diagnostics_are_preserved(self):
         config = (ROOT / '.bazelrc').read_text().splitlines()
         for flag in ['--noslim_profile', '--experimental_profile_include_target_label',
