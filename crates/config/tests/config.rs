@@ -994,6 +994,38 @@ fn repository_exec_scratch_is_an_optional_boolean() {
 }
 
 #[test]
+fn repository_selected_tests_is_an_optional_bounded_limit() {
+    let with = |value: Value| {
+        let mut document: Value = EXAMPLE.parse().unwrap();
+        document["github"]["repos"][0]
+            .as_table_mut()
+            .unwrap()
+            .insert("selected_tests".into(), value);
+        Config::parse(&toml::to_string(&document).unwrap())
+    };
+    assert_eq!(
+        Config::parse(EXAMPLE).unwrap().github.repos[0].selected_tests,
+        None
+    );
+    for limit in [1, 200, 1000] {
+        assert_eq!(
+            with(Value::Integer(limit)).unwrap().github.repos[0].selected_tests,
+            Some(limit as u32)
+        );
+    }
+    for invalid in [
+        Value::Integer(0),
+        Value::Integer(1001),
+        Value::Boolean(true),
+    ] {
+        assert!(
+            with(invalid.clone()).is_err(),
+            "reject selected_tests={invalid}"
+        );
+    }
+}
+
+#[test]
 fn console_is_optional_and_needs_a_fixed_unicast_port_and_absolute_assets() {
     let config = Config::parse(EXAMPLE).unwrap();
     let console = config.console.as_ref().unwrap();

@@ -38,6 +38,12 @@ reason blocks under that finding's supplied goal or standing rule; cite its id.
 After a clean rebase, the reviewed state is its rebased equivalent, including
 the new base's code and test configuration. A dropped reproducer's recorded
 reason needs the same judgment.
+A check named "Existing tests that import the change" is code's selection of
+existing tests the change's imports reach, kept only if they pass on the base.
+A passing test there may carry a note that it failed with the others and passed
+alone. When edited_selected_tests is supplied, the change edits the files of
+tests that failed that check in an earlier round, so they are no longer run.
+Judge whether each edit only weakens the test to hide a regression.
 A regression's pre-existing failure is not a new regression. Missing, skipped
 or uncollected named tests are not passes. An infrastructure-failure is not
 evidence that the code passed or that the code is wrong. In-process custody is

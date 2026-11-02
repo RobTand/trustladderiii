@@ -55,6 +55,8 @@ installation_id = 1
 # base_branch = "main"
 # Optional additions to the mandatory defaults and global planning.protected_paths.
 # protected_paths = ["CHANGELOG.md", "release/**"]
+# Optional: also run up to this many existing tests that import the change as a regression check.
+# selected_tests = 200
 # PrismaBuild: branch_template = "prismabuild-{issue}-tl3-{node}"
 
 [models]
