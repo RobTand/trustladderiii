@@ -2667,13 +2667,13 @@ fn status_nodeless_incidents(settings: &tl3_config::Store) {
 fn postmortem_records(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let records = root.path().join("upstreams");
+    let mut controller = open(settings, &records);
     raw(settings)
         .execute(
             "UPDATE tl3_settings SET value = '1' WHERE key = 'postmortem_sample_share'",
             &[],
         )
         .unwrap();
-    let mut controller = open(settings, &records);
     controller.intake(labelled()).unwrap();
     for _ in 0..200 {
         if !controller.drive_once().unwrap() {
