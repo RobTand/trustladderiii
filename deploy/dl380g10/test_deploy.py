@@ -238,7 +238,9 @@ class DeployTests(unittest.TestCase):
         defaults = tomllib.loads((deploy.HERE / "models.toml").read_text())["models"]
         for role, ladder in defaults.items():
             self.assertEqual(actual[role], ladder)
-        self.assertEqual(actual["maker"][1]["effort"], "max")
+        # #416: attempt 2 escalates to Opus 5.5 at high effort.
+        self.assertEqual(actual["maker"][1]["name"], "claude-opus-5-5")
+        self.assertEqual(actual["maker"][1]["effort"], "high")
         self.assertEqual(actual["maker"][1]["budget_tokens"], 128000)
 
     def test_check_reports_both_bad_credentials_as_missing(self):
