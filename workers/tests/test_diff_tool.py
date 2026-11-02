@@ -5,13 +5,15 @@ from importlib.resources import files
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 import pytest
 
-from tl3_workers import runtime
+from tl3_workers import diff as diff_module
+from tl3_workers import forecast, runtime
 from tl3_workers.roles import ROLES
 from tl3_workers.tools import OUTPUT_LIMITS, READ_TOOLS, TOOL_FACTORIES, Worktree, build_tools
 from test_maker import maker_request, turn  # noqa: F401
@@ -220,6 +222,185 @@ def test_diff_gives_a_clean_worktree_an_empty_change(repo):
     with attach(Worktree(root), root, git(root, "rev-parse", "HEAD")) as worktree:
         result = diff_tool(worktree).invoke({})
     assert result["stat"] == [] and result["diff"] == "" and result["message"] == "No changes against the base."
+
+
+# Repository configuration and attributes must not run a program, and the tool must be bounded
+# in processes, memory and files, whatever the worktree holds (#442 review).
+def marker_script(root):
+    marker = root.parent / "executed"
+    script = root.parent / "evil.sh"
+    script.write_text(f"#!/bin/sh\ntouch {marker}\ncat\n")
+    script.chmod(0o755)
+    return marker, script
+
+
+def hostile(root, script, driver, attributes, via):
+    """Define filter.evil.<driver> and select it for every path, after the fixture's commits."""
+    key = f"filter.evil.{driver}"
+    if via == "config":
+        git(root, "config", key, str(script))
+    else:
+        extra = root.parent / "extra.gitconfig"
+        extra.write_text(f'[filter "evil"]\n\t{driver} = {script}\n')
+        git(root, "config", "include.path", str(extra))
+    if attributes == "worktree":
+        (root / ".gitattributes").write_text("* filter=evil\n")
+    else:
+        (root / ".git/info").mkdir(exist_ok=True)
+        (root / ".git/info/attributes").write_text("* filter=evil\n")
+
+
+@pytest.mark.parametrize("driver,attributes,via", [
+    ("clean", "worktree", "config"), ("process", "worktree", "config"),
+    ("clean", "info", "config"), ("clean", "worktree", "include"), ("process", "info", "include"),
+])
+def test_diff_does_not_run_filter_drivers(repo, driver, attributes, via):
+    root, base = repo
+    marker, script = marker_script(root)
+    hostile(root, script, driver, attributes, via)
+    assert not marker.exists()
+    with attach(Worktree(root), root, base) as worktree:
+        tool = diff_tool(worktree)
+        everything = tool.invoke({})
+        tracked = tool.invoke({"path": "src/app.py"})
+        untracked = tool.invoke({"path": "src/new.py"})
+    assert not marker.exists(), "a filter driver ran"
+    assert "+line three\n" in tracked["diff"] and "+def added():\n" in untracked["diff"]
+    assert {"src/app.py", "src/new.py"} <= {item["path"] for item in everything["stat"]}
+
+
+def test_diff_refuses_a_filter_name_it_cannot_clear(repo):
+    root, base = repo
+    marker, script = marker_script(root)
+    git(root, "config", "filter.a=b.clean", str(script))
+    (root / ".gitattributes").write_text("* filter=a=b\n")
+    with attach(Worktree(root), root, base) as worktree:
+        result = failed(diff_tool(worktree))
+    assert not marker.exists()
+    assert result.status == "error"
+    assert result.text == "diff is unavailable: the repository defines a filter driver whose name Git cannot be told to disable."
+
+
+class Tracked:
+    """A pipe wrapper that records every read, so a test can see what the tool buffers."""
+
+    def __init__(self, pipe, sizes):
+        self.pipe, self.sizes = pipe, sizes
+
+    def readline(self, limit=-1):
+        data = self.pipe.readline(limit)
+        self.sizes.append(len(data))
+        return data
+
+    def __iter__(self):
+        for line in self.pipe:
+            self.sizes.append(len(line))
+            yield line
+
+    def __getattr__(self, name):
+        return getattr(self.pipe, name)
+
+
+def track_reads(monkeypatch):
+    sizes, starts = [], []
+    real = subprocess.Popen
+
+    class Popen(real):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            starts.append(args[0])
+            if self.stdout is not None:
+                self.stdout = Tracked(self.stdout, sizes)
+
+    monkeypatch.setattr(diff_module.subprocess, "Popen", Popen)
+    return sizes, starts
+
+
+def test_diff_buffers_only_a_bounded_slice_of_a_very_long_line(repo, monkeypatch):
+    root, base = repo
+    (root / "minified.js").write_text("x" * (20 * 1_048_576) + "\n")
+    sizes, _ = track_reads(monkeypatch)
+    with attach(Worktree(root), root, base) as worktree:
+        text = diff_tool(worktree).invoke({"path": "minified.js"})["diff"]
+    assert "[line cut at 2048 bytes]" in text
+    assert max(sizes) <= 65_536, f"read {max(sizes)} bytes of one line at once"
+
+
+def git_processes(monkeypatch):
+    count = [0]
+    real_run, real_popen = subprocess.run, subprocess.Popen
+
+    def run(*args, **kwargs):
+        count[0] += 1
+        return real_run(*args, **kwargs)
+
+    class Popen(real_popen):
+        def __init__(self, *args, **kwargs):
+            count[0] += 1
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(diff_module.subprocess, "run", run)
+    monkeypatch.setattr(diff_module.subprocess, "Popen", Popen)
+    return count
+
+
+def test_a_page_costs_the_same_number_of_git_processes_however_many_files_changed(repo, monkeypatch):
+    root, base = repo
+    counts = {}
+    for name, files_count in (("few", 3), ("many", 150)):
+        for number in range(files_count):
+            (root / f"{name}_{number}.txt").write_text(f"{name} {number}\n")
+        count = git_processes(monkeypatch)
+        with attach(Worktree(root), root, base) as worktree:
+            tool = diff_tool(worktree)
+            count[0] = 0
+            tool.invoke({"offset": 40})
+        counts[name] = count[0]
+        monkeypatch.undo()
+        for number in range(files_count):
+            (root / f"{name}_{number}.txt").unlink()
+    assert counts["many"] == counts["few"] and counts["few"] <= 14
+
+
+def test_diff_lists_and_pages_at_most_200_untracked_files(repo):
+    root, base = repo
+    for number in range(230):
+        (root / f"u{number:03}.txt").write_text(f"u {number}\n")
+    with attach(Worktree(root), root, base) as worktree:
+        tool = diff_tool(worktree)
+        first = tool.invoke({})
+        text, offset = first["diff"], first["next_offset"]
+        while offset is not None:
+            page = tool.invoke({"offset": offset})
+            text, offset = text + page["diff"], page["next_offset"]
+    # The fixture has two untracked files that sort first, so 198 of the new ones fit in the 200.
+    assert text.count("\ndiff --git a/u") == 198
+    assert "32 more untracked files are not shown; narrow the path." in first["message"]
+
+
+def test_diff_skips_files_that_are_not_regular_or_are_too_large(repo):
+    root, base = repo
+    os.mkfifo(root / "pipe")
+    (root / "src/old.py").unlink()
+    os.mkfifo(root / "src/old.py")
+    (root / "huge.txt").write_bytes(b"a\n" * (diff_module.DIFF_FILE_BYTES // 2 + 1))
+    previous = signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError("diff hung")))
+    signal.alarm(60)
+    try:
+        with attach(Worktree(root), root, base) as worktree:
+            result = diff_tool(worktree).invoke({})
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+    assert {"pipe", "huge.txt", "src/old.py"}.isdisjoint(item["path"] for item in result["stat"])
+    assert "src/app.py" in {item["path"] for item in result["stat"]}
+    assert "3 changed files were skipped because they are not regular files or are over 16,777,216 bytes" in result["message"]
+    for name in ("pipe", "huge.txt", "src/old.py"):
+        assert name in result["message"]
+
+
+def test_the_size_cap_is_the_planners_declared_file_cap():
+    assert diff_module.DIFF_FILE_BYTES == forecast.HARD_CAP_BYTES
 
 
 # The maker and reviewer runs attach the checkout and the base the tool reads.

@@ -23,6 +23,8 @@ _DIFF = ["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames"]
 STAT_ENTRIES = 100
 UNTRACKED_ENTRIES = 200
 STAT_BYTES = 6_144
+# The planner's declared-file hard cap (forecast.HARD_CAP_BYTES; the test keeps them equal).
+DIFF_FILE_BYTES = 16 * 1_048_576
 _SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
 
