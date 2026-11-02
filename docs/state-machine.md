@@ -701,7 +701,7 @@ cannot cause a regression in an untouched test.
 If a requeued run fails on any of the same tests, the controller reports a
 normal CI failure with evidence. The maker or reviewer gets the check names,
 URLs and failing test lines and can compare against base. Unmapped test IDs,
-missing test IDs or incomplete evidence do not justify an outside-change
+missing test IDs, unavailable plans or incomplete evidence do not justify an outside-change
 requeue. The controller journals the decision and test IDs with the queue fact,
 so restart and redelivery retain the retry bound. The kernel and state table
 are unchanged.

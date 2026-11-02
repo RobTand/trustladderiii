@@ -190,7 +190,7 @@ When every parsed failing test maps to an unchanged file and the plan named
 none of the failing tests or checks, the controller journals an infrastructure
 failure with those IDs. The kernel requeues once without a maker or credit.
 A repeat on any of those tests takes normal failure handling with evidence,
-including after restart. Unknown mappings, absent IDs and incomplete evidence
+including after restart. Unknown mappings, absent IDs, unavailable plans and incomplete evidence
 take normal handling. A bare non-infrastructure CI fact still records feedback
 stating when the upstream supplied no check details. Infrastructure failures
 and stale replies do not add maker findings.

@@ -184,6 +184,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             Phase::Making,
             "outside test failure must not start a maker"
         );
+        assert_eq!(after.run, before.run, "no maker run is started");
         assert_eq!(after.credit.spent, before.credit.spent);
         assert_eq!(after.attempt, before.attempt);
         assert_eq!(after.round, before.round);
@@ -195,6 +196,13 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
                 .to_string()
                 .contains(TEST),
             "journal must retain the decision's test IDs"
+        );
+        let facts = queue_facts(&mut controller);
+        let decision = facts.last().unwrap();
+        assert_eq!(decision["evidence"]["CiFailed"]["infra"], true);
+        assert_eq!(
+            decision["evidence"]["CiFailed"]["details"]["decision"],
+            "outside_change"
         );
         if mode != "repeat" {
             println!("test ci_evidence_{mode} ... ok");
@@ -233,6 +241,12 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     }
     if mode == "repeat" {
         assert!(finding.to_string().contains(TEST));
+        let facts = queue_facts(&mut controller);
+        let repeated = facts
+            .iter()
+            .find(|fact| fact["evidence"]["CiFailed"]["details"]["decision"] == "repeated_test")
+            .unwrap();
+        assert_eq!(repeated["evidence"]["CiFailed"]["infra"], false);
     }
     if mode == "overflow" {
         assert_eq!(finding["failed_tests"].as_array().unwrap().len(), 20);

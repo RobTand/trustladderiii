@@ -2641,6 +2641,14 @@ fn legacy_intent_ignores_completed_at() {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--ci-evidence") {
+        let mut database = support::Database::start();
+        for mode in ci_evidence::MODES {
+            ci_evidence::scenario(&database.create(&format!("ci_evidence_{mode}")), mode);
+        }
+        database.stop();
+        return;
+    }
     if let Some(mode) = std::env::args()
         .nth(1)
         .and_then(|arg| arg.strip_prefix("--ci-evidence-").map(str::to_owned))
