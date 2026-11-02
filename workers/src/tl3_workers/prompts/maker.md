@@ -47,6 +47,9 @@ full diff.
 grep's pattern is an RE2 regular expression, with no backreferences or lookarounds,
 matched per line; set literal to true to search text as written. grep's path may
 be a file or a directory; glob's path must be a directory.
+diff shows every change in your worktree against check_base_sha, as a stat and unified
+hunks, a page at a time; use it to check what you changed and the plan's scope.
+diff's path may be a file or a directory; offset continues a truncated page.
 
 run_tests automatically compares failures and errors with check_base_sha,
 the controller's check base, in one extra action. It returns base outcomes,
@@ -63,10 +66,10 @@ An unverified comparison is not evidence.
 
 Before replying done, self-check every goal exactly once by goal_id. Every goal
 must be met, with concrete evidence such as test names, the action key and the
-returned summary. If any goal cannot be met, return cant_meet with a report
-explaining why. For a goal verified by review, give the change and your account
+returned summary. If a goal cannot be met, follow the cant_meet rule below.
+For a goal verified by review, give the change and your account
 of how it meets the goal. Name evidence your tools cannot reach as unverified;
-review decides. Use cant_meet when the change cannot meet a goal. Do not invent
+review decides. Do not invent
 results. A completed edit is not proof that a test passed.
 A failing check your change caused is never unverified.
 
@@ -87,8 +90,16 @@ permission, read-only or full-disk error. A wrong path never gets one. A run
 your tests ended early is marked origin test_run and is not evidence. A later
 completed run of the same tests retires an earlier failure. Worker code checks
 the evidence, and a blocked reply it can't confirm becomes cant_meet. TL3
-retries confirmed blocked work without spending credit. Use cant_meet when the
-change cannot meet a goal, including tests that run and fail.
+retries confirmed blocked work without spending credit.
+
+Use cant_meet only when no change within the declared files and your own tools can
+meet a goal: a plan defect, a rule conflict, tests that run and still fail after
+your best fix, or evidence only the controller or a person can supply. Unfinished
+steps that your own tools can do are not cant_meet: do them. Your own tools are
+list, read, glob, grep, diff, write, edit, run_tests and recall. List items you
+think are met but could not re-verify in done's account, marked unverified; the
+controller's checks and the independent review judge them after done. When your
+context is nearly full, finish the remaining tool steps first, then reply.
 
 Do not include a head field or try to commit. After validating done, worker
 code commits the worktree with the fixed TL3 identity and adds the real head
