@@ -135,12 +135,11 @@ fn example_parses_with_sourced_numbers_and_different_reviewer_family() {
     assert_eq!(config.github.repos[0].name, "tl3-sandbox");
     assert_eq!(config.hindsight.endpoint.as_str(), "http://127.0.0.1:8890/");
     assert_eq!(config.hindsight.bank, "tl3");
-    for (maker, expected) in
-        config
-            .models
-            .maker
-            .iter()
-            .zip(["alternate-model", "alternate-model", "default-model"])
+    for (maker, expected) in config
+        .models
+        .maker
+        .iter()
+        .zip(["alternate-model", "default-model"])
     {
         let reviewer = config.models.reviewer_for(&maker.family).unwrap();
         assert!(!reviewer.family.eq_ignore_ascii_case(&maker.family));
@@ -501,12 +500,11 @@ fn explicit_reviewer_and_proxy_specific_efforts_are_supported() {
     document["limits"]["credit_reserve"] = Value::Integer(0);
     document["limits"]["free_rechecks"] = Value::Integer(0);
     let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
-    for (maker, expected) in
-        config
-            .models
-            .maker
-            .iter()
-            .zip(["alternate-model", "alternate-model", "default-model"])
+    for (maker, expected) in config
+        .models
+        .maker
+        .iter()
+        .zip(["alternate-model", "default-model"])
     {
         let reviewer = config
             .models

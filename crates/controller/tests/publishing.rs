@@ -1299,7 +1299,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             },
             "check outcomes must name their own comparison base"
         );
-        assert_ne!(review["model"]["name"], config.models.maker[0].name);
+        // Q22: a different model from the maker of the reviewed attempt (#416:
+        // attempt 2 runs the next model line, so its reviewer changes too).
+        let attempt = review["trace"]["attempt"].as_u64().unwrap() as usize;
+        let maker = &config.models.maker[(attempt - 1).min(config.models.maker.len() - 1)];
+        assert_ne!(review["model"]["name"], maker.name);
         assert!(
             review["inputs"]["standing_rules"][1]["description"]
                 .as_str()
