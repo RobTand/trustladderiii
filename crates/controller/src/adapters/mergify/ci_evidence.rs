@@ -274,3 +274,23 @@ pub(crate) fn outside_change(
             })
         })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_codes_are_removed_before_redaction_and_clipping() {
+        for text in [
+            "pass\x1b[31mword=planted-secret\x1b[0m",
+            "\x1b]window title\x07password=planted-secret",
+            "\x1b]window title\x1b\\password=planted-secret",
+            "\x1bPdevice data\x1b\\password=planted-secret",
+            "pass\0\x08\x7fword=planted-secret",
+            "\u{009b}31mpassword=planted-secret\u{009b}0m",
+        ] {
+            assert_eq!(safe(text, 1000), "[redacted]");
+        }
+        assert_eq!(safe("a\t雪\nb", 1000), "a\t雪\nb");
+    }
+}

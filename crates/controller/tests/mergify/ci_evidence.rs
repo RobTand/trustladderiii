@@ -18,6 +18,13 @@ pub(super) const MODES: &[&str] = &[
     "logs-unavailable",
     "missing-plan",
     "multiple-drafts",
+    "truncated",
+    "range-truncated",
+    "ansi-mixed",
+    "controls",
+    "compile",
+    "lint",
+    "redelivery",
 ];
 const TEST: &str = "//tests:test_a_ready_gpu_action_is_not_starved_by_cpu_shards";
 const URL: &str =
@@ -41,6 +48,13 @@ impl Fixture {
                 return Some(ResponseTemplate::new(200).set_body_string("Gate verdict: failed"));
             }
             "/repos/owner/sandbox/actions/jobs/125550020549/logs" => {
+                if self.log == "range-truncated" {
+                    return Some(
+                        ResponseTemplate::new(206)
+                            .insert_header("content-range", "bytes 90000-99999/100000")
+                            .set_body_string(include_str!("../fixtures/mergify/pb2625/gate.log")),
+                    );
+                }
                 if self.log == "unavailable" {
                     return Some(ResponseTemplate::new(403));
                 }
@@ -89,6 +103,19 @@ fn failure(api: &Server, mode: &str, repeat: bool) {
             }])
         }
         "logs-unavailable" => log = "unavailable".into(),
+        "truncated" => {
+            log = format!(
+                "FAILED: //tests:test_action_resource_profile\n{}\n{log}",
+                "old line\n".repeat(10000)
+            );
+        }
+        "range-truncated" => log = "range-truncated".into(),
+        "ansi-mixed" => {
+            log = format!("\x1b[31mFAILED: //tests:test_action_resource_profile\x1b[0m\n{log}");
+        }
+        "controls" => {
+            log = "\x1b]8;;https://example.invalid\x07\x1b[31mFAILED: //tests:test_action_resource_profile\x1b[0m\x1b]8;;\x1b\\ pass\x1b[32mword=planted-password\x1b[0m\nBearer planted-bearer\0\x08\x7f\u{009b}31m\u{009c}\n".into();
+        }
         "overflow" => {
             log = (0..30)
                 .map(|index| format!("FAILED: //tests:test_outside_{index}\n"))
@@ -128,11 +155,23 @@ fn failure(api: &Server, mode: &str, repeat: bool) {
         files,
         log,
     });
-    if mode == "aggregate" {
+    if matches!(mode, "aggregate" | "compile" | "lint") {
         state.ci_fixture.as_mut().unwrap().checks["check_runs"].as_array_mut().unwrap().push(json!({
             "id":125552384811_u64,"name":"gate","head_sha":gate["head"],"status":"completed","conclusion":"failure",
             "app":{"id":15368,"slug":"github-actions"},"output":{"title":"Gate verdict failed","summary":"Bazel failed"}
         }));
+    }
+    if matches!(mode, "compile" | "lint") {
+        let extra = &mut state.ci_fixture.as_mut().unwrap().checks["check_runs"][1];
+        extra["name"] = json!(mode);
+        extra["output"]["summary"] = json!(format!("{mode} failed without test IDs"));
+    }
+    if mode == "controls" {
+        let check = &mut state.ci_fixture.as_mut().unwrap().checks["check_runs"][0];
+        check["name"] = json!("\x1b[31mBazel\x1b[0m");
+        check["details_url"] = json!(format!("\x1b[32m{URL}\x1b[0m"));
+        check["output"]["title"] = json!("\x1b[31mGate failed\x1b[0m");
+        check["output"]["summary"] = json!("pass\x1b[0mword=planted-password\0\x08\x7f");
     }
 }
 fn observe(controller: &mut Controller, api: &Server, config: &Bootstrap) {
@@ -184,7 +223,10 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     let before = controller.world().unwrap().nodes[0];
     failure(&api, mode, false);
     observe(&mut controller, &api, &config);
-    if matches!(mode, "outside" | "repeat" | "aggregate" | "multiple-drafts") {
+    if matches!(
+        mode,
+        "outside" | "repeat" | "multiple-drafts" | "redelivery"
+    ) {
         let after = controller.world().unwrap().nodes[0];
         assert_ne!(
             after.phase,
@@ -211,7 +253,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             decision["evidence"]["CiFailed"]["details"]["decision"],
             "outside_change"
         );
-        if mode != "repeat" {
+        if !matches!(mode, "repeat" | "redelivery") {
             println!("test ci_evidence_{mode} ... ok");
             return;
         }
@@ -224,6 +266,58 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         );
         controller =
             Controller::open(Store::open(settings).unwrap(), registry, config.clone()).unwrap();
+        if mode == "redelivery" {
+            failure(&api, mode, false);
+            let before = api.state.lock().unwrap().get_paths.clone();
+            observe(&mut controller, &api, &config);
+            let snapshot = controller.snapshot().unwrap();
+            let changes = serde_json::from_value(json!({"repository":"RobTand/prismabuild", "issues":[],
+                "comments":[], "labels":[], "pull_requests":[], "check_runs":[], "check_suites":[]})).unwrap();
+            Translator::new(api.clients())
+                .unwrap()
+                .catch_up(&config.repos[0], &changes, &snapshot)
+                .unwrap();
+            let mut delivery: Delivery = serde_json::from_value(
+                snapshot
+                    .rows
+                    .iter()
+                    .find(|row| {
+                        row.table == "allowances"
+                            && row.value["delivery"]["output"]["Effect"]["kind"] == "Enqueue"
+                    })
+                    .unwrap()
+                    .value["delivery"]
+                    .clone(),
+            )
+            .unwrap();
+            delivery.pull_request = Some(100);
+            delivery.head_sha = Some(
+                api.state.lock().unwrap().pull["head"]["sha"]
+                    .as_str()
+                    .unwrap()
+                    .into(),
+            );
+            api.adapter(&root.path().join("redelivered"), 0)
+                .with_store(settings.clone())
+                .observations(&delivery)
+                .unwrap();
+            let after = api.state.lock().unwrap().get_paths.clone();
+            for path in [
+                "/repos/owner/sandbox/pulls/2661",
+                "/repos/owner/sandbox/pulls/100/files",
+                "/repos/owner/sandbox/commits/8e8df7e2fedfa413a7c6698ba1749a340d6bcb28/check-runs",
+                "/repos/owner/sandbox/actions/jobs/125550020549/logs",
+            ] {
+                assert_eq!(
+                    after.get(path),
+                    before.get(path),
+                    "redelivery must not recollect {path}"
+                );
+            }
+            assert_eq!(api.state.lock().unwrap().requeues, 1);
+            println!("test ci_evidence_{mode} ... ok");
+            return;
+        }
         failure(&api, mode, true);
         observe(&mut controller, &api, &config);
     }
@@ -255,10 +349,56 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             .unwrap();
         assert_eq!(repeated["evidence"]["CiFailed"]["infra"], false);
     }
+    if mode == "ansi-mixed" {
+        assert_eq!(
+            finding["failed_tests"].as_array().unwrap().len(),
+            2,
+            "coloured failures must not disappear"
+        );
+    }
+    if matches!(
+        mode,
+        "truncated" | "range-truncated" | "aggregate" | "compile" | "lint"
+    ) {
+        let facts = queue_facts(&mut controller);
+        assert_eq!(
+            facts.last().unwrap()["evidence"]["CiFailed"]["details"]["complete"],
+            false
+        );
+    }
+    if mode == "controls" {
+        for fact in queue_facts(&mut controller) {
+            let details = &fact["evidence"]["CiFailed"]["details"];
+            if details.is_object() {
+                for check in details["checks"].as_array().unwrap() {
+                    for field in ["name", "summary", "url"] {
+                        assert!(
+                            check[field]
+                                .as_str()
+                                .unwrap_or("")
+                                .chars()
+                                .all(|ch| !ch.is_control() || matches!(ch, '\n' | '\t'))
+                        );
+                    }
+                }
+                for test in details["failed_tests"].as_array().unwrap() {
+                    for field in ["test", "message"] {
+                        assert!(
+                            test[field]
+                                .as_str()
+                                .unwrap()
+                                .chars()
+                                .all(|ch| !ch.is_control() || matches!(ch, '\n' | '\t'))
+                        );
+                    }
+                }
+            }
+        }
+    }
     if mode == "overflow" {
         assert_eq!(finding["failed_tests"].as_array().unwrap().len(), 20);
     }
-    if mode == "hostile" {
+    if matches!(mode, "hostile" | "controls") {
         let text = finding.to_string();
         for secret in ["planted-password", "planted-bearer", "ghp_planted123456789"] {
             assert!(!text.contains(secret), "must redact {secret}");
