@@ -154,8 +154,9 @@ def canonical(label):
 class Workspace:
     """Git and Bazel on the runner. Every failure raises GateError."""
 
-    def __init__(self, root=ROOT, bazel='bazel'):
+    def __init__(self, root=ROOT, bazel='bazel', graph_cache=None):
         self.root, self.bazel = root, bazel
+        self.graph_cache = graph_cache
 
     def run(self, *command, capture=True, check=True):
         print('$ ' + shlex.join(map(str, command)), flush=True)
@@ -224,22 +225,34 @@ class Workspace:
         self._graphs, self._deps, self._typed_hashes, self._crates = {}, {}, {}, {}
         try:
             for name, sha in [('base', base), ('head', head)]:
-                self.checkout(sha)
-                self.run(*generate(self._hashes[name], self._edges[name]))
-                raw_deps = json.loads(self._edges[name].read_text())
-                sources = bazel_graph_impact.source_labels(json.loads(self._hashes[name].read_text()))
-                if bazel_graph_impact.needs_source_edges(raw_deps, sources):
-                    print('bazel-diff omits source edges; supplementing from one streamed Bazel query', flush=True)
-                    query = (f'deps({TESTS} except attr(tags, "\\bmanual\\b", //...)) '
-                             'intersect //...:all-targets')
-                    stream = self.run(self.bazel, 'query', query, '--output=streamed_jsonproto',
-                                      '--keep_going=false')
-                    raw_deps = bazel_graph_impact.add_source_edges(raw_deps, stream)
-                self._source_edges[name].write_text(json.dumps(raw_deps, sort_keys=True) + '\n')
-                graph, deps, hashes = bazel_graph_impact.load(
-                    self._source_edges[name], self._hashes[name], self.tests(), self.root)
-                self._graphs[name], self._deps[name], self._typed_hashes[name] = graph, deps, hashes
-                self._crates[name] = set(map(canonical, self.query('kind("rust_library rule", //crates/...)')))
+                files = (self._hashes[name], self._edges[name], self._source_edges[name])
+                cached = self.graph_cache.get(sha) if self.graph_cache is not None else None
+                if cached:
+                    graph, deps, hashes, crates, contents = cached
+                    for file, data in zip(files, contents):
+                        file.write_bytes(data)
+                    self._graphs[name], self._deps[name], self._typed_hashes[name] = graph, deps, hashes
+                    self._crates[name] = crates
+                else:
+                    self.checkout(sha)
+                    self.run(*generate(self._hashes[name], self._edges[name]))
+                    raw_deps = json.loads(self._edges[name].read_text())
+                    sources = bazel_graph_impact.source_labels(json.loads(self._hashes[name].read_text()))
+                    if bazel_graph_impact.needs_source_edges(raw_deps, sources):
+                        print('bazel-diff omits source edges; supplementing from one streamed Bazel query', flush=True)
+                        query = (f'deps({TESTS} except attr(tags, "\\bmanual\\b", //...)) '
+                                 'intersect //...:all-targets')
+                        stream = self.run(self.bazel, 'query', query, '--output=streamed_jsonproto',
+                                          '--keep_going=false')
+                        raw_deps = bazel_graph_impact.add_source_edges(raw_deps, stream)
+                    self._source_edges[name].write_text(json.dumps(raw_deps, sort_keys=True) + '\n')
+                    graph, deps, hashes = bazel_graph_impact.load(
+                        self._source_edges[name], self._hashes[name], self.tests(), self.root)
+                    self._graphs[name], self._deps[name], self._typed_hashes[name] = graph, deps, hashes
+                    self._crates[name] = set(map(canonical, self.query('kind("rust_library rule", //crates/...)')))
+                    if self.graph_cache is not None:
+                        self.graph_cache[sha] = (graph, deps, hashes, self._crates[name],
+                                                 tuple(file.read_bytes() for file in files))
                 artifacts = os.environ.get('BUILDBUDDY_ARTIFACTS_DIRECTORY')
                 if artifacts:
                     for file in (self._hashes[name], self._edges[name], self._source_edges[name]):

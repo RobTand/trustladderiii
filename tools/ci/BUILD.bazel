@@ -229,3 +229,14 @@ py_binary(
         ":graph_impact",
     ],
 )
+
+py_binary(
+    name = "graph_impact_replay",
+    srcs = ["graph_impact_replay.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":bazel_gate",
+        ":bazel_graph_impact",
+        ":graph_impact",
+    ],
+)

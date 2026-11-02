@@ -1,4 +1,4 @@
-"""TL3's adapter for bazel-diff dependency exports. No second graph query."""
+"""TL3's adapter for bazel-diff exports and missing source-edge evidence."""
 import json
 from pathlib import Path
 import subprocess
@@ -19,6 +19,48 @@ def closure(deps, start):
     return seen
 
 
+def package(label):
+    # Each Rust crate is one Bazel package, including its wrapper test targets.
+    return canonical(label).split(':', 1)[0]
+
+
+def package_max_reach(graph):
+    maxima = {}
+    for test, sources in graph['reach'].items():
+        owner = graph['test_packages'][test]
+        maxima[owner] = max(maxima.get(owner, 0), len(sources))
+    return dict(sorted(maxima.items()))
+
+
+def node_types(data):
+    return {label: value.get('type') if isinstance(value, dict) else value.split('#', 1)[0]
+            for label, value in hashes(data).items()}
+
+
+def comparison_inputs(base, head):
+    """Use base ownership ceilings and each revision's authoritative label types."""
+    def classified(graph):
+        kinds = graph['node_types']
+        result = {'rule_to_rule': set(), 'rule_to_source': set()}
+        for consumer, dependency in graph['edges']:
+            if kinds.get(consumer) == 'Rule':
+                if kinds.get(dependency) == 'Rule':
+                    result['rule_to_rule'].add((consumer, dependency))
+                elif kinds.get(dependency) == 'SourceFile':
+                    result['rule_to_source'].add((consumer, dependency))
+        return result
+    old, new = classified(base), classified(head)
+    old_packages = base.get('test_packages') or {test: package(test) for test in base['reach']}
+    return {
+        'test_packages': {test: package(test) for test in sorted(head['reach'])},
+        'base_package_max_reach': package_max_reach({**base, 'test_packages': old_packages}),
+        'edge_diff': {
+            'added': {kind: [list(edge) for edge in sorted(new[kind] - old[kind])] for kind in new},
+            'removed': {kind: [list(edge) for edge in sorted(old[kind] - new[kind])] for kind in old},
+        },
+    }
+
+
 def from_deps(deps, tests, sources, loc=None):
     sources, tests = set(sources), set(tests)
     if not tests or tests - deps.keys():
@@ -31,6 +73,8 @@ def from_deps(deps, tests, sources, loc=None):
     weights = {source: (loc or {}).get(source, 1) for source in sources}
     edges = {(node, dep) for node, values in deps.items() for dep in values}
     measured = graph_impact.measure({test: closure(deps, test) & sources for test in tests}, edges, weights)
+    measured['test_packages'] = {test: package(test) for test in sorted(tests)}
+    measured['node_types'] = {node: 'SourceFile' if node in sources else 'Rule' for node in nodes}
     conftests = {node for node in deps if node.endswith((':conftest', ':conftest.py', '/conftest.py'))}
     measured['edge_groups']['conftest_source'] = sorted(
         f'{consumer} -> {dependency}' for consumer, dependency in edges
@@ -44,6 +88,7 @@ def baseline(graph):
 
 def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, previous_policy=None,
           record_gains=False):
+    head = {**head, **comparison_inputs(base, head)}
     errors = graph_impact.allowlist_errors(allowlist or {}, previous_allowlist if previous_allowlist is not None
                                           else allowlist or {})
     errors += graph_impact.baseline_errors(policy, previous_policy)
@@ -65,6 +110,7 @@ def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, 
     broad = {test for test in targets if any(f'{test} reach ' in error for error in errors)}
     return {'summary': graph_impact.summary(base, head, policy['reach_budget']), 'errors': errors,
             'base': base, 'head': head, 'added_edges': [list(edge) for edge in sorted(added)],
+            'edge_diff': head['edge_diff'], 'base_package_max_reach': head['base_package_max_reach'],
             'fanout_growth': [list(row) for row in growth],
             'explain_targets': sorted(targets, key=lambda test: (test not in broad, test))}
 
@@ -146,6 +192,8 @@ def load(deps_file, hashes_file, tests, root):
     loc = {label: len((Path(root) / path(label)).read_bytes().splitlines()) for label in sources}
     reaches, edges, weights = graph_impact.read_deps(deps_file, tests, sources, loc=loc)
     graph = graph_impact.measure(reaches, edges, weights)
+    graph['test_packages'] = {test: package(test) for test in sorted(reaches)}
+    graph['node_types'] = node_types(source_hashes)
     conftests = {node for node in deps if node.endswith((':conftest', ':conftest.py', '/conftest.py'))}
     graph['edge_groups']['conftest_source'] = sorted(
         f'{consumer} -> {dependency}' for consumer, dependency in edges

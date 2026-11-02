@@ -43,7 +43,7 @@ def planted(workspace):
         if not any(message in error for error in result['errors']):
             raise RuntimeError(f'planted {name} did not fail as expected: {result["errors"]}')
         records[name] = {'summary': result['summary'], 'errors': result['errors']}
-    head = graph_impact.measure({test: set() for test in tests}, base['edges'], base['loc'])
+    head = {**base, **graph_impact.measure({test: set() for test in tests}, base['edges'], base['loc'])}
     head['edge_groups'] = base['edge_groups']
     result = bazel_graph_impact.check(base, head, set(), policy)
     if not any('record the gain' in error for error in result['errors']):

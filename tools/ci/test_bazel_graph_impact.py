@@ -5,6 +5,39 @@ import bazel_graph_impact as adapter
 
 
 class BazelGraphTests(unittest.TestCase):
+    def test_comparison_inputs_keep_package_ceiling_at_base(self):
+        base = adapter.from_deps(
+            {'//crates/controller:existing': ['//pkg:a.py', '//pkg:b.py'],
+             '//tools/tests:small': ['//pkg:a.py'], '//pkg:a.py': [], '//pkg:b.py': []},
+            ['//crates/controller:existing', '//tools/tests:small'], ['//pkg:a.py', '//pkg:b.py'])
+        head = adapter.from_deps(
+            {'//crates/controller:new': ['//pkg:a.py', '//pkg:b.py', '//pkg:c.py'],
+             '//new/package:test': ['//pkg:a.py'],
+             '//pkg:a.py': [], '//pkg:b.py': [], '//pkg:c.py': []},
+            ['//crates/controller:new', '//new/package:test'],
+            ['//pkg:a.py', '//pkg:b.py', '//pkg:c.py'])
+        comparison = adapter.comparison_inputs(base, head)
+        self.assertEqual(comparison['test_packages']['//crates/controller:new'], '//crates/controller')
+        self.assertEqual(comparison['test_packages']['//new/package:test'], '//new/package')
+        self.assertEqual(comparison['base_package_max_reach'],
+                         {'//crates/controller': 2, '//tools/tests': 1})
+        self.assertNotIn('//new/package', comparison['base_package_max_reach'])
+
+    def test_edge_diff_uses_each_revisions_types_and_covers_removals(self):
+        base = {'reach': {'//test:t': ['//pkg:a.py']},
+                'edges': [['//test:t', '//pkg:lib'], ['//pkg:lib', '//pkg:a.py']],
+                'node_types': {'//test:t': 'Rule', '//pkg:lib': 'Rule', '//pkg:a.py': 'SourceFile'}}
+        head = {'reach': {'//test:t': ['//pkg:b.py']},
+                'edges': [['//test:t', '//pkg:new'], ['//pkg:new', '//pkg:b.py']],
+                'node_types': {'//test:t': 'Rule', '//pkg:new': 'Rule', '//pkg:b.py': 'SourceFile'}}
+        comparison = adapter.comparison_inputs(base, head)
+        self.assertEqual(comparison['edge_diff'], {
+            'added': {'rule_to_rule': [['//test:t', '//pkg:new']],
+                      'rule_to_source': [['//pkg:new', '//pkg:b.py']]},
+            'removed': {'rule_to_rule': [['//test:t', '//pkg:lib']],
+                        'rule_to_source': [['//pkg:lib', '//pkg:a.py']]},
+        })
+
     def test_leaf_keys_do_not_prove_source_edges_are_present(self):
         deps = {'//pkg:lib': [], '//pkg:src/lib.rs': []}
         self.assertTrue(adapter.needs_source_edges(deps, {'//pkg:src/lib.rs'}))
