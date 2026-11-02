@@ -178,20 +178,16 @@ class FailFast:
         self.failure, self.deadline = None, None
         self.failures, self.observed = set(), set()
 
-    def event(self, event, now, budget_only):
+    def event(self, event, now):
         identity = event.get('id', {})
         result = identity.get('testResult')
         summary = identity.get('testSummary')
-        if result or (summary and event.get('testSummary', {}).get('overallStatus') != 'NO_STATUS'):
+        if result or (summary and event.get('testSummary', {}).get('overallStatus', 'NO_STATUS') != 'NO_STATUS'):
             self.observed.add(canonical((result or summary)['label']))
         reason, label = None, None
-        if result and event.get('testResult', {}).get('status') == 'FAILED':
-            label, reason = canonical(result['label']), 'FAILED'
-            # BEP names outputs before remote downloads finish. Looking only
-            # at bazel-testlogs races the budget marker's materialization.
-            outputs = event['testResult'].get('testActionOutput', [])
-            if any(Path(output.get('name', '')).name == BUDGET_MARKER for output in outputs) or label in budget_only([label]):
-                return
+        status = event.get('testResult', {}).get('status')
+        if result and status in ('FAILED', 'TIMEOUT'):
+            label, reason = canonical(result['label']), status
         completed = identity.get('targetCompleted')
         if completed and event.get('completed', {}).get('success') is False:
             label, reason = canonical(completed['label']), 'BUILD_FAILURE'
@@ -286,7 +282,7 @@ class Workspace:
         with subprocess.Popen(list(map(str, command)), cwd=self.root) as process:
             while True:
                 for event in stream.read():
-                    watcher.event(event, time.monotonic(), self.budget_only)
+                    watcher.event(event, time.monotonic())
                 if process.poll() is not None:
                     break
                 if watcher.should_cancel(time.monotonic()):
@@ -306,7 +302,7 @@ class Workspace:
                 time.sleep(.1)
             # The last events and summaries may arrive during SIGINT shutdown.
             for event in stream.read():
-                watcher.event(event, time.monotonic(), self.budget_only)
+                watcher.event(event, time.monotonic())
         return process.returncode, watcher.observed
 
     def test(self, targets, config, metadata, log_name, extra=()):
@@ -325,9 +321,6 @@ class Workspace:
             self.run(*command, capture=False, check=False)
             self.not_run = []
         else:
-            # Each undeclared output must be named in BEP so a budget marker
-            # can be recognized without downloading an outputs.zip first.
-            command.append('--nozip_undeclared_test_outputs')
             _, observed = self.watch(command, bep)
             self.not_run = sorted(set(targets) - observed)
         return test_statuses(bep)
@@ -433,13 +426,10 @@ def gate_pr(workspace, base, head, metadata, mode='pr'):
     decision = plan(changed, deleted, impacted, used, tests)
     selected_seconds = time.monotonic() - started
     statuses = workspace.test(decision['selected'], CONFIGS['amd64'], metadata, 'pr')
+    statuses, reruns = rerun_budget_only(workspace, decision['selected'], statuses, CONFIGS['amd64'],
+                                         metadata, 'pr')
     aborted = getattr(workspace, 'aborted_early', None)
     not_run = getattr(workspace, 'not_run', sorted(set(decision['selected']) - statuses.keys()))
-    reruns = {}
-    if not aborted:
-        statuses, reruns = rerun_budget_only(workspace, decision['selected'], statuses, CONFIGS['amd64'],
-                                             metadata, 'pr')
-        aborted = getattr(workspace, 'aborted_early', None)
     verdicts, failed = classify(decision['selected'], statuses, rust)
     inputs = [] if aborted else workspace.inputs_check() + workspace.budget_check(base)
     if not aborted and not workspace.build(decision['build'], CONFIGS['amd64'], metadata, 'pr'):

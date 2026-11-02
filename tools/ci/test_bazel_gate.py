@@ -197,13 +197,13 @@ class FailFastTests(unittest.TestCase):
 
     def test_batch_assertion_failure_cancels_immediately(self):
         watcher = bazel_gate.FailFast('batch-draft')
-        watcher.event(self.result(), 10, lambda labels: set())
+        watcher.event(self.result(), 10)
         self.assertEqual(watcher.failure, {'label': '//a:failed', 'reason': 'FAILED'})
         self.assertTrue(watcher.should_cancel(10))
 
     def test_timeout_is_a_definitive_failure(self):
         watcher = bazel_gate.FailFast('batch-draft')
-        watcher.event(self.result(status='TIMEOUT'), 10, lambda labels: set())
+        watcher.event(self.result(status='TIMEOUT'), 10)
         self.assertTrue(watcher.should_cancel(10))
         self.assertEqual(watcher.failure, {'label': '//a:failed', 'reason': 'TIMEOUT'})
 
@@ -212,39 +212,39 @@ class FailFastTests(unittest.TestCase):
                                     ('TIMEOUT', {'//a:failed'})]:
             with self.subTest(status=status, quarantine=quarantine):
                 watcher = bazel_gate.FailFast('batch-draft', quarantine=quarantine)
-                watcher.event(self.result(status=status), 10, lambda labels: set())
+                watcher.event(self.result(status=status), 10)
                 self.assertFalse(watcher.should_cancel(1000))
                 self.assertIsNone(watcher.failure)
 
     def test_no_status_summary_does_not_count_as_a_test_that_ran(self):
         watcher = bazel_gate.FailFast('pr')
         watcher.event({'id': {'testSummary': {'label': '//a:pending'}},
-                       'testSummary': {'overallStatus': 'NO_STATUS'}}, 0, lambda labels: set())
+                       'testSummary': {'overallStatus': 'NO_STATUS'}}, 0)
         self.assertEqual(watcher.observed, set())
 
     def test_pr_collects_failures_for_at_most_sixty_seconds(self):
         watcher = bazel_gate.FailFast('pr')
-        watcher.event(self.result(), 10, lambda labels: set())
+        watcher.event(self.result(), 10)
         self.assertFalse(watcher.should_cancel(69.9))
-        watcher.event(self.result('//a:another'), 69, lambda labels: set())
+        watcher.event(self.result('//a:another'), 69)
         self.assertEqual(watcher.failures, {'//a:failed', '//a:another'})
         self.assertTrue(watcher.should_cancel(70))
         self.assertEqual(watcher.failure['label'], '//a:failed')
 
     def test_main_never_cancels(self):
         watcher = bazel_gate.FailFast('main')
-        watcher.event(self.result(), 0, lambda labels: set())
+        watcher.event(self.result(), 0)
         watcher.event({'id': {'targetCompleted': {'label': '//a:broken'}},
-                       'completed': {'success': False}}, 1, lambda labels: set())
+                       'completed': {'success': False}}, 1)
         self.assertFalse(watcher.should_cancel(1000))
 
     def test_build_failure_cancels_but_failed_test_completion_is_not_a_build_failure(self):
         watcher = bazel_gate.FailFast('batch-draft')
         watcher.event({'id': {'targetCompleted': {'label': '//a:test'}},
-                       'completed': {'success': True}}, 1, lambda labels: set())
+                       'completed': {'success': True}}, 1)
         self.assertFalse(watcher.should_cancel(1))
         watcher.event({'id': {'targetCompleted': {'label': '//a:broken'}},
-                       'completed': {'success': False}}, 2, lambda labels: set())
+                       'completed': {'success': False}}, 2)
         self.assertEqual(watcher.failure, {'label': '//a:broken', 'reason': 'BUILD_FAILURE'})
         self.assertTrue(watcher.should_cancel(2))
 
@@ -286,7 +286,6 @@ class FailFastTests(unittest.TestCase):
             stream.return_value.read.side_effect = [[self.result()], [self.result('//a:another')], []]
             process = popen.return_value.__enter__.return_value
             process.poll.side_effect = [None, 3]
-            workspace.budget_only = lambda labels: set()
             workspace.test(['//a:failed', '//a:another'], 'remote', {}, 'pr')
             process.send_signal.assert_not_called()
         self.assertIsNone(workspace.aborted_early)
@@ -303,7 +302,6 @@ class FailFastTests(unittest.TestCase):
             process = popen.return_value.__enter__.return_value
             process.poll.return_value = None
             process.wait.return_value = 8
-            workspace.budget_only = lambda labels: set()
             workspace.test(['//a:failed', '//a:pending'], 'remote', {}, 'pr')
             process.send_signal.assert_called_once_with(signal.SIGINT)
             process.wait.assert_called()

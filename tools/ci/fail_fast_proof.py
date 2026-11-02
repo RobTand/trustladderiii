@@ -16,14 +16,12 @@ import bazel_gate
 JOBS = 16
 SLEEP = 4
 
-PLANTED = '''import os
-from pathlib import Path
-import sys
+PLANTED = '''import sys
 import time
 mode = sys.argv[1]
 if mode == 'budget':
-    Path(os.environ['TEST_UNDECLARED_OUTPUTS_DIR'], 'budget-overrun.txt').write_text('budget only')
-    raise SystemExit(1)
+    print('WARNING: planted budget overrun, 11s > 10s')
+    raise SystemExit(0)
 if mode == 'timeout':
     time.sleep(10)
 if mode == 'slow':
@@ -77,15 +75,18 @@ def main():
                          f'args=[{mode!r}], size="small")')
         (package / 'BUILD.bazel').write_text('\n'.join(rules) + '\n')
         guards = run([prefix + name for name in ['budget', 'timeout', 'quarantine']],
-                     'batch-draft', 'fail-fast-guards', quarantine={prefix + 'quarantine'},
+                     'batch-draft', 'fail-fast-guards', quarantine={prefix + 'quarantine', prefix + 'timeout'},
                      extra=['--test_timeout=2'])
         assert guards['aborted_early'] is None, guards
-        assert guards['statuses'] == {prefix + 'budget': 'FAILED', prefix + 'timeout': 'TIMEOUT',
+        assert guards['statuses'] == {prefix + 'budget': 'PASSED', prefix + 'timeout': 'TIMEOUT',
                                      prefix + 'quarantine': 'FAILED'}, guards
         if args.guards_only:
             print(json.dumps({'guards': guards}), flush=True)
             return
         targets = [prefix + f't{index:04}' for index in range(count)]
+        timeout = run([prefix + 'timeout', *targets[1:JOBS + 1]], 'batch-draft',
+                      'fail-fast-timeout', extra=['--test_timeout=2'])
+        assert timeout['aborted_early']['reason'] == 'TIMEOUT', timeout
         baseline = run(targets, 'main', 'fail-fast-baseline')
         assert baseline['completed'] == count, baseline
         assert baseline['statuses'][targets[0]] == 'FAILED', baseline
@@ -98,7 +99,7 @@ def main():
         # all slots for its entire wall time overestimates its executor usage.
         lower_bound = ((count - 1) * SLEEP - JOBS * cancelled['wall_seconds']) / 60
         report = {'fallback_targets': count, 'jobs': JOBS, 'sleep_seconds': SLEEP,
-                  'guards': guards, 'baseline': baseline, 'cancelled': cancelled,
+                  'guards': guards, 'timeout': timeout, 'baseline': baseline, 'cancelled': cancelled,
                   'wall_minutes_saved': round((baseline['wall_seconds'] - cancelled['wall_seconds']) / 60, 3),
                   'executor_minutes_saved_lower_bound': round(lower_bound, 3)}
         print(json.dumps(report, sort_keys=True), flush=True)
