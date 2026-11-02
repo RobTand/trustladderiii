@@ -130,6 +130,31 @@ generation, so a worker retry keeps its affinity. A later attempt gets a new
 identity. Streamed usage uses the last usage chunk per call. Totals on finish and
 trailing chunks are never summed, including in recorded usage.
 
+A model call that fails with a connection error or a dropped stream is sent
+again once, at the failure, with the same history. Earlier tool calls are not
+repeated. A second failure of that turn fails the run. The dropped call is
+charged against the input allowance, and the retry is sent only if it still
+fits. When the controller reruns a maker after a worker failure, the run
+continues the same visit. After every update the maker saves a versioned
+`attempt-N.visit` checkpoint: history, the whole exploration allowance
+(spent input, turns, compaction and cache state), budget exhaustion, in-flight
+test actions and the environment evidence a blocked reply cites (Q50).
+A rerun resumes from the last complete tool result and keeps that state. A
+checkpoint that fails to decode, has the wrong shape or has another version
+starts the visit afresh with a fixed stderr note. run_tests records each
+PrismaBuild key as soon as pbrun returns. If the visit stopped during that call, the
+rerun waits on the same action and uses its result as the tool result, so the
+model cannot submit it twice. Any other interrupted call is dropped, and the
+model is told it may have run. A dropped-call retry keeps the final-answer
+reserve. A repair prompt keeps at most 2 KB of a validation message.
+
+A reply that fails the reply schema or a role check gets one repair turn in the
+same run. The model receives the exact validation message and no tools; any tool
+call it makes in that turn is dropped. The repaired reply is validated again. A
+second invalid reply fails the run as InvalidReply, and the run summary keeps
+both safe diagnostics. The repair turn spends the input allowance. When it does
+not fit, the run fails with the first validation error.
+
 The worker writes only flushed, UTF-8, `\n`-terminated JSON to stdout, whatever
 the locale. At startup it moves its own fd 1 to stderr, so prints, C
 extensions and child processes can't write to the protocol stream. A reply
@@ -293,8 +318,9 @@ still uses the original model name and the OpenAI-compatible endpoint.
 Tests inspect the final model request to catch any injected prompts or tools.
 
 The worker asks for a JSON object directly and validates it against the schema.
-It does not use structured-output tool calls or model repair loops, so no
-implicit output tool or extra model turn can change the declared role tools.
+It does not use structured-output tool calls, so no implicit output tool can
+change the declared role tools. An invalid reply gets at most one tool-free
+repair turn, described with turn retries above.
 
 Every role prompt says: "Reply with one JSON object only: no prose, no code
 fences." Claude models still sometimes wrap the object in prose or a fence
@@ -303,7 +329,8 @@ the worker takes the one closed ``` or ```json block, or else the one
 outermost object in the text. The extracted text goes through the same strict
 parser, so duplicate keys and non-finite numbers still fail. Two candidates fail
 as "reply has more than one JSON object", and no candidate fails as "reply is
-not one JSON object". Both are reply-level diagnostics, not "invalid worker data".
+not one JSON object". Both are reply-level errors: they get the repair turn,
+and a second failure is an InvalidReply, not "invalid worker data".
 
 ## Add a role
 

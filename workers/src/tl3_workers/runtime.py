@@ -24,6 +24,7 @@ from tl3_workers.roles import ROLES
 from tl3_workers.tools import Worktree, build_tools
 from tl3_workers.memory import Summary, current
 from tl3_workers.exploration import ExplorationMiddleware
+from tl3_workers.turns import TurnControl, repaired
 from tl3_workers.session import is_unaccepted_session
 
 
@@ -107,7 +108,8 @@ def create_model(request) -> BaseChatModel:
 ONLY_JSON = "Reply with one JSON object only: no prose, no code fences."
 
 
-def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None, context_size=150_000):
+def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None, context_size=150_000,
+                control=None):
     descriptions = {**BUILTIN_TOOL_DESCRIPTIONS, **role.tools}
     profile = HarnessProfile(
         base_system_prompt="",
@@ -146,8 +148,12 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None,
         tool_token_limit_before_evict=None,
     )
     middleware = [filesystem]
+    control = TurnControl() if control is None else control
     if role.exploration_budget is not None:
-        middleware.append(ExplorationMiddleware(role.exploration_budget, role.name, context_size))
+        # The allowance wraps the turn control, so it charges dropped calls and repairs.
+        control.allowance = ExplorationMiddleware(role.exploration_budget, role.name, context_size)
+        middleware.append(control.allowance)
+    middleware.append(control)
     return create_deep_agent(
         model=model, tools=build_tools(worktree, role.tools), subagents=[], system_prompt=prompt,
         middleware=middleware, name="tl3_" + role.name,
@@ -181,29 +187,36 @@ def _run(request, emit):
             worktree.hindsight_key_file = request.get("hindsight_key_file")
             worktree.progress_emit = emit
         if role.run is None:
+            control = TurnControl()
             agent = build_agent(model, role, worktree, context_size=request["inputs"].get(
-                "context_size", request["inputs"].get("forecast", {}).get("context_tokens", 150_000)))
-            reply = _run_agent(agent, request, emit)
+                "context_size", request["inputs"].get("forecast", {}).get("context_tokens", 150_000)),
+                control=control)
+            history = [HumanMessage(content=json.dumps(request["inputs"], ensure_ascii=False))]
+            reply = repaired(control, history, lambda: _run_agent(agent, history, emit),
+                             lambda text: _checked(role, request["inputs"], read_reply(text)))
         else:
             reply = role.run(model, request, worktree, emit)
-    if not role.validates_reply:
-        validate(role.reply_schema, reply)
-        if role.check_reply is not None:
-            role.check_reply(request["inputs"], reply)
+            if not role.validates_reply:
+                _checked(role, request["inputs"], reply)
     emit({"event": "reply", "role": role.name, "reply": reply})
     return reply
 
 
-def _run_agent(agent, request, emit):
+def _checked(role, inputs, reply):
+    validate(role.reply_schema, reply)
+    if role.check_reply is not None:
+        role.check_reply(inputs, reply)
+    return reply
+
+
+def _run_agent(agent, history, emit):
     last_message = None
-    for update in agent.stream(
-        {"messages": [HumanMessage(content=json.dumps(request["inputs"], ensure_ascii=False))]},
-        stream_mode="updates",
-    ):
+    for update in agent.stream({"messages": list(history)}, stream_mode="updates"):
         for result in update.values():
             if not isinstance(result, dict):
                 continue
             for message in result.get("messages", []):
+                history.append(message)
                 if isinstance(message, AIMessage):
                     emit({"event": "progress", "unit": "model_turn"})
                     last_message = message
@@ -211,4 +224,4 @@ def _run_agent(agent, request, emit):
                     emit({"event": "progress", "unit": "tool_result"})
     if last_message is None or last_message.tool_calls or last_message.invalid_tool_calls:
         raise ValueError("missing final model reply")
-    return read_reply(last_message.text)
+    return last_message.text
