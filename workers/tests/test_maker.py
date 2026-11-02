@@ -53,12 +53,15 @@ model = MakerModel(""",
     monkeypatch.setattr(worker_process, "LAUNCH", launcher)
 
 
-def turn(reply=None, *, calls=None, input_tokens=100, output_tokens=50):
+def turn(reply=None, *, calls=None, input_tokens=100, output_tokens=50, reasoning=None):
+    usage = {"input_tokens": input_tokens, "output_tokens": output_tokens,
+             "total_tokens": input_tokens + output_tokens}
+    if reasoning is not None:
+        usage["output_token_details"] = {"reasoning": reasoning}
     return {
         "content": json.dumps(reply) if reply is not None else "",
         "tool_calls": calls or [],
-        "usage_metadata": {"input_tokens": input_tokens, "output_tokens": output_tokens,
-                           "total_tokens": input_tokens + output_tokens},
+        "usage_metadata": usage,
     }
 
 
@@ -354,6 +357,54 @@ def test_usage_fallback_includes_history_and_tool_results(maker_request, monkeyp
 def test_usage_estimate_rounds_up_before_applying_85_percent(usage, characters, expected):
     message = AIMessage(content="x", usage_metadata=usage)
     assert maker.out_of_room(message, 1000, characters - 1) is expected
+
+
+def reasoning_usage(input_tokens, output_tokens, reasoning):
+    usage = {"input_tokens": input_tokens, "output_tokens": output_tokens,
+             "total_tokens": input_tokens + output_tokens}
+    if reasoning is not None:
+        usage["output_token_details"] = {"reasoning": reasoning}
+    return usage
+
+
+def read_call(path="greeting.py"):
+    return [{"name": "read", "args": {"path": path}, "id": "read", "type": "tool_call"}]
+
+
+@pytest.mark.parametrize("reasoning", [None, 39_900], ids=["no-details", "reasoning-details"])
+@pytest.mark.parametrize("input_tokens,output_tokens", [
+    (84_073, 36_544),  # issue #355: the 59.7-minute turn of request 87
+    (88_000, 40_000),  # the next turn: 128,000 of 150,000 by the old sum, 88,300 resent
+])
+def test_reasoning_tokens_do_not_fill_the_context(input_tokens, output_tokens, reasoning):
+    message = AIMessage(content="", tool_calls=read_call(),
+                        usage_metadata=reasoning_usage(input_tokens, output_tokens, reasoning))
+    assert maker.out_of_room(message, 150_000, 1) is False
+
+
+@pytest.mark.parametrize("with_details", [True, False], ids=["reasoning-details", "no-details"])
+def test_visible_output_still_counts_toward_the_context(with_details):
+    # 48,000 visible tokens at three characters each, resent with the next prompt.
+    visible = "x" * 144_000
+    reasoning = 2_000 if with_details else None
+    message = AIMessage(content=visible, usage_metadata=reasoning_usage(80_000, 50_000, reasoning))
+    assert maker.out_of_room(message, 150_000, 1) is True
+
+
+@pytest.mark.parametrize("output_tokens,expected", [(47_499, False), (47_500, True)])
+def test_reasoning_details_leave_exactly_the_visible_tokens(output_tokens, expected):
+    message = AIMessage(content="ok", usage_metadata=reasoning_usage(80_000, 50_000, 50_000 - output_tokens))
+    assert maker.out_of_room(message, 150_000, 1) is expected
+
+
+def test_maker_continues_past_a_turn_that_only_reasoned_long(tmp_path, maker_request):
+    root = Path(maker_request["worktree"])
+    result = start_worker(tmp_path, maker_request, [
+        write_turn(input_tokens=700, output_tokens=400, reasoning=390),
+        turn(DONE, input_tokens=720, output_tokens=300, reasoning=250),
+    ])
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1]["reply"] == {**DONE, "head": git(root, "rev-parse", "HEAD")}
 
 
 def test_done_schema_is_selected_by_kind(maker_request, monkeypatch):
