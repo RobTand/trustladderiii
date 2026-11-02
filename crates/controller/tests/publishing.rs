@@ -297,6 +297,9 @@ impl support::github::Routes for State {
 }
 impl Respond for Api {
     fn respond(&self, r: &Request) -> ResponseTemplate {
+        if r.method == "POST" && r.url.path() == "/v1/default/banks/tl3/memories/recall" {
+            return ResponseTemplate::new(200).set_body_json(json!({"results": []}));
+        }
         if r.method == "POST" && r.url.path() == "/v1/default/banks/tl3/memories" {
             let body: Value = serde_json::from_slice(&r.body).unwrap();
             assert_eq!(body["async"], true);
