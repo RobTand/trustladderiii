@@ -1,0 +1,20 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+load("//tools/bazel:python.bzl", "tl3_py_test")
+
+py_binary(
+    name = "board",
+    srcs = ["board.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "queue_pr",
+    srcs = ["queue_pr.py"],
+    visibility = ["//visibility:public"],
+)
+
+tl3_py_test(
+    name = "test_queue_pr",
+    srcs = ["test_queue_pr.py"],
+    deps = [":queue_pr"],
+)

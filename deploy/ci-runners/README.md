@@ -146,7 +146,10 @@ deploy/ci-runners/install.sh 6
 deploy/ci-runners/install.sh 4
 ```
 
-Run the same workflow once per host with a branch containing the host input:
+Run the same workflow once per host with a branch containing the host input.
+`light-checks.yml` was replaced by the Bazel gate (`.github/workflows/gate.yml`,
+#310), which runs on BuildBuddy and has no `runner_host` input. This procedure
+applies only to a repository that still runs the old workflow:
 
 ```sh
 gh api --method POST repos/RobTand/trustladderiii/actions/workflows/light-checks.yml/dispatches \

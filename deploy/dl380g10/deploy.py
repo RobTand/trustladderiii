@@ -185,10 +185,11 @@ def render_config(home, listen, installation=1, issue=None, image=None, primary=
     }
     if image:
         replacements['sha256:' + '0' * 64] = image
+    # Primary is maker attempts 1 and 2; alternate is attempt 3. Both rename every role that uses them.
     if primary:
-        replacements['gpt-6.1-sol'] = primary
+        replacements['claude-sonnet-5-5'] = primary
     if alternate:
-        replacements['claude-fable-5-1'] = alternate
+        replacements['claude-opus-5-5'] = alternate
     for old, new in replacements.items():
         text = text.replace(old, new)
     text = text.replace('[github]\n', '[github]\nwebhook_listen = "127.0.0.1:8081"\n')

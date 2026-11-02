@@ -114,12 +114,22 @@ def python(files, *, selected=None, lint=True):
             "-p", "test_*.py", "-v")
 
 
+def python_lint(files):
+    """What the gate keeps outside Bazel: ruff, and lock checks for test-less projects."""
+    projects = python_projects(files)
+    untested = {
+        f"project:{directory}" for directory in projects
+        if not any(path.match("test_*.py") and path.is_relative_to(directory) for path in files)
+    }
+    python(files, selected=untested)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("language", choices=("rust", "python"))
+    parser.add_argument("language", choices=("rust", "python", "python-lint"))
     args = parser.parse_args()
     files = tracked_files()
-    {"rust": rust, "python": python}[args.language](files)
+    {"rust": rust, "python": python, "python-lint": python_lint}[args.language](files)
 
 
 if __name__ == "__main__":
