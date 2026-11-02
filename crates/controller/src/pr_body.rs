@@ -236,7 +236,7 @@ mod tests {
         assert_eq!(instructed(&rule, issue).as_deref(), Some("feature"));
         assert_eq!(value(&rule, Some(issue), &feature), "feature");
         assert_eq!(
-            lines(&[rule.clone()], Some(issue), &feature),
+            lines(std::slice::from_ref(&rule), Some(issue), &feature),
             "Change type: feature\n"
         );
         // Without a `PR rules` section, the whole text counts; case is the rule's.
