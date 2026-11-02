@@ -144,3 +144,23 @@ def test_a_real_assertion_on_the_base_still_demonstrates(round_repo):
         container=execution.Container('sha256:' + '1' * 64))
     assert result.verdict == Verdict.PASS
     assert result.tests[0].message == ''
+
+
+def test_refusal_and_head_failure_are_truncated_with_a_marker():
+    from tl3_harness.model import Failure, FailureNotes, judge
+    test = 'tests/test_digest.py::test_x'
+    notes = FailureNotes()
+    notes.details[test] = Failure('call', 'KeyError: ' + "'k'" * 60, 'trace')
+    result = judge(Check('check', Kind.DEMONSTRATING, (test,)), {test: Outcome.ERROR}, {test: Outcome.ASSERTION},
+                   messages={test: 'head ' * 400}, base_notes=notes)
+    message = result.tests[0].message
+    assert result.verdict == Verdict.FAIL
+    assert len(message) == 1000 and message.endswith(' [truncated]')
+    assert message.startswith('On the base this test raised `KeyError')
+
+
+def test_an_error_without_evidence_keeps_the_plain_line():
+    from tl3_harness.model import judge
+    test = 'tests/test_digest.py::test_x'
+    result = judge(Check('check', Kind.DEMONSTRATING, (test,)), {test: Outcome.ERROR}, {test: Outcome.PASSED})
+    assert result.tests[0].message == 'Check demonstrating: base error, head passed.'
