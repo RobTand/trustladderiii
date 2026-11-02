@@ -356,7 +356,7 @@ def test_live_copies_of_a_long_run_match_what_the_final_keeps(request_doc, tmp_p
     assert stored == kept, 'MLflow must hold what the final keeps, not live copies it omitted'
     root = next(span for span in trace['spans'].values() if not span.parent_span_id)
     omitted = next(attr.value.int_value for attr in root.attributes if attr.key == 'tl3.trace.omitted_spans')
-    assert omitted == extra
+    assert omitted == extra + 1, 'the root takes one of the last slots'
 
 
 def crafted_log(directory, uri, spans=1):

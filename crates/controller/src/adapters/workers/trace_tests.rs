@@ -232,12 +232,12 @@ fn flushers_start_in_the_launcher_scope() {
         trace::HELD_BYTES,
     )
     .unwrap();
+    assert!(flushed(&attempt).unwrap().success());
     let args = fs::read_to_string(root.path().join("launcher.args")).unwrap();
     let args: Vec<_> = args.lines().collect();
     assert_eq!(args[0], "--scope-fixture");
     assert_eq!(args[1], root.path().join("python").to_str().unwrap());
     assert_eq!(args[2..6], ["-I", "-m", "tl3_workers.tracing", "flush"]);
-    assert!(flushed(&attempt).unwrap().success());
 }
 
 #[test]

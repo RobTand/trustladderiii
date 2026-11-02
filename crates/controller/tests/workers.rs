@@ -140,6 +140,15 @@ fn delivery() -> Delivery {
         proposed: None,
     }
 }
+/// Entries of the runs directory besides `.traces`, which holds span logs of
+/// retired runs until they ship (#430).
+fn run_entries(runs: &Path) -> usize {
+    fs::read_dir(runs)
+        .unwrap()
+        .filter(|entry| entry.as_ref().unwrap().file_name() != ".traces")
+        .count()
+}
+
 fn root_for(config: &tl3_config::Config, key: &str) -> PathBuf {
     config
         .workers
@@ -225,10 +234,11 @@ fn linked_materials(settings: &tl3_config::Store, wrapped: bool) {
     );
     assert_eq!(request["inputs"]["issue"]["title"], "Correct the greeting");
     let log = root_for(&config, &delivery.key).join("attempt-00000000/trace.jsonl");
+    let wake = config.workers.runs.join(".traces/.wake");
     assert_eq!(
         request["trace"],
         json!({"repo": "RobTand/tl3-sandbox", "issue": 1000, "request": "1", "attempt": 1, "round": 0,
-               "log": log}),
+               "log": log, "wake": wake}),
         "worker metadata must identify its request without changing role inputs"
     );
     assert_eq!(
@@ -756,7 +766,7 @@ fn missing_prompt_holds_launch(settings: &tl3_config::Store) {
     );
     assert!(!root.path().join("entered").exists(), "no worker ran");
     assert_eq!(
-        fs::read_dir(&config.workers.runs).unwrap().count(),
+        run_entries(&config.workers.runs),
         1,
         "only the notification inbox exists"
     );
@@ -1925,7 +1935,7 @@ fn assert_retired(config: &tl3_config::Config, store: &mut Store) {
     assert!(store.worker_progress(None).unwrap().is_empty());
     assert!(store.worker_watches().unwrap().is_empty());
     assert_eq!(
-        fs::read_dir(&config.workers.runs).unwrap().count(),
+        run_entries(&config.workers.runs),
         1,
         "only the notification inbox remains"
     );
