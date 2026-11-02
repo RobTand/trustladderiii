@@ -19,7 +19,7 @@ load("//tools/bazel:python.bzl", "tl3_py_test")
 # a private /tmp, which remote containers and Bazel's sandbox both provide.
 WORKSPACE = "/tmp/tl3-workspace"
 
-_POSTGRES = ["crates/console", "crates/controller", "crates/store"]
+_POSTGRES = ["crates/controller", "crates/store"]
 
 # Files that include_str! and build.rs read from outside the crate.
 _COMPILE_DATA = {
@@ -33,9 +33,6 @@ _COMPILE_DATA = {
         "//workers/tests:fixtures",
     ],
     "crates/config": ["//deploy/dl380g10:models.toml"],
-    # The console's tests and fixture include the store's embedded Postgres
-    # support and the example config's model ladders.
-    "crates/console": ["//crates/config:sources", "//crates/store:sources"],
     "crates/github": ["//crates/mergify:sources"],
     "crates/mergify": ["//crates/github:sources"],
 }
@@ -44,15 +41,10 @@ _BUILD_SCRIPT_DATA = {
 }
 _EXAMPLE_DATA = {
     "//deploy/dl380g10:helper.rs": ["//deploy/github-app:manifest.json"],
-    "examples/console_fixture.rs": ["//crates/config:sources", "//crates/store:sources"],
-    "examples/board_scale.rs": ["//crates/store:sources"],
 }
 
 # Files other crates' tests read at run time.
-_RUNTIME = {
-    # web_api_types_are_current compares the generated TypeScript with the Rust types.
-    "crates/console": ["//web:api_types"],
-}
+_RUNTIME = {}
 
 # rust_gate.py runs the controller's github binary as two timed groups.
 _GATE_GROUPS = {"tl3-controller/github": ["flow", "notices"]}
