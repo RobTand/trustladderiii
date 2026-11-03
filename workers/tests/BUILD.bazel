@@ -591,6 +591,7 @@ tl3_py_test(
     deps = [
         ":conftest",
         ":planner_fixtures",
+        ":worker_process",
         "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//jsonschema",
