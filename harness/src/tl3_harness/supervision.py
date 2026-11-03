@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 import json
 import os
+from pathlib import PurePosixPath
 import selectors
 import signal
 import subprocess
@@ -117,7 +118,11 @@ class Supervised:
                         test = record.get('test')
                         if (set(record) != {'event', 'test'} or not isinstance(test, str)
                                 or self.finished or not test or len(test) > MAX_REPORT_LINE_BYTES
-                                or self.tests and not any(selects(selector, test) for selector in self.tests)):
+                                or self.tests and not any(
+                                    selects(selector, test) or "::" not in selector and (
+                                        str(PurePosixPath(selector)) == "." or
+                                        test.startswith(str(PurePosixPath(selector)) + "/"))
+                                    for selector in self.tests)):
                             raise ValueError('invalid test start')
                         self.test = test
                         # A test starting is evidence, not a PB progress unit. Only completed
