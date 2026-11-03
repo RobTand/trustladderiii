@@ -388,6 +388,7 @@ enum Source {
     Review,
     Ci,
     Maker,
+    Budget,
     Planner,
 }
 
@@ -444,6 +445,16 @@ fn stop_with(source: Source, operations: bool) -> Stopped {
                         "findings": []})),
                     (Source::Maker, Role::Make) => ("maker", json!({"kind": "cant_meet",
                         "report": "The goal needs a schema change outside the plan."})),
+                    (Source::Budget, Role::Make) => ("maker", json!({"kind": "cant_meet",
+                        "report": "Final verification remains unfinished.",
+                        "budget_exhaustion": {
+                            "kind": "execution_budget_exhausted", "dimension": "tool_turns",
+                            "tool_turns": {"used": 64, "allowed": 64},
+                            "input_tokens": {"used": 123456, "allowed": 6000000},
+                            "operation": {"node": 0, "generation": 0, "kind": "make"},
+                            "preserved_work": {"head": "a".repeat(40), "tree": "b".repeat(40)},
+                            "unfinished_obligations": ["CHANGELOG.md update", "final regression checks"]
+                        }})),
                     (Source::Planner, Role::Plan) => ("planner", json!({"kind": "leaf",
                         "files": ["value.py"],
                         "checks": [{"kind": "regression", "node_ids": ["test_value.py::test_total"], "goal_ids": [0]}],
@@ -628,6 +639,37 @@ fn each_failing_step_records_its_own_evidence() {
         assert!(report.contains(text), "{source:?}: {report}");
         assert_operations_note(&stopped.posted, step);
     }
+}
+
+#[test]
+fn maker_budget_exhaustion_reaches_the_stop_report_and_operations_notice() {
+    let mut stopped = stop_with(Source::Budget, true);
+    assert_eq!(stopped.node.phase, Phase::Closed(Outcome::Stopped));
+    assert_eq!(stopped.node.review_stop, Some(ReviewStop::MakerCantMeet));
+    let diagnostic = &stopped.record["findings"]["budget_exhaustion"];
+    assert_eq!(diagnostic["kind"], "execution_budget_exhausted");
+    assert_eq!(diagnostic["tool_turns"]["used"], 64);
+    assert_eq!(diagnostic["preserved_work"]["tree"], "b".repeat(40));
+    assert!(stopped.record["text"].as_str().unwrap().contains("budget"));
+    let notes = operations_notes(&stopped.posted);
+    assert_eq!(notes.len(), 1);
+    let text = notes[0].note.as_deref().unwrap();
+    assert!(text.contains("execution_budget_exhausted"), "{text}");
+    assert!(
+        text.contains("64/64") && text.contains("123456/6000000"),
+        "{text}"
+    );
+    assert!(
+        text.contains("CHANGELOG.md update") && text.contains("final regression checks"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("Restart it"),
+        "exhaustion must not suggest a blind restart: {text}"
+    );
+    let snapshot = stopped.controller.snapshot().unwrap();
+    assert!(!snapshot.rows.iter().any(|r| r.table == "questions"));
+    assert_operations_note(&stopped.posted, "maker_cant_meet");
 }
 
 #[test]
