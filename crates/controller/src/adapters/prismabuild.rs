@@ -90,6 +90,8 @@ struct Job {
     /// The harness may report one trailing selected regression check (#359).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     selected_tests: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    always_tests: Vec<String>,
 }
 
 pub struct Adapter {
@@ -472,7 +474,8 @@ impl Adapter {
             .images
             .for_repository(&delivery.repository, &self.settings.image);
         let run = checks::descended_base(delivery)?;
-        let selected_tests = self.images.selected_tests(&delivery.repository);
+        let tests = self.images.additional_tests(&delivery.repository);
+        let selected_tests = tests.selected;
         let mut staged = delivery.clone();
         staged.checks = Some(run.clone());
         let changed_paths = checks::stage(
@@ -482,8 +485,14 @@ impl Adapter {
             image,
             self.images.exec_scratch(&delivery.repository),
             &self.protected_paths(&delivery.repository),
-            selected_tests,
+            &tests,
         )?;
+        let mut seen = std::collections::BTreeSet::new();
+        let always_tests = tests
+            .always
+            .into_iter()
+            .filter(|test| seen.insert(test.clone()))
+            .collect();
         let mut command = self.settings.python.clone();
         command.extend(["-I".into(), "-B".into(), "action.py".into()]);
         let action = SubmitAction {
@@ -511,6 +520,7 @@ impl Adapter {
             changed_paths,
             run,
             selected_tests,
+            always_tests,
         };
         // The sealed key reaches stable storage before PB may execute anything.
         write(&record_path(&self.settings.records, delivery, "job"), &job)?;
