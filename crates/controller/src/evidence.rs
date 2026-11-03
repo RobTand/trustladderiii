@@ -1220,31 +1220,38 @@ mod tests {
     fn escaped_field_deliveries() -> Vec<Delivery> {
         let mut deliveries = Vec::new();
         for key in ["cookie", "token", "apikey", "passwd"] {
-            for depth in [1, 2, 3] {
+            for depth in [0, 1, 2, 3] {
                 for quote in ['"', '\''] {
+                    let opposite = if quote == '"' { '\'' } else { '"' };
                     for space in [" ", r"\n\t"] {
-                        let quote = format!("{}{quote}", "\\".repeat(depth));
-                        let name = format!(
-                            "check-1 out: {{{quote}{key}{quote}:{space}{quote}Z7vQ9mN4pR6xT8cL2hK5sD3f{quote}}}"
-                        );
-                        let (mut snapshot, mut delivery) = fixture();
-                        let report = &mut snapshot
-                            .rows
-                            .iter_mut()
-                            .find(|row| row.table == "check_reports")
-                            .unwrap()
-                            .value;
-                        report["results"][0]["name"] = json!(name);
-                        *report = check_record(report);
-                        delivery.evidence = Some(
-                            capture(
-                                &snapshot,
-                                &Commit::new("publish", json!({}), &snapshot),
-                                &delivery,
-                            )
-                            .unwrap(),
-                        );
-                        deliveries.push(delivery);
+                        for prefix in [
+                            String::new(),
+                            format!("ab{opposite}"),
+                            format!("ab{opposite}cd{opposite}"),
+                        ] {
+                            let quote = format!("{}{quote}", "\\".repeat(depth));
+                            let name = format!(
+                                "check-1 out: {{{quote}{key}{quote}:{space}{quote}{prefix}Z7vQ9mN4pR6xT8cL2hK5sD3f{quote}}}"
+                            );
+                            let (mut snapshot, mut delivery) = fixture();
+                            let report = &mut snapshot
+                                .rows
+                                .iter_mut()
+                                .find(|row| row.table == "check_reports")
+                                .unwrap()
+                                .value;
+                            report["results"][0]["name"] = json!(name);
+                            *report = check_record(report);
+                            delivery.evidence = Some(
+                                capture(
+                                    &snapshot,
+                                    &Commit::new("publish", json!({}), &snapshot),
+                                    &delivery,
+                                )
+                                .unwrap(),
+                            );
+                            deliveries.push(delivery);
+                        }
                     }
                 }
             }
