@@ -1656,3 +1656,33 @@ def test_correction_cannot_expand_draft(planner_request, request156, monkeypatch
     assert violations, 'a coherent correction must not authorize a wider draft'
     if expansion == 'file':
         assert any('Correction expands the draft footprint: tests/test_existing.py' in v for v in violations)
+
+
+@pytest.mark.parametrize('forcing_change', ['new', 'same', 'target', 'value', 'environment'])
+def test_appended_coverage_check_cannot_introduce_forcing(planner_request, request156, monkeypatch, forcing_change):
+    from tl3_workers import runtime
+
+    forcing = {'symptom': 'Delay daemon replies.', 'environment': {},
+               'patches': [{'target': 'shim.DELAY', 'value': 1}]}
+    if forcing_change != 'new':
+        request156['checks'][0]['forcing'] = copy.deepcopy(forcing)
+    fixed = copy.deepcopy(request156)
+    if forcing_change == 'target':
+        forcing['patches'][0]['target'] = 'shim.OTHER_DELAY'
+    elif forcing_change == 'value':
+        forcing['patches'][0]['value'] = 2
+    elif forcing_change == 'environment':
+        forcing['environment'] = {'SHIM_DELAY': '1'}
+    fixed['checks'].append({'kind': 'demonstrating', 'node_ids': [CONTROL], 'goal_ids': [1],
+                            'forcing': forcing})
+    model = planner_model(monkeypatch, request156, fixed, LEAF)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    assert not model.calls[1][1]
+    result = events[-1]['reply']
+    if forcing_change == 'same':
+        assert result['violations'] == []
+        assert result['checks'] == fixed['checks']
+    else:
+        assert 'Correction adds a forcing absent from the draft.' in result['violations']

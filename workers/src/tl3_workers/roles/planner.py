@@ -73,6 +73,9 @@ class PlanConsistencyError(ValueError):
                 if (check['kind'] != 'demonstrating'
                         or any(function(node) not in uncovered for node in check['node_ids'])):
                     errors.append('Correction may only add demonstrating checks for uncovered edits.')
+                if ('forcing' in check
+                        and not any(check['forcing'] == original.get('forcing') for original in checks)):
+                    errors.append('Correction adds a forcing absent from the draft.')
                 continue
             original = checks[index]
             if ({key: value for key, value in check.items() if key != 'node_ids'}

@@ -120,6 +120,7 @@ those marked for review. Return exactly one of these proposals:
   kinds and forcings. Only add the missing demonstrating coverage, replace
   forced non-base selections with existing base nodes, or drop an uncovered
   unnecessary edit declaration. Do not add files, unrelated checks or goals.
+  An added check may reuse a draft forcing unchanged or run without a forcing.
   A goal that asks the maker to change an existing test, for
   example to extend, patch, update, fix or rewrite it, needs that test in
   edits_tests; code refuses a plan whose goal asks that of a test a regression
