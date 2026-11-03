@@ -1,8 +1,11 @@
 """The Bazel migration must preserve the gate's discovered tests."""
 import json
+import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import bazel_parity
 
@@ -79,6 +82,40 @@ class ParityTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'duplicate'):
             bazel_parity.compare(inventory, inventory)
 
+
+
+class ShardedReceiptTests(unittest.TestCase):
+    def receipts(self, root, parts):
+        for index, names in enumerate(parts):
+            outputs = root / f'shard_{index}/test.outputs'
+            outputs.mkdir(parents=True)
+            (outputs / 'inventory.json').write_text(json.dumps({
+                'rust': {'controller/workers': names},
+                'shard': {'index': index, 'total': 2}}))
+
+    def test_disjoint_shards_merge_into_one_binary_inventory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.receipts(root, [['first'], ['second']])
+            try:
+                found = bazel_parity.bazel_receipts(root)['rust']
+            except RuntimeError as error:
+                self.fail(f'disjoint complete shards must be accepted: {error}')
+            self.assertEqual(found, {'controller/workers': ['first', 'second']})
+
+    def test_missing_shard_fails(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.receipts(root, [['first']])
+            with self.assertRaisesRegex(RuntimeError, 'missing.*shard'):
+                bazel_parity.bazel_receipts(root)
+
+    def test_duplicate_scenario_across_shards_fails(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.receipts(root, [['same'], ['same']])
+            with self.assertRaisesRegex(RuntimeError, 'duplicate.*scenario'):
+                bazel_parity.bazel_receipts(root)
 
 
 class ReceiptTests(unittest.TestCase):
@@ -176,6 +213,29 @@ class StaticParityTests(unittest.TestCase):
     def test_empty_discovery_fails(self):
         with self.assertRaisesRegex(RuntimeError, 'empty'):
             bazel_parity.compare_static({}, {}, [], [])
+
+
+class RustRunnerReceiptTests(unittest.TestCase):
+    def test_shard_receipt_does_not_claim_scalar_action_resource_metrics(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'bazel'))
+        import rust_runner
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = {'TEST_TOTAL_SHARDS': '2', 'TEST_SHARD_INDEX': '1',
+                           'TEST_SHARD_STATUS_FILE': str(Path(temporary, 'status')),
+                           'TEST_UNDECLARED_OUTPUTS_DIR': temporary, 'TL3_BUDGETS': 'record'}
+            with patch.dict(os.environ, environment), \
+                 patch.object(sys, 'argv', ['runner', 'fixture', 'tl3-controller/workers', 'custom', '-']), \
+                 patch.object(rust_runner, 'prepare'), \
+                 patch.object(rust_runner, 'link_workspace'), \
+                 patch.object(rust_runner, 'check_workspace'), \
+                 patch.object(rust_runner.rust_gate, 'execute_binary',
+                              return_value={'tl3-controller/workers::one': 0.25}):
+                rust_runner.main()
+            receipt = json.loads(Path(temporary, 'inventory.json').read_text())
+            self.assertEqual(receipt['shard'], {'index': 1, 'total': 2})
+            self.assertEqual(receipt['rust'], {'tl3-controller/workers': ['one']})
+            self.assertIsInstance(receipt.get('cpu_seconds', {}), dict)
+            self.assertNotIn('wall_seconds', receipt)
 
 
 class NestedSuiteSizingTests(unittest.TestCase):

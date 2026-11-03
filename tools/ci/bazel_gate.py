@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -50,11 +51,11 @@ IRRELEVANT = [
     'crates/kernel/run.py',
 ]
 CONFIGS = {'amd64': 'remote', 'arm64': 'remote-arm64'}
-# Written by tools/bazel/rust_runner.py when every test passed but a budget overran.
-BUDGET_MARKER = 'budget-overrun.txt'
 # .bazelrc's default names; test and build runs prefix their own.
 DIAGNOSTICS = ['bazel-remote-grpc.log', 'execution_log.binpb.zst']
 TESTS = 'tests(//...)'
+# No quarantined targets today. A future table supplies canonical labels here.
+QUARANTINE = frozenset()
 
 
 class GateError(RuntimeError):
@@ -154,12 +155,64 @@ def canonical(label):
     return label[1:] if label.startswith('@//') else label.removeprefix('@@')
 
 
+class BepStream:
+    """Read new, complete JSON lines without retaining or exposing raw events."""
+
+    def __init__(self, path):
+        self.path, self.offset, self.pending = path, 0, b''
+
+    def read(self):
+        if not self.path.exists():
+            return []
+        with self.path.open('rb') as stream:
+            stream.seek(self.offset)
+            data = stream.read()
+            self.offset = stream.tell()
+        lines = (self.pending + data).split(b'\n')
+        self.pending = lines.pop()
+        return [json.loads(line) for line in lines if line.strip()]
+
+
+class FailFast:
+    """Mode policy; the caller owns the Bazel process."""
+
+    def __init__(self, mode, quarantine=QUARANTINE, grace=60):
+        self.mode, self.quarantine, self.grace = mode, quarantine, min(grace, 60)
+        self.failure, self.deadline = None, None
+        self.failures, self.observed = set(), set()
+
+    def event(self, event, now):
+        identity = event.get('id', {})
+        result = identity.get('testResult')
+        summary = identity.get('testSummary')
+        if result or (summary and event.get('testSummary', {}).get('overallStatus', 'NO_STATUS') != 'NO_STATUS'):
+            self.observed.add(canonical((result or summary)['label']))
+        reason, label = None, None
+        status = event.get('testResult', {}).get('status')
+        if result and status in ('FAILED', 'TIMEOUT'):
+            label, reason = canonical(result['label']), status
+        completed = identity.get('targetCompleted')
+        if completed and 'completed' in event and not event['completed'].get('success', False):
+            label, reason = canonical(completed['label']), 'BUILD_FAILURE'
+        if not label or label in self.quarantine or self.mode == 'main':
+            return
+        self.failures.add(label)
+        if self.failure is None:
+            self.failure = {'label': label, 'reason': reason}
+            self.deadline = now + (self.grace if self.mode == 'pr' else 0)
+
+    def should_cancel(self, now):
+        return self.deadline is not None and now >= self.deadline
+
+
 class Workspace:
     """Git and Bazel on the runner. Every failure raises GateError."""
 
-    def __init__(self, root=ROOT, bazel='bazel', graph_cache=None):
-        self.root, self.bazel = root, bazel
+    def __init__(self, root=ROOT, bazel='bazel', graph_cache=None, mode='main', quarantine=QUARANTINE):
+        self.root, self.bazel, self.mode = root, bazel, mode
         self.graph_cache = graph_cache
+        self.quarantine = quarantine
+        self.aborted_early, self.not_run = None, []
 
     def run(self, *command, capture=True, check=True):
         print('$ ' + shlex.join(map(str, command)), flush=True)
@@ -303,6 +356,37 @@ class Workspace:
         except (ValueError, OSError, KeyError) as error:
             raise GateError(f'graph-impact check failed: {error}') from error
 
+    def watch(self, command, bep):
+        """SIGINT the client, then reap it after Bazel cancels remote actions."""
+        print('$ ' + shlex.join(map(str, command)), flush=True)
+        watcher, stream = FailFast(self.mode, self.quarantine), BepStream(bep)
+        self.aborted_early = None
+        with subprocess.Popen(list(map(str, command)), cwd=self.root) as process:
+            while True:
+                for event in stream.read():
+                    watcher.event(event, time.monotonic())
+                if process.poll() is not None:
+                    break
+                if watcher.should_cancel(time.monotonic()):
+                    try:
+                        process.send_signal(signal.SIGINT)
+                    except ProcessLookupError:
+                        break
+                    self.aborted_early = watcher.failure
+                    print('Aborting Bazel: ' + json.dumps(self.aborted_early), flush=True)
+                    try:
+                        process.wait(timeout=30)
+                    except subprocess.TimeoutExpired:
+                        # Bazel's second interrupt stops actions that ignored the first.
+                        process.send_signal(signal.SIGINT)
+                        process.wait(timeout=30)
+                    break
+                time.sleep(.1)
+            # The last events and summaries may arrive during SIGINT shutdown.
+            for event in stream.read():
+                watcher.event(event, time.monotonic())
+        return process.returncode, watcher.observed
+
     def test(self, targets, config, metadata, log_name, extra=()):
         """Run targets; return per-label status. Build failures leave labels without status."""
         if not targets:
@@ -311,38 +395,51 @@ class Workspace:
         patterns.write_text('\n'.join(targets) + '\n')
         bep = Path(tempfile.gettempdir(), f'{log_name}-bep.json')
         bep.unlink(missing_ok=True)
-        self.run(self.bazel, 'test', f'--config={config}', '--config=ci', '--keep_going',
-                 f'--target_pattern_file={patterns}', f'--build_event_json_file={bep}',
-                 *diagnostic_logs(log_name), *extra,
-                 *[f'--build_metadata={key}={value}' for key, value in metadata.items()],
-                 capture=False, check=False)
+        command = [self.bazel, 'test', f'--config={config}', '--config=ci', '--keep_going',
+                   f'--target_pattern_file={patterns}', f'--build_event_json_file={bep}',
+                   *diagnostic_logs(log_name), *extra,
+                   *[f'--build_metadata={key}={value}' for key, value in metadata.items()]]
+        if self.mode == 'main':
+            self.run(*command, capture=False, check=False)
+            self.not_run = []
+        else:
+            _, observed = self.watch(command, bep)
+            self.not_run = sorted(set(targets) - observed)
         return test_statuses(bep)
 
-    def budget_only(self, labels):
-        """Failed labels whose runner reported only a time-budget overrun."""
-        found = set()
-        for label in labels:
+    def budget_warnings(self, labels):
+        """Collect timing warnings from this run, including cached test outputs."""
+        warnings = []
+        for label in sorted(labels):
             package, _, name = label.removeprefix('//').partition(':')
             outputs = self.root / 'bazel-testlogs' / package / name / 'test.outputs'
+            path = outputs / 'budget-warnings.json'
             archive = outputs / 'outputs.zip'
-            if (outputs / BUDGET_MARKER).is_file():
-                found.add(label)
+            records = []
+            if path.is_file():
+                records = json.loads(path.read_text())
             elif archive.is_file():
                 with zipfile.ZipFile(archive) as zipped:
-                    if BUDGET_MARKER in zipped.namelist():
-                        found.add(label)
-        return found
+                    if path.name in zipped.namelist():
+                        records = json.loads(zipped.read(path.name))
+            warnings.extend({**record, 'label': label} for record in records)
+        return warnings
 
-    def build(self, targets, config, metadata, log_name):
+    def build(self, targets, config, metadata, log_name, extra=()):
         """Build targets; True when every one built."""
         if not targets:
             return True
         patterns = Path(tempfile.gettempdir(), f'{log_name}-build-targets.txt')
         patterns.write_text('\n'.join(targets) + '\n')
-        return not self.run(self.bazel, 'build', f'--config={config}', '--config=ci', '--keep_going',
-                            f'--target_pattern_file={patterns}', *diagnostic_logs(f'{log_name}-build'),
-                            *[f'--build_metadata={key}={value}' for key, value in metadata.items()],
-                            capture=False, check=False)
+        command = [self.bazel, 'build', f'--config={config}', '--config=ci', '--keep_going',
+                   f'--target_pattern_file={patterns}', *diagnostic_logs(f'{log_name}-build'), *extra,
+                   *[f'--build_metadata={key}={value}' for key, value in metadata.items()]]
+        if self.mode == 'main':
+            return not self.run(*command, capture=False, check=False)
+        bep = Path(tempfile.gettempdir(), f'{log_name}-build-bep.json')
+        bep.unlink(missing_ok=True)
+        code, _ = self.watch([*command, f'--build_event_json_file={bep}'], bep)
+        return code == 0
 
     def budget_check(self, base):
         """Light checks refused PRs that grow test budgets; so does this gate."""
@@ -423,19 +520,8 @@ def runner_entrypoint(main):
     return scan_status or status
 
 
-def rerun_budget_only(workspace, labels, statuses, config, metadata, log_name):
-    """Rerun once the targets that failed only a time budget. Real failures are never retried."""
-    failed = [label for label in labels if statuses.get(label) != 'PASSED']
-    budget = sorted(workspace.budget_only(failed))
-    if not budget:
-        return statuses, {}
-    again = workspace.test(budget, config, metadata, f'{log_name}-budget-rerun',
-                           extra=['--nocache_test_results'])
-    reruns = {label: again.get(label, 'NO_STATUS') for label in budget}
-    return {**statuses, **reruns}, reruns
-
-
-def gate_pr(workspace, base, head, metadata):
+def gate_pr(workspace, base, head, metadata, mode='pr'):
+    workspace.mode = mode
     started = time.monotonic()
     for sha in [base, head]:
         workspace.ensure_commit(sha)
@@ -451,14 +537,18 @@ def gate_pr(workspace, base, head, metadata):
     decision = plan(changed, deleted, impacted, used, tests)
     selected_seconds = time.monotonic() - started
     statuses = workspace.test(decision['selected'], CONFIGS['amd64'], metadata, 'pr')
-    statuses, reruns = rerun_budget_only(workspace, decision['selected'], statuses, CONFIGS['amd64'],
-                                         metadata, 'pr')
+    warnings = workspace.budget_warnings(statuses)
+    aborted = getattr(workspace, 'aborted_early', None)
+    not_run = getattr(workspace, 'not_run', sorted(set(decision['selected']) - statuses.keys()))
     verdicts, failed = classify(decision['selected'], statuses, rust)
-    inputs = workspace.inputs_check() + workspace.budget_check(base) + graph['errors']
-    if not workspace.build(decision['build'], CONFIGS['amd64'], metadata, 'pr'):
+    inputs = (graph['errors'] if aborted else
+              workspace.inputs_check() + workspace.budget_check(base) + graph['errors'])
+    if not aborted and not workspace.build(decision['build'], CONFIGS['amd64'], metadata, 'pr'):
         # Reported like stale inputs, so both checks fail.
         inputs.append('bazel build of impacted targets failed: ' + ' '.join(decision['build']))
-    return {**decision, 'verdicts': verdicts, 'failed': failed, 'inputs': inputs, 'budget_reruns': reruns,
+    aborted = aborted or getattr(workspace, 'aborted_early', None)
+    return {**decision, 'verdicts': verdicts, 'failed': failed, 'inputs': inputs, 'budget_warnings': warnings,
+            'aborted_early': aborted, 'not_run': not_run,
             'changed': sorted(changed | deleted), 'graph_impact': graph,
             'durations': {'selection': round(selected_seconds, 1),
                           'total': round(time.monotonic() - started, 1)}}
@@ -466,6 +556,7 @@ def gate_pr(workspace, base, head, metadata):
 
 def gate_main(workspace, base, head, metadata):
     """Full run after a merge, on both architectures, plus what selection would have run."""
+    workspace.mode = 'main'
     started = time.monotonic()
     for sha in [base, head]:
         workspace.ensure_commit(sha)
@@ -487,24 +578,26 @@ def gate_main(workspace, base, head, metadata):
     for architecture, config in CONFIGS.items():
         begun = time.monotonic()
         statuses = workspace.test(everything, config, metadata, f'main-{architecture}')
-        statuses, reruns = rerun_budget_only(workspace, everything, statuses, config, metadata,
-                                             f'main-{architecture}')
+        warnings = workspace.budget_warnings(statuses)
         verdicts, failed = classify(everything, statuses, rust)
         failures = failed['rust'] + failed['python']
         architectures[architecture] = {
             'verdicts': verdicts, 'failed': failed,
-            'missed': sorted(set(failures) - set(selection['selected'])), 'budget_reruns': reruns,
+            'missed': sorted(set(failures) - set(selection['selected'])), 'budget_warnings': warnings,
             'seconds': round(time.monotonic() - begun, 1)}
     return {'selection': selection['selection'], 'reason': selection['reason'],
             'selected': selection['selected'], 'tests': len(everything),
-            'architectures': architectures, 'inputs': workspace.inputs_check(),
+            'architectures': architectures,
+            'budget_warnings': [{**warning, 'architecture': arch}
+                                for arch, info in architectures.items() for warning in info['budget_warnings']],
+            'inputs': workspace.inputs_check(),
             'changed': sorted(changed | deleted),
             'durations': {'total': round(time.monotonic() - started, 1)}}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['pr', 'main'])
+    parser.add_argument('mode', choices=['pr', 'batch-draft', 'main'])
     parser.add_argument('--base', required=True)
     parser.add_argument('--head', required=True)
     parser.add_argument('--branch', default='')
@@ -513,8 +606,11 @@ def main():
     metadata = {'COMMIT_SHA': args.head, 'BRANCH_NAME': args.branch}
     result = {'schema': SCHEMA, 'mode': args.mode, 'base': args.base, 'head': args.head}
     try:
-        gate = gate_pr if args.mode == 'pr' else gate_main
-        result.update(gate(Workspace(), args.base, args.head, metadata))
+        workspace = Workspace(mode=args.mode)
+        if args.mode == 'main':
+            result.update(gate_main(workspace, args.base, args.head, metadata))
+        else:
+            result.update(gate_pr(workspace, args.base, args.head, metadata, mode=args.mode))
         result['error'] = None
     except GateError as error:
         result['error'] = str(error)
@@ -524,7 +620,7 @@ def main():
 
 
 def passed(result):
-    if result.get('error') or result.get('inputs'):
+    if result.get('error') or result.get('inputs') or result.get('aborted_early'):
         return False
     if result['mode'] == 'main':
         return all(not any(arch['failed'].values()) for arch in result['architectures'].values())

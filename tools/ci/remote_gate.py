@@ -180,14 +180,14 @@ def parse_result(raw, head):
 
 def outputs(result):
     """GitHub step outputs. Scopes are ready only when detection succeeded."""
-    ready = result.get('error') is None and result.get('mode') == 'pr'
+    ready = result.get('error') is None and result.get('mode') in ('pr', 'batch-draft')
     values = {
         'scopes_ready': str(ready).lower(),
         'scopes': ','.join(result.get('scopes', [])) if ready else '',
         'all_scopes': str(bool(result.get('all_scopes'))).lower(),
     }
-    inputs_ok = not result.get('error') and not result.get('inputs')
-    if result.get('mode') == 'pr':
+    inputs_ok = not result.get('error') and not result.get('inputs') and not result.get('aborted_early')
+    if result.get('mode') in ('pr', 'batch-draft'):
         for language in ['rust', 'python']:
             verdict = result.get('verdicts', {}).get(language)
             values[language] = 'success' if inputs_ok and verdict in ('pass', 'skipped') else 'failure'
@@ -213,6 +213,7 @@ def post_merge_record(result, prs, seconds):
             'verdict': verdict, 'selection': result.get('selection'),
             'selected': len(result.get('selected', [])), 'tests': result.get('tests'),
             'failures': failures, 'missed': missed, 'seconds': round(seconds, 1),
+            'budget_warnings': result.get('budget_warnings', []),
             'error': result.get('error'), 'inputs': result.get('inputs')}
 
 
@@ -236,7 +237,11 @@ def explain(result, prs):
             lines.append('Crate fan-out: ' + ', '.join(f'{label} {count}' for label, count in
                          sorted(crates['fanout'].items(), key=lambda item: (-item[1], item[0]))))
         lines.extend(graph.get('errors', []))
-    if result['mode'] == 'pr':
+    if result.get('aborted_early'):
+        aborted = result['aborted_early']
+        lines.append(f"Aborted early: {aborted['label']} ({aborted['reason']})")
+        lines.append(f"Targets without a test result: {len(result.get('not_run', []))}")
+    if result['mode'] in ('pr', 'batch-draft'):
         lines.append(f"Selection: {result.get('selection')}, {len(result.get('selected', []))} tests")
         for language, labels in result.get('failed', {}).items():
             for label in labels:
@@ -249,6 +254,10 @@ def explain(result, prs):
                 if arch == 'arm64':
                     caught = 'arm64 runs only after merge'
                 lines.append(f'FAILED on {arch}: {label} ({caught})')
+    for warning in result.get('budget_warnings', []):
+        architecture = f" on {warning['architecture']}" if warning.get('architecture') else ''
+        lines.append(f"WARNING{architecture}: {warning['label']} {warning['test']} "
+                     f"{warning['metric']} {warning['measured']:.3f}s > {warning['limit']:.3f}s")
     return '\n'.join(lines)
 
 
@@ -309,7 +318,7 @@ def main():
             sys.exit(str(error))
         return 0
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['pr', 'main'])
+    parser.add_argument('mode', choices=['pr', 'batch-draft', 'main'])
     parser.add_argument('--base', default='')
     parser.add_argument('--head', required=True)
     parser.add_argument('--branch', required=True)

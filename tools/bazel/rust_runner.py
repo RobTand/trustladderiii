@@ -11,8 +11,6 @@ import rust_gate  # noqa: E402
 
 # Must match WORKSPACE in tools/bazel/rust.bzl.
 WORKSPACE = Path('/tmp/tl3-workspace')
-# Must match BUDGET_MARKER in tools/ci/bazel_gate.py: every test passed, only a budget overran.
-BUDGET_MARKER = 'budget-overrun.txt'
 
 
 def link_workspace():
@@ -39,14 +37,11 @@ def use_worker_python(launcher):
 
 
 def enforce_budget(results, config, runner, outputs, baseline=None, cpu_seconds=None, cpu_fallbacks=None):
-    try:
-        rust_gate.check_budget(results, config, baseline or config, runner_class=runner,
-                               cpu_seconds=cpu_seconds, cpu_fallbacks=cpu_fallbacks)
-    except RuntimeError as error:
-        if str(error).startswith('Per-test time budget exceeded'):
-            # The gate reruns budget-only failures once; an executor can be contended.
-            Path(outputs, BUDGET_MARKER).write_text(str(error) + '\n')
-        raise
+    warnings = rust_gate.check_budget(results, config, baseline or config, runner_class=runner,
+                                      cpu_seconds=cpu_seconds, cpu_fallbacks=cpu_fallbacks)
+    Path(outputs, 'budget-warnings.json').write_text(json.dumps(warnings) + '\n')
+    for warning in warnings:
+        print(json.dumps({'budget_warning': warning}), flush=True)
 
 
 def main():
@@ -58,17 +53,25 @@ def main():
     for repository in Path('..').glob('*postgres_linux_*'):
         os.environ['TL3_TEST_POSTGRES_DIR'] = str(repository.resolve())
     binary = {'name': name, 'command': [str(Path(executable).resolve())]}
+    shard = None
+    if int(os.environ.get('TEST_TOTAL_SHARDS', '1')) > 1:
+        shard = {'index': int(os.environ['TEST_SHARD_INDEX']),
+                 'total': int(os.environ['TEST_TOTAL_SHARDS'])}
+        if harness != 'custom' or name != 'tl3-controller/workers':
+            raise RuntimeError('scenario sharding requires a shard-aware custom harness')
+        Path(os.environ['TEST_SHARD_STATUS_FILE']).touch()
     cpu_seconds, cpu_details = {}, {}
     results = rust_gate.execute_binary(binary, harness == 'custom', arguments, cpu_seconds=cpu_seconds,
                                        cpu_details=cpu_details)
     check_workspace()
-    # .bazelrc names the executor class; budgets stay strict without one.
+    # .bazelrc names the executor class used to calculate warning thresholds.
     runner = os.environ.get('TL3_RUNNER_CLASS', 'baseline')
     names = [key.split('::', 1)[1] for key in results if not key.endswith('::__tail__')]
     # Written before the budget check so calibration also sees overruns.
     receipt = Path(os.environ['TEST_UNDECLARED_OUTPUTS_DIR'], 'inventory.json')
-    receipt.write_text(json.dumps({'rust': {name: names}, 'seconds': results, 'cpu_seconds': cpu_seconds, 'runner_class': runner,
-                                   'cpu_platform': sys.platform, 'cpu_sampling': 'proc-postmaster-v1', **cpu_details}))
+    receipt.write_text(json.dumps({'rust': {name: names}, 'seconds': results, 'cpu_seconds': cpu_seconds,
+                                   'runner_class': runner, 'shard': shard, 'cpu_platform': sys.platform,
+                                   'cpu_sampling': 'proc-postmaster-v1', **cpu_details}))
     if os.environ.get('TL3_BUDGETS') == 'record':
         # Uncalibrated executors (arm64) keep the seconds in the receipt only.
         return
