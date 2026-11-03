@@ -216,15 +216,21 @@ def test_request233_rejects_unbound_or_incompatible_campaign_before_admission(re
     assert ledger.actions == ledger.attempts == 0
 
 
-def test_request233_source_assertion_goal_has_a_protocol_representation(request233):
+@pytest.mark.parametrize('name', ['ingest-reply', 'maker-input', 'reviewer-input'])
+def test_request233_source_assertion_goal_has_a_protocol_representation(request233, name):
     from jsonschema import Draft202012Validator
-    from tl3_workers.contracts import schema
+    from tl3_workers.contracts import schema, registry
     _, _, inputs, _, _ = request233
-    goal = inputs['ingest']['goals'][0]
-    variant = next(item for item in schema('ingest-reply')['oneOf']
-                   if item['properties']['kind'].get('const') == 'brief')
-    validator = Draft202012Validator({'$defs': schema('ingest-reply')['$defs'],
-                                      **variant['properties']['goals']['items']})
+    goal = deepcopy(inputs['ingest']['goals'][0])
+    document = schema(name)
+    if name == 'ingest-reply':
+        variant = next(item for item in document['oneOf']
+                       if item['properties']['kind'].get('const') == 'brief')
+    else:
+        variant = document
+        goal['id'] = 'goal-1'
+    validator = Draft202012Validator({'$id': document['$id'], '$defs': document.get('$defs', {}),
+                                      **variant['properties']['goals']['items']}, registry=registry())
     validator.validate(goal)
 
 
@@ -236,8 +242,8 @@ def test_request233_supplemental_campaign_keeps_zero_of_ten_refusal(request233):
                          'repeat': 10, 'parallel': 4}, goal_ids=[1])
     assert result['status'] == 'refused', result
     assert 'observed 0 of 10 runs; zero is not RED' in result['message']
-    assert len(calls) == 2
-    assert len(result['forced']['symptom_runs']) == 10
+    assert len(calls) == 1
+    assert len(result['unforced']['symptom_runs']) == 10
 
 
 def test_request233_rehearsal_tool_exposes_goal_binding(request233):
