@@ -66,7 +66,10 @@ def exporters(monkeypatch):
 
     def launch(*args, **kwargs):
         child = popen(*args, **kwargs)
-        children.append(child)
+        command = child.args
+        if (isinstance(command, (list, tuple)) and len(command) > 2
+                and command[2] == 'ship' and Path(command[1]).name == 'tracing.py'):
+            children.append(child)
         return child
 
     monkeypatch.setattr(subprocess, 'Popen', launch)
