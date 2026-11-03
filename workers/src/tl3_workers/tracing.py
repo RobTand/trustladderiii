@@ -1255,9 +1255,10 @@ class WorkerStageError(ValueError):
                         "postmortem assessment write failure",
                         "postmortem assessment outcome unknown"})
 
-    def __init__(self, stage, error=None):
+    def __init__(self, stage, error=None, *, judge_failure=None):
         self.stage = stage if stage in self.STAGES else "worker run failed"
         self.validation = error
+        self.judge_failure = judge_failure
         super().__init__(self.stage)
 
 
@@ -1314,7 +1315,17 @@ def failure_tags(error):
                 "failure_message": Redactor(None).text(message)[:220]}
     if isinstance(error, WorkerStageError):
         from jsonschema import ValidationError
+        from tl3_workers.judges import FailureClass, JudgeFailure
+
         message = error.stage
+        if (isinstance(error.judge_failure, JudgeFailure)
+                and isinstance(error.judge_failure.category, FailureClass)):
+            cause = error.judge_failure
+            message += ": " + cause.category.value
+            if type(cause.status) is int and 400 <= cause.status <= 599:
+                message += f" HTTP {cause.status}"
+            return {"failure_class": cause.category.value, "failure_stage": error.stage,
+                    "failure_message": message}
         if isinstance(error.validation, ValidationError):
             message += ": " + failure_tags(error.validation)["failure_message"]
         return {"failure_class": "WorkerStageError", "failure_message": message[:512]}
