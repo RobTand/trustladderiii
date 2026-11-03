@@ -51,7 +51,8 @@ jobs:
           BASE: ${{ steps.refs.outputs.base }}
           HEAD: ${{ steps.refs.outputs.head }}
           BRANCH: ${{ github.head_ref }}
-        run: exec python3 tools/ci/remote_gate.py pr --base "$BASE" --head "$HEAD" --branch "$BRANCH"
+          MODE: ${{ github.event.pull_request.draft && startsWith(github.head_ref, 'mergify/') && 'batch-draft' || 'pr' }}
+        run: exec python3 tools/ci/remote_gate.py "$MODE" --base "$BASE" --head "$HEAD" --branch "$BRANCH"
       - name: Cancel BuildBuddy run
         if: cancelled()
         env:

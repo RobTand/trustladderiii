@@ -163,6 +163,14 @@ class CancellationTests(unittest.TestCase):
 
 
 class ResultTests(unittest.TestCase):
+    def test_batch_abort_keeps_scopes_and_fails_both_checks(self):
+        values = remote_gate.outputs(result(mode='batch-draft',
+                                           aborted_early={'label': '//a:failed', 'reason': 'FAILED'}))
+        self.assertEqual(values['scopes_ready'], 'true')
+        self.assertEqual(values['rust'], 'failure')
+        self.assertEqual(values['python'], 'failure')
+
+
     def test_merged_pr_lookup_keeps_its_token_out_of_git(self):
         with patch.dict(os.environ, {'BEFORE': 'base', 'AFTER': 'head',
                                     'GITHUB_REPOSITORY': 'owner/repo',
