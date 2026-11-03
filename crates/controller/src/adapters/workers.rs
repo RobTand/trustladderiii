@@ -12,6 +12,8 @@ pub(crate) mod ladder;
 mod process;
 pub(crate) mod protocol;
 pub(crate) mod reproducing;
+#[cfg(test)]
+mod restart_base_tests;
 pub(crate) mod review;
 mod source;
 #[cfg(test)]
