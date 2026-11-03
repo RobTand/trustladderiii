@@ -475,6 +475,8 @@ pub struct MemoryCuration {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkerRunFacts {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prismabuild: Vec<WorkerPrismaBuildFallback>,
     pub started_ms: i64,
     pub finished_ms: Option<i64>,
     pub outcome: String,
@@ -500,6 +502,16 @@ pub struct WorkerBoundaryFailure {
     pub request_id: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerPrismaBuildFallback {
+    phase: String,
+    cause: String,
+    fallback_used: bool,
+    transport: String,
+    runtime: String,
+}
+
 impl WorkerRunFacts {
     pub fn validate(&self) -> crate::Result<()> {
         let bounded = |value: &str, max: usize| {
@@ -511,7 +523,15 @@ impl WorkerRunFacts {
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b"_.:-".contains(&b))
         };
-        if self.started_ms < 0
+        if self.prismabuild.len() > 2
+            || self.prismabuild.iter().any(|diagnostic| {
+                diagnostic.phase != "prismabuild_capability"
+                    || diagnostic.cause != "machine_record_unsupported"
+                    || !diagnostic.fallback_used
+                    || diagnostic.transport != "stdout"
+                    || !matches!(diagnostic.runtime.as_str(), "pbrun" | "pbwait")
+            })
+            || self.started_ms < 0
             || self.finished_ms.is_some_and(|v| v < 0)
             || !matches!(
                 self.outcome.as_str(),

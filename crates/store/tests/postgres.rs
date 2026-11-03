@@ -2354,6 +2354,11 @@ fn settings_editor(settings: &tl3_config::Store) {
 fn worker_completion_facts(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     let facts = WorkerRunFacts {
+        prismabuild: serde_json::from_value(json!([{
+            "phase": "prismabuild_capability", "cause": "machine_record_unsupported",
+            "fallback_used": true, "transport": "stdout", "runtime": "pbrun"
+        }]))
+        .unwrap(),
         started_ms: 1_000_000,
         finished_ms: Some(9_666_000),
         outcome: "succeeded".into(),
