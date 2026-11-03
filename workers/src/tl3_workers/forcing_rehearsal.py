@@ -27,7 +27,8 @@ def identity(base_sha, selectors, forcing):
 
 def unusable(result, selectors, outcome):
     if result.get('status') != 'completed' or not result.get('receipts'):
-        return 'missing completed, verified receipt'
+        return (f"missing completed, verified receipt: status={result.get('status', 'unknown')}; "
+                f"{result.get('message', 'no diagnostic')}")
     if len(result['tests']) != sum(result['totals'].values()):
         return 'incomplete node results'
     for selector in selectors:
