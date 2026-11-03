@@ -276,7 +276,7 @@ impl Respond for Api {
                 if state.forbidden_summary
                     && serde_json::from_slice::<Value>(&request.body).unwrap()["body"]
                         .as_str()
-                        .is_some_and(|body| body.starts_with("Request "))
+                        .is_some_and(|body| body.lines().any(|line| line.starts_with("Request ")))
                 {
                     return ResponseTemplate::new(403);
                 }
