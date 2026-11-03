@@ -911,3 +911,133 @@ fn t653_rejected_inputs_send_only_the_safe_diagnostic_to_tracing() {
     );
     assert!(request.get("key_file").is_none());
 }
+
+#[test]
+fn t653_review_setup_failure_preserves_completed_work_in_both_notices() {
+    use crate::executor::{Registry, Upstream};
+    use crate::git_tests::{Repo, support::Database};
+    struct ReviewFails(Fake);
+    impl Executor for ReviewFails {
+        fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
+            if protocol::delivery_role(delivery) == Some("reviewer") {
+                protocol::validate_inputs("reviewer", &json!({}))?;
+            }
+            self.0.execute(delivery)
+        }
+        fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+            self.0.reconcile(delivery)
+        }
+    }
+    struct NeverDraft;
+    impl writer::Writer for NeverDraft {
+        fn draft(&mut self, _: &str, _: &writer::WriteRequest) -> Result<writer::WriterReply> {
+            panic!("recorded setup failures must not depend on model prose")
+        }
+    }
+    let f = Repo::new();
+    let mut db = Database::start();
+    let mut config =
+        tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+    config.store = db.create("review_setup_progress");
+    let mut registry: Registry = crate::adapters::simulation(&f.root.path().join("fakes")).unwrap();
+    registry.register(
+        Upstream::Workers,
+        ReviewFails(Fake::new(&f.root.path().join("worker"))),
+    );
+    let mut controller = crate::Controller::open(
+        Store::open(&config.store).unwrap(),
+        registry,
+        crate::Bootstrap::from_config(&config).unwrap(),
+    )
+    .unwrap();
+    controller
+        .intake(crate::LabelledIssue {
+            delivery: "review-progress".into(),
+            owner: "RobTand".into(),
+            repo: "tl3-sandbox".into(),
+            installation: 1,
+            number: 42,
+            title: "Preserve the test change".into(),
+            actor: config.github.rob.id,
+            label: "tl3".into(),
+            labels: vec![],
+        })
+        .unwrap();
+    let mut store = Store::open(&config.store).unwrap();
+    let mut recorded = false;
+    for _ in 0..100 {
+        let snapshot = store.load().unwrap();
+        if let Some(effect) = snapshot.pending_effects.iter().find(|effect| {
+            let delivery: Delivery = serde_json::from_value(effect.payload.clone()).unwrap();
+            protocol::delivery_role(&delivery) == Some("reviewer")
+        }) && !recorded
+        {
+            let delivery: Delivery = serde_json::from_value(effect.payload.clone()).unwrap();
+            let head = delivery.head_sha.unwrap();
+            let mut commit =
+                tl3_store::Commit::new("record-maker-handover", json!(null), &snapshot);
+            commit.rows.push(crate::put("maker_replies","0".into(),json!({"kind":"done","head":head,
+                "self_check":[{"goal_id":"goal-1","status":"met","evidence":"Committed the test change"}]})));
+            store.commit(&commit).unwrap();
+            recorded = true;
+        }
+        if snapshot.rows.iter().any(|row| row.table == "incidents") {
+            break;
+        }
+        assert!(controller.drive_once().unwrap());
+    }
+    assert!(
+        recorded,
+        "fixture must reach review after the maker completed"
+    );
+    let snapshot = store.load().unwrap();
+    let incident = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "incidents")
+        .unwrap();
+    let summary = incident.value["summary"].as_str().unwrap();
+    assert!(summary.contains("Review setup failed."), "{summary}");
+    assert!(
+        summary.contains("The maker's change is complete and preserved."),
+        "{summary}"
+    );
+    let mut notices = 0;
+    for effect in store.effects().unwrap() {
+        let delivery: Delivery = serde_json::from_value(effect.payload).unwrap();
+        let notice = match delivery.output {
+            crate::executor::Output::Notice {
+                notice:
+                    notice @ (tl3_kernel::Notice::Incident { .. } | tl3_kernel::Notice::Ask { .. }),
+                ..
+            } => notice,
+            _ => continue,
+        };
+        let input = crate::adapters::github::writer_input(
+            &delivery,
+            Some(notice),
+            "Preserve the test change",
+            "Preserve the test change",
+        )
+        .unwrap();
+        protocol::validate_inputs("writer", &serde_json::to_value(&input).unwrap()).unwrap();
+        let text = crate::adapters::github::question_draft(
+            &mut NeverDraft,
+            &delivery,
+            input,
+            &tl3_github::message::Policy::default(),
+        )
+        .unwrap();
+        assert!(text.contains("Review setup failed."), "{text}");
+        assert!(
+            text.contains("The maker's change is complete and preserved."),
+            "{text}"
+        );
+        assert!(!text.contains("has not started"), "{text}");
+        notices += 1;
+    }
+    assert_eq!(
+        notices, 2,
+        "operations incident and request question both preserve progress"
+    );
+}
