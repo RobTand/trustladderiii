@@ -7,7 +7,6 @@ from tl3_workers.roles import planner
 
 from worker_process import FORCING
 from worker_process import NODE
-from worker_process import TEST
 from worker_process import git
 from worker_process import plan
 from worker_process import reachable
@@ -36,24 +35,6 @@ def test_distinct_candidate_after_negative_preserves_valid_receipts(rehearsal, m
     assert ledger.run([NODE], deepcopy(bad)) == rejected
     assert ledger.run([NODE], deepcopy(first))['status'] == 'validated'
     assert len(calls) == count == 6
-
-
-def test_negative_cache_and_exhaustion_preserve_eight_candidate_cap(rehearsal):
-    ledger, _, inputs, calls = rehearsal
-    for i in range(8):
-        bad = deepcopy(FORCING)
-        bad['environment'] = {'CANDIDATE': str(i)}
-        rejected = ledger.run([NODE], bad)
-        assert rejected['status'] == 'refused'
-        assert ledger.run([NODE], deepcopy(bad)) == rejected
-        assert len(calls) == 2 * (i + 1), 'distinct negatives must consume their own bounded actions'
-    exhausted = ledger.run([NODE], reachable())
-    assert exhausted['status'] == 'exhausted'
-    assert '8 rehearsals' in exhausted['message'] and '16' in exhausted['message']
-    assert ledger.run([NODE], reachable()) == exhausted
-    assert len(calls) == 16
-    assert ledger.violations(inputs['base_sha'], plan(reachable())['checks']) == [exhausted['message']]
-    assert all(cmd[cmd.index('--timeout-s') + 1] == '120' for cmd in calls)
 
 
 def test_final_plan_accepts_only_matching_validated_candidates(rehearsal):
@@ -92,41 +73,3 @@ def test_receipt_binding_and_execution_cache_preserve_json_value_types(rehearsal
     assert ledger.violations(inputs['base_sha'], plan(forcing)['checks']) == []
     ledger.run([NODE], changed)
     assert len(calls) == 4, 'JSON-distinct values must run as distinct experiments'
-
-
-@pytest.mark.parametrize('validated', [False, True])
-@pytest.mark.parametrize('cosmetic', ['symptom', 'selectors', 'patches', 'all'])
-def test_execution_cache_ignores_prose_and_irrelevant_order(rehearsal, tmp_path, validated, cosmetic):
-    ledger, root, inputs, calls = rehearsal
-    (root / 'tests/test_adoption.py').write_text(TEST + TEST[TEST.index('def test_adopt'):].replace(
-        'def test_adopt', 'def test_other'))
-    git(root, 'add', '.')
-    git(root, 'commit', '-qm', 'two selectors')
-    inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
-    checkpoint = tmp_path / 'rehearsals.json'
-    ledger = ForcingRehearsals(ledger.worktree, inputs, checkpoint=checkpoint)
-    forcing = reachable()
-    if not validated:
-        forcing['patches'][0]['delay_seconds'] = 0.001
-    forcing['patches'].append({'target': 'publisher.Publisher.decide', 'returns': 1})
-    selectors = [NODE, NODE.replace('::test_adopt', '::test_other')]
-    first = ledger.run(selectors, forcing)
-    assert first['status'] == ('validated' if validated else 'refused')
-    changed = deepcopy(forcing)
-    reordered = list(selectors)
-    if cosmetic in {'symptom', 'all'}:
-        changed['symptom'] = 'The same experiment, described differently.'
-    if cosmetic in {'selectors', 'all'}:
-        reordered.reverse()
-    if cosmetic in {'patches', 'all'}:
-        changed['patches'].reverse()
-    for current in (ledger, ForcingRehearsals(ledger.worktree, inputs, checkpoint=checkpoint)):
-        assert current.run(reordered, changed) == first, 'cosmetic changes must return the original evidence'
-        assert current.attempts == 1 and current.actions == 2
-        assert len(calls) == 2
-        final = plan(changed)['checks']
-        final[0]['node_ids'] = reordered
-        assert current.violations(inputs['base_sha'], final), 'cache reuse must not mint a changed final receipt'
-        exact = plan(forcing)['checks']
-        exact[0]['node_ids'] = selectors
-        assert bool(current.violations(inputs['base_sha'], exact)) is not validated

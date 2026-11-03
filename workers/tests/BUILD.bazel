@@ -515,3 +515,23 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_pb_tests_execution_cache",
+    srcs = ["test_pb_tests_execution_cache.py"],
+    deps = [
+        ":conftest",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_pb_tests_exhaustion",
+    srcs = ["test_pb_tests_exhaustion.py"],
+    deps = [
+        ":conftest",
+        ":worker_process",
+    ],
+)
