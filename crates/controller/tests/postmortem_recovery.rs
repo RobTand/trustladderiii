@@ -499,7 +499,11 @@ fn postmortem_runs_with_only_opus_quota() {
     postmortem_quotas(&mut f, &["claude-opus-5-5"], future_reset());
     f.controller.run_postmortems(quota_pace());
     drain(&mut f.controller);
-    assert_eq!(f.reason(), None, "one eligible postmortem model is enough");
+    assert_eq!(
+        f.reason(),
+        Some(status::PostmortemBlock::NoSpareCapacity),
+        "the available model runs and fills the pool"
+    );
     assert_eq!(f.claims(), 1, "the postmortem is dispatched");
 }
 
@@ -511,8 +515,8 @@ fn postmortem_runs_with_only_sonnet_quota() {
     drain(&mut f.controller);
     assert_eq!(
         f.reason(),
-        None,
-        "Sonnet quota must not block available Opus"
+        Some(status::PostmortemBlock::NoSpareCapacity),
+        "Opus runs and fills the pool despite Sonnet quota"
     );
     assert_eq!(f.claims(), 1);
 }
@@ -539,8 +543,8 @@ fn expired_postmortem_quota_does_not_block() {
     drain(&mut f.controller);
     assert_eq!(
         f.reason(),
-        None,
-        "pacing and the worker ladder agree on expired resets"
+        Some(status::PostmortemBlock::NoSpareCapacity),
+        "expired quotas allow a run that fills the pool"
     );
     assert_eq!(f.claims(), 1);
 }

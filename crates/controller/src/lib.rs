@@ -2990,6 +2990,7 @@ impl Controller {
                         }));
                     }
                 };
+                self.clear_model_quota(snapshot, model.as_deref(), commit);
                 if let Some(protected) =
                     self.protected_reply(snapshot, commit, node, &role, &reply)?
                 {

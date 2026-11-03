@@ -1363,6 +1363,24 @@ impl Controller {
         Ok(())
     }
 
+    pub(crate) fn clear_model_quota(
+        &self,
+        snapshot: &Snapshot,
+        model: Option<&str>,
+        commit: &mut Commit,
+    ) {
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "model_quotas" && Some(row.id.as_str()) == model)
+        {
+            commit.rows.push(RowChange::Delete {
+                table: row.table.clone(),
+                id: row.id.clone(),
+            });
+        }
+    }
+
     pub(crate) fn quota_allowance(
         &self,
         snapshot: &Snapshot,
