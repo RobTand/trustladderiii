@@ -133,3 +133,10 @@ Independently derive the contract from the original issue, including requirement
 omitted by ingest. Object when ingest loses an execution goal, required artifact,
 executor, reproduction method or protected-file dependency. An unsupported
 contract remains unsupported even when its other goals can be implemented.
+
+A repository with a configured generator also supplies run_generator with executor
+prismabuild_generator. Its runner_features are git_index, scoped_outputs and
+idempotent_import; its method is configured_generation. It returns action_key,
+cas_receipt, input_tree, output_tree, artifact_sha256, logs and terminal_verdict.
+Use that capability only when it appears in tool_capabilities. It cannot edit
+protected files or replace the independent test executor.

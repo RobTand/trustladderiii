@@ -354,7 +354,7 @@ pub struct Repository {
     /// Generated outputs cost a regeneration allowance rather than a source edit.
     #[serde(default)]
     pub generated_files: Vec<String>,
-    /// Guidance for the maker, not a command the controller executes.
+    /// Fixed argv command for the admitted generator action; never model-selected.
     #[serde(default)]
     pub generator: Option<String>,
     #[serde(default)]

@@ -220,7 +220,7 @@ class Forecaster:
         notes = []
         if self.generated:
             notes.append("Generated outputs: " + listed(sorted(self.generated)) + ". "
-                         + generated_edit_instruction(self.config.get("generator"))
+                         + generated_edit_instruction()
                          + "Read only relevant regions.")
         if self.large:
             notes.append(

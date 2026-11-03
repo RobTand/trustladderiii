@@ -62,7 +62,7 @@ def _priority(priority):
     return priority
 
 
-def _stage(worktree, root, base_sha=None):
+def _stage(worktree, root, base_sha=None, *, action="test_tool"):
     harness = Path(execution.__file__).resolve().parent
     owner = os.fstat(worktree._root)
     if any(os.path.samestat(parent.stat(), owner) for parent in (harness, *harness.parents)):
@@ -89,7 +89,7 @@ def _stage(worktree, root, base_sha=None):
     (root / "action.py").write_text(
         'import sys\nfrom pathlib import Path\n'
         'sys.path.insert(0, str(Path(__file__).resolve().parent / "trusted"))\n'
-        'from tl3_harness.test_tool import main\nmain()\n'
+        f'from tl3_harness.{action} import main\nmain()\n'
     )
     # PB snapshots a Git checkout. These fixed commands create its private input,
     # never invoking hooks or commands from the role's Git configuration.

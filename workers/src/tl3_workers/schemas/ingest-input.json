@@ -86,10 +86,11 @@
           },
           "description": "Repository-relative generated-output globs. ** matches zero or more path segments. Generated text costs a fixed regeneration allowance."
         },
+        "generator_available": {"type": "boolean"},
         "generator": {
           "type": "string",
           "minLength": 1,
-          "description": "Repository generator command for maker guidance. The controller does not execute it."
+          "description": "Configured argv command, executed only by the admitted run_generator action."
         }
       },
       "required": [

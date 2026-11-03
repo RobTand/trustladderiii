@@ -139,3 +139,10 @@ forced_reproduction.contention_wrapper. Unrecognized mandatory requirements must
 keep their exact names and meaning; absence from the configured capabilities
 means unsupported. An empty tool_capabilities list supports no execution.
 Code records evidence_errors. Do not supply that field yourself.
+
+A repository with a configured generator also supplies run_generator with executor
+prismabuild_generator. Its runner_features are git_index, scoped_outputs and
+idempotent_import; its method is configured_generation. It returns action_key,
+cas_receipt, input_tree, output_tree, artifact_sha256, logs and terminal_verdict.
+Use that capability only when it appears in tool_capabilities. It cannot edit
+protected files or replace the independent test executor.
