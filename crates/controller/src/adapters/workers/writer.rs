@@ -277,6 +277,24 @@ pub fn checked_draft(
         .as_str()
         .ok_or(Error::Invalid("writer needs the original issue title"))?
         .to_owned();
+    if input.kind == MessageKind::Summary {
+        let mut text = format!(
+            "Request {}.\n\n{}\n\n{}",
+            crate::evidence::label(&title)?,
+            input.facts["outcome"]
+                .as_str()
+                .unwrap_or("The request ended."),
+            input.facts["recorded_summary"]
+                .as_str()
+                .unwrap_or("Details of checks and review were not captured in this summary.")
+        );
+        if let Some(removed) = input.facts["removed_changes"].as_str() {
+            let removed = crate::redaction::text(removed)?;
+            text.push_str("\n\n");
+            text.push_str(&removed);
+        }
+        return Ok(text);
+    }
     let blocker = blocker_anchors(&input);
     let actions = proposed_actions(&input);
     let policy = Policy {
@@ -288,9 +306,6 @@ pub fn checked_draft(
             .collect(),
         ..policy.clone()
     };
-    let removed_changes = (input.kind == MessageKind::Summary)
-        .then(|| input.facts["removed_changes"].as_str().map(str::to_owned))
-        .flatten();
     let change_quote = (input.kind == MessageKind::Note)
         .then(|| input.facts["change_quote"].as_str().map(str::to_owned))
         .flatten();
@@ -361,9 +376,6 @@ pub fn checked_draft(
         };
         match checked {
             Ok(mut text) => {
-                if let Some(removed) = &removed_changes {
-                    text = format!("{}\n\n{removed}", text.trim_end());
-                }
                 if let Some(quote) = &change_quote {
                     // Indentation keeps Markdown inert; embedded markers must also be neutralised.
                     let quote = quote

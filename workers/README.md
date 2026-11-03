@@ -515,6 +515,15 @@ forecast settings in ingest inputs, ingest must declare `files` for the root's
 scope. The shared forecaster counts those files and the brief with the pinned
 o200k_base tokenizer. A model-supplied forecast is rejected.
 
+Ingest, audit and planner receive code-generated `forcing_capabilities` alongside
+their inputs. Reserved names and prefixes come from `tl3_harness.model`, and the
+same constants build their prompt guidance. This guidance also accompanies a
+controller-supplied prompt. The `runner_environment` values are native-thread
+bounds supplied by the runner. They belong to the `native_threads_1` runner
+feature in evidence contracts. Q55 `forcing.environment` carries only symptom
+mutations. `tool_capabilities` still controls which requirements preflight can
+accept; this context does not grant an executor or claim that a run has happened.
+
 Planner replies also append code-generated `violations`. Leaf and split rule
 violations are successful evidence reports, so the controller can preserve the
 reason for the kernel's next planner run. Transport errors, malformed replies

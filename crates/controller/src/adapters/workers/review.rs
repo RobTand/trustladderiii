@@ -160,6 +160,13 @@ pub(super) fn inputs(
             inputs["test_evidence"] = json!(tested);
         }
     }
+    if let Some(reply) = store.worker_document(&node, "maker_replies")?
+        && reply["head"] == head
+        && let Some(receipt) = reply.get("generation_evidence")
+        && receipt["output_tree"].as_str() == Some(repository.tree(&head_id)?.as_str())
+    {
+        inputs["generation_evidence"] = receipt.clone();
+    }
     super::protocol::validate_inputs("reviewer", &inputs)?;
     Ok(inputs)
 }

@@ -358,6 +358,21 @@ fn plan_cant_meet_stops_with_the_planners_report_and_no_rerun() {
         request.facts["findings"]["report"],
         "The goal needs a schema change outside the plan."
     );
+    let rendered = tl3_controller::adapters::workers::writer::checked_draft(
+        &mut tl3_controller::adapters::workers::writer::FakeWriter,
+        "fail-fast-summary",
+        request,
+        &Default::default(),
+    )
+    .unwrap();
+    assert!(
+        rendered.contains("The goal needs a schema change outside the plan."),
+        "the deterministic summary must retain the recorded fail-fast report: {rendered}"
+    );
+    assert!(
+        !rendered.contains("The reason for stopping was not captured."),
+        "the recorded review stop must supply the summary's stop reason: {rendered}"
+    );
     assert_operations_note(&posted, "plan_cant_meet");
     let owed = Store::open(&settings).unwrap().postmortems("0").unwrap();
     assert!(

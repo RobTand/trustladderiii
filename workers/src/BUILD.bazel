@@ -87,6 +87,7 @@ py_library(
         "tl3_workers/forecast.py",
         "tl3_workers/judges.py",
         "tl3_workers/memory.py",
+        "tl3_workers/pb_generators.py",
         "tl3_workers/pb_tests.py",
         "tl3_workers/quota.py",
         "tl3_workers/recall.py",

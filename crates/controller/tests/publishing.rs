@@ -1558,6 +1558,20 @@ fn publication_open_conflict() {
     f.adapter().execute(&push).unwrap();
     f.advance_main(true);
     let server = Server::new(f);
+    let token = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+    server.runtime.block_on(async {
+        Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(
+                "/repos/RobTand/tl3-sandbox/issues/42",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "number":42, "title":format!("Fix the value {token}"), "body":"Return two.",
+                "state":"open", "updated_at":"2026-10-30T00:00:00Z"
+            })))
+            .with_priority(1)
+            .mount(&server.server)
+            .await;
+    });
     let mut open = push.clone();
     open.key = "open-conflict".into();
     open.output = Out::Effect {
@@ -1566,6 +1580,10 @@ fn publication_open_conflict() {
         kind: EffectKind::OpenPr,
         head: None,
     };
+    open.evidence = Some(tl3_controller::evidence::Evidence {
+        checks: vec![json!({"head_sha":open.head_sha, "results":[]})],
+        ..Default::default()
+    });
     let mut adapter = server.adapter(&root.path().join("github"), 1);
     let result = adapter.execute(&open).unwrap();
     assert!(
@@ -1590,6 +1608,43 @@ fn publication_open_conflict() {
         if c.observations.iter().any(|o| matches!(o, Observation::Kernel(tl3_kernel::Event::Fact { fact: tl3_kernel::Fact::Conflict, .. }))))
     );
     assert!(!server.api.state.lock().unwrap().labels);
+    let posted = server
+        .runtime
+        .block_on(server.server.received_requests())
+        .unwrap()
+        .into_iter()
+        .find(|r| r.method == "POST" && r.url.path().ends_with("/pulls"))
+        .unwrap();
+    let posted: Value = serde_json::from_slice(&posted.body).unwrap();
+    server.api.state.lock().unwrap().pull.as_mut().unwrap()["body"] =
+        json!(format!("Human-written introduction {token}\n"));
+    adapter.execute(&open).unwrap();
+    let patched = server
+        .runtime
+        .block_on(server.server.received_requests())
+        .unwrap()
+        .into_iter()
+        .find(|r| r.method == "PATCH" && r.url.path().ends_with("/pulls/100"))
+        .unwrap();
+    let patched: Value = serde_json::from_slice(&patched.body).unwrap();
+    let leaks: Vec<_> = [
+        ("new PR title", &posted["title"]),
+        ("retained PR prose", &patched["body"]),
+    ]
+    .into_iter()
+    .filter(|(_, text)| text.as_str().unwrap().contains(token))
+    .map(|(label, _)| label)
+    .collect();
+    assert!(
+        leaks.is_empty(),
+        "secrets leaked in actual GitHub payloads: {leaks:?}"
+    );
+    assert!(
+        patched["body"]
+            .as_str()
+            .unwrap()
+            .contains("Human-written introduction [REDACTED]")
+    );
 }
 fn publication_requires_conventions() {
     let root = tempfile::tempdir().unwrap();

@@ -61,9 +61,10 @@ FORCING_TEXT = 1000
 FORCING_LITERAL_BYTES = 4096
 MAX_DELAY_SECONDS = 5
 PATCH_MODES = ("value", "returns", "raises", "delay_seconds")
+NATIVE_THREAD_ENVIRONMENT = {"OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
+                             "OPENBLAS_NUM_THREADS": "1"}
 # Variables the harness itself sets or the interpreter reads; a forcing can't override them.
-RESERVED_ENVIRONMENT = frozenset({"HOME", "PATH", "TMPDIR", "TEMP", "TMP", "OMP_NUM_THREADS",
-                                  "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"})
+RESERVED_ENVIRONMENT = frozenset({"HOME", "PATH", "TMPDIR", "TEMP", "TMP", *NATIVE_THREAD_ENVIRONMENT})
 RESERVED_PREFIXES = ("PYTHON", "PYTEST", "LD_", "TL3_", "PRISMABUILD_")
 ENVIRONMENT_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,63}")
 TARGET = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+")
@@ -97,7 +98,9 @@ class Forcing:
         for name, value in self.environment:
             if (not isinstance(name, str) or not ENVIRONMENT_NAME.fullmatch(name) or name in RESERVED_ENVIRONMENT
                     or name.startswith(RESERVED_PREFIXES)):
-                raise HarnessInputError(f"a forcing can't set the environment variable {name!r}")
+                detail = (f"; {name}={NATIVE_THREAD_ENVIRONMENT[name]} is a runner-owned native-thread bound"
+                          if isinstance(name, str) and name in NATIVE_THREAD_ENVIRONMENT else "")
+                raise HarnessInputError(f"a forcing can't set the environment variable {name!r}{detail}")
             if not isinstance(value, str) or len(value) > FORCING_TEXT or "\x00" in value:
                 raise HarnessInputError(f"{name} needs a string value of at most {FORCING_TEXT} characters")
         for target, mode, argument in self.patches:

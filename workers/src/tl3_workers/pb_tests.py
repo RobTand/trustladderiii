@@ -12,6 +12,7 @@ import sys
 import tempfile
 
 from tl3_harness import execution
+from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT
 from tl3_harness.node_ids import selects
 from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, infrastructure, options
 from tl3_harness.trees import export
@@ -62,7 +63,7 @@ def _priority(priority):
     return priority
 
 
-def _stage(worktree, root, base_sha=None):
+def _stage(worktree, root, base_sha=None, *, action="test_tool"):
     harness = Path(execution.__file__).resolve().parent
     owner = os.fstat(worktree._root)
     if any(os.path.samestat(parent.stat(), owner) for parent in (harness, *harness.parents)):
@@ -89,7 +90,7 @@ def _stage(worktree, root, base_sha=None):
     (root / "action.py").write_text(
         'import sys\nfrom pathlib import Path\n'
         'sys.path.insert(0, str(Path(__file__).resolve().parent / "trusted"))\n'
-        'from tl3_harness.test_tool import main\nmain()\n'
+        f'from tl3_harness.{action} import main\nmain()\n'
     )
     # PB snapshots a Git checkout. These fixed commands create its private input,
     # never invoking hooks or commands from the role's Git configuration.
@@ -231,8 +232,8 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
                            *(("--priority", str(priority)) if priority is not None else ()),
                            "--container-image", settings.image,
                            "--progress-phase", f"tests={settings.quiet_seconds}",
-                           "--env", "OMP_NUM_THREADS=1", "--env", "MKL_NUM_THREADS=1",
-                           "--env", "OPENBLAS_NUM_THREADS=1", "--detach", "--",
+                           *[arg for name, value in NATIVE_THREAD_ENVIRONMENT.items()
+                             for arg in ("--env", f"{name}={value}")], "--detach", "--",
                            "python3", "-I", "-B", "action.py", settings.image, json.dumps(selected)]
                 if settings.exec_scratch:
                     command.append("--exec-scratch")

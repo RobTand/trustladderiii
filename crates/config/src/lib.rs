@@ -60,6 +60,8 @@ pub struct Operations {
     pub owner: String,
     pub repo: String,
     pub issue: u64,
+    #[serde(default)]
+    pub delegated_attributions: Vec<String>,
 }
 
 /// The protected paths in force for one repository (#388): the slice-one
@@ -132,9 +134,15 @@ fn evidence_tools() -> Vec<ToolCapability> {
     vec![ToolCapability {
         tool: "run_tests".into(),
         executor: "prismabuild_pytest".into(),
-        runner_features: ["base_head", "repeat", "parallel", "always_tests"]
-            .map(String::from)
-            .to_vec(),
+        runner_features: [
+            "base_head",
+            "repeat",
+            "parallel",
+            "always_tests",
+            "native_threads_1",
+        ]
+        .map(String::from)
+        .to_vec(),
         artifacts: [
             "action_key",
             "cas_receipt",
@@ -355,7 +363,7 @@ pub struct Repository {
     /// Generated outputs cost a regeneration allowance rather than a source edit.
     #[serde(default)]
     pub generated_files: Vec<String>,
-    /// Guidance for the maker, not a command the controller executes.
+    /// Fixed argv command for the admitted generator action; never model-selected.
     #[serde(default)]
     pub generator: Option<String>,
     #[serde(default)]
@@ -670,6 +678,25 @@ impl Config {
         if let Some(operations) = &self.operations {
             github_name("operations.owner", &operations.owner, false)?;
             github_name("operations.repo", &operations.repo, true)?;
+            if operations.delegated_attributions.len() > 32
+                || operations.delegated_attributions.iter().any(|line| {
+                    line.is_empty()
+                        || line.len() > 1000
+                        || line.trim() != line
+                        || line.chars().any(char::is_control)
+                })
+                || operations
+                    .delegated_attributions
+                    .iter()
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    != operations.delegated_attributions.len()
+            {
+                return Err(invalid(
+                    "operations.delegated_attributions",
+                    "needs at most 32 unique, nonempty single lines of at most 1000 bytes without surrounding whitespace",
+                ));
+            }
             if operations.issue == 0 {
                 return Err(invalid(
                     "operations.issue",

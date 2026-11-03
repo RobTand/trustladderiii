@@ -117,11 +117,13 @@ struct ApiState {
     fail_reads: bool,
     empty_body: bool,
     catch_up_evidence: bool,
+    catch_up_comments: Option<Vec<Value>>,
     redeliveries: Vec<u64>,
     new_delivery: bool,
     linked: Vec<Value>,
     lose_issue_reply: bool,
     forbidden_question: bool,
+    forbidden_summary: bool,
     question_status: Option<u16>,
     rejected_question_posts: usize,
     forbidden_filing: bool,
@@ -272,6 +274,13 @@ impl Respond for Api {
                 if path.starts_with("/repos/owner/sandbox/issues/")
                     && path.ends_with("/comments") =>
             {
+                if state.forbidden_summary
+                    && serde_json::from_slice::<Value>(&request.body).unwrap()["body"]
+                        .as_str()
+                        .is_some_and(|body| body.lines().any(|line| line.starts_with("Request ")))
+                {
+                    return ResponseTemplate::new(403);
+                }
                 if (state.forbidden_question || state.question_status.is_some())
                     && original_path.contains("/sandbox/")
                     && String::from_utf8_lossy(&request.body).contains("recommend option")
@@ -377,7 +386,9 @@ impl Respond for Api {
                 ResponseTemplate::new(200).set_body_json(issues)
             }
             ("GET", "/repos/owner/sandbox/issues/comments") => ResponseTemplate::new(200)
-                .set_body_json(if state.gap {
+                .set_body_json(if let Some(comments) = &state.catch_up_comments {
+                    json!(comments)
+                } else if state.gap {
                     {
                         let mut comment = fixture(true)["comment"].clone();
                         comment["created_at"] = json!(Utc::now());
@@ -612,6 +623,7 @@ fn main() {
             "credit" => steering::credit(&settings),
             "answer_replacement" => steering::answer_replacement(&settings),
             "restart_open" => restart::open_request(&settings),
+            "restart_delegated" => restart::delegated_restart(&settings),
             "restart_revoked" => restart::revoked_issue(&settings),
             "restart_stopped" => restart::stopped_request(&settings),
             "restart_merged" => restart::merged_request(&settings),
@@ -630,6 +642,7 @@ fn main() {
         println!("test message_reconciliation ... ok");
         restart::reopens_issue_tl3_closed();
         restart::open_request(&database.create("restart_open"));
+        restart::delegated_restart(&database.create("restart_delegated"));
         restart::revoked_issue(&database.create("restart_revoked"));
         restart::stopped_request(&database.create("restart_stopped"));
         restart::merged_request(&database.create("restart_merged"));
@@ -739,6 +752,7 @@ fn main() {
     steering::dropped_change_quote();
     steering::second_replacement(&database.create("second_replacement"));
     restart::open_request(&database.create("restart_open"));
+    restart::delegated_restart(&database.create("restart_delegated"));
     restart::revoked_issue(&database.create("restart_revoked"));
     restart::stopped_request(&database.create("restart_stopped"));
     restart::merged_request(&database.create("restart_merged"));
@@ -764,7 +778,7 @@ fn main() {
         steering::merge_pending(&database.create(&format!("pending_{point}")), point);
     }
     database.stop();
-    let scenario_count = if group == Some("flow") { 83 } else { 201 };
+    let scenario_count = if group == Some("flow") { 84 } else { 202 };
     println!(
         "{scenario_count} GitHub integration scenarios passed; no skips; no live GitHub calls"
     );
@@ -1298,12 +1312,12 @@ fn writer_checks() {
     };
     assert_eq!(
         rejecting.execute(&draft).unwrap().ack,
-        tl3_kernel::Ack::Permanent
+        tl3_kernel::Ack::Confirmed
     );
-    assert_eq!(calls.lock().unwrap().len(), 3);
+    assert!(calls.lock().unwrap().is_empty());
     let state = api.state.lock().unwrap();
-    assert_eq!(state.posts, posted + 1);
-    assert!(!state.closed, "a rejected summary must not close the issue");
+    assert_eq!(state.posts, posted + 2);
+    assert!(!state.closed, "a stopped summary must leave the issue open");
 }
 
 fn raw_http(address: SocketAddr, request: &[u8]) -> String {

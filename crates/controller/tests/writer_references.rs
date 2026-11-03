@@ -77,7 +77,6 @@ macro_rules! rejection {
                 MessageKind::Question,
                 MessageKind::Clarification,
                 MessageKind::Note,
-                MessageKind::Summary,
             ] {
                 let mut writer = writer($token, false);
                 assert!(
@@ -115,7 +114,6 @@ fn own_issue_and_pull_request_are_allowed_in_every_message_kind() {
         MessageKind::Question,
         MessageKind::Clarification,
         MessageKind::Note,
-        MessageKind::Summary,
     ] {
         for text in [
             "See #12",
@@ -154,7 +152,6 @@ fn code_spans_are_allowed_in_every_message_kind() {
         MessageKind::Question,
         MessageKind::Clarification,
         MessageKind::Note,
-        MessageKind::Summary,
     ] {
         for text in [
             "Use `@octocat @org/team owner/repo#56 #56`",
@@ -206,7 +203,6 @@ fn rejected_draft_gets_actionable_feedback_then_a_clean_draft() {
         MessageKind::Question,
         MessageKind::Clarification,
         MessageKind::Note,
-        MessageKind::Summary,
     ] {
         for token in ["@octocat", "@org/team", "owner/repo#12", "#56"] {
             let mut writer = writer(token, true);
@@ -302,7 +298,6 @@ fn checker_feedback_reaches_real_writer_protocol_and_fake_model() {
         MessageKind::Question,
         MessageKind::Clarification,
         MessageKind::Note,
-        MessageKind::Summary,
     ] {
         let mut writer = ProtocolWriter {
             python: package.join(".venv/bin/python"),
@@ -346,7 +341,6 @@ macro_rules! entity_feedback {
                 MessageKind::Question,
                 MessageKind::Clarification,
                 MessageKind::Note,
-                MessageKind::Summary,
             ] {
                 let mut writer = writer($entity, true);
                 let result = checked_draft(&mut writer, "entity", input(kind), &policy()).unwrap();
@@ -420,7 +414,6 @@ macro_rules! ordinary_ampersand {
                 MessageKind::Question,
                 MessageKind::Clarification,
                 MessageKind::Note,
-                MessageKind::Summary,
             ] {
                 let mut writer = writer($text, false);
                 assert!(
@@ -488,3 +481,14 @@ rejection!(
     "ſGH-5",
     "GH-5"
 );
+
+#[test]
+fn closing_summary_uses_recorded_text_without_drafting_or_retries() {
+    let mut writer = writer("@octocat owner/repo#56", false);
+    let mut request = input(MessageKind::Summary);
+    request.facts["recorded_summary"] = json!("Checks passed. Review approved. Queue failed.");
+    let text = checked_draft(&mut writer, "summary", request, &policy()).unwrap();
+    assert!(writer.calls.is_empty());
+    assert!(text.contains("Checks passed. Review approved. Queue failed."));
+    assert!(!text.contains("@octocat"));
+}

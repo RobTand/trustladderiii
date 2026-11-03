@@ -4,6 +4,19 @@
 
 Created in [T3 Code](https://t3.codes).
 
+## Delegated commands
+
+`[operations].delegated_attributions` lists exact standing-approval attribution
+lines, for example `"(Posted by the TL3 build coordinator under Rob's standing approval.)"`.
+The default is `[]`. Only unedited comments authored by the configured Rob account
+qualify. The attribution must be the final nonempty plain Markdown line, outside
+quotes, code blocks and HTML. Edited comments keep normal classification.
+TL3 records the matching line as the delegate and classifies the remaining text as
+Rob's command. Exact attributed `restart` commands use code directly when restart
+is allowed. Other authors and non-matching lines keep their existing behavior.
+Entries must be unique nonempty single lines without surrounding whitespace,
+with at most 32 entries and 1000 bytes per entry. See `crates/config/example.toml`.
+
 ## Review exhaustion
 
 Q44 gives an exhausted reviewer one fresh conversation on the next reviewer

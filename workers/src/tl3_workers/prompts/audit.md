@@ -119,7 +119,13 @@ Compare the requirements with tool_capabilities. Do not replace mandatory runs
 with review goals, omit requirements, or substitute a different executor's proof.
 
 The installed executor is prismabuild_pytest. It supports base_head, repeat,
-parallel and always_tests, with action_key, cas_receipt, sha, logs and terminal_verdict artifacts.
+parallel, always_tests and native_threads_1, with action_key, cas_receipt, sha, logs and terminal_verdict artifacts.
+native_threads_1 is runner configuration for the native-thread bounds in the
+code-supplied forcing_capabilities. Preserve a required bound in runner_features
+and require the run artifacts; do not label it forced_reproduction.environment
+or place it in forcing.environment. Reserved names and prefixes come from
+forcing_capabilities and cannot be overridden. These capabilities describe what
+a future run can prove, never checks already completed.
 Its methods are head, base_head, red_green, forced_reproduction.environment and
 forced_reproduction.patches. Q55 environment and Python patches do not implement
 a pinned CPU artificial contention wrapper. BuildBuddy Remote Bazel evidence
@@ -140,3 +146,11 @@ helper and the observers are new tests of its behavior, including diagnostic
 text from a deliberately failing inner test. If that capability is absent,
 report the missing method through the evidence preflight, without substituting
 review or a flaky-test forcing.
+
+
+A repository with a configured generator also supplies run_generator with executor
+prismabuild_generator. Its runner_features are git_index, scoped_outputs and
+idempotent_import; its method is configured_generation. It returns action_key,
+cas_receipt, input_tree, output_tree, artifact_sha256, logs and terminal_verdict.
+Use that capability only when it appears in tool_capabilities. It cannot edit
+protected files or replace the independent test executor.

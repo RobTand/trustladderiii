@@ -102,7 +102,7 @@ pub(super) fn run(mode: &str) {
         effect.scope_removals = Some(removed.into());
     }
     let completion = adapter.execute(&effect).unwrap();
-    if matches!(mode, "negative" | "scope-path") {
+    if mode == "negative" {
         assert_ne!(completion.ack, tl3_kernel::Ack::Confirmed);
         assert_eq!(api.state.lock().unwrap().posts, 0);
     } else {
@@ -115,9 +115,12 @@ pub(super) fn run(mode: &str) {
         let state = api.state.lock().unwrap();
         assert_eq!(state.posts, 1);
         let posted = state.comments[0]["body"].as_str().unwrap();
-        assert!(posted.contains(&text));
-        if mode == "scope" {
+        if matches!(mode, "scope" | "scope-path") {
+            assert!(posted.contains(title));
             assert_eq!(posted.matches(removed).count(), 1);
+            assert!(!posted.contains(&text));
+        } else {
+            assert!(posted.contains(&text));
         }
     }
     println!("test request_vocabulary_{mode} ... ok");

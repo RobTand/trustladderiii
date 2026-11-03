@@ -192,7 +192,9 @@ def test_only_tl3_prompt_and_read_tools_reach_model(request_doc, role, monkeypat
     assert not options.get("tools")
     assert [message.type for message in messages] == ["system", "human"]
     system = messages[0].text
+    from tl3_workers.evidence import forcing_capabilities, forcing_guidance
     expected = files("tl3_workers").joinpath("prompts", role + ".md").read_text()
+    expected += "\n\n" + forcing_guidance()
     if role == "ingest":
         from tl3_workers.tools import Worktree
         with Worktree(request_doc["worktree"]) as tree:
@@ -206,7 +208,8 @@ def test_only_tl3_prompt_and_read_tools_reach_model(request_doc, role, monkeypat
     assert system == expected + "\n\nReply with one JSON object only: no prose, no code fences. It must match this schema:\n" + json.dumps(proposal, ensure_ascii=False)
     assert request_doc["key_file"] not in system
     assert "key_file" not in messages[1].text.replace(request_doc["inputs"]["issue"]["body"], "")
-    assert json.loads(messages[1].text) == request_doc["inputs"]
+    assert json.loads(messages[1].text) == {**request_doc["inputs"],
+                                             "forcing_capabilities": forcing_capabilities()}
 
 
 def test_excluded_tool_is_rejected_and_progress_is_streamed(tmp_path, request_doc):

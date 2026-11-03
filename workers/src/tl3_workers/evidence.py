@@ -1,5 +1,36 @@
 """Compare a request's evidence with the installed tools, without substituting proof."""
 
+from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT, RESERVED_ENVIRONMENT, RESERVED_PREFIXES
+
+
+def forcing_capabilities():
+    """Code-owned model context, independent of operator-selected executor support."""
+    return {
+        "reserved_environment": sorted(RESERVED_ENVIRONMENT),
+        "reserved_prefixes": list(RESERVED_PREFIXES),
+        "runner_environment": dict(NATIVE_THREAD_ENVIRONMENT),
+        "runner_feature": "native_threads_1",
+        "executor": "prismabuild_pytest",
+    }
+
+
+def forcing_guidance():
+    contract = forcing_capabilities()
+    return ("Q55 forcing environment cannot set these reserved names: "
+            + ", ".join(contract["reserved_environment"])
+            + ". It also cannot set any name starting with: "
+            + ", ".join(contract["reserved_prefixes"])
+            + ". Native-thread bounds are runner configuration: "
+            + ", ".join(f"{name}={value}" for name, value in contract["runner_environment"].items())
+            + ". Keep these names out of forcing.environment, including when the requested value matches. "
+            "Represent a required bound of one with runner_features=[native_threads_1] on "
+            "prismabuild_pytest and retain its required run artifacts. Check tool_capabilities for support. "
+            "forced_reproduction.environment describes only symptom mutations. "
+            "A delay patch can use an empty environment. The reviewer still judges causal relevance "
+            "and the harness still requires forced base failure and head passes with and without forcing. "
+            "Never claim a future run has already supplied evidence.")
+
+
 DIMENSIONS = ('runner_features', 'artifacts', 'methods', 'protected_files')
 
 
