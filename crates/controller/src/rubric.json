@@ -51,6 +51,14 @@
       "grader": "code",
       "fact": "seconds spent in each phase, from the phase history; recorded, not graded"
     },
+    "tokens": {
+      "grader": "code",
+      "fact": "input, output and cache tokens summed over the node's MLflow traces, added by its postmortem; recorded, not graded"
+    },
+    "cache_rate": {
+      "grader": "code",
+      "fact": "the share of input tokens read from the prompt cache over the node's MLflow traces, added by its postmortem; recorded, not graded"
+    },
     "fidelity to the request": {
       "grader": "judge",
       "grades": {

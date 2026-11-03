@@ -66,16 +66,24 @@ pub(super) fn isolate_credentials(
 
 #[derive(Clone, Default)]
 pub(super) struct ActiveRuns(Arc<Mutex<BTreeMap<String, BTreeMap<String, i64>>>>);
+/// Jobs outside the kernel are keyed apart, so stopping a node's run never
+/// stops its comment classification or postmortem.
+fn active_key(delivery: &Delivery) -> String {
+    if delivery.is_classifier() {
+        format!("comment:{}", delivery.node().0)
+    } else if delivery.is_postmortem() {
+        format!("postmortem:{}", delivery.node().0)
+    } else {
+        delivery.node().0.to_string()
+    }
+}
+
 impl ActiveRuns {
     fn add(&self, delivery: &Delivery, attempt: i64) {
         self.0
             .lock()
             .unwrap()
-            .entry(if delivery.is_classifier() {
-                format!("comment:{}", delivery.node().0)
-            } else {
-                delivery.node().0.to_string()
-            })
+            .entry(active_key(delivery))
             .or_default()
             .entry(delivery.key.clone())
             .and_modify(|current| *current = (*current).max(attempt))
@@ -83,11 +91,7 @@ impl ActiveRuns {
     }
     fn remove(&self, delivery: &Delivery, attempt: i64) {
         let mut nodes = self.0.lock().unwrap();
-        let node = if delivery.is_classifier() {
-            format!("comment:{}", delivery.node().0)
-        } else {
-            delivery.node().0.to_string()
-        };
+        let node = active_key(delivery);
         if let Some(keys) = nodes.get_mut(&node) {
             if keys.get(&delivery.key) == Some(&attempt) {
                 keys.remove(&delivery.key);
@@ -234,12 +238,18 @@ impl Supervisor {
             None
         };
         let resume_review = review::resumes(delivery, review_session.as_ref(), review_restarted);
-        let mut materials =
-            if let Some(crate::steering::Task::Classify { inputs, .. }) = &delivery.steering {
-                inputs.clone()
-            } else {
-                self.materials(delivery, store, snapshot)?
-            };
+        let mut materials = match &delivery.steering {
+            Some(crate::steering::Task::Classify { inputs, .. }) => inputs.clone(),
+            Some(crate::steering::Task::Postmortem { id, .. }) => crate::postmortems::case_file(
+                store,
+                snapshot,
+                delivery,
+                *id,
+                &self.models,
+                self.limits.postmortem_deadline_secs,
+            )?,
+            _ => self.materials(delivery, store, snapshot)?,
+        };
         if role == "maker" && self.materials_provider.is_some() {
             let brief = store
                 .worker_document(&node, "briefs")?
@@ -835,7 +845,7 @@ impl Supervisor {
                 ..
             } => protocol::role(role),
             Out::Comment {
-                kind: CommentKind::Classify,
+                kind: CommentKind::Classify | CommentKind::Postmortem,
                 ..
             } => protocol::delivery_role(delivery),
             Out::Effect {
@@ -920,11 +930,15 @@ impl Supervisor {
         }
         let attempt = root.join(format!("attempt-{attempt_number:08}"));
         fs::create_dir(&attempt)?;
-        request["memory"] = json!({
-            "summary_file": attempt.join("memory.json"),
-            "repo": format!("{}/{}", delivery.repository.owner, delivery.repository.name),
-            "issue": delivery.issue, "request": delivery.node().0.to_string(), "epoch": delivery.epoch,
-        });
+        // A postmortem's lessons reach Hindsight through its stored result,
+        // not as a run summary.
+        if !delivery.is_postmortem() {
+            request["memory"] = json!({
+                "summary_file": attempt.join("memory.json"),
+                "repo": format!("{}/{}", delivery.repository.owner, delivery.repository.name),
+                "issue": delivery.issue, "request": delivery.node().0.to_string(), "epoch": delivery.epoch,
+            });
+        }
         request["trace"]["log"] = json!(attempt.join(trace::LOG));
         request["trace"]["wake"] = json!(self.settings.runs.join(trace::HELD).join(trace::WAKE));
         let python = release_python(&self.settings.python)?;
@@ -1043,7 +1057,9 @@ impl Executor for Supervisor {
     }
 
     fn look(&mut self, delivery: &Delivery) -> Result<Look> {
-        if !matches!(delivery.output, Out::Effect { kind: EffectKind::StartRun(role), .. } if protocol::role(role).is_some())
+        // A postmortem runs long, so its looks read progress like a node's run.
+        if !delivery.is_postmortem()
+            && !matches!(delivery.output, Out::Effect { kind: EffectKind::StartRun(role), .. } if protocol::role(role).is_some())
         {
             return Ok(match self.reconcile(delivery)? {
                 Reconciliation::Found(c) => Look::Found(c),
@@ -1132,7 +1148,7 @@ impl Executor for Supervisor {
                 ..
             } if protocol::role(role).is_some() => self.reconcile_run(delivery),
             Out::Comment {
-                kind: CommentKind::Classify,
+                kind: CommentKind::Classify | CommentKind::Postmortem,
                 ..
             } => self.reconcile_run(delivery),
             Out::Effect {
@@ -1210,6 +1226,19 @@ pub(super) fn latest(root: &Path) -> Result<Option<(i64, PathBuf)>> {
 }
 
 pub(crate) fn failed(delivery: &Delivery) -> Completion {
+    failed_with(delivery, "worker_failed")
+}
+
+/// A failed run's completion. A postmortem names a fixed failure class, never
+/// the worker's own text.
+fn failed_with(delivery: &Delivery, class: &str) -> Completion {
+    if delivery.is_postmortem() {
+        return Completion::confirmed(vec![Observation::Postmortem {
+            key: delivery.key.clone(),
+            reply: None,
+            failure: Some(class.into()),
+        }]);
+    }
     if delivery.is_classifier() {
         return Completion::confirmed(vec![Observation::Classified {
             key: delivery.key.clone(),
@@ -1252,8 +1281,20 @@ pub(super) fn inspect(attempt: &Path, delivery: &Delivery) -> Result<Reconciliat
         return Ok(Reconciliation::Absent);
     };
     if exit["code"] != 0 {
+        if delivery.is_postmortem() {
+            // #486: a run its own deadline stopped names that class.
+            let deadline = read(&attempt.join("memory.json"))
+                .ok()
+                .flatten()
+                .is_some_and(|summary| summary["reason"]["failure_class"] == "PostmortemDeadline");
+            return Ok(Reconciliation::Found(if deadline {
+                failed_with(delivery, "deadline")
+            } else {
+                failed(delivery)
+            }));
+        }
         let mut completion = failed(delivery);
-        if !delivery.is_classifier()
+        if delivery.job_table().is_none()
             && let Some(summary) = read(&attempt.join("memory.json")).ok().flatten()
             && let Some(reason) = summary.get("reason")
             && let (Some(class), Some(message)) = (
@@ -1297,7 +1338,7 @@ pub(super) fn inspect(attempt: &Path, delivery: &Delivery) -> Result<Reconciliat
     };
     Ok(Reconciliation::Found(match observation {
         Ok(observation) => Completion::confirmed(vec![observation]),
-        Err(_) => failed(delivery),
+        Err(_) => failed_with(delivery, "invalid_reply"),
     }))
 }
 

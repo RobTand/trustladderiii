@@ -1261,14 +1261,22 @@ def failure_tags(error):
     return {"failure_class": type(error).__name__[:64], "failure_message": message[:512]}
 
 
+def mlflow_settings(request):
+    """The run's [mlflow] settings: from the request, else TL3_MLFLOW_CONFIG."""
+    if 'mlflow' not in request and (config := os.environ.get('TL3_MLFLOW_CONFIG')):
+        try:
+            return tomllib.loads(Path(config).read_text())['mlflow']
+        except Exception:
+            failure()
+            return None
+    return request.get('mlflow')
+
+
 @contextmanager
 def observe(request):
     capture = None
-    if 'mlflow' not in request and (config := os.environ.get('TL3_MLFLOW_CONFIG')):
-        try:
-            request = {**request, 'mlflow': tomllib.loads(Path(config).read_text())['mlflow']}
-        except Exception:
-            failure()
+    if 'mlflow' not in request and (settings := mlflow_settings(request)):
+        request = {**request, 'mlflow': settings}
     if request.get('mlflow'):
         try:
             os.environ['MLFLOW_DISABLE_TELEMETRY'] = 'true'

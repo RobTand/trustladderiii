@@ -109,6 +109,10 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (12, include_str!("../migrations/0012_prompts.sql")),
     (13, include_str!("../migrations/0013_postmortems.sql")),
     (14, include_str!("../migrations/0014_memory_curations.sql")),
+    (
+        15,
+        include_str!("../migrations/0015_postmortem_results.sql"),
+    ),
     (17, include_str!("../migrations/0017_worker_facts.sql")),
 ];
 
@@ -145,9 +149,7 @@ impl Store {
     /// Independent of kernel revisions. The immutable operation ID survives lost acknowledgements.
     pub fn queue_memory(&mut self, operation_id: &str, item: &serde_json::Value) -> Result<()> {
         let mut tx = self.client.transaction()?;
-        tx.batch_execute("LOCK TABLE tl3_memory_outbox IN SHARE ROW EXCLUSIVE MODE")?;
-        tx.execute("INSERT INTO tl3_memory_outbox (operation_id, item) VALUES ($1, $2) ON CONFLICT (operation_id) DO NOTHING", &[&operation_id, item])?;
-        tx.execute("UPDATE tl3_memory_outbox SET parked_reason = 'capacity', parked_at = CURRENT_TIMESTAMP WHERE sequence IN (SELECT sequence FROM tl3_memory_outbox WHERE parked_reason IS NULL ORDER BY sequence DESC OFFSET 10000)", &[])?;
+        queue_memory_in(&mut tx, operation_id, item)?;
         tx.commit()?;
         Ok(())
     }
@@ -741,8 +743,10 @@ impl Store {
                 &[&owed.node, &owed.trigger, &owed.reason, &owed.sample_share, &owed.repo, &owed.issue, &owed.title, &revision.get()])?;
         }
         for grade in &change.grades {
-            tx.execute("INSERT INTO tl3_code_grades (node_id, trigger, rubric_version, dimension, grade, fact, revision, recorded_at) SELECT $1, $2, $3, $4, $5, $6, revision, committed_at FROM tl3_events WHERE revision = $7 ON CONFLICT (node_id, trigger, rubric_version, dimension) DO NOTHING",
-                &[&grade.node, &grade.trigger, &grade.rubric_version, &grade.dimension, &grade.grade, &grade.fact, &revision.get()])?;
+            insert_grade(&mut tx, grade, revision.get())?;
+        }
+        for update in &change.postmortem_updates {
+            apply_postmortem(&mut tx, update, revision.get())?;
         }
         boundary(
             &mut self.boundary_hook,
@@ -876,19 +880,117 @@ impl Store {
         Ok(self
             .client
             .query(
-                "SELECT id, node_id, trigger, reason, sample_share, status FROM tl3_postmortems WHERE node_id = $1 ORDER BY id",
+                &format!(
+                    "SELECT {POSTMORTEM_RECORD} FROM tl3_postmortems WHERE node_id = $1 ORDER BY id"
+                ),
                 &[&node],
             )?
             .iter()
-            .map(|row| PostmortemRecord {
-                id: row.get(0),
-                node: row.get(1),
-                trigger: row.get(2),
-                reason: row.get(3),
-                sample_share: row.get(4),
-                status: row.get(5),
-            })
+            .map(postmortem_record)
             .collect())
+    }
+
+    /// The oldest owed postmortem, which the runner claims next (#403). Runs
+    /// owed again after a failure wait behind every first run (#486).
+    pub fn owed_postmortem(&mut self) -> Result<Option<PostmortemRecord>> {
+        Ok(self
+            .client
+            .query_opt(
+                &format!("SELECT {POSTMORTEM_RECORD} FROM tl3_postmortems WHERE status = 'owed' ORDER BY attempts, owed_at, id LIMIT 1"),
+                &[],
+            )?
+            .as_ref()
+            .map(postmortem_record))
+    }
+
+    /// Postmortem claims made since the start of the current UTC day (#486).
+    pub fn postmortem_claims_today(&mut self) -> Result<u32> {
+        let count: i64 = self
+            .client
+            .query_one(
+                "SELECT count(*) FROM tl3_postmortem_claims WHERE claimed_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'",
+                &[],
+            )?
+            .get(0);
+        Ok(u32::try_from(count).unwrap_or(u32::MAX))
+    }
+
+    /// The failure classes of postmortem runs since the last one that
+    /// succeeded, newest first and up to 3, counting only claims committed
+    /// after revision `since` (#486).
+    pub fn postmortem_failure_streak(&mut self, since: i64) -> Result<Vec<String>> {
+        let outcomes = self.client.query(
+            "SELECT failure FROM tl3_postmortem_claims WHERE revision > $1 AND outcome IN ('done', 'failed') ORDER BY revision DESC LIMIT 3",
+            &[&since],
+        )?;
+        // A success has no failure class, and ends the streak.
+        Ok(outcomes
+            .iter()
+            .map_while(|row| row.get::<_, Option<String>>(0))
+            .collect())
+    }
+
+    /// Postmortems claimed by a runner and not yet finished.
+    pub fn running_postmortems(&mut self) -> Result<Vec<PostmortemRecord>> {
+        Ok(self
+            .client
+            .query(
+                &format!("SELECT {POSTMORTEM_RECORD} FROM tl3_postmortems WHERE status = 'running' ORDER BY id"),
+                &[],
+            )?
+            .iter()
+            .map(postmortem_record)
+            .collect())
+    }
+
+    /// One postmortem with its stored result and recommendations.
+    pub fn postmortem(&mut self, id: i64) -> Result<Option<PostmortemDetail>> {
+        let mut tx = read_transaction(&mut self.client)?;
+        let Some(row) = tx.query_opt(
+            &format!("SELECT {POSTMORTEM_RECORD}, repo, issue, title, model, rubric_version, failure, cause, summary, timeline, process_failures, grades, notes, assessment_ids FROM tl3_postmortems WHERE id = $1"),
+            &[&id],
+        )?
+        else {
+            tx.commit()?;
+            return Ok(None);
+        };
+        let recommendations = tx
+            .query(
+                "SELECT fingerprint, rank, phase, kind, target, operation, before, after, evidence, effect FROM tl3_postmortem_recommendations WHERE postmortem_id = $1 ORDER BY rank",
+                &[&id],
+            )?
+            .iter()
+            .map(|row| Recommendation {
+                fingerprint: row.get(0),
+                rank: row.get(1),
+                phase: row.get(2),
+                kind: row.get(3),
+                target: row.get(4),
+                operation: row.get(5),
+                before: row.get(6),
+                after: row.get(7),
+                evidence: row.get(8),
+                effect: row.get(9),
+            })
+            .collect();
+        tx.commit()?;
+        Ok(Some(PostmortemDetail {
+            record: postmortem_record(&row),
+            repo: row.get("repo"),
+            issue: row.get("issue"),
+            title: row.get("title"),
+            model: row.get("model"),
+            rubric_version: row.get("rubric_version"),
+            failure: row.get("failure"),
+            cause: row.get("cause"),
+            summary: row.get("summary"),
+            timeline: row.get("timeline"),
+            process_failures: row.get("process_failures"),
+            grades: row.get("grades"),
+            notes: row.get("notes"),
+            assessment_ids: row.get("assessment_ids"),
+            recommendations,
+        }))
     }
 
     /// A node's code grades, oldest first.
@@ -1203,6 +1305,136 @@ impl Reader {
         tx.commit()?;
         Ok(events)
     }
+}
+
+const POSTMORTEM_RECORD: &str =
+    "id, node_id, trigger, reason, sample_share, status, run_key, attempts";
+
+fn postmortem_record(row: &Row) -> PostmortemRecord {
+    PostmortemRecord {
+        id: row.get(0),
+        node: row.get(1),
+        trigger: row.get(2),
+        reason: row.get(3),
+        sample_share: row.get(4),
+        status: row.get(5),
+        run_key: row.get(6),
+        attempts: row.get(7),
+    }
+}
+
+fn insert_grade(tx: &mut Transaction<'_>, grade: &CodeGrade, revision: i64) -> Result<()> {
+    tx.execute("INSERT INTO tl3_code_grades (node_id, trigger, rubric_version, dimension, grade, fact, revision, recorded_at) SELECT $1, $2, $3, $4, $5, $6, revision, committed_at FROM tl3_events WHERE revision = $7 ON CONFLICT (node_id, trigger, rubric_version, dimension) DO NOTHING",
+        &[&grade.node, &grade.trigger, &grade.rubric_version, &grade.dimension, &grade.grade, &grade.fact, &revision])?;
+    Ok(())
+}
+
+/// #403: a runner's claim, result, failure or release. Only a claim on an
+/// owed row and a finish under the claim's own run key change anything.
+fn apply_postmortem(
+    tx: &mut Transaction<'_>,
+    update: &PostmortemUpdate,
+    revision: i64,
+) -> Result<()> {
+    const AT: &str = "(SELECT committed_at FROM tl3_events WHERE revision = $3)";
+    match update {
+        PostmortemUpdate::Claim {
+            id,
+            run_key,
+            rubric_version,
+        } => {
+            let claimed = tx.execute(
+                &format!("UPDATE tl3_postmortems SET status = 'running', run_key = $2, started_at = {AT}, rubric_version = $4 WHERE id = $1 AND status = 'owed'"),
+                &[id, run_key, &revision, rubric_version],
+            )?;
+            if claimed != 1 {
+                return Err(Error::Invalid("the postmortem is no longer owed"));
+            }
+            tx.execute(
+                &format!("INSERT INTO tl3_postmortem_claims (run_key, postmortem_id, revision, claimed_at) VALUES ($2, $1, $3, {AT})"),
+                &[id, run_key, &revision],
+            )?;
+        }
+        PostmortemUpdate::Done {
+            id,
+            run_key,
+            result,
+        } => {
+            let done = tx.execute(
+                &format!("UPDATE tl3_postmortems SET status = 'done', finished_at = {AT}, failed_at = NULL, failure = NULL, cause = $4, summary = $5, timeline = $6, process_failures = $7, grades = $8, notes = $9, assessment_ids = $10, model = $11 WHERE id = $1 AND status = 'running' AND run_key = $2"),
+                &[id, run_key, &revision, &result.cause, &result.summary, &result.timeline, &result.process_failures, &result.grades, &result.notes, &result.assessment_ids, &result.model],
+            )?;
+            // A stale run's result changes nothing.
+            if done != 1 {
+                return Ok(());
+            }
+            claim_ended(tx, run_key, "done", None)?;
+            for item in &result.recommendations {
+                tx.execute("INSERT INTO tl3_postmortem_recommendations (postmortem_id, fingerprint, rank, phase, kind, target, operation, before, after, evidence, effect) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                    &[id, &item.fingerprint, &item.rank, &item.phase, &item.kind, &item.target, &item.operation, &item.before, &item.after, &item.evidence, &item.effect])?;
+            }
+            for grade in &result.code_grades {
+                insert_grade(tx, grade, revision)?;
+            }
+            if let Some((operation, item)) = &result.memory {
+                queue_memory_in(tx, operation, item)?;
+            }
+        }
+        PostmortemUpdate::Failed {
+            id,
+            run_key,
+            failure,
+        } => {
+            // A failure worth retrying is owed again, twice at most (#486).
+            let retried = RETRIED_FAILURES.contains(&failure.as_str());
+            let failed = tx.execute(
+                &format!("UPDATE tl3_postmortems SET status = CASE WHEN $5 AND attempts < 2 THEN 'owed' ELSE 'failed' END, attempts = CASE WHEN $5 AND attempts < 2 THEN attempts + 1 ELSE attempts END, run_key = CASE WHEN $5 AND attempts < 2 THEN NULL ELSE run_key END, started_at = CASE WHEN $5 AND attempts < 2 THEN NULL ELSE started_at END, model = CASE WHEN $5 AND attempts < 2 THEN NULL ELSE model END, rubric_version = CASE WHEN $5 AND attempts < 2 THEN NULL ELSE rubric_version END, failed_at = {AT}, failure = $4 WHERE id = $1 AND status = 'running' AND run_key = $2"),
+                &[id, run_key, &revision, failure, &retried],
+            )?;
+            if failed == 1 {
+                claim_ended(tx, run_key, "failed", Some(failure.as_str()))?;
+            }
+        }
+        PostmortemUpdate::Release { id, run_key } => {
+            let released = tx.execute(
+                "UPDATE tl3_postmortems SET status = 'owed', run_key = NULL, started_at = NULL, model = NULL, rubric_version = NULL WHERE id = $1 AND status = 'running' AND run_key = $2",
+                &[id, run_key],
+            )?;
+            if released == 1 {
+                claim_ended(tx, run_key, "released", None)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Postmortem failure classes worth another run: the worker died or ran out
+/// of time. A stall, a refused launch or an invalid reply would repeat (#486).
+const RETRIED_FAILURES: [&str; 2] = ["worker_failed", "deadline"];
+
+fn claim_ended(
+    tx: &mut Transaction<'_>,
+    run_key: &str,
+    outcome: &str,
+    failure: Option<&str>,
+) -> Result<()> {
+    tx.execute(
+        "UPDATE tl3_postmortem_claims SET outcome = $2, failure = $3 WHERE run_key = $1",
+        &[&run_key, &outcome, &failure],
+    )?;
+    Ok(())
+}
+
+/// Queue one Hindsight memory in `tx`, parking the oldest past the outbox's capacity.
+fn queue_memory_in(
+    tx: &mut Transaction<'_>,
+    operation_id: &str,
+    item: &serde_json::Value,
+) -> Result<()> {
+    tx.batch_execute("LOCK TABLE tl3_memory_outbox IN SHARE ROW EXCLUSIVE MODE")?;
+    tx.execute("INSERT INTO tl3_memory_outbox (operation_id, item) VALUES ($1, $2) ON CONFLICT (operation_id) DO NOTHING", &[&operation_id, item])?;
+    tx.execute("UPDATE tl3_memory_outbox SET parked_reason = 'capacity', parked_at = CURRENT_TIMESTAMP WHERE sequence IN (SELECT sequence FROM tl3_memory_outbox WHERE parked_reason IS NULL ORDER BY sequence DESC OFFSET 10000)", &[])?;
+    Ok(())
 }
 
 /// Create or update a login that may read TL3's tables, now and after later
