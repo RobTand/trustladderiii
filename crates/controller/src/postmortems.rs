@@ -509,13 +509,10 @@ impl crate::Controller {
             return Ok(false);
         };
         let per_day = pace.per_day;
-        let now = self.now_ms();
-        let resets = crate::adapters::workers::ladder::quota_resets(snapshot);
-        let quota = !pace.models.is_empty()
-            && pace
-                .models
-                .iter()
-                .all(|model| resets.get(model).is_some_and(|reset| *reset > now));
+        let quota = snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "model_quotas" && pace.models.contains(&row.id));
         let running = snapshot.rows.iter().filter(|row| row.table == JOBS).count();
         let Some(owed) = self.store.owed_postmortem()? else {
             return self.postmortem_blocked(snapshot, None);
