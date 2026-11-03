@@ -26,6 +26,8 @@ FILES = {
 }
 CORE = ['tests/test_core.py::test_core', 'tests/test_core.py::TestCore::test_method']
 FARTHER = ['tests/test_api.py::test_api', 'tests/test_helped.py::test_helped']
+CORE_UNIT = ['tests/test_core.py']
+FARTHER_UNITS = ['tests/test_api.py', 'tests/test_helped.py']
 
 
 def save(repo, message):
@@ -52,7 +54,16 @@ def repo(tmp_path, monkeypatch):
 
     def run_tree(tree, container, tests, *args, **kwargs):
         runs.append((tree.name, tests))
-        return {test: outcomes.get((tree.name, test), Outcome.PASSED) for test in tests}
+        observed = {}
+        collected = []
+        for test in tests:
+            members = execution.selection.node_ids(tree, test) if '::' not in test else [test]
+            collected.extend(members)
+            observed[test] = next((outcomes[tree.name, member] for member in members
+                                   if outcomes.get((tree.name, member), Outcome.PASSED) != Outcome.PASSED), Outcome.PASSED)
+        if kwargs.get('selected') is not None:
+            kwargs['selected'].collected = tuple(collected)
+        return observed
 
     monkeypatch.setattr(execution, 'require_admission', lambda: None)
     monkeypatch.setattr(execution, 'run_tree', run_tree)
@@ -71,9 +82,9 @@ def test_tests_importing_the_change_run_as_a_regression_check(repo):
     results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER, selected_tests=50)
     assert [result.name for result in results] == ['other', SELECTED]
     assert results[1].kind == Kind.REGRESSION
-    assert [test.test for test in results[1].tests] == CORE + FARTHER
+    assert [test.test for test in results[1].tests] == CORE_UNIT + FARTHER_UNITS
     assert [result.verdict for result in results] == [Verdict.PASS, Verdict.PASS]
-    assert any(tree == 'base' and set(CORE) <= set(tests) for tree, tests in runs), runs
+    assert any(tree == 'base' and set(CORE_UNIT) <= set(tests) for tree, tests in runs), runs
 
 
 def test_a_selected_test_failing_on_the_base_is_dropped_and_a_head_failure_fails_the_round(repo):
@@ -84,26 +95,26 @@ def test_a_selected_test_failing_on_the_base_is_dropped_and_a_head_failure_fails
     outcomes[('head', CORE[0])] = Outcome.ASSERTION
     results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER, selected_tests=50)
     selected = results[1]
-    assert [test.test for test in selected.tests] == CORE
+    assert [test.test for test in selected.tests] == CORE_UNIT
     assert selected.verdict == Verdict.FAIL
-    assert [test.passed for test in selected.tests] == [False, True]
+    assert [test.passed for test in selected.tests] == [False]
 
 
-def test_planned_and_edited_tests_are_not_selected(repo):
+def test_edited_modules_are_excluded_without_removing_planned_companions(repo):
     repo, base, runs, outcomes = repo
     write(repo, {'pkg/core.py': 'def value():\n    return 1  # changed\n',
                  'tests/test_api.py': 'import pkg.api\n\ndef test_api():\n    assert pkg.api.api()\n'})
     head = save(repo, 'leaf changes pkg.core and edits an existing test')
     plan = PLAN + (Check('core', Kind.REGRESSION, (CORE[0],)),)
     results = execution.run_checks(repo, base, head, plan, container=CONTAINER, selected_tests=50)
-    assert [test.test for test in results[-1].tests] == [CORE[1], FARTHER[1]]
+    assert [test.test for test in results[-1].tests] == CORE_UNIT + [FARTHER_UNITS[1]]
 
 
 def test_the_limit_keeps_the_closest_tests(repo):
     repo, base, runs, outcomes = repo
     head = change_core(repo)
     results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER, selected_tests=2)
-    assert [test.test for test in results[1].tests] == CORE
+    assert [test.test for test in results[1].tests] == CORE_UNIT
 
 
 @pytest.mark.parametrize('selected_tests', [None, 50])
@@ -134,9 +145,9 @@ def test_selection_expands_lazily_and_stops_at_the_limit(repo, monkeypatch):
     monkeypatch.setattr(execution.Pytest, 'changed_existing_tests',
                         lambda self, old, new, tests: judged.extend(tests) or changed_existing_tests(self, old, new, tests))
     results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER, selected_tests=2)
-    assert [test.test for test in results[1].tests] == CORE
-    assert expanded == ['tests/test_core.py'], 'stop expanding files once the limit is reached'
-    assert set(judged) <= {OTHER, *CORE}, 'only judge edits of tests that can still be selected'
+    assert [test.test for test in results[1].tests] == CORE_UNIT
+    assert set(expanded) == {'tests/test_core.py'}, 'stop expanding files once the limit is reached'
+    assert set(judged) <= {OTHER, *CORE_UNIT}, 'only judge edits of tests that can still be selected'
 
 
 def test_candidates_run_on_the_base_apart_from_the_plan(repo):
@@ -144,12 +155,12 @@ def test_candidates_run_on_the_base_apart_from_the_plan(repo):
     head = change_core(repo)
     execution.run_checks(repo, base, head, PLAN, container=CONTAINER, selected_tests=50)
     assert ('base', (OTHER,)) in runs, 'the plan base run is exactly as without selection'
-    assert ('base', tuple(CORE + FARTHER)) in runs
+    assert ('base', tuple(CORE_UNIT + FARTHER_UNITS)) in runs
     runs.clear()
     write(repo, {'pkg/core.py': 'def value():\n    return 1  # changed again\n'})
     newer = save(repo, 'a newer head')
     execution.run_checks(repo, base, newer, PLAN, container=CONTAINER, selected_tests=50)
-    assert [tests for tree, tests in runs if tree == 'base'] == [], 'base results are cached per test'
+    assert [tests for tree, tests in runs if tree == 'base'] == [], 'base results are cached per complete unit'
 
 
 def test_a_candidate_crashing_the_base_leaves_the_plan_alone(repo, monkeypatch):
@@ -159,7 +170,7 @@ def test_a_candidate_crashing_the_base_leaves_the_plan_alone(repo, monkeypatch):
 
     def crashing(tree, container, tests, *args, **kwargs):
         observed = real(tree, container, tests, *args, **kwargs)
-        return dict.fromkeys(tests, Outcome.NO_REPORT) if CORE[0] in tests and tree.name == 'base' else observed
+        return dict.fromkeys(tests, Outcome.NO_REPORT) if CORE_UNIT[0] in tests and tree.name == 'base' else observed
 
     monkeypatch.setattr(execution, 'run_tree', crashing)
     results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER, selected_tests=50)
@@ -167,7 +178,7 @@ def test_a_candidate_crashing_the_base_leaves_the_plan_alone(repo, monkeypatch):
     assert results[0].verdict == Verdict.PASS
 
 
-def test_a_head_failure_that_passes_alone_is_reported_as_flaky(repo):
+def test_a_head_failure_that_passes_in_its_complete_unit_is_reported_as_flaky(repo):
     repo, base, runs, outcomes = repo
     head = change_core(repo)
     calls = []
@@ -178,7 +189,7 @@ def test_a_head_failure_that_passes_alone_is_reported_as_flaky(repo):
 
     real = execution.run_tree
     execution.run_tree = lambda tree, container, tests, *args, **kwargs: {
-        test: (Outcome.ASSERTION if tree.name == 'head' and test == CORE[1] and once(tree, test) else outcome)
+        test: (Outcome.ASSERTION if tree.name == 'head' and test == CORE_UNIT[0] and once(tree, test) else outcome)
         for test, outcome in real(tree, container, tests, *args, **kwargs).items()}
     try:
         results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER, selected_tests=50)
@@ -186,20 +197,20 @@ def test_a_head_failure_that_passes_alone_is_reported_as_flaky(repo):
         execution.run_tree = real
     selected = results[1]
     assert selected.verdict == Verdict.PASS
-    flaky = next(test for test in selected.tests if test.test == CORE[1])
-    assert flaky.passed and 'passed alone' in flaky.message
-    assert ('head', (CORE[1],)) in runs, 'the failing test reruns alone'
+    flaky = next(test for test in selected.tests if test.test == CORE_UNIT[0])
+    assert flaky.passed and 'complete execution group' in flaky.message
+    assert ('head', tuple(CORE_UNIT)) in runs, 'the failing unit reruns complete'
     assert ('head', (OTHER,)) in runs, 'the plan head run is exactly as without selection'
 
 
-def test_a_test_crashing_the_head_fails_alone_without_infrastructure(repo, monkeypatch):
+def test_a_unit_crashing_the_head_fails_complete_without_infrastructure(repo, monkeypatch):
     repo, base, runs, outcomes = repo
     head = change_core(repo)
     real = execution.run_tree
 
     def crashing(tree, container, tests, *args, **kwargs):
         observed = real(tree, container, tests, *args, **kwargs)
-        if tree.name == 'head' and CORE[0] in tests:
+        if tree.name == 'head' and CORE_UNIT[0] in tests:
             return dict.fromkeys(tests, Outcome.NO_REPORT)
         return observed
 
@@ -208,7 +219,7 @@ def test_a_test_crashing_the_head_fails_alone_without_infrastructure(repo, monke
     assert results[0].verdict == Verdict.PASS
     selected = results[1]
     assert selected.verdict == Verdict.FAIL
-    assert [test.test for test in selected.tests if not test.passed] == [CORE[0]]
+    assert [test.test for test in selected.tests if not test.passed] == CORE_UNIT
     assert selected.tests[0].head == Outcome.ERROR
 
 
@@ -318,4 +329,4 @@ def test_a_fixture_only_change_adds_the_selected_check(repo):
     head = save(repo, 'leaf edits only the fixture')
     results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER, selected_tests=50)
     assert [result.name for result in results] == ['other', SELECTED]
-    assert [test.test for test in results[1].tests] == ['tests/test_pin.py::test_pin']
+    assert [test.test for test in results[1].tests] == ['tests/test_pin.py']

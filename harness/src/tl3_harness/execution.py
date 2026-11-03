@@ -11,9 +11,9 @@ import time
 from typing import Protocol
 
 from .limits import MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, validate_check_plan
-from .model import (ALWAYS_CHECK, Check, FailureNotes, Forcing, HarnessInputError, Kind, Outcome, Result, TestResult, Verdict,
+from .model import (ALWAYS_CHECK, SELECTED_CHECK, Check, FailureNotes, Forcing, HarnessInputError, Kind, Outcome, Result, TestResult, Verdict,
                     NATIVE_THREAD_ENVIRONMENT, judge)
-from .node_ids import selects, validate_always_tests
+from .node_ids import validate_always_tests
 from .report import InvalidReport, decode, parse
 from . import selection
 from .trees import (UnsupportedEntry, added_names, changed_configuration, changed_existing_tests,
@@ -22,14 +22,34 @@ from .trees import (UnsupportedEntry, added_names, changed_configuration, change
 
 
 TMPFS_MIB = 512
-# Existing tests that import the change (#359), and configured repo-wide rules (#498).
-SELECTED_CHECK = "Existing tests that import the change"
 MAX_SELECTED_TESTS = 1000
 
 
 _BASE_RESULTS: dict[tuple, tuple[dict[str, Outcome], dict[str, str]]] = {}
-# Selected candidates' base outcomes, per test, apart from the plan's base cache.
-_SELECTED_BASE: dict[tuple, Outcome] = {}
+# Complete execution units, never individual members, apart from the plan's base cache.
+_SELECTED_BASE: dict[tuple, "SelectedObservation"] = {}
+
+
+@dataclass
+class SelectedRun:
+    groups: tuple[tuple[str, ...], ...]
+    limit: int
+    expected: tuple[str, ...] | None = None
+    collected: tuple[str, ...] = ()
+    refusal: str = ""
+
+    def as_json(self):
+        return {"groups": self.groups, "limit": self.limit, "expected": self.expected}
+
+
+@dataclass(frozen=True)
+class SelectedObservation:
+    outcomes: dict[str, Outcome]
+    collection: tuple[str, ...]
+
+    @property
+    def identity(self):
+        return hashlib.sha256(json.dumps(self.collection, ensure_ascii=True).encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -103,7 +123,8 @@ class Progress:
 
 def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: Path,
              progress: Progress, additions: frozenset[tuple[str, str]] = frozenset(), *,
-             messages: dict[str, str] | None = None, forcing: Forcing | None = None) -> dict[str, Outcome]:
+             messages: dict[str, str] | None = None, forcing: Forcing | None = None,
+             selected: SelectedRun | None = None) -> dict[str, Outcome]:
     missing = {test for test in tests if not (tree / test.split("::")[0]).is_file()}
     records = []
     invalid = False
@@ -114,8 +135,12 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
     # is journalled and parsed by this host process, outside the checkout.
     with report.open("wb") as journal, tempfile.TemporaryFile() as errors, tempfile.TemporaryFile() as selection:
         # The forcing travels with the selection to the read-only runner, outside the checkout (#393).
-        selection.write(json.dumps(tests if forcing is None else
-                                   {"tests": tests, "forcing": forcing.as_json()}).encode())
+        request = tests
+        if forcing is not None:
+            request = {"tests": tests, "forcing": forcing.as_json()}
+        if selected is not None:
+            request = {"tests": tests, "selection": selected.as_json()}
+        selection.write(json.dumps(request).encode())
         selection.seek(0)
         with subprocess.Popen(container_command(tree, container, tests), stdin=selection,
                               stdout=subprocess.PIPE, stderr=errors) as child:
@@ -145,7 +170,13 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
     try:
         if invalid:
             raise InvalidReport("invalid report stream")
-        return parse(records, tests, missing, exit_code, additions, messages=messages)
+        outcomes = parse(records, tests, missing, exit_code, additions, messages=messages)
+        if selected is not None:
+            selected.collected = tuple(test for record in records if record.get("event") == "collection"
+                                       for test in record["tests"])
+            selected.refusal = next((record["message"] for record in records
+                                     if record.get("event") == "plan-error"), "")
+        return outcomes
     except InvalidReport:
         return dict.fromkeys(tests, Outcome.NO_REPORT)
 
@@ -215,7 +246,8 @@ class TestTool(Protocol):
 
     def run(self, tree: Path, container: Container, tests: tuple[str, ...], report: Path,
             progress: Progress, additions: frozenset[tuple[str, str]] = frozenset(), *,
-            messages: dict[str, str] | None = None, forcing: Forcing | None = None) -> dict[str, Outcome]: ...
+            messages: dict[str, str] | None = None, forcing: Forcing | None = None,
+            selected: SelectedRun | None = None) -> dict[str, Outcome]: ...
 
 
 class Pytest:
@@ -242,7 +274,10 @@ class Pytest:
     def select(self, tree, changed, config):
         return selection.select(tree, changed, lambda name: is_test(name, config["test-files"]))
 
-    def run(self, tree, container, tests, report, progress, additions=frozenset(), *, messages=None, forcing=None):
+    def run(self, tree, container, tests, report, progress, additions=frozenset(), *, messages=None, forcing=None,
+            selected=None):
+        if selected is not None:
+            return run_tree(tree, container, tests, report, progress, additions, messages=messages, selected=selected)
         # Test seams stand in for run_tree without a forcing parameter; pass it only when set.
         if forcing is None:
             return run_tree(tree, container, tests, report, progress, additions, messages=messages)
@@ -253,69 +288,121 @@ PYTEST = Pytest()
 
 
 def selected_candidates(repo: Path, tool: TestTool, old: Path, new: Path, config: dict, base: str,
-                        head: str, plan: tuple[Check, ...], limit: int) -> tuple[str, ...]:
-    """Existing tests the change's imports reach, closest first, up to `limit`. Tests the plan
-    names are judged there; tests the head edits or lacks are the leaf's own, for review."""
-    named = [test for check in plan for test in check.tests]
-    candidates = []
+                        head: str, plan: tuple[Check, ...], limit: int) -> tuple[tuple[str, ...], ...]:
+    """Closest complete modules, or owner-declared groups of modules. Planned functions
+    stay in their owning unit. An edited unit is excluded whole, never cut into pieces."""
+    declared = {name: tuple(group) for group in config.get("selection-groups", []) for name in group}
+    named_files = {test for check in plan for test in check.tests if "::" not in test}
+    candidates, seen, cost = [], set(), 0
     try:
-        # Lazily, closest first: a widely imported file can reach thousands of tests.
         for test in tool.select(old, changed_files(repo, own_base(repo, base, head), head), config):
-            if (any(selects(test, other) or selects(other, test) for other in named)
-                    or tool.changed_existing_tests(old, new, (test,))):
+            name = test.split("::", 1)[0]
+            group = declared.get(name, (name,))
+            if name in seen:
                 continue
-            candidates.append(test)
-            if len(candidates) == limit:
+            seen.update(group)
+            if set(group) <= named_files or tool.changed_existing_tests(old, new, group):
+                continue
+            # A lower bound keeps expansion lazy. Collection charges every parameter case
+            # before execution, and refuses a group that cannot fit the remaining budget.
+            try:
+                group_cost = sum(max(1, len(selection.node_ids(old, member))) for member in group)
+            except selection.UNREADABLE as error:
+                raise HarnessInputError(f"Cannot discover the complete selected execution group {group}.") from error
+            if cost + group_cost > limit:
+                raise HarnessInputError(f"Selected execution group {group} needs at least {group_cost} tests; "
+                                        f"remaining selected-test budget is {limit - cost}.")
+            proposed = (*candidates, group)
+            try:
+                validate_check_plan(plan + (Check(SELECTED_CHECK, Kind.REGRESSION,
+                                                 tuple(member for unit in proposed for member in unit)),))
+            except ValueError as error:
+                raise HarnessInputError(f"Selected execution group {group} exceeds report limits: {error}") from error
+            candidates.append(group)
+            cost += group_cost
+            if cost == limit:
                 break
     except (RecursionError, MemoryError):
         return ()
-    while candidates:
-        try:
-            validate_check_plan(plan + (Check(SELECTED_CHECK, Kind.REGRESSION, tuple(candidates)),))
-            break
-        except ValueError:
-            candidates = candidates[:len(candidates) // 2]
     return tuple(candidates)
 
 
-def selected_base(tool: TestTool, old: Path, container: Container, candidates: tuple[str, ...], base: str,
-                  root: Path, progress: Progress) -> dict[str, Outcome]:
-    """The candidates' base outcomes, from one run apart from the plan's, cached per test."""
-    key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container)
-    missing = tuple(test for test in candidates if (*key, test) not in _SELECTED_BASE)
+def selected_base(tool: TestTool, old: Path, container: Container, candidates: tuple[tuple[str, ...], ...], base: str,
+                  root: Path, progress: Progress, limit: int, config: dict) -> dict[tuple[str, ...], SelectedObservation]:
+    """Cache only complete units. The immutable base and image bind collection inputs;
+    the observed exact collection travels with each unit to head and retries."""
+    key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container, id(tool),
+           json.dumps(config, sort_keys=True), "complete-modules-v1", limit,
+           tuple((name, os.environ.get(name, default)) for name, default in NATIVE_THREAD_ENVIRONMENT.items()))
+    missing = tuple(group for group in candidates if (*key, group) not in _SELECTED_BASE)
+    cached_cost = sum(len(_SELECTED_BASE[(*key, group)].collection) for group in candidates if group not in missing)
     if missing:
-        for test, outcome in tool.run(old, container, missing, root / "selected-base.jsonl", progress).items():
-            if outcome != Outcome.NO_REPORT:
-                _SELECTED_BASE[(*key, test)] = outcome
-    return {test: _SELECTED_BASE.get((*key, test), Outcome.NO_REPORT) for test in candidates}
+        contract = SelectedRun(missing, limit - cached_cost)
+        tests = tuple(member for group in missing for member in group)
+        observed = tool.run(old, container, tests, root / "selected-base.jsonl", progress, selected=contract)
+        if contract.refusal:
+            raise HarnessInputError(contract.refusal)
+        for group in missing:
+            collection = tuple(test for test in contract.collected if test.split("::", 1)[0] in group)
+            outcomes = {member: observed.get(member, Outcome.NO_REPORT) for member in group}
+            if collection and Outcome.NO_REPORT not in outcomes.values():
+                _SELECTED_BASE[(*key, group)] = SelectedObservation(outcomes, collection)
+    return {group: _SELECTED_BASE.get((*key, group),
+                                    SelectedObservation(dict.fromkeys(group, Outcome.NO_REPORT), ()))
+            for group in candidates}
 
 
-def selected_head(tool: TestTool, new: Path, container: Container, kept: tuple[str, ...],
-                  before: dict[str, Outcome], root: Path, progress: Progress) -> Result:
-    """Judge the kept tests on the head, apart from the plan's run. A failing test reruns once,
-    alone: the maker can't fix a flake, and one test ending the process must not take the
-    others with it. The first MAX_DETAILED_FAILURES failures rerun; the rest stand."""
+def selected_head(tool: TestTool, new: Path, container: Container, kept: tuple[tuple[str, ...], ...],
+                  before: dict[tuple[str, ...], SelectedObservation], root: Path, progress: Progress,
+                  limit: int) -> Result:
+    """Run the same complete units as base. Retry each failing unit once, within the
+    original node budget and the detailed-failure cap. Never isolate a group member."""
+    tests = tuple(member for group in kept for member in group)
+    expected = tuple(test for group in kept for test in before[group].collection)
+    contract = SelectedRun(kept, limit, expected)
     messages, notes = {}, {}
-    after = tool.run(new, container, kept, root / "selected-head.jsonl", progress, messages=messages)
-    failing = [test for test in kept if after.get(test) != Outcome.PASSED]
-    for index, test in enumerate(failing[:MAX_DETAILED_FAILURES]):
-        alone_messages = {}
-        alone = tool.run(new, container, (test,), root / f"selected-alone-{index}.jsonl", progress,
-                         messages=alone_messages).get(test, Outcome.NO_REPORT)
-        if alone == Outcome.PASSED:
-            notes[test] = (f"{after.get(test, Outcome.NO_REPORT)} on the head with the other selected tests, "
-                           "then passed alone: flaky or disturbed by another test. Not counted against the change.")
-        elif test in alone_messages:
-            messages[test] = alone_messages[test]
-        after[test] = alone
-    for test in kept:
-        if after.get(test, Outcome.NO_REPORT) == Outcome.NO_REPORT:
-            # It passed on the base; ending the process on the head is the change's failure.
-            after[test] = Outcome.ERROR
-            messages[test] = "The test ended its process on the head without a report; it passed on the base."
-    result = judge(Check(SELECTED_CHECK, Kind.REGRESSION, kept), before, after, messages=messages)
-    return replace(result, tests=tuple(replace(test, message=notes[test.test][:MAX_MESSAGE_CHARS])
-                                       if test.passed and test.test in notes else test for test in result.tests))
+    after = tool.run(new, container, tests, root / "selected-head.jsonl", progress,
+                     messages=messages, selected=contract)
+    if contract.refusal:
+        raise HarnessInputError(contract.refusal)
+    head_collections = {group: tuple(test for test in contract.collected if test.split("::", 1)[0] in group)
+                        for group in kept}
+    failing = [group for group in kept if any(after.get(member) != Outcome.PASSED for member in group)]
+    retried = set()
+    for index, group in enumerate(failing[:MAX_DETAILED_FAILURES]):
+        retry_messages = {}
+        retry_contract = SelectedRun((group,), len(before[group].collection), before[group].collection)
+        retry = tool.run(new, container, group, root / f"selected-retry-{index}.jsonl", progress,
+                         messages=retry_messages, selected=retry_contract)
+        if retry_contract.refusal:
+            raise HarnessInputError(retry_contract.refusal)
+        head_collections[group] = retry_contract.collected
+        retried.add(group)
+        passed = all(retry.get(member) == Outcome.PASSED for member in group)
+        for member in group:
+            if passed:
+                notes[member] = ("Failed on the head with the selected groups, then passed on retry as a "
+                                 "complete execution group: flaky or disturbed by another group. "
+                                 "Not counted against the change.")
+            elif member in retry_messages:
+                messages[member] = retry_messages[member]
+            after[member] = retry.get(member, Outcome.NO_REPORT)
+    base_outcomes = {member: before[group].outcomes[member] for group in kept for member in group}
+    for group in kept:
+        identity = before[group].identity
+        membership = ("identical base/head collection" if head_collections[group] == before[group].collection
+                      else "head collection unverified; required base collection")
+        receipt = (f"Complete execution group {group}; {membership} "
+                   f"{len(before[group].collection)} tests, sha256 {identity}; "
+                   f"retry unit: {group if group in retried else 'not retried'}.")
+        for member in group:
+            if after.get(member, Outcome.NO_REPORT) == Outcome.NO_REPORT:
+                after[member] = Outcome.ERROR
+                messages[member] = ("The execution group ended its process on the head without a complete "
+                                    "report; this complete group passed on the base.")
+            notes[member] = (receipt + "\n" + (notes.get(member) or messages.get(member, ""))).strip()[:MAX_MESSAGE_CHARS]
+    result = judge(Check(SELECTED_CHECK, Kind.REGRESSION, tests), base_outcomes, after, messages=messages)
+    return replace(result, tests=tuple(replace(test, message=notes[test.test]) for test in result.tests))
 
 
 def stale_result(result: Result, stale: set[str]) -> Result:
@@ -336,8 +423,8 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                always_tests: tuple[str, ...] = ()) -> tuple[Result, ...]:
     """Run one round inside one admitted PB action, from trusted installed code. `protected`
     holds the repository's protected path patterns; a change to any of them is refused.
-    With `selected_tests`, up to that many existing tests whose imports reach the change,
-    and that pass on the base, run as one more regression check, `SELECTED_CHECK`.
+    With `selected_tests`, complete execution groups whose imports reach the change
+    run as one more regression check, `SELECTED_CHECK`. The limit counts collected cases.
     `always_tests` runs the configured files or node IDs as regression checks every round."""
     require_admission()
     if not plan or len({check.name for check in plan}) != len(plan):
@@ -432,9 +519,10 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         before = before.copy()
         before.update(dict.fromkeys(stale, Outcome.MISSING))
         # Candidates run apart, so one crashing there can't cost the plan its base evidence.
-        selected_before = selected_base(tool, old, container, candidates, base, root, progress)
-        # A test that doesn't pass on the base says nothing about the change: drop it, don't excuse it.
-        kept = tuple(test for test in candidates if selected_before[test] == Outcome.PASSED)
+        selected_before = selected_base(tool, old, container, candidates, base, root, progress, selected_tests, config)
+        # Filter complete units: no head run may lose a fixture companion.
+        kept = tuple(group for group in candidates
+                     if all(outcome == Outcome.PASSED for outcome in selected_before[group].outcomes.values()))
         if demonstrating:
             shutil.copytree(old, demo)
             tool.test_edits(old, new, demo, config)
@@ -535,7 +623,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                     result = replace(result, verdict=Verdict.FAIL, tests=restored)
             results.append(stale_result(result, stale))
         if kept:
-            results.append(selected_head(tool, new, container, kept, selected_before, root, progress))
+            results.append(selected_head(tool, new, container, kept, selected_before, root, progress, selected_tests))
         return tuple(results)
 
 

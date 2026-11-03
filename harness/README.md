@@ -144,27 +144,58 @@ such as `os.path.join`. A bare file name doesn't count: it can't say which
 of several same-named files it means. For prismaquant#3213's changes, no
 PrismaQuant test file named a changed file only by its bare name. A file that
 imports an affected one is affected too, through production modules and test
-helpers alike. Every test
-file in that closure contributes its test functions and methods. Tests are
-ordered by import distance, then path, then source order, and the first
-`limit` are candidates. Tests that a planned check names, and tests that the
-head edits or lacks, are not candidates.
+helpers alike. The owning module is the default execution unit, including every
+collected test and parameter case. This preserves module fixture teardown guards
+and module-owned session fixtures without guessing which functions use rows.
+Modules are ordered by import distance and path. A planned function stays in
+its selected module as a companion. A unit already covered by whole-file plan
+entries needs no additional run. A unit with any edited or missing module is
+excluded whole, for review, rather than narrowed to its unchanged functions.
 
-Selection is lazy: it reads one import level at a time, and expands and
-filters test files only until it has `limit` candidates. A file the parser
-can't read, including one deep enough to exhaust it, is skipped; selection
-never fails the round.
+Cross-module completion guards need an owner-declared group in the base's
+protected configuration. This is the supported policy for fixtures whose
+completion roster spans modules, including shared session fixtures. The harness
+does not infer an arbitrary fixture's completion roster from Python code.
+Declare every companion module, including modules outside the import closure:
 
-The candidates run on the base in their own run, apart from the plan's, with
-outcomes cached per test. Only those that pass there are kept: a test that
-fails, errors or skips on the base says nothing about the change. The kept
-tests run on the head, again apart from the plan's run, and are judged by
-the regression rules. The first 20 that fail rerun once, alone. One that then
-passes counts as passed, and its result says it failed with the others and
-passed alone. One that ends its process on the head is an error, not an
-infrastructure failure, because it passed on the base. If none are kept, no
-check is added. A plan may not use the selected check's name. The controller
-accepts the trailing check only from an action it staged with a limit.
+```toml
+[tool.tl3.harness]
+command = ["python", "-m", "pytest"]
+test-files = ["tests/**/*.py"]
+selection-groups = [["tests/test_calls.py", "tests/test_bindings.py"]]
+```
+
+Groups contain existing configured module paths, without globs, repeated
+members, or overlap. Selecting any member selects the whole group. The head
+cannot change the declaration. Ordinary shared session setup that has no
+cross-module completion requirement needs no declaration.
+
+Selection stays lazy and uses the number of statically discovered functions
+as a lower bound. The trusted runner charges every collected parameter case
+against the original limit before executing any tests. A group that cannot
+fit the remaining limit or report budget is refused with its member paths and
+cost, never split or silently skipped. Pytest deselection options are unsupported
+for automatic complete-module runs. An unreadable candidate source is skipped
+by static import selection; an unreadable declared companion is refused.
+
+Candidates run apart from the plan. The base cache stores complete units and
+exact collection identity, bound to the action owner, base commit, immutable
+container, tool, protected configuration, thread bounds, policy and node limit.
+Partial or unreported units never enter the cache. Only units whose every
+member passes on base run on head. Head collection must match that unit's base
+collection exactly, in order, before tests execute. Collection drift is a
+harness input refusal, never a product regression.
+
+Failing units retry once as complete units. At most 20 failing units retry,
+and the total number of retried cases cannot exceed the original selected-test
+limit. An independent single-test module still retries on its own. A unit that
+passes on retry is reported as flaky or disturbed by another unit. A unit that
+ends its process on head without a complete report fails as a group because
+that complete unit passed on base. Results name the selected modules; bounded
+messages record group membership, collection count and hash, and retry unit.
+If no units pass base, no selected check is added. A plan may not use the
+selected check's name. The controller accepts the trailing check only from an
+action it staged with a limit.
 
 The controller carries each round's failed selected tests forward in its
 check report. When the change under review edits the file of one of them,

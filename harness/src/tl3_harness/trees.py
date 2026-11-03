@@ -51,7 +51,7 @@ def export(repo: Path, revision: str, target: Path):
 def configuration(tree: Path) -> dict:
     with (tree / "pyproject.toml").open("rb") as source:
         config = tomllib.load(source)["tool"]["tl3"]["harness"]
-    if set(config) != {"command", "test-files"}:
+    if set(config) - {"command", "test-files", "selection-groups"} or not {"command", "test-files"} <= set(config):
         raise ValueError("harness configuration needs command and test-files")
     command, files = config["command"], config["test-files"]
     if command not in (["python", "-m", "pytest"], ["python3", "-m", "pytest"]):
@@ -65,6 +65,24 @@ def configuration(tree: Path) -> dict:
         if (path.is_absolute() or ".." in path.parts
                 or "\\" in name or path.name == "conftest.py" or path.suffix != ".py"):
             raise ValueError("test-files must be relative Python test paths")
+    groups = config.get("selection-groups", [])
+    if not isinstance(groups, list):
+        raise ValueError("selection-groups must list complete module groups")
+    grouped = set()
+    for group in groups:
+        if not isinstance(group, list) or not group:
+            raise ValueError("each selection group must list complete test modules")
+        for name in group:
+            if not isinstance(name, str):
+                raise ValueError("selection groups must name relative test modules")
+            path = PurePosixPath(name)
+            if (name != path.as_posix() or path.is_absolute() or ".." in path.parts
+                    or any(char in name for char in "*?[]\\:") or path.name == "conftest.py"
+                    or path.suffix != ".py" or not is_test(name, files) or not (tree / name).is_file()):
+                raise ValueError(f"selection group needs an existing configured test module: {name}")
+            if name in grouped:
+                raise ValueError(f"selection groups must not overlap or repeat modules: {name}")
+            grouped.add(name)
     return config
 
 

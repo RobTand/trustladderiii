@@ -97,6 +97,9 @@ def test_complete_fixture_unit_retries_without_manufacturing_393_unused_rows(fro
     assert ('base', (MODULE,)) in runs
     assert [tests for tree, tests in runs if tree == 'head' and tests != (OTHER,)] == [(MODULE,), (MODULE,)]
     assert 'complete execution group' in result.tests[0].message
+    receipt = json.loads(execution.result_json(results))[-1]
+    assert receipt['tests'][0]['base'] == receipt['tests'][0]['head'] == 'passed'
+    assert 'identical base/head collection 394 tests, sha256 ' in receipt['tests'][0]['message']
 
 
 def test_frozen_guard_is_real_and_unchanged(frozen_repo, tmp_path):
@@ -116,6 +119,7 @@ def test_a_real_behavior_failure_in_a_complete_unit_still_fails(frozen_repo):
     base = save(repo, 'base')
     result = selected(repo, base, head(repo, 0))[-1]
     assert result.verdict == Verdict.FAIL
+    assert 'real behavior failure' in result.tests[0].message
     assert [test.test for test in result.tests] == [MODULE]
     assert all(tests == (MODULE,) for tree, tests in runs if tree == 'head' and tests != (OTHER,))
 
@@ -163,7 +167,8 @@ def test_product_driven_collection_change_is_a_selection_refusal(frozen_repo):
         selected(repo, base, head(repo, 3))
 
 
-def test_declared_session_group_includes_unreached_companion_modules(frozen_repo):
+@pytest.mark.parametrize('flaky', [False, True])
+def test_declared_session_group_includes_unreached_companion_modules(frozen_repo, flaky):
     repo, runs = frozen_repo
     (repo / 'pyproject.toml').write_text(CONFIG + 'selection-groups=[["tests/test_contract.py", "tests/test_companion.py"]]\n')
     (repo / 'tests/conftest.py').write_text('''import pytest
@@ -176,18 +181,22 @@ def all_calls():
 def seen():
     return SEEN
 ''')
-    (repo / MODULE).write_text('from product import value\ndef test_first(seen):\n    assert value()\n    seen.add("first")\n')
+    (repo / MODULE).write_text('from pathlib import Path\nfrom product import value\n'
+        'def test_first(seen):\n    seen.add("first")\n'
+        '    marker = Path(__file__).with_name(".first-ran")\n'
+        '    if value() == 2 and not marker.exists():\n        marker.touch()\n        assert False\n')
     (repo / 'tests/test_companion.py').write_text('def test_second(seen):\n    seen.add("second")\n')
     # The plan does not use this shared conftest's session guard.
     (repo / 'other.py').write_text('def test_other():\n    assert True\n')
     (repo / 'pyproject.toml').write_text((repo / 'pyproject.toml').read_text().replace('"tests/*.py"', '"tests/*.py", "other.py"'))
     plan = (Check('other', Kind.REGRESSION, ('other.py::test_other',)),)
     base = save(repo, 'base')
-    result = selected(repo, base, head(repo), limit=2, plan=plan)[-1]
+    result = selected(repo, base, head(repo, 2 if flaky else 1), limit=2, plan=plan)[-1]
     assert result.verdict == Verdict.PASS, result
     group = (MODULE, 'tests/test_companion.py')
     assert tuple(test.test for test in result.tests) == group
     assert ('base', group) in runs and ('head', group) in runs
+    assert len([tests for tree, tests in runs if tree == 'head' and MODULE in tests]) == (2 if flaky else 1)
 
 
 def test_independent_module_flake_still_gets_a_bounded_retry(frozen_repo):
@@ -231,3 +240,30 @@ def test_cache_binds_container_and_never_reuses_an_unreported_group(frozen_repo,
     different = execution.Container('sha256:' + '2' * 64)
     assert selected(repo, base, commit, container=different)[-1].verdict == Verdict.PASS
     assert ('base', (MODULE,)) in runs
+
+
+def test_a_cached_group_consumes_budget_before_a_new_group_is_admitted(frozen_repo):
+    repo, _ = frozen_repo
+    (repo / 'extra.py').write_text('VALUE = 1\n')
+    (repo / 'tests/test_extra.py').write_text('import pytest\nimport extra\n'
+        '@pytest.mark.parametrize("row", range(7))\ndef test_extra(row):\n    assert extra.VALUE\n')
+    base = save(repo, 'base')
+    selected(repo, base, head(repo))
+    (repo / 'extra.py').write_text('VALUE = 2\n')
+    commit = save(repo, 'select another group against the same base')
+    with pytest.raises(HarnessInputError, match='execution group.*7.*6'):
+        selected(repo, base, commit)
+
+
+@pytest.mark.parametrize('groups', [
+    '[["tests/test_contract.py"], ["tests/test_contract.py"]]',
+    '[["tests/test_contract.py::test_bindings_are_shared"]]',
+    '[["tests/missing.py"]]',
+    '[["tests/*.py"]]',
+    '[[]]',
+])
+def test_group_declarations_reject_ambiguous_or_partial_modules(frozen_repo, groups):
+    repo, _ = frozen_repo
+    (repo / 'pyproject.toml').write_text(CONFIG + f'selection-groups={groups}\n')
+    with pytest.raises(ValueError, match='selection group'):
+        execution.configuration(repo)
