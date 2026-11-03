@@ -86,6 +86,8 @@ class Facts(BaseCallbackHandler):
         self.session_id = None
         self.lock = Lock()
         self.pending = {}
+        self.calls = self.ended = 0
+        self.missing_usage = False
         self.totals = {key: None for key in ('input_tokens', 'cached_tokens', 'output_tokens')}
 
     def row(self, outcome, finished_ms=None, failure=None):
@@ -93,6 +95,7 @@ class Facts(BaseCallbackHandler):
             'started_ms': self.started_ms, 'finished_ms': finished_ms, 'outcome': outcome,
             'release': self.request.get('trace', {}).get('release'),
             'model': self.request['model']['name'], **self.totals,
+            'usage_complete': self.calls > 0 and self.calls == self.ended and not self.missing_usage,
             'trace_id': self.trace_id, 'session_id': self.session_id, 'failure': failure,
         }
 
@@ -100,12 +103,20 @@ class Facts(BaseCallbackHandler):
         if path := self.request.get('trace', {}).get('completion'):
             publish(Path(path), self.row(outcome, finished_ms, failure))
 
+    def on_chat_model_start(self, serialized, messages, *, run_id, **kwargs):
+        with self.lock:
+            self.calls += 1
+            self.save('running')
+
     def on_llm_new_token(self, token, *, run_id, chunk=None, **kwargs):
         if chunk is not None and (usage := getattr(chunk.message, 'usage_metadata', None)):
             with self.lock:
                 self.pending[run_id] = usage
 
     def add(self, usage):
+        self.ended += 1
+        self.missing_usage |= not all(type(usage.get(key)) is int and usage[key] >= 0
+                                      for key in ('input_tokens', 'output_tokens'))
         values = {key: usage.get(key) for key in ('input_tokens', 'output_tokens')}
         values['cached_tokens'] = usage.get('input_token_details', {}).get('cache_read')
         for key, value in values.items():
@@ -118,13 +129,12 @@ class Facts(BaseCallbackHandler):
             last = self.pending.pop(run_id, None)
             message = response.generations[0][0].message if response.generations else None
             usage = getattr(message, 'usage_metadata', None) or last
-            if usage:
-                self.add(usage)
+            self.add(usage or {})
 
     def on_llm_error(self, error, *, run_id, **kwargs):
         with self.lock:
-            if usage := self.pending.pop(run_id, None):
-                self.add(usage)
+            self.missing_usage = True
+            self.add(self.pending.pop(run_id, None) or {})
 
 
 @contextmanager

@@ -62,6 +62,7 @@ fn completed(attempt: &Path) -> Result<Option<WorkerRunFacts>> {
                 .into(),
             input_tokens: None,
             cached_tokens: None,
+            usage_complete: false,
             output_tokens: None,
             trace_id: None,
             session_id: None,
@@ -75,6 +76,7 @@ fn completed(attempt: &Path) -> Result<Option<WorkerRunFacts>> {
         .or(facts.finished_ms);
     if facts.outcome == "running" || facts.finished_ms.is_none() {
         facts.outcome = "crashed".into();
+        facts.usage_complete = false;
         facts.failure = Some(WorkerBoundaryFailure {
             origin: "worker".into(),
             class: "ProcessExited".into(),

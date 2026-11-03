@@ -482,6 +482,8 @@ pub struct WorkerRunFacts {
     pub model: String,
     pub input_tokens: Option<i64>,
     pub cached_tokens: Option<i64>,
+    #[serde(default)]
+    pub usage_complete: bool,
     pub output_tokens: Option<i64>,
     pub trace_id: Option<String>,
     #[serde(default)]

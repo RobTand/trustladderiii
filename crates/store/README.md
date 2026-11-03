@@ -288,7 +288,7 @@ the same completion twice is harmless, and replacing it is refused.
 
 The console's reader role can select the table, including its generated columns:
 `started_ms`, `finished_ms`, `outcome`, `release`, `model`, `input_tokens`,
-`cached_tokens`, `output_tokens`, `trace_id`, `session_id`, `failure_origin`,
+`cached_tokens`, `output_tokens`, `usage_complete`, `trace_id`, `session_id`, `failure_origin`,
 `failure_class`, `failure_status` and `failure_request_id`. Times are Unix
 milliseconds recorded at the worker boundary. Effect update times only describe
 acknowledgement. Missing finish times and token counts stay NULL. Earlier runs

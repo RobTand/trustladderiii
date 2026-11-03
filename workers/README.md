@@ -783,7 +783,8 @@ numeric usage after each model call and writes a terminal record when the run
 ends, even when MLflow is unavailable. It records the model, pinned worker
 release, trace ID and the session ID sent to CLIProxyAPI. Streamed totals count
 once per call, including the last measured usage of an interrupted stream.
-Missing usage stays unknown. Cached tokens are input cache reads.
+Missing usage stays unknown. `usage_complete` is false when any model call lacks
+usage, is interrupted or is still running. Cached tokens are input cache reads.
 
 The waitpid owner records worker start and exit times separately from the launch
 acknowledgement. The controller imports the completion before reporting its
