@@ -696,11 +696,16 @@ A leaf gets its slot and all its files together. **Q48, Rob, 2026-11-01:** an ol
 
 ## Agent pool
 
-Slice one uses one account, and serves runs first come, first served.
+Slice one uses one account. Each agent run takes a ticket, then waits for a free grant. **Approved by Rob, 2026-11-02 (#417):** grants are strictly priority-first, pulling this part of Q39 forward from slice two.
+
+- **Priority.** A request's priority comes from its issue: a `P0`–`P3` label, or else a `[P0]`–`[P3]` title prefix, both case-insensitive. A label wins over the title, and with several priority labels the most urgent wins. Unranked comes after P3. Intake reads it. An issue edit, a label change or catch-up refreshes it while the request is open; a closed request keeps its last priority. Edits are ordered by the issue's `updated_at` on GitHub, not by arrival, so an older edit is stale whenever it arrives. That time has second precision, so when two edits in one second disagree, neither is applied, and the controller's timer rereads the issue. A reread with a newer time applies. A reread with the same time applies only once 60 seconds have passed since that time, because before then it may show the intermediate state. A failed or too-early reread is retried after 60 s, then 2 min, 4 min and so on. After 6 rereads TL3 logs it and keeps the last applied priority. A tick rereads at most 8 issues, the longest-waiting first. The credit reserve (#416) uses the same parser.
+- **Order.** A free grant goes to the waiter with the best priority, then the older ticket.
+- **Waiting.** A waiter is granted once no waiter of better priority, and no older waiter of its own priority, remains. If no better-priority run arrives while it waits, that takes at most as many grants as there are waiters ahead of it. Better-priority work that keeps arriving can hold it back indefinitely; as in Q30, starvation is accepted.
+- `tl3 status` and the console's cards show each waiting run's priority and place in line.
 
 From slice two on:
 
-- Runs are granted in the gate's order, by rank with ties going to the older run, within each account's capacity (Q39).
+- Runs are granted in the gate's order, by rank with ties going to the older run, within each account's capacity (Q39). How rank combines with priority is decided when slice two starts.
 - Postmortem runs come after every delivery run, so they use only spare capacity. Under constant load they wait (Q39).
 - A quota reset the provider announces is a wake-up event. When every model in a step's ladder is out, the earliest reset wakes it (Q53).
 
@@ -777,7 +782,7 @@ A newer kernel never replays older events. They stay for audit.
 - **Rank:** the number of other nodes waiting on a node, directly or through a chain of waits. Higher ranks go first, and ties go to the older node (Q36). The wait graph has no cycles, so the count is always finite.
 - **Wait reason:** what every open node is waiting on.
 
-There are no manual priorities in slices one and two. A label such as `tl3-urgent` could be added later if Rob finds he wants one (Q37). In slice one there are no dependencies between leaves. Leaves can wait on a file holder or an older gate ticket; the Q48 gate (Rob, 2026-11-01) protects older runnable or overlapping waiters. Ranking starts in slice two.
+Approved by Rob, 2026-11-02 (#416, #417), replacing "no manual priorities in slices one and two" (Q37): an issue's `P0`–`P3` priority orders agent-pool grants and can raise its starting credit. It doesn't change the gate's slot order. In slice one there are no dependencies between leaves. Leaves can wait on a file holder or an older gate ticket; the Q48 gate (Rob, 2026-11-01) protects older runnable or overlapping waiters. Ranking starts in slice two.
 
 File waits and pauses count in the wait graph, and neither can close a cycle:
 

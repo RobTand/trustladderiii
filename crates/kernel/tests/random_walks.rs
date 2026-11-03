@@ -44,6 +44,13 @@ fn random_event(w: &mut World, pool: &[u64; 4], rng: &mut Rng) -> Event {
     if w.nodes.is_empty() || (w.nodes.len() < 4 && rng.below(40) == 0) {
         return Event::NewRequest {
             repo: RepoId(rng.below(3)),
+            priority: [
+                Priority::P0,
+                Priority::P1,
+                Priority::P2,
+                Priority::P3,
+                Priority::Unranked,
+            ][rng.below(5) as usize],
         };
     }
     let i = rng.below(w.nodes.len() as u64) as usize;
@@ -193,7 +200,10 @@ fn random_walks_keep_every_rule() {
         let mut w = World::new(&gates, 1 + rng.below(2) as u8);
         for _ in 0..500 {
             let event = if rng.below(4) == 0 {
-                w.witness().unwrap_or(Event::NewRequest { repo: RepoId(0) })
+                w.witness().unwrap_or(Event::NewRequest {
+                    repo: RepoId(0),
+                    priority: Priority::Unranked,
+                })
             } else {
                 random_event(&mut w, pool, &mut rng)
             };

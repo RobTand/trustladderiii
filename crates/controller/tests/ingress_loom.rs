@@ -65,6 +65,7 @@ fn sources_publish_evidence_before_one_owner_consumes_it() {
                 | Input::GitHubWake
                 | Input::Look { .. }
                 | Input::ProposedIssue { .. }
+                | Input::IssueChanged(_)
                 | Input::AdoptionClarification(_) => {
                     panic!("fixture sources send only issue labels and worker replies")
                 }

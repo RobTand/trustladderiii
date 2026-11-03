@@ -45,6 +45,8 @@ if mode == "manifest":
     rows = []
     for name in selected:
         if name.startswith("gate_leaf_progress_"):
+            # Four arbitrary nodes; Q39's priority field took them past 10 GB.
+            # Measured at 99aec9a8: 13.3 GB peak, about 35 minutes each.
             memory = 16
         elif name.startswith("gate_"):
             memory = 10

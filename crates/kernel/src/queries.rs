@@ -34,6 +34,8 @@ impl Node {
             match self.phase {
                 Phase::Queued => Wait::MergeQueue,
                 Phase::Ready(_) => Wait::SlotOrFiles,
+                // Q39: every agent role waits in one pool line.
+                _ if self.ticket.is_some() => Wait::AgentPool,
                 Phase::Planning { .. } => Wait::AgentPool,
                 Phase::Closed(_) => Wait::None,
                 _ => Wait::UpstreamEvent,

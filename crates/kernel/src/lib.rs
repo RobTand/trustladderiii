@@ -407,6 +407,12 @@ pub struct Node {
     #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
     pub review_restarted: bool,
     pub credit: Credit,
+    /// Orders agent-pool grants (Q39). Unranked keeps the older row shape.
+    #[cfg_attr(
+        all(feature = "serde", not(kani)),
+        serde(default, skip_serializing_if = "Priority::is_unranked")
+    )]
+    pub priority: Priority,
     /// Set when `fail_fast` stopped the node for TL3 review instead of
     /// retrying (Q54). A postmortem for it is owed as `needed_fix`.
     #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
@@ -462,6 +468,7 @@ impl Node {
                 spent: 0,
                 merge_credited: false,
             },
+            priority: Priority::Unranked,
             review_stop: None,
         }
     }
@@ -645,6 +652,33 @@ pub enum Ack {
     Permanent,
 }
 
+/// A request's priority from its issue (Q39): best first, then unranked.
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+pub enum Priority {
+    P0,
+    P1,
+    P2,
+    P3,
+    #[default]
+    Unranked,
+}
+
+impl Priority {
+    pub fn is_unranked(&self) -> bool {
+        *self == Priority::Unranked
+    }
+
+    /// 0 for P0 through 4 for unranked.
+    pub fn rank(self) -> u8 {
+        self as u8
+    }
+}
+
 #[cfg_attr(
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
@@ -670,6 +704,8 @@ pub enum Fact {
     },
     /// A PR or queue record is alive but unchanged across allowance looks.
     UpstreamStalled,
+    /// The issue's title or labels now give this priority.
+    Priority(Priority),
 }
 
 #[cfg_attr(
@@ -709,13 +745,30 @@ pub enum Command {
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+// A plain tag. Without it, Q39's Priority field let rustc hide the event's
+// discriminant in that field's spare values, and decoding it at every match
+// took the reply proofs from 15,166 VCCs to 19,549 and past 44 GB. With the
+// tag, apply_maker_done has 4,612.
+#[repr(u8)]
 pub enum Event {
     NewRequest {
         repo: RepoId,
+        /// Events stored before Q39 carry none and read as unranked; unranked
+        /// serializes that way too, as #371 requires of later fields.
+        #[cfg_attr(
+            all(feature = "serde", not(kani)),
+            serde(default, skip_serializing_if = "Priority::is_unranked")
+        )]
+        priority: Priority,
     },
     NewAdoption {
         repo: RepoId,
         head: HeadId,
+        #[cfg_attr(
+            all(feature = "serde", not(kani)),
+            serde(default, skip_serializing_if = "Priority::is_unranked")
+        )]
+        priority: Priority,
     },
     Reply {
         node: NodeId,
@@ -1549,6 +1602,7 @@ pub fn proof_of_event(event: &Event) -> &'static str {
             Fact::Conflict => "apply_conflict",
             Fact::IncidentCleared { .. } => "apply_incident_cleared",
             Fact::UpstreamStalled => "apply_upstream_stalled",
+            Fact::Priority(_) => "apply_priority",
         },
         Event::Command { command, .. } => match command {
             Command::Stop => "apply_stop",
@@ -1639,16 +1693,23 @@ pub fn step_traced(mut world: World, event: Event) -> (World, Vec<Out>, Vec<Worl
 
 fn apply(w: &mut World, event: Event, out: &mut Outbox) {
     match event {
-        Event::NewAdoption { repo, head } => {
+        Event::NewAdoption {
+            repo,
+            head,
+            priority,
+        } => {
             if repo.index().is_some_and(|r| r < w.gates.len()) {
                 let mut node = Node::new(repo);
                 node.proposed = Some(head);
+                node.priority = priority;
                 w.nodes.push(node);
             }
         }
-        Event::NewRequest { repo } => {
+        Event::NewRequest { repo, priority } => {
             if repo.index().is_some_and(|r| r < w.gates.len()) {
-                w.nodes.push(Node::new(repo));
+                let mut node = Node::new(repo);
+                node.priority = priority;
+                w.nodes.push(node);
             }
         }
         Event::Reply {
@@ -2259,6 +2320,11 @@ fn effect_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
 
 fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
     match fact {
+        Fact::Priority(priority) => {
+            if !w.nodes[i].phase.is_closed() {
+                w.nodes[i].priority = priority;
+            }
+        }
         Fact::PrMerged {
             head,
             checks_passed,
@@ -2752,14 +2818,23 @@ fn slot_free(w: &World, i: usize) -> bool {
     holders < gate.w as u32
 }
 
+/// A node's place in the agent pool's line (Q39), lowest first: its priority,
+/// then the older ticket. None unless it waits for the pool.
+pub fn pool_key(n: &Node) -> Option<(Priority, u64)> {
+    let ticket = n.ticket.filter(|_| !matches!(n.phase, Phase::Ready(_)))?;
+    Some((n.priority, ticket))
+}
+
 /// Older slot waiters block runnable or overlapping younger leaves.
-/// The agent pool retains strict ticket order.
+/// The agent pool goes strictly by priority, then ticket (Q39).
 fn first_in_line(w: &World, i: usize) -> bool {
     let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };
     if !matches!(me.phase, Phase::Ready(_)) {
         return !w.nodes.iter().any(|n| {
-            !matches!(n.phase, Phase::Ready(_)) && n.ticket.is_some_and(|theirs| theirs < mine)
+            !matches!(n.phase, Phase::Ready(_))
+                && n.ticket
+                    .is_some_and(|theirs| (n.priority, theirs) < (me.priority, mine))
         });
     }
     let mut first_runnable = mine;

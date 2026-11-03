@@ -235,7 +235,7 @@ fn check_apply(event: Event) -> World {
             assert_eq!(n.plan_retries, b.plan_retries);
         }
     }
-    if let Event::NewAdoption { repo, head } = &event {
+    if let Event::NewAdoption { repo, head, .. } = &event {
         if repo.index().is_some_and(|r| r < before.gates.len()) {
             assert_eq!(after.nodes.len(), before.nodes.len() + 1);
             assert_eq!(after.nodes.last().unwrap().proposed, Some(*head));
@@ -612,7 +612,10 @@ macro_rules! proof {
 // Applying each event variant.
 proof!(
     apply_new_request,
-    check_apply(Event::NewRequest { repo: kani::any() })
+    check_apply(Event::NewRequest {
+        repo: kani::any(),
+        priority: kani::any()
+    })
 );
 proof!(
     apply_ingest_done,
@@ -773,6 +776,7 @@ fn check_conflict() {
     );
 }
 proof!(apply_conflict, check_conflict());
+proof!(apply_priority, check_priority());
 proof!(
     apply_upstream_stalled,
     check_apply(fact(Fact::UpstreamStalled))
@@ -944,6 +948,7 @@ proof!(apply_new_adoption, {
     let after = check_apply(Event::NewAdoption {
         repo,
         head: HeadId(7),
+        priority: kani::any(),
     });
     kani::cover!(
         repo.index().is_some_and(|r| r < after.gates.len()),
@@ -1629,3 +1634,128 @@ fn check_gate_leaf_progress(width: u8) {
 
 proof!(gate_leaf_progress_w2, check_gate_leaf_progress(2));
 proof!(gate_leaf_progress_w3, check_gate_leaf_progress(3));
+
+// Q39: agent-pool grants go strictly by priority, then ticket.
+
+fn check_priority() {
+    let before = any_settled_world(None);
+    let priority: Priority = kani::any();
+    let mut after = before.clone();
+    let mut out = Outbox::new();
+    apply(&mut after, fact(Fact::Priority(priority)), &mut out);
+    require_consistent(&after);
+    check_nodes(&before, &after);
+    check_outputs(&before, &after, &out, None);
+    let n = before.nodes[0];
+    if n.phase.is_closed() {
+        assert_eq!(after.nodes[0], n, "Closed is final");
+    } else {
+        assert_eq!(
+            after.nodes[0],
+            Node { priority, ..n },
+            "only the priority changes"
+        );
+    }
+    assert_eq!(&after.nodes[1..], &before.nodes[1..]);
+    assert!(out.is_empty());
+    kani::cover!(
+        !n.phase.is_closed() && n.priority != priority,
+        "a priority changes"
+    );
+}
+
+/// The state table's place in the pool line, written independently of the
+/// kernel: the priority's level, then the ticket.
+fn spec_key(priority: Priority, ticket: u64) -> (u64, u64) {
+    let level = match priority {
+        Priority::P0 => 0,
+        Priority::P1 => 1,
+        Priority::P2 => 2,
+        Priority::P3 => 3,
+        Priority::Unranked => 4,
+    };
+    (level, ticket)
+}
+
+/// Three leaves waiting for the agent pool at their first run, in arbitrary
+/// priority and ticket order, with the pool free or full.
+fn pool_world() -> World {
+    let mut w = World::new(&[3], kani::any());
+    kani::assume(w.pool_capacity <= 1);
+    w.next_ticket = kani::any();
+    kani::assume(w.next_ticket <= 64);
+    for _ in 0..3 {
+        let mut n = Node::new(RepoId(0));
+        n.ticket = kani::any();
+        n.priority = kani::any();
+        w.nodes.push(n);
+    }
+    kani::assume(w.consistent());
+    w
+}
+
+fn check_pool_grant_order() {
+    let before = pool_world();
+    let n = before.nodes[0];
+    kani::assume(n.ticket.is_some());
+    let mut after = before.clone();
+    let mut out = Outbox::new();
+    advance(&mut after, 0, &mut out);
+    require_consistent(&after);
+    let mine = spec_key(n.priority, n.ticket.unwrap());
+    let first = before.nodes[1..]
+        .iter()
+        .all(|m| m.ticket.is_none_or(|t| mine < spec_key(m.priority, t)));
+    if after.nodes[0].pool {
+        assert!(
+            first,
+            "a grant goes to the best priority, then the older ticket"
+        );
+        assert!(after.nodes[0].ticket.is_none());
+    } else if before.pool_capacity == 1 {
+        assert!(!first, "the free pool goes to the first waiter in line");
+    }
+    kani::cover!(
+        after.nodes[0].pool
+            && before.nodes[1..]
+                .iter()
+                .any(|m| m.ticket.is_some_and(|t| t < mine.1)),
+        "a better priority passes an older ticket"
+    );
+    kani::cover!(
+        !after.nodes[0].pool && before.pool_capacity == 1,
+        "a better waiter keeps its place"
+    );
+    assert_eq!(&after.nodes[1..], &before.nodes[1..]);
+}
+
+fn check_pool_order_is_strict_priority() {
+    let mut a = Node::new(RepoId(0));
+    let mut b = Node::new(RepoId(0));
+    a.phase = Phase::Ingesting;
+    b.phase = Phase::Ingesting;
+    a.ticket = Some(kani::any());
+    b.ticket = Some(kani::any());
+    a.priority = kani::any();
+    b.priority = kani::any();
+    kani::assume(a.ticket != b.ticket);
+    let (ka, kb) = (pool_key(&a).unwrap(), pool_key(&b).unwrap());
+    // Priority first, whatever the tickets; the older ticket breaks a tie.
+    let expected = a.priority < b.priority || (a.priority == b.priority && a.ticket < b.ticket);
+    assert_eq!(
+        ka < kb,
+        expected,
+        "the pool line is strict priority, then ticket"
+    );
+    kani::cover!(
+        a.priority < b.priority && a.ticket > b.ticket,
+        "a better priority passes an older ticket"
+    );
+    kani::cover!(a.priority == b.priority, "a tie goes by ticket");
+}
+
+proof!(pool_grant_is_priority_ordered, check_pool_grant_order());
+proof!(
+    pool_order_is_strict_priority,
+    check_pool_order_is_strict_priority()
+);
