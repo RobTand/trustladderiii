@@ -215,9 +215,9 @@ impl Adapter {
         ))?;
         Ok(Self::linked(delivery, issue))
     }
-    /// PRD #327: a console command's audit note. Code writes it, so it is
-    /// posted as written, without the writer model.
+    /// PRD #327: redact code-written audit notes before posting, without the writer model.
     fn console_note(&mut self, delivery: &Delivery, text: &str) -> Result<Completion> {
+        let text = crate::redaction::text(text)?;
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
         if self
@@ -230,7 +230,7 @@ impl Adapter {
                 &repo,
                 delivery.issue,
                 delivery.marker_key(),
-                text,
+                &text,
             ))?;
         }
         Ok(Completion::confirmed(vec![]))
