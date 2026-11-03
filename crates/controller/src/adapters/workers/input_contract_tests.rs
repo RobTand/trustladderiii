@@ -242,7 +242,7 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
         }
         // Classifier and requested postmortems are controller-side jobs, so their
         // contracts apply in every reachable phase, including paused and closed.
-        let comment = json!({"id":index+100,"body":"Continue","user":{"id":config.github.rob.id,"login":"owner"},"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"});
+        let comment = json!({"id":index+100,"body":"Continue","issue_url":"https://api.github.com/repos/RobTand/tl3-sandbox/issues/42","user":{"id":config.github.rob.id,"login":"owner"},"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"});
         snapshot.rows.push(tl3_store::WorldRow {
             table: "unclassified_comments".into(),
             id: format!("contract-{index}"),

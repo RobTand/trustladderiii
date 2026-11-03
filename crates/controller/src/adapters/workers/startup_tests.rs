@@ -939,6 +939,7 @@ fn t653_review_setup_failure_preserves_completed_work_in_both_notices() {
     let mut config =
         tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
     config.store = db.create("review_setup_progress");
+    fs::create_dir(f.root.path().join("worker")).unwrap();
     let mut registry: Registry = crate::adapters::simulation(&f.root.path().join("fakes")).unwrap();
     registry.register(
         Upstream::Workers,
