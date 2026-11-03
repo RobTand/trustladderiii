@@ -2,12 +2,13 @@
 import json
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
 from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
 from tl3_harness.test_tool import Summary
-from tl3_workers import pb_tests
+from tl3_workers import facts, pb_tests, tracing
 import pb_fixtures as shared
 from pb_fixtures import IMAGE, KEY, call, configured_generator
 
@@ -54,6 +55,8 @@ if name == 'pbrun':
 if config.get('refusal'):
     print('private diagnostic must not leak: token=fixture-secret', file=sys.stderr)
     raise SystemExit(2)
+with (here / (name + '-actions')).open('a') as actions:
+    actions.write('action\n')
 original_print = builtins.print
 
 def machine_print(document, *args, **kwargs):
@@ -105,11 +108,49 @@ def configure(scripts, name, **config):
     (scripts / (name + '-channel.json')).write_text(json.dumps(config))
 
 
-@pytest.fixture(params=['tests', 'generator'])
+@pytest.fixture(params=['tests', 'rehearsal', 'generator'])
 def consumer(request, private_backend, generator_repo, tmp_path):
     root, scripts = private_backend
     if request.param == 'tests':
         return lambda: call(private_backend, Summary().result), scripts
+    if request.param == 'rehearsal':
+        from tl3_workers.forcing_rehearsal import ForcingRehearsals
+        from tl3_workers.tools import Worktree
+        root = generator_repo
+        (root / 'publisher.py').write_text('def adopt(): return True\n')
+        (root / 'tests/test_adoption.py').write_text(
+            'from publisher import adopt\ndef test_adopt(): assert adopt()\n')
+        pb_tests._git(root, 'add', '.')
+        pb_tests._git(root, 'commit', '-qm', 'Rehearsal base')
+        base = pb_tests._git(root, 'rev-parse', 'HEAD').strip()
+        script = scripts / 'pbrun.py'
+        source = script.read_text().replace(
+            'assert (root / "checkout/uncommitted.py").read_bytes() == b"current dirty bytes\\x00\\xff"', '')
+        source = source.replace('print(json.dumps({"schema":', """
+sys.path.insert(0, str(root / 'trusted'))
+from tl3_harness.test_tool import Summary
+summary = Summary()
+node = 'tests/test_adoption.py::test_adopt'
+forcing = json.loads(sys.argv[sys.argv.index('--forcing') + 1]) if '--forcing' in sys.argv else None
+summary.add(node, 'failed' if forcing else 'passed', target_hits={'publisher.adopt': 1})
+if forcing:
+    summary.result.update(forcing=forcing, selectors=[node])
+(here / 'response.json').write_text(json.dumps(summary.result))
+print(json.dumps({"schema":""")
+        script.write_text(source)
+        (scripts / 'response.json').write_text(json.dumps(Summary().result))
+
+        def rehearse():
+            with Worktree(root) as tree:
+                ledger = ForcingRehearsals(tree, {'base_sha': base, 'tests': {
+                    'image': IMAGE, 'tools_path': str(scripts)}}, checkout=root)
+                result = ledger.run(['tests/test_adoption.py::test_adopt'], {
+                    'symptom': 'Adoption fails.', 'patches': [
+                        {'target': 'publisher.adopt', 'returns': False}]})
+                if result['status'] == 'validated':
+                    return {**result, 'status': 'completed', 'action_key': result['forced']['action_key']}
+                return result[result['stage']] if result['status'] == 'infrastructure_error' else result
+        return rehearse, scripts
     # The fake pbrun executes the staged trusted generator with its configured
     # interpreter, and publishes the same verified log receipt as fake pbwait.
     script = scripts / 'pbrun.py'
@@ -164,43 +205,56 @@ def test_channel_failures_are_typed_and_safe(consumer, name, mode):
 
 @pytest.mark.parametrize('name', ['pbrun', 'pbwait'])
 @pytest.mark.parametrize('capability,rc', [
-    ('', 2), ('{}', 0),
+    ('{}', 0),
     ('{"schema":"wrong","machine_record_fd":1}', 0),
-    ('{"schema":"prismabuild.machine_record_capability.v1","machine_record_fd":0}', 0),
     ('{"schema":"prismabuild.machine_record_capability.v1","machine_record_fd":true}', 0),
     ('{"schema":"prismabuild.machine_record_capability.v1","machine_record_fd":1.0}', 0),
     ('{"schema":"prismabuild.machine_record_capability.v1","machine_record_fd":1}\nnoise', 0),
-    ('{"schema":"prismabuild.machine_record_capability.v1","machine_record_fd":1}', 2),
 ])
-def test_unsupported_runtime_refuses_without_stdout_fallback(consumer, name, capability, rc):
+def test_unsupported_capability_uses_stdout_fallback(consumer, name, capability, rc):
     run, scripts = consumer
     configure(scripts, name, capability=capability, capability_rc=rc)
     result = run()
-    assert result['status'] in ('infrastructure_error', 'failed'), result
-    assert result.get('execution', {}).get('termination_reason') == 'machine_record_unsupported'
-    assert not (scripts / ('submitted.json' if name == 'pbrun' else 'waited.json')).exists()
+    assert result['status'] == 'completed', result
+    assert result['action_key'] == KEY
 
 
 
 @pytest.mark.parametrize('name', ['pbrun', 'pbwait'])
-def test_runtime_without_capability_flag_refuses_safely(consumer, name):
+@pytest.mark.parametrize('unsupported', ['argparse_absent', 'exit_2', 'version_zero'])
+def test_unsupported_runtime_runs_once_with_fallback_and_diagnostics(consumer, name, unsupported, tmp_path):
     run, scripts = consumer
-    (scripts / (name + '.py')).write_text(
-        'import argparse\n'
-        'from pathlib import Path\n'
-        'parser = argparse.ArgumentParser(prog="fixture-secret-old-runtime")\n'
-        'parser.add_argument("--detach", action="store_true")\n'
-        'parser.add_argument("--endings", action="store_true")\n'
-        'parser.parse_args()\n'
-        'Path(__file__).with_suffix(".executed").touch()\n')
-    result = run()
-    assert result['status'] in ('infrastructure_error', 'failed'), result
-    assert result['execution']['outcome'] == 'transport_failure'
-    assert result['execution']['phase'] == 'prismabuild_capability'
-    assert result['execution']['termination_reason'] == 'machine_record_unsupported'
-    assert 'fixture-secret' not in json.dumps(result)
-    assert not (scripts / (name + '.executed')).exists()
-    assert not (scripts / ('submitted.json' if name == 'pbrun' else 'waited.json')).exists()
+    script = scripts / (name + '.py')
+    if unsupported == 'argparse_absent':
+        script.write_text(
+            'import argparse\nimport sys\n'
+            'if "--machine-record-capability" in sys.argv or "--machine-record-fd" in sys.argv:\n'
+            '    argparse.ArgumentParser(prog="fixture-secret-old-runtime").parse_args()\n'
+            + script.read_text())
+    elif unsupported == 'exit_2':
+        configure(scripts, name, capability='', capability_rc=2)
+    else:
+        configure(scripts, name, capability=json.dumps({
+            'schema': 'prismabuild.machine_record_capability.v1', 'machine_record_fd': 0}))
+    completion = tmp_path / 'completion.json'
+    trace = SimpleNamespace(tags={})
+    token = tracing.active.set(trace)
+    try:
+        with facts.observe({'model': {'name': 'fixture'}, 'trace': {'completion': str(completion)}}):
+            result = run()
+    finally:
+        tracing.active.reset(token)
+    assert result['status'] == 'completed', result
+    assert result['action_key'] == KEY
+    # Rehearsals intentionally submit one unforced and one forced action.
+    count = 2 if 'forced' in result else 1
+    assert (scripts / (name + '-actions')).read_text().splitlines() == ['action'] * count
+    diagnostic = {'phase': 'prismabuild_capability', 'cause': 'machine_record_unsupported',
+                  'fallback_used': True, 'transport': 'stdout', 'runtime': name}
+    assert json.loads(completion.read_text())['prismabuild'] == [diagnostic]
+    assert json.loads(trace.tags['prismabuild_fallback']) == {
+        key: value for key, value in diagnostic.items() if key != 'runtime'}
+    assert 'fixture-secret' not in json.dumps(result) + completion.read_text() + json.dumps(trace.tags)
 
 
 def test_public_stdout_is_not_machine_data(consumer):

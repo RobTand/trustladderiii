@@ -17,6 +17,22 @@ current = ContextVar('tl3_worker_facts', default=None)
 register_configure_hook(current, inheritable=True)
 
 
+def record_prismabuild_fallback(runtime):
+    """Record fixed capability evidence without retaining probe text or paths."""
+    from tl3_workers.tracing import active
+
+    diagnostic = {'phase': 'prismabuild_capability', 'cause': 'machine_record_unsupported',
+                  'fallback_used': True, 'transport': 'stdout'}
+    if capture := active.get():
+        capture.tags['prismabuild_fallback'] = json.dumps(diagnostic, sort_keys=True)
+    if capture := current.get():
+        with capture.lock:
+            evidence = {**diagnostic, 'runtime': runtime}
+            if evidence not in capture.prismabuild:
+                capture.prismabuild.append(evidence)
+                capture.save('running')
+
+
 def boundary_failure(error, request):
     """Attribute only the boundary we observed. Never retain exception text or bodies."""
     from openai import APIError, APIStatusError
@@ -86,6 +102,7 @@ class Facts(BaseCallbackHandler):
         self.session_id = None
         self.lock = Lock()
         self.pending = {}
+        self.prismabuild = []
         self.calls = self.ended = 0
         self.missing_usage = False
         self.totals = {key: None for key in ('input_tokens', 'cached_tokens', 'output_tokens')}
@@ -99,6 +116,7 @@ class Facts(BaseCallbackHandler):
             'model': self.request['model']['name'], **self.totals,
             'usage_complete': self.calls > 0 and self.calls == self.ended and not self.missing_usage,
             'trace_id': self.trace_id, 'session_id': self.session_id, 'failure': failure,
+            **({'prismabuild': list(self.prismabuild)} if self.prismabuild else {}),
         }
         if self.retro is not None:
             row['retro'] = self.retro
