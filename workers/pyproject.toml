@@ -37,3 +37,4 @@ tl3_workers = ["schemas/*.json", "prompts/*.md", "evaluation/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--durations=10"

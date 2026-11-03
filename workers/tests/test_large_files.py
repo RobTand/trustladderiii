@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from test_planner import LEAF, SPLIT, cache_tokenizer, planner_request, run_reply, tool_capable_fake  # noqa: F401
+from planner_fixtures import LEAF, SPLIT, cache_tokenizer, planner_request, run_reply, tool_capable_fake  # noqa: F401
 from test_workers import BRIEF, request_doc  # noqa: F401
 from test_maker import maker_request, turn  # noqa: F401
 from tl3_workers.forecast import RANGED_FILE_TOKENS
