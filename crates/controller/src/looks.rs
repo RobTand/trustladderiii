@@ -1675,6 +1675,7 @@ pub(crate) fn incident_summary(
     app_login: Option<&str>,
 ) -> String {
     let source = match signature.upstream {
+        _ if signature.class == crate::worker_inputs::CLASS => "TL3's worker input builder",
         _ if matches!(
             signature.class.as_str(),
             "pr_evidence" | "pr_obligation" | "pr_policy"

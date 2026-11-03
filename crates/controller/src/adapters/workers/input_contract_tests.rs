@@ -201,21 +201,14 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
                 tl3_kernel::Out::Effect {
                     node,
                     seq,
-                    kind: EffectKind::StartRun(role),
+                    kind: EffectKind::StartRun(kernel_role),
                     head,
                 } => {
-                    let role = protocol::role(role).unwrap();
+                    let role = protocol::role(kernel_role).unwrap();
                     delivery.output = Out::Effect {
                         node,
                         seq,
-                        kind: EffectKind::StartRun(match role {
-                            "ingest" => tl3_kernel::Role::Ingest,
-                            "audit" => tl3_kernel::Role::Audit,
-                            "planner" => tl3_kernel::Role::Plan,
-                            "maker" => tl3_kernel::Role::Make,
-                            "reviewer" => tl3_kernel::Role::Review,
-                            _ => unreachable!(),
-                        }),
+                        kind: EffectKind::StartRun(kernel_role),
                         head,
                     };
                     let request = supervisor

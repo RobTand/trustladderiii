@@ -210,7 +210,7 @@ pub(super) fn input_failure(
 ) {
     use serde_json::json;
     use std::io::Write;
-    let record = || -> Result<()> {
+    let mut record = || -> Result<()> {
         let directory = super::run_root(&settings.runs.join(HELD), &format!("input-schema:{key}"));
         fs::create_dir_all(&directory)?;
         let log = directory.join(LOG);
