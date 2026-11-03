@@ -159,6 +159,7 @@ ROLE = Role(
     prompt="reviewer.md",
     input_schema="reviewer-input",
     reply_schema="reviewer-reply",
+    environment_errors_end_run=True,
     tools={
         "list": "List reviewed worktree directories to locate evidence for a goal or rule.",
         "read": "Read reviewed head files to check goals and standing rules. Follow page continuations.",

@@ -56,6 +56,8 @@ class TurnControl(AgentMiddleware):
     def __init__(self):
         self.allowance = None
         self.repairing = False
+        # The last model call as sent, and its result: a later turn reuses its cached prefix.
+        self.last_exchange = None
 
     @contextmanager
     def repair(self, history, error):
@@ -89,6 +91,7 @@ class TurnControl(AgentMiddleware):
                                           if key != "tool_calls"}})
                 if isinstance(message, AIMessage) else message
                 for message in response.result]
+        self.last_exchange = (request.system_message, list(request.messages), list(response.result))
         return response
 
 

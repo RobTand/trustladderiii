@@ -13,7 +13,7 @@ from threading import Lock
 import re2
 from langchain_core.tools import StructuredTool, ToolException, create_schema_from_function
 
-from tl3_workers.diff import make_diff_tool
+from tl3_workers.diff import MissingExecutable, make_diff_tool
 from tl3_workers.pb_tests import make_test_tool
 from tl3_workers.forcing_rehearsal import make_rehearsal_tool
 from tl3_workers.pb_generators import make_generator_tool
@@ -148,6 +148,13 @@ ENVIRONMENT_ERRNOS = frozenset(
         errno.EIO, errno.EMFILE, errno.ENFILE, errno.ENOMEM,
     )
 )
+
+
+class WorktreeUnavailable(Exception):
+    """The environment stopped a role that has no reply to report it (Q50).
+
+    It ends the run as an infrastructure failure. The message is a fixed tool
+    name and error class, never a path or model text."""
 
 
 def environment_class(error):
@@ -339,6 +346,8 @@ class Worktree:
         self.generated_files = generated_files
         self.generator = generator
         self.protected_paths = ()
+        # Set by the runtime for roles without a blocked reply.
+        self.environment_errors_end_run = False
 
     def is_generated(self, path):
         if any(PurePosixPath(path).full_match(pattern) for pattern in self.generated_files):
@@ -373,6 +382,10 @@ class Worktree:
                 + generated_edit_instruction()
                 + "Read only relevant regions with read offset/limit or locate them with grep. "
                 "A generated output costs a 1,024-token regeneration allowance in the shared fit forecast.")
+
+    def root_removed(self):
+        """Whether the checkout directory itself was deleted while open."""
+        return os.fstat(self._root).st_nlink == 0
 
     def __enter__(self):
         return self
@@ -669,13 +682,21 @@ def build_tools(worktree, descriptions):
                     raise ToolException("The worktree is nested too deeply to walk.") from exc
                 except ValueError as exc:
                     raise ToolException(str(exc)) from exc
+                except MissingExecutable as exc:
+                    if worktree.environment_errors_end_run:
+                        raise WorktreeUnavailable(f"{_name}: missing executable") from exc
+                    raise ToolException(f"{_name} is unavailable in this environment.") from exc
                 except FileNotFoundError as exc:
+                    if worktree.environment_errors_end_run and worktree.root_removed():
+                        raise WorktreeUnavailable(f"{_name}: worktree removed") from exc
                     raise ToolException("File or directory not found.") from exc
                 except OSError as exc:
                     cls = environment_class(exc)
                     if cls is None:
                         path = kwargs.get("path", ".") if _name in READ_TOOLS | WRITE_TOOLS else "the call's input"
                         raise ToolException(_path_error(_name, exc, path)) from exc
+                    if worktree.environment_errors_end_run:
+                        raise WorktreeUnavailable(f"{_name}: {cls}") from exc
                     error = worktree.evidence.tool_error(_name, cls)
                     raise ToolException(
                         f"Worktree tool rejected the path or operation. Tool error id: {error}."

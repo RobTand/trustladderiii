@@ -178,6 +178,11 @@ completed run of the same tests retires an earlier failure. Worker code checks
 the evidence, and a blocked reply it can't confirm becomes cant_meet. TL3
 retries confirmed blocked work without spending credit.
 
+Abort when a missing capability greatly impedes your work: missing tools, no
+disk access, an unreadable worktree or an absent executor. Do not work around
+it. Reply blocked and cite the evidence that this run recorded. If the run
+recorded no evidence, reply cant_meet and name the missing capability.
+
 Use cant_meet only when no change within the declared files and your own tools can
 meet a goal: a plan defect, a rule conflict, tests that run and still fail after
 your best fix, or a truly unsupported requirement named by evidence preflight.

@@ -21,3 +21,5 @@ class Role:
     exploration_budget: ExplorationBudget | None = None
     # Rewrites validated inputs before the first model turn, given the request.
     prepare_inputs: Callable[[dict, dict], dict] | None = None
+    # Roles without a blocked reply end the run on an environment tool failure (Q50).
+    environment_errors_end_run: bool = False

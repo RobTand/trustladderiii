@@ -489,6 +489,10 @@ pub struct WorkerRunFacts {
     #[serde(default)]
     pub session_id: Option<String>,
     pub failure: Option<WorkerBoundaryFailure>,
+    /// The maker's retro (#648): its status, its own usage outside the totals
+    /// above, and its bounded result. Absent rows keep their stored form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retro: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -511,7 +515,18 @@ impl WorkerRunFacts {
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b"_.:-".contains(&b))
         };
+        let retro = |value: &serde_json::Value| {
+            let usage = ["input_tokens", "cached_tokens", "output_tokens"]
+                .iter()
+                .all(|key| value.get(key).is_none_or(|v| v.as_u64().is_some()));
+            matches!(
+                value["status"].as_str(),
+                Some("recorded" | "invalid" | "failed" | "timeout")
+            ) && usage
+                && serde_json::to_vec(value).is_ok_and(|bytes| bytes.len() <= 6_144)
+        };
         if self.started_ms < 0
+            || self.retro.as_ref().is_some_and(|value| !retro(value))
             || self.finished_ms.is_some_and(|v| v < 0)
             || !matches!(
                 self.outcome.as_str(),

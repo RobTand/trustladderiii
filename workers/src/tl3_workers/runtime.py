@@ -227,6 +227,7 @@ def _run(request, emit):
     with Worktree(request["worktree"], generated_files=forecast.get("generated_files", ()),
                   generator=forecast.get("generator")) if role.tools else nullcontext() as worktree:
         if worktree is not None:
+            worktree.environment_errors_end_run = role.environment_errors_end_run
             worktree.hindsight_key_file = request.get("hindsight_key_file")
             worktree.progress_emit = emit
         if role.name == 'planner':

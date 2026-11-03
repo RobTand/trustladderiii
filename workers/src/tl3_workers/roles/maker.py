@@ -21,6 +21,7 @@ from tl3_workers.forecast import forecast_fit, measure_files, optional_encoding
 from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.pb_tests import TestSettings
 from tl3_workers.pb_generators import make_generator_tool
+from tl3_workers import retro
 from tl3_workers.roles.base import Role
 from tl3_workers.session import ContextCharacters, is_unaccepted_session, out_of_room, save
 from tl3_workers.tools import _parts, build_tools
@@ -565,6 +566,8 @@ def run(model, request, worktree, emit):
         reply["fits"] = forecast_fit(inputs["brief"], file_tokens, inputs["forecast"], encoding, problems)["fits"]
     if session and reply["kind"] != "out_of_room":
         save(session, messages_to_dict(history))
+    # After the accepted reply and outside the session history and allowance (#648).
+    retro.run(model, control)
     return reply
 
 

@@ -1082,7 +1082,11 @@ class Capture:
                 entry.proto.parent_span_id = root.proto.span_id
             entry.proto.name = self.redactor.text(entry.name)[:256]
         usage = {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0}
+        retro = retro_spans(entries)
         for entry in entries:
+            if entry.proto.span_id in retro:
+                # The maker's retro has its own retro_* tags (#648).
+                continue
             for attr in entry.proto.attributes:
                 if attr.key == 'mlflow.chat.tokenUsage':
                     for item in attr.value.kvlist_value.values:
@@ -1157,6 +1161,25 @@ class Capture:
             if content.limit < 512:
                 content.limit = 0
         return truncated
+
+
+def retro_spans(entries):
+    """The span ids of the maker's retro span and its descendants."""
+    from tl3_workers.retro import SPAN
+
+    parents = {entry.proto.span_id: entry.proto.parent_span_id for entry in entries}
+    marked = {entry.proto.span_id for entry in entries if entry.name == SPAN}
+
+    def inside(span_id):
+        seen = set()
+        while span_id and span_id not in seen:
+            if span_id in marked:
+                return True
+            seen.add(span_id)
+            span_id = parents.get(span_id)
+        return False
+
+    return {span_id for span_id in parents if inside(span_id)}
 
 
 def span_entry(span, redactor, role, model):
@@ -1241,6 +1264,7 @@ def failure_tags(error):
     from tl3_workers.roles.planner import PlanConsistencyError
     from tl3_workers.evidence import EvidenceContractError
     from tl3_workers.forcing_rehearsal import ForcingInfrastructureError
+    from tl3_workers.tools import WorktreeUnavailable
     from tl3_workers.turns import InvalidReply, Unrepairable
 
     if type(error) is GeneratedOutputProhibition:
@@ -1249,6 +1273,10 @@ def failure_tags(error):
 
     if isinstance(error, EvidenceContractError):
         return {"failure_class": "EvidenceContractError", "failure_message": str(error)}
+
+    if isinstance(error, WorktreeUnavailable):
+        # The message is a fixed tool name and error class (tools.WorktreeUnavailable).
+        return {"failure_class": "WorktreeUnavailable", "failure_message": str(error)[:128]}
 
     if isinstance(error, ForcingInfrastructureError):
         return {"failure_class": "ForcingInfrastructureError", "failure_message": str(error)[:512]}

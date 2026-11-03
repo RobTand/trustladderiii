@@ -81,6 +81,7 @@ fn completed(attempt: &Path) -> Result<Option<WorkerRunFacts>> {
                 status: None,
                 request_id: None,
             }),
+            retro: None,
         },
     };
     facts.started_ms = started_ms;
@@ -251,7 +252,11 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path();
         request(path);
-        write(&path.join("exit.json"), &json!({"code":0, "finished_ms":9000})).unwrap();
+        write(
+            &path.join("exit.json"),
+            &json!({"code":0, "finished_ms":9000}),
+        )
+        .unwrap();
         let retro = json!({"status":"recorded","input_tokens":7777,"cached_tokens":7000,
             "output_tokens":50,"result":{"slowed_by":["Three reads repeated."],"missing":[],
             "checks":[],"noise":[]}});
@@ -266,7 +271,10 @@ mod tests {
         let facts = completed(path).unwrap().unwrap();
         let stored = serde_json::to_value(&facts).unwrap();
         assert_eq!(stored["retro"], retro);
-        assert_eq!(stored["input_tokens"], 100, "retro usage stays out of the run's totals");
+        assert_eq!(
+            stored["input_tokens"], 100,
+            "retro usage stays out of the run's totals"
+        );
 
         for invalid in [json!("a sentence"), json!({"status":"guessed"})] {
             write(

@@ -2366,6 +2366,7 @@ fn worker_completion_facts(settings: &tl3_config::Store) {
         trace_id: Some("tr-0f626041aebfeefcdea5b8365b1a3e46".into()),
         session_id: Some("tl3-83-17-1".into()),
         failure: None,
+        retro: None,
     };
     store
         .record_worker_facts("run:83:17", "83", 0, "maker", &facts)

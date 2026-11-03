@@ -89,15 +89,20 @@ class Facts(BaseCallbackHandler):
         self.calls = self.ended = 0
         self.missing_usage = False
         self.totals = {key: None for key in ('input_tokens', 'cached_tokens', 'output_tokens')}
+        # The maker's retro (#648), with its own usage outside the totals.
+        self.retro = None
 
     def row(self, outcome, finished_ms=None, failure=None):
-        return {
+        row = {
             'started_ms': self.started_ms, 'finished_ms': finished_ms, 'outcome': outcome,
             'release': self.request.get('trace', {}).get('release'),
             'model': self.request['model']['name'], **self.totals,
             'usage_complete': self.calls > 0 and self.calls == self.ended and not self.missing_usage,
             'trace_id': self.trace_id, 'session_id': self.session_id, 'failure': failure,
         }
+        if self.retro is not None:
+            row['retro'] = self.retro
+        return row
 
     def save(self, outcome, finished_ms=None, failure=None):
         if path := self.request.get('trace', {}).get('completion'):

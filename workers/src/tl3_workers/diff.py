@@ -45,9 +45,22 @@ _SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _DISCARD = 65_536
 
 
+class MissingExecutable(Exception):
+    """Git could not start: the environment lacks it, not the model's input."""
+
+
+def _start(launch, *args, **kwargs):
+    try:
+        return launch(*args, **kwargs)
+    except (FileNotFoundError, PermissionError) as error:
+        if error.filename == args[0][0]:
+            raise MissingExecutable() from error
+        raise
+
+
 @cache
 def _version():
-    done = subprocess.run(["git", "--version"], env=_ENV, stdout=subprocess.PIPE, check=False)
+    done = _start(subprocess.run, [_GIT[0], "--version"], env=_ENV, stdout=subprocess.PIPE, check=False)
     found = re.search(rb"(\d+)\.(\d+)", done.stdout)
     return (int(found[1]), int(found[2])) if found else (0, 0)
 
@@ -75,8 +88,8 @@ class _Git:
             self.prefix.insert(1, f"--attr-source={empty}")
 
     def run(self, *args, env=None, ok=(0,), stdin=None):
-        done = subprocess.run([*self.prefix, *args], cwd=self.checkout, env={**_ENV, **(env or {})},
-                              input=stdin, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
+        done = _start(subprocess.run, [*self.prefix, *args], cwd=self.checkout, env={**_ENV, **(env or {})},
+                      input=stdin, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
         if done.returncode not in ok:
             raise ValueError("diff could not read the change from Git.")
         return done.stdout.decode("utf-8", errors="replace")
@@ -84,8 +97,8 @@ class _Git:
     def lines(self, *args, env=None):
         """Stream a command's lines, each cut at line_bytes, and stop the command if the reader stops."""
         cap = self.limits["line_bytes"]
-        process = subprocess.Popen([*self.prefix, *args], cwd=self.checkout, env={**_ENV, **(env or {})},
-                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        process = _start(subprocess.Popen, [*self.prefix, *args], cwd=self.checkout, env={**_ENV, **(env or {})},
+                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         try:
             while raw := process.stdout.readline(cap + 1):
                 if len(raw) > cap and not raw.endswith(b"\n"):
