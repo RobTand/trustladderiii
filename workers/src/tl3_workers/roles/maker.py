@@ -569,7 +569,7 @@ def run(model, request, worktree, emit):
     # After the accepted reply and outside the session history and allowance (#648).
     # An out_of_room ending has no context left for one.
     if reply["kind"] != "out_of_room":
-        retro.run(model, control, emit)
+        retro.run(model, control, emit, request.get("silence_secs"))
     return reply
 
 

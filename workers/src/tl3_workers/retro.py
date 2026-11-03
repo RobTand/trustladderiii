@@ -24,6 +24,11 @@ from tl3_workers.contracts import read_reply
 
 SPAN = "tl3.maker_retro"
 DEADLINE_S = 60
+
+
+def deadline(silence_secs=None):
+    """At most DEADLINE_S, and at most half the worker's silence allowance when known."""
+    return DEADLINE_S if silence_secs is None else min(DEADLINE_S, silence_secs / 2)
 RESULT_BYTES = 5_120
 ITEM_CHARS = 240
 FIELDS = ("slowed_by", "missing", "checks", "noise")
@@ -82,10 +87,10 @@ def _model(model):
     return model
 
 
-def _ask(model, control):
+def _ask(model, control, limit):
     record = {"status": "failed"}
     try:
-        message = _model(model).invoke(_messages(control), timeout=DEADLINE_S)
+        message = _model(model).invoke(_messages(control), timeout=limit)
         record.update(_usage(message))
         result = read_reply(message.text)
         Draft202012Validator(SCHEMA).validate(result)
@@ -97,7 +102,7 @@ def _ask(model, control):
     return record
 
 
-def _traced(model, control, capture):
+def _traced(model, control, capture, limit):
     """The retro call, in its own thread's copy of the run's context."""
     from tl3_workers.facts import current as current_facts
     from tl3_workers.tracing import failure
@@ -112,7 +117,7 @@ def _traced(model, control, capture):
         else:
             span_context = nullcontext()
         with span_context as span:
-            record = _ask(model, control)
+            record = _ask(model, control, limit)
             if span is not None:
                 span.set_outputs(record)
     except Exception:
@@ -120,8 +125,8 @@ def _traced(model, control, capture):
     return record
 
 
-def run(model, control, emit=None):
-    """Run the retro once, within DEADLINE_S, and record it. Never raises."""
+def run(model, control, emit=None, silence_secs=None):
+    """Run the retro once, within its deadline, and record it. Never raises."""
     from tl3_workers.facts import current as current_facts
     from tl3_workers.tracing import active, failure
 
@@ -133,14 +138,15 @@ def run(model, control, emit=None):
     try:
         if emit is not None:
             emit({"event": "progress", "unit": "model_turn"})
+        limit = deadline(silence_secs)
         context = contextvars.copy_context()
         result = {}
         # A daemon thread: past the deadline the reply goes out, and process
         # exit ends a call that is still waiting on the model.
-        thread = threading.Thread(target=lambda: result.update(record=context.run(_traced, model, control, capture)),
+        thread = threading.Thread(target=lambda: result.update(record=context.run(_traced, model, control, capture, limit)),
                                   name="tl3-retro", daemon=True)
         thread.start()
-        thread.join(DEADLINE_S)
+        thread.join(limit)
         record = result.get("record", record)
     except Exception:
         record = {"status": "failed"}
