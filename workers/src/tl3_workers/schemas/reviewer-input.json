@@ -3,6 +3,7 @@
   "$id": "https://trustladderiii.invalid/workers/protocol-1/reviewer-input.json",
   "type": "object",
   "properties": {
+    "generation_evidence": {"$ref": "maker-reply.json#/$defs/generation_receipt"},
     "memories": {
       "type": "array",
       "items": {

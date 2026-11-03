@@ -134,7 +134,7 @@ def maker_request(tmp_path):
 
 
 def test_maker_declares_only_file_and_pb_tools():
-    assert ROLES["maker"].tools.keys() == READ_TOOLS | WRITE_TOOLS | {"run_tests", "recall"}
+    assert ROLES["maker"].tools.keys() == READ_TOOLS | WRITE_TOOLS | {"run_tests", "run_generator", "recall"}
 
 
 @pytest.mark.parametrize("reply", [

@@ -389,15 +389,20 @@ impl Supervisor {
                 && repo.name.eq_ignore_ascii_case(&delivery.repository.name)
                 && repo.installation_id == delivery.repository.installation
         }) {
-            if !repository.generated_files.is_empty() {
-                forecast["generated_files"] = json!(repository.generated_files);
-            }
+            forecast["generated_files"] = json!(repository.generated_files);
             if let Some(generator) = &repository.generator {
                 forecast["generator"] = json!(generator);
             }
+            forecast["generator_available"] =
+                json!(repository.generator.is_some() && !repository.generated_files.is_empty());
         }
+        let generator_available = forecast["generator_available"] == true;
         if role == "maker" {
             inputs["forecast"] = forecast.clone();
+            inputs["protected_paths"] = json!(
+                self.protected_paths
+                    .for_repository(&delivery.repository, &self.planning.protected_paths)?
+            );
         }
         if role == "reviewer" {
             inputs = review::inputs(
@@ -495,6 +500,14 @@ impl Supervisor {
         }
         if matches!(role, "ingest" | "audit" | "planner") {
             inputs["tool_capabilities"] = json!(self.planning.tool_capabilities);
+            if generator_available {
+                inputs["tool_capabilities"].as_array_mut().unwrap().push(json!({
+                    "tool": "run_generator", "executor": "prismabuild_generator",
+                    "runner_features": ["git_index", "scoped_outputs", "idempotent_import"],
+                    "artifacts": ["action_key", "cas_receipt", "input_tree", "output_tree", "artifact_sha256", "logs", "terminal_verdict"],
+                    "methods": ["configured_generation"], "protected_files": [],
+                }));
+            }
         }
         if role == "planner" {
             inputs["audit_evidence_contract"] = store

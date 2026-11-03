@@ -35,10 +35,9 @@ def test_generated_output_fits_as_regeneration_work(tmp_path, monkeypatch, heade
     assert forecast["fits"] is True, forecast
     assert forecast["file_tokens"]["tests/BUILD.bazel"] == 1024
     notes = "\n".join(forecaster.notes())
-    assert "tests/BUILD.bazel" in notes and "tools/bazel/generate.sh" in notes
-    assert "minimal hunk" in notes and "exact-text" in notes
-    assert "Gate" in notes and "generator check" in notes
-    assert "Do not hand-edit" not in notes
+    assert "tests/BUILD.bazel" in notes
+    assert 'Never hand-edit generated outputs. When generator_available is true, change generator inputs and call run_generator before checks. Otherwise report missing generation capability. Gate still independently verifies the final head.' in notes
+    assert "minimal hunk" not in notes
 
 
 @pytest.mark.parametrize("prefix", [
@@ -119,13 +118,10 @@ def test_maker_receives_generated_regeneration_guidance(maker_request, monkeypat
     monkeypatch.setattr(runtime, "create_model", lambda request: model)
     runtime.run(maker_request, lambda event: None)
     context = "\n".join(observed)
-    assert "BUILD.bazel" in context and "minimal hunk" in context and "exact-text" in context
-    assert "Gate" in context and "generator check" in context
-    assert "Do not hand-edit generated outputs" not in context
-    assert "Run the repository generator" not in context
+    assert "BUILD.bazel" in context
+    assert 'Never hand-edit generated outputs. When generator_available is true, change generator inputs and call run_generator before checks. Otherwise report missing generation capability. Gate still independently verifies the final head.' in context
+    assert "minimal hunk" not in context
     assert "target()" not in context
-    if configured:
-        assert "tools/bazel/generate.sh" in context
 
 
 def test_planner_and_maker_share_generated_output_fit(tmp_path, planner_request, maker_request, monkeypatch):  # noqa: F811

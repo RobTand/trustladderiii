@@ -138,7 +138,8 @@ def test_run_uses_the_prompt_version_it_was_given(role, request_fixture, text, r
         from tl3_workers.evidence import forcing_guidance
         prefix += "\n\n" + forcing_guidance()
     assert system[0].text.startswith(prefix + "\n\n" + guidance + "\n\n" + ONLY_JSON)
-    assert "minimal hunk" in guidance and "exact-text" in guidance and "Gate's generator check" in guidance
+    assert 'Never hand-edit generated outputs. When generator_available is true, change generator inputs and call run_generator before checks. Otherwise report missing generation capability. Gate still independently verifies the final head.' in guidance
+    assert "minimal hunk" not in guidance
     packaged = files("tl3_workers").joinpath("prompts", f"{role}.md").read_text()
     assert packaged.strip().splitlines()[0] not in system[0].text
 
