@@ -88,7 +88,21 @@ pub(crate) fn review_stop(step: ReviewStop, sources: &Sources) -> Option<Value> 
         | ReviewStop::CiFailed
         | ReviewStop::MakerCantMeet => rung(sources, CANT_MEET),
     }?;
-    Some(json!({"source": found["source"], "report": found["report"]}))
+    let mut result = json!({"source": found["source"], "report": found["report"]});
+    if matches!(
+        step,
+        ReviewStop::MakerCantMeet | ReviewStop::MakerOutOfRoom | ReviewStop::MakerNeedsFiles
+    ) && let Some(reply) = (sources.fresh)("maker_replies")
+        && reply["budget_exhaustion"]["kind"] == "execution_budget_exhausted"
+    {
+        result["budget_exhaustion"] = reply["budget_exhaustion"].clone();
+        result["report"] = json!(format!(
+            "Execution budget exhausted. {} {}",
+            reply["budget_exhaustion"],
+            found["report"].as_str().unwrap_or_default()
+        ));
+    }
+    Some(result)
 }
 
 fn caused(report: &str) -> Option<Value> {
@@ -156,11 +170,22 @@ fn split(plan: &Value) -> Option<Value> {
     }
     let reason = match plan["reason"].as_str()? {
         "does_not_fit" => "is too large to make as one change",
+        "execution_budget" => "exceeds the maker's usable execution budget before work starts",
         "multiple_repos" => "spans more than one repository",
         _ => "ran out of room in a single attempt",
     };
-    let report =
+    let mut report =
         format!("The planned change {reason}.") + &size(&plan["forecast"]).unwrap_or_default();
+    if plan["reason"] == "execution_budget"
+        && let (Some(estimate), Some(usable)) = (
+            plan["execution"]["estimated_tool_turns"].as_u64(),
+            plan["execution"]["usable_tool_turns"].as_u64(),
+        )
+    {
+        report.push_str(&format!(
+            " Its execution estimate is {estimate} tool turns against {usable} usable turns."
+        ));
+    }
     let pieces: Vec<_> = plan["pieces"]
         .as_array()?
         .iter()
@@ -527,6 +552,25 @@ mod tests {
             text(&found, "decision"),
             "How would you like to narrow the request?"
         );
+    }
+
+    #[test]
+    fn execution_budget_split_reports_the_constraint_before_maker_work() {
+        let plan = json!({"kind": "split", "reason": "execution_budget",
+            "forecast": {"tokens": 1200, "fit_tokens": 100000, "file_tokens": {}},
+            "execution": {"estimated_tool_turns": 60, "usable_tool_turns": 56},
+            "pieces": [{"brief": "Implement and prove behavior.", "files": ["a.py"]},
+                {"brief": "Update metadata and verify.", "files": ["CHANGELOG.md"]}]});
+        let found = split(&plan).unwrap();
+        let report = text(&found, "report");
+        assert!(report.contains("execution budget"), "{report}");
+        assert!(report.contains("before work starts"), "{report}");
+        assert!(
+            report.contains("60 tool turns") && report.contains("56 usable"),
+            "{report}"
+        );
+        assert!(!report.contains("ran out of room"), "{report}");
+        assert_eq!(found["pieces"].as_array().unwrap().len(), 2);
     }
 
     #[test]

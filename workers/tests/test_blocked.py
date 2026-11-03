@@ -6,7 +6,7 @@ from pathlib import Path
 
 from jsonschema import ValidationError
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 import pytest
 
 from tl3_workers import runtime
@@ -49,7 +49,8 @@ def run_maker(maker_request, monkeypatch, results, reply, selectors=None):  # no
     monkeypatch.setattr(runtime, "create_model", lambda request: model)
     events = []
     runtime.run(maker_request, events.append)
-    return events[-1]["reply"], observed[-1][-1].text
+    return events[-1]["reply"], next(message.text for message in reversed(observed[-1])
+                                    if isinstance(message, ToolMessage))
 
 
 def test_blocked_cites_an_infrastructure_action_key_from_this_run(maker_request, monkeypatch):  # noqa: F811

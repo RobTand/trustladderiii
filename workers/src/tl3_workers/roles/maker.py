@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages import messages_from_dict, messages_to_dict
@@ -15,7 +16,7 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
 from tl3_workers.contracts import read_json, read_reply, schema
-from tl3_workers.exploration import ExplorationBudget
+from tl3_workers.exploration import BudgetUnavailable, ExplorationBudget
 from tl3_workers.forecast import forecast_fit, measure_files, optional_encoding
 from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.pb_tests import TestSettings
@@ -84,7 +85,7 @@ def _checking_handoff(inputs, head, tree):
             "status": "pending", "owner": "checking", "checks": checks}
 
 
-def _git(request, *args, check=True):
+def _git(request, *args, check=True, index=None):
     # Discard inherited Git overrides as well as user/system configuration.
     env = {
         "PATH": os.defpath, "LANG": "C.UTF-8",
@@ -93,6 +94,8 @@ def _git(request, *args, check=True):
         "GIT_AUTHOR_NAME": "TL3", "GIT_AUTHOR_EMAIL": "tl3@example.invalid",
         "GIT_COMMITTER_NAME": "TL3", "GIT_COMMITTER_EMAIL": "tl3@example.invalid",
     }
+    if index is not None:
+        env["GIT_INDEX_FILE"] = str(index)
     return subprocess.run(
         ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
          "-c", "core.fsmonitor=false", *args],
@@ -220,6 +223,63 @@ def _tree(request, commit):
     return result.stdout.strip() if result.returncode == 0 else None
 
 
+def _budget_reply(request, allowance, history, worktree, reply):
+    """Attach code-owned exhaustion facts without adding a kernel outcome."""
+    inputs = request["inputs"]
+    with tempfile.TemporaryDirectory(prefix="tl3-maker-budget-") as temporary:
+        index = Path(temporary) / "index"
+        _git(request, "read-tree", "HEAD", index=index)
+        _git(request, "add", "--all", "--", ".", index=index)
+        tree = _git(request, "write-tree", index=index).stdout.strip()
+    head = _git(request, "rev-parse", "HEAD").stdout.strip()
+    unfinished = list(reply.get("unfinished_obligations", []))
+    if reply["kind"] != "done":
+        unfinished.extend("Unverified goal: " + goal["id"] + ": " + goal["description"]
+                          for goal in inputs["goals"] if goal.get("stage", "maker") == "maker")
+        if reply.get("report"):
+            unfinished.append(reply["report"])
+    evidence = [entry for entry in worktree.evidence.test_evidence()
+                if not entry["base"] and entry["tree"] == tree and entry["status"] == "completed"
+                and not any(entry["totals"].get(outcome, 0) for outcome in ("failed", "error", "skipped", "missing"))]
+    if worktree.generator:
+        receipt = getattr(worktree, "generation_receipt", {})
+        if receipt.get("status") != "completed" or receipt.get("output_tree") != tree:
+            # Recovery may have only the durable checkpoint. Inspect it without
+            # submitting generation or importing outputs from the reserve.
+            with worktree._mutation_lock:
+                receipt = make_generator_tool(worktree, restore_only=True)()
+        if receipt.get("status") != "completed" or receipt.get("output_tree") != tree:
+            unfinished.append("Final configured generation")
+    verified = {test for entry in evidence for test in entry["tests"]}
+    unfinished.extend("Unverified final check: " + check["name"]
+                      for check in inputs["plan"]["checks"] if not set(check["tests"]) <= verified)
+    # A read or diff before the last mutation cannot verify the final files.
+    last_edit = max((i for i, message in enumerate(history) if isinstance(message, AIMessage)
+                     and any(call["name"] in {"write", "edit", "run_generator"} for call in message.tool_calls)), default=-1)
+    successful = {message.tool_call_id for message in history if isinstance(message, ToolMessage)
+                  and message.status != "error"}
+    final_calls = [call for message in history[last_edit + 1:] if isinstance(message, AIMessage)
+                   for call in message.tool_calls if call["id"] in successful]
+    if not any(call["name"] == "diff" for call in final_calls):
+        unfinished.append("Final diff and scope review")
+    changed = _git(request, "diff", "--name-only", "HEAD", tree).stdout.splitlines()
+    read_back = {call["args"].get("path") for call in final_calls if call["name"] == "read"}
+    unfinished.extend("Final readback: " + path for path in changed if path not in read_back)
+    unfinished = list(dict.fromkeys(unfinished))
+    if reply["kind"] == "done" and unfinished:
+        reply = {"kind": "cant_meet", "report": "Mandatory final verification remains unfinished."}
+    remaining = allowance.remaining()
+    diagnostic = {"kind": "execution_budget_exhausted", "dimension": allowance.exhaustion,
+                  "tool_turns": {key: remaining["tool_turns"][key] for key in ("used", "allowed")},
+                  "input_tokens": {key: remaining["input_tokens"][key] for key in ("used", "allowed")},
+                  "operation": request["operation"], "preserved_work": {"head": head, "tree": tree},
+                  "unfinished_obligations": unfinished}
+    reply["budget_exhaustion"] = diagnostic
+    if reply["kind"] == "cant_meet":
+        reply["report"] = "execution_budget_exhausted: " + json.dumps(diagnostic, ensure_ascii=False)
+    return reply
+
+
 def _commit(request, starting_head, merge_target=None, merge_files=None):
     _git(request, "merge-base", "--is-ancestor", starting_head, "HEAD")
     merge = _merge_head(request)
@@ -284,6 +344,8 @@ def run(model, request, worktree, emit):
         model.model_kwargs = {**model.model_kwargs, "parallel_tool_calls": False}
     # The protocol requires a head, but the model must never supply one.
     proposal = deepcopy(schema("maker-reply"))
+    for variant in proposal["oneOf"]:
+        variant["properties"].pop("budget_exhaustion", None)
     done = next(variant for variant in proposal["oneOf"]
                 if variant["properties"]["kind"]["const"] == "done")
     done["required"].remove("head")
@@ -305,6 +367,9 @@ def run(model, request, worktree, emit):
     agent = build_agent(model, ROLE, worktree, reply_schema=proposal, context_size=inputs["context_size"],
                         control=control)
     allowance = control.allowance
+    if allowance is not None:
+        test_paths = {test.split("::", 1)[0] for check in inputs["plan"]["checks"] for test in check["tests"]}
+        allowance.implementation_files = frozenset(inputs["plan"]["files"]) - test_paths
     characters = ContextCharacters()
     starting_head, merge_target, merge_files = _starting_state(request, session)
     progress = session.with_suffix(".visit") if session else None
@@ -432,8 +497,13 @@ def run(model, request, worktree, emit):
     for completion in range(2):
         try:
             reply = repaired(control, history, ask, check)
+        except BudgetUnavailable:
+            budget_exhausted = True
+            reply = {"kind": "cant_meet", "report": "No further model call fits the remaining execution allowance."}
         except _OutOfRoom:
             return {"kind": "out_of_room"}
+        if allowance is not None and allowance.exhaustion:
+            reply = _budget_reply(request, allowance, history, worktree, reply)
         if reply["kind"] != "done":
             break
         try:
@@ -503,7 +573,8 @@ ROLE = Role(
     prompt="maker.md",
     input_schema="maker-input",
     reply_schema="maker-reply",
-    exploration_budget=ExplorationBudget(tool_turns=64, input_tokens=6_000_000, history_bytes=65_536),
+    exploration_budget=ExplorationBudget(tool_turns=64, input_tokens=6_000_000, history_bytes=65_536,
+                                         finalization_turns=8),
     tools={
         "list": "List worktree files needed to implement the declared plan.",
         "read": "Read worktree text to implement or self-check a goal.",

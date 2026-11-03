@@ -90,7 +90,7 @@ def _recover_temporaries(worktree, state):
             pass
 
 
-def make_generator_tool(worktree):
+def make_generator_tool(worktree, *, restore_only=False):
     transient_state = getattr(worktree, "generator_checkpoint", {})
     diagnostics = {}
 
@@ -131,11 +131,14 @@ def make_generator_tool(worktree):
             if state_path:
                 save(state_path, state)
 
+        if restore_only and (state.get("contract") != identity or state.get("phase") != "applied"):
+            return {"status": "not_available", "message": "No completed generation checkpoint matches this contract."}
         if state.get("contract") != identity:
             if state.get("phase") == "importing":
                 raise ValueError("Generator contract changed during an interrupted import.")
             state = {}
-        _recover_temporaries(worktree, state)
+        if not restore_only:
+            _recover_temporaries(worktree, state)
         current = generator.manifest(checkout)
         if any(Path(name).name == ".tl3-generator-import" for name in current):
             raise ValueError("Reserved generator import path exists in the worktree.")
@@ -143,8 +146,13 @@ def make_generator_tool(worktree):
             worktree.generation_receipt = state["receipt"]
             return state["receipt"]
         if state.get("phase") == "applied" and current == state["after"]:
+            if restore_only and (state["receipt"].get("status") != "completed"
+                                 or state["receipt"].get("output_manifest") != generator.digest(current)):
+                return {"status": "not_available", "message": "Generation receipt does not match the current manifest."}
             worktree.generation_receipt = state["receipt"]
             return state["receipt"]
+        if restore_only:
+            return {"status": "not_available", "message": "Generation checkpoint is stale for the current worktree."}
         if state.get("phase") == "importing":
             after = generator.validate_artifact(state["artifact"], state["before"], contract)
             if any(current.get(name) not in (state["before"].get(name), after.get(name))

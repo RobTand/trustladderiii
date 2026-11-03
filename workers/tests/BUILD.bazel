@@ -403,6 +403,18 @@ tl3_py_test(
 )
 
 tl3_py_test(
+    name = "test_maker_budget",
+    srcs = ["test_maker_budget.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
     name = "test_proof_obligations",
     srcs = ["test_proof_obligations.py"],
     deps = [

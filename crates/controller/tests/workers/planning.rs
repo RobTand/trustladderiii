@@ -142,6 +142,7 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
         assert_eq!(requests.len(), 1);
         assert_eq!(plan["kind"], "leaf");
         assert_eq!(plan["forecast"]["fits"], true);
+        assert_eq!(plan["execution"]["exploration_declared"], true);
         let declared: Vec<_> = snapshot
             .interned
             .iter()
