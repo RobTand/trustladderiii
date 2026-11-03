@@ -155,6 +155,7 @@ omits a source obligation or makes a chosen method part of a goal. Re-ingest
 corrects that reading. Preserve a method explicitly required by the source,
 with its provenance, even if a different method could prove the behavior.
 
+Choose an ordinary failing test whose assertions observe the changed subject.
 The subject/observer rule (#645, Q27/Q55) applies to every proof. RED runs
 head observers against base subjects; GREEN runs the same observers against
 head subjects. node_ids name the observers. Every other base definition stays

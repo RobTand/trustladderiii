@@ -343,6 +343,8 @@ def prepare_base_submission(submission, base_value="base", head_value="head"):
         ], cwd=root, text=True).strip()
 
     git("init", "--quiet", "--template=")
+    (root / "pyproject.toml").write_text(
+        '[tool.tl3.harness]\ncommand=["python", "-m", "pytest"]\ntest-files=["test_*.py"]\n')
     (root / "example_module.py").write_text(f"value = {base_value!r}\n")
     test_source = ("from example_module import value\ndef test_value():\n"
                    "    if value == 'error': raise RuntimeError('fixture error')\n"
@@ -2234,7 +2236,13 @@ def test_uncertain_owner_uses_runtime_guard_and_preserves_typed_stop(rehearsal, 
                'patches': [{'target': target, 'returns': 0}]}
     result = ledger.run([NODE], forcing)
     assert len(calls) == 2, 'uncertain static owners must reach the admitted runtime guard'
-    assert result['status'] == 'validated', result
+    if binding == 'dynamic_external':
+        # The observer imported the original shared module before forcing. A
+        # private proxy on pkg.mod must leave that independent alias alone.
+        assert result['status'] == 'refused', result
+        assert 'ended passed; expected failed' in result['message']
+    else:
+        assert result['status'] == 'validated', result
 
 
 def test_declared_symptom_rehearsal_binds_declaration_and_fixed_campaign(rehearsal):

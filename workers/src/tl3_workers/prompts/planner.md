@@ -159,11 +159,10 @@ those marked for review. Return exactly one of these proposals:
   or behavior-preserving check names. Name such a test in a demonstrating check, never in a regression
   or behavior-preserving check: those run tests exactly as the base wrote them,
   so the harness refuses an edit to a test they name. If the change edits only
-  tests, such as a deflake that patches the flaky test, an ordinary
-  demonstrating check can't show it, because the base run applies the leaf's
-  named head observers against base subjects through the shared assembler. A
-  changed test needs separate observer assertions, supported forcing, or a declared
-  symptom. State no_design_questions and lands_on_its_own
+  tests, identify the subject separately from the named head observers. The
+  shared assembler keeps all other base definitions. For an existing test that
+  is itself the subject, use a separate observer or a supported forcing or
+  declared symptom. State no_design_questions and lands_on_its_own
   only when true. If either is false, return can't meet with the unresolved
   question. In slice one, avoid CI, Mergify and test configuration, including
   conftest.py, pytest settings, tox, nox and test scripts called by CI. Both
@@ -314,6 +313,7 @@ omits a source obligation or makes a chosen method part of a goal. Re-ingest
 corrects that reading. Preserve a method explicitly required by the source,
 with its provenance, even if a different method could prove the behavior.
 
+Choose an ordinary failing test whose assertions observe the changed subject.
 The subject/observer rule (#645, Q27/Q55) applies to every proof. RED runs
 head observers against base subjects; GREEN runs the same observers against
 head subjects. node_ids name the observers. Every other base definition stays

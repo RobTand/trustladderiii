@@ -736,7 +736,7 @@ def test_prompt_states_forced_reproduction_for_deflakes():
     assert "fails by assertion on the base under the forcing" in prompt
     assert "passes on the change both with and without the forcing" in prompt
     assert "Repeating a test until it fails does not count" in prompt
-    assert "A change to tests alone needs a forced reproduction (Q55, #393)" in prompt
+    assert "identify the subject separately from the named head observers" in prompt
 
 
 PID_FORCING = {
@@ -1005,14 +1005,12 @@ def test_corrected_plan_declares_its_edit(tmp_path, planner_request, digests_pla
     assert reply['violations'] == []
 
 
-TEST_ONLY = ("A change to tests alone needs a forced reproduction (Q55) on its demonstrating check; "
-             "if no forcing can be written, return can't meet.")
 FORCING = {'symptom': 'Another process holds the module lock while digests import.', 'environment': {},
            'patches': [{'target': 'digests.LOCK_HELD', 'value': True}]}
 
 
-def test_test_only_change_without_a_forcing_needs_a_forced_reproduction(planner_request, digests_plan):
-    # PB #2625's shape: a deflake that patches only the flaky test can't demonstrate unforced (#444, Q55).
+def test_test_only_observer_edits_use_the_source_partition(planner_request, digests_plan):
+    # Existing selected assertions are observers. Checking judges their RED.
     digests_plan['files'] = [DIGESTS]
     digests_plan['edits_tests'] = [FROZEN]
     digests_plan['checks'] = [
@@ -1020,7 +1018,7 @@ def test_test_only_change_without_a_forcing_needs_a_forced_reproduction(planner_
         {'kind': 'regression', 'node_ids': [SIBLING], 'goal_ids': [1]},
     ]
     violations = planned(planner_request, digests_plan)
-    assert any('changes only tests' in item and TEST_ONLY in item for item in violations), violations
+    assert violations == [], violations
     assert not any('#393' in item for item in violations), violations
 
 
@@ -1035,13 +1033,13 @@ def test_test_only_change_with_a_forcing_still_needs_rehearsal(planner_request, 
     validate('planner-reply', digests_plan)
     assert any('matching forcing rehearsal receipt' in v
                for v in planned(planner_request, copy.deepcopy(digests_plan)))
-    # Every demonstrating check needs the forcing, and it must be valid.
+    # A second assertion observer does not waive the forced check rehearsal.
     digests_plan['checks'].append({'kind': 'demonstrating', 'node_ids': [SIBLING], 'goal_ids': [0]})
-    assert any(TEST_ONLY in item for item in planned(planner_request, copy.deepcopy(digests_plan)))
+    assert any('matching forcing rehearsal receipt' in item
+               for item in planned(planner_request, copy.deepcopy(digests_plan)))
     digests_plan['checks'].pop()
     digests_plan['checks'][0]['forcing']['patches'][0] = {'target': 'digests.f', 'raises': 'AssertionError'}
     violations = planned(planner_request, digests_plan)
-    assert any(TEST_ONLY in item for item in violations), violations
     assert any(item.startswith('Invalid forcing:') for item in violations), violations
 
 
@@ -1096,27 +1094,27 @@ def test_goal_that_edits_a_frozen_test_is_refused(planner_request, digests_plan,
     assert any(f'Goal 0 names `{NAME}`' in item for item in violations), violations
 
 
-def test_test_only_leaf_whose_goal_names_a_frozen_test_answers_cant_meet(planner_request, digests_plan):
+def test_test_file_location_does_not_invent_a_proof_obligation(planner_request, digests_plan):
     # PQ #3070 and Tessera #1532: a deflake goal names the flaky test without an edit verb.
     planner_request['inputs']['ingest']['goals'][0]['description'] = (
         f'Identify the cause of the intermittent failure of {NAME} and reproduce it deterministically.')
     digests_plan['files'] = [DIGESTS]
     digests_plan['checks'] = [{'kind': 'regression', 'node_ids': [FROZEN, SIBLING], 'goal_ids': [0, 1]}]
     violations = planned(planner_request, copy.deepcopy(digests_plan))
-    assert any('changes only tests' in item and TEST_ONLY in item for item in violations), violations
+    assert violations == [], violations
     digests_plan['files'] = ['digests.py', DIGESTS]
     assert planned(planner_request, digests_plan) == []
 
 
-def test_test_only_leaf_cannot_demonstrate(planner_request, digests_plan):
-    # The base run applies every test-file edit, so a test-only head is the demonstrating base.
+def test_new_test_observer_can_demonstrate_a_test_file_subject(planner_request, digests_plan):
+    # Checking grafts only this observer, preserving all other base definitions.
     digests_plan['files'] = [DIGESTS, 'tests/test_lazy.py']
     digests_plan['checks'] = [
         {'kind': 'demonstrating', 'node_ids': ['tests/test_lazy.py::test_lazy_imports_run'], 'goal_ids': [0]},
         {'kind': 'regression', 'node_ids': [SIBLING], 'goal_ids': [1]},
     ]
     violations = planned(planner_request, digests_plan)
-    assert any('changes only tests' in item and TEST_ONLY in item for item in violations), violations
+    assert violations == [], violations
 
 
 def test_test_only_regression_plan_is_accepted(planner_request, digests_plan):
@@ -1506,7 +1504,7 @@ def test_request156_shares_the_single_format_correction(planner_request, request
     assert len(model.calls) == 2
 
 
-@pytest.mark.parametrize('obstacle', ['goal', 'protected', 'unsupported', 'test_only'])
+@pytest.mark.parametrize('obstacle', ['goal', 'protected', 'unsupported', 'proof_scope'])
 def test_request156_corrected_reply_is_fully_rechecked(planner_request, request156, monkeypatch, obstacle):
     from tl3_workers import runtime
 
@@ -1521,9 +1519,9 @@ def test_request156_corrected_reply_is_fully_rechecked(planner_request, request1
         requirement['executor'] = 'buildbuddy_remote_bazel'
         fixed['evidence_contract'] = [requirement]
     else:
-        Path(planner_request['worktree'], 'pyproject.toml').write_text(
-            '[tool.tl3.harness]\ntest-files = ["tests/**/*.py"]\n')
-        fixed['files'] = [PBWAIT_TESTS]
+        planner_request['inputs']['tool_capabilities'][0]['methods'].append('subject_observer')
+        fixed['checks'][0]['proof'] = {
+            'subjects': ['undeclared.py'], 'observer_support': [], 'red_message': 'old subject'}
     model = planner_model(monkeypatch, request156, fixed, LEAF)
     events = []
     runtime.run(planner_request, events.append)
@@ -1532,7 +1530,7 @@ def test_request156_corrected_reply_is_fully_rechecked(planner_request, request1
     assert result['kind'] == 'cant_meet' if obstacle == 'unsupported' else result['violations']
 
 
-@pytest.mark.parametrize('obstacle', ['cant_meet', 'unsupported', 'protected', 'out_of_room', 'forcing', 'test_only'])
+@pytest.mark.parametrize('obstacle', ['cant_meet', 'unsupported', 'protected', 'out_of_room', 'forcing', 'proof_scope'])
 def test_request156_substantive_stops_do_not_get_consistency_correction(planner_request, request156, monkeypatch, obstacle):
     from tl3_workers import runtime
 
@@ -1548,9 +1546,9 @@ def test_request156_substantive_stops_do_not_get_consistency_correction(planner_
         request156['checks'][0]['forcing'] = {
             'symptom': 'Delay submission.', 'environment': {'OMP_NUM_THREADS': '1'}, 'patches': []}
     else:
-        Path(planner_request['worktree'], 'pyproject.toml').write_text(
-            '[tool.tl3.harness]\ntest-files = ["tests/**/*.py"]\n')
-        request156['files'] = [PBWAIT_TESTS]
+        planner_request['inputs']['tool_capabilities'][0]['methods'].append('subject_observer')
+        request156['checks'][0]['proof'] = {
+            'subjects': ['undeclared.py'], 'observer_support': [], 'red_message': 'old subject'}
     model = planner_model(monkeypatch, request156, LEAF)
     events = []
     runtime.run(planner_request, events.append)

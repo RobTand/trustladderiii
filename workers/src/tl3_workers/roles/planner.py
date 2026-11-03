@@ -3,7 +3,6 @@
 from copy import deepcopy
 from pathlib import PurePosixPath
 import re
-import tomllib
 
 from jsonschema import Draft202012Validator
 
@@ -13,7 +12,7 @@ from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES, MAX_EXECUTION_PIECE
 from tl3_harness import Check, Forcing, HarnessInputError, Kind, Proof
 from tl3_harness.proof import overlaps
 from tl3_harness.limits import validate_check_plan
-from tl3_harness.trees import test_function_source, bound_names
+from tl3_harness.trees import test_function_source
 from tl3_workers.tools import Worktree
 from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.recall import check_citations
@@ -299,7 +298,7 @@ def check_reply(inputs, reply, *, rehearsals=None):
     reply["violations"] = list(dict.fromkeys(violations))
 
 
-def base_definition(node_id, *, binding=False):
+def base_definition(node_id):
     """Whether the base defines the test, after whether its file is over the hard cap."""
     # The whole module is parsed to find the test, so the
     # declared-file hard cap bounds it, not a page size.
@@ -310,25 +309,7 @@ def base_definition(node_id, *, binding=False):
         return False, False
     if len(source.encode("utf-8")) > HARD_CAP_BYTES:
         return True, False
-    if binding:
-        try:
-            names = bound_names(source)
-        except SyntaxError:
-            return False, True
-        return False, node_id.split("::", 1)[1] in names or "*" in names
     return False, test_function_source(source, node_id) is not None
-
-
-def test_files():
-    """The repository's harness test-file patterns, or None when the base doesn't configure them."""
-    try:
-        with Worktree(".") as tree, tree._file("pyproject.toml") as stream:
-            patterns = tomllib.loads(stream.read(HARD_CAP_BYTES))["tool"]["tl3"]["harness"]["test-files"]
-    except (OSError, ValueError, UnicodeError, KeyError, TypeError):
-        return None
-    if not isinstance(patterns, list) or not all(isinstance(pattern, str) for pattern in patterns):
-        return None
-    return patterns
 
 
 EDIT_VERBS = frozenset(("extend", "extends", "extending", "patch", "patches", "patching", "update", "updates",
@@ -413,28 +394,18 @@ def edit_violations(goals, reply):
                               "Name it only in a demonstrating check.")
         if function(node_id) not in demonstrated and not any(overlaps(function(node_id), unit) for unit in subjects):
             uncovered.append(node_id)
-    names_frozen = False
     for goal_id, goal in enumerate(goals):
         for key, (name, kind, node_id) in frozen.items():
             if key in edited or node_id.split("::")[0] not in reply["files"]:
                 continue
             test = key.rsplit("::", 1)[-1]
             found = list(mentions(goal["description"], test))
-            names_frozen = names_frozen or bool(found)
             # A heuristic: an edit verb governing the name says the goal edits the test.
             if any(asks_to_edit(before, after) for before, after in found):
                 violations.append(f"Goal {goal_id} names `{test}`, and {name} freezes `{node_id}` as a {kind} "
                                   "check. If the change edits that test, list it in edits_tests and name it only "
                                   "in a demonstrating check. If it leaves the test as written there, guard that "
                                   "behavior with other existing tests.")
-    # A repaired test is a subject. Its observer must be a separate assertion,
-    # or the trusted outcome observer used by forcing and declared symptoms.
-    for check in reply['checks']:
-        if (check['kind'] == 'demonstrating' and not valid_forcing(check)
-                and 'declared_symptom' not in check and 'proof' not in check
-                and any(function(node) in edited for node in check['node_ids'])):
-            violations.append('A changed test is a subject. Name a separate head observer with proof.subjects, '
-                              'or use a supported forcing or declared symptom on the original test.')
     return violations, uncovered
 
 

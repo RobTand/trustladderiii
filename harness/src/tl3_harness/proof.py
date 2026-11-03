@@ -118,6 +118,8 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         new = new_path.read_text()
         requested = [item for item in (*observers, *support) if item.split('::')[0] == name]
         if not old_path.exists():
+            if any(subject.split('::')[0] == name for subject in subjects):
+                raise ProofRefusal('new observer module would carry a declared subject onto base', name)
             # A new module has no old subject to overwrite. Its complete source is
             # the observer context, including its imports and pytest fixtures.
             for item in requested:
@@ -129,6 +131,8 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         for item in requested:
             text, _ = source_unit(new, item)
             required_texts.append(text)
+            if item in observers and isinstance(ast.parse(textwrap.dedent(text)).body[0], ast.ClassDef):
+                raise ProofRefusal('select exact observer methods instead of a whole class', name, item.split('::')[-1])
             if '::' not in item:
                 raise ProofRefusal('an existing module cannot be observer support', name)
             identities[item] = digest(text)
@@ -143,7 +147,10 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
                     try:
                         source_unit(old, parent)
                     except ProofRefusal:
+                        if any(overlaps(parent, subject) for subject in subjects):
+                            raise ProofRefusal('new observer class would carry a declared subject onto base', name, parts[1])
                         text, _ = source_unit(new, parent)
+                        required_texts.append(text)
                     else:
                         _, parent_span = source_unit(old, parent)
                         replacements.append((parent_span[1], parent_span[1], '\n' + text))

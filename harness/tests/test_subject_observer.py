@@ -261,3 +261,32 @@ def test_explicit_fixture_subject_keeps_base_conftest(repository):
     results, _, _ = round_result(repository, before, after,
         Check('fixture subject', Kind.DEMONSTRATING, ('tests/test_fixture.py::test_value',), proof=proof))
     assert results[0].verdict == Verdict.PASS, results
+
+
+@pytest.mark.parametrize('container', ['module', 'class'])
+def test_new_observer_context_cannot_smuggle_a_declared_subject(repository, container):
+    if container == 'module':
+        before = {}
+        after = {'tests/test_new.py': 'def subject(): return "fixed"\ndef test_value(): assert subject() == "fixed"\n'}
+        subject, observer = 'tests/test_new.py::subject', 'tests/test_new.py::test_value'
+    else:
+        before = {'tests/test_new.py': 'def control(): pass\n'}
+        after = {'tests/test_new.py': 'class TestWorld:\n    def subject(self): return "fixed"\n    def test_value(self): assert self.subject() == "fixed"\n'}
+        subject, observer = 'tests/test_new.py::TestWorld::subject', 'tests/test_new.py::TestWorld::test_value'
+    proof = model.Proof((subject,), (), 'old subject')
+    results, _, _ = round_result(repository, before, after,
+        Check('smuggled context', Kind.DEMONSTRATING, (observer,), proof=proof))
+    assert results[0].verdict == Verdict.FAIL
+    assert 'subject onto base' in results[0].tests[0].message
+
+
+def test_new_observer_class_carries_its_needed_decorator_import(repository):
+    before = 'def helper(): return "old"\n'
+    after = (before.replace('"old"', '"new"') + 'import pytest\n'
+             '@pytest.mark.parametrize("expected", ["new"])\n'
+             'class TestWorld:\n    def test_value(self, expected):\n'
+             '        assert helper() == expected, "old world"\n')
+    proof = model.Proof(('tests/test_world.py::helper',), (), 'old world')
+    results, _, _ = round_result(repository, {'tests/test_world.py': before}, {'tests/test_world.py': after},
+        Check('class context', Kind.DEMONSTRATING, ('tests/test_world.py::TestWorld::test_value',), proof=proof))
+    assert results[0].verdict == Verdict.PASS, results
