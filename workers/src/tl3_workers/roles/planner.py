@@ -270,10 +270,10 @@ def check_reply(inputs, reply, *, rehearsals=None):
 
 
 def helper_target_problem(source, target):
-    """Reject a structurally impossible preservation target without importing it.
+    """Reject unsupported target shapes and data constructors without importing them.
 
-    This is a necessary shape check, not proof that the declared cases reach the
-    intended assertion. Independent execution still establishes that contract.
+    Call chains may supply a failure contract. Independent execution still
+    establishes whether the declared cases reach the intended assertion.
     """
     name = target.split('::')[1]
     definitions = [node for node in ast.parse(source).body
@@ -294,8 +294,12 @@ def helper_target_problem(source, target):
                 return True
         return any(has_assertion(child) for child in ast.iter_child_nodes(node))
 
-    if not any(has_assertion(statement) for statement in definitions[0].body):
-        return ('helper target has no direct assertion failure contract; a dictionary-returning '
+    returns_dictionary = any(isinstance(node, ast.Return) and isinstance(node.value, ast.Dict)
+                             for statement in definitions[0].body for node in ast.walk(statement))
+    calls_other_code = any(isinstance(node, ast.Call) for node in ast.walk(definitions[0]))
+    if (returns_dictionary and not calls_other_code
+            and not any(has_assertion(statement) for statement in definitions[0].body)):
+        return ('helper target constructs a dictionary without an assertion failure contract; this '
                 'helper cannot preserve the old test assertion. Consider an existing test with '
                 'a supported forcing, or report the remaining source obligation and unsupported target shape.')
     return None

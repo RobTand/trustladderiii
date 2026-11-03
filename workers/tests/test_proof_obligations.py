@@ -58,13 +58,14 @@ def test_t613_ac2_three_stage_reconciliation_replaces_methods_but_keeps_source()
     assert reply['evidence_errors'] == []
 
 
-@pytest.mark.parametrize('body', ["return {'errno': 5}", 'assert False'])
+@pytest.mark.parametrize('body', ["return {'errno': 5}", 'assert False', 'return _failure()', "return {'validated': _failure()}"])
 @pytest.mark.parametrize('decorated', [False, True])
 def test_t613_ac4_helper_capability_does_not_establish_target_suitability(tmp_path, monkeypatch, body, decorated):
     (tmp_path / 'tests').mkdir()
     (tmp_path / 'pyproject.toml').write_text('[tool.tl3.harness]\ntest-files=["tests/*.py"]\n')
     (tmp_path / 'tests/test_evidence.py').write_text(
-        ('@anything\n' if decorated else '') + f'def _eio():\n    {body}\n')
+        'def _failure():\n    assert False\n\n'
+        + ('@anything\n' if decorated else '') + f'def _eio():\n    {body}\n')
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(planner.Forecaster, 'measure', lambda *args: {'fits': True})
     inputs = {'must_split': False, 'protected_paths': [], 'ingest': {'brief': 'Correct evidence.',
@@ -76,7 +77,7 @@ def test_t613_ac4_helper_capability_does_not_establish_target_suitability(tmp_pa
                          'goal_ids': [0], 'helper_evidence': {'target': 'tests/test_evidence.py::_eio',
                                                           'failure_cases': [{'args': [], 'kwargs': {}}]}}]}
     planner.check_reply(inputs, reply)
-    if decorated or body.startswith('return'):
+    if decorated or body == "return {'errno': 5}":
         assert any('helper target' in v and ('undecorated' in v or 'assertion' in v)
                    for v in reply['violations']), reply
     else:
