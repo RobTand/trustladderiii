@@ -1762,7 +1762,48 @@ fn publication_404_look(settings: &tl3_config::Store, case: &str) {
     println!("test publication_404_look_{case} ... ok");
 }
 
+
+fn stage_obligations_block_publication() {
+    for case in ["wrong-branch", "missing-proof", "draft"] {
+        let root = tempfile::tempdir().unwrap();
+        let f = Arc::new(Fixture::create(root.path()));
+        let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+        f.adapter().execute(&prepare).unwrap();
+        let mut push = f.delivery(EffectKind::Push, 2);
+        push.head_sha = Some(f.head(&prepare));
+        f.adapter().execute(&push).unwrap();
+        let server = Server::new(f.clone());
+        let mut open = push.clone();
+        open.key = format!("stage-{case}");
+        open.output = Out::Effect { node: NodeId(0), seq: 3, kind: EffectKind::OpenPr, head: None };
+        let mut adapter = server.adapter(&root.path().join("github"), 1);
+        if case == "draft" {
+            adapter.execute(&open).unwrap();
+            server.api.state.lock().unwrap().pull.as_mut().unwrap()["draft"] = json!(true);
+            open.key.push_str("-revisit");
+        }
+        let mut value = serde_json::to_value(&open).unwrap();
+        value["evidence"] = json!({"checks":[],"reviews":[],"audit":null,"queue":[],"scratch":[],
+            "remaining_failures":[],"artifacts":[],"goals":[{"id":"publication", "stage":"publishing",
+                "description":"Keep scope, stable branch, non-draft PR and before/after proof.",
+                "publication":{"branch_prefix":if case == "wrong-branch" { "unavailable/" } else { "" },
+                    "non_draft":true,"body_lines":["Change type: test"],"proof":case == "missing-proof"}}]});
+        let open: Delivery = serde_json::from_value(value).unwrap();
+        let result = adapter.execute(&open);
+        assert!(matches!(result, Err(tl3_controller::Error::Permanent { .. })),
+            "{case} must fail at Publishing, got {result:?}");
+        if case != "draft" {
+            assert_eq!(server.api.state.lock().unwrap().opens, 0, "validate before writing a PR");
+        }
+    }
+}
+
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--stage-obligations") {
+        stage_obligations_block_publication();
+        println!("test stage_obligations_block_publication ... ok");
+        return;
+    }
     if env::args().nth(1).as_deref() == Some("q46-open") {
         publication_open_conflict();
         println!("test publication_open_conflict ... ok");
@@ -1809,6 +1850,8 @@ fn main() {
         println!("test publishing_{mode} ... ok");
         return;
     }
+    stage_obligations_block_publication();
+    println!("test stage_obligations_block_publication ... ok");
     publication_open_conflict();
     println!("test publication_open_conflict ... ok");
     publication_requires_conventions();
