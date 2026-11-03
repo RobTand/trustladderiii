@@ -884,3 +884,12 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_prompt_style",
+    srcs = ["test_prompt_style.py"],
+    deps = [
+        ":conftest",
+        "@tl3_pip//pytest",
+    ],
+)

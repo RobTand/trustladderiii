@@ -100,7 +100,9 @@ def test_prompt_distinguishes_excused_regressions_and_unverified_evidence():
     assert "It excuses no demonstrating, reproducing or behavior-preserving check" in prompt
     assert "do not edit unrelated code, pins or tests to make a test pass" in prompt
     assert "Name such a test and both runs in your self-check" in prompt
-    assert "so it is not a reason for cant_meet" in prompt
+    # M42: an excused pre-existing regression is never a reason for cant_meet (#674 review).
+    assert ("A regression test that fails on both base and head is pre-existing. "
+            "It is not a reason for cant_meet") in prompt
     assert "For a goal that review verifies, describe the change and how it meets the goal" in prompt
     assert "Mark evidence that your tools cannot reach as unverified. Review decides" in prompt
     assert "A failing check that your change caused is never unverified." in prompt
