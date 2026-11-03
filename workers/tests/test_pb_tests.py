@@ -1718,6 +1718,42 @@ def test_owned_timeout_receipt_cannot_validate_a_q50_blocker(submission):
     assert 'base' not in result, 'a hang has no assertion outcome to compare or retry'
 
 
+@pytest.mark.parametrize('repeat', [1, 3])
+def test_oversized_incomplete_report_cannot_become_q50_evidence(submission, monkeypatch, repeat):
+    from tl3_harness import execution, test_tool
+    from tl3_workers.tools import Evidence
+
+    root, _ = submission
+    names = ['test_' + str(index) + '_' + 'x' * 1780 for index in range(10)]
+    selected = ['test_exit.py::' + name for name in names]
+    (root / 'test_exit.py').write_text(
+        'import os\nfrom pathlib import Path\n'
+        "counter = Path(__file__).with_name('collections')\n"
+        'count = int(counter.read_text()) + 1 if counter.exists() else 1\n'
+        'counter.write_text(str(count))\n'
+        f'if count == {repeat}: os._exit(0)\n'
+        + ''.join(f'def {name}():\n    assert False\n' for name in names))
+    monkeypatch.setattr(test_tool, 'require_admission', lambda: None)
+    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_PATH', str(root / 'progress.json'))
+    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_TOKEN', 'fixture')
+    monkeypatch.setattr(test_tool, 'container_command', lambda tree, container, tests: [
+        sys.executable, '-I', '-B', str(Path(execution.__file__).with_name('runner.py')),
+        '-', str(tree),
+    ])
+    summary = test_tool.run(root, execution.Container(IMAGE), tuple(selected), repeat=repeat)
+    result = call(submission, summary, selected)
+    evidence = Evidence()
+    evidence.test_result(result, (False, tuple(selected)))
+    assert not evidence.cites({'action_key': KEY}), result
+    assert result['status'] == 'infrastructure_error'
+    assert result['origin'] == 'test_run'
+    assert result['execution'] == {'outcome': 'unknown_incomplete', 'phase': 'unknown',
+                                   'termination_reason': 'incomplete_report', 'test_started': False}
+    assert result['selectors_omitted'] + len(result['selectors']) == len(selected)
+    assert len(json.dumps(result).encode()) <= SUMMARY_BYTES
+    assert result['receipts'][0]['receipt_sha256'] == 'b' * 64
+
+
 @pytest.mark.parametrize('stage', ['admission', 'retrieval'])
 def test_transport_failure_has_typed_diagnostic_and_no_test_verdict(submission, monkeypatch, stage):
     from tl3_workers import pb_tests
