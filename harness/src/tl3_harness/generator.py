@@ -1,15 +1,18 @@
 """Trusted generator action. Only the configured command runs in the container."""
 import base64
+from contextlib import contextmanager
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import re
 import shlex
 import shutil
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 from .execution import Container, container_command as test_container_command, require_admission
 from .trees import git
@@ -22,7 +25,57 @@ ARTIFACT_BYTES = 48 * 1_048_576
 MAX_OUTPUTS = 128
 INPUT_BYTES = 512 * 1_048_576
 TIMEOUT = 120
-IMPLEMENTATION = "tl3-generator-v2"
+MAX_TIMEOUT = 600
+PREPARATION_SECONDS = 25
+VALIDATION_SECONDS = 20
+CLEANUP_SECONDS = 10
+# Five more seconds let the trusted wrapper serialize its bounded artifact.
+OUTER_OVERHEAD_SECONDS = PREPARATION_SECONDS + VALIDATION_SECONDS + CLEANUP_SECONDS + 5
+IMPLEMENTATION = "tl3-generator-v3"
+
+
+def budget(cpus=1, mem_gb=2, timeout_s=TIMEOUT):
+    if (type(cpus) is not int or not 1 <= cpus <= 16
+            or type(mem_gb) is not int or not 1 <= mem_gb <= 64
+            or type(timeout_s) is not int or not 1 <= timeout_s <= MAX_TIMEOUT):
+        raise ValueError("generator budget requires 1–16 CPUs, 1–64 GiB and generator_timeout_s in 1–600")
+    return {"cpus": cpus, "mem_gb": mem_gb, "timeout_s": timeout_s,
+            "outer_timeout_s": timeout_s + OUTER_OVERHEAD_SECONDS}
+
+
+class StageTimeout(TimeoutError):
+    pass
+
+
+@contextmanager
+def _phase(result, name, allowance=None):
+    started = time.monotonic()
+    timing = result["timings"][name]
+    outcome = "completed"
+    previous = None
+    if allowance is not None:
+        # The trusted action runs in its own main process, outside the container.
+        # Bound filesystem/Git preparation and validation as well as docker run.
+        def expired(signum, frame):
+            raise StageTimeout(name)
+        handler = signal.signal(signal.SIGALRM, expired)
+        previous = signal.setitimer(signal.ITIMER_REAL, allowance)
+    try:
+        yield
+    except (StageTimeout, subprocess.TimeoutExpired):
+        outcome = "timeout"
+        raise
+    except BaseException:
+        outcome = "failed"
+        raise
+    finally:
+        if previous is not None:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, handler)
+            if previous[0]:
+                signal.setitimer(signal.ITIMER_REAL, max(0.000001, previous[0] - (time.monotonic() - started)), previous[1])
+        timing.update(seconds=time.monotonic() - started, outcome=outcome)
+
 
 
 def _check_interpreter(argv):
@@ -172,74 +225,102 @@ def container_command(tree, container, argv, cidfile):
     ]
 
 
-def run(tree, container, command, generated_files, protected_paths, files, timeout=TIMEOUT):
+def run(tree, container, command, generated_files, protected_paths, files, timeout=TIMEOUT,
+        cpus=1, mem_gb=2):
     require_admission()
     argv = configured_argv(command)
-    if not argv or not generated_files or not 0 < timeout <= TIMEOUT:
+    # Fractional deadlines remain useful to trusted qualification callers. Repo
+    # configuration goes through budget(), which accepts whole seconds only.
+    if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+            or not 0 < timeout <= MAX_TIMEOUT or not argv or not generated_files):
         raise ValueError("generator requires a command, generated output patterns and a bounded timeout")
-    before = manifest(tree)
-    if sum(entry["bytes"] for entry in before.values()) > INPUT_BYTES:
-        raise ValueError("generator input exceeds the 512-MiB snapshot limit")
+    selected = budget(cpus, mem_gb, max(1, int(timeout)))
+    selected.update(timeout_s=timeout, outer_timeout_s=timeout + OUTER_OVERHEAD_SECONDS)
+    started = time.monotonic()
     result = {"status": "failed", "exit_code": None, "message": "Generator did not complete.",
-              "input_manifest": digest(before), "command": command,
-              "argv": argv,
-              "identity": {"implementation": IMPLEMENTATION, "image": container.image}}
-    # Writable scratch is memory-backed and charged to the admitted scope,
-    # so a generator cannot fill the worker disk before diff validation.
-    with tempfile.TemporaryDirectory(prefix="tl3-generator-", dir="/dev/shm") as temporary:
-        root = Path(temporary)
-        root.chmod(0o755)
-        copy = root / "checkout"
-        shutil.copytree(tree, copy)
-        # The action never receives the served repository's Git directory. The
-        # synthetic index includes new files and has no hooks, remotes or secrets.
-        if (copy / ".git").exists():
-            raise ValueError("generator input must not contain Git metadata")
-        git(copy, "init", "--quiet", "--template=")
-        git(copy, "add", "--force", "--all")
-        git(copy, "config", "safe.directory", "/checkout")
-        for path in [copy, *copy.rglob("*")]:
-            if ".git" in path.relative_to(copy).parts:
-                continue
-            path.chmod(0o777 if path.is_dir() else 0o666 | (path.stat().st_mode & 0o111))
-        cidfile = root / "container.id"
-        with tempfile.TemporaryFile(dir=root) as log:
-            try:
-                child = subprocess.run(container_command(copy, container, argv, cidfile), cwd=copy,
-                                       stdout=log, stderr=subprocess.STDOUT, timeout=timeout)
-                result["exit_code"] = child.returncode
-                if child.returncode:
-                    result["message"] = f"Generator exited with status {child.returncode}."
-                else:
-                    after = manifest(copy)
-                    names = changed(before, after, generated_files, protected_paths, files)
-                    outputs, total = [], 0
-                    for name in names:
-                        with (copy / name).open("rb") as stream:
-                            raw = stream.read(FILE_BYTES + 1)
-                        text(raw)
-                        total += len(raw)
-                        if total > OUTPUT_BYTES:
-                            raise ValueError("generator output exceeds total size limit")
-                        outputs.append({"path": name, "entry": after[name],
-                                        "data": base64.b64encode(raw).decode("ascii")})
-                    result.update(status="completed", message="Generator completed.", outputs=outputs,
-                                  output_manifest=digest(after))
-            except subprocess.TimeoutExpired:
-                result.update(exit_code=124, message=f"Generator exceeded its {timeout}-second deadline.")
-            except UnicodeDecodeError:
-                result["message"] = "Generator output must be UTF-8 text."
-            except (ValueError, OSError) as error:
-                result["status"] = "refused"
-                result["message"] = str(error)[:1000]
-            finally:
-                if cidfile.exists():
+              "command": command, "argv": argv, "phase": "preparation", "budget": selected,
+              "identity": {"implementation": IMPLEMENTATION, "image": container.image, "budget": selected},
+              "timings": {name: {"seconds": 0.0, "outcome": "skipped"} for name in
+                          ("preparation", "container", "validation", "cleanup")}}
+    result["timings"]["container"]["scope"] = "startup_and_command"
+    temporary, log, cidfile = None, None, None
+    try:
+        with _phase(result, "preparation", PREPARATION_SECONDS):
+            before = manifest(tree)
+            result["input_manifest"] = digest(before)
+            if sum(entry["bytes"] for entry in before.values()) > INPUT_BYTES:
+                raise ValueError("generator input exceeds the 512-MiB snapshot limit")
+            # Memory-backed scratch stays charged to the admitted scope.
+            temporary = tempfile.TemporaryDirectory(prefix="tl3-generator-", dir="/dev/shm")
+            root = Path(temporary.name)
+            root.chmod(0o755)
+            copy = root / "checkout"
+            shutil.copytree(tree, copy)
+            if (copy / ".git").exists():
+                raise ValueError("generator input must not contain Git metadata")
+            git(copy, "init", "--quiet", "--template=")
+            git(copy, "add", "--force", "--all")
+            git(copy, "config", "safe.directory", "/checkout")
+            for path in [copy, *copy.rglob("*")]:
+                if ".git" in path.relative_to(copy).parts:
+                    continue
+                path.chmod(0o777 if path.is_dir() else 0o666 | (path.stat().st_mode & 0o111))
+            cidfile = root / "container.id"
+            log = tempfile.TemporaryFile(dir=root)
+        result["phase"] = "container"
+        with _phase(result, "container"):
+            child = subprocess.run(container_command(copy, container, argv, cidfile), cwd=copy,
+                                   stdout=log, stderr=subprocess.STDOUT, timeout=timeout)
+            result["exit_code"] = child.returncode
+            if child.returncode:
+                result["message"] = f"Generator exited with status {child.returncode}."
+        if child.returncode:
+            result["timings"]["container"]["outcome"] = "failed"
+        if child.returncode == 0:
+            result["phase"] = "validation"
+            with _phase(result, "validation", VALIDATION_SECONDS):
+                after = manifest(copy)
+                names = changed(before, after, generated_files, protected_paths, files)
+                outputs, total = [], 0
+                for name in names:
+                    with (copy / name).open("rb") as stream:
+                        raw = stream.read(FILE_BYTES + 1)
+                    text(raw)
+                    total += len(raw)
+                    if total > OUTPUT_BYTES:
+                        raise ValueError("generator output exceeds total size limit")
+                    outputs.append({"path": name, "entry": after[name],
+                                    "data": base64.b64encode(raw).decode("ascii")})
+                result.update(status="completed", phase="completed", message="Generator completed.",
+                              outputs=outputs, output_manifest=digest(after))
+    except subprocess.TimeoutExpired:
+        result.update(exit_code=124, message=f"Generator exceeded its {timeout}-second deadline.")
+    except StageTimeout:
+        result.update(exit_code=124, message=f"Generator {result['phase']} exceeded its stage deadline.")
+    except UnicodeDecodeError:
+        result["message"] = "Generator output must be UTF-8 text."
+    except ValueError as error:
+        result.update(status="refused", message=str(error)[:1000])
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        result["message"] = "Generator action infrastructure failed."
+    finally:
+        try:
+            with _phase(result, "cleanup", CLEANUP_SECONDS):
+                if cidfile is not None and cidfile.exists():
                     cid = cidfile.read_text().strip()
                     if re.fullmatch(r"[0-9a-f]{64}", cid):
-                        subprocess.run(["docker", "rm", "--force", cid], stdout=subprocess.DEVNULL,
-                                       stderr=subprocess.DEVNULL, timeout=10)
-            log.seek(0)
-            result["log"] = log.read(3072).decode(errors="replace")
+                        subprocess.run(["docker", "rm", "--force", cid], check=True,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=CLEANUP_SECONDS)
+                if log is not None:
+                    log.seek(0)
+                    result["log"] = log.read(3072).decode(errors="replace")
+                    log.close()
+                if temporary is not None:
+                    temporary.cleanup()
+        except (OSError, ValueError, RuntimeError, StageTimeout, subprocess.SubprocessError):
+            if result["status"] == "completed":
+                result.update(status="failed", phase="cleanup", message="Generator cleanup failed.")
+        result["timings"]["total_seconds"] = time.monotonic() - started
     return result
 
 

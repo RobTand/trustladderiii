@@ -270,6 +270,7 @@ def run(model, request, worktree, emit):
     forecast = inputs.get("forecast", {})
     worktree.generated_files = tuple(forecast.get("generated_files", ()))
     worktree.generator = forecast.get("generator")
+    worktree.generator_timeout_s = forecast.get("generator_timeout_s", 120)
     worktree.protected_paths = tuple(inputs.get("protected_paths", ()))
     worktree.generator_files = inputs["plan"]["files"]
     worktree.generator_state = session.with_suffix(".generator") if session else None
@@ -438,7 +439,10 @@ def run(model, request, worktree, emit):
                     generated = make_generator_tool(worktree)()
                 if generated["status"] != "completed":
                     reply = {"kind": "cant_meet", "report": "Generation failed before final head: "
-                             + generated["message"]}
+                             + generated["message"] + " Evidence: "
+                             + json.dumps({key: generated[key] for key in (
+                                 "action_key", "artifact_sha256", "receipt_sha256", "budget", "identity",
+                                 "phase", "inner", "outer", "timings", "receipts") if key in generated}, sort_keys=True)}
                     break
                 if "forecast" in inputs:
                     encoding = optional_encoding()

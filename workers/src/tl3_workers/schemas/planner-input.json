@@ -87,6 +87,11 @@
         },
         "generator_available": {
           "type": "boolean"
+        },
+        "generator_timeout_s": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600
         }
       },
       "required": [

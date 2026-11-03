@@ -370,6 +370,14 @@ pub struct Identity {
     pub id: u64,
 }
 
+fn generator_timeout_setting<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u32>, D::Error> {
+    Option::<u32>::deserialize(deserializer).map_err(|_| {
+        serde::de::Error::custom("generator_timeout_s must be a whole number from 1 to 600 seconds")
+    })
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Repository {
@@ -381,9 +389,12 @@ pub struct Repository {
     /// Fixed argv command for the admitted generator action; never model-selected.
     #[serde(default)]
     pub generator: Option<String>,
+    /// Container startup plus command deadline. Unset keeps 120 seconds.
+    #[serde(default, deserialize_with = "generator_timeout_setting")]
+    pub generator_timeout_s: Option<u32>,
     #[serde(default)]
     pub container_image: Option<String>,
-    /// CPU and memory reservation for this repository's PrismaBuild tests.
+    /// CPU and memory reservation for this repository's PrismaBuild tests and generators.
     #[serde(default)]
     pub test_demand: Option<TestDemand>,
     #[serde(default)]
@@ -865,6 +876,14 @@ impl Config {
                         "use 1 to 64 GiB",
                     ));
                 }
+            }
+            if let Some(timeout) = repo.generator_timeout_s
+                && !(1..=600).contains(&timeout)
+            {
+                return Err(invalid(
+                    format!("{field}.generator_timeout_s"),
+                    "use 1 to 600 seconds; unset keeps 120 seconds",
+                ));
             }
             validate_protected_paths(&format!("{field}.protected_paths"), &repo.protected_paths)?;
             validate_protected_paths(&format!("{field}.generated_files"), &repo.generated_files)?;

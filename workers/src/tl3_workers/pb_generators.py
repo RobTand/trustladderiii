@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -12,6 +13,11 @@ import tempfile
 from tl3_harness import generator
 from tl3_workers.pb_tests import TestSettings, _failure_receipt, _git, _json_command, _stage
 from tl3_workers.session import save
+
+
+def _elapsed(ending):
+    elapsed = (ending.get("diagnostics") or {}).get("elapsed_s")
+    return elapsed if type(elapsed) in (int, float) and math.isfinite(elapsed) and elapsed >= 0 else None
 
 
 def _artifact(ending, key):
@@ -36,7 +42,11 @@ def _artifact(ending, key):
     return artifact, {"action_key": key, "artifact_sha256": log["sha256"],
                       "receipt_sha256": evidence["receipt_sha256"], "exit_code": artifact["exit_code"],
                       "command": artifact.get("command"), "argv": artifact.get("argv"),
-                      "identity": artifact.get("identity")}
+                      "identity": artifact.get("identity"), "budget": artifact.get("budget"),
+                      "phase": artifact.get("phase"), "timings": artifact.get("timings"),
+                      "inner": {"status": artifact["status"], "exit_code": artifact["exit_code"]},
+                      "outer": {"status": ending["status"], "exit_code": ending["exit_code"],
+                                "elapsed_s": _elapsed(ending)}}
 
 
 def _import(worktree, outputs):
@@ -82,13 +92,17 @@ def _recover_temporaries(worktree, state):
 
 def make_generator_tool(worktree):
     transient_state = getattr(worktree, "generator_checkpoint", {})
+    diagnostics = {}
 
     def run() -> dict:
         """Regenerate configured outputs. There are no model-selected commands or arguments."""
+        diagnostics.clear()
         try:
             return generate()
         except (OSError, RuntimeError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
-            return {"status": "failed", "message": str(error)[:1000]}
+            result = {"status": "failed", "message": str(error)[:1000], **diagnostics}
+            worktree.generation_receipt = result
+            return result
 
     def generate():
         settings = getattr(worktree, "test_settings", None)
@@ -97,12 +111,15 @@ def make_generator_tool(worktree):
         if not isinstance(settings, TestSettings) or not command or not patterns:
             return {"status": "not_available", "message": "No admitted generator command/output contract was configured."}
         generator.configured_argv(command)
+        selected = generator.budget(settings.cpus, settings.mem_gb,
+                                    getattr(worktree, "generator_timeout_s", generator.TIMEOUT))
         checkout = worktree.test_checkout
         contract = {"command": command, "generated_files": patterns,
                     "protected_paths": list(getattr(worktree, "protected_paths", ())),
-                    "files": list(worktree.generator_files)}
+                    "files": list(worktree.generator_files), "timeout": selected["timeout_s"],
+                    "cpus": selected["cpus"], "mem_gb": selected["mem_gb"]}
         identity = {**contract, "image": settings.image, "exec_scratch": settings.exec_scratch,
-                    "implementation": generator.IMPLEMENTATION}
+                    "implementation": generator.IMPLEMENTATION, "budget": selected}
         state_path = getattr(worktree, "generator_state", None)
         nonlocal transient_state
         state = json.loads(state_path.read_text()) if state_path and state_path.exists() else transient_state
@@ -122,6 +139,9 @@ def make_generator_tool(worktree):
         current = generator.manifest(checkout)
         if any(Path(name).name == ".tl3-generator-import" for name in current):
             raise ValueError("Reserved generator import path exists in the worktree.")
+        if state.get("phase") == "failed" and current == state["before"]:
+            worktree.generation_receipt = state["receipt"]
+            return state["receipt"]
         if state.get("phase") == "applied" and current == state["after"]:
             worktree.generation_receipt = state["receipt"]
             return state["receipt"]
@@ -144,7 +164,8 @@ def make_generator_tool(worktree):
                     args = [sys.executable, str(Path(settings.tools_path) / "pbrun.py"),
                             "--cwd", str(root), "--anywhere", "--cpus", str(settings.cpus),
                             "--demand", f"mem_gb={settings.mem_gb}", "--container-image", settings.image,
-                            "--timeout-s", "180", "--progress-phase", "tests=180",
+                            "--timeout-s", str(selected["outer_timeout_s"]), "--progress-phase",
+                            f"tests={selected['outer_timeout_s']}",
                             *[arg for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")
                               for arg in ("--env", f"{name}={settings.cpus}")], "--detach", "--",
                             "python3", "-I", "-B", "action.py", settings.image]
@@ -161,6 +182,8 @@ def make_generator_tool(worktree):
                              "before": current, "input_tree": tree}
                     record()
             key = state["key"]
+            diagnostics.update(action_key=key, budget=selected, phase="outer", identity={
+                "implementation": generator.IMPLEMENTATION, "image": settings.image, "budget": selected})
             while True:
                 getattr(worktree, "progress_emit", lambda event: None)({
                     "event": "progress", "unit": "external_wait",
@@ -175,7 +198,11 @@ def make_generator_tool(worktree):
                     if code or not waited["endings"][0].get("succeeded"):
                         receipt = _failure_receipt(waited["endings"][0], settings)
                         result = {"status": "failed", "action_key": key, "receipts": [receipt],
-                                  "message": "Generator action failed: " + json.dumps(receipt, sort_keys=True)}
+                                  "message": "Generator action failed: " + json.dumps(receipt, sort_keys=True),
+                                  "budget": selected, "phase": "outer", "identity": {
+                                      "implementation": generator.IMPLEMENTATION, "image": settings.image,
+                                      "budget": selected}, "outer": {**receipt, "elapsed_s": _elapsed(waited["endings"][0])},
+                                  "inner": {"status": "unavailable", "exit_code": None}}
                         state.update(phase="failed", receipt=result)
                         record()
                         worktree.generation_receipt = result
@@ -183,14 +210,18 @@ def make_generator_tool(worktree):
                     break
                 if waited["endings"][0]["status"] not in ("waiting", "executed", "cache_hit"):
                     raise ValueError("PrismaBuild could not verify generator completion.")
+            diagnostics.update(outer=_failure_receipt(waited["endings"][0], settings), phase="artifact_validation")
             artifact, receipt = _artifact(waited["endings"][0], key)
-            if artifact["status"] != "completed":
-                state["phase"] = "failed"
+            if (artifact.get("command") != command or artifact.get("identity") != {
+                    "implementation": generator.IMPLEMENTATION, "image": settings.image, "budget": selected}
+                    or artifact.get("budget") != selected):
+                raise ValueError("Generator artifact identity differs from its configured command/image/budget.")
+            if artifact["status"] != "completed" or artifact["exit_code"] != 0:
+                result = {**receipt, "status": "failed", "message": artifact["message"]}
+                state.update(phase="failed", receipt=result)
                 record()
-                return {**receipt, "status": artifact["status"],
-                        "message": artifact["message"], "log": artifact.get("log", "")}
-            if artifact["command"] != command or artifact["identity"]["image"] != settings.image:
-                raise ValueError("Generator artifact identity differs from its configured command/image.")
+                worktree.generation_receipt = result
+                return result
             after = generator.validate_artifact(artifact, current, contract)
             if generator.manifest(checkout) != current:
                 raise ValueError("Generator artifact input tree is stale; source work was preserved.")

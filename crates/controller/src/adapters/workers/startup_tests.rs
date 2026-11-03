@@ -18,9 +18,11 @@ fn planner_protected_paths_follow_the_request_repository() {
     config.github.repos[0].protected_paths = vec!["CHANGELOG.md".into()];
     config.github.repos[0].generated_files = vec!["**/BUILD.bazel".into()];
     config.github.repos[0].generator = Some("bash tools/bazel/generate.sh".into());
+    config.github.repos[0].generator_timeout_s = Some(300);
     let mut other = config.github.repos[0].clone();
     other.name = "other-repo".into();
     other.test_demand = None;
+    other.generator_timeout_s = None;
     other.protected_paths = vec!["other-only/**".into()];
     other.generator = None;
     config.github.repos.push(other);
@@ -96,6 +98,10 @@ fn planner_protected_paths_follow_the_request_repository() {
         let forecast = &request["inputs"]["forecast"];
         assert_eq!(forecast["generated_files"], json!(["**/BUILD.bazel"]));
         assert_eq!(forecast["generator_available"], name == "TL3-SANDBOX");
+        assert_eq!(
+            forecast["generator_timeout_s"],
+            if name == "TL3-SANDBOX" { 300 } else { 120 }
+        );
         if name == "TL3-SANDBOX" {
             assert_eq!(forecast["generator"], "bash tools/bazel/generate.sh");
         } else {
