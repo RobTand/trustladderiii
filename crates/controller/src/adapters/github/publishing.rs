@@ -153,6 +153,7 @@ impl Adapter {
                 kind: EffectKind::OpenPr,
                 ..
             } => {
+                let branch = self.branches.branch(delivery)?;
                 let issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
                 let request = delivery
                     .request_text
@@ -182,7 +183,6 @@ impl Adapter {
                     }
                     return Ok(binding(delivery, &pull));
                 }
-                let branch = self.branches.branch(delivery)?;
                 let rules = self.body_lines(&delivery.repository);
                 // Policy lines follow `Refs #N.`, where a self-heal also puts them.
                 // The issue's own instruction, such as PrismaBuild's `## PR rules`,
