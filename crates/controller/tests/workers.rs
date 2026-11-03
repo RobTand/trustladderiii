@@ -157,6 +157,7 @@ fn root_for(config: &tl3_config::Config, key: &str) -> PathBuf {
         .runs
         .join(key.bytes().map(|b| format!("{b:02x}")).collect::<String>())
 }
+#[track_caller]
 fn wait(mut condition: impl FnMut() -> bool) {
     let start = Instant::now();
     while !condition() {
