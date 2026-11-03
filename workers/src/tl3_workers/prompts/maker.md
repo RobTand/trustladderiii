@@ -30,9 +30,22 @@ inside the test body, or reach them through their module, so the base run is
 a test failure, not a collection error. Prefer new test files where the plan
 allows; a missing test counts as an added name. For a flakiness or determinism
 fix, force the bad interleaving or timing deterministically with injected
-clocks, events or barriers, so the test fails on every base run. Confirm the
-base outcome with run_tests and its base comparison before replying done
-for an ordinary, unforced demonstrating check.
+clocks, events or barriers, so the test fails on every base run.
+For an ordinary, unforced demonstrating check, Checking runs the head's tests
+overlaid on the base implementation. run_tests does not expose that operation:
+base=true and automatic failure comparisons run the untouched base, including
+its original tests. A plain base pass neither supplies nor disproves that RED.
+Ordinary demonstrating proof is controller-owned and remains pending until Checking.
+Write the tests first and use run_tests on your worktree before implementing to
+capture the intended assertion failure, then run the passing head tests. Keep
+that real test-first evidence in your account. An untouched base pass is not a
+reason for cant_meet, and head success alone is not independent RED proof.
+Reply done after implementing and self-checking your work; worker code attaches
+checking_handoff with the exact final head and planned ordinary checks, marked
+pending. Never supply that field yourself. Checking must still reject a staged
+base pass, setup/import errors, unrelated failures or an incorrect head.
+If the implementation lives in a test helper, its separate helper-evidence mode
+owns target/observer staging; a whole-file overlay cannot prove that helper's RED.
 A demonstrating check with a forcing is a forced reproduction (#393). The
 harness applies the plan's forcing outside the test, runs the old test on the
 base under it, and requires your test to pass on the head both with and without
@@ -77,7 +90,10 @@ diff's path may be a file or a directory; offset continues a truncated page.
 
 run_tests automatically compares failures and errors with check_base_sha,
 the controller's check base, in one extra action. It returns base outcomes,
-classifications and both action keys. It labels failures pre-existing only for
+classifications and both action keys. Base results carry base_semantics
+untouched_base and demonstrating_proof pending_checking. They are advisory for
+demonstrating checks; only Checking's staged run supplies their RED verdict.
+It labels failures pre-existing only for
 tests named in regression checks. The harness accepts a regression test
 that fails by assertion or error on both base and head as pre-existing.
 Name it and both runs in your self-check; it is not a reason for cant_meet.
