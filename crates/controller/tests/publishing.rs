@@ -578,8 +578,8 @@ fn prepare_workers() -> PathBuf {
     );
     root.join(".venv/bin/python")
 }
-fn drive_to_idle(_drive: impl FnMut() -> bool) -> bool {
-    todo!("bound publishing driver bursts")
+fn drive_to_idle(mut drive: impl FnMut() -> bool) -> bool {
+    (0..500).any(|_| !drive())
 }
 
 fn drain(c: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store, expected: Phase) {
@@ -983,7 +983,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
 
         webhook(&mut c, &server, "synchronize");
         if mode == "review-reset-push" {
-            while c.drive_once().unwrap() {}
+            assert!(
+                drive_to_idle(|| c.drive_once().unwrap()),
+                "review-reset-push did not become idle after 500 driver steps; worker observations have not been polled: {:?}",
+                c.world().unwrap().nodes[0]
+            );
             assert!(
                 !c.world().unwrap().nodes[0].review_restarted,
                 "outside push starts a new review"
