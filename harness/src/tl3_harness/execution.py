@@ -284,7 +284,7 @@ class Pytest:
         return changed_existing_tests(base, head, tests)
 
     def select(self, tree, changed, config):
-        return selection.select(tree, changed, lambda name: is_test(name, config["test-files"]), modules=True)
+        return selection.select(tree, changed, lambda name: is_test(name, config["test-files"]), modules_only=True)
 
     def run(self, tree, container, tests, report, progress, additions=frozenset(), *, messages=None, forcing=None,
             selected=None):
