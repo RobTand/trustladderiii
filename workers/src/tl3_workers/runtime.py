@@ -147,6 +147,8 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None,
     if identifier:
         register_harness_profile(f"{provider}:{identifier}", profile)
     prompt = role_prompt(role)
+    if worktree is not None and role.name in {"ingest", "planner", "maker"}:
+        prompt += "\n\n" + worktree.generation_instruction()
     prompt += "\n\n" + ONLY_JSON + " It must match this schema:\n"
     proposal = deepcopy(schema(role.reply_schema)) if reply_schema is None else reply_schema
     for variant in proposal.get("oneOf", [proposal]):
@@ -155,8 +157,6 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None,
     for name in role.code_only_fields:
         proposal.get("$defs", {}).pop(name, None)
     prompt += json.dumps(proposal, ensure_ascii=False)
-    if role.name == "maker" and worktree is not None:
-        prompt += "\n\n" + worktree.generation_instruction()
     # Deep Agents requires read_file in its filesystem middleware. The profile
     # excludes it at both model and dispatch boundaries; StateBackend holds no host files.
     filesystem = FilesystemMiddleware(
@@ -210,7 +210,9 @@ def _run(request, emit):
                                          "memories": redacted_memories(request["inputs"]["memories"])}}
     if role.prepare_inputs is not None:
         request = {**request, "inputs": role.prepare_inputs(request["inputs"], request)}
-    with Worktree(request["worktree"]) if role.tools else nullcontext() as worktree:
+    forecast = request["inputs"].get("forecast", {})
+    with Worktree(request["worktree"], generated_files=forecast.get("generated_files", ()),
+                  generator=forecast.get("generator")) if role.tools else nullcontext() as worktree:
         if worktree is not None:
             worktree.hindsight_key_file = request.get("hindsight_key_file")
             worktree.progress_emit = emit

@@ -62,6 +62,7 @@ installation_id = 1
 # base_branch = "main"
 # Optional additions to the mandatory defaults and global planning.protected_paths.
 # protected_paths = ["CHANGELOG.md", "release/**"]
+# Generated outputs cost a 1,024-token fit allowance; standard leading headers are also detected.
 # Optional admitted generator; outputs still require footprint and protected-path checks.
 # generated_files = ["**/BUILD.bazel"]
 # generator = "bash tools/bazel/generate.sh"

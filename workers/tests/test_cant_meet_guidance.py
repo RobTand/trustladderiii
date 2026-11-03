@@ -16,7 +16,10 @@ def test_the_maker_prompt_says_when_cant_meet_applies():
     prompt = text("prompts", "maker.md")
     assert ("Use cant_meet only when no change within the declared files and your own tools can meet "
             "a goal: a plan defect, a rule conflict, tests that run and still fail after your best fix, "
-            "or evidence only the controller or a person can supply") in prompt
+            "or a truly unsupported requirement named by evidence preflight") in prompt
+    assert ("Ordinary PR creation and independent controller checks are downstream work, "
+            "not missing system capabilities and not reasons for cant_meet") in prompt
+    assert "Forced-base proof is controller-owned (Q55) and remains pending until Checking" in prompt
     assert "Unfinished steps that your own tools can do are not cant_meet: do them" in prompt
     assert ("List items you think are met but could not re-verify in done's account, marked "
             "unverified; the controller's checks and the independent review judge them after done") in prompt
@@ -39,5 +42,7 @@ def test_the_cant_meet_schema_description_matches_the_prompt():
     schema = json.loads(files("tl3_workers").joinpath("schemas", "maker-reply.json").read_text())
     variant = next(item for item in schema["oneOf"] if item["properties"]["kind"]["const"] == "cant_meet")
     description = " ".join(variant["description"].split())
-    assert ("Only when no change within the declared files and your own tools can meet a goal, or the "
-            "plan is defective. Not for unfinished steps your own tools can do.") == description
+    assert ("Only when a maker-owned goal cannot be met within the declared files and tools, the plan "
+            "is defective, or evidence preflight names a truly unsupported requirement. Ordinary "
+            "controller-owned checks and PR publication are pending downstream work. Not for "
+            "unfinished steps your own tools can do.") == description

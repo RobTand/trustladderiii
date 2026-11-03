@@ -35,8 +35,10 @@ def _check_inputs(inputs):
     for item in [*inputs["plan"]["checks"], *inputs.get("feedback", [])]:
         if not set(item["goal_ids"]) <= set(goals):
             raise ValueError("unknown goal id")
-    if {goal for check in inputs["plan"]["checks"] for goal in check["goal_ids"]} != set(goals):
-        raise ValueError("checks must cover every goal")
+    required = {goal["id"] for goal in inputs["goals"] if goal.get("stage", "maker") != "publishing"}
+    covered = {goal for check in inputs["plan"]["checks"] for goal in check["goal_ids"]}
+    if not required <= covered:
+        raise ValueError("checks must cover every maker and checking goal")
 
 
 def _check_reply(inputs, reply):
@@ -45,8 +47,13 @@ def _check_reply(inputs, reply):
         checked = [check["goal_id"] for check in reply["self_check"]]
         if len(checked) != len(goals) or set(checked) != set(goals):
             raise ValueError("self-check must cover every goal exactly once")
-        if any(check["status"] != "met" for check in reply["self_check"]):
-            raise ValueError("done requires every goal to be met; use cant_meet with a report")
+        stages = {goal["id"]: goal.get("stage", "maker") for goal in inputs["goals"]}
+        for check in reply["self_check"]:
+            if stages[check["goal_id"]] == "maker":
+                if check["status"] != "met":
+                    raise ValueError("done requires every maker goal to be met")
+            elif check["status"] != "pending":
+                raise ValueError("downstream goals must remain pending for their owning stage")
         findings = {item["id"] for item in inputs.get("current_review_findings", [])}
         reproductions = reply.get("reproductions", [])
         mapped = [item["finding_id"] for item in reproductions]
@@ -389,7 +396,7 @@ def run(model, request, worktree, emit):
     def check(text):
         reply = read_reply(text)
         Draft202012Validator(proposal).validate(reply)
-        if reply["kind"] == "done" and any(check["status"] != "met" for check in reply["self_check"]):
+        if reply["kind"] == "done" and any(check["status"] == "not_met" for check in reply["self_check"]):
             reply = {"kind": "cant_meet", "report": json.dumps(reply["self_check"], ensure_ascii=False)}
         if reply["kind"] == "blocked":
             # Free text alone cannot claim an environment failure (Q50). Worker

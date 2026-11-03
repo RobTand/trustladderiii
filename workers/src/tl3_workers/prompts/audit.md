@@ -62,6 +62,32 @@ not a blocker. Ordinary test files are allowed unless a supplied pattern matches
 If useful unprotected work meets all goals on its own, plan that leaf. Do not
 plan an unusable half, such as a marker whose only consumer requires a protected edit.
 
+
+Stage ownership (#552): preserve every original request obligation. Split mixed
+implementation/scope/PR goals into atomic obligations: stage maker for edits,
+scope and self-checks; checking for independent controller proof (including Q55);
+publishing for branch and PR actions. Omitted stage means maker for older runs.
+Never move implementation or scope constraints downstream. The independent audit
+must object to a missing obligation or incorrect owner. Planner and maker cannot
+relabel accepted goals. Every maker and checking goal needs a planned check;
+publishing goals have publication guards instead of pretend pytest coverage.
+A publishing goal carries publication: non_draft true, body_lines (each required
+literal line, exactly once), proof (whether recorded proof is required), and any
+required exact branch or branch_prefix. Keep the full original wording in the
+brief; audit checks that this contract preserves it. Branch stability is owned
+by the controller's persistent branch convention, never by the maker.
+Controller-owned PR creation and Q55 proof are supported system actions, not
+missing maker capabilities. When #524 supplies evidence_contract and tool_capabilities, only mandatory
+execution evidence belongs in that contract. Do not invent Git or PR evidence executors for ordinary
+publication. Preserve genuine unsupported external evidence as exact blockers.
+The run_tests receipt exposes action key, exit status and receipt/log digests;
+command, measured affinity and resource details are not exposed by that tool.
+If the request requires those details, name the exact capability gap; when
+evidence_contract is available retain them there for preflight. Do not call them observed. Optional contention remains optional.
+At review, judge maker implementation and scope against actual independent check
+verdicts; publication remains pending until Publishing enforces its guards.
+
+
 The controller supplies decision_context separately from recalled memories.
 These are accepted answers applicable to this request version, with their source
 comments, questions, allowed scope and restrictions. Apply them when reading the

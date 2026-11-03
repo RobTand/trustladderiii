@@ -528,6 +528,7 @@ impl crate::Controller {
             scope_removals: None,
             question_context: None,
             request_text: None,
+            evidence: None,
             proposed: None,
             steering: Some(Task::Postmortem {
                 id: owed.id,

@@ -12,7 +12,7 @@ import sys
 
 import tiktoken
 
-from tl3_workers.tools import LARGE_FILE_BYTES, Worktree, _parts, environment_class
+from tl3_workers.tools import LARGE_FILE_BYTES, Worktree, _parts, environment_class, generated_edit_instruction
 from tl3_workers.turns import Unrepairable
 
 
@@ -219,12 +219,9 @@ class Forecaster:
 
         notes = []
         if self.generated:
-            command = self.config.get("generator")
-            instruction = (f"Use run_generator for `{command}`" if self.config.get("generator_available")
-                           else "No admitted generator capability is configured")
-            notes.append("Do not hand-edit these generated outputs; change their generator inputs and "
-                         "regenerate them. " + instruction + ". Read only relevant regions: "
-                         + listed(sorted(self.generated)) + ".")
+            notes.append("Generated outputs: " + listed(sorted(self.generated)) + ". "
+                         + generated_edit_instruction()
+                         + "Read only relevant regions.")
         if self.large:
             notes.append(
                 "These declared files are too large to read whole. Read them by range with "

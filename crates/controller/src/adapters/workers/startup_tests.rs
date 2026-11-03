@@ -104,6 +104,8 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
     config.github.repos[0].generated_files = vec!["**/BUILD.bazel".into()];
     config.github.repos[0].generator = Some("bash tools/bazel/generate.sh".into());
     config.workers.runs = f.root.path().join("runs");
+    config.github.repos[0].generated_files = vec!["**/BUILD.bazel".into()];
+    config.github.repos[0].generator = Some("tools/bazel/generate.sh".into());
     let supervisor = Supervisor::new(&config, &f.root.path().join("records")).unwrap();
     let mut store = Store::open(&config.store).unwrap();
     store

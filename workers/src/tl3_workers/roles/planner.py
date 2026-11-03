@@ -72,8 +72,10 @@ def check_reply(inputs, reply):
                                           for i, check in enumerate(reply['checks']) if check['node_ids']))
             except ValueError as error:
                 violations.append(str(error))
-        if covered != goals:
-            violations.append("Every goal must have a check.")
+        required = {i for i, goal in enumerate(inputs["ingest"]["goals"])
+                    if goal.get("stage", "maker") != "publishing"}
+        if not required <= covered:
+            violations.append("Every maker and checking goal must have a check.")
         paths.update(reply["files"])
     elif reply["kind"] == "split":
         covered = set()

@@ -560,6 +560,27 @@ impl Adapter {
         if is_merge_queue_pr(&state.pull_request) {
             return Err(Error::Invalid("cannot queue a Mergify draft PR"));
         }
+        crate::evidence::validate_publication(
+            delivery,
+            &state.pull_request.head.branch,
+            state.pull_request.draft,
+            state.pull_request.body.as_deref().unwrap_or_default(),
+        )?;
+        let proof =
+            crate::evidence::publication(delivery, delivery.request_text.as_deref().unwrap_or(""))?;
+        if !proof.is_empty()
+            && !state
+                .pull_request
+                .body
+                .as_deref()
+                .unwrap_or_default()
+                .contains(&proof)
+        {
+            return Err(Error::Permanent {
+                class: "pr_evidence",
+                source: "Required recorded proof is missing from the PR body".into(),
+            });
+        }
         if self.heal_body(delivery, &state.pull_request)? {
             // The checks read before the edit are stale; the next read decides.
             return Ok((state, Vec::new()));

@@ -1539,6 +1539,7 @@ fn delivery() -> Delivery {
         job_generation: None,
         steering: None,
         request_text: None,
+        evidence: None,
         proposed: None,
     }
 }

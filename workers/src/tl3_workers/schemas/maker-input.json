@@ -3,103 +3,401 @@
   "$id": "https://trustladderiii.invalid/workers/protocol-1/maker-input.json",
   "type": "object",
   "properties": {
-    "decision_context": {"$ref": "decision-context.json"},
-    "brief": {"$ref": "#/$defs/text"},
+    "decision_context": {
+      "$ref": "decision-context.json"
+    },
+    "brief": {
+      "$ref": "#/$defs/text"
+    },
     "goals": {
-      "type": "array", "minItems": 1,
+      "type": "array",
+      "minItems": 1,
       "items": {
         "type": "object",
         "properties": {
-          "id": {"$ref": "#/$defs/text"},
-          "description": {"$ref": "#/$defs/text"},
-          "verification": {"enum": ["test", "review"]}
+          "id": {
+            "$ref": "#/$defs/text"
+          },
+          "description": {
+            "$ref": "#/$defs/text"
+          },
+          "verification": {
+            "enum": [
+              "test",
+              "review"
+            ]
+          },
+          "stage": {
+            "enum": [
+              "maker",
+              "checking",
+              "publishing"
+            ]
+          },
+          "publication": {
+            "type": "object",
+            "properties": {
+              "branch": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "branch_prefix": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "non_draft": {
+                "const": true
+              },
+              "body_lines": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "pattern": "^[^\\r\\n]+$"
+                }
+              },
+              "proof": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "non_draft",
+              "body_lines",
+              "proof"
+            ],
+            "additionalProperties": false
+          }
         },
-        "required": ["id", "description"], "additionalProperties": false
+        "required": [
+          "id",
+          "description"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "stage"
+              ],
+              "properties": {
+                "stage": {
+                  "const": "publishing"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "publication"
+              ]
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "publication"
+                ]
+              }
+            }
+          }
+        ]
       }
     },
     "plan": {
       "type": "object",
       "properties": {
-        "files": {"$ref": "#/$defs/strings"},
+        "files": {
+          "$ref": "#/$defs/strings"
+        },
         "checks": {
-          "type": "array", "minItems": 1,
+          "type": "array",
+          "minItems": 1,
           "items": {
             "type": "object",
             "properties": {
-              "name": {"$ref": "#/$defs/text"},
-              "kind": {"enum": ["demonstrating", "regression", "behavior-preserving"]},
-              "tests": {"$ref": "#/$defs/strings"},
-              "goal_ids": {"$ref": "#/$defs/strings"},
-              "forcing": {"$ref": "planner-reply.json#/$defs/forcing"}
+              "name": {
+                "$ref": "#/$defs/text"
+              },
+              "kind": {
+                "enum": [
+                  "demonstrating",
+                  "regression",
+                  "behavior-preserving"
+                ]
+              },
+              "tests": {
+                "$ref": "#/$defs/strings"
+              },
+              "goal_ids": {
+                "$ref": "#/$defs/strings"
+              },
+              "forcing": {
+                "$ref": "planner-reply.json#/$defs/forcing"
+              }
             },
-            "required": ["name", "kind", "tests", "goal_ids"], "additionalProperties": false
+            "required": [
+              "name",
+              "kind",
+              "tests",
+              "goal_ids"
+            ],
+            "additionalProperties": false
           }
         }
       },
-      "required": ["files", "checks"], "additionalProperties": false
+      "required": [
+        "files",
+        "checks"
+      ],
+      "additionalProperties": false
     },
-    "attempt": {"type": "integer", "minimum": 1, "maximum": 3},
-    "round": {"type": "integer", "enum": [0, 1]},
-    "check_base_sha": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
-    "reviewed_sha": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "attempt": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3
+    },
+    "round": {
+      "type": "integer",
+      "enum": [
+        0,
+        1
+      ]
+    },
+    "check_base_sha": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "reviewed_sha": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
     "current_review_findings": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "id": {"$ref": "#/$defs/text"},
-          "reviewed_sha": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"}
+          "id": {
+            "$ref": "#/$defs/text"
+          },
+          "reviewed_sha": {
+            "type": "string",
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+          }
         },
-        "required": ["id"]
+        "required": [
+          "id"
+        ]
       }
     },
     "feedback": {
-      "type": "array", "minItems": 1,
+      "type": "array",
+      "minItems": 1,
       "items": {
         "type": "object",
         "properties": {
-          "kind": {"enum": ["failed_check", "review_finding"]},
-          "id": {"$ref": "#/$defs/text"},
-          "reviewed_sha": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
-          "resolved_round": {"type": "integer", "minimum": 1},
-          "report": {"$ref": "#/$defs/text", "maxLength": 16000},
-          "goal_ids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
-          "failed_tests": {"type": "array", "maxItems": 20, "items": {"type": "object", "properties": {"test": {"$ref": "#/$defs/text"}, "message": {"$ref": "#/$defs/text", "maxLength": 1000}}, "required": ["test", "message"], "additionalProperties": false}},
-          "outside_paths": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"$ref": "#/$defs/text", "maxLength": 4096}},
-          "outside_paths_total": {"type": "integer", "minimum": 0},
-          "ci_checks": {"type": "array", "maxItems": 20, "items": {"type": "object", "properties": {"name": {"$ref": "#/$defs/text"}, "summary": {"$ref": "#/$defs/text", "maxLength": 1000}, "url": {"type": ["string", "null"], "maxLength": 4096}}, "required": ["name", "summary", "url"], "additionalProperties": false}}
+          "kind": {
+            "enum": [
+              "failed_check",
+              "review_finding"
+            ]
+          },
+          "id": {
+            "$ref": "#/$defs/text"
+          },
+          "reviewed_sha": {
+            "type": "string",
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+          },
+          "resolved_round": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "report": {
+            "$ref": "#/$defs/text",
+            "maxLength": 16000
+          },
+          "goal_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/$defs/text"
+            }
+          },
+          "failed_tests": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "properties": {
+                "test": {
+                  "$ref": "#/$defs/text"
+                },
+                "message": {
+                  "$ref": "#/$defs/text",
+                  "maxLength": 1000
+                }
+              },
+              "required": [
+                "test",
+                "message"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "outside_paths": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/$defs/text",
+              "maxLength": 4096
+            }
+          },
+          "outside_paths_total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "ci_checks": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "$ref": "#/$defs/text"
+                },
+                "summary": {
+                  "$ref": "#/$defs/text",
+                  "maxLength": 1000
+                },
+                "url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 4096
+                }
+              },
+              "required": [
+                "name",
+                "summary",
+                "url"
+              ],
+              "additionalProperties": false
+            }
+          }
         },
-        "required": ["kind", "report", "goal_ids"], "additionalProperties": false,
-        "dependentRequired": {"id": ["reviewed_sha"], "reviewed_sha": ["id"]}
+        "required": [
+          "kind",
+          "report",
+          "goal_ids"
+        ],
+        "additionalProperties": false,
+        "dependentRequired": {
+          "id": [
+            "reviewed_sha"
+          ],
+          "reviewed_sha": [
+            "id"
+          ]
+        }
       }
     },
     "tests": {
       "type": "object",
       "properties": {
-        "image": {"type": "string", "pattern": "^(?:[\\w./:-]+@)?sha256:[0-9a-f]{64}$"},
-        "tools_path": {"type": "string", "pattern": "^/", "minLength": 1},
-        "cpus": {"type": "integer", "minimum": 1},
-        "mem_gb": {"type": "integer", "minimum": 1},
-        "quiet_seconds": {"type": "integer", "minimum": 1},
-        "exec_scratch": {"type": "boolean"}
+        "image": {
+          "type": "string",
+          "pattern": "^(?:[\\w./:-]+@)?sha256:[0-9a-f]{64}$"
+        },
+        "tools_path": {
+          "type": "string",
+          "pattern": "^/",
+          "minLength": 1
+        },
+        "cpus": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "mem_gb": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "quiet_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "exec_scratch": {
+          "type": "boolean"
+        }
       },
-      "required": ["image", "tools_path"], "additionalProperties": false
+      "required": [
+        "image",
+        "tools_path"
+      ],
+      "additionalProperties": false
     },
     "hindsight": {
       "type": "object",
-      "properties": {"endpoint": {"type": "string", "pattern": "^https?://"}, "bank": {"$ref": "#/$defs/text"}},
-      "required": ["endpoint", "bank"], "additionalProperties": false
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "pattern": "^https?://"
+        },
+        "bank": {
+          "$ref": "#/$defs/text"
+        }
+      },
+      "required": [
+        "endpoint",
+        "bank"
+      ],
+      "additionalProperties": false
+    },
+    "forecast": {
+      "$ref": "planner-input.json#/properties/forecast"
     },
     "protected_paths": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "forecast": {"$ref": "planner-input.json#/properties/forecast"},
     "context_size": {"type": "integer", "minimum": 1}
   },
-  "required": ["brief", "goals", "plan", "attempt", "round", "tests", "context_size"],
+  "required": [
+    "brief",
+    "goals",
+    "plan",
+    "attempt",
+    "round",
+    "tests",
+    "context_size"
+  ],
   "additionalProperties": false,
-  "if": {"properties": {"round": {"const": 1}}},
-  "then": {"required": ["feedback"]},
+  "if": {
+    "properties": {
+      "round": {
+        "const": 1
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "feedback"
+    ]
+  },
   "$defs": {
-    "text": {"type": "string", "minLength": 1, "pattern": "\\S"},
-    "strings": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}}
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "strings": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/text"
+      }
+    }
   }
 }
