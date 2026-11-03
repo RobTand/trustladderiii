@@ -872,3 +872,15 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_reply_contracts",
+    srcs = ["test_reply_contracts.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
