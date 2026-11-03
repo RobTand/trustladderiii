@@ -916,3 +916,14 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_planner_proof_correction",
+    srcs = ["test_planner_proof_correction.py"],
+    deps = [
+        ":conftest",
+        ":planner_fixtures",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)

@@ -51,7 +51,7 @@ def file_plan(planner_request, monkeypatch):
     return draft
 
 
-def model_for(monkeypatch, draft, fixed, *, read=True):
+def model_for(monkeypatch, draft, fixed, *, read=False):
     from tl3_workers import runtime
     responses = []
     if read:
@@ -69,15 +69,17 @@ def corrected(draft):
     return fixed
 
 
-def test_whole_file_gets_complete_exact_tool_free_correction(planner_request, file_plan, monkeypatch):
+def test_whole_file_gets_exact_tool_free_correction(planner_request, file_plan, monkeypatch):
     from tl3_workers import runtime
     model = model_for(monkeypatch, file_plan, corrected(file_plan))
     events = []
     runtime.run(planner_request, events.append)
-    assert len(model.calls) == 3, 'whole-file syntax must reach the existing correction boundary'
+    assert len(model.calls) == 2, 'whole-file syntax must reach the existing correction boundary'
     history, tools = model.calls[-1]
     assert not tools and isinstance(history[-1], HumanMessage)
-    assert FILE in history[-1].text and 'Tools are unavailable' in history[-1].text
+    assert f'Replace `{FILE}` with the exact test definitions this check needs.' in history[-1].text
+    assert 'Tools are unavailable' in history[-1].text
+    assert not any(node in history[-1].text for node in NODES)
     result = events[-1]['reply']
     assert result['violations'] == []
     assert result['checks'] == corrected(file_plan)['checks']
@@ -88,63 +90,31 @@ def test_whole_file_gets_complete_exact_tool_free_correction(planner_request, fi
     assert result['evidence_contract'] == planner_request['inputs']['ingest'].get('evidence_contract', [])
 
 
-@pytest.mark.parametrize('change', ['drop', 'extra', 'case_only', 'kind', 'goal', 'scope', 'estimate'])
+@pytest.mark.parametrize('change', ['unknown', 'kind', 'goal', 'scope', 'estimate', 'other_check', 'proof', 'edits'])
 def test_file_correction_cannot_change_obligations(planner_request, file_plan, monkeypatch, change):
     from tl3_workers import runtime
     fixed = corrected(file_plan)
-    if change == 'drop':
-        fixed['checks'][2]['node_ids'].remove(NODES[0])
-    elif change == 'extra':
-        fixed['checks'][2]['node_ids'].append('tests/test_existing.py::test_unrelated')
-        Path('tests/test_existing.py').write_text(Path('tests/test_existing.py').read_text() +
-                                                 'def test_unrelated(): assert True\n')
-    elif change == 'case_only':
-        fixed['checks'][2]['node_ids'][3] += '[0]'
+    if change == 'unknown':
+        fixed['checks'][2]['node_ids'] = [FILE + '::test_unknown']
     elif change == 'kind':
         fixed['checks'][2]['kind'] = 'demonstrating'
     elif change == 'goal':
         fixed['checks'][2]['goal_ids'] = [0]
     elif change == 'scope':
         fixed['files'].append('unrelated.py')
-    else:
+    elif change == 'estimate':
         fixed['estimated_tool_turns'] = 1
+    elif change == 'other_check':
+        fixed['checks'][1]['node_ids'] = ['tests/test_existing.py::test_existing']
+    elif change == 'proof':
+        fixed['checks'][0]['proof']['red_message'] = 'different message'
+    else:
+        fixed['edits_tests'] = []
     model = model_for(monkeypatch, file_plan, fixed)
     events = []
     runtime.run(planner_request, events.append)
-    assert len(model.calls) == 3, 'validate the attempted correction, not just the original draft'
+    assert len(model.calls) == 2, 'validate the attempted correction, not just the original draft'
     assert events[-1]['reply']['violations']
-
-
-@pytest.mark.parametrize('source,reason', [
-    (None, 'unavailable'),
-    ('def test_a(): pass\ndef test_a(): pass\n', 'ambiguous'),
-    ('for name in ["test_dynamic"]:\n    globals()[name] = lambda: None\n', 'dynamic'),
-    ('from other import test_imported\n', 'dynamic'),
-    ('class TestInherited(Unknown):\n    pass\n', 'dynamic'),
-    ('#' * (16 * 1048576 + 1), 'limit'),
-    ('def test_broken(:\n', 'unavailable'),
-], ids=['missing', 'ambiguous', 'generated', 'imported', 'inherited', 'oversized', 'syntax'])
-def test_file_discovery_refuses_without_guessing(planner_request, file_plan, monkeypatch, source, reason):
-    from tl3_workers import runtime
-    if source is None:
-        Path(FILE).unlink()
-    else:
-        Path(FILE).write_text(source)
-    model = model_for(monkeypatch, file_plan, corrected(file_plan))
-    events = []
-    runtime.run(planner_request, events.append)
-    assert len(model.calls) == 2
-    violations = '\n'.join(events[-1]['reply']['violations'])
-    assert FILE in violations and reason in violations
-
-
-def test_file_correction_requires_already_read_definitions(planner_request, file_plan, monkeypatch):
-    from tl3_workers import runtime
-    model = model_for(monkeypatch, file_plan, corrected(file_plan), read=False)
-    events = []
-    runtime.run(planner_request, events.append)
-    assert len(model.calls) == 1
-    assert any(FILE in item and 'already-read' in item for item in events[-1]['reply']['violations'])
 
 
 def test_file_correction_exhaustion_records_selector(planner_request, file_plan, monkeypatch):
@@ -155,12 +125,12 @@ def test_file_correction_exhaustion_records_selector(planner_request, file_plan,
     events = []
     with pytest.raises(InvalidReply) as raised:
         runtime.run(planner_request, events.append)
-    assert len(model.calls) == 3 and not any(event['event'] == 'reply' for event in events)
+    assert len(model.calls) == 2 and not any(event['event'] == 'reply' for event in events)
     message = failure_tags(raised.value)['failure_message']
     assert FILE in message and 'repaired reply' in message
 
 
-@pytest.mark.parametrize('obstacle', ['budget', 'protected', 'must_split', 'disabled', 'demonstrating'])
+@pytest.mark.parametrize('obstacle', ['budget', 'protected', 'must_split', 'disabled'])
 def test_file_syntax_does_not_repair_substantive_refusals(planner_request, file_plan, monkeypatch, obstacle):
     from tl3_workers import runtime
     if obstacle == 'budget':
@@ -171,95 +141,27 @@ def test_file_syntax_does_not_repair_substantive_refusals(planner_request, file_
         planner_request['inputs']['must_split'] = True
     elif obstacle == 'disabled':
         planner_request['inputs']['repair_plan_consistency'] = False
-    else:
-        file_plan['checks'][2]['kind'] = 'demonstrating'
+
     model = model_for(monkeypatch, file_plan, corrected(file_plan))
     events = []
     runtime.run(planner_request, events.append)
-    assert len(model.calls) == 2
+    assert len(model.calls) == 1
     assert events[-1]['reply']['violations']
 
 
-@pytest.mark.parametrize('setting', ['absent', 'explicit'])
-def test_default_test_prefix_includes_testtwo(planner_request, file_plan, monkeypatch, setting):
+
+
+@pytest.mark.parametrize('selector', [FILE, 'tests/', FILE + '::'])
+def test_nonexact_selectors_use_planner_chosen_base_nodes(planner_request, file_plan, monkeypatch, selector):
     from tl3_workers import runtime
 
-    if setting == 'explicit':
-        Path('pytest.ini').write_text('[pytest]\npython_files = test_*.py *_test.py\n'
-                                      'python_functions = test\npython_classes = Test\n')
-    Path(FILE).write_text(SOURCE + '\ndef testtwo():\n    assert True\n')
+    file_plan['checks'][2]['node_ids'][-1] = selector
     fixed = corrected(file_plan)
-    fixed['checks'][2]['node_ids'].append(FILE + '::testtwo')
+    # The planner chooses a subset; code makes no claim about whole-file collection.
+    fixed['checks'][2]['node_ids'] = [NODES[0]]
     model = model_for(monkeypatch, file_plan, fixed)
     events = []
     runtime.run(planner_request, events.append)
-    assert len(model.calls) == 3
-    assert events[-1]['reply']['violations'] == [], 'default collection includes every test-prefixed function'
-    assert FILE + '::testtwo' in events[-1]['reply']['checks'][2]['node_ids']
-
-
-@pytest.mark.parametrize('config,contents', [
-    ('pytest.ini', '[pytest]\npython_functions = test check_*\n'),
-    ('pyproject.toml', '[tool.tl3.harness]\ntest-files = ["tests/**/*.py"]\n'
-                       '[tool.pytest.ini_options]\npython_functions = ["test", "check_*"]\n'),
-    ('setup.cfg', '[tool:pytest]\npython_functions = test check_*\n'),
-    ('tox.ini', '[pytest]\npython_functions = test check_*\n'),
-    ('pytest.ini', '[pytest]\npython_files = *.py\n'),
-    ('pytest.ini', '[pytest]\npython_classes = Test Check*\n'),
-    ('pytest.ini', '[pytest\npython_functions = test\n'),
-], ids=['ini-functions', 'toml-functions', 'setup-functions', 'tox-functions',
-        'files', 'classes', 'malformed'])
-def test_nondefault_or_uncertain_collection_refuses(planner_request, file_plan, monkeypatch, config, contents):
-    from tl3_workers import runtime
-
-    Path(config).write_text(contents)
-    Path(FILE).write_text(SOURCE + '\ndef check_extra():\n    assert True\n')
-    model = model_for(monkeypatch, file_plan, corrected(file_plan))
-    events = []
-    runtime.run(planner_request, events.append)
-    assert len(model.calls) == 2, 'custom or uncertain collection cannot offer an incomplete correction'
-    assert any(FILE in item and 'collection settings' in item for item in events[-1]['reply']['violations'])
-
-
-@pytest.mark.parametrize('injection', [
-    'def helper(x=globals().update(test_extra=lambda: None)):\n    pass\n',
-    'def helper(*, x=globals().update(test_extra=lambda: None)):\n    pass\n',
-    '@pytest.mark.skipif(globals().update(test_extra=lambda: None), reason="injection")\n'
-    'def test_decorated():\n    pass\n',
-    '@pytest.mark.parametrize("value", globals().update(test_extra=lambda: None))\n'
-    'def test_decorated(value):\n    pass\n',
-], ids=['positional-default', 'keyword-default', 'decorator-call', 'parametrize-call'])
-def test_executable_definition_expressions_refuse(planner_request, file_plan, monkeypatch, injection):
-    from tl3_workers import runtime
-
-    Path(FILE).write_text(SOURCE + '\n' + injection)
-    fixed = corrected(file_plan)
-    if 'test_decorated' in injection:
-        fixed['checks'][2]['node_ids'].append(FILE + '::test_decorated')
-    model = model_for(monkeypatch, file_plan, fixed)
-    events = []
-    runtime.run(planner_request, events.append)
-    assert len(model.calls) == 2, 'executable definition expressions make complete discovery uncertain'
-    assert any(FILE in item and 'dynamic' in item for item in events[-1]['reply']['violations'])
-
-
-@pytest.mark.parametrize('location,hook', [
-    ('conftest.py', 'pytest_collect_file'),
-    ('tests/conftest.py', 'pytest_collectstart'),
-    ('tests/conftest.py', 'pytest_generate_tests'),
-    ('module', 'pytest_generate_tests'),
-    ('tests/conftest.py', 'pytest_plugins'),
-])
-def test_applicable_collection_hooks_refuse(planner_request, file_plan, monkeypatch, location, hook):
-    from tl3_workers import runtime
-
-    source = f'def {hook}(*args):\n    pass\n' if hook != 'pytest_plugins' else 'pytest_plugins = ["custom_plugin"]\n'
-    if location == 'module':
-        Path(FILE).write_text(SOURCE + '\n' + source)
-    else:
-        Path(location).write_text(source)
-    model = model_for(monkeypatch, file_plan, corrected(file_plan))
-    events = []
-    runtime.run(planner_request, events.append)
-    assert len(model.calls) == 2, 'applicable collection hooks prohibit static file expansion'
-    assert any(FILE in item and 'dynamic' in item for item in events[-1]['reply']['violations'])
+    assert len(model.calls) == 2
+    assert events[-1]['reply']['violations'] == []
+    assert events[-1]['reply']['checks'] == fixed['checks']
