@@ -48,6 +48,7 @@ pub mod status;
 pub mod status_web;
 pub mod steering;
 mod sync;
+pub mod worker_inputs;
 
 use executor::{
     Completion, Delivery, Observation, Output as DeliveryOutput, Reconciliation, Registry,
@@ -76,6 +77,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("upstream adapter failed: {0}")]
     Adapter(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("{0}")]
+    WorkerInputs(#[from] worker_inputs::Failure),
     #[error("{0}")]
     Invalid(&'static str),
     #[error("Hindsight returned HTTP {0}")]
@@ -1197,6 +1200,29 @@ impl Controller {
                             self.complete(&effect.key, completion)?;
                             return Ok(true);
                         }
+                        Err(Error::WorkerInputs(ref failure)) => {
+                            let snapshot = self.store.load()?;
+                            let mut commit = Commit::new(
+                                format!(
+                                    "worker-input-failure:{}:{}",
+                                    effect.key,
+                                    snapshot.revision.get()
+                                ),
+                                json!({"worker_input_failure":effect.key}),
+                                &snapshot,
+                            );
+                            commit.rows.push(put(
+                                "worker_input_failures",
+                                effect.key.clone(),
+                                json!(failure),
+                            ));
+                            self.store.commit(&commit)?;
+                            self.complete(
+                                &effect.key,
+                                Completion::permanent(worker_inputs::CLASS),
+                            )?;
+                            return Ok(true);
+                        }
                         // GitHub can briefly return 404 for a newly created resource.
                         // A look proving absence spends the existing retry allowance.
                         Err(ref error @ Error::Permanent { class, .. })
@@ -2103,8 +2129,12 @@ impl Controller {
             } = output
             {
                 let id = looks::incident_id(snapshot, index);
-                let (mut source, mut class, diagnostic) =
-                    self.attach_incident(snapshot, node, &id, commit)?;
+                let looks::AttachedIncident {
+                    upstream: mut source,
+                    mut class,
+                    diagnostic,
+                    input_failure,
+                } = self.attach_incident(snapshot, node, &id, commit)?;
                 let blocked = blocked::evidence(commit, node)?;
                 if blocked.is_some() {
                     source = executor::Upstream::Workers;
@@ -2126,6 +2156,7 @@ impl Controller {
                     needs_rob,
                     app_login.as_deref(),
                 );
+                worker_inputs::append(&mut summary, input_failure.as_ref());
                 let occurrences = 1 + snapshot
                     .rows
                     .iter()

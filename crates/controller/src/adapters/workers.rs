@@ -233,6 +233,27 @@ impl Supervisor {
         store: &mut Store,
         snapshot: &Snapshot,
     ) -> Result<Value> {
+        let request = self.build_request(delivery, role, store, snapshot);
+        if let Err(Error::WorkerInputs(failure)) = &request {
+            trace::input_failure(
+                &self.settings,
+                &delivery.key,
+                json!({"node":delivery.node().0,"generation":delivery.generation,"kind":role}),
+                json!({"repo":format!("{}/{}",delivery.repository.owner,delivery.repository.name),
+                    "issue":delivery.issue,"request":delivery.node().0,"attempt":delivery.attempt,"round":delivery.round}),
+                failure,
+            );
+        }
+        request
+    }
+
+    fn build_request(
+        &self,
+        delivery: &Delivery,
+        role: &str,
+        store: &mut Store,
+        snapshot: &Snapshot,
+    ) -> Result<Value> {
         let node = delivery.node().0.to_string();
         let review_restarted = role == "reviewer"
             && crate::snapshot::decode(snapshot)?.nodes[delivery.node().0 as usize]

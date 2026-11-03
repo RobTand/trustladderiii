@@ -149,7 +149,7 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
     let brief = json!({"kind":"brief","brief":"Preserve evidence","memory_ids":[],"goals":[{"description":"Preserve evidence","verification":"test"}]});
     let plan = json!({"kind":"leaf","files":["README.md"],"checks":[{"name":"evidence","kind":"regression","node_ids":["test_value.py::test_value"],"goal_ids":[0]}]});
     let repo = crate::production::repository_materials(&f.path, &f.base).unwrap();
-    store.put_worker_materials("0", &json!({"issue":{"number":42,"title":"Preserve evidence","body":"Preserve evidence","author":"owner","comments":[]},"repo":repo,"maker":crate::production::maker_inputs(&brief,&plan).unwrap(),"base_checkout":{"repository":f.path,"commit":f.base}})).unwrap();
+    store.put_worker_materials("0", &json!({"issue":{"number":42,"title":"Preserve evidence","body":"Preserve evidence","author":"owner","comments":[]},"repo":repo,"ingest":{"issue":{"number":42,"title":"Preserve evidence","body":"Preserve evidence","author":"owner","comments":[]},"repo":repo},"audit":{"repo":repo},"maker":crate::production::maker_inputs(&brief,&plan).unwrap(),"base_checkout":{"repository":f.path,"commit":f.base}})).unwrap();
     documents(
         &mut store,
         &[

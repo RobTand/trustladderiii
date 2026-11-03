@@ -859,7 +859,7 @@ fn t653_input_schema_defect_reaches_the_incident_without_retrying() {
             .unwrap()
             .iter()
             .filter(
-                |effect| effect.kind == "workers" && effect.state == tl3_store::EffectState::Failed
+                |effect| effect.kind == "Workers" && effect.state == tl3_store::EffectState::Failed
             )
             .count(),
         1

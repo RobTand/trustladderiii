@@ -123,6 +123,14 @@ impl Writer for ProcessWriter {
                     "attempt": "none", "round": "none"}),
             ),
         };
+        if let Err(error) =
+            super::protocol::validate_inputs("writer", &serde_json::to_value(input)?)
+        {
+            if let Error::WorkerInputs(failure) = &error {
+                super::trace::input_failure(&self.config.workers, key, operation, trace, failure);
+            }
+            return Err(error);
+        }
         let mut request = json!({"protocol":1,"operation":operation,"trace":trace,
             "role":"writer","model":self.config.models.worker_model(model), "key_file":self.config.models.key_file,
             "inputs":input,"worktree":root});
