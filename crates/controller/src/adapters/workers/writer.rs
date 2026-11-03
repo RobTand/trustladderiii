@@ -894,6 +894,79 @@ mod title_feedback_tests {
         );
     }
 
+    fn text(text: String) -> WriterReply {
+        WriterReply::Text(TextDraft { text })
+    }
+
+    fn titled(title: &str) -> Policy {
+        Policy {
+            request_title: Some(title.into()),
+            ..Policy::default()
+        }
+    }
+
+    #[test]
+    fn a_correctly_quoted_title_is_never_blamed() {
+        // #685 review: "lineage" is exempt inside the quoted title; only "leaf" fails.
+        let title = "Show the lineage of PrismaBuild runs";
+        let reply = text(format!("You asked for \"{title}\". The leaf failed."));
+        let feedback = feedback(&reply, &[Violation::InternalVocabulary], &titled(title));
+        assert!(feedback[0].contains("'leaf'"), "{}", feedback[0]);
+        assert!(!feedback[0].contains("lineage"), "{}", feedback[0]);
+        assert!(
+            !feedback[0].contains("ASCII double quotes"),
+            "{}",
+            feedback[0]
+        );
+    }
+
+    #[test]
+    fn a_title_word_beside_punctuation_still_asks_for_the_title_quotes() {
+        // #685 review: the word sits next to a comma, parentheses or curly quotes.
+        for (title, violation, word) in [
+            (
+                "Show lineage, please",
+                Violation::InternalVocabulary,
+                "lineage",
+            ),
+            (
+                "Fix the (lineage) view",
+                Violation::InternalVocabulary,
+                "lineage",
+            ),
+            (
+                "Use \u{201c}lineage\u{201d} data",
+                Violation::InternalVocabulary,
+                "lineage",
+            ),
+            ("Capture stdout, then stop", Violation::Log, "stdout"),
+            ("Keep (stdout) quiet", Violation::Log, "stdout"),
+        ] {
+            let reply = text(format!("You asked for {title}. The work starts next."));
+            let feedback = feedback(&reply, std::slice::from_ref(&violation), &titled(title));
+            assert!(feedback[0].contains(word), "{title}: {}", feedback[0]);
+            assert!(
+                feedback[0].contains(&format!("\"{title}\""))
+                    && feedback[0].contains("ASCII double quotes"),
+                "{title}: {}",
+                feedback[0]
+            );
+        }
+    }
+
+    #[test]
+    fn a_bare_title_word_and_another_word_get_both_fixes() {
+        let title = "Show the lineage of PrismaBuild runs";
+        let reply = text(format!("You asked for {title}. The leaf failed."));
+        let feedback = feedback(&reply, &[Violation::InternalVocabulary], &titled(title));
+        assert!(
+            feedback[0].contains("ASCII double quotes"),
+            "{}",
+            feedback[0]
+        );
+        assert!(feedback[0].contains("'leaf'"), "{}", feedback[0]);
+    }
+
     #[test]
     fn an_internal_word_outside_the_title_still_asks_to_remove_it() {
         let policy = Policy {
