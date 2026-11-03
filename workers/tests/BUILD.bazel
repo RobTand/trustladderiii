@@ -904,5 +904,6 @@ tl3_py_test(
         "//workers/src",
         "@tl3_pip//jsonschema",
         "@tl3_pip//pytest",
+        "@tl3_pip//pytest_xdist",
     ],
 )

@@ -5,6 +5,7 @@ from copy import deepcopy
 import pytest
 import json
 from pathlib import Path
+import xdist  # noqa: F401  # runner.py loads it in subprocess campaigns
 
 from worker_process import rehearsal  # noqa: F401
 
@@ -242,8 +243,8 @@ def test_request233_supplemental_campaign_keeps_zero_of_ten_refusal(request233):
                          'repeat': 10, 'parallel': 4}, goal_ids=[1])
     assert result['status'] == 'refused', result
     assert 'observed 0 of 10 runs; zero is not RED' in result['message']
-    assert len(calls) == 1
-    assert len(result['unforced']['symptom_runs']) == 10
+    assert len(calls) == 2
+    assert len(result['forced']['symptom_runs']) == 10
 
 
 def test_request233_rehearsal_tool_exposes_goal_binding(request233):
