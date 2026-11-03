@@ -51,7 +51,12 @@ jobs:
           BASE: ${{ steps.refs.outputs.base }}
           HEAD: ${{ steps.refs.outputs.head }}
           BRANCH: ${{ github.head_ref }}
-        run: python3 tools/ci/remote_gate.py pr --base "$BASE" --head "$HEAD" --branch "$BRANCH"
+        run: exec python3 tools/ci/remote_gate.py pr --base "$BASE" --head "$HEAD" --branch "$BRANCH"
+      - name: Cancel BuildBuddy run
+        if: cancelled()
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: python3 tools/ci/remote_gate.py cancel
       - id: token
         name: Require the Mergify token
         if: always() && steps.gate.outputs.scopes_ready == 'true'
@@ -148,6 +153,13 @@ jobs:
         run: |
           python3 tools/ci/child_env.py rustup toolchain install 1.99.1 --profile minimal
           python3 tools/ci/child_env.py rustup default 1.99.1
+      - name: Keep feature build artifacts small
+        if: matrix.mode == 'features'
+        # Cargo reads this directly; child_env.py filters profile environment variables.
+        # The test profile inherits dev, and rust-cache hashes this configuration.
+        run: |
+          mkdir -p .cargo
+          printf '[profile.dev]\ndebug = 0\nincremental = false\n' > .cargo/config.toml
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
@@ -168,8 +180,18 @@ jobs:
             python3 tools/ci/child_env.py cargo install --locked kani-verifier --version 0.68.0
           fi
           python3 tools/ci/child_env.py cargo kani setup
+      - name: Disk before feature builds
+        if: matrix.mode == 'features'
+        run: |
+          df -h .
+          if [ -d target ]; then du -sh target; fi
       - name: Compile test and proof targets without running them
         run: python3 tools/ci/child_env.py python3 tools/ci/feature_gate.py '${{ matrix.mode }}'
+      - name: Disk after feature builds
+        if: always() && matrix.mode == 'features'
+        run: |
+          df -h .
+          if [ -d target ]; then du -sh target; fi
 
   python-lint:
     name: Python lint and locks
