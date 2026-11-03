@@ -92,13 +92,14 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
+    "tests/console_commands.rs": ["tests/fixtures/decisions/**"],
     "tests/hindsight.rs": ["README.md"],
     "tests/fail_fast.rs": ["tests/support/**"],
     "tests/fixture_contracts.rs": ["tests/support/**"],
     "tests/mergify.rs": ["tests/support/**", "tests/fixtures/mergify/**"],
     "tests/core_defects.rs": ["tests/worktree_fixture/**"],
     "tests/crash_safety.rs": ["tests/crash/**"],
-    "tests/github.rs": ["tests/support/**", "tests/fixtures/steering/**", "tests/worker_model.py", "tests/worker_replies.py", "tests/worker_transport.py"],
+    "tests/github.rs": ["tests/support/**", "tests/fixtures/decisions/**", "tests/fixtures/steering/**", "tests/worker_model.py", "tests/worker_replies.py", "tests/worker_transport.py"],
     "tests/looks.rs": ["tests/fixtures/bell/**", "tests/fixtures/waits/**", "tests/worktree_fixture/**"],
     "tests/prismabuild.rs": ["tests/support/**", "tests/fixtures/bell/**", "tests/fixtures/pb.py", "tests/prismabuild_fixture/**"],
     "tests/publishing.rs": ["tests/support/**", "tests/fixtures/pb.py", "tests/prismabuild_fixture/**", "tests/worktree_fixture/**"],
@@ -111,6 +112,7 @@ _CONTROLLER_TEST_SOURCES = {
         "tests/fixtures/pb.py",
         "tests/fixtures/waits/**",
         "tests/fixtures/narrowing/**",
+        "tests/fixtures/decisions/**",
         "tests/maker/**",
         "tests/prismabuild_fixture/**",
         "tests/worker_model.py",
