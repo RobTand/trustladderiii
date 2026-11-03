@@ -760,6 +760,8 @@ mod tests {
     boundary_test!(source_names_inotify_read_failure, "inotify read");
     boundary_test!(source_names_read_failure, "read");
     boundary_test!(source_names_pidfd_failure, "process::pidfd");
+    boundary_test!(source_names_identity_read_failure, "identity_read");
+    boundary_test!(source_names_pidfd_open_failure, "pidfd_open");
     boundary_test!(source_names_seek_failure, "seek");
     boundary_test!(source_names_reconciliation_failure, "inspect_recorded");
     boundary_test!(source_names_ready_remove_failure, "ready_remove");
