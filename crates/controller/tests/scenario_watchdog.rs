@@ -7,7 +7,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-fn child(test: &str, mode: &str) -> Output {
+fn child(test: &str, mode: &str) -> (Output, Duration) {
+    let started = Instant::now();
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", test, "--nocapture"])
         .env("TL3_WATCHDOG_FIXTURE", mode)
@@ -23,7 +24,7 @@ fn child(test: &str, mode: &str) -> Output {
         }
         thread::sleep(Duration::from_millis(10));
     }
-    child.wait_with_output().unwrap()
+    (child.wait_with_output().unwrap(), started.elapsed())
 }
 
 fn planted(mode: &str) -> bool {
@@ -40,7 +41,7 @@ fn stalled_scenario_exits_with_last_progress() {
             }
         });
     }
-    let output = child("stalled_scenario_exits_with_last_progress", "stall");
+    let (output, elapsed) = child("stalled_scenario_exits_with_last_progress", "stall");
     let diagnostic = String::from_utf8(output.stderr).unwrap();
     assert_eq!(
         output.status.code(),
@@ -49,26 +50,51 @@ fn stalled_scenario_exits_with_last_progress() {
     );
     assert!(diagnostic.contains("scenario watchdog expired: planted-worker-wait"));
     assert!(diagnostic.contains("last progress: waiting for worker reply"));
+    assert!(elapsed >= Duration::from_millis(100), "{elapsed:?}");
+    assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
     eprintln!("{diagnostic}");
 }
 
 #[test]
-fn progress_does_not_extend_the_scenario_deadline() {
-    if planted("busy") {
-        scenario::run("planted-busy-driver", Duration::from_millis(100), || {
-            loop {
-                scenario::progress("driver still active");
-                thread::sleep(Duration::from_millis(1));
+fn steady_progress_outlives_the_inactivity_limit() {
+    if planted("steady") {
+        scenario::run("planted-steady-driver", Duration::from_millis(200), || {
+            for _ in 0..20 {
+                scenario::progress("applied observation");
+                thread::sleep(Duration::from_millis(25));
             }
         });
+        return;
     }
-    let output = child("progress_does_not_extend_the_scenario_deadline", "busy");
-    let diagnostic = String::from_utf8(output.stderr).unwrap();
-    assert_eq!(
-        output.status.code(),
-        Some(124),
-        "progress must not keep a planted scenario alive: {diagnostic}"
+    let (output, elapsed) = child("steady_progress_outlives_the_inactivity_limit", "steady");
+    assert!(
+        output.status.success(),
+        "steady progress must keep the scenario alive: {output:?}"
     );
+    assert!(elapsed >= Duration::from_millis(500), "{elapsed:?}");
+}
+
+#[test]
+fn perpetual_progress_expires_at_the_absolute_cap() {
+    if planted("busy") {
+        scenario::run_with_limits(
+            "planted-busy-driver",
+            Duration::from_millis(200),
+            Duration::from_millis(700),
+            || loop {
+                scenario::progress("driver still active");
+                thread::sleep(Duration::from_millis(25));
+            },
+        );
+    }
+    let (output, elapsed) = child("perpetual_progress_expires_at_the_absolute_cap", "busy");
+    let diagnostic = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(output.status.code(), Some(124), "{diagnostic}");
+    assert!(
+        elapsed >= Duration::from_millis(700),
+        "absolute cap expired early: {elapsed:?}; {diagnostic}"
+    );
+    assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
     assert!(diagnostic.contains("scenario watchdog expired: planted-busy-driver"));
     assert!(diagnostic.contains("last progress: driver still active"));
 }
@@ -81,6 +107,6 @@ fn completed_scenarios_disarm_the_watchdog() {
         thread::sleep(Duration::from_millis(200));
         return;
     }
-    let output = child("completed_scenarios_disarm_the_watchdog", "complete");
+    let (output, _) = child("completed_scenarios_disarm_the_watchdog", "complete");
     assert!(output.status.success(), "{output:?}");
 }

@@ -36,8 +36,7 @@ use tl3_store::{Commit, RowChange, Store};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 use worktree_fixture::{Fixture, commit};
 
-// Loaded BuildBuddy batches run publishing about twice as slowly as an isolated target.
-const PUBLISHING_SCENARIO_TIMEOUT: Duration = Duration::from_secs(60);
+const PUBLISHING_SCENARIO_INACTIVITY: Duration = Duration::from_secs(60);
 
 fn git(path: &Path, args: &[&str]) -> String {
     progress(format!("git {args:?}"));
@@ -45,7 +44,7 @@ fn git(path: &Path, args: &[&str]) -> String {
 }
 
 fn scenario<T>(name: &str, run: impl FnOnce() -> T) -> T {
-    support::scenario::run(name, PUBLISHING_SCENARIO_TIMEOUT, run)
+    support::scenario::run(name, PUBLISHING_SCENARIO_INACTIVITY, run)
 }
 
 fn drive_to_idle(mut drive: impl FnMut() -> bool) -> bool {
@@ -2081,13 +2080,16 @@ fn stage_obligations_block_publication() {
         "pass",
         "pre-existing",
     ] {
+        progress(format!("stage_obligations {case}: fixture"));
         let root = tempfile::tempdir().unwrap();
         let f = Arc::new(Fixture::create(root.path()));
         let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
         f.adapter().execute(&prepare).unwrap();
+        progress(format!("stage_obligations {case}: prepared"));
         let mut push = f.delivery(EffectKind::Push, 2);
         push.head_sha = Some(f.head(&prepare));
         f.adapter().execute(&push).unwrap();
+        progress(format!("stage_obligations {case}: pushed"));
         let server = Server::new(f.clone());
         let mut open = push.clone();
         open.key = format!("stage-{case}");

@@ -198,7 +198,6 @@ cas_receipt, input_tree, output_tree, artifact_sha256, logs and terminal_verdict
 Use that capability only when it appears in tool_capabilities. It cannot edit
 protected files or replace the independent test executor.
 
-
 Configured generation is necessary supporting work. "Edit only X" restricts
 model edits; it does not forbid the configured generator's declared outputs.
 "Do not hand-edit generated files" likewise allows trusted regeneration.
