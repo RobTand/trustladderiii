@@ -1,0 +1,233 @@
+"""Independent Checking must keep a frozen-row fixture's execution unit intact (#591)."""
+import json
+from pathlib import Path
+import sys
+
+import pytest
+
+from tl3_harness import execution
+from tl3_harness.model import Check, HarnessInputError, Kind, Outcome, Verdict
+from tl3_harness.trees import git
+
+RUNNER = Path(__file__).parents[1] / 'src/tl3_harness/runner.py'
+CONTAINER = execution.Container('sha256:' + '1' * 64)
+MODULE = 'tests/test_contract.py'
+BINDING = MODULE + '::test_bindings_are_shared'
+CALLS = MODULE + '::test_frozen_calls'
+OTHER = 'tests/test_other.py::test_other'
+PLAN = (Check('other', Kind.REGRESSION, (OTHER,)),)
+CONFIG = '[tool.tl3.harness]\ncommand=["python", "-m", "pytest"]\ntest-files=["tests/*.py"]\n'
+CONTRACT = '''from pathlib import Path
+import json
+import pytest
+from product import value
+
+ROWS = json.loads(Path(__file__).with_name("frozen.json").read_text())
+USED = set()
+
+@pytest.fixture(scope="module", autouse=True)
+def every_frozen_row_used():
+    yield
+    unused = set(ROWS) - USED
+    assert not unused, f"{len(unused)} frozen row(s) that no passing call used"
+
+@pytest.mark.parametrize("row", list(ROWS))
+def test_frozen_calls(row):
+    assert value() > 0, "real behavior failure"
+    USED.add(row)
+
+def test_bindings_are_shared():
+    marker = Path(__file__).with_name(".binding-ran")
+    if value() == 2 and not marker.exists():
+        marker.touch()
+        pytest.fail("one complete-group flake")
+    assert callable(value)
+'''
+
+
+def save(repo, message):
+    git(repo, 'add', '--all')
+    git(repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+        'commit', '-qm', message)
+    return git(repo, 'rev-parse', 'HEAD').decode().strip()
+
+
+@pytest.fixture
+def frozen_repo(tmp_path, monkeypatch):
+    repo = tmp_path / 'repo'
+    (repo / 'tests').mkdir(parents=True)
+    git(repo, 'init', '-q')
+    (repo / 'pyproject.toml').write_text(CONFIG)
+    (repo / MODULE).write_text(CONTRACT)
+    (repo / 'tests/frozen.json').write_text(json.dumps({str(row): row for row in range(393)}))
+    (repo / 'tests/test_other.py').write_text('def test_other():\n    assert True\n')
+    (repo / 'product.py').write_text('def value():\n    return 1\n')
+    runs = []
+    command = execution.container_command
+
+    def real_runner(tree, container, tests):
+        runs.append((tree.name, tests))
+        return [sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)]
+
+    monkeypatch.setattr(execution, 'require_admission', lambda: None)
+    monkeypatch.setattr(execution, 'container_command', real_runner)
+    monkeypatch.setattr(execution.Progress, 'commit', lambda *_: None)
+    monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(repo))
+    yield repo, runs
+    monkeypatch.setattr(execution, 'container_command', command)
+
+
+def head(repo, value=1):
+    (repo / 'product.py').write_text(f'def value():\n    return {value}\n# changed\n')
+    return save(repo, 'head')
+
+
+def selected(repo, base, commit, limit=400, plan=PLAN, container=CONTAINER):
+    return execution.run_checks(repo, base, commit, plan, container=container, selected_tests=limit)
+
+
+def test_complete_fixture_unit_retries_without_manufacturing_393_unused_rows(frozen_repo):
+    repo, runs = frozen_repo
+    base = save(repo, 'base')
+    results = selected(repo, base, head(repo, 2))
+    result = results[-1]
+    assert result.name == execution.SELECTED_CHECK
+    assert result.verdict == Verdict.PASS, result
+    assert [test.test for test in result.tests] == [MODULE]
+    assert ('base', (MODULE,)) in runs
+    assert [tests for tree, tests in runs if tree == 'head' and tests != (OTHER,)] == [(MODULE,), (MODULE,)]
+    assert 'complete execution group' in result.tests[0].message
+
+
+def test_frozen_guard_is_real_and_unchanged(frozen_repo, tmp_path):
+    repo, _ = frozen_repo
+    messages = {}
+    outcome = execution.run_tree(repo, CONTAINER, (BINDING,), tmp_path / 'alone.jsonl',
+                                 execution.Progress(), messages=messages)
+    assert outcome[BINDING] == Outcome.ERROR
+    assert '393 frozen row(s)' in messages[BINDING]
+    complete = execution.run_tree(repo, CONTAINER, (MODULE,), tmp_path / 'complete.jsonl', execution.Progress())
+    assert complete == {MODULE: Outcome.PASSED}
+    assert len(json.loads((repo / 'tests/frozen.json').read_text())) == 393
+
+
+def test_a_real_behavior_failure_in_a_complete_unit_still_fails(frozen_repo):
+    repo, runs = frozen_repo
+    base = save(repo, 'base')
+    result = selected(repo, base, head(repo, 0))[-1]
+    assert result.verdict == Verdict.FAIL
+    assert [test.test for test in result.tests] == [MODULE]
+    assert all(tests == (MODULE,) for tree, tests in runs if tree == 'head' and tests != (OTHER,))
+
+
+def test_base_filter_drops_the_whole_failing_unit(frozen_repo):
+    repo, runs = frozen_repo
+    with (repo / MODULE).open('a') as target:
+        target.write('\ndef test_upstream():\n    assert value() != 1\n')
+    base = save(repo, 'base')
+    results = selected(repo, base, head(repo, 3))
+    assert [result.name for result in results] == ['other']
+    assert ('base', (MODULE,)) in runs
+    assert not any(tree == 'head' and MODULE in tests for tree, tests in runs)
+
+
+def test_partial_base_cache_never_runs_a_missing_member_alone(frozen_repo):
+    repo, runs = frozen_repo
+    base = save(repo, 'base')
+    commit = head(repo)
+    selected(repo, base, commit, plan=PLAN + (Check('binding', Kind.REGRESSION, (BINDING,)),))
+    runs.clear()
+    result = selected(repo, base, commit)[-1]
+    assert result.verdict == Verdict.PASS
+    assert [test.test for test in result.tests] == [MODULE]
+    assert not any(tree == 'base' and tests in ((BINDING,), (CALLS,)) for tree, tests in runs)
+
+
+@pytest.mark.parametrize('cached', [False, True])
+def test_whole_group_cost_obeys_the_original_node_budget(frozen_repo, cached):
+    repo, _ = frozen_repo
+    base = save(repo, 'base')
+    commit = head(repo)
+    if cached:
+        selected(repo, base, commit)
+    with pytest.raises(HarnessInputError, match='execution group.*394.*393'):
+        selected(repo, base, commit, limit=393)
+
+
+def test_product_driven_collection_change_is_a_selection_refusal(frozen_repo):
+    repo, _ = frozen_repo
+    path = repo / MODULE
+    path.write_text(CONTRACT.replace('list(ROWS)', 'list(ROWS)[:392] if value() == 3 else list(ROWS)'))
+    base = save(repo, 'base')
+    with pytest.raises(HarnessInputError, match='collection.*execution group'):
+        selected(repo, base, head(repo, 3))
+
+
+def test_declared_session_group_includes_unreached_companion_modules(frozen_repo):
+    repo, runs = frozen_repo
+    (repo / 'pyproject.toml').write_text(CONFIG + 'selection-groups=[["tests/test_contract.py", "tests/test_companion.py"]]\n')
+    (repo / 'tests/conftest.py').write_text('''import pytest
+SEEN = set()
+@pytest.fixture(scope="session", autouse=True)
+def all_calls():
+    yield
+    assert SEEN == {"first", "second"}, "session companions were split"
+@pytest.fixture
+def seen():
+    return SEEN
+''')
+    (repo / MODULE).write_text('from product import value\ndef test_first(seen):\n    assert value()\n    seen.add("first")\n')
+    (repo / 'tests/test_companion.py').write_text('def test_second(seen):\n    seen.add("second")\n')
+    # The plan does not use this shared conftest's session guard.
+    (repo / 'other.py').write_text('def test_other():\n    assert True\n')
+    (repo / 'pyproject.toml').write_text((repo / 'pyproject.toml').read_text().replace('"tests/*.py"', '"tests/*.py", "other.py"'))
+    plan = (Check('other', Kind.REGRESSION, ('other.py::test_other',)),)
+    base = save(repo, 'base')
+    result = selected(repo, base, head(repo), limit=2, plan=plan)[-1]
+    assert result.verdict == Verdict.PASS, result
+    group = (MODULE, 'tests/test_companion.py')
+    assert tuple(test.test for test in result.tests) == group
+    assert ('base', group) in runs and ('head', group) in runs
+
+
+def test_independent_module_flake_still_gets_a_bounded_retry(frozen_repo):
+    repo, runs = frozen_repo
+    (repo / MODULE).write_text('''from pathlib import Path
+from product import value
+
+def test_flaky():
+    marker = Path(__file__).with_name(".once")
+    if value() == 2 and not marker.exists():
+        marker.touch()
+        assert False, "independent flake"
+''')
+    base = save(repo, 'base')
+    result = selected(repo, base, head(repo, 2), limit=1)[-1]
+    assert result.verdict == Verdict.PASS
+    assert len([tests for tree, tests in runs if tree == 'head' and tests != (OTHER,)]) == 2
+    assert 'complete execution group' in result.tests[0].message
+
+
+def test_cache_binds_container_and_never_reuses_an_unreported_group(frozen_repo, monkeypatch):
+    repo, runs = frozen_repo
+    base = save(repo, 'base')
+    commit = head(repo)
+    actual = execution.run_tree
+    first = True
+
+    def interrupted(tree, container, tests, *args, **kwargs):
+        nonlocal first
+        if tree.name == 'base' and any(test.startswith(MODULE) for test in tests) and first:
+            first = False
+            return dict.fromkeys(tests, Outcome.NO_REPORT)
+        return actual(tree, container, tests, *args, **kwargs)
+
+    monkeypatch.setattr(execution, 'run_tree', interrupted)
+    assert len(selected(repo, base, commit)) == 1
+    assert selected(repo, base, commit)[-1].verdict == Verdict.PASS
+    runs.clear()
+    assert selected(repo, base, commit)[-1].verdict == Verdict.PASS
+    assert not any(tree == 'base' for tree, _ in runs)
+    different = execution.Container('sha256:' + '2' * 64)
+    assert selected(repo, base, commit, container=different)[-1].verdict == Verdict.PASS
+    assert ('base', (MODULE,)) in runs
