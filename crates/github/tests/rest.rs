@@ -1235,3 +1235,113 @@ async fn required_status_checks_unprotected_branch_has_none() {
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn ci_log_reads_bound_the_tail_and_refuse_external_redirects() {
+    let server = MockServer::start().await;
+    let gh = client(&server).await;
+    let log = format!(
+        "{}\nFAILED: //tests:test_fixture\n",
+        "old line\n".repeat(10000)
+    );
+    Mock::given(method("GET"))
+        .and(path("/repos/o/r/actions/jobs/1/logs"))
+        .and(header("authorization", "Bearer fake-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(log))
+        .mount(&server)
+        .await;
+    let tail = gh.job_log_tail("o/r", 1).await.unwrap();
+    assert!(tail.truncated);
+    assert!(tail.text.len() <= 64 * 1024);
+    assert!(tail.text.ends_with("FAILED: //tests:test_fixture\n"));
+    for (job, location) in [
+        (2, "http://127.0.0.1/private"),
+        (3, "https://example.invalid/private"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(format!("/repos/o/r/actions/jobs/{job}/logs")))
+            .respond_with(ResponseTemplate::new(302).insert_header("location", location))
+            .mount(&server)
+            .await;
+        assert!(matches!(
+            gh.job_log_tail("o/r", job).await,
+            Err(Error::Response)
+        ));
+    }
+}
+
+#[tokio::test]
+async fn ci_diff_paths_include_renames_and_paginate() {
+    let server = MockServer::start().await;
+    let gh = client(&server).await;
+    let files: Vec<_> = (0..100)
+        .map(|index| {
+            json!({"filename":format!("tests/new_{index}.py"),
+        "previous_filename":format!("tests/old_{index}.py")})
+        })
+        .collect();
+    Mock::given(method("GET"))
+        .and(path("/repos/o/r/pulls/1/files"))
+        .and(query_param("page", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(files))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/o/r/pulls/1/files"))
+        .and(query_param("page", "2"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!([{"filename":"tests/last.py"}])),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let paths = gh.pull_request_paths("o/r", 1).await.unwrap().unwrap();
+    assert_eq!(paths.len(), 201);
+    assert!(paths.contains(&"tests/old_99.py".into()));
+    assert!(paths.contains(&"tests/last.py".into()));
+}
+
+#[tokio::test]
+async fn ci_log_tail_reports_ranges_and_untruncated_responses() {
+    let server = MockServer::start().await;
+    let gh = client(&server).await;
+    let log = "old fragment\nFAILED: //tests:test_fixture\n";
+    let length = log.len();
+    for (job, status, range, truncated) in [
+        (1, 200, None, false),
+        (
+            2,
+            206,
+            Some(format!("bytes 1000-{}/{}", 999 + length, 1000 + length)),
+            true,
+        ),
+        (
+            3,
+            206,
+            Some(format!("bytes 0-{}/{length}", length - 1)),
+            false,
+        ),
+        (
+            4,
+            206,
+            Some(format!("bytes 0-{}/{}", length - 1, length + 1000)),
+            true,
+        ),
+        (5, 206, None, true),
+        (6, 206, Some("malformed".into()), true),
+    ] {
+        let mut response = ResponseTemplate::new(status).set_body_string(log);
+        if let Some(range) = range {
+            response = response.insert_header("content-range", range);
+        }
+        Mock::given(method("GET"))
+            .and(path(format!("/repos/o/r/actions/jobs/{job}/logs")))
+            .respond_with(response)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let tail = gh.job_log_tail("o/r", job).await.unwrap();
+        assert_eq!(tail.truncated, truncated, "job {job}");
+        assert!(tail.text.ends_with("FAILED: //tests:test_fixture\n"));
+    }
+}

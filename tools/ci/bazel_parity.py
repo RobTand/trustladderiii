@@ -8,6 +8,7 @@ cargo, git and bazel query, and runs on every CI build.
 against rust_gate timing files from a Cargo run of the same commit.
 """
 import argparse
+import ast
 import fnmatch
 import json
 import os
@@ -17,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+import textwrap
 import zipfile
 
 import check
@@ -105,6 +107,81 @@ def bazel_tests(query_lines):
         raise RuntimeError('These tests are tagged manual, so the gate never runs them; remove the tag:\n'
                            + '\n'.join(sorted(manual)))
     return rust, sorted(python)
+
+
+def has_nested_suite(source):
+    """Find runner commands, harness calls, and scripts written by a test.
+
+    This is a source guard for known runner entry points, not Python dataflow
+    analysis. Follow local command aliases; inspect embedded scripts separately
+    so ordinary descriptions of subprocesses do not count as executions.
+    """
+    tree = ast.parse(source)
+    assignments = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    assignments.setdefault(target.id, []).append(node.value)
+
+    def command_text(node, seen=frozenset()):
+        text = ast.unparse(node)
+        for name in {item.id for item in ast.walk(node) if isinstance(item, ast.Name)} - seen:
+            for value in assignments.get(name, []):
+                text += ' ' + command_text(value, seen | {name})
+        return text
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, 'id', '')
+        if name in ('run_tree', 'run_checks'):
+            return True
+        if name in ('run', 'Popen', 'check_call', 'check_output', 'call'):
+            command = node.args[0] if node.args else next(
+                (keyword.value for keyword in node.keywords if keyword.arg == 'args'), None)
+            if command is not None and re.search(
+                    r"""(?:^|['\"\s/])(?:pytest|unittest)(?:['\"\s]|$)|tl3_harness/runner\.py""", command_text(command)):
+                return True
+        if name == 'write_text':
+            for literal in ast.walk(node):
+                if not isinstance(literal, ast.Constant) or not isinstance(literal.value, str):
+                    continue
+                # A replace() fragment may end midway through a Python statement.
+                lines = textwrap.dedent(literal.value).splitlines()
+                while lines:
+                    fragment = '\n'.join(lines)
+                    try:
+                        ast.parse(fragment)
+                    except SyntaxError as error:
+                        lines = lines[:error.lineno - 1]
+                    else:
+                        if has_nested_suite(fragment):
+                            return True
+                        break
+    return False
+
+
+def check_python_sizing(query_lines, root=ROOT):
+    """Require explicit resources for nested suites in any Python package."""
+    problems = []
+    for line in query_lines:
+        rule = json.loads(line).get('rule', {})
+        attributes = {attribute['name']: attribute for attribute in rule.get('attribute', [])}
+        if attributes.get('main', {}).get('stringValue') != PYTHON_RUNNER:
+            continue
+        module = attributes['args']['stringListValue'][0]
+        if not has_nested_suite((root / module).read_text()):
+            continue
+        properties = {entry['key']: entry['value'] for entry in
+                      attributes.get('exec_properties', {}).get('stringDictValue', [])}
+        for key in ('EstimatedComputeUnits', 'EstimatedCPU', 'EstimatedMemory'):
+            value = properties.get(key, '')
+            if not re.fullmatch(r'[0-9]+(?:\.[0-9]+)?(?:GB)?', value) or float(value.removesuffix('GB')) <= 0:
+                problems.append(f"{rule['name']} ({module}): missing positive {key}")
+    if problems:
+        raise RuntimeError('Nested suite sizing drift:\n' + '\n'.join(problems)
+                           + '\nMeasure the target and add its reservation to tools/bazel/test_sizing.bzl.')
 
 
 def compare_static(cargo, bazel_rust, expected_python, bazel_python):
@@ -226,7 +303,9 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == 'static':
-            rust, python = bazel_tests(bazel_query(args.bazel.split()))
+            query = bazel_query(args.bazel.split())
+            rust, python = bazel_tests(query)
+            check_python_sizing(query)
             compare_static(cargo_binaries(cargo_metadata()), rust,
                            python_modules(check.tracked_files()), python)
             summary = {'rust_binaries': len(rust), 'python_modules': len(python)}

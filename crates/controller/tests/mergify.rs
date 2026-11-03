@@ -2,6 +2,8 @@
 mod ack_wait;
 #[path = "mergify/check_reads.rs"]
 mod check_reads;
+#[path = "mergify/ci_evidence.rs"]
+mod ci_evidence;
 #[path = "mergify/classic_protection.rs"]
 mod classic_protection;
 #[path = "mergify/dequeue_followups.rs"]
@@ -133,6 +135,7 @@ struct State {
     tl3_branch: bool,
     body_patches: usize,
     failed_job_reruns: Vec<u64>,
+    ci_fixture: Option<ci_evidence::Fixture>,
 }
 impl State {
     fn new() -> Self {
@@ -191,6 +194,7 @@ impl State {
             tl3_branch: false,
             body_patches: 0,
             failed_job_reruns: vec![],
+            ci_fixture: None,
         }
     }
     fn checks(&self) -> Value {
@@ -265,7 +269,12 @@ impl support::github::Routes for State {
 impl Respond for Api {
     fn respond(&self, request: &Request) -> ResponseTemplate {
         let mut state = self.0.lock().unwrap();
-        let path = request.url.path();
+        let normalized = request
+            .url
+            .path()
+            .replace("/repos/RobTand/prismabuild", "/repos/owner/sandbox")
+            .replace("/repos/RobTand/trustladderiii", "/repos/owner/sandbox");
+        let path = normalized.as_str();
         let method = request.method.as_str();
         if let Some(response) = support::github::access_token(path, 3, "disposable") {
             return response;
@@ -286,6 +295,11 @@ impl Respond for Api {
         }
         if state.fail_reads && method == "GET" {
             return ResponseTemplate::new(503);
+        }
+        if let Some(fixture) = &state.ci_fixture
+            && let Some(response) = fixture.respond(path)
+        {
+            return response;
         }
         if let Some(response) =
             support::github::respond(request, path, "/repos/owner/sandbox", &mut *state)
@@ -421,6 +435,10 @@ impl Respond for Api {
             ("GET", "/repos/owner/sandbox/issues/100/events") => ResponseTemplate::new(200).set_body_json(json!(state.events)),
             ("GET", "/repos/owner/sandbox/issues/events") => ResponseTemplate::new(200).set_body_json(json!(state.events)),
             ("GET", "/repos/owner/sandbox/issues" | "/repos/owner/sandbox/issues/comments") => ResponseTemplate::new(200).set_body_json(json!([])),
+            ("GET", path) if path.starts_with("/repos/owner/sandbox/actions/jobs/")
+                && path.ends_with("/logs") => ResponseTemplate::new(404),
+            ("GET", path) if path.starts_with("/repos/owner/sandbox/pulls/")
+                && path != "/repos/owner/sandbox/pulls/100" => ResponseTemplate::new(404),
             _ => panic!("unexpected API request {method} {path}"),
         }
     }
@@ -478,6 +496,17 @@ fn queued_with(
     confirmed: bool,
     repos: &[tl3_config::Repository],
 ) -> Controller {
+    queued_for(settings, api, root, confirmed, repos, bootstrap())
+}
+fn queued_for(
+    settings: &tl3_config::Store,
+    api: &Server,
+    root: &Path,
+    confirmed: bool,
+    repos: &[tl3_config::Repository],
+    config: Bootstrap,
+) -> Controller {
+    let repository = config.repos[0].clone();
     let mut registry = adapters::simulation(root).unwrap();
     registry.register(
         Upstream::Mergify,
@@ -487,13 +516,13 @@ fn queued_with(
             .with_store(settings.clone()),
     );
     let mut controller =
-        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+        Controller::open(Store::open(settings).unwrap(), registry, config).unwrap();
     controller.register_github_translator("mergify", Translator::new(api.clients()).unwrap());
     controller
         .intake(LabelledIssue {
             delivery: "label-1".into(),
-            owner: "owner".into(),
-            repo: "sandbox".into(),
+            owner: repository.owner,
+            repo: repository.name,
             installation: 3,
             number: 12,
             title: "change".into(),
@@ -2616,6 +2645,23 @@ fn legacy_intent_ignores_completed_at() {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--ci-evidence") {
+        let mut database = support::Database::start();
+        for mode in ci_evidence::MODES {
+            ci_evidence::scenario(&database.create(&format!("ci_evidence_{mode}")), mode);
+        }
+        database.stop();
+        return;
+    }
+    if let Some(mode) = std::env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--ci-evidence-").map(str::to_owned))
+    {
+        let mut database = support::Database::start();
+        ci_evidence::scenario(&database.create("ci_evidence"), &mode);
+        database.stop();
+        return;
+    }
     if let Some(mode) = std::env::args()
         .nth(1)
         .and_then(|arg| arg.strip_prefix("--held-").map(str::to_owned))
@@ -2825,6 +2871,12 @@ fn main() {
     scenario!(label_removed_before_confirmation());
     scenario!(applied_marker_waits_for_person_evidence());
     let mut database = support::Database::start();
+    for mode in ci_evidence::MODES {
+        scenario!(ci_evidence::scenario(
+            &database.create(&format!("ci_evidence_{mode}")),
+            mode
+        ));
+    }
     scenario!(ack_wait::scenario(&database.create("ack_wait")));
     for mode in ["gaps", "adapter", "source", "reopen-look", "reopen-source"] {
         scenario!(check_reads::scenario(
