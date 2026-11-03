@@ -62,6 +62,7 @@ pub(crate) fn check(reply: &Value, current: crate::findings::CurrentReview<'_>) 
                 tests,
                 forcing: None,
                 helper_evidence: None,
+                declared_symptom: None,
             });
         } else {
             item["reason"] = mapping["reason"].clone();

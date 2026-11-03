@@ -1399,8 +1399,8 @@ def test_changed_or_stale_evidence_is_unusable(rehearsal, change):
 
 def test_planner_tool_allows_only_declarative_forcing_and_bounded_actions(rehearsal):
     ledger, _, _, calls = rehearsal
-    with pytest.raises(ValueError):
-        ledger.run([NODE], {**FORCING, 'command': 'touch /tmp/arbitrary'})
+    refused = ledger.run([NODE], {**FORCING, 'command': 'touch /tmp/arbitrary'})
+    assert refused['status'] == 'refused' and 'command' in refused['message']
     assert calls == []
     assert ledger.run([NODE], reachable())['status'] == 'validated'
     count = len(calls)

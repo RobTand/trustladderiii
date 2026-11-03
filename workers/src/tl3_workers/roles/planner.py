@@ -77,6 +77,9 @@ class PlanConsistencyError(ValueError):
                 if ('forcing' in check
                         and not any(check['forcing'] == original.get('forcing') for original in checks)):
                     errors.append('Correction adds a forcing absent from the draft.')
+                if ('declared_symptom' in check and not any(
+                        check['declared_symptom'] == original.get('declared_symptom') for original in checks)):
+                    errors.append('Correction adds a declared symptom absent from the draft.')
                 continue
             original = checks[index]
             if ({key: value for key, value in check.items() if key != 'node_ids'}
@@ -161,7 +164,7 @@ def check_reply(inputs, reply, *, rehearsals=None):
                     violations.append("Checks must name exact pytest node IDs.")
                     continue
                 # A forced check runs the old test on the base, so it must exist there too.
-                if check["kind"] in {"regression", "behavior-preserving"} or "forcing" in check:
+                if check["kind"] in {"regression", "behavior-preserving"} or "forcing" in check or "declared_symptom" in check:
                     path = node_id.split("::")[0]
                     oversized, exists = base_definition(node_id)
                     if oversized:
@@ -181,7 +184,8 @@ def check_reply(inputs, reply, *, rehearsals=None):
             try:
                 validate_check_plan(tuple(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']),
                                                 (forcings.get(i) if check['kind'] == 'demonstrating' else None),
-                                                HelperEvidence.parse(check['helper_evidence']) if 'helper_evidence' in check else None)
+                                                HelperEvidence.parse(check['helper_evidence']) if 'helper_evidence' in check else None,
+                                                check.get('declared_symptom'))
                                           for i, check in enumerate(reply['checks']) if check['node_ids']))
             except ValueError as error:
                 violations.append(str(error))
@@ -397,7 +401,7 @@ def edit_violations(goals, reply):
                                   "behavior with other existing tests.")
     # Q55: a forced reproduction recreates the flake outside the test, so it can show a test-only change.
     demonstrating = [check for check in reply["checks"] if check["kind"] == "demonstrating"]
-    forced = bool(demonstrating) and all(valid_forcing(check) or "helper_evidence" in check for check in demonstrating)
+    forced = bool(demonstrating) and all(valid_forcing(check) or "helper_evidence" in check or "declared_symptom" in check for check in demonstrating)
     if test_only and (edited or demonstrated or names_frozen) and not forced:
         violations.append("This leaf changes only tests, so an ordinary demonstrating check can't show it: the "
                           "base run applies the leaf's test edits, so base and head run the same test. A change "

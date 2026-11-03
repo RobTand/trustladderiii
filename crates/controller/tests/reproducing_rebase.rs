@@ -62,6 +62,7 @@ fn fix_round_rebases_reviewed_tree_with_upstream_configuration() {
             tests: vec!["test_value.py::test_value".into()],
             forcing: None,
             helper_evidence: None,
+            declared_symptom: None,
         }]
     );
     assert_eq!(

@@ -1,6 +1,6 @@
 # TL3 state machine
 
-Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. On 2026-10-29 and 30, I grilled him on every open branch of the specs; his 41 decisions are listed under "Decisions from the grilling", and the text cites them as Q1 to Q41. Two later decisions that day, Q42 and Q43, and Q44, Q45, Q46 and the amendment to Q29 from 2026-10-31 are listed with them, along with Q48, Q50 and Q51 from 2026-11-01, and Q54 from 2026-11-02. The stack it runs on is in `docs/stack.md`.
+Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. On 2026-10-29 and 30, I grilled him on every open branch of the specs; his 41 decisions are listed under "Decisions from the grilling", and the text cites them as Q1 to Q41. Two later decisions that day, Q42 and Q43, and Q44, Q45, Q46 and the amendment to Q29 from 2026-10-31 are listed with them, along with Q48, Q50 and Q51 from 2026-11-01, and Q54 from 2026-11-02 and the Q27 declared-symptom RED approval (#592) from 2026-11-03. The stack it runs on is in `docs/stack.md`.
 
 **Precedence.** `docs/state-table.md` is the source of truth for the kernel: its phases, events, rules and numbers. This document keeps the reasoning and Rob's decisions. Where the two disagree, the state table wins, and the disagreement is a bug in this document.
 
@@ -100,7 +100,7 @@ Agreed on 2026-10-29. Rob asked for self-review, adversarial review against pred
 
 **Checks must be able to fail.** Proposed after review round 2, and agreed by Rob on 2026-10-30 (Q40). A check that only passes proves nothing, but demanding that every check fail on the old code would reject the normal case, because existing tests pass there. So each check is one of three kinds:
 
-- **Demonstrating:** a new test that fails on the old code with only the new tests added, by a real assertion rather than a setup error, and passes on the new code.
+- **Demonstrating:** a new test that fails on the old code with only the new tests added, by a real assertion or an explicitly declared symptom under Q27 #592, and passes on the new code.
 - **Regression:** existing tests that must still pass. Failures that already happen on the old code are excused.
 - **Behavior-preserving:** for refactors, the tests pass on both versions, and review judges the rest.
 
@@ -690,14 +690,22 @@ Rob, 2026-11-02, answering #393: "yes, agreed." This is a reading of Q40 for def
 
 > For a change whose goal is to make a named flaky test deterministic, a **forced reproduction** counts as the red:
 > - The plan names a **forcing**: a patch, fixture or environment setting the harness applies. It deterministically recreates the flake's condition, for example "a real process holds PID 4242".
-> - With the forcing applied, the harness runs the **old test on the base code**, which must fail by assertion, and the **new test on the change**, which must pass. The new test must also pass without the forcing.
+> - With the forcing applied, the harness runs the **old test on the base code**, which must fail by assertion or its explicitly declared symptom, and the **new test on the change**, which must pass. The new test must also pass without the forcing.
 > - The maker can't alter the forcing's verdict, because it's applied by the harness outside the test being fixed. The reviewer judges whether the forcing really models the symptom the issue describes.
 > - Stress runs, meaning repeat until it fails, don't count.
 > - If no forcing can be written, the planner says "can't meet" once, with the reason. Under fail-fast (#440) the request then stops for TL3 review.
 
 The forcing is a field on a demonstrating check. It is declarative: a symptom, environment variables, and patches of attributes inside the served repository with a JSON value, a returned value, a builtin exception other than `AssertionError`, or a bounded delay. The planner writes it, so it is untrusted model output. The harness's host process only bounds it; the runner applies it inside the test container, under the same sandbox as the tests. The maker's edits can't reach it. The check's result echoes the forcing and the head's outcome under it, for review. The kernel is unchanged: it still sees a check pass or fail.
 
-A leaf that changes only tests (#444's `edits_tests` rule) is valid when every demonstrating check carries a valid forcing. Otherwise the planner reports that a change to tests alone needs a forced reproduction, or can't meet.
+A leaf that changes only tests (#444's `edits_tests` rule) is valid when every demonstrating check carries a valid forcing or an explicit declared-symptom contract. Otherwise the planner reports that a change to tests alone needs a forced reproduction, or can't meet.
+
+### Declared non-assertion symptoms
+
+[Rob's Q27 approval, 2026-11-03](https://github.com/RobTand/trustladderiii/issues/592#issuecomment-6602790849) extends demonstrating checks and Q55. Assertion RED remains the default. Before execution, the plan declares an exact exception class, exact original test node, and phase, either `call` or `setup`. The exception must come from the test's own code or fixture. PB #2643's `TimeoutError` from `Future.result` is a call symptom. PQ #3284's unwritable scratch fixture is a setup symptom. PB #2710's intermittent `FileNotFoundError` needs a fixed campaign. These errors remain errors; they are never renamed assertions.
+
+For intermittent symptoms, declare a fixed repeat count of 1 to 10 and parallel setting of 0 or 2 to 4, using the `run_tests` limits. Run the unchanged base and edited head under identical forcing and settings. RED requires at least one exact base occurrence. Zero base occurrences is not RED and must be reported with the declared denominator. GREEN requires zero matching head occurrences and every head run to pass. A forced reproduction also passes without forcing. No retry-until-failure is allowed.
+
+An undeclared setup error, import error, unrelated exception, infrastructure failure, missing report, or outer hang cannot supply RED. Keep every report and receipt bound to the immutable base, exact head, node, declaration, and forcing. Preserve pre-maker rehearsal, forcing reachability, independent checking, and final review. Q50 and Q54, bounded transitions, incident recovery, and explicit restart rules are unchanged. A test-only declared-symptom check runs the original fixture or helper on base instead of overlaying its repaired definition.
 
 ## Q57: requests that require protected paths
 

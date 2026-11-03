@@ -169,6 +169,7 @@ fn evidence_tools() -> Vec<ToolCapability> {
         .to_vec(),
         methods: [
             "red_green",
+            "declared_symptom",
             "head",
             "base_head",
             "helper_target_observer",

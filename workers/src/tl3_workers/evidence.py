@@ -113,6 +113,13 @@ def preflight(inputs, reply, *, planning=False):
                 'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
                 'artifacts': ['cas_receipt', 'terminal_verdict'],
                 'methods': ['helper_target_observer.setup_function'], 'protected_files': []})
+    if planning and any('declared_symptom' in check for check in reply.get('checks', [])):
+        reply['evidence_contract'].append({
+            'requirement': 'Observe the declared exception at the original node and phase in a fixed campaign.',
+            'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+            'runner_features': ['base_head', 'repeat', 'parallel'],
+            'artifacts': ['cas_receipt', 'logs', 'sha', 'terminal_verdict'],
+            'methods': ['declared_symptom'], 'protected_files': []})
     contract = []
     for requirements in (inputs.get('ingest', {}).get('evidence_contract', []),
                          inputs.get('audit_evidence_contract', []), reply['evidence_contract']):

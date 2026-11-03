@@ -138,8 +138,10 @@
               },
               "helper_evidence": {
                 "$ref": "planner-reply.json#/$defs/helper_evidence"
+              },
+              "declared_symptom": {
+                "$ref": "planner-reply.json#/$defs/declared_symptom"
               }
-
             },
             "required": [
               "name",
@@ -360,9 +362,20 @@
       ],
       "additionalProperties": false
     },
-    "protected_paths": {"type": "array", "items": {"type": "string", "minLength": 1}},
-    "forecast": {"$ref": "planner-input.json#/properties/forecast"},
-    "context_size": {"type": "integer", "minimum": 1}
+    "protected_paths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "forecast": {
+      "$ref": "planner-input.json#/properties/forecast"
+    },
+    "context_size": {
+      "type": "integer",
+      "minimum": 1
+    }
   },
   "required": [
     "brief",

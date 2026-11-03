@@ -177,3 +177,22 @@ def test_declared_demonstrating_without_forcing_uses_original_base(repo):
     result, _, _ = run(repo, TIMEOUT.replace("if not os.getenv('REPRODUCE'):", 'if False:'), PASS,
                        check(forcing=None))
     assert result.verdict == Verdict.PASS, result.tests
+    evidence = json.loads(execution.result_json((result,)))[0]['symptom_evidence']
+    assert [receipt['side'] for receipt in evidence['runs']] == ['base', 'head']
+
+
+def test_parallel_campaign_preserves_exact_setup_exception_and_forcing(repo):
+    result, _, _ = run(repo, SETUP, SETUP.replace("if os.getenv('REPRODUCE'):", 'if False:'),
+                       check(declaration('builtins.PermissionError', 'setup', parallel=2)))
+    assert result.verdict == Verdict.PASS, json.dumps(result.symptom_evidence, indent=2)
+    evidence = json.loads(execution.result_json((result,)))[0]['symptom_evidence']
+    assert [receipt['outcome'] for receipt in evidence['runs']] == ['symptom', 'passed', 'passed']
+
+
+def test_forcing_itself_cannot_raise_the_declared_symptom(repo):
+    (repo / 'product.py').write_text('def probe():\n    return True\n')
+    old = 'import product\ndef test_original():\n    assert product.probe()\n'
+    forcing = Forcing.parse({'symptom': 'injected exception',
+                             'patches': [{'target': 'product.probe', 'raises': 'TimeoutError'}]})
+    result, _, _ = run(repo, old, PASS, check(forcing=forcing))
+    assert result.verdict == Verdict.FAIL

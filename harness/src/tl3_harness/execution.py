@@ -197,7 +197,7 @@ def refused(plan: tuple[Check, ...], message: str) -> tuple[Result, ...]:
     """A failing round that tells the maker what to undo; nothing ran."""
     return tuple(Result(check.name, check.kind, Verdict.FAIL, tuple(
         TestResult(test, Outcome.UNCOLLECTED, Outcome.UNCOLLECTED, False, False, message[:MAX_MESSAGE_CHARS])
-        for test in check.tests)) for check in plan)
+        for test in check.tests), forcing=check.forcing, declared_symptom=check.declared_symptom) for check in plan)
 
 
 def listed(instruction: str, changed: list[str]) -> str:
@@ -582,6 +582,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         changed = tool.changed_existing_tests(old, new, ordinary)
         demonstrating = tuple(dict.fromkeys(test for check in plan
                                             if check.kind == Kind.DEMONSTRATING and check.forcing is None and check.helper_evidence is None
+                                            and check.declared_symptom is None
                                             for test in check.tests))
         candidates = (selected_candidates(repo, tool, old, new, config, base, head, plan, selected_tests, selected_failures)
                       if selected_tests else ())
@@ -647,13 +648,24 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         # A forced check runs the old test on the original base and the new test on the
         # head, both under its forcing; the ordinary head run is the unforced one (#393).
         forced = {}
-        for index, check in enumerate(check for check in plan if check.forcing is not None):
+        for index, check in enumerate(check for check in plan if check.forcing is not None and check.declared_symptom is None):
             notes, head_messages = FailureNotes(), {}
             forced_base = tool.run(old, container, check.tests, root / f"forced-base-{index}.jsonl", progress,
                                    messages=notes, forcing=check.forcing)
             forced_head = tool.run(new, container, check.tests, root / f"forced-head-{index}.jsonl", progress,
                                    messages=head_messages, forcing=check.forcing)
             forced[check.name] = forced_base, notes, forced_head, head_messages
+        symptom_results = {}
+        for check in plan:
+            if check.declared_symptom is None:
+                continue
+            from .test_tool import run_symptom
+            from .symptoms import judge_symptom
+            observed = run_symptom(old, container, check.tests, check.declared_symptom, forcing=check.forcing)
+            fixed = run_symptom(new, container, check.tests, check.declared_symptom, forcing=check.forcing)
+            ordinary_head = (run_symptom(new, container, check.tests, check.declared_symptom)
+                             if check.forcing else fixed)
+            symptom_results[check.name] = judge_symptom(check, observed, fixed, ordinary_head, base, head)
         helper_outcomes = {}
         for check in helpers:
             staged, identity = helper_runs[check.name]
@@ -677,7 +689,10 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             identity.update(preservation)
             helper_outcomes[check.name] = outcomes, notes, identity
         messages = {}
-        after = tool.run(new, container, tests, root / "head.jsonl", progress, messages=messages)
+        ordinary_tests = tuple(test for test in tests if any(
+            test in check.tests and check.declared_symptom is None for check in plan))
+        after = (tool.run(new, container, ordinary_tests, root / "head.jsonl", progress, messages=messages)
+                 if ordinary_tests else {})
         after.update(dict.fromkeys(stale, Outcome.MISSING))
         # A collection/plan refusal is also UNCOLLECTED, but proves nothing about missing nodes.
         stale.update(test for test in always_tests if "::" in test
@@ -688,6 +703,9 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                        Kind.REGRESSION: before, Kind.BEHAVIOR_PRESERVING: before}
         results = []
         for check in plan:
+            if check.name in symptom_results:
+                results.append(symptom_results[check.name])
+                continue
             if check.name in helper_outcomes:
                 outcomes, notes, identity = helper_outcomes[check.name]
                 result = judge(check, outcomes, after, messages=messages, base_notes=notes)
@@ -850,6 +868,10 @@ def result_json(results: tuple[Result, ...]) -> str:
         pair[1]['passed']))
     retained = {id(test) for _, test in [pair for pair in priority if pair[1]['message']][:MAX_DETAILED_FAILURES]}
     for result, report in zip(results, reports):
+        if result.declared_symptom is None:
+            del report['declared_symptom']
+        if result.symptom_evidence is None:
+            del report['symptom_evidence']
         # Unforced results keep their earlier shape; a forced one carries its forcing for review (#393).
         if result.selection is None:
             del report["selection"]

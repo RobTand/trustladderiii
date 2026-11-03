@@ -88,7 +88,7 @@ those marked for review. Return exactly one of these proposals:
   value, makes it return a JSON value, makes it raise a builtin exception other
   than AssertionError, or makes it wait delay_seconds, at most 5, before
   running. The forced check names the existing flaky test as the base wrote it.
-  It passes only when the old test fails by assertion on the base under the
+  By default it passes only when the old test fails by assertion on the base under the
   forcing and the new test passes on the change both with and without the
   forcing. The reviewer judges whether the forcing models the symptom the
   request describes. A forced demonstrating check cannot name an invented or
@@ -253,7 +253,7 @@ and require the run artifacts; do not label it forced_reproduction.environment
 or place it in forcing.environment. Reserved names and prefixes come from
 forcing_capabilities and cannot be overridden. These capabilities describe what
 a future run can prove, never checks already completed.
-Its methods are head, base_head, red_green, helper_target_observer,
+Its methods are head, base_head, red_green, declared_symptom, helper_target_observer,
 helper_target_observer.setup_function, forced_reproduction.environment and
 forced_reproduction.patches. Q55 environment and Python patches do not implement
 a pinned CPU artificial contention wrapper. BuildBuddy Remote Bazel evidence
@@ -375,3 +375,35 @@ A repo-prefixed alias such as pkg.mod.time.monotonic still mutates shared time
 and is refused. Source-only owner preflight runs before rehearsal submission.
 Dynamic owners it cannot resolve safely are reported as a capability limit.
 The admitted runner repeats the object-level guard before patching anything.
+
+
+## Declared symptom RED, Q27 #592
+
+Rob approved this additional mode on 2026-11-03. Assertion RED remains the default.
+A demonstrating check may carry declared_symptom with exactly node, exception,
+phase, repeat, and parallel. Name one exact original pytest node and its exact
+qualified exception class, such as builtins.TimeoutError, builtins.FileNotFoundError,
+or subprocess.CalledProcessError. Declare phase call or setup. The exception must
+arise from the test's own code or fixture. Import failures, undeclared setup errors,
+unrelated exceptions, missing reports, infrastructure failures, and outer hangs do
+not count. Never relabel an exception as an assertion.
+
+Declare repeat from 1 to 10 and parallel 0 or 2 to 4. The unchanged base test and
+fixture run for that fixed campaign. At least one exact base occurrence is RED;
+zero is not RED and must be reported with the denominator. Every head run must
+pass, with zero symptom occurrences, under identical forcing and settings. Q55
+also requires ordinary head success. No retry-until-failure or campaign extension.
+The trusted reports retain each run, bound to exact base, head, forcing, and declaration.
+A test-only repair can use this mode without overlaying the repaired helper or fixture
+onto base. It does not require helper_target_observer or change that mode's rules.
+Use capability method declared_symptom and retain cas_receipt, logs, sha, and
+terminal_verdict. Preserve every original behavior goal and the source of accepted
+clarifications; audit objects to a stale assertion-only or helper-observer contract
+instead of silently dropping goals. Nothing here changes fail_fast or restart rules.
+
+For Q55, call rehearse_forcing with tests, forcing, and the same declared_symptom
+object before returning the plan. Reachability and per-node delayed-target hits
+remain required. The receipt is valid only for the exact declaration and fixed
+campaign. A cached zero-occurrence campaign cannot be retried to seek RED.
+Independent Checking runs its own base and head campaigns. Final review must
+compare the exception, phase, original fixture or test, and forcing against the issue.

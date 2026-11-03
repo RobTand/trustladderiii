@@ -28,6 +28,16 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result
         return Ok(());
     }
     let mut contract = Vec::new();
+    if role == "planner"
+        && reply["checks"]
+            .as_array()
+            .is_some_and(|checks| checks.iter().any(|c| c.get("declared_symptom").is_some()))
+    {
+        contract.push(json!({
+            "requirement":"Observe the declared exception at the original node and phase in a fixed campaign.",
+            "tool":"run_tests", "executor":"prismabuild_pytest", "runner_features":["base_head", "repeat", "parallel"],
+            "artifacts":["cas_receipt", "logs", "sha", "terminal_verdict"], "methods":["declared_symptom"], "protected_files":[]}));
+    }
     for source in [
         &inputs["ingest"]["evidence_contract"],
         &inputs["audit_evidence_contract"],
