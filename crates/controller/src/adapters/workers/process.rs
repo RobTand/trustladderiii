@@ -84,6 +84,13 @@ pub(super) fn alive(path: &Path) -> Result<bool> {
 }
 
 pub(super) fn pidfd(path: &Path) -> Result<Option<std::os::fd::OwnedFd>> {
+    pidfd_with(path, |pid| pidfd_open(pid, PidfdFlags::empty()))
+}
+
+fn pidfd_with(
+    path: &Path,
+    open: impl FnOnce(Pid) -> rustix::io::Result<std::os::fd::OwnedFd>,
+) -> Result<Option<std::os::fd::OwnedFd>> {
     let Some(value) = read(path)? else {
         return Ok(None);
     };
@@ -95,7 +102,7 @@ pub(super) fn pidfd(path: &Path) -> Result<Option<std::os::fd::OwnedFd>> {
         return Ok(None);
     }
     let pid = Pid::from_raw(identity.pid).ok_or(Error::Invalid("invalid worker pid"))?;
-    let fd = match pidfd_open(pid, PidfdFlags::empty()) {
+    let fd = match open(pid) {
         Ok(fd) => fd,
         Err(rustix::io::Errno::SRCH) => return Ok(None),
         Err(e) => return Err(std::io::Error::from(e).into()),
@@ -209,6 +216,80 @@ fn read_stat(opened: std::io::Result<File>) -> Result<Option<String>> {
 mod tests {
     use super::*;
     use std::process::{Command, Stdio};
+
+    fn source_pidfd_failure(
+        errno: rustix::io::Errno,
+        exit: bool,
+    ) -> Result<Option<std::os::fd::OwnedFd>> {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("process.json");
+        let mut child = Command::new("sh")
+            .args(["-c", "read line"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stat = fs::read_to_string(format!("/proc/{}/stat", child.id())).unwrap();
+        let start = stat
+            .rsplit_once(')')
+            .unwrap()
+            .1
+            .split_whitespace()
+            .nth(19)
+            .unwrap();
+        write(
+            &path,
+            &serde_json::json!({"pid":child.id(), "start":start.parse::<u64>().unwrap(),
+            "machine":fs::read_to_string("/etc/machine-id").unwrap().trim(),
+            "boot":fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap().trim()}),
+        )
+        .unwrap();
+        let result = pidfd_with(&path, |_| {
+            if exit {
+                drop(child.stdin.take());
+                child.wait().unwrap();
+            }
+            Err(errno)
+        });
+        if !exit {
+            drop(child.stdin.take());
+            child.wait().unwrap();
+        }
+        result
+    }
+
+    #[test]
+    fn source_pidfd_einval_after_exit_is_absence() {
+        assert!(
+            source_pidfd_failure(rustix::io::Errno::INVAL, true)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn source_pidfd_einval_for_live_process_still_errors() {
+        assert!(
+            matches!(source_pidfd_failure(rustix::io::Errno::INVAL, false),
+            Err(Error::Io(error)) if error.raw_os_error() == Some(22))
+        );
+    }
+
+    #[test]
+    fn source_pidfd_esrch_remains_absence() {
+        assert!(
+            source_pidfd_failure(rustix::io::Errno::SRCH, true)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn source_pidfd_other_errors_after_exit_still_error() {
+        assert!(
+            matches!(source_pidfd_failure(rustix::io::Errno::ACCESS, true),
+            Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::PermissionDenied)
+        );
+    }
 
     #[test]
     fn process_exit_between_stat_open_and_read_is_absence() {
