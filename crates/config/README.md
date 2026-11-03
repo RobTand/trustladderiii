@@ -151,6 +151,47 @@ repository's patterns. Other repositories do not inherit that entry's additions.
 Both lists require valid repository-relative globs without parent traversal,
 backslashes or control characters. Empty patterns are rejected.
 
+## Repository generators
+
+Each `[[github.repos]]` entry accepts optional `generated_files` globs and a
+`generator` command string. The field names match the generated-file fit config.
+
+```toml
+generated_files = ["**/BUILD.bazel", "src/generated/**"]
+generator = "tools/bazel/generate.sh"
+```
+
+The command is a single line parsed as argv. Shell operators are not interpreted.
+The maker's argument-free `run_generator` tool runs only this configured command
+in a PrismaBuild-admitted action using the repository's immutable test image.
+It has no network, host credentials or served-repo Git metadata. A private Git
+index includes all snapshot files, including new source files, for `git ls-files`.
+The generator has 120 seconds; the enclosing action has a 180-second deadline.
+The image must contain the generator's interpreter, Git and dependencies.
+
+Every changed path must match `generated_files`, occur in the plan footprint,
+and avoid the effective protected paths. The action rejects the entire output
+for any other write, deletion, symlink, binary or invalid UTF-8 output. Limits
+are 128 changed files, 16 MiB per file and 32 MiB of output in total. There is no
+partial import after refusal. Model file tools reject hand edits of generated
+outputs and protected files. Generated headers alone never authorize execution.
+
+PrismaBuild's verified stdout artifact carries the output bytes. The maker
+checks its CAS log digest, terminal verdict, receipt and complete output diff
+before import. The durable import journal lives beside the maker session,
+outside the served worktree. Each replacement is atomic. A retry reuses the
+same action and permits only the original or verified bytes during recovery.
+A source edit invalidates an applied receipt. Worker code ensures generation
+before its final commit, then records the input tree, command, image identity,
+action key, exit status, artifact digest and final output tree. Independent
+checks and review still run on that final head.
+
+Generated text costs a 1,024-token regeneration allowance in fit forecasts;
+reads return at most 40 lines and 3,072 bytes. Ordinary source retains its usual
+cost and text limits. Missing command or output patterns means generation is
+unavailable, which planner and maker receive as `generator_available = false`.
+Configuration is optional; existing repositories keep their current tools.
+
 ## Repository branches
 
 Each `[[github.repos]]` entry accepts `branch_template` and `base_branch`.

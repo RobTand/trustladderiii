@@ -12,9 +12,12 @@ fn planner_protected_paths_follow_the_request_repository() {
     config.workers.runs = f.root.path().join("runs");
     config.planning.protected_paths.push("global/**".into());
     config.github.repos[0].protected_paths = vec!["CHANGELOG.md".into()];
+    config.github.repos[0].generated_files = vec!["**/BUILD.bazel".into()];
+    config.github.repos[0].generator = Some("tools/bazel/generate.sh".into());
     let mut other = config.github.repos[0].clone();
     other.name = "other-repo".into();
     other.protected_paths = vec!["other-only/**".into()];
+    other.generator = None;
     config.github.repos.push(other);
     let registry = crate::adapters::simulation(&f.root.path().join("fakes")).unwrap();
     let mut controller = crate::Controller::open(
@@ -59,6 +62,14 @@ fn planner_protected_paths_follow_the_request_repository() {
         let request = supervisor
             .request(&delivery, "planner", &mut store, &snapshot)
             .unwrap();
+        let forecast = &request["inputs"]["forecast"];
+        assert_eq!(forecast["generated_files"], json!(["**/BUILD.bazel"]));
+        assert_eq!(forecast["generator_available"], name == "TL3-SANDBOX");
+        if name == "TL3-SANDBOX" {
+            assert_eq!(forecast["generator"], "tools/bazel/generate.sh");
+        } else {
+            assert!(forecast.get("generator").is_none());
+        }
         let paths = request["inputs"]["protected_paths"].as_array().unwrap();
         assert!(paths.contains(&json!(own)), "missing {own}: {paths:?}");
         assert!(
@@ -83,6 +94,8 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
     let mut config =
         tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
     config.store = db.create("bounded_feedback");
+    config.github.repos[0].generated_files = vec!["**/BUILD.bazel".into()];
+    config.github.repos[0].generator = Some("tools/bazel/generate.sh".into());
     config.workers.runs = f.root.path().join("runs");
     let supervisor = Supervisor::new(&config, &f.root.path().join("records")).unwrap();
     let mut store = Store::open(&config.store).unwrap();
@@ -134,6 +147,14 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
         .request(&delivery, "maker", &mut store, &snapshot)
         .unwrap();
     let inputs = &request["inputs"];
+    assert_eq!(inputs["forecast"]["generator_available"], true);
+    assert_eq!(inputs["forecast"]["generator"], "tools/bazel/generate.sh");
+    assert!(
+        inputs["protected_paths"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(".github/**"))
+    );
     let sent = serde_json::to_string(inputs).unwrap().len();
     let limit = config.limits.context_tokens as usize;
     assert!(

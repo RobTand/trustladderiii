@@ -62,6 +62,9 @@ installation_id = 1
 # base_branch = "main"
 # Optional additions to the mandatory defaults and global planning.protected_paths.
 # protected_paths = ["CHANGELOG.md", "release/**"]
+# Optional admitted generator; outputs still require footprint and protected-path checks.
+# generated_files = ["**/BUILD.bazel"]
+# generator = "tools/bazel/generate.sh"
 # Optional: also run up to this many existing tests that import the change as a regression check.
 # selected_tests = 200
 # PrismaBuild: branch_template = "prismabuild-{issue}-tl3-{node}"

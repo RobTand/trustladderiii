@@ -1446,3 +1446,27 @@ fn heal_rerun_workflows_are_workflow_file_names() {
         assert!(error.contains("heal_rerun_workflows"), "{bad:?}: {error}");
     }
 }
+
+#[test]
+fn repository_generator_contract_is_optional_and_validated() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    assert!(config.github.repos[0].generated_files.is_empty());
+    assert!(config.github.repos[0].generator.is_none());
+    let source = EXAMPLE.replace(
+        "[[github.repos]]",
+        "[[github.repos]]\ngenerated_files = [\"**/BUILD.bazel\"]\ngenerator = \"python3 tools/bazel/build_files.py\"",
+    );
+    let config = Config::parse(&source).unwrap();
+    assert_eq!(config.github.repos[0].generated_files, ["**/BUILD.bazel"]);
+    assert_eq!(
+        config.github.repos[0].generator.as_deref(),
+        Some("python3 tools/bazel/build_files.py")
+    );
+    for (before, after) in [
+        ("**/BUILD.bazel", "../BUILD.bazel"),
+        ("python3 tools/bazel/build_files.py", " "),
+        ("python3 tools/bazel/build_files.py", "python3\\nbad"),
+    ] {
+        assert!(Config::parse(&source.replace(before, after)).is_err());
+    }
+}

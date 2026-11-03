@@ -2,7 +2,6 @@
 import base64
 import hashlib
 import json
-import os
 from pathlib import Path, PurePosixPath
 import re
 import shlex
@@ -35,6 +34,8 @@ def path_parts(name):
             any(ord(char) < 32 or char == "\\" for char in name) or
             len(name.encode()) > 3072 or any(len(part.encode()) > 255 for part in path.parts)):
         raise ValueError("generator path must be a canonical relative file path")
+    if path.name == ".tl3-generator-import":
+        raise ValueError("reserved generator import path")
     return path.parts
 
 
@@ -136,6 +137,8 @@ def container_command(tree, container, argv, cidfile):
         "--mount", f"type=bind,src={tree / '.git'},dst=/checkout/.git,readonly",
         "--cidfile", str(cidfile), "--ulimit", f"fsize={OUTPUT_BYTES}:{OUTPUT_BYTES}",
         "--env", "PYTHONDONTWRITEBYTECODE=1",
+        "--env", "GIT_CONFIG_COUNT=1", "--env", "GIT_CONFIG_KEY_0=safe.directory",
+        "--env", "GIT_CONFIG_VALUE_0=/checkout",
         "--env", "GIT_CONFIG_NOSYSTEM=1", "--env", "GIT_CONFIG_GLOBAL=/dev/null",
         "--env", "GIT_TERMINAL_PROMPT=0", "--env", "GIT_NO_LAZY_FETCH=1",
         "--entrypoint=" + argv[0], container.image, *argv[1:],

@@ -80,6 +80,8 @@ def _recover_temporaries(worktree, state):
 
 
 def make_generator_tool(worktree):
+    transient_state = {}
+
     def run() -> dict:
         """Regenerate configured outputs. There are no model-selected commands or arguments."""
         try:
@@ -99,9 +101,12 @@ def make_generator_tool(worktree):
                     "files": list(worktree.generator_files)}
         identity = {**contract, "image": settings.image, "exec_scratch": settings.exec_scratch}
         state_path = getattr(worktree, "generator_state", None)
-        state = json.loads(state_path.read_text()) if state_path and state_path.exists() else {}
+        nonlocal transient_state
+        state = json.loads(state_path.read_text()) if state_path and state_path.exists() else transient_state
 
         def record():
+            nonlocal transient_state
+            transient_state = state
             if state_path:
                 save(state_path, state)
 

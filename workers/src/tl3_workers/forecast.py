@@ -211,7 +211,8 @@ class Forecaster:
         notes = []
         if self.generated:
             command = self.config.get("generator")
-            instruction = f"Run `{command}`" if command else "Find and run the repository generator"
+            instruction = (f"Use run_generator for `{command}`" if self.config.get("generator_available")
+                           else "No admitted generator capability is configured")
             notes.append("Do not hand-edit these generated outputs; change their generator inputs and "
                          "regenerate them. " + instruction + ". Read only relevant regions: "
                          + listed(sorted(self.generated)) + ".")
