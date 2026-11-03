@@ -306,7 +306,8 @@ pub(crate) fn observation_context(
         Observation::Queue(fact) => fact.node(snapshot)?,
         Observation::Progress { key, .. }
         | Observation::Quota { key, .. }
-        | Observation::Classified { key, .. } => snapshot
+        | Observation::Classified { key, .. }
+        | Observation::Postmortem { key, .. } => snapshot
             .rows
             .iter()
             .find(|row| row.table == "allowances" && row.id == *key)

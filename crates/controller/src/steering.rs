@@ -44,6 +44,11 @@ pub enum Task {
     ConsoleNote {
         text: String,
     },
+    /// #403: the postmortem a runner claimed, under the claim's run key.
+    Postmortem {
+        id: i64,
+        run_key: String,
+    },
 }
 
 /// Where a steering instruction came from: Rob's issue comment, or a console
@@ -67,6 +72,27 @@ impl Delivery {
                 ..
             }
         )
+    }
+
+    pub fn is_postmortem(&self) -> bool {
+        matches!(
+            self.output,
+            Output::Comment {
+                kind: CommentKind::Postmortem,
+                ..
+            }
+        )
+    }
+
+    /// The world table whose row keeps a worker job outside the kernel live.
+    pub(crate) fn job_table(&self) -> Option<&'static str> {
+        if self.is_classifier() {
+            Some("comment_jobs")
+        } else if self.is_postmortem() {
+            Some(crate::postmortems::JOBS)
+        } else {
+            None
+        }
     }
 }
 

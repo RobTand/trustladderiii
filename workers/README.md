@@ -231,6 +231,8 @@ are identifiers, never network locations to fetch.
 | `ingest-reply.json` | A brief with goals, or an early end with a reason. |
 | `audit-input.json` | Required `issue`, `repo` and `ingest`, optional `memories`. |
 | `audit-reply.json` | Agreement with no objections, or disagreement with at least one objection. |
+| `postmortem-input.json` | The controller's case file: `record`, `case`, `rubric`, `release`, `grade_model` and the node's `trace_tags`. |
+| `postmortem-reply.json` | The judge's postmortem with at most three recommendations, plus code's grades, assessment ids, usage and models. |
 
 Every issue has `number`, `title`, `body`, `author` and `comments`. Each comment
 has `author` and `body`. Empty bodies and empty comment lists are valid.
@@ -773,3 +775,55 @@ preserve the role's result. Deep Agents remains the engine. Stored traces aren't
 pruned yet; `deploy/dl380g10/README.md` gives their growth and how to reclaim
 space. `workers/tools/trial_live_traces.py` checks all of this against a real
 server, in the scratch experiment `tl3-430-scratch`, through PrismaBuild.
+
+## Postmortems
+
+The `postmortem` role (#403) judges a finished request on MLflow 3.17.2's GenAI
+judges. Its dependency is `mlflow-skinny`, which has the judges; MLflow's
+judges also import `numpy` and `pandas`, which skinny leaves out, so the
+project pins them too, and `judges.py`'s Gazelle annotations add them to the
+Bazel targets. Skinny makes `import mlflow` take about 0.96 s and 134 MB, up
+from 0.45 s and 67 MB with `mlflow-tracing`. The role runs no Deep Agents graph.
+
+- **Inputs.** The controller writes the case file (see `crates/controller`'s
+  README). `prepare_inputs` passes its `case` through #302's `Redactor`, with
+  the run's loaded model key, before any judge reads it.
+- **Traces.** The role finds the node's traces in the configured experiment by
+  the tags `node`, `request`, `repo` and `issue`, and leaves out earlier
+  postmortem runs. It merges the newest 24 into one in-memory trace under a case
+  root span, redacting every span's content again and dropping events and status
+  messages. With no `[mlflow]` settings the judges read the case file alone.
+- **Judges.** `judges.configure` routes them through CLIProxyAPI with
+  `model="openai:/<name>"`, `base_url` set to the full
+  `<proxy>/v1/chat/completions` URL, and the run's key in this process's
+  `OPENAI_API_KEY`. One judge per judge-graded rubric dimension runs on the case
+  file's `grade_model`, then the postmortem judge runs on the request's model.
+  While they run, `judges.guarded_tools` redacts every tool result and caps it at
+  80,000 characters, because one search over a 2 MB trace overflowed the
+  model's context in the calibration spike. A judge whose Feedback, or any
+  ensemble member's, carries an error fails the run.
+- **Bounds (#486).** `make_judge` ignores effort and token budgets, so
+  `judges.configure` sets `MLFLOW_JUDGE_MAX_ITERATIONS` to 12 model turns per
+  judge. The whole run, every judge and MLflow call, gets the case file's
+  `deadline_secs` of wall clock (`limits.postmortem_deadline_secs`, 20 minutes
+  by default). Past it, a `SIGALRM` raises `PostmortemDeadline`, and the
+  controller fails the run with the `deadline` class.
+- **Recommendations (#486).** TL1's rule holds: a recommendation's `target` is a
+  file the release ships, as a path from the repository root, and its `before`
+  text appears there exactly once. The role drops any other recommendation and
+  logs why on stderr, so slice C's curator never sees an edit that can't apply.
+  The worker release ships `workers/` and `harness/` (#372), so a
+  recommendation for Rust code is dropped too.
+- **Results.** The postmortem is redacted again. Each graded dimension is
+  logged as an MLflow assessment on the node's newest trace, with metadata
+  `node`, `request`, `repo`, `issue`, `release`, `rubric_version`, `dimension`
+  and `judge_model`. The reply adds the grades, assessment ids, token usage
+  from the traces' tags, and the models that ran.
+- **Once per run key.** The worktree keeps `judged.json`, `assessments.json`
+  and `reply.json`, so a run restarted under the same key pays for no judge
+  twice and logs no assessment twice.
+
+`judges.py` is also the seam for a later escalation ensemble: `needs_rob_judge`
+and `unanimous` return `Feedback` without logging it. Nothing acts on a verdict
+yet.
+
