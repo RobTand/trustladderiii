@@ -117,6 +117,7 @@ struct ApiState {
     fail_reads: bool,
     empty_body: bool,
     catch_up_evidence: bool,
+    catch_up_comments: Option<Vec<Value>>,
     redeliveries: Vec<u64>,
     new_delivery: bool,
     linked: Vec<Value>,
@@ -377,7 +378,9 @@ impl Respond for Api {
                 ResponseTemplate::new(200).set_body_json(issues)
             }
             ("GET", "/repos/owner/sandbox/issues/comments") => ResponseTemplate::new(200)
-                .set_body_json(if state.gap {
+                .set_body_json(if let Some(comments) = &state.catch_up_comments {
+                    json!(comments)
+                } else if state.gap {
                     {
                         let mut comment = fixture(true)["comment"].clone();
                         comment["created_at"] = json!(Utc::now());

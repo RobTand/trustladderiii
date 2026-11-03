@@ -767,6 +767,51 @@ pub(super) fn delegated_restart(settings: &tl3_config::Store) {
         "another account remains ignored"
     );
     assert_eq!(controller.world().unwrap().nodes.len(), 2);
+    let mut edited = fixture(true)["comment"].clone();
+    edited["id"] = json!(29005);
+    edited["body"] = json!(format!("restart\n\n{LINE}"));
+    edited["created_at"] = json!(Utc::now() - chrono::Duration::minutes(1));
+    edited["updated_at"] = json!(Utc::now());
+    api.state.lock().unwrap().catch_up_comments = Some(vec![edited.clone()]);
+    let mut catch_up_store = Store::open(settings).unwrap();
+    let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap();
+    catch_up.pass(&mut catch_up_store, &bootstrap()).unwrap();
+    drain(&mut controller);
+    let classified = controller
+        .effect("classify:owner/sandbox/3/29005")
+        .unwrap()
+        .expect("a first-seen edited comment must keep normal classification");
+    let inputs = &classified.payload["steering"]["Classify"]["inputs"];
+    assert_eq!(inputs["comment"]["body"], edited["body"]);
+    assert!(inputs["comment"].get("delegated_by").is_none());
+    assert_eq!(controller.world().unwrap().nodes.len(), 2);
+    for (index, body) in [
+        format!("restart\n```\n{LINE}\n```"),
+        format!("restart\n~~~\n{LINE}\n~~~"),
+        format!("restart\n\n    {LINE}"),
+        format!("restart\n\n> {LINE}"),
+        format!("restart\n\n> quoted attribution\n{LINE}"),
+        format!("restart\n\n<!--\n{LINE}\n-->"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let id = 29100 + index as u64;
+        observe(&mut controller, id, 42, body.clone());
+        let classified = controller
+            .effect(&format!("classify:owner/sandbox/3/{id}"))
+            .unwrap()
+            .expect("Markdown attributions must keep normal classification");
+        let inputs = &classified.payload["steering"]["Classify"]["inputs"];
+        assert_eq!(inputs["comment"]["body"], body);
+        assert!(inputs["comment"].get("delegated_by").is_none());
+    }
+    assert!(
+        !controller.snapshot().unwrap().rows.iter().any(|row| {
+            row.table == "request_delegations"
+                && (row.id.ends_with("/29005") || row.value["comment_id"].as_u64().is_some_and(|id| (29100..29106).contains(&id)))
+        })
+    );
     drop(controller);
     let mut store = Store::open(settings).unwrap();
     assert!(

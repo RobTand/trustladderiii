@@ -1388,4 +1388,35 @@ mod delegation_tests {
             .is_none()
         );
     }
+
+    #[test]
+    fn attribution_must_be_trailing_plain_markdown() {
+        for body in [
+            format!("restart\n```\n{LINE}\n```"),
+            format!("restart\n~~~\n{LINE}\n~~~"),
+            format!("restart\n\n```\n{LINE}"),
+            format!("restart\n\n~~~\n{LINE}"),
+            format!("restart\n\n    {LINE}"),
+            format!("restart\n\n\t{LINE}"),
+            format!("restart\n\n> {LINE}"),
+            format!("restart\n\n> quoted attribution\n{LINE}"),
+            format!("restart\n\n<!--\n{LINE}\n-->"),
+            format!("restart\n\n<!--\n{LINE}"),
+            format!("restart\n\n<div>\n{LINE}\n</div>"),
+            format!("restart\n\n{LINE}\nmore text"),
+        ] {
+            assert!(
+                delegated_comment(42, 42, &body, &[LINE.into()]).is_none(),
+                "Markdown content must not grant delegation: {body}"
+            );
+        }
+        for body in [
+            format!("restart\n{LINE}"),
+            format!("restart\n\n{LINE}\n\n"),
+            format!("restart\n\n> a quote\n\n{LINE}"),
+            format!("restart\n\n```\nexample\n```\n\n{LINE}"),
+        ] {
+            assert!(delegated_comment(42, 42, &body, &[LINE.into()]).is_some());
+        }
+    }
 }
