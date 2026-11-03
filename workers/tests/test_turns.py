@@ -45,7 +45,7 @@ class Scripted(FakeMessagesListChatModel):
     offered: bool = False
 
     def bind_tools(self, tools, **kwargs):
-        self.offered = bool(tools)
+        self.offered = bool(tools) and kwargs.get("tool_choice") != "none"
         return self
 
     def _generate(self, messages, **kwargs):
@@ -202,7 +202,7 @@ def test_invalid_reply_gets_one_tool_free_repair_turn(role, request, tmp_path, m
     # A code-owned budget notice may follow the repair instruction.
     instruction = instructions(repair)[-1]
     assert message in instruction.text
-    assert not offered, "the repair turn offers no tools"
+    assert not offered, "the repair turn disables tool calls"
     if tool:
         assert model.calls[0][1], "earlier turns keep their tools"
     assert len(tool_results(repair)) == (1 if tool else 0), "earlier tool calls are not repeated"

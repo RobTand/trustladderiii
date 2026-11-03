@@ -786,3 +786,17 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_stable_tools",
+    srcs = ["test_stable_tools.py"],
+    deps = [
+        ":conftest",
+        ":test_prompt_cache",
+        "//workers/src",
+        "@tl3_pip//httpx",
+        "@tl3_pip//langchain",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)

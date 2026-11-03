@@ -105,7 +105,8 @@ class ConsistencyModel(FakeMessagesListChatModel):
     turns: int = 0
 
     def bind_tools(self, tools, **kwargs):
-        self.offered = bool(tools)
+        # #647: repair turns keep the definitions and disable calling with tool_choice "none".
+        self.offered = bool(tools) and kwargs.get("tool_choice") != "none"
         return self
 
     def _generate(self, messages, **kwargs):

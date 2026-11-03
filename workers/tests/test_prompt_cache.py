@@ -202,7 +202,7 @@ def test_maker_budget_notices_preserve_the_proxy_system_prefix(maker_request, tm
     def respond(request):
         body = json.loads(request.content)
         sent.append(body["messages"])
-        offered.append(bool(body.get('tools')))
+        offered.append(bool(body.get('tools')) and body.get('tool_choice') != 'none')
         if len(sent) <= 2:
             return response_frames("", tool_calls=[{
                 "index": 0, "id": f"read-{len(sent)}", "type": "function",

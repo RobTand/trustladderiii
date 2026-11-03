@@ -5,7 +5,7 @@ from contextlib import contextmanager
 import httpx
 from jsonschema import ValidationError
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 import openai
 
 
@@ -72,7 +72,7 @@ class TurnControl(AgentMiddleware):
 
     def wrap_model_call(self, request, handler):
         if self.repairing:
-            request = request.override(tools=[], tool_choice=None)
+            request = request.override(tool_choice="none")
         try:
             response = handler(request)
         except DROPPED:
@@ -90,6 +90,12 @@ class TurnControl(AgentMiddleware):
                 if isinstance(message, AIMessage) else message
                 for message in response.result]
         return response
+
+    def wrap_tool_call(self, request, handler):
+        if self.repairing:
+            return ToolMessage(content="Tools are unavailable for this turn.",
+                               tool_call_id=request.tool_call["id"], status="error")
+        return handler(request)
 
 
 def repaired(control, history, ask, check):
