@@ -29,7 +29,7 @@ import json
 import os
 import sys
 if sys.argv[1:] == ["--machine-record-capability"]:
-    print(json.dumps({"schema": "prismabuild.machine_record_capability.v1", "machine_record_fd": 1}))
+    print(json.dumps(dict(schema="prismabuild.machine_record_capability.v1", machine_record_fd=1)))
     raise SystemExit(0)
 if "--machine-record-fd" in sys.argv:
     index = sys.argv.index("--machine-record-fd")
