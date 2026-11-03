@@ -72,13 +72,16 @@ class Summary:
         # Every test's outcome, including entries the size bound drops; repeats aggregate these.
         self.outcomes = {}
 
-    def add(self, test, outcome, message="", truncated=False, target_hits=None, forcing_refusal=None):
+    def add(self, test, outcome, message="", truncated=False, target_hits=None, forcing_refusal=None,
+            forcing_tampered=False):
         self.result["totals"][outcome] += 1
         item = {"test": test, "outcome": outcome, "message": message[:MESSAGE_CHARS]}
         if target_hits is not None:
             item["target_hits"] = target_hits
         if forcing_refusal is not None:
             item["forcing_refusal"] = forcing_refusal
+        if forcing_tampered:
+            item['forcing_tampered'] = True
         self.outcomes[test] = item
         clipped = truncated or len(message) > MESSAGE_CHARS
         self.result["tests"].append(item)
@@ -138,6 +141,12 @@ def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=No
                                     or forcing is None or refusal['target'] not in {p[0] for p in forcing.patches}
                                     or any(not isinstance(value, str) or len(value) > 4096 for value in refusal.values())):
                                 raise ValueError('invalid forcing refusal')
+                        tampered = record.get('forcing_tampered', False)
+                        if 'forcing_tampered' in record:
+                            expected.add('forcing_tampered')
+                            if (tampered is not True or forcing is None or record['outcome'] != 'error'
+                                    or hits != {} or not record['message'].startswith('forcing_tampered:')):
+                                raise ValueError('invalid forcing tamper report')
                         if (set(record) != expected
                                 or not isinstance(record["test"], str) or record["test"] in seen
                                 or record["outcome"] not in OUTCOMES
@@ -145,7 +154,8 @@ def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=No
                                 or type(record["truncated"]) is not bool):
                             raise ValueError("invalid test result")
                         seen.add(record["test"])
-                        summary.add(record["test"], record["outcome"], record["message"], record["truncated"], hits, refusal)
+                        summary.add(record["test"], record["outcome"], record["message"], record["truncated"], hits, refusal,
+                                    tampered)
                         progress.commit(record["test"])
                     elif record.get("event") == "collection-error":
                         collection_error = True
