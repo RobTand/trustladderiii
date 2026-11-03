@@ -144,7 +144,7 @@
     },
     {
       "type": "object",
-      "description": "Only when no change within the declared files and your own tools can meet a goal, or the plan is defective. Not for unfinished steps your own tools can do.",
+      "description": "Only when a maker-owned goal cannot be met within the declared files and tools, the plan is defective, or evidence preflight names a truly unsupported requirement. Ordinary controller-owned checks and PR publication are pending downstream work. Not for unfinished steps your own tools can do.",
       "properties": {
         "kind": {
           "const": "cant_meet"
