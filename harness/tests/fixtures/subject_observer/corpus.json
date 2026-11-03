@@ -1,0 +1,183 @@
+[
+  {
+    "request": 178,
+    "trace": "tr-0f0469e0a2138b744520476a39763ac5",
+    "trace_sha256": "b853873a04b6ad978057c3759fe4d1e3379558ab6602561650d96a517f1d81a2",
+    "cause": "helper_evidence_cannot_express_callable_setup_preconditions",
+    "base_sha": null,
+    "source_obligations": []
+  },
+  {
+    "request": 195,
+    "trace": "tr-0b98dbfd2b5d703b55b3b4eb5534ee27",
+    "trace_sha256": "30492be92428c77e1cd91a15c4f9d14652943b12ed368cf1c27466084700426a",
+    "cause": "helper_setup_preconditions_unrepresentable_in_rollback_contract",
+    "base_sha": "a5f0e996db267a2460cf7de2db9295b3d71a746d",
+    "source_obligations": []
+  },
+  {
+    "request": 202,
+    "trace": "tr-68436d6fd277b78fc64221f8d980fa22",
+    "trace_sha256": "1a62bbb5071d0ddf47b5e412a17c2da830d82c9cfd63cc45c4b3cdbf100223bf",
+    "cause": "helper_setup_requires_fixture_injection_or_class_world",
+    "base_sha": "a5f0e996db267a2460cf7de2db9295b3d71a746d",
+    "source_obligations": []
+  },
+  {
+    "request": 206,
+    "trace": "tr-27f7f232f14e88b2fcbd9f3af6d76fc3",
+    "trace_sha256": "8acb033632aae6c7b64ee540f044f06238961790df2400c9a382c3bc06d534c8",
+    "cause": "fixture_injection_cannot_compose_claimed_row_setup",
+    "base_sha": "a5f0e996db267a2460cf7de2db9295b3d71a746d",
+    "source_obligations": []
+  },
+  {
+    "request": 216,
+    "trace": "tr-664bb3b59e1cb6c3eca69040ba83847b",
+    "trace_sha256": "32cd5a540095c0f6629fbff3eb35b82004e6997772491f05b5de18fcb698baab",
+    "cause": "required_multifile_test_helper_proof_exceeds_observer_and_staging_structure",
+    "base_sha": "071094caa54922143398eb0397acb61bf3fed9f9",
+    "source_obligations": []
+  },
+  {
+    "request": 225,
+    "trace": "tr-50cd0342ceb5ed11bba50d22c801cf84",
+    "trace_sha256": "8b7c36b4806a65b7464032f2117bddc93215c82a0350b5851901102354752491",
+    "cause": "negated_generated_output_freeze_false_positive_and_missing_safe_ingest_reply_repair",
+    "base_sha": null,
+    "source_obligations": []
+  },
+  {
+    "request": 229,
+    "trace": "tr-e671a718aa87dcfe671c204002df148c",
+    "trace_sha256": "68c17adc41827984d77a4fef2104a3bf1bf6bc56d7388e5d17c41b0daa33af00",
+    "cause": "tmpfs_only_scratch_incompatible_with_untouched_base_local_disk_guard",
+    "base_sha": "071094caa54922143398eb0397acb61bf3fed9f9",
+    "source_obligations": []
+  },
+  {
+    "request": 230,
+    "trace": "tr-bf18c3a1cc3235f28c87b3dec816e635",
+    "trace_sha256": "9a586392c00df5fbdbac38937c98c14b2826cf152cd45b6f60e3b745c51ed16b",
+    "base_sha": null,
+    "source_obligations": []
+  },
+  {
+    "request": 233,
+    "trace": "tr-df2fefe55dece59301d72ade80667420",
+    "trace_sha256": "45a5cf3888b332eca83e58c923921f01c238d06e8b689d081efc0afee43c1dd0",
+    "base_sha": "be46386566d662fb72b6ba57a6116216a396b4a7",
+    "source_obligations": [
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [
+          "red_green"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Run `tests/test_checkout_recovery_1465.py` through run_tests at base (red) and at head (green). Read each run's own verdict and log; record skips or missing tools.",
+          "source": "issue.body"
+        },
+        "requirement": "Run tests/test_checkout_recovery_1465.py through run_tests at base (red) and at head (green): the new or changed test fails on base and passes on head. Read each run's verdict and log, and record skips or missing tools.",
+        "runner_features": [
+          "base_head"
+        ],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [
+          "base_head"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "run_tests on the same file with repeat=10 and parallel=4, twice at base and twice at head, through TL3's normal PrismaBuild admission.",
+          "source": "issue.body"
+        },
+        "requirement": "Contention evidence: run_tests on tests/test_checkout_recovery_1465.py with repeat=10 and parallel=4, twice at base and twice at head, through normal PrismaBuild admission.",
+        "runner_features": [
+          "base_head",
+          "repeat",
+          "parallel"
+        ],
+        "tool": "run_tests"
+      }
+    ]
+  },
+  {
+    "request": 234,
+    "trace": "tr-fd935d6b3b5716a7202f1927fdda3b70",
+    "trace_sha256": "65724d0906dd1f5481f7588907244ff5148f5684d7c34d33f7a7870f13450db2",
+    "cause": "mandatory_stable_test_edit_has_no_supported_base_red_under_test_only_scope",
+    "base_sha": "635bbe6460a4f6fb31e47da0df8c970e986f9e77",
+    "source_obligations": [
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [
+          "base_head",
+          "red_green"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Test-first evidence: the new or changed test fails on base and passes on head via run_tests (TL3 records both); separate RED/GREEN commits are not required. Run only `tests/test_the_claim_pass_times_its_transition_holds.py`.",
+          "source": "issue.body"
+        },
+        "requirement": "The new or changed exception-path test in tests/test_the_claim_pass_times_its_transition_holds.py must fail on base and pass on head via run_tests, with TL3 recording both runs. Run only that test file.",
+        "runner_features": [
+          "base_head"
+        ],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [
+          "base_head"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Contention evidence: run_tests on the focused tests with repeat=10 and parallel=4, run twice at base and twice at head, through TL3's normal PrismaBuild admission. No pinned CPU, no CPU-limited reservation, no external wrapper.",
+          "source": "issue.body"
+        },
+        "requirement": "Contention evidence: run_tests on the focused tests with repeat=10 and parallel=4, run twice at base and twice at head, through TL3's normal PrismaBuild admission. No pinned CPU, no CPU-limited reservation, no external wrapper.",
+        "runner_features": [
+          "base_head",
+          "repeat",
+          "parallel"
+        ],
+        "tool": "run_tests"
+      }
+    ]
+  }
+]

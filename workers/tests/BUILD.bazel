@@ -425,3 +425,12 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_subject_observer_contract",
+    srcs = ["test_subject_observer_contract.py"],
+    deps = [
+        ":conftest",
+        "//workers/src",
+    ],
+)
