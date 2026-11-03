@@ -309,3 +309,33 @@ def test_request204_regression_selector_must_exist_on_selected_base(rehearsal, h
     assert any(node in message and 'base' in message and 'demonstrating' in message
                for message in reply['violations']), reply
     assert calls == [], 'an inapplicable selector must be refused before any admitted action'
+
+
+@pytest.mark.parametrize('kind', ['demonstrating', 'regression'])
+def test_review696_module_selector_reaches_exact_node_violation_before_applicability(request233, monkeypatch, kind):
+    from tl3_workers.contracts import validate
+    from tl3_workers.roles.planner import check_reply, Forecaster
+    from worker_process import git
+
+    _, root, inputs, calls, subject_path = request233
+    selector = 'workers/tests/test_subject_observer_contract.py'
+    module = root / selector
+    module.parent.mkdir(parents=True)
+    module.write_text('def test_observer(): pass\n')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'module-only selector reproduction')
+    inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(Forecaster, 'measure', lambda *args: {'fits': True})
+    reply = {'kind': 'leaf', 'estimated_exploration_turns': 0,
+             'files': [subject_path, selector], 'edits_tests': [],
+             'no_design_questions': True, 'lands_on_its_own': True,
+             'checks': [{'kind': kind, 'node_ids': [selector], 'goal_ids': [0],
+                         'proof': {'subjects': [subject_path + '::_git'], 'observer_support': [],
+                                   'red_message': 'automatic maintenance remains enabled'}},
+                        {'kind': 'regression', 'node_ids': [subject_path + '::test_wrong_head'], 'goal_ids': [1]}]}
+    validate('planner-reply', reply)
+    check_reply(inputs, reply)
+    assert len(reply['violations']) == 1, reply
+    assert reply['violations'][0].startswith('Checks must name exact pytest node IDs')
+    assert calls == []
