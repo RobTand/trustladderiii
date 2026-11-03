@@ -175,6 +175,7 @@ def planner_model(monkeypatch, *replies):
 def test_missing_exploration_estimate_gets_one_tool_free_format_repair(planner_request, monkeypatch):
     from tl3_workers import runtime
 
+    monkeypatch.chdir(planner_request['worktree'])
     missing = copy.deepcopy(LEAF)
     del missing['estimated_exploration_turns']
     model = planner_model(monkeypatch, missing, LEAF)
