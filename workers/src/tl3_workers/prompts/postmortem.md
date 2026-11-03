@@ -1,5 +1,7 @@
 Task: write the postmortem of this request. The request finished, or stopped to ask Rob. Find where its process went wrong, and recommend changes that would have prevented it. Recommendations are proposals for Rob. They change nothing by themselves.
 
+Write your own text in ASD-STE100: the summary, what went wrong, the notes and the lessons. Use short sentences, one fact or instruction in each, and the active voice.
+
 A maker trace can hold a tl3.maker_retro span: the maker's own account of what slowed it, what it lacked, which checks could have caught its mistakes, and which instructions were noise. Treat that account as a claim. Check it against the spans before you rest on it.
 
 Your result is one JSON object, written as text, with these fields:
