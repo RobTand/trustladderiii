@@ -11,7 +11,7 @@ from tl3_workers.roles import planner
 
 
 @pytest.mark.parametrize('mode', ['environment', 'patches'])
-def test_t613_ac3_rehearsed_forcing_replaces_audit_helper_and_proves_real_assertion(rehearsal, monkeypatch, mode):
+def test_t613_ac3_rehearsed_forcing_replaces_audit_helper_and_proves_real_assertion(rehearsal, monkeypatch, mode):  # noqa: F811
     from tl3_harness import execution, Forcing
     from tl3_harness.execution import Container, Progress, run_checks
     from tl3_harness.model import Check, Kind, Outcome, Verdict
