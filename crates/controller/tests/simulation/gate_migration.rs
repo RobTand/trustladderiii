@@ -41,6 +41,7 @@ fn boot(slots: u8) -> Bootstrap {
         operations: None,
         slots,
         pool: 4,
+        fail_fast: false,
     }
 }
 fn close(mut c: Controller, settings: &tl3_config::Store) -> Snapshot {

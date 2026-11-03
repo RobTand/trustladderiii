@@ -44,7 +44,7 @@ if mode == "manifest":
         sys.exit("unknown proof name")
     rows = []
     for name in selected:
-        if name in {"gate_leaf_progress_w2", "gate_leaf_progress_w3"}:
+        if name.startswith("gate_leaf_progress_"):
             # Four arbitrary nodes; Q39's priority field took them past 10 GB.
             # Measured at 99aec9a8: 13.3 GB peak, about 35 minutes each.
             memory = 16
@@ -56,7 +56,7 @@ if mode == "manifest":
             memory = 44
         elif name.startswith("progress_from_"):
             memory = 24
-        elif name in replies:
+        elif name in replies or name.startswith("fail_fast_"):
             memory = 44
         else:
             memory = 10

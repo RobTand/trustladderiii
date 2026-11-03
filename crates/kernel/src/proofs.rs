@@ -66,6 +66,7 @@ fn any_world(phase: Option<Phase>) -> World {
         next_ticket: kani::any(),
         next_question: kani::any(),
         file_sets: Vec::new(),
+        fail_fast: kani::any(),
     };
     kani::assume(world.pool_capacity <= 2);
     kani::assume(world.gates[0].w <= 3 && world.gates[1].w <= 3);
@@ -104,6 +105,7 @@ fn require_consistent(w: &World) {
         Err(Broken::Merge) => panic!("broken: merge"),
         Err(Broken::Closed) => panic!("broken: closed"),
         Err(Broken::Gate) => panic!("broken: gate"),
+        Err(Broken::ReviewStop) => panic!("broken: review stop"),
     }
 }
 
@@ -252,6 +254,8 @@ fn check_apply(event: Event) -> World {
         _ => None,
     };
     check_outputs(&before, &after, &out, exempt);
+    check_fail_fast(&before, &after, event);
+    check_fail_fast_funding(&before, &after, event);
     if let Event::Reply {
         generation,
         reply: Reply::ReviewerOutOfRoom,
@@ -267,7 +271,11 @@ fn check_apply(event: Event) -> World {
             assert_eq!(n.run_failures, 0);
             assert_eq!(n.attempt, b.attempt);
             assert_eq!(n.round, b.round);
-            if b.review_restarted {
+            if b.review_restarted && before.fail_fast {
+                assert_eq!(n.phase, Phase::Stopping(Outcome::Stopped));
+                assert_eq!(n.review_stop, Some(ReviewStop::ReviewerOutOfRoom));
+                assert_eq!(n.credit, b.credit);
+            } else if b.review_restarted {
                 assert!(!n.holds);
                 if b.credit.can_spend(1) {
                     assert_eq!(n.phase, Phase::Planning { must_split: true });
@@ -343,6 +351,163 @@ fn check_apply(event: Event) -> World {
         }
     }
     before
+}
+
+/// Q54: under `fail_fast` no transition retries the work: none raises
+/// `attempt` past the first leaf plan's 1, re-plans, or enters Planning other
+/// than through Rob's answer, and the planner never re-runs on `cant_meet`.
+/// A stop for TL3 review spends nothing and asks nothing. Without the flag,
+/// nothing stops for TL3 review.
+fn check_fail_fast(before: &World, after: &World, event: Event) {
+    let mut i = 0;
+    while i < before.nodes.len() {
+        let b = &before.nodes[i];
+        let n = &after.nodes[i];
+        let stopped = n.review_stop != b.review_stop;
+        if !before.fail_fast {
+            assert!(!stopped, "only fail_fast stops for TL3 review");
+        } else {
+            assert!(
+                n.attempt <= b.attempt.max(1),
+                "fail_fast starts no new attempt"
+            );
+            assert!(b.replanned || !n.replanned, "fail_fast never re-plans");
+            if matches!(n.phase, Phase::Planning { .. }) {
+                assert!(matches!(
+                    b.phase,
+                    Phase::Planning { .. } | Phase::AwaitingRob
+                ));
+            }
+            // A work failure never asks Rob whether to go on. Only the kernel's
+            // rule-break path, which the planner worker can't reach, still does.
+            // Rob's unclear answer re-asks his open question under a new id; that
+            // clarification is the same question, not a new one.
+            let clarifies = |p: Question, q: Question| {
+                b.phase == Phase::AwaitingRob
+                    && p.kind == q.kind
+                    && p.cont == q.cont
+                    && p.cost == q.cost
+                    && !p.clarified
+                    && q.clarified
+            };
+            let asked = n.question.is_some_and(|q| {
+                q.kind == QKind::CantMeet
+                    && b.question
+                        .map_or(true, |p| p.id != q.id && !clarifies(p, q))
+            });
+            if asked {
+                assert!(
+                    matches!(
+                        event,
+                        Event::Reply {
+                            reply: Reply::PlanLeaf { .. },
+                            ..
+                        }
+                    ),
+                    "fail_fast asks can't-meet only after a broken rule"
+                );
+            }
+            if stopped {
+                assert!(b.review_stop.is_none());
+                assert_eq!(n.phase, Phase::Stopping(Outcome::Stopped));
+                assert_eq!(n.credit, b.credit);
+                assert!(n.question.is_none());
+            }
+        }
+        i += 1;
+    }
+    if let Event::Reply {
+        generation,
+        reply: Reply::PlanCantMeet,
+        ..
+    } = event
+    {
+        let b = &before.nodes[0];
+        let n = &after.nodes[0];
+        if before.fail_fast
+            && matches!(b.phase, Phase::Planning { .. })
+            && b.current() == Some(Item::Await)
+            && b.run == Some(generation)
+        {
+            assert_eq!(n.phase, Phase::Stopping(Outcome::Stopped));
+            assert_eq!(n.review_stop, Some(ReviewStop::PlanCantMeet));
+        }
+    }
+}
+
+/// fail_fast stops retries, not credit decisions: a footprint extension that
+/// fits but has no credit asks Rob for credit (#482).
+fn check_fail_fast_funding(before: &World, after: &World, event: Event) {
+    if let Event::Reply {
+        generation,
+        reply: Reply::MakerNeedsFiles { files, fits },
+        ..
+    } = event
+    {
+        let b = &before.nodes[0];
+        let n = &after.nodes[0];
+        if before.fail_fast
+            && b.phase == Phase::Making
+            && b.current() == Some(Item::Await)
+            && b.run == Some(generation)
+            && before.has_footprint(files)
+            && fits
+            && !files.is_empty()
+            && !b.credit.can_spend(1)
+        {
+            assert_eq!(n.phase, Phase::AwaitingRob);
+            assert!(n.question.is_some_and(
+                |q| q.kind == QKind::OutOfCredit && q.cont == Cont::Ready(Resume::Making)
+            ));
+            assert!(n.review_stop.is_none());
+        }
+    }
+}
+
+/// Q54: the flag changes only a step that would retry the work, and that step
+/// stops for TL3 review instead. So with the flag off, the event does exactly
+/// what it did before the flag existed. The phase is the one that accepts the
+/// event; elsewhere the event never reaches a step that reads the flag.
+fn check_fail_fast_diverts(phase: Phase, event: Event) {
+    let mut off = any_settled_world(Some(phase));
+    off.fail_fast = false;
+    let mut on = off.clone();
+    on.fail_fast = true;
+    let b = off.nodes[0];
+    let mut out_off = Outbox::new();
+    apply(&mut off, event, &mut out_off);
+    let mut out_on = Outbox::new();
+    apply(&mut on, event, &mut out_on);
+    on.fail_fast = false;
+    let diverted = on != off;
+    kani::cover!(diverted, "fail_fast stops a retry for TL3 review");
+    kani::cover!(!diverted, "with the flag on, the event does what it did");
+    if diverted {
+        let n = &on.nodes[0];
+        let r = &off.nodes[0];
+        assert_eq!(on.nodes[1], off.nodes[1]);
+        assert_eq!(n.credit, b.credit);
+        let funding = n
+            .question
+            .is_some_and(|q| q.kind == QKind::OutOfCredit && q.cont == Cont::Ready(Resume::Making));
+        if funding {
+            // An unfunded extension that fits waits for credit instead of a split.
+            assert!(
+                r.question.is_some_and(|q| q.kind == QKind::OutOfCredit
+                    && q.cont == Cont::Planning { must_split: true })
+            );
+            assert!(n.review_stop.is_none());
+        } else {
+            assert_eq!(n.phase, Phase::Stopping(Outcome::Stopped));
+            assert!(n.review_stop.is_some());
+            assert!(out_on.is_empty());
+        }
+        let retried = r.attempt > b.attempt
+            || matches!(r.phase, Phase::Planning { .. })
+            || r.question
+                .is_some_and(|q| matches!(q.kind, QKind::CantMeet | QKind::OutOfCredit));
+        assert!(retried, "fail_fast diverts only a retry");
+    }
 }
 
 /// One internal transition of request 0 keeps the world consistent, changes
@@ -1273,7 +1438,19 @@ fn check_publishing_ci_tests() {
     assert_eq!(n.credit, queued.nodes[0].credit);
     assert_eq!(n.round, queued.nodes[0].round);
     assert_eq!(n.attempt, queued.nodes[0].attempt);
-    assert!(n.round != b.round || n.credit.spent > b.credit.spent || n.question.is_some());
+    assert!(
+        n.round != b.round
+            || n.credit.spent > b.credit.spent
+            || n.question.is_some()
+            || n.review_stop.is_some()
+    );
+    kani::cover!(
+        before.fail_fast
+            && b.round == 1
+            && b.review_stop.is_none()
+            && n.review_stop == Some(ReviewStop::CiFailed),
+        "fail_fast stops for TL3 review"
+    );
     kani::cover!(b.round == 0 && n.round == 1, "a free fix round");
     kani::cover!(
         b.round == 1 && n.credit.spent > b.credit.spent,
@@ -1286,6 +1463,65 @@ fn check_publishing_ci_tests() {
     kani::cover!(b.effect.is_some(), "an enqueue is cancelled");
 }
 proof!(apply_publishing_ci_tests, check_publishing_ci_tests());
+
+// Q54: one proof per event that can reach a retry, in the phase that accepts it.
+proof!(
+    fail_fast_plan_cant_meet,
+    check_fail_fast_diverts(
+        Phase::Planning {
+            must_split: kani::any()
+        },
+        reply(Reply::PlanCantMeet)
+    )
+);
+proof!(
+    fail_fast_maker_needs_files,
+    check_fail_fast_diverts(
+        Phase::Making,
+        reply(Reply::MakerNeedsFiles {
+            files: kani::any(),
+            fits: kani::any()
+        })
+    )
+);
+proof!(
+    fail_fast_maker_cant_meet,
+    check_fail_fast_diverts(Phase::Making, reply(Reply::MakerCantMeet))
+);
+proof!(
+    fail_fast_maker_out_of_room,
+    check_fail_fast_diverts(Phase::Making, reply(Reply::MakerOutOfRoom))
+);
+proof!(
+    fail_fast_checks_done,
+    check_fail_fast_diverts(
+        Phase::Checking,
+        reply(Reply::ChecksDone {
+            report: kani::any(),
+            pass: kani::any(),
+            in_footprint: kani::any()
+        })
+    )
+);
+proof!(
+    fail_fast_changes_requested,
+    check_fail_fast_diverts(Phase::Reviewing, reply(Reply::ChangesRequested))
+);
+proof!(
+    fail_fast_reviewer_out_of_room,
+    check_fail_fast_diverts(Phase::Reviewing, reply(Reply::ReviewerOutOfRoom))
+);
+proof!(
+    fail_fast_ci_failed_queued,
+    check_fail_fast_diverts(Phase::Queued, fact(Fact::CiFailed { infra: kani::any() }))
+);
+proof!(
+    fail_fast_ci_failed_publishing,
+    check_fail_fast_diverts(
+        Phase::Publishing,
+        fact(Fact::CiFailed { infra: kani::any() })
+    )
+);
 
 fn check_publishing_ci_infrastructure() {
     let (before, after) = publishing_ci_transition(true);

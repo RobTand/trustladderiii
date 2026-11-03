@@ -940,62 +940,107 @@ pub(super) fn repository_images(database: &mut Database) {
     println!("test maker_repository_image_override_and_global_fallback ... ok");
 }
 
-pub(super) fn run(database: &mut Database) {
-    repository_images(database);
-    adopted_fix_without_session(&database.create("adopted_first_fix"));
-    println!("test adopted_first_fix_runs_real_maker_without_session ... ok");
-    real::reproducing_fix(&database.create("maker_reproducing_fix"), false);
-    real::reproducing_fix(&database.create("maker_reproducing_rebase"), true);
-    println!("test review_fix_maps_findings_to_checks_and_carries_reasons_to_review ... ok");
-    declared_wait(&database.create("maker_declared_wait"));
-    println!("test maker_declared_wait_survives_recovery_and_runfailed_retry ... ok");
-    real::review_feedback(&database.create("maker_review_feedback"));
-    println!("test reviewer_blockers_reach_real_maker ... ok");
-    legacy_session(&database.create("maker_legacy_session"));
-    println!("test maker_legacy_session_fails_closed ... ok");
-    real::outside_paths_bounded(&database.create("maker_outside_bounds"));
-    println!("test maker_outside_paths_bounded ... ok");
-    real::recorded_failure_feedback(&database.create("maker_recorded_failure"));
-    println!("test maker_recorded_pytest_message_reaches_fix_round ... ok");
-    real::acceptance(&database.create("maker_real_worktrees"));
-    println!("test maker_real_worktrees_and_recorded_harness ... ok");
-    real::survives_controller_restart(&database.create("maker_controller_restart"));
-    println!("test maker_run_survives_controller_restart ... ok");
-    for new_edits in [false, true] {
-        real::rebase_revisit(
-            &database.create(&format!("maker_rebase_{new_edits}")),
-            new_edits,
-        );
-        println!("test maker_rebase_revisit_new_edits_{new_edits} ... ok");
-    }
-    restart_after_replan(&database.create("maker_replan_restart"));
-    println!("test maker_restart_at_attempt_one_after_replan_starts_fresh ... ok");
-    process_contract(&database.create("maker_process"));
-    println!("test maker_recovery_invalid_output_and_stop ... ok");
-    for (mode, fail) in [
-        ("normal", false),
-        ("killed-after-commit", false),
-        ("session-save-fails", false),
-        ("twice-killed", false),
-        ("fix-killed", false),
-        ("self-check-mismatch", false),
-        ("normal", true),
-        ("outside", false),
-        ("cant-meet", false),
-        ("unmet", false),
-        ("out-of-room", false),
-        ("needs-files", false),
-        ("ci-failure", false),
-        ("ci-fact", false),
+pub(super) fn run(database: &mut Database, shard: &mut super::scenario_shard::Shard) {
+    use super::scenario_shard::WorkerGroup;
+
+    shard.run(WorkerGroup::MakerRepositoryImages, || {
+        repository_images(database)
+    });
+    shard.run(WorkerGroup::MakerAdoptedFix, || {
+        adopted_fix_without_session(&database.create("adopted_first_fix"));
+        println!("test adopted_first_fix_runs_real_maker_without_session ... ok");
+    });
+    shard.run(WorkerGroup::MakerReproducingFix, || {
+        real::reproducing_fix(&database.create("maker_reproducing_fix"), false);
+        real::reproducing_fix(&database.create("maker_reproducing_rebase"), true);
+        println!("test review_fix_maps_findings_to_checks_and_carries_reasons_to_review ... ok");
+    });
+    shard.run(WorkerGroup::MakerDeclaredWait, || {
+        declared_wait(&database.create("maker_declared_wait"));
+        println!("test maker_declared_wait_survives_recovery_and_runfailed_retry ... ok");
+    });
+    shard.run(WorkerGroup::MakerReviewFeedback, || {
+        real::review_feedback(&database.create("maker_review_feedback"));
+        println!("test reviewer_blockers_reach_real_maker ... ok");
+    });
+    shard.run(WorkerGroup::MakerLegacySession, || {
+        legacy_session(&database.create("maker_legacy_session"));
+        println!("test maker_legacy_session_fails_closed ... ok");
+    });
+    shard.run(WorkerGroup::MakerOutsidePaths, || {
+        real::outside_paths_bounded(&database.create("maker_outside_bounds"));
+        println!("test maker_outside_paths_bounded ... ok");
+    });
+    shard.run(WorkerGroup::MakerRecordedFailure, || {
+        real::recorded_failure_feedback(&database.create("maker_recorded_failure"));
+        println!("test maker_recorded_pytest_message_reaches_fix_round ... ok");
+    });
+    shard.run(WorkerGroup::MakerAcceptance, || {
+        real::acceptance(&database.create("maker_real_worktrees"));
+        println!("test maker_real_worktrees_and_recorded_harness ... ok");
+    });
+    shard.run(WorkerGroup::MakerControllerRestart, || {
+        real::survives_controller_restart(&database.create("maker_controller_restart"));
+        println!("test maker_run_survives_controller_restart ... ok");
+    });
+    for (new_edits, group) in [
+        (false, WorkerGroup::MakerRebaseUnchanged),
+        (true, WorkerGroup::MakerRebaseEdited),
     ] {
-        let name = format!("maker_{}_{}", mode.replace('-', "_"), fail);
-        // A daemon source lives until process exit; isolate it with its database.
-        let mut child = Command::new(env::current_exe().unwrap());
-        child.args(["--maker-failure", mode]);
-        if fail {
-            child.arg("--checks-fail");
-        }
-        assert!(child.status().unwrap().success(), "maker scenario {name}");
+        shard.run(group, || {
+            real::rebase_revisit(
+                &database.create(&format!("maker_rebase_{new_edits}")),
+                new_edits,
+            );
+            println!("test maker_rebase_revisit_new_edits_{new_edits} ... ok");
+        });
+    }
+    shard.run(WorkerGroup::MakerReplanRestart, || {
+        restart_after_replan(&database.create("maker_replan_restart"));
+        println!("test maker_restart_at_attempt_one_after_replan_starts_fresh ... ok");
+    });
+    shard.run(WorkerGroup::MakerProcess, || {
+        process_contract(&database.create("maker_process"));
+        println!("test maker_recovery_invalid_output_and_stop ... ok");
+    });
+    for (mode, fail, group) in [
+        ("normal", false, WorkerGroup::MakerNormal),
+        (
+            "killed-after-commit",
+            false,
+            WorkerGroup::MakerKilledAfterCommit,
+        ),
+        (
+            "session-save-fails",
+            false,
+            WorkerGroup::MakerSessionSaveFails,
+        ),
+        ("twice-killed", false, WorkerGroup::MakerTwiceKilled),
+        ("fix-killed", false, WorkerGroup::MakerFixKilled),
+        (
+            "self-check-mismatch",
+            false,
+            WorkerGroup::MakerSelfCheckMismatch,
+        ),
+        ("normal", true, WorkerGroup::MakerChecksFail),
+        ("outside", false, WorkerGroup::MakerOutside),
+        ("cant-meet", false, WorkerGroup::MakerCantMeet),
+        ("unmet", false, WorkerGroup::MakerUnmet),
+        ("out-of-room", false, WorkerGroup::MakerOutOfRoom),
+        ("needs-files", false, WorkerGroup::MakerNeedsFiles),
+        ("ci-failure", false, WorkerGroup::MakerCiFailure),
+        ("ci-fact", false, WorkerGroup::MakerCiFact),
+    ] {
+        shard.run(group, || {
+            let name = format!("maker_{}_{}", mode.replace('-', "_"), fail);
+            // A daemon source lives until process exit; isolate it with its database.
+            let mut child = Command::new(env::current_exe().unwrap());
+            child.args(["--maker-failure", mode]);
+            if fail {
+                child.arg("--checks-fail");
+            }
+            assert!(child.status().unwrap().success(), "maker scenario {name}");
+        });
     }
 }
 

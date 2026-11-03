@@ -24,21 +24,13 @@ _POSTGRES = ["crates/controller", "crates/store"]
 
 # Files that include_str! and build.rs read from outside the crate.
 _COMPILE_DATA = {
-    "crates/controller": [
-        "//crates/config:sources",
-        "//crates/github:sources",
-        "//crates/mergify:sources",
-        "//crates/store:sources",
-        "//harness:project_files",
-        "//workers:schemas",
-        "//workers/tests:fixtures",
-    ],
+    "crates/controller": ["//workers:schemas"],
     "crates/config": ["//deploy/dl380g10:models.toml"],
     "crates/github": ["//crates/mergify:sources"],
     "crates/mergify": ["//crates/github:sources"],
 }
 _BUILD_SCRIPT_DATA = {
-    "crates/controller": ["//harness:project_files", "//workers:runtime_files", "//workers:schemas", "//workers/tests:fixtures"],
+    "crates/controller": ["//workers:schemas", "//workers/src:prompts"],
 }
 _EXAMPLE_DATA = {
     "//deploy/dl380g10:helper.rs": ["//deploy/github-app:manifest.json"],
@@ -50,27 +42,95 @@ _RUNTIME = {}
 # rust_gate.py runs the controller's github binary as two timed groups.
 _GATE_GROUPS = {"tl3-controller/github": ["flow", "notices"]}
 
-# Controller tests start its binaries and the Python workers.
-_CONTROLLER_BINARIES = [":tl3", ":tl3d"]
-_CONTROLLER_RUNTIME = [
-    "//crates/prismabuild:sources",
-    "//deploy/sandbox:evidence",
-    "//harness:project_files",
-    "//tools/bazel:worker_python",
-    "//workers:runtime_files",
-    "//workers/tests:worker_process",
-    "//workers/tools:scripts",
-    "@o200k_base//file",
+# Inputs read by controller tests, rather than by the controller library.
+_CONTROLLER_TEST_DATA = [
+    "//crates/config:sources",
+    "//crates/github:sources",
+    "//crates/mergify:sources",
+    "//crates/store:sources",
 ]
+_CONTROLLER_TEST_COMPILE_DATA = {
+    "tests/writer_blocker.rs": ["//workers/tests:fixtures"],
+}
+# Only these scenarios execute tl3_workers. Its imports include tl3_harness.
+_CONTROLLER_WORKERS = [
+    "lib_test_tl3_controller",
+    "test_test_github-flow",
+    "test_test_publishing",
+    "test_test_workers",
+    "test_test_writer_references",
+]
+_CONTROLLER_BINARIES = {
+    "test_test_console_commands": [":tl3d"],
+    "test_test_github-flow": [":tl3d"],
+    # Both groups compile github.rs, including its env!("CARGO_BIN_EXE_tl3d").
+    "test_test_github-notices": [":tl3d"],
+    "test_test_simulation": [":tl3", ":tl3d"],
+}
+# These tests stage the trusted harness into a sealed check action, even when
+# the queue fixture supplies the result instead of executing that action.
+_CONTROLLER_RUNTIME = {
+    "lib_test_tl3_controller": [
+        "//harness:project_files",
+        "//workers/tests:worker_process",
+        "//workers/tools:scripts",
+        "//workers/src:prompts",
+        "//workers/tests:fixtures",
+    ],
+    "test_test_hindsight": ["//workers/src:role_files"],
+    "test_test_prismabuild": ["//harness/src/tl3_harness", "//crates/prismabuild:sources"],
+    "test_test_publishing": ["//harness/src/tl3_harness", "//crates/prismabuild:sources"],
+    "test_test_sandbox_gate": ["//deploy/sandbox:evidence"],
+    "test_test_workers": [
+        "//harness/src/tl3_harness",
+        "//crates/prismabuild:sources",
+        "//workers/tests:worker_process",
+        "//workers/tools:scripts",
+    ],
+}
+
+# Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
+# includes its own module tree; these are the cross-tree reads Cargo cannot see.
+_CONTROLLER_TEST_SOURCES = {
+    "tests/hindsight.rs": ["README.md"],
+    "tests/fail_fast.rs": ["tests/support/**"],
+    "tests/fixture_contracts.rs": ["tests/support/**"],
+    "tests/mergify.rs": ["tests/support/**", "tests/fixtures/mergify/**"],
+    "tests/core_defects.rs": ["tests/worktree_fixture/**"],
+    "tests/crash_safety.rs": ["tests/crash/**"],
+    "tests/github.rs": ["tests/support/**", "tests/fixtures/steering/**", "tests/worker_model.py", "tests/worker_replies.py", "tests/worker_transport.py"],
+    "tests/looks.rs": ["tests/fixtures/bell/**", "tests/fixtures/waits/**", "tests/worktree_fixture/**"],
+    "tests/prismabuild.rs": ["tests/support/**", "tests/fixtures/bell/**", "tests/fixtures/pb.py", "tests/prismabuild_fixture/**"],
+    "tests/publishing.rs": ["tests/support/**", "tests/fixtures/pb.py", "tests/prismabuild_fixture/**", "tests/worktree_fixture/**"],
+    "tests/reproducing_rebase.rs": ["tests/worktree_fixture/**"],
+    "tests/scope.rs": ["tests/support/**", "tests/worktree_fixture/**"],
+    "tests/simulation.rs": ["tests/worktree_fixture/**"],
+    "tests/workers.rs": [
+        "tests/support/**",
+        "tests/fixtures/pb.py",
+        "tests/fixtures/waits/**",
+        "tests/fixtures/narrowing/**",
+        "tests/maker/**",
+        "tests/prismabuild_fixture/**",
+        "tests/worker_model.py",
+        "tests/worker_replies.py",
+        "tests/worker_transport.py",
+    ],
+    "tests/worktrees.rs": ["tests/worktree_fixture/**"],
+    "tests/writer_references.rs": ["tests/writer_reference_model.py"],
+}
 
 def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     package = native.package_name()
     controller = package == "crates/controller"
-    binaries = _CONTROLLER_BINARIES if controller else []
+    binaries = _CONTROLLER_BINARIES.get(name, []) if controller else []
+    workers = controller and name in _CONTROLLER_WORKERS
     env = {"CARGO_MANIFEST_DIR": WORKSPACE + "/" + package}
     for binary in binaries:
         env["CARGO_BIN_EXE_" + binary[1:]] = WORKSPACE + "/$(rootpath " + binary + ")"
-    runtime = _CONTROLLER_RUNTIME if controller else _RUNTIME.get(package, [])
+    runtime = _CONTROLLER_RUNTIME.get(name, []) if controller else _RUNTIME.get(package, [])
+    if workers:
+        runtime = runtime + ["//tools/bazel:worker_python", "@o200k_base//file"]
     postgres = select({
         "@platforms//cpu:aarch64": ["@postgres_linux_arm64//:all"],
         "//conditions:default": ["@postgres_linux_amd64//:all"],
@@ -94,7 +154,7 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
             "$(rootpath :%s_binary)" % name,
             binary_id,
             harness,
-            "$(rootpath //tools/bazel:worker_python)" if controller else "-",
+            "$(rootpath //tools/bazel:worker_python)" if workers else "-",
         ] + gate_args,
         data = depset(
             [":" + name + "_binary", "//tools/ci:rust-test-budget.json"] + binaries +
@@ -104,7 +164,8 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
         tags = ["rust"] + tags,
         exec_properties = exec_properties,
         size = "large",
-        # Keep #472 for workers until #483 shards it and CPU calibration empties wall_only.
+        shard_count = 8 if controller and name == "test_test_workers" else 0,
+        # Keep #472 while worker shards need CPU calibration and wall_only entries remain.
         timeout = "eternal" if binary_id == "tl3-controller/workers" else "long",
     )
 
@@ -125,6 +186,12 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
             allow_empty = True,
         ),
     )
+    if directory == "crates/controller":
+        native.filegroup(
+            name = "library_sources",
+            srcs = native.glob(["src/**/*", "tools/**/*"]),
+        )
+    library_sources = [":library_sources"] if directory == "crates/controller" else [":sources"]
     compile_data = _COMPILE_DATA.get(directory, [])
     script = []
     if build_script:
@@ -141,7 +208,7 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
         name = crate,
         crate_name = crate,
         crate_root = "src/lib.rs",
-        srcs = [":sources"],
+        srcs = library_sources,
         compile_data = compile_data,
         edition = "2024",
         crate_features = features,
@@ -153,7 +220,7 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
             name = name,
             crate_name = name.replace("-", "_"),
             crate_root = "src/bin/%s.rs" % name,
-            srcs = [":sources"],
+            srcs = library_sources,
             edition = "2024",
             crate_features = features,
             aliases = aliases(),
@@ -199,6 +266,20 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
 
 def _crate_test(kind, package, name, source, harness, options):
     binary = "%s/%s" % (package, name)
+    sources = [":sources", source]
+    compile_data = options["compile_data"]
+    if native.package_name() == "crates/controller":
+        sources = [":library_sources", source] + native.glob(
+            (["tests/loom/**", "tests/fixtures/narrowing/**", "tests/fixtures/worker-replies-d8e4f2a8.jsonl"] if kind == "lib" else
+             ([source.removesuffix(".rs") + "/**"] if not source.startswith("//") else [])) +
+            _CONTROLLER_TEST_SOURCES.get(source, []),
+            allow_empty = True,
+        )
+        native.filegroup(name = kind + "_sources_" + name, srcs = sources)
+        sources = [":" + kind + "_sources_" + name]
+        compile_data = compile_data + _CONTROLLER_TEST_DATA + _CONTROLLER_TEST_COMPILE_DATA.get(source, [])
+        if kind == "lib":
+            compile_data = compile_data + _CONTROLLER_RUNTIME.get("lib_test_" + name, [])
     for group in _GATE_GROUPS.get(binary, [""]):
         suffix = "-" + group if group else ""
         tl3_rust_test(
@@ -206,8 +287,8 @@ def _crate_test(kind, package, name, source, harness, options):
             binary_id = binary + suffix,
             crate_name = name.replace("-", "_"),
             crate_root = source,
-            srcs = [":sources", source],
-            compile_data = options["compile_data"] + [
+            srcs = sources,
+            compile_data = compile_data + [
                 label
                 for label in _EXAMPLE_DATA.get(source, [])
                 if label not in options["compile_data"]

@@ -1012,12 +1012,69 @@ one and no delivery work waits on one.
   one is owed or running, and posts nothing on the issue.
 
 Early-end closes (duplicate, already done, not actionable) stay owed: a wrong
-early end is exactly the quiet error a postmortem should catch. The judge that
-writes postmortems arrives separately; until then owed rows accumulate. They
-drain as it runs them on spare capacity, at most one at a time. Their number is
+early end is exactly the quiet error a postmortem should catch. Their number is
 bounded by closes, questions and incidents, and `tl3_phase_history` grows by one
 row per phase change.
 The store tables are described in `crates/store/README.md`.
+
+### The runner
+
+The runner judges owed postmortems with the workers' `postmortem` role (slice B
+of #403). Like comment classification, it is a worker job outside the kernel:
+it holds no pool grant, and no delivery work waits on it.
+
+- **When.** tl3d calls `run_postmortems` as it starts; a controller without it,
+  such as a test whose workers run no postmortem role, leaves owed rows owed.
+  `drive_once` then calls `start_postmortem` on every pass, so a postmortem
+  starts when a commit makes room, never on a timer. It starts only while no
+  postmortem is running and `spare_pool_capacity(world, running)` holds: no node
+  has a ticket without a grant, and the grant holders plus the running
+  postmortems are fewer than `pool_capacity`. That one function is the place a
+  priority-first pool (#417) orders postmortems last. The kernel never sees a
+  postmortem, so one that runs while new work starts can use one model session
+  beyond the pool.
+- **Pace (#486).** Spare slots aren't spare quota. `start_postmortem` asks the
+  store for an owed row first and decodes the world only when one exists. It
+  claims nothing while a model in the postmortem ladder (`PostmortemPace`, from
+  `models.postmortem`) has a `model_quotas` row, and at most
+  `limits.postmortems_per_day` (default 10) a UTC day, counted by claim time in
+  `tl3_postmortem_claims`. A day's limit or an ended quota is noticed on the
+  next drive pass, so owed rows drain over days, not in one burst.
+- **Claim.** The oldest owed row, first runs before retries, becomes `running` with a `run_key`, which is
+  also its delivery's key (`postmortem:<id>:<revision>`), in the commit that
+  writes the delivery: its effect, its watch, its allowance and its
+  `postmortem_jobs` row. `PostmortemUpdate::Claim` fails that commit if the row
+  is no longer owed.
+- **Run.** The workers adapter launches the role like the classifier and keys
+  its active run apart from the node's, so stopping a node's run never stops its
+  postmortem. Its looks read progress like a node's run, and a postmortem raises
+  no incident. The case file is written at launch from stored records: the
+  request and outcome, the code grades, phase times, questions with their #322
+  findings, incidents, plan, brief, audit and findings, the release tl3d
+  started with, the rubric, the grade judges' model, the node's MLflow tags and
+  the run's wall-clock allowance (`limits.postmortem_deadline_secs`).
+- **Result.** The worker's reply is checked against the role's schema and, in
+  code, for at most three recommendations. It is stored only for the claim's
+  run key, in the commit that consumes it: the row becomes `done` with its
+  timeline, cause, summary, process failures, grades and assessment ids; its
+  recommendations are ranked and fingerprinted; tokens and cache rate are later
+  code grades (`postmortem:<id>`); and the lessons go to `tl3_memory_outbox`,
+  tagged `postmortem`. Stored and retained text passes through the memory
+  redaction first. A failed run, a refused launch or an invalid reply marks the
+  row `failed` with a fixed class: `worker_failed`, `launch_failed`,
+  `invalid_reply`, `no_progress` (the controller stopped it as stalled) or
+  `deadline` (the run passed its allowance). A `worker_failed` or `deadline`
+  row is owed again instead, twice at most, behind rows owed since (#486).
+  Three failed runs in a row since tl3d started pause claims until a run
+  succeeds or tl3d starts again, and the pause writes one journal line. With
+  one postmortem at a time, a pause lasts until tl3d starts again.
+- **Recovery.** At startup, a `running` row whose delivery isn't live (no pending
+  effect, watch or queued result) is owed again, and a `postmortem_jobs` row
+  with no live delivery is removed. A live delivery finishes as it would have:
+  the worker's attempt directory holds its reply, and the role caches each step
+  under the run key, so no judge runs twice.
+
+Nothing in slice B acts on a verdict.
 
 ## Hindsight write-back
 

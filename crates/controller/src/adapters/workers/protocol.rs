@@ -26,6 +26,10 @@ pub(super) fn delivery_role(delivery: &crate::executor::Delivery) -> Option<&'st
             kind: CommentKind::Classify,
             ..
         } => Some("classifier"),
+        Output::Comment {
+            kind: CommentKind::Postmortem,
+            ..
+        } => Some("postmortem"),
         Output::Effect {
             kind: tl3_kernel::EffectKind::StartRun(r),
             ..
@@ -157,6 +161,15 @@ fn validator(role: &str, direction: &str) -> Result<&'static jsonschema::Validat
     validators()?
         .get(&format!("{role}-{direction}.json"))
         .ok_or(Error::Invalid("unsupported worker role"))
+}
+
+/// A reply checked against its role's schema alone, for replies no kernel role maps.
+pub(crate) fn validate_reply(role: &str, reply: &Value) -> Result<()> {
+    if validator(role, "reply")?.is_valid(reply) {
+        Ok(())
+    } else {
+        Err(Error::Invalid("worker reply breaks role schema"))
+    }
 }
 
 pub(super) fn validate_inputs(role: &str, inputs: &Value) -> Result<()> {

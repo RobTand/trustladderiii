@@ -163,6 +163,14 @@ class CancellationTests(unittest.TestCase):
 
 
 class ResultTests(unittest.TestCase):
+    def test_batch_abort_keeps_scopes_and_fails_both_checks(self):
+        values = remote_gate.outputs(result(mode='batch-draft',
+                                           aborted_early={'label': '//a:failed', 'reason': 'FAILED'}))
+        self.assertEqual(values['scopes_ready'], 'true')
+        self.assertEqual(values['rust'], 'failure')
+        self.assertEqual(values['python'], 'failure')
+
+
     def test_merged_pr_lookup_keeps_its_token_out_of_git(self):
         with patch.dict(os.environ, {'BEFORE': 'base', 'AFTER': 'head',
                                     'GITHUB_REPOSITORY': 'owner/repo',
@@ -177,6 +185,21 @@ class ResultTests(unittest.TestCase):
         self.assertEqual(request.call_args.args[0].get_header('Authorization'),
                          'Bearer synthetic-fixture')
         write.assert_called_once_with('GITHUB_OUTPUT', 'prs=2,12\n')
+
+    def test_budget_warnings_reach_job_summary_and_post_merge_record(self):
+        warning = {'label': '//crates/store:test_test_postgres', 'test': 'slow',
+                   'measured': 56, 'limit': 30, 'metric': 'wall'}
+        for mode in ['pr', 'main']:
+            with self.subTest(mode=mode):
+                receipt = result(mode=mode, budget_warnings=[warning])
+                summary = remote_gate.explain(receipt, [12, 13])
+                self.assertIn('WARNING', summary)
+                for value in [warning['label'], '56', '30']:
+                    self.assertIn(value, summary)
+                self.assertEqual(remote_gate.post_merge_record(receipt, [12, 13], 1)['budget_warnings'],
+                                 [warning])
+                if mode == 'pr':
+                    self.assertEqual(remote_gate.outputs(receipt)['rust'], 'success')
 
     def test_result_is_read_from_the_artifact(self):
         client = FakeClient([remote_gate.DONE], {remote_gate.RESULT: json.dumps(result()).encode()})
@@ -258,7 +281,7 @@ class WorkflowTests(unittest.TestCase):
     def test_cancellation_cleanup_covers_prs_and_mergify_queue_drafts(self):
         bazel = self.workflow.split('  bazel:', 1)[1].split('  rust-lint:', 1)[0]
         self.assertIn("if: github.event_name == 'pull_request'", bazel)
-        self.assertNotIn('github.event.pull_request.draft', bazel)
+        self.assertNotIn('github.event.pull_request.draft', bazel.split('    steps:', 1)[0])
         self.assertIn('- name: Cancel BuildBuddy run\n        if: cancelled()\n', bazel)
         cleanup = bazel.split('- name: Cancel BuildBuddy run', 1)[1].split('      - ', 1)[0]
         self.assertIn('BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}', cleanup)

@@ -9,6 +9,15 @@ const ADDITIONAL_PROOFS: &[&str] = &[
     "apply_publishing_ci_tests",
     "apply_publishing_ci_infrastructure",
     "apply_publishing_ci_earlier_step",
+    "fail_fast_plan_cant_meet",
+    "fail_fast_maker_needs_files",
+    "fail_fast_maker_cant_meet",
+    "fail_fast_maker_out_of_room",
+    "fail_fast_checks_done",
+    "fail_fast_changes_requested",
+    "fail_fast_reviewer_out_of_room",
+    "fail_fast_ci_failed_queued",
+    "fail_fast_ci_failed_publishing",
     "gate_leaf_progress_w2",
     "gate_leaf_progress_w3",
     "gate_grant_w2",
@@ -25,7 +34,7 @@ const ADDITIONAL_PROOFS: &[&str] = &[
     "gate_merge_progress_w3",
     "gate_resume_progress_w2",
     "gate_resume_progress_w3",
-    // Q39: priority-first agent-pool grants and their aging bound.
+    // Q39: strictly priority-first agent-pool grants.
     "pool_grant_is_priority_ordered",
     "pool_order_is_strict_priority",
 ];

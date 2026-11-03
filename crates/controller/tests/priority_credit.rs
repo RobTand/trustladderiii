@@ -24,6 +24,7 @@ fn start_credit(
             rob: 42,
             slots: 1,
             pool: 1,
+            fail_fast: false,
             operations: None,
         },
     )
@@ -125,6 +126,7 @@ fn an_early_ended_request_keeps_the_kernel_reserve() {
             rob: 42,
             slots: 1,
             pool: 1,
+            fail_fast: false,
             operations: None,
         },
     )

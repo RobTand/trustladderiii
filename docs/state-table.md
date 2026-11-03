@@ -1,6 +1,6 @@
 # TL3 state table
 
-Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47, Q48, Q50 and Q51. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
+Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47, Q48, Q50 and Q51, and on 2026-11-02 with Q54. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
 
 **Changing the rules.** Any change to a rule in this file needs Rob's approval. That includes a new rule that comes from a bug Kani or a test finds. A clarification that changes no rule doesn't need it (Q27).
 
@@ -289,6 +289,10 @@ Code computes a signature for each failure from the upstream's error class, and 
 
 **Work failures** are failed checks, review findings and CI test failures. They follow the rules for rounds and attempts under "A failed round".
 
+**Fail fast,** from Rob's decision on 2026-11-02 (Q54; which steps count as retries is the coordinator's reading, flagged to Rob in #482): `[limits] fail_fast` is false by default, which keeps every rule as written. When it is true, each row below marked "`fail_fast`" stops the request for TL3 review instead of retrying the work. Infrastructure failures, Q50 blockers and Q53 quota fallback are not work retries and are unchanged. tl3d sets the flag on the stored world each time it opens, and the kernel reads it at the moment of the retry, so it applies to requests already open.
+
+**Stop for TL3 review:** go to Stopping(Stopped) and record the failing step on the node. Spend nothing and ask Rob nothing. The closing summary names the step and its evidence and, as for any stop, says to comment `restart` and leaves the issue open (Q49). A postmortem is owed as `needed_fix`, and one line goes to the operations issue for the coordinator.
+
 ## Node phases, slice one
 
 Slice one runs one issue whose root plans as a single leaf. The root's owner is Rob, so in slice one every pass-up goes to AwaitingRob. From slice two on, a node with a parent goes to Escalated instead.
@@ -357,6 +361,7 @@ goals and forecast settings:
 | Plan: can't meet, with required protected paths (Q57) | Controller verifies concrete paths against defaults plus global and repository lists | Stopping(NotActionable) | No retry, credit spent or Rob question, regardless of `fail_fast` |
 | Plan: leaf | The leaf rules hold | Ready(fresh) | |
 | Plan: split | Slice one | AwaitingRob(needs splitting) | Ask Rob to narrow the request, showing the proposed pieces |
+| Plan: can't meet, with a report | `fail_fast` (Q54) | Stop for TL3 review | See "Failures". The planner worker reports a plan that breaks a rule as can't meet, so a rule-breaking plan arrives here and stops at once. |
 | Plan: can't meet, with a report | First time | Planning | Re-run with the next model on the planner's ladder, in a new generation |
 | Plan: can't meet, with a report | Second time | AwaitingRob(can't meet, continue to Planning) | |
 | Plan breaks a rule | First time | Planning | Re-run with the reason, in a new generation |
@@ -407,9 +412,12 @@ The exact models come from what CLIProxyAPI serves. They are set in config, and 
 | Worktree preparation confirms | No proposed head, or already adopted | Making at the next step | Start or resume the maker run |
 | Maker done (a commit, and its own check that every measure is met) | | Checking | Submit the check job |
 | Maker needs more files (a list) | Credit at least 1, and the forecast with the new files still fits | Ready(the same Making) | Spend 1; record the larger footprint; release the slot and files. The worktree and session stay. |
+| Maker needs more files | `fail_fast` (Q54); the forecast with the new files still fits; credit 0 | AwaitingRob(out of credit, continue to Ready(the same Making)) | Record the larger footprint; release the slot and files. `fail_fast` stops retries, not credit decisions. |
 | Maker needs more files | Otherwise | As for out of room | |
+| Maker can't meet, with a report | `fail_fast` (Q54), in any round | Stop for TL3 review | See "Failures" |
 | Maker can't meet, with a report | | The next attempt, as for a failed round 1 | |
 | Maker blocked, with evidence its worker checked (Q50, Rob, 2026-11-01) | | See "Failures": an infrastructure failure | Spend nothing |
+| Maker out of room | `fail_fast` (Q54) | Stop for TL3 review | See "Failures" |
 | Maker out of room | Credit at least 1 | Planning, which must split | Spend 1; release the slot and files |
 | Maker out of room | Credit 0 | AwaitingRob(out of credit, continue to Planning, which must split) | Release the slot and files |
 
@@ -439,6 +447,7 @@ Coordinator defaults, for Rob to check: the ladder clamps at its last entry. A c
 | Changes requested (findings, each tied to a measure) | | A failed round | |
 | Reviewer out of room | First time for this review; within `free_rechecks`, or credit at least 1 | Reviewing | Start a fresh conversation, without session resume, on the next reviewer model, clamped at the last entry. Count it as a recheck: free up to `free_rechecks`, then spend 1. |
 | Reviewer out of room | First time for this review; beyond `free_rechecks`, and credit 0 | AwaitingRob(out of credit, continue to Ready(Reviewing)) | Release the slot and files; after funding, start the fresh review on the next reviewer model, clamped at the last entry, without session resume |
+| Reviewer out of room | Again, on the fresh review; `fail_fast` (Q54) | Stop for TL3 review | See "Failures" |
 | Reviewer out of room | Again, on the fresh review; credit at least 1 | Planning, which must split | Spend 1; release the slot and files; set `must_split` true |
 | Reviewer out of room | Again, on the fresh review; credit 0 | AwaitingRob(out of credit, continue to Planning, which must split) | Release the slot and files; preserve `must_split` true in the continuation |
 
@@ -471,6 +480,7 @@ The missing-check rows decide on the check-suite and check-run webhooks TL3 alre
 ### A failed round
 
 - **Round 0:** go to Making(round 1), and resume the maker's session with the evidence.
+- **Round 1 fails, or the maker says it can't meet, under `fail_fast` (Q54):** stop for TL3 review, as under "Failures". The steps below don't run.
 - **Round 1 fails, or the maker says it can't meet:** move to the next step below. Each step costs 1. Each new attempt runs in a fresh session, starting from the branch, with every finding so far.
   - After attempt 1: Making(attempt 2, round 0), on the next model line in the maker's ladder.
   - After attempt 2: Making(attempt 3, round 0), on the ladder's next rung, or its last.
@@ -603,7 +613,7 @@ Every move into Closed runs `close(outcome)`. It:
 - adds the merged-leaf credit to the ledger, for a Merged leaf;
 - releases every pause this node owns;
 - tells the parent the outcome;
-- for a root, posts a plain-language summary to the issue, listing any unmet measures, and closes the issue. After Replaced, the issue stays open for the new request. After Stopped or Abandoned, the issue stays open too, and the summary tells Rob to comment `restart` to start again (Q49);
+- for a root, posts a plain-language summary to the issue, listing any unmet measures, and closes the issue. After Replaced, the issue stays open for the new request. After Stopped or Abandoned, the issue stays open too, and the summary tells Rob to comment `restart` to start again (Q49). After a stop for TL3 review, it also names the failing step and its evidence (Q54);
 - tells waiting nodes whether the work was delivered (Merged or Done) or abandoned;
 - records the code grades: rounds, attempts, credit spent, outcome, and time from start to merge;
 - from slice three on, marks a judge postmortem as owed.

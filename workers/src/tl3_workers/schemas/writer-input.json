@@ -88,6 +88,16 @@
             "request": {"$ref": "writer-reply.json#/$defs/text"},
             "outcome": {"$ref": "writer-reply.json#/$defs/text"},
             "removed_changes": {"$ref": "writer-reply.json#/$defs/text"},
+            "findings": {
+              "description": "Evidence behind a stop for TL3 review (Q54). The worker redacts it before the model turn.",
+              "type": "object",
+              "properties": {
+                "source": {"enum": ["planner", "maker", "checks_and_review"]},
+                "report": {"type": "string"}
+              },
+              "required": ["source", "report"],
+              "additionalProperties": false
+            },
             "unmet_goals": {
               "type": "array",
               "items": {"$ref": "writer-reply.json#/$defs/text"}

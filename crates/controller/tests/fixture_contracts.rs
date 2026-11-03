@@ -255,3 +255,106 @@ fn assert_delivery_methods(
     );
     calls.lock().unwrap().clear();
 }
+
+#[test]
+fn scenario_shards_cover_every_group_once_and_balance_the_worker_fixture_groups() {
+    use support::scenario_shard::WORKER_GROUPS;
+    let groups = WORKER_GROUPS;
+    let mut owners = vec![0; groups.len()];
+    let mut loads = Vec::new();
+    for index in 0..8 {
+        let mut shard = support::scenario_shard::Shard::new(index, 8);
+        let mut load = 0;
+        for (group_index, group) in groups.iter().copied().enumerate() {
+            shard.run(group, || {
+                owners[group_index] += 1;
+                load += group.markers();
+            });
+        }
+        shard.finish("fixture");
+        loads.push(load);
+    }
+    assert!(owners.iter().all(|owners| *owners == 1), "{owners:?}");
+    assert_eq!(
+        loads.iter().sum::<usize>(),
+        groups.iter().map(|group| group.markers()).sum::<usize>()
+    );
+    assert!(
+        loads.iter().max().unwrap() - loads.iter().min().unwrap() <= 1,
+        "fixture group sizes must inform the partition: {loads:?}"
+    );
+}
+
+#[test]
+#[should_panic(expected = "duplicate scenario group")]
+fn scenario_shards_reject_a_duplicated_group_without_a_global_total() {
+    let mut shard = support::scenario_shard::Shard::new(0, 1);
+    shard.run(support::scenario_shard::WorkerGroup::Router, || {});
+    shard.run(support::scenario_shard::WorkerGroup::Router, || {});
+}
+
+#[test]
+#[should_panic(expected = "missing scenario group")]
+fn scenario_shards_reject_a_missing_group_without_a_global_total() {
+    let mut shard = support::scenario_shard::Shard::new(0, 1);
+    shard.run(support::scenario_shard::WorkerGroup::Router, || {});
+    shard.finish("fixture");
+}
+
+#[test]
+fn controller_restart_waits_for_the_old_postgres_session_and_releases_its_probe() {
+    use std::{sync::mpsc, thread, time::Duration, time::Instant};
+
+    let mut database = support::Database::start();
+    let settings = database.create("restart_ownership");
+    let connect = || {
+        postgres::Config::new()
+            .host(&settings.host)
+            .port(settings.port)
+            .user(&settings.user)
+            .dbname(&settings.database)
+            .password("tl3-disposable-test-password")
+            .connect(postgres::NoTls)
+            .unwrap()
+    };
+    let mut old_owner = Store::open(&settings).unwrap();
+    old_owner.claim_controller().unwrap();
+    let mut observer = connect();
+    let mut waiter = connect();
+    let waiter_pid: i32 = waiter
+        .query_one("SELECT pg_backend_pid()", &[])
+        .unwrap()
+        .get(0);
+    let (finished, completion) = mpsc::channel();
+    let waiting = thread::spawn(move || {
+        support::controller_restart::wait_for_owner_release(&mut waiter);
+        finished.send(()).unwrap();
+        waiter
+    });
+    let started = Instant::now();
+    let returned_early = loop {
+        if completion.try_recv().is_ok() {
+            break true;
+        }
+        let blockers: Vec<i32> = observer
+            .query_one("SELECT pg_blocking_pids($1)", &[&waiter_pid])
+            .unwrap()
+            .get(0);
+        if !blockers.is_empty() {
+            break false;
+        }
+        assert!(started.elapsed() < Duration::from_secs(90));
+        thread::sleep(Duration::from_millis(10));
+    };
+    drop(old_owner);
+    let waiter = waiting.join().unwrap();
+    let claim = Store::open(&settings).and_then(|mut store| store.claim_controller());
+    drop(waiter);
+    drop(observer);
+    database.stop();
+    assert!(
+        !returned_early,
+        "restart continued while the old PostgreSQL session still owned the controller"
+    );
+    claim.expect("the synchronization probe must release ownership before restarting");
+}
