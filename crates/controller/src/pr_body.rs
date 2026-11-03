@@ -309,7 +309,7 @@ mod tests {
 }
 
 /// Validate the repository contract on the final publication body.
-pub(crate) fn validate(body: &str, rules: &[BodyLine]) -> crate::Result<()> {
+pub fn validate(body: &str, rules: &[BodyLine]) -> crate::Result<()> {
     let failures: Vec<_> = rules
         .iter()
         .filter_map(|rule| {

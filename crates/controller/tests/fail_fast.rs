@@ -1008,10 +1008,15 @@ fn t629_local_body_defect_stops_for_tl3_review_without_owner_question() {
                     ..
                 }
             ) {
-                return Err(tl3_controller::Error::Permanent {
-                    class: "pr_policy",
-                    source: "private synthetic-secret body".into(),
-                });
+                tl3_controller::pr_body::validate(
+                    "Change type: test\nChange type: fix\nprivate synthetic-secret body",
+                    &[tl3_config::BodyLine {
+                        label: "Change type".into(),
+                        values: vec!["test".into(), "fix".into()],
+                        default: "test".into(),
+                    }],
+                )?;
+                panic!("conflicting body must be refused");
             }
             self.fake.execute(delivery)
         }
@@ -1076,7 +1081,15 @@ fn t629_local_body_defect_stops_for_tl3_review_without_owner_question() {
                     .is_some_and(|text| text.contains("tl3_review"))
         })
         .expect("operations review note");
-    assert!(note.note.as_ref().unwrap().contains("pr_policy"));
+    for required in [
+        "pr_policy",
+        "Change type",
+        "expected_count",
+        "found_count",
+        "conflicting",
+    ] {
+        assert!(note.note.as_ref().unwrap().contains(required));
+    }
     assert!(!format!("{posted:?}").contains("synthetic-secret"));
     let snapshot = controller.snapshot().unwrap();
     assert!(
