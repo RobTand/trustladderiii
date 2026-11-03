@@ -1844,7 +1844,7 @@ def test_negative_cache_and_exhaustion_preserve_eight_candidate_cap(rehearsal):
     ledger, _, inputs, calls = rehearsal
     for i in range(8):
         bad = deepcopy(FORCING)
-        bad['symptom'] += str(i)
+        bad['environment'] = {'CANDIDATE': str(i)}
         rejected = ledger.run([NODE], bad)
         assert rejected['status'] == 'refused'
         assert ledger.run([NODE], deepcopy(bad)) == rejected
@@ -2044,3 +2044,134 @@ def test_external_alias_owner_refused_before_admission_and_survives_stop(
     assert reply['kind'] == 'cant_meet' and target in reply['report'] and module in reply['report']
     assert reply['forcing_rehearsals'][0]['refusal'] == result['refusal']
     assert calls == []
+
+
+# PR #603 review: execution dedupe and final proof binding have different contracts.
+@pytest.mark.parametrize('replacement', [True, 1.0])
+def test_receipt_binding_and_execution_cache_preserve_json_value_types(rehearsal, replacement):
+    ledger, root, inputs, calls = rehearsal
+    (root / 'tests/test_adoption.py').write_text(
+        'from publisher import Publisher\ndef test_adopt():\n    assert Publisher().try_adopt() is True\n')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'type-sensitive assertion')
+    inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    ledger = ForcingRehearsals(ledger.worktree, inputs)
+    forcing = {'symptom': 'The return type matters.',
+               'patches': [{'target': 'publisher.Publisher.try_adopt', 'returns': 1}]}
+    assert ledger.run([NODE], forcing)['status'] == 'validated'
+    changed = deepcopy(forcing)
+    changed['patches'][0]['returns'] = replacement
+    assert ledger.violations(inputs['base_sha'], plan(changed)['checks']), '1 must not bind true or 1.0'
+    assert ledger.violations(inputs['base_sha'], plan(forcing)['checks']) == []
+    ledger.run([NODE], changed)
+    assert len(calls) == 4, 'JSON-distinct values must run as distinct experiments'
+
+
+@pytest.mark.parametrize('validated', [False, True])
+@pytest.mark.parametrize('cosmetic', ['symptom', 'selectors', 'patches', 'all'])
+def test_execution_cache_ignores_prose_and_irrelevant_order(rehearsal, tmp_path, validated, cosmetic):
+    ledger, root, inputs, calls = rehearsal
+    (root / 'tests/test_adoption.py').write_text(TEST + TEST[TEST.index('def test_adopt'):].replace(
+        'def test_adopt', 'def test_other'))
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'two selectors')
+    inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    checkpoint = tmp_path / 'rehearsals.json'
+    ledger = ForcingRehearsals(ledger.worktree, inputs, checkpoint=checkpoint)
+    forcing = reachable()
+    if not validated:
+        forcing['patches'][0]['delay_seconds'] = 0.001
+    forcing['patches'].append({'target': 'publisher.Publisher.decide', 'returns': 1})
+    selectors = [NODE, NODE.replace('test_adopt', 'test_other')]
+    first = ledger.run(selectors, forcing)
+    assert first['status'] == ('validated' if validated else 'refused')
+    changed = deepcopy(forcing)
+    reordered = list(selectors)
+    if cosmetic in {'symptom', 'all'}:
+        changed['symptom'] = 'The same experiment, described differently.'
+    if cosmetic in {'selectors', 'all'}:
+        reordered.reverse()
+    if cosmetic in {'patches', 'all'}:
+        changed['patches'].reverse()
+    for current in (ledger, ForcingRehearsals(ledger.worktree, inputs, checkpoint=checkpoint)):
+        assert current.run(reordered, changed) == first, 'cosmetic changes must return the original evidence'
+        assert current.attempts == 1 and current.actions == 2
+        assert len(calls) == 2
+        final = plan(changed)['checks']
+        final[0]['node_ids'] = reordered
+        assert current.violations(inputs['base_sha'], final), 'cache reuse must not mint a changed final receipt'
+        exact = plan(forcing)['checks']
+        exact[0]['node_ids'] = selectors
+        assert bool(current.violations(inputs['base_sha'], exact)) is not validated
+
+
+def test_inherited_repository_method_reaches_rehearsal(rehearsal):
+    ledger, root, inputs, calls = rehearsal
+    (root / 'publisher.py').write_text(
+        'class Base:\n    def try_adopt(self):\n        return True\n'
+        'class Publisher(Base):\n    pass\n')
+    (root / 'tests/test_adoption.py').write_text(
+        'from publisher import Publisher\ndef test_adopt():\n    assert Publisher().try_adopt()\n')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'inherited repository method')
+    inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    ledger = ForcingRehearsals(ledger.worktree, inputs)
+    forcing = {'symptom': 'Inherited repository methods remain eligible.',
+               'patches': [{'target': 'publisher.Publisher.try_adopt', 'returns': False}]}
+    result = ledger.run([NODE], forcing)
+    assert result['status'] == 'validated', result
+    assert len(calls) == 2
+    assert ledger.violations(inputs['base_sha'], plan(forcing)['checks']) == []
+
+
+@pytest.mark.parametrize('binding', ['conditional_repository', 'dynamic_repository', 'dynamic_external'])
+def test_uncertain_owner_uses_runtime_guard_and_preserves_typed_stop(rehearsal, monkeypatch, binding):
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+    from tl3_workers import runtime
+    ledger, root, inputs, calls = rehearsal
+    (root / 'pkg').mkdir()
+    (root / 'pkg/__init__.py').write_text('')
+    source = ('class Clock:\n    @staticmethod\n    def monotonic():\n        return 1\n')
+    source += {
+        'conditional_repository': 'import time\nif True:\n    time = Clock\n',
+        'dynamic_repository': 'time = (lambda: Clock)()\n',
+        'dynamic_external': 'time = __import__("time")\n',
+    }[binding]
+    (root / 'pkg/mod.py').write_text(source)
+    (root / 'tests/test_adoption.py').write_text(
+        'from pkg.mod import time\ndef test_adopt():\n    assert time.monotonic() > 0\n')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'uncertain owner')
+    inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    ledger = ForcingRehearsals(ledger.worktree, inputs)
+    target = 'pkg.mod.time.monotonic'
+    forcing = {'symptom': 'The runtime guard decides uncertain ownership.',
+               'patches': [{'target': target, 'returns': 0}]}
+    result = ledger.run([NODE], forcing)
+    assert len(calls) == 2, 'uncertain static owners must reach the admitted runtime guard'
+    if binding != 'dynamic_external':
+        assert result['status'] == 'validated', result
+        return
+    refusal = {'phase': 'forcing_validation', 'target': target, 'resolved_module': 'time',
+               'owner_category': 'external_module', 'reason': 'outside_served_repository'}
+    assert result['status'] == 'refused' and result['refusal'] == refusal
+    assert result['forced']['tests'][0]['forcing_refusal'] == refusal
+    assert result['forced']['tests'][0]['outcome'] == 'error'
+    assert 'time' in result['message'] and 'outside_served_repository' in result['message']
+    model = FakeMessagesListChatModel(responses=[
+        AIMessage(content='', tool_calls=[{'name': 'rehearse_forcing', 'id': 'dynamic',
+                                          'args': {'tests': [NODE], 'forcing': forcing}}]),
+        AIMessage(content='malformed final after runtime ownership refusal'),
+    ])
+    monkeypatch.setattr(runtime, 'create_model', lambda _: model)
+    request = {'role': 'planner', 'worktree': str(root), 'inputs': inputs,
+               'operation': {'node': 1, 'generation': 0, 'kind': 'planning'},
+               'model': {'name': 'fixture', 'effort': 'high', 'budget_tokens': 32000}}
+    events = []
+    runtime.run(request, events.append)
+    reply = events[-1]['reply']
+    assert reply['kind'] == 'cant_meet' and target in reply['report']
+    assert 'outside_served_repository' in reply['report'] and 'time' in reply['report']
+    assert reply['forcing_rehearsals'][0]['refusal'] == refusal
+    assert len(calls) == 4, 'a new planner ledger runs once; the guard still refuses the global owner'
