@@ -639,8 +639,43 @@ impl Controller {
         if seen.is_some_and(|seen| change.updated_at < seen) {
             return Ok(());
         }
-        let newer = seen.is_none_or(|seen| change.updated_at > seen);
-        let priority = priority::pool_priority(&change.title, &change.labels);
+        let mut current = (
+            change.updated_at,
+            priority::pool_priority(&change.title, &change.labels),
+        );
+        if seen == Some(change.updated_at) && current.1 != n.priority {
+            // GitHub's updated_at has second precision, so two edits in one
+            // second can arrive in either order. Settle the conflict with the
+            // issue as it is now; if it can't be read, keep what we have, and
+            // catch-up brings the issue's state later.
+            match self
+                .adapters
+                .get(executor::Upstream::GitHub)
+                .and_then(|github| github.issue(&repo, change.number))
+            {
+                Ok(issue) if issue.updated_at >= change.updated_at => {
+                    let labels: Vec<_> = issue
+                        .labels
+                        .iter()
+                        .map(|label| label.name.as_str())
+                        .collect();
+                    current = (
+                        issue.updated_at,
+                        priority::pool_priority(&issue.title, &labels),
+                    );
+                }
+                Ok(_) => return Ok(()),
+                Err(error) => {
+                    eprintln!(
+                        "issue {}/{}#{} not reread for a same-second edit: {error}",
+                        repo.owner, repo.name, change.number
+                    );
+                    return Ok(());
+                }
+            }
+        }
+        let (updated_at, priority) = current;
+        let newer = seen.is_none_or(|seen| updated_at > seen);
         let changed = n.priority != priority;
         if !newer && !changed {
             return Ok(());
@@ -655,9 +690,7 @@ impl Controller {
             commit.rows.push(put(
                 ISSUE_EDITS,
                 row.id.clone(),
-                json!(IssueEdit {
-                    updated_at: change.updated_at
-                }),
+                json!(IssueEdit { updated_at }),
             ));
         }
         if changed {

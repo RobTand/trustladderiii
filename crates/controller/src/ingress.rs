@@ -204,13 +204,19 @@ pub(crate) fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<
             // reordered edits converge on its current priority (Q39).
             for issue in &changes.issues {
                 if issue.pull_request.is_none() {
+                    // GitHub's updated_at has second precision, so two snapshots
+                    // can share it; the digest of what they say tells them apart.
+                    let mut labels: Vec<_> = issue.labels.iter().map(|label| &label.name).collect();
+                    labels.sort();
+                    let digest = Sha256::digest(json!([&issue.title, labels]).to_string());
                     result.push(Input::IssueChanged(IssueChange {
                         delivery: format!(
-                            "catch-up-issue:{}/{}:{}:{}",
+                            "catch-up-issue:{}/{}:{}:{}:{:x}",
                             repository.owner,
                             repository.name,
                             issue.number,
-                            issue.updated_at.to_rfc3339()
+                            issue.updated_at.to_rfc3339(),
+                            digest
                         ),
                         owner: repository.owner.clone(),
                         repo: repository.name.clone(),

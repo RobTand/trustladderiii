@@ -291,6 +291,15 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
+    fn issue(&mut self, repository: &crate::Repository, number: u64) -> Result<tl3_github::Issue> {
+        let client = self
+            .clients
+            .get(&repository.installation)
+            .cloned()
+            .ok_or(Error::Invalid("missing GitHub installation client"))?;
+        let repo = format!("{}/{}", repository.owner, repository.name);
+        Ok(self.runtime.block_on(client.issue(&repo, number))?)
+    }
     fn input_incident(
         &mut self,
         notice: &crate::input_errors::IncidentNotice,

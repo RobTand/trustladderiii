@@ -638,7 +638,7 @@ Credit costs and infrastructure retry limits are the same as in Queued.
 
 > Priority-first agent pool grants (#417).
 
-A free agent-pool grant goes to the waiting run with the best priority, P0 to P3 then unranked. Ties go to the older ticket. The gate's slot order (Q48) doesn't change. Rob approved priority-first, so a lower priority waits as long as better-priority work keeps arriving; as in Q30, starvation is accepted. A bounded-seniority rule (a ticket plus 8 tickets per level below P0) was offered on #539 and is not approved.
+A free agent-pool grant goes to the waiting run with the best priority, P0 to P3 then unranked. Ties go to the older ticket. The gate's slot order (Q48) doesn't change. Rob approved priority-first, so a lower priority waits as long as better-priority work keeps arriving; as in Q30, starvation is accepted.
 
 `Event` has `#[repr(u8)]`. Without it, the new `Priority` field on `NewRequest` and `NewAdoption` let rustc hide the event's discriminant in that field's spare values. Kani then decoded it at every match, which took `apply_maker_done` from 15,166 VCCs to 19,549 and the reply proofs past 44 GB. With the plain tag it has 4,612, fewer than before Q39.
 
