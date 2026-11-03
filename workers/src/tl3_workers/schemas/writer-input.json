@@ -20,6 +20,7 @@
           "type": "object",
           "properties": {
             "issue_title": {"$ref": "writer-reply.json#/$defs/text"},
+            "worker_input_failure": {"$ref": "#/$defs/worker_input_failure"},
             "request": {"$ref": "writer-reply.json#/$defs/text"},
             "obstacle": {"$ref": "writer-reply.json#/$defs/text"},
             "options": {"$ref": "writer-reply.json#/$defs/options"},
@@ -69,6 +70,7 @@
           "type": "object",
           "properties": {
             "issue_title": {"$ref": "writer-reply.json#/$defs/text"},
+            "worker_input_failure": {"$ref": "#/$defs/worker_input_failure"},
             "request": {"$ref": "writer-reply.json#/$defs/text"},
             "change": {"$ref": "writer-reply.json#/$defs/text"},
             "change_quote": {"$ref": "writer-reply.json#/$defs/text"},
@@ -90,6 +92,7 @@
           "type": "object",
           "properties": {
             "issue_title": {"$ref": "writer-reply.json#/$defs/text"},
+            "worker_input_failure": {"$ref": "#/$defs/worker_input_failure"},
             "request": {"$ref": "writer-reply.json#/$defs/text"},
             "outcome": {"$ref": "writer-reply.json#/$defs/text"},
             "evidence_status": {"enum": ["captured", "not_captured"]},
@@ -152,5 +155,6 @@
         }
       }
     }
-  ]
+  ],
+  "$defs": {"worker_input_failure": {"type": "object", "properties": {"role": {"enum": ["ingest", "audit", "planner", "maker", "reviewer", "classifier", "writer", "postmortem"]}, "pointer": {"type": "string", "maxLength": 320}, "rule": {"type": "string", "minLength": 1, "maxLength": 48}, "maker_head": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"}}, "required": ["role", "pointer", "rule"], "additionalProperties": false}}
 }

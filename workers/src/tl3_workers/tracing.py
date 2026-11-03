@@ -1238,7 +1238,31 @@ class WorkerStageError(ValueError):
         super().__init__(self.stage)
 
 
+class InputSchemaFailure(Exception):
+    """A controller-owned diagnostic, with no rejected instance values."""
+
+    def __init__(self, diagnostic):
+        self.message = ('worker inputs break role schema: '
+                        f"role={diagnostic['role']} pointer={diagnostic['pointer']} rule={diagnostic['rule']}")
+        super().__init__(self.message)
+
+
+def input_failure(request):
+    """Export a controller-rejected input's safe diagnostic before a worker starts."""
+    safe = {key: request[key] for key in ('protocol', 'operation', 'role', 'model', 'trace') if key in request}
+    safe['inputs'] = {key: request['inputs'][key] for key in ('role', 'pointer', 'rule')}
+    if 'mlflow' in request:
+        safe['mlflow'] = request['mlflow']
+    try:
+        with observe(safe):
+            raise InputSchemaFailure(safe['inputs'])
+    except InputSchemaFailure:
+        return 0
+
+
 def failure_tags(error):
+    if type(error) is InputSchemaFailure:
+        return {"failure_class": "worker_input_schema", "failure_message": error.message}
     from tl3_workers.generated_scope import GeneratedOutputProhibition
     from tl3_workers.roles.planner import PlanConsistencyError
     from tl3_workers.evidence import EvidenceContractError
@@ -1709,6 +1733,8 @@ def closing_root(header, end, spans, path):
 
 
 def main(args):
+    if args == ['input-failure']:
+        return input_failure(json.load(sys.stdin))
     if args[:1] == ['ship'] and len(args) >= 2:
         return ship(int(args[1]), **options(args[2:]))
     if args[:1] == ['flush'] and len(args) == 2:

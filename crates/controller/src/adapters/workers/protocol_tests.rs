@@ -240,3 +240,88 @@ fn request_123_pending_is_a_handover_not_a_false_success() {
         MappedReply::Made(_)
     ));
 }
+
+#[test]
+fn t653_schema_roles_have_controller_contracts() {
+    let actual: std::collections::BTreeSet<_> = PACKAGED_SCHEMAS
+        .iter()
+        .filter_map(|(name, _)| name.strip_suffix("-input.json"))
+        .collect();
+    assert_eq!(
+        actual,
+        [
+            "ingest",
+            "audit",
+            "planner",
+            "maker",
+            "reviewer",
+            "classifier",
+            "writer",
+            "postmortem"
+        ]
+        .into_iter()
+        .collect(),
+        "each new input schema needs a production-builder contract case"
+    );
+}
+
+#[test]
+fn t653_input_failure_names_role_pointer_and_rule_without_values() {
+    for (inputs, pointer, rule) in [
+        (
+            json!({"comment":{"author": "owner", "body": "sensitive-value"}, "state":{"phase":23, "closed":false}}),
+            "/state/phase",
+            "type",
+        ),
+        (
+            json!({"comment":{"author": "owner", "body": "sensitive-value"}, "state":{"phase":"Making", "closed":false, "new_field":"sensitive-value"}}),
+            "/state/new_field",
+            "additionalProperties",
+        ),
+        (
+            json!({"comment":{"author": "owner", "body": "sensitive-value"}, "state":{"closed":false}}),
+            "/state/phase",
+            "required",
+        ),
+    ] {
+        let error = validate_inputs("classifier", &inputs).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("role=classifier"), "{message}");
+        assert!(message.contains(&format!("pointer={pointer}")), "{message}");
+        assert!(message.contains(&format!("rule={rule}")), "{message}");
+        assert!(!message.contains("sensitive-value"));
+        assert_eq!(crate::looks::failure_class(&error), "worker_input_schema");
+    }
+}
+
+#[test]
+fn t653_composed_writer_failure_names_the_applicable_branch_field() {
+    let error = validate_inputs(
+        "writer",
+        &json!({"kind":"summary","facts":{"issue_title":"private-input-value",
+            "request":"private-input-value","outcome":"Delivered"}}),
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "worker inputs break role schema: role=writer pointer=/facts/unmet_goals rule=required"
+    );
+}
+
+#[test]
+fn t653_nested_anyof_failure_keeps_the_matching_leaf_without_values() {
+    let schema = json!({"anyOf":[
+        {"properties":{"kind":{"const":"other"},"facts":{"required":["unrelated"]}}},
+        {"properties":{"kind":{"const":"summary"},"facts":{"oneOf":[
+            {"type":"string"},
+            {"type":"object","properties":{"goals":{"type":"array","items":{"type":"integer"}}}}
+        ]}}}
+    ]});
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let inputs = json!({"kind":"summary","facts":{"goals":["private-input-value"]}});
+    let error = validator.validate(&inputs).unwrap_err();
+    assert_eq!(
+        crate::worker_inputs::Failure::capture("writer", &error).to_string(),
+        "worker inputs break role schema: role=writer pointer=/facts/goals/0 rule=type"
+    );
+}

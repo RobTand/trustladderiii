@@ -97,6 +97,13 @@ pub enum Cause {
     Tl3,
 }
 
+pub(crate) struct AttachedIncident {
+    pub upstream: Upstream,
+    pub class: String,
+    pub diagnostic: Option<crate::publication_failure::Diagnostic>,
+    pub input_failure: Option<crate::worker_inputs::Context>,
+}
+
 impl Cause {
     /// Workers and worktrees are TL3's own harness: agent runs, reply
     /// validation, Q50 blockers and local Git checkouts. A worktree failure
@@ -106,7 +113,11 @@ impl Cause {
     pub(crate) fn of(upstream: Upstream, class: &str) -> Self {
         if matches!(
             class,
-            "redaction_infra" | "pr_evidence" | "pr_obligation" | "pr_policy"
+            "worker_input_schema"
+                | "redaction_infra"
+                | "pr_evidence"
+                | "pr_obligation"
+                | "pr_policy"
         ) {
             return Cause::Tl3;
         }
@@ -1109,6 +1120,7 @@ impl Controller {
             .app_login(request.repo.installation);
         let mut summary =
             incident_summary(&request.title, &signature, needs_rob, app_login.as_deref());
+        crate::worker_inputs::append(&mut summary, crate::worker_inputs::of(&error));
         if let Some(progress) = state.progress.as_deref().filter(|progress| {
             progress.starts_with(crate::adapters::mergify::REQUEUE_PROGRESS_PREFIX)
         }) {
@@ -1474,11 +1486,7 @@ impl Controller {
         node: NodeId,
         id: &str,
         commit: &mut Commit,
-    ) -> Result<(
-        Upstream,
-        String,
-        Option<crate::publication_failure::Diagnostic>,
-    )> {
+    ) -> Result<AttachedIncident> {
         let cause = snapshot
             .rows
             .iter()
@@ -1516,16 +1524,24 @@ impl Controller {
             let upstream = upstream(state.delivery.output);
             let diagnostic =
                 crate::publication_failure::retained(snapshot, commit, &state.delivery.key)?;
+            let input_failure =
+                crate::worker_inputs::retained(snapshot, commit, &state.delivery.key)?;
             commit
                 .rows
                 .push(put("allowances", state.delivery.key.clone(), json!(state)));
-            Ok((
+            Ok(AttachedIncident {
                 upstream,
-                state.failure.unwrap_or_else(|| "operation_failed".into()),
+                class: state.failure.unwrap_or_else(|| "operation_failed".into()),
                 diagnostic,
-            ))
+                input_failure,
+            })
         } else {
-            Ok((Upstream::GitHub, "operation_failed".into(), None))
+            Ok(AttachedIncident {
+                upstream: Upstream::GitHub,
+                class: "operation_failed".into(),
+                diagnostic: None,
+                input_failure: None,
+            })
         }
     }
 
@@ -1632,6 +1648,7 @@ pub(crate) const CHECKS_PENDING: &str = "checks_pending";
 
 pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
     match error {
+        crate::Error::WorkerInputs(_) => crate::worker_inputs::CLASS,
         crate::Error::ChecksPending => CHECKS_PENDING,
         crate::Error::RedactionInfra(_) => "redaction_infra",
         crate::Error::Quota { .. } => "quota",
@@ -1676,6 +1693,7 @@ pub(crate) fn incident_summary(
     app_login: Option<&str>,
 ) -> String {
     let source = match signature.upstream {
+        _ if signature.class == crate::worker_inputs::CLASS => "TL3's worker input builder",
         _ if matches!(
             signature.class.as_str(),
             "pr_evidence" | "pr_obligation" | "pr_policy"
@@ -1691,6 +1709,9 @@ pub(crate) fn incident_summary(
         Upstream::GitHub => "GitHub",
     };
     let reason = match signature.class.as_str() {
+        "worker_input_schema" => {
+            "could not start because TL3 built inputs that violate the role schema"
+        }
         "pr_evidence" => "refused publication because required independent evidence is missing",
         "pr_obligation" => "refused publication because a branch or body obligation is unmet",
         "pr_policy" => "refused publication because the body breaks repository policy",

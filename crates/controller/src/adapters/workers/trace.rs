@@ -198,3 +198,56 @@ fn reap(directory: &Path, child: Child) {
 #[cfg(test)]
 pub(super) static FLUSHES: std::sync::Mutex<Vec<(PathBuf, Child)>> =
     std::sync::Mutex::new(Vec::new());
+
+/// A rejected request has no worker attempt. Give its safe diagnostic the same
+/// durable span-log/export path, without handing Python any rejected inputs.
+pub(super) fn input_failure(
+    settings: &tl3_config::Workers,
+    key: &str,
+    operation: serde_json::Value,
+    mut tags: serde_json::Value,
+    failure: &crate::worker_inputs::Failure,
+) {
+    use serde_json::json;
+    use std::io::Write;
+    let mut record = || -> Result<()> {
+        let directory = super::run_root(&settings.runs.join(HELD), &format!("input-schema:{key}"));
+        fs::create_dir_all(&directory)?;
+        let log = directory.join(LOG);
+        if log.try_exists()? || shipped(&directory)? {
+            return Ok(());
+        }
+        tags["log"] = json!(log);
+        let request = json!({"protocol":1,"role":operation["kind"],"operation":operation,
+            "model":{"name":"not_started","effort":null},"inputs":failure,"trace":tags});
+        let mut command = match settings.launcher.split_first() {
+            Some((launcher, args)) => {
+                let mut command = Command::new(launcher);
+                command.args(args).arg(&settings.python);
+                command
+            }
+            None => Command::new(&settings.python),
+        };
+        let mut child = command
+            .args(["-I", "-m", "tl3_workers.tracing", "input-failure"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let written = child
+            .stdin
+            .take()
+            .ok_or(Error::Invalid("trace stdin missing"))?
+            .write_all(&serde_json::to_vec(&request)?);
+        let status = child.wait()?;
+        written?;
+        if !status.success() {
+            return Err(Error::Invalid("input failure trace helper failed"));
+        }
+        Ok(())
+    };
+    if let Err(error) = record() {
+        // Observability must never replace the original contract failure.
+        eprintln!("input failure trace could not be recorded: {error}");
+    }
+}

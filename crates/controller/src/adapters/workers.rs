@@ -7,6 +7,8 @@ pub use writer::{FakeWriter, Writer};
 mod evidence;
 mod facts;
 mod fake;
+#[cfg(test)]
+mod input_contract_tests;
 mod json;
 pub(crate) mod ladder;
 mod process;
@@ -227,6 +229,27 @@ impl Supervisor {
     }
 
     fn request(
+        &self,
+        delivery: &Delivery,
+        role: &str,
+        store: &mut Store,
+        snapshot: &Snapshot,
+    ) -> Result<Value> {
+        let request = self.build_request(delivery, role, store, snapshot);
+        if let Err(Error::WorkerInputs(failure)) = &request {
+            trace::input_failure(
+                &self.settings,
+                &delivery.key,
+                json!({"node":delivery.node().0,"generation":delivery.generation,"kind":role}),
+                json!({"repo":format!("{}/{}",delivery.repository.owner,delivery.repository.name),
+                    "issue":delivery.issue,"request":delivery.node().0,"attempt":delivery.attempt,"round":delivery.round}),
+                failure,
+            );
+        }
+        request
+    }
+
+    fn build_request(
         &self,
         delivery: &Delivery,
         role: &str,
