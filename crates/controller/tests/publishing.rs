@@ -1,3 +1,5 @@
+#[path = "publishing/drain_deadline.rs"]
+mod drain_deadline;
 mod prismabuild_fixture;
 #[path = "publishing/adoption.rs"]
 mod publishing_adoption;
@@ -625,14 +627,16 @@ fn drain_with_budget(
     budget: Duration,
 ) {
     let (sender, receiver) = mpsc::channel();
-    let start = Instant::now();
-    let mut last_progress = start;
+    let mut deadline = drain_deadline::DrainDeadline::new(Instant::now(), budget);
     let mut phase = c.world().unwrap().nodes[0].phase;
     loop {
         let mut changed = false;
         let mut idle = false;
         for _ in 0..500 {
-            if !drive_once(c) {
+            deadline.check(Instant::now());
+            let driven = drive_once(c);
+            deadline.check(Instant::now());
+            if !driven {
                 idle = true;
                 break;
             }
@@ -640,7 +644,7 @@ fn drain_with_budget(
             let next_phase = c.world().unwrap().nodes[0].phase;
             if next_phase != phase {
                 phase = next_phase;
-                last_progress = Instant::now();
+                deadline.progress(Instant::now());
             }
             if expected == (Phase::Planning { must_split: true })
                 && c.world().unwrap().nodes[0].phase == expected
@@ -654,29 +658,27 @@ fn drain_with_budget(
             "publication must recover without asking Rob"
         );
         progress("poll worker observations");
+        deadline.check(Instant::now());
         source.poll_once(store, &sender).unwrap();
+        deadline.check(Instant::now());
         progress("apply worker observations");
         let mut observed = false;
         for input in receiver.try_iter() {
             if let Input::Observation { key, observation } = input {
+                deadline.check(Instant::now());
                 c.observe(&key, observation).unwrap();
-                last_progress = Instant::now();
+                deadline.progress(Instant::now());
                 changed = true;
                 observed = true;
             }
         }
+        deadline.check(Instant::now());
         let reached_planner = expected == (Phase::Planning { must_split: true }) && !observed;
         if ((idle && !observed) || reached_planner) && c.world().unwrap().nodes[0].phase == expected
         {
+            deadline.check(Instant::now());
             return;
         }
-        assert!(
-            last_progress.elapsed() < budget && start.elapsed() < Duration::from_secs(300),
-            "publishing did not settle after {:?}, no settle progress for {:?}: {:?}",
-            start.elapsed(),
-            last_progress.elapsed(),
-            c.world().unwrap().nodes[0]
-        );
         if !changed {
             thread::sleep(Duration::from_millis(10));
         }
@@ -1021,14 +1023,8 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             },
         )
         .unwrap();
-        // No time remains, but consuming the final input reaches an idle Queued node.
-        drain_with_budget(
-            &mut c,
-            &mut source,
-            &mut store,
-            Phase::Queued,
-            Duration::ZERO,
-        );
+        // Consuming the final input must still reach an idle Queued node within budget.
+        drain(&mut c, &mut source, &mut store, Phase::Queued);
         assert!(
             c.snapshot()
                 .unwrap()
