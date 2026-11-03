@@ -15,6 +15,7 @@ CREATE TABLE tl3_worker_runs (
     input_tokens bigint GENERATED ALWAYS AS ((facts->>'input_tokens')::bigint) STORED CHECK (input_tokens >= 0),
     cached_tokens bigint GENERATED ALWAYS AS ((facts->>'cached_tokens')::bigint) STORED CHECK (cached_tokens >= 0),
     output_tokens bigint GENERATED ALWAYS AS ((facts->>'output_tokens')::bigint) STORED CHECK (output_tokens >= 0),
+    session_id text GENERATED ALWAYS AS (facts->>'session_id') STORED,
     trace_id text GENERATED ALWAYS AS (facts->>'trace_id') STORED,
     failure_origin text GENERATED ALWAYS AS (facts->'failure'->>'origin') STORED,
     failure_class text GENERATED ALWAYS AS (facts->'failure'->>'class') STORED,

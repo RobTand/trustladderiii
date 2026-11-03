@@ -253,6 +253,8 @@ tl3_py_test(
         "//workers/src",
         "@tl3_pip//httpx",
         "@tl3_pip//langchain_core",
+        "@tl3_pip//langchain_openai",
+        "@tl3_pip//openai",
         "@tl3_pip//pytest",
     ],
 )

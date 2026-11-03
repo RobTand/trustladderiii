@@ -500,6 +500,15 @@ fn main() {
         database.stop();
         return;
     }
+    if args.get(1).is_some_and(|s| s == "--worker-facts") {
+        simulation(&database.create("facts_retirement"));
+        event_source(&database.create("facts_event_source"));
+        killed_worker(&database.create("facts_killed_worker"));
+        killed_supervisor(&database.create("facts_killed_supervisor"));
+        fake_stop(&database.create("facts_stopped_worker"));
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--r3") {
         external_wait_survives_restart(&database.create("workers_r3_wait"));
         database.stop();
@@ -1152,6 +1161,17 @@ fn simulation(settings: &tl3_config::Store) {
         "the next run takes Rob's edit"
     );
     assert_retired(&config, &mut store);
+    let completed = owner(settings)
+        .query_one(
+            "SELECT count(*) FROM tl3_worker_runs WHERE node_id = '0'",
+            &[],
+        )
+        .unwrap()
+        .get::<_, i64>(0);
+    assert_eq!(
+        completed, 2,
+        "both workers' facts survive attempt retirement"
+    );
     let memory = store.pending_memories(0).unwrap();
     assert_eq!(memory.len(), 2, "both real workers survive a memory outage");
     let roles: std::collections::BTreeSet<_> = memory
@@ -1208,6 +1228,16 @@ fn killed_worker(settings: &tl3_config::Store) {
     supervisor.execute(&delivery).unwrap();
     assert_eq!(attempts(&root_for(&config, &delivery.key)), 2);
     assert!(!failed(&terminal(&mut supervisor, &delivery)));
+    assert_eq!(
+        owner(settings)
+            .query_one(
+                "SELECT count(*) FROM tl3_worker_runs WHERE run_key = $1",
+                &[&delivery.key]
+            )
+            .unwrap()
+            .get::<_, i64>(0),
+        2
+    );
     assert_eq!(
         fs::read(root_for(&config, &delivery.key).join("attempt-00000000/process.json")).unwrap(),
         first
@@ -1750,6 +1780,13 @@ fn event_source(settings: &tl3_config::Store) {
     let events = events.unwrap();
     let event = events.last().unwrap();
     assert_eq!(event["observation"]["WorkerReply"]["role"], "ingest");
+    let row = owner(settings).query_one(
+        "SELECT started_ms, finished_ms, outcome, model FROM tl3_worker_runs WHERE run_key = $1",
+        &[&delivery().key],
+    ).unwrap();
+    assert!(row.get::<_, i64>(1) >= row.get::<_, i64>(0));
+    assert_eq!(row.get::<_, String>(2), "succeeded");
+    assert_eq!(row.get::<_, String>(3), "fixture-model");
 }
 
 fn partial_crash(settings: &tl3_config::Store) {

@@ -457,3 +457,47 @@ def test_missing_usage_stays_unknown_and_local_failure_has_no_body(tmp_path, req
     assert row["failure"]["class"] == type(error).__name__
     assert all(row[key] is None for key in ("input_tokens", "cached_tokens", "output_tokens"))
     assert "secret" not in completion.read_text()
+
+
+def test_real_process_writes_completion_without_changing_protocol(tmp_path, request_doc):
+    completion = tmp_path / "facts.json"
+    request_doc["trace"] = {"completion": str(completion)}
+    result = start_worker(tmp_path, request_doc, [{"content": json.dumps(BRIEF), "usage_metadata": {
+        "input_tokens": 11, "output_tokens": 7, "total_tokens": 18}}])
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1] == {"event": "reply", "role": "ingest", "reply": BRIEF}
+    row = json.loads(completion.read_text())
+    assert row["outcome"] == "succeeded"
+    assert row["input_tokens"] == 11 and row["output_tokens"] == 7
+    assert row["finished_ms"] >= row["started_ms"]
+
+
+def test_callback_checkpoints_usage_before_a_worker_can_be_killed(tmp_path, request_doc):
+    from tl3_workers import facts
+    completion = tmp_path / "facts.json"
+    request_doc["trace"] = {"completion": str(completion)}
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="ok", usage_metadata={
+        "input_tokens": 11, "output_tokens": 7, "total_tokens": 18})])
+    with facts.observe(request_doc):
+        model.invoke("one")
+        model.invoke("two")
+        checkpoint = json.loads(completion.read_text())
+        assert checkpoint["outcome"] == "running"
+        assert checkpoint["finished_ms"] is None
+        assert (checkpoint["input_tokens"], checkpoint["output_tokens"]) == (22, 14)
+
+
+@pytest.mark.parametrize("request_id", ["Bearer secret", "x" * 129, "fixture-key-value"])
+def test_failure_correlation_rejects_secrets_and_unbounded_headers(tmp_path, request_doc, request_id):
+    from tl3_workers import facts
+    from tl3_workers.tracing import record_model_key
+    import httpx
+    from openai import InternalServerError
+    record_model_key("fixture-key-value")
+    completion = tmp_path / "facts.json"
+    request_doc["trace"] = {"completion": str(completion)}
+    response = httpx.Response(502, headers={"x-request-id": request_id},
+                              request=httpx.Request("POST", "http://model.invalid/v1"))
+    with pytest.raises(InternalServerError), facts.observe(request_doc):
+        raise InternalServerError("never stored", response=response, body=None)
+    assert json.loads(completion.read_text())["failure"]["request_id"] is None

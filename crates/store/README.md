@@ -262,3 +262,17 @@ A successful retain deletes its outbox row and clears key-rejection health in
 one transaction. Repeated rejections update the status without duplicating the
 incident. Queue and replay writers share a table lock to preserve the 10,000
 pending-row cap.
+
+## Worker completion facts
+
+Migration 0017 adds `tl3_worker_runs`, keyed by run key and process attempt.
+The rows survive progress and attempt retirement. They are append-only; importing
+the same completion twice is harmless, and replacing it is refused.
+
+The console's reader role can select the table, including its generated columns:
+`started_ms`, `finished_ms`, `outcome`, `release`, `model`, `input_tokens`,
+`cached_tokens`, `output_tokens`, `trace_id`, `session_id`, `failure_origin`,
+`failure_class`, `failure_status` and `failure_request_id`. Times are Unix
+milliseconds recorded at the worker boundary. Effect update times only describe
+acknowledgement. Missing finish times and token counts stay NULL. Earlier runs
+without worker measurements are not backfilled from effects.

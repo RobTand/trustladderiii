@@ -95,6 +95,9 @@ def create_model(request) -> BaseChatModel:
     record_model_key(key)
     spec = request["model"]
     identity = session_identity(request)
+    from tl3_workers.facts import current as current_facts
+    if facts := current_facts.get():
+        facts.session_id = identity
     return ProxyChatOpenAI(
         base_url=spec["base_url"],
         model=spec["name"],

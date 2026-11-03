@@ -389,6 +389,8 @@ pub struct WorkerRunFacts {
     pub cached_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub trace_id: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub failure: Option<WorkerBoundaryFailure>,
 }
 
@@ -421,6 +423,10 @@ impl WorkerRunFacts {
             || !bounded(&self.model, 256)
             || self.release.as_ref().is_some_and(|v| !identifier(v, 256))
             || self.trace_id.as_ref().is_some_and(|v| !identifier(v, 128))
+            || self
+                .session_id
+                .as_ref()
+                .is_some_and(|v| !identifier(v, 128))
             || [self.input_tokens, self.cached_tokens, self.output_tokens]
                 .iter()
                 .flatten()

@@ -2354,6 +2354,7 @@ fn worker_completion_facts(settings: &tl3_config::Store) {
         cached_tokens: Some(1_000_000),
         output_tokens: Some(170_000),
         trace_id: Some("tr-0f626041aebfeefcdea5b8365b1a3e46".into()),
+        session_id: Some("tl3-83-17-1".into()),
         failure: None,
     };
     store

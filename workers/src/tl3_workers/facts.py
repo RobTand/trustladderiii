@@ -10,7 +10,7 @@ import time
 from uuid import uuid4
 
 from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.callbacks.manager import register_configure_hook
+from langchain_core.tracers.context import register_configure_hook
 
 
 current = ContextVar('tl3_worker_facts', default=None)
@@ -22,6 +22,13 @@ def boundary_failure(error, request):
     from openai import APIError, APIStatusError
     from tl3_workers.tracing import Redactor
 
+    for _ in range(4):
+        if isinstance(error, APIError):
+            break
+        cause = error.__cause__ or error.__context__
+        if cause is None:
+            break
+        error = cause
     origin = 'worker'
     status, request_id = None, None
     if isinstance(error, APIError):
@@ -31,6 +38,9 @@ def boundary_failure(error, request):
         if isinstance(error, APIStatusError):
             status = error.status_code
             request_id = error.response.headers.get('x-request-id')
+            from urllib.parse import urlsplit
+            if error.response.request.url.host != urlsplit(request['model']['base_url']).hostname:
+                origin = 'provider'
     elif isinstance(error, (ConnectionError, TimeoutError)):
         origin = 'unknown'
     redactor = Redactor(None)
@@ -42,7 +52,8 @@ def boundary_failure(error, request):
         request_id = None
     # Classes are library identifiers. Unrecognized classes become a fixed label.
     name = type(error).__name__
-    if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,63}', name):
+    if (not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,63}', name)
+            or redactor.text(name) != name):
         name = 'WorkerError'
     return {'origin': origin, 'class': name, 'status': status, 'request_id': request_id}
 
@@ -72,6 +83,7 @@ class Facts(BaseCallbackHandler):
         self.request = request
         self.started_ms = None
         self.trace_id = None
+        self.session_id = None
         self.lock = Lock()
         self.pending = {}
         self.totals = {key: None for key in ('input_tokens', 'cached_tokens', 'output_tokens')}
@@ -81,7 +93,7 @@ class Facts(BaseCallbackHandler):
             'started_ms': self.started_ms, 'finished_ms': finished_ms, 'outcome': outcome,
             'release': self.request.get('trace', {}).get('release'),
             'model': self.request['model']['name'], **self.totals,
-            'trace_id': self.trace_id, 'failure': failure,
+            'trace_id': self.trace_id, 'session_id': self.session_id, 'failure': failure,
         }
 
     def save(self, outcome, finished_ms=None, failure=None):

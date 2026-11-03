@@ -935,6 +935,16 @@ impl Store {
             .map(|row| row.get(0)))
     }
 
+    pub fn worker_facts_recorded(&mut self, key: &str, attempt: i64) -> Result<bool> {
+        Ok(self
+            .client
+            .query_opt(
+                "SELECT 1 FROM tl3_worker_runs WHERE run_key = $1 AND attempt = $2",
+                &[&key, &attempt],
+            )?
+            .is_some())
+    }
+
     /// Import a worker-owned terminal record before retiring its attempt files.
     /// A replay is harmless; changing an already imported attempt is refused.
     pub fn record_worker_facts(

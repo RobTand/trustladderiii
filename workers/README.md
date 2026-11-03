@@ -773,3 +773,28 @@ preserve the role's result. Deep Agents remains the engine. Stored traces aren't
 pruned yet; `deploy/dl380g10/README.md` gives their growth and how to reclaim
 space. `workers/tools/trial_live_traces.py` checks all of this against a real
 server, in the scratch experiment `tl3-430-scratch`, through PrismaBuild.
+
+## Completion facts
+
+When `trace.completion` names an attempt file, the runtime atomically checkpoints
+numeric usage after each model call and writes a terminal record when the run
+ends, even when MLflow is unavailable. It records the model, pinned worker
+release, trace ID and the session ID sent to CLIProxyAPI. Streamed totals count
+once per call, including the last measured usage of an interrupted stream.
+Missing usage stays unknown. Cached tokens are input cache reads.
+
+The waitpid owner records worker start and exit times separately from the launch
+acknowledgement. The controller imports the completion before reporting its
+observation and before deleting the attempt. If the waitpid owner died, a missing
+finish time stays unknown. A deliberate stop uses the confirmed stop boundary.
+
+Failure records contain only the observed boundary, exception class, HTTP status
+and a redacted request ID capped at 128 characters. They retain no error text,
+credentials, URLs or response bodies. An error returned by CLIProxyAPI names the
+proxy boundary; it does not prove which provider failed behind it. A direct
+provider response can name the provider boundary. Wrapped API errors keep their
+bounded cause. The session ID also correlates calls without a response ID.
+
+For focused process coverage, run `cargo test -p tl3-controller --test workers --
+--worker-facts` through PrismaBuild. This exercises completion ingress, retirement,
+worker and supervisor crashes, retries and deliberate stops.
