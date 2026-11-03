@@ -104,6 +104,13 @@
     "decision_context": {
       "$ref": "decision-context.json",
       "description": "Controller-recorded decisions applicable to this request version. Source answers define scope and restrictions; they do not grant tools or override protected paths."
+    },
+    "tool_capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "ingest-reply.json#/$defs/tool_capability"
+      },
+      "maxItems": 64
     }
   },
   "required": [

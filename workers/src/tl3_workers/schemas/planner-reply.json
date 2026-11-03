@@ -326,6 +326,20 @@
         "decision_context": {
           "$ref": "decision-context.json",
           "description": "Code supplies the applicable approvals and restrictions from the planner inputs."
+        },
+        "evidence_contract": {
+          "$ref": "ingest-reply.json#/$defs/evidence_contract"
+        },
+        "evidence_errors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "uniqueItems": true,
+          "maxItems": 1024,
+          "description": "Code-owned unsupported evidence requirements."
         }
       },
       "required": [
@@ -526,6 +540,20 @@
         "decision_context": {
           "$ref": "decision-context.json",
           "description": "Code supplies the applicable approvals and restrictions from the planner inputs."
+        },
+        "evidence_contract": {
+          "$ref": "ingest-reply.json#/$defs/evidence_contract"
+        },
+        "evidence_errors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "uniqueItems": true,
+          "maxItems": 1024,
+          "description": "Code-owned unsupported evidence requirements."
         }
       },
       "required": [
@@ -702,6 +730,20 @@
         "decision_context": {
           "$ref": "decision-context.json",
           "description": "Code supplies the applicable approvals and restrictions from the planner inputs."
+        },
+        "evidence_contract": {
+          "$ref": "ingest-reply.json#/$defs/evidence_contract"
+        },
+        "evidence_errors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "uniqueItems": true,
+          "maxItems": 1024,
+          "description": "Code-owned unsupported evidence requirements."
         }
       },
       "required": [

@@ -84,3 +84,32 @@ plan before the maker may edit it.
 
 The controller reconciles restored decisions against the current issue before
 restart intake. Current issue text supersedes contradictory old approvals.
+
+
+When tool_capabilities is supplied, return evidence_contract, including an empty
+list when the request has no mandatory execution evidence. Derive it from the
+original request and constraints.
+Only evidence the request requires belongs in evidence_contract.
+Tools named only as history, context, non-goals or examples do not create evidence
+requirements. For example, "the earlier BuildBuddy run showed a failure" is
+context and does not require a BuildBuddy executor. An explicit request to run
+BuildBuddy does. Do not infer an execution requirement from a tool name alone.
+Each requirement names its source requirement
+in requirement, the exact tool and executor, runner_features, artifacts, methods,
+and protected_files. Use empty lists for dimensions the requirement does not
+constrain. List necessary edits to protected files, including runner or wrapper
+configuration, in protected_files. Merely reading a protected file is not an edit.
+Compare the requirements with tool_capabilities. Do not replace mandatory runs
+with review goals, omit requirements, or substitute a different executor's proof.
+
+The installed executor is prismabuild_pytest. It supports base_head, repeat,
+parallel and always_tests, with action_key, cas_receipt, sha, logs and terminal_verdict artifacts.
+Its methods are head, base_head, red_green, forced_reproduction.environment and
+forced_reproduction.patches. Q55 environment and Python patches do not implement
+a pinned CPU artificial contention wrapper. BuildBuddy Remote Bazel evidence
+requires executor buildbuddy_remote_bazel, artifact invocation_url and, when
+requested, runner feature pinned_cpu_contention and method
+forced_reproduction.contention_wrapper. Unrecognized mandatory requirements must
+keep their exact names and meaning; absence from the configured capabilities
+means unsupported. An empty tool_capabilities list supports no execution.
+Code records evidence_errors. Do not supply that field yourself.

@@ -5,6 +5,7 @@ pub mod writer;
 pub use writer::{FakeWriter, Writer};
 
 mod facts;
+mod evidence;
 mod fake;
 mod json;
 pub(crate) mod ladder;
@@ -477,6 +478,15 @@ impl Supervisor {
             if let Some(repo) = inputs["repo"].as_object_mut() {
                 repo.remove("materials");
             }
+        }
+        if matches!(role, "ingest" | "audit" | "planner") {
+            inputs["tool_capabilities"] = json!(self.planning.tool_capabilities);
+        }
+        if role == "planner" {
+            inputs["audit_evidence_contract"] = store
+                .worker_document(&node, "audits")?
+                .and_then(|audit| audit.get("evidence_contract").cloned())
+                .unwrap_or(json!([]));
         }
         protocol::validate_inputs(role, &inputs)?;
         let now = std::time::SystemTime::now()

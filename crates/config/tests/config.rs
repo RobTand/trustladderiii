@@ -1448,6 +1448,30 @@ fn heal_rerun_workflows_are_workflow_file_names() {
 }
 
 #[test]
+fn evidence_tools_are_explicit_configuration() {
+    let mut document: toml::Value = EXAMPLE.parse().unwrap();
+    document["planning"]["tool_capabilities"] = toml::Value::Array(vec![]);
+    let source = toml::to_string(&document).unwrap();
+    assert!(
+        Config::parse(&source).is_ok(),
+        "operators must be able to disable evidence tools"
+    );
+}
+
+#[test]
+fn evidence_tools_accept_always_tests_configuration() {
+    let mut document: Value = EXAMPLE.parse().unwrap();
+    document["planning"]["tool_capabilities"][0]["runner_features"] =
+        Value::Array(vec![Value::String("always_tests".into())]);
+    let config = Config::parse(&toml::to_string(&document).unwrap())
+        .expect("the installed runner supports always_tests");
+    assert_eq!(
+        config.planning.tool_capabilities[0].runner_features,
+        ["always_tests"]
+    );
+}
+
+#[test]
 fn repository_always_tests_defaults_empty_and_accepts_files_and_node_ids() {
     assert!(
         Config::parse(EXAMPLE).unwrap().github.repos[0]

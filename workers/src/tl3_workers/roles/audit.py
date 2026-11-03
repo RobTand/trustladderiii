@@ -1,11 +1,14 @@
 """Independently audit an ingest reply against the supplied issue."""
 
 from tl3_workers.roles.base import Role
+from tl3_workers.evidence import preflight
 from tl3_workers.exploration import ExplorationBudget
 
 
 ROLE = Role(
     name="audit",
+    check_reply=preflight,
+    code_only_fields=("evidence_errors",),
     prompt="audit.md",
     input_schema="audit-input",
     reply_schema="audit-reply",

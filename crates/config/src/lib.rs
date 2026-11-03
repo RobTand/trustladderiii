@@ -92,6 +92,8 @@ pub fn path_is_protected(path: &str, patterns: &[String]) -> bool {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Planning {
+    #[serde(default = "evidence_tools")]
+    pub tool_capabilities: Vec<ToolCapability>,
     /// Calibration seam: replace these named estimates with measured overheads later.
     pub overhead_tokens: BTreeMap<String, u32>,
     pub protected_paths: Vec<String>,
@@ -114,9 +116,51 @@ impl Planning {
     }
 }
 
+/// Evidence one installed tool can produce in a single execution protocol.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolCapability {
+    pub tool: String,
+    pub executor: String,
+    pub runner_features: Vec<String>,
+    pub artifacts: Vec<String>,
+    pub methods: Vec<String>,
+    pub protected_files: Vec<String>,
+}
+
+fn evidence_tools() -> Vec<ToolCapability> {
+    vec![ToolCapability {
+        tool: "run_tests".into(),
+        executor: "prismabuild_pytest".into(),
+        runner_features: ["base_head", "repeat", "parallel", "always_tests"]
+            .map(String::from)
+            .to_vec(),
+        artifacts: [
+            "action_key",
+            "cas_receipt",
+            "sha",
+            "logs",
+            "terminal_verdict",
+        ]
+        .map(String::from)
+        .to_vec(),
+        methods: [
+            "red_green",
+            "head",
+            "base_head",
+            "forced_reproduction.environment",
+            "forced_reproduction.patches",
+        ]
+        .map(String::from)
+        .to_vec(),
+        protected_files: Vec::new(),
+    }]
+}
+
 impl Default for Planning {
     fn default() -> Self {
         Self {
+            tool_capabilities: evidence_tools(),
             overhead_tokens: [
                 ("prompt".into(), 5_000),
                 ("making".into(), 20_000),
@@ -623,6 +667,30 @@ impl Config {
                 return Err(invalid(
                     "operations.issue",
                     "must be a positive issue number",
+                ));
+            }
+        }
+        let installed = evidence_tools().remove(0);
+        for capability in &self.planning.tool_capabilities {
+            if capability.tool != installed.tool
+                || capability.executor != installed.executor
+                || !capability
+                    .runner_features
+                    .iter()
+                    .all(|v| installed.runner_features.contains(v))
+                || !capability
+                    .artifacts
+                    .iter()
+                    .all(|v| installed.artifacts.contains(v))
+                || !capability
+                    .methods
+                    .iter()
+                    .all(|v| installed.methods.contains(v))
+                || !capability.protected_files.is_empty()
+            {
+                return Err(invalid(
+                    "planning.tool_capabilities",
+                    "must describe installed run_tests capabilities; configure a subset or disable with []",
                 ));
             }
         }
