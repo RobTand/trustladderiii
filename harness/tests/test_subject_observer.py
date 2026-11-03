@@ -370,3 +370,42 @@ def test_rereview662_runtime_rejects_indirect_subject_rebinding(repository, defe
     assert results[0].verdict == Verdict.FAIL, results
     assert 'proof_subject_integrity' in results[0].tests[0].message, results
     assert path in results[0].tests[0].message and 'helper' in results[0].tests[0].message, results
+
+
+def test_rereview662_new_module_cannot_rebind_an_inferred_subject(repository):
+    before = {'app.py': 'VERSION = 0\ndef helper(): return ("old", VERSION)\n'
+              'def install(value):\n    globals()["helper"] = value\n'}
+    after = {'app.py': before['app.py'].replace('= 0', '= 1').replace('"old"', '"new"'),
+             'tests/test_new.py': 'import app\nTOKEN = app.install(lambda: ("new", app.VERSION))\n'
+             'def test_observer():\n    assert app.helper() == ("new", 1), "declared result"\n'}
+    check = Check('inferred subject', Kind.DEMONSTRATING, ('tests/test_new.py::test_observer',),
+                  proof=model.Proof((), ('tests/test_new.py::TOKEN',), 'declared result'))
+    results, _, _ = round_result(repository, before, after, check)
+    assert results[0].verdict == Verdict.FAIL, results
+    assert 'proof_subject_integrity' in results[0].tests[0].message, results
+    assert 'app.py::helper' in results[0].tests[0].message, results
+
+
+def test_rereview662_parallel_maker_checks_integrity_after_fixtures(repository, tmp_path):
+    from tl3_harness import test_tool
+    from tl3_harness.proof import assemble_proof
+    from tl3_harness.trees import configuration, export
+
+    repo, save = repository
+    path = 'tests/test_subject.py'
+    before = ('VERSION = 0\ndef helper(): return ("old", VERSION)\n'
+              'def install(value):\n    globals()["helper"] = value\n')
+    base = save({path: before})
+    head = save({path: before.replace('= 0', '= 1').replace('"old"', '"new"') +
+                 'import pytest\n@pytest.fixture(autouse=True)\ndef TOKEN():\n'
+                 '    install(lambda: ("new", VERSION))\n'
+                 'def test_observer():\n    assert helper() == ("new", 1), "declared result"\n'})
+    old, new, staged = (tmp_path / name for name in ('base', 'head', 'staged'))
+    export(repo, base, old)
+    export(repo, head, new)
+    check = Check('parallel fixture', Kind.DEMONSTRATING, (path + '::test_observer',),
+                  proof=model.Proof((path + '::helper',), (path + '::TOKEN',), 'declared result'))
+    assemble_proof(old, new, staged, check, configuration(old))
+    result = test_tool.run_current(staged, Container(IMAGE), check.tests, parallel=2)
+    assert result['totals']['error'] == 1, result
+    assert 'proof_subject_integrity' in result['tests'][0]['message'], result
