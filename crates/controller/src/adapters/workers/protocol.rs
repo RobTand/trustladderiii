@@ -50,7 +50,7 @@ pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
                     .as_array()
                     .unwrap()
                     .iter()
-                    .any(|check| check["status"] != "met") =>
+                    .any(|check| check["status"] == "not_met") =>
             {
                 MappedReply::Kernel(Reply::MakerCantMeet)
             }

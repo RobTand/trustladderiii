@@ -1013,6 +1013,7 @@ fn delivery(notice: Notice) -> Delivery {
         question_context: None,
         steering: None,
         request_text: None,
+        evidence: None,
         proposed: None,
         checks: None,
         job_generation: None,

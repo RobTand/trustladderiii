@@ -189,6 +189,7 @@ impl Controller {
                 question_context: None,
                 steering: Some(crate::steering::Task::ConsoleNote { text: line }),
                 request_text: None,
+                evidence: None,
             };
             commit.rows.push(self.allowance_row(delivery.clone()));
             commit.effects.push(delivery.into_effect());

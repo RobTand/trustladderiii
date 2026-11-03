@@ -84,6 +84,7 @@ fn fixture(root: &Path) -> Delivery {
         scope_removals: None,
         steering: None,
         request_text: None,
+        evidence: None,
         proposed: None,
         question_context: None,
         question: None,

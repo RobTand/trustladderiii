@@ -185,6 +185,7 @@ impl Controller {
                     scope_removals: None,
                     question_context: None,
                     request_text: binding.source,
+                    evidence: None,
                     proposed: None,
                     steering: Some(Task::ReplacementDropped { text, outcome }),
                 },
@@ -285,6 +286,7 @@ impl Controller {
             scope_removals: None,
             question_context: None,
             request_text: binding.source,
+            evidence: None,
             proposed: None,
             steering: Some(Task::Classify {
                 comment_key: row.id.clone(),
@@ -854,6 +856,7 @@ impl Controller {
                 scope_removals: None,
                 question_context: None,
                 request_text: binding.source,
+                evidence: None,
                 proposed: None,
                 steering: Some(restart),
             },
@@ -994,6 +997,7 @@ impl Controller {
                         commit,
                         Delivery {
                             key: format!("restart-decisions:{comment_key}"),
+                            evidence: None,
                             epoch: snapshot.epoch.get(),
                             output: Output::Comment {
                                 node: original,
