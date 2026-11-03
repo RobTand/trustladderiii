@@ -232,9 +232,6 @@ def check_reply(inputs, reply, *, rehearsals=None):
     execution = execution_forecast(paths, check_count, declared=reply.get("estimated_tool_turns", 0),
                                    exploration=reply.get("estimated_exploration_turns"),
                                    generator=bool(inputs["forecast"].get("generator")))
-    if reply["kind"] in {"leaf", "split"} and not execution["exploration_declared"]:
-        violations.append("Declare estimated_exploration_turns, including searches, orientation reads and recall. "
-                          "Structural work alone cannot establish execution fit; zero must be an explicit estimate.")
     if reply["kind"] == "leaf" and execution["exploration_declared"] and not execution["fits"]:
         violations.append(f"The leaf exceeds the execution budget: estimated {execution['estimated_tool_turns']} "
                           f"tool turns, usable {execution['usable_tool_turns']} after the finalization reserve. "
@@ -265,9 +262,6 @@ def check_reply(inputs, reply, *, rehearsals=None):
                                           exploration=piece.get("estimated_exploration_turns"),
                                           generator=bool(inputs["forecast"].get("generator")))
             pieces.append(estimate)
-            if not estimate["exploration_declared"]:
-                violations.append("Every split piece must declare estimated_exploration_turns; "
-                                  "structure alone cannot establish execution fit.")
             for error in forecaster.problems:
                 violations.append(f"Declared file can't be used: {error}. Leave it out.")
             if reason == "execution_budget":

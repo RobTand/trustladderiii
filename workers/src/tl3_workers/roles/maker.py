@@ -241,8 +241,15 @@ def _budget_reply(request, allowance, history, worktree, reply):
     evidence = [entry for entry in worktree.evidence.test_evidence()
                 if not entry["base"] and entry["tree"] == tree and entry["status"] == "completed"
                 and not any(entry["totals"].get(outcome, 0) for outcome in ("failed", "error", "skipped", "missing"))]
-    if worktree.generator and getattr(worktree, "generation_receipt", {}).get("output_tree") != tree:
-        unfinished.append("Final configured generation")
+    if worktree.generator:
+        receipt = getattr(worktree, "generation_receipt", {})
+        if receipt.get("status") != "completed" or receipt.get("output_tree") != tree:
+            # Recovery may have only the durable checkpoint. Inspect it without
+            # submitting generation or importing outputs from the reserve.
+            with worktree._mutation_lock:
+                receipt = make_generator_tool(worktree, restore_only=True)()
+        if receipt.get("status") != "completed" or receipt.get("output_tree") != tree:
+            unfinished.append("Final configured generation")
     verified = {test for entry in evidence for test in entry["tests"]}
     unfinished.extend("Unverified final check: " + check["name"]
                       for check in inputs["plan"]["checks"] if not set(check["tests"]) <= verified)

@@ -238,34 +238,35 @@ class ExplorationMiddleware(AgentMiddleware):
         else:
             predicted = math.ceil(context * cold_weight)
         self.in_flight, self.in_flight_reserve = predicted, 0
+        final = False
         if self.repairing:
             # A repair turn spends the same allowance, without the final-answer reserve.
             if self.spent + predicted > self.budget.input_tokens:
                 raise RepairUnavailable()
-            return self._account(handler(request), bound)
-        original = [m for m in messages if isinstance(m, HumanMessage)]
-        reserve = input_estimate(request.override(messages=original, tools=[]))
-        reserve += (self.budget.history_bytes * 2 + len(FINISH) + 1024 + 2) // 3
-        # A compaction may invalidate cached evidence. Reserve a cold final call.
-        reserve = math.ceil(max(reserve, context) * cold_weight)
-        context_full = (self.compacted_below and not compact_now and len(source) > self.compaction_offset
-                        and context >= self.context_size * 0.7)
-        final = (self.exhaustion is not None or self.turns >= self.budget.tool_turns or context_full
-                 or self.spent + predicted + reserve > self.budget.input_tokens)
-        self.in_flight_reserve = 0 if final else reserve
-        if self.final:
-            raise BudgetUnavailable("The final reply already consumed the remaining execution allowance.")
-        if final:
-            self.final = True
-            self.exhaustion = self.exhaustion or ("tool_turns" if self.turns >= self.budget.tool_turns else
-                                                "context_tokens" if context_full else "input_tokens")
-            if notice is not None:
-                notice.content = BUDGET_PREFIX + json.dumps(self.remaining("final"), sort_keys=True)
-            request = request.override(tools=[], tool_choice=None,
-                                       messages=messages + [HumanMessage(content=FINISH)])
-            bound = input_estimate(request)
-        if self.spent + predicted > self.budget.input_tokens:
-            raise BudgetUnavailable("No final model call fits the remaining input-token allowance.")
+        else:
+            original = [m for m in messages if isinstance(m, HumanMessage)]
+            reserve = input_estimate(request.override(messages=original, tools=[]))
+            reserve += (self.budget.history_bytes * 2 + len(FINISH) + 1024 + 2) // 3
+            # A compaction may invalidate cached evidence. Reserve a cold final call.
+            reserve = math.ceil(max(reserve, context) * cold_weight)
+            context_full = (self.compacted_below and not compact_now and len(source) > self.compaction_offset
+                            and context >= self.context_size * 0.7)
+            final = (self.exhaustion is not None or self.turns >= self.budget.tool_turns or context_full
+                     or self.spent + predicted + reserve > self.budget.input_tokens)
+            self.in_flight_reserve = 0 if final else reserve
+            if self.final:
+                raise BudgetUnavailable("The final reply already consumed the remaining execution allowance.")
+            if final:
+                self.final = True
+                self.exhaustion = self.exhaustion or ("tool_turns" if self.turns >= self.budget.tool_turns else
+                                                    "context_tokens" if context_full else "input_tokens")
+                if notice is not None:
+                    notice.content = BUDGET_PREFIX + json.dumps(self.remaining("final"), sort_keys=True)
+                request = request.override(tools=[], tool_choice=None,
+                                           messages=messages + [HumanMessage(content=FINISH)])
+                bound = input_estimate(request)
+            if self.spent + predicted > self.budget.input_tokens:
+                raise BudgetUnavailable("No final model call fits the remaining input-token allowance.")
         response = handler(request)
         if notice is not None:
             # Persist budget notices with the call they preceded so subsequent
