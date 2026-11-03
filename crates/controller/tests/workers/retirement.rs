@@ -423,7 +423,16 @@ pub(super) fn session_unlink_error(settings: &tl3_config::Store) {
 }
 
 pub(super) fn bad_memory_never_blocks_retirement(settings: &tl3_config::Store) {
-    for bad in ["request", "exit", "size"] {
+    for bad in [
+        "request",
+        "exit",
+        "size",
+        "facts",
+        "facts-size",
+        "started",
+        "stopped",
+        "missing-exit",
+    ] {
         let root = tempfile::tempdir().unwrap();
         let config = config(settings, root.path(), "normal");
         let mut store = Store::open(settings).unwrap();
@@ -437,16 +446,29 @@ pub(super) fn bad_memory_never_blocks_retirement(settings: &tl3_config::Store) {
         let attempt = root_for(&config, &run.key).join("attempt-00000000");
         fs::write(
             attempt.join("request.json"),
-            json!({"role":"audit", "memory":{"repo":"fixture", "request":"0"}}).to_string(),
+            json!({"role":"audit", "operation":{"node":0}, "model":{"name":"fixture-model"},
+                "memory":{"repo":"fixture", "request":"0"}})
+            .to_string(),
         )
         .unwrap();
+        if !matches!(bad, "request" | "exit" | "size") {
+            fs::write(
+                attempt.join("worker-started.json"),
+                json!({"started_ms":1000}).to_string(),
+            )
+            .unwrap();
+        }
         if bad == "size" {
             fs::write(
                 attempt.join("request.json"),
                 vec![b' '; 16 * 1024 * 1024 + 1],
             )
             .unwrap();
-        } else {
+        } else if bad == "facts-size" {
+            fs::write(attempt.join("facts.json"), vec![b' '; 8193]).unwrap();
+        } else if bad == "started" {
+            fs::write(attempt.join("worker-started.json"), b"broken json").unwrap();
+        } else if bad != "missing-exit" {
             fs::write(attempt.join(format!("{bad}.json")), b"broken json").unwrap();
         }
         supervisor.retire(&mut store).unwrap();

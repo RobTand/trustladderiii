@@ -3,6 +3,9 @@
   "$id": "https://trustladderiii.invalid/workers/protocol-1/maker-input.json",
   "type": "object",
   "properties": {
+    "decision_context": {
+      "$ref": "decision-context.json"
+    },
     "brief": {
       "$ref": "#/$defs/text"
     },

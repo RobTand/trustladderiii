@@ -79,6 +79,24 @@ pub(super) fn open_request(settings: &tl3_config::Store) {
     controller.intake(labelled()).unwrap();
     drain(&mut controller);
     assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    let context: Value =
+        serde_json::from_str(include_str!("../fixtures/decisions/pq2662.json")).unwrap();
+    let mut store = Store::open(settings).unwrap();
+    let mut commit = tl3_store::Commit::new(
+        "reviewed-fixture-backfill",
+        json!({}),
+        &store.load().unwrap(),
+    );
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "request_decisions".into(),
+        id: "0".into(),
+        value: context.clone(),
+    });
+    store.commit(&commit).unwrap();
+    // A process restart must read the durable context, not a recalled memory.
+    drop(controller);
+    let mut controller =
+        steering::race_controller(settings, root.path(), &api, json!({"kind": "restart"}));
     edit_issue(&api);
     restart_comment(&mut controller, 20001);
     drain(&mut controller);
@@ -91,6 +109,89 @@ pub(super) fn open_request(settings: &tl3_config::Store) {
     assert_eq!(world.nodes[0].phase, Phase::Closed(Outcome::Replaced));
     assert!(!world.nodes[1].phase.is_closed());
     assert_restarted(&mut controller, &api, "1", 0);
+    let inherited = store
+        .load()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|r| r.table == "request_decisions" && r.id == "1")
+        .expect("restart must preserve approved decisions")
+        .value;
+    assert_eq!(inherited["request_version"], 1);
+    assert_eq!(inherited["decision_ids"], json!(["pq2662-q10"]));
+    assert!(inherited.get("decisions").is_none());
+    // A change request revokes the contradictory approval without erasing its history.
+    drop(controller);
+    let mut controller = steering::race_controller(
+        settings,
+        root.path(),
+        &api,
+        json!({
+            "kind": "change_request", "new_text": "Do not update the retention pin.",
+            "supersedes": ["pq2662-q10"],
+        }),
+    );
+    let mut comment = fixture(true)["comment"].clone();
+    comment["id"] = json!(20011);
+    comment["body"] = json!("Change the request: do not update the retention pin.");
+    controller
+        .observe(
+            "contradict-q10",
+            Observation::GitHubComment {
+                repository: bootstrap().repos.remove(0),
+                issue: 12,
+                comment: serde_json::from_value(comment).unwrap(),
+            },
+        )
+        .unwrap();
+    drain(&mut controller);
+    let updated = store
+        .load()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|r| r.table == "request_decisions" && r.id == "2")
+        .unwrap()
+        .value;
+    assert_eq!(updated["request_version"], 2);
+    assert_eq!(updated["decision_ids"], json!([]));
+    let history = store
+        .load()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|r| r.table == "decisions")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        history.len(),
+        1,
+        "history is stored once across all request versions"
+    );
+    assert_eq!(
+        history[0].value["superseded_by"],
+        "https://github.com/owner/sandbox/issues/12#issuecomment-20011"
+    );
+    assert!(
+        history[0].value["supersession_reason"]
+            .as_str()
+            .unwrap()
+            .contains("contradicts")
+    );
+    assert_eq!(
+        history[0].value["answer"],
+        context["decisions"][0]["answer"]
+    );
+    assert_eq!(
+        store
+            .load()
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|r| r.table == "request_decisions" && r.id == "0")
+            .unwrap()
+            .value,
+        json!({"schema_version":2, "request_version":0, "decision_ids":["pq2662-q10"]})
+    );
     println!("test restart_open_request_starts_from_edited_issue ... ok");
 }
 
@@ -513,4 +614,63 @@ pub(super) fn duplicate_request(settings: &tl3_config::Store) {
         "TL3 reopens its own close"
     );
     println!("test restart_duplicate_request_reopens_issue ... ok");
+}
+
+pub(super) fn revoked_issue(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("hold-merges"), "hold").unwrap();
+    let api = Server::new();
+    let mut controller =
+        steering::race_controller(settings, root.path(), &api, json!({"kind":"restart"}));
+    controller.intake(labelled()).unwrap();
+    drain(&mut controller);
+    let context: Value =
+        serde_json::from_str(include_str!("../fixtures/decisions/pq2662.json")).unwrap();
+    let mut store = Store::open(settings).unwrap();
+    let mut commit = tl3_store::Commit::new("reviewed-q10", json!({}), &store.load().unwrap());
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "request_decisions".into(),
+        id: "0".into(),
+        value: context,
+    });
+    store.commit(&commit).unwrap();
+    api.state.lock().unwrap().issue_body =
+        Some("Do not update the retention pin. Preserve the original two-file scope.".into());
+    restart_comment(&mut controller, 20100);
+    drain(&mut controller);
+    let snapshot = store.load().unwrap();
+    let latest = snapshot
+        .rows
+        .iter()
+        .filter(|r| r.table == "request_decisions")
+        .max_by_key(|r| r.id.parse::<u64>().unwrap())
+        .unwrap();
+    assert_eq!(
+        latest.value["decision_ids"],
+        json!([]),
+        "current issue text must revoke the restored pin approval"
+    );
+    let history = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "decisions" && r.id == "pq2662-q10")
+        .expect("revoked approval keeps one durable history record");
+    assert!(
+        history.value["supersession_reason"]
+            .as_str()
+            .unwrap()
+            .contains("current issue")
+    );
+    let request = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "requests" && r.id == latest.id)
+        .unwrap();
+    assert!(
+        request.value["source"]
+            .as_str()
+            .unwrap()
+            .contains("Do not update")
+    );
+    println!("test restart_current_issue_revokes_approval ... ok");
 }

@@ -237,6 +237,58 @@ fn classifier_schema(value: &Value, reply: bool) -> Result<()> {
 
 pub(crate) fn validate_classification(inputs: &Value, reply: &Value) -> Result<()> {
     classifier_schema(reply, true)?;
+    if inputs.get("reconcile_issue").is_some() || reply["kind"] == "reconcile_decisions" {
+        if inputs.get("reconcile_issue").is_none() || reply["kind"] != "reconcile_decisions" {
+            return Err(Error::Invalid("restart must reconcile the current issue"));
+        }
+        let active: std::collections::BTreeSet<_> = inputs["decision_context"]["decisions"]
+            .as_array()
+            .ok_or(Error::Invalid("reconciliation needs decisions"))?
+            .iter()
+            .map(|d| d["id"].as_str().unwrap())
+            .collect();
+        let items = reply["assessments"].as_array().unwrap();
+        let ids: std::collections::BTreeSet<_> =
+            items.iter().map(|a| a["id"].as_str().unwrap()).collect();
+        if ids != active || ids.len() != items.len() {
+            return Err(Error::Invalid(
+                "reconciliation must assess every applicable decision exactly once",
+            ));
+        }
+        return Ok(());
+    }
+    if inputs["selected_answer"]
+        .as_object()
+        .is_some_and(|selected| {
+            selected
+                .iter()
+                .any(|(key, value)| reply.get(key) != Some(value))
+        })
+    {
+        return Err(Error::Invalid(
+            "classifier changed a selected console answer",
+        ));
+    }
+    let active = inputs["decision_context"]["decisions"].as_array();
+    if (reply["kind"] == "change_request" || reply["answer"] == "change_request")
+        && active.is_some_and(|decisions| !decisions.is_empty())
+        && reply["supersedes"].as_array().is_none()
+    {
+        return Err(Error::Invalid(
+            "replacement must assess applicable decisions",
+        ));
+    }
+    if reply["supersedes"].as_array().is_some_and(|ids| {
+        ids.iter().any(|id| {
+            !active.is_some_and(|decisions| {
+                decisions
+                    .iter()
+                    .any(|decision| decision["id"] == *id && decision["superseded_by"].is_null())
+            })
+        })
+    }) {
+        return Err(Error::Invalid("supersedes names an inapplicable decision"));
+    }
     let closed = inputs["state"]["closed"] == true;
     let kind = reply["kind"].as_str().unwrap();
     if (kind == "restart" && inputs["state"]["restartable"] != true)
@@ -435,6 +487,13 @@ mod reply_defects {
     #[test]
     fn registry_resolves_a_new_cross_schema_reference() {
         let schemas = vec![
+            (
+                "decision-context.json".into(),
+                serde_json::from_str(include_str!(
+                    "../../../../../workers/src/tl3_workers/schemas/decision-context.json"
+                ))
+                .unwrap(),
+            ),
             (
                 "new-input.json".into(),
                 json!({"$id":"https://trustladderiii.invalid/workers/protocol-1/new-input.json", "$ref":"maker-input.json#/properties/goals/items"}),

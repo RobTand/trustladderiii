@@ -185,8 +185,10 @@ tl3_py_test(
         ":conftest",
         ":worker_process",
         "//workers/src",
+        "@tl3_pip//httpx",
         "@tl3_pip//jsonschema",
         "@tl3_pip//langchain_core",
+        "@tl3_pip//openai",
         "@tl3_pip//pytest",
     ],
 )
@@ -251,6 +253,8 @@ tl3_py_test(
         "//workers/src",
         "@tl3_pip//httpx",
         "@tl3_pip//langchain_core",
+        "@tl3_pip//langchain_openai",
+        "@tl3_pip//openai",
         "@tl3_pip//pytest",
     ],
 )

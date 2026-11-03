@@ -14,7 +14,7 @@ from tl3_workers.recall import check_citations
 
 
 def check_reply(inputs, reply):
-    if "forecast" in reply or "violations" in reply:
+    if "forecast" in reply or "violations" in reply or "decision_context" in reply:
         raise ValueError("only code may supply planning evidence")
     check_citations(inputs, reply)
     goals = set(range(len(inputs["ingest"]["goals"])))
@@ -118,6 +118,8 @@ def check_reply(inputs, reply):
                 violations.append(f"Declared file can't be used: {error}. Leave it out.")
             if child["tokens"] >= forecast["tokens"]:
                 violations.append("Every proposed piece must have a smaller forecast than its parent.")
+    if "decision_context" in inputs:
+        reply["decision_context"] = inputs["decision_context"]
     reply["forecast"] = forecast
     reply["violations"] = list(dict.fromkeys(violations))
 
@@ -261,7 +263,7 @@ ROLE = Role(
     prompt="planner.md",
     input_schema="planner-input",
     reply_schema="planner-reply",
-    code_only_fields=("forecast", "violations"),
+    code_only_fields=("forecast", "violations", "decision_context"),
     tools={
         "list": "List worktree directories to locate material for the plan.",
         "read": "Read worktree text to identify files and checks for the goals.",
