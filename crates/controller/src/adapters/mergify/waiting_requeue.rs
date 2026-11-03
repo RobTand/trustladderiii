@@ -49,28 +49,33 @@ impl Adapter {
         )
     }
     pub(super) fn retain_legacy_command(&self, delivery: &Delivery) -> Result<()> {
+        let Some(attempt) = self.baseline(delivery)? else {
+            return Ok(());
+        };
+        let command = match attempt.requeue {
+            Some(Requeue::Sending) => Command::Sending,
+            Some(Requeue::Refused) => Command::Refused,
+            _ => return Ok(()),
+        };
+        // Closed nodes have already lost their PR binding. Their head receipt
+        // survives retirement independently of these effect-keyed files.
+        if delivery.pull_request.is_none() || delivery.head_sha.is_none() {
+            return Ok(());
+        }
         if self
             .recovery(delivery)?
             .is_some_and(|recovery| !matches!(recovery.command, Command::Ready))
         {
             return Ok(());
         }
-        if let Some(attempt) = self.baseline(delivery)? {
-            let command = match attempt.requeue {
-                Some(Requeue::Sending) => Command::Sending,
-                Some(Requeue::Refused) => Command::Refused,
-                _ => return Ok(()),
-            };
-            self.save_recovery(
-                delivery,
-                &Recovery {
-                    eligible_since_ms: None,
-                    command,
-                    command_key: delivery.key.clone(),
-                },
-            )?;
-        }
-        Ok(())
+        self.save_recovery(
+            delivery,
+            &Recovery {
+                eligible_since_ms: None,
+                command,
+                command_key: delivery.key.clone(),
+            },
+        )
     }
     fn recovery(&self, delivery: &Delivery) -> Result<Option<Recovery>> {
         let path = self.recovery_path(delivery)?;
