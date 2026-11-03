@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -12,6 +13,11 @@ import tempfile
 from tl3_harness import generator
 from tl3_workers.pb_tests import TestSettings, _failure_receipt, _git, _json_command, _stage
 from tl3_workers.session import save
+
+
+def _elapsed(ending):
+    elapsed = (ending.get("diagnostics") or {}).get("elapsed_s")
+    return elapsed if type(elapsed) in (int, float) and math.isfinite(elapsed) and elapsed >= 0 else None
 
 
 def _artifact(ending, key):
@@ -39,7 +45,8 @@ def _artifact(ending, key):
                       "identity": artifact.get("identity"), "budget": artifact.get("budget"),
                       "phase": artifact.get("phase"), "timings": artifact.get("timings"),
                       "inner": {"status": artifact["status"], "exit_code": artifact["exit_code"]},
-                      "outer": {"status": ending["status"], "exit_code": ending["exit_code"]}}
+                      "outer": {"status": ending["status"], "exit_code": ending["exit_code"],
+                                "elapsed_s": _elapsed(ending)}}
 
 
 def _import(worktree, outputs):
@@ -194,7 +201,7 @@ def make_generator_tool(worktree):
                                   "message": "Generator action failed: " + json.dumps(receipt, sort_keys=True),
                                   "budget": selected, "phase": "outer", "identity": {
                                       "implementation": generator.IMPLEMENTATION, "image": settings.image,
-                                      "budget": selected}, "outer": receipt,
+                                      "budget": selected}, "outer": {**receipt, "elapsed_s": _elapsed(waited["endings"][0])},
                                   "inner": {"status": "unavailable", "exit_code": None}}
                         state.update(phase="failed", receipt=result)
                         record()

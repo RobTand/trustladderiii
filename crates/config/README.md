@@ -210,9 +210,10 @@ The enclosing PB execution and progress budgets are the configured deadline
 plus 60 seconds, so the default stays 180 seconds. Preparation has 25 seconds,
 validation 20, cleanup 10, and artifact serialization has 5 seconds of headroom.
 The trusted action bounds preparation and validation with process timers.
-Its timing receipt reports those phases, container execution, cleanup, and total
-admitted-action time. Container startup and command time share one measurement;
-queue/admission wait is outside it. Cleanup failure cannot replace the original
+Its timing receipt reports those phases, container execution, cleanup, and the
+total generator lifecycle. The outer verdict separately retains PB's whole action
+`elapsed_s`, or null when older PB records omit it. Container startup and command
+time share one measurement. Queue/admission wait is outside both totals. Cleanup failure cannot replace the original
 inner timeout. If PB terminates the action without an artifact, its outer verdict
 is retained and the inner verdict is explicitly unavailable.
 

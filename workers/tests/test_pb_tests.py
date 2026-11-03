@@ -724,6 +724,7 @@ def generator_backend(tmp_path, monkeypatch):
             log = tmp_path / f"generator-{len(calls)}.log"
             log.write_bytes(raw)
             artifacts[KEY] = {"action_key": KEY, "status": "executed", "exit_code": 0,
+                              "diagnostics": {"elapsed_s": 123.5},
                               "succeeded": True, "result": {"verified": True,
                               "receipt_sha256": "b" * 64, "stdout": {
                                   "path": str(log), "bytes": len(raw),
@@ -1071,6 +1072,7 @@ def test_generator_repository_deadline_reaches_inner_and_outer_budgets(
     assert args[args.index("--timeout-s") + 1] == str(timeout + 60)
     assert args[args.index("--progress-phase") + 1] == f"tests={timeout + 60}"
     assert result.get("budget", {}).get("timeout_s") == timeout
+    assert result["outer"].get("elapsed_s") == 123.5, "retain PB's whole action time separately from harness stages"
 
 
 @pytest.mark.parametrize("change", ["cpus", "mem_gb", "deadline"])
