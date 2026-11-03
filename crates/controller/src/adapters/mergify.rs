@@ -839,9 +839,8 @@ impl Adapter {
         // A repaired head's eligible waiting check is not dequeue completion.
         // Its bounded recovery is reconciled by repository/PR/head below.
         if state.state == QueueState::Waiting
-            && (self.has_recovery(delivery)?
-                || issue.labels.iter().any(|label| label.name == QUEUE_LABEL)
-                    && self.repaired_head(delivery, snapshot)?)
+            && issue.labels.iter().any(|label| label.name == QUEUE_LABEL)
+            && (self.has_recovery(delivery)? || self.repaired_head(delivery, snapshot)?)
         {
             return Ok(Reconciliation::Pending);
         }
@@ -995,25 +994,23 @@ impl Executor for Adapter {
         self.records.write(&path, &serde_json::to_vec(&attempt)?)?;
         self.fence(delivery)?;
         if attempt.requeue.is_some() {
-            return match self.queue_command(delivery, false)? {
-                Reconciliation::Found(completion) => Ok(*completion),
-                _ => Err(Error::Invalid(
-                    "queue command sent; Mergify acceptance is still unknown",
-                )),
-            };
-        }
-        match self
-            .runtime
-            .block_on(Mergify::new(github).queue(&repo, number, head))
-        {
-            Ok(()) => {}
-            Err(tl3_mergify::Error::HeadChanged) => {
-                return match self.completion(delivery, self.snapshot()?.as_ref())? {
-                    Reconciliation::Found(completion) => Ok(*completion),
-                    _ => Err(Error::Invalid("PR changed during enqueue")),
-                };
+            if let Reconciliation::Found(completion) = self.queue_command(delivery, false)? {
+                return Ok(*completion);
             }
-            Err(error) => return Err(adapter_error(error)),
+        } else {
+            match self
+                .runtime
+                .block_on(Mergify::new(github).queue(&repo, number, head))
+            {
+                Ok(()) => {}
+                Err(tl3_mergify::Error::HeadChanged) => {
+                    return match self.completion(delivery, self.snapshot()?.as_ref())? {
+                        Reconciliation::Found(completion) => Ok(*completion),
+                        _ => Err(Error::Invalid("PR changed during enqueue")),
+                    };
+                }
+                Err(error) => return Err(adapter_error(error)),
+            }
         }
         self.records.write(
             &self.records.path(&delivery.key).with_extension("applied"),
