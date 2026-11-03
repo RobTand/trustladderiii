@@ -1255,12 +1255,23 @@ fn changed_console_request_reconciles_existing_decisions() {
         .iter()
         .max_by_key(|(id, _)| id.parse::<u64>().unwrap())
         .unwrap();
-    assert_eq!(latest.1["decision_ids"], json!([]));
-    let history = world.rows("decisions");
-    assert_eq!(history.len(), 1);
-    assert!(!history[0].1["superseded_by"].is_null());
+    assert_eq!(latest.1["decision_ids"].as_array().unwrap().len(), 1);
     assert!(
-        history[0].1["supersession_reason"]
+        !latest.1["decision_ids"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("pq2662-q10"))
+    );
+    let history = world.rows("decisions");
+    assert_eq!(
+        history.len(),
+        2,
+        "one record each for the old approval and replacement answer"
+    );
+    let revoked = history.iter().find(|(id, _)| id == "pq2662-q10").unwrap();
+    assert!(!revoked.1["superseded_by"].is_null());
+    assert!(
+        revoked.1["supersession_reason"]
             .as_str()
             .unwrap()
             .contains("contradicts")
