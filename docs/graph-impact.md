@@ -66,12 +66,14 @@ reasons. Keys are `reach:<test-label>`, `edge:<group>:<consumer> -> <dependency>
 or `scc:<sorted,comma-separated-members>`. Compared with base, entries may only
 be deleted. Reasons cannot change. The initial empty list permits no exceptions.
 
-Run the check on BuildBuddy, using full commit SHAs:
+CI runs the check on BuildBuddy through the in-repo Run API client,
+[`tools/ci/remote_gate.py`](../tools/ci/remote_gate.py). For an agent run on
+dl380g10, use the external Run API helper described in
+[Running tests](bazel.md#running-tests), in `step` mode with this remote
+command and full commit SHAs:
 
 ```sh
-bb remote --timeout=10m --jobs=16 --run_from_commit="$HEAD_SHA" \
-  --container_image="docker://gcr.io/flame-public/rbe-ubuntu24-04@sha256:5f0c01e5f6d79e58d7a996330de33aa38ce599bf8431eaf27521e7602daadf50" \
-  --script="python3 tools/ci/graph_impact_check.py --base $BASE_SHA --head $HEAD_SHA"
+python3 tools/ci/graph_impact_check.py --base "$BASE_SHA" --head "$HEAD_SHA"
 ```
 
 Add `--write-baseline` inside the remote command to record gains. Fetch the
@@ -86,7 +88,9 @@ It generates independent hash pairs with v42 and v70.0.2 and fails if their impa
 rule sets differ. It plants broad reach, forbidden dependencies, existing-source
 expansion, and a cycle into the exported graph and checks each failure. It also
 checks that a new sibling test, three new hub sources, and a U improvement pass.
-Run it with `bb remote --timeout=10m --git_fetch_depth=0 --script='...'`.
+Run it through the same Run API workflow, with a ten-minute timeout and the
+historical commits available in the runner's checkout. Follow the
+[credential rules](bazel.md#running-tests) for logs, child processes, and artifacts.
 
 `graph_impact_replay.py --harvest graph-impact-replay-ranges.json` exports the last
 30 merged ranges using queries, sharing immutable snapshots at consecutive

@@ -51,6 +51,8 @@ def main():
             result = subprocess.run(command, check=False, env=child_env())
             timings.append({'command': command, 'seconds': time.monotonic() - before,
                             'returncode': result.returncode})
+            if args.mode == 'features':
+                subprocess.run(['du', '-sh', 'target'], check=False, env=child_env())
             result.check_returncode()
     finally:
         report = {'mode': args.mode, 'seconds': time.monotonic() - started, 'builds': timings}

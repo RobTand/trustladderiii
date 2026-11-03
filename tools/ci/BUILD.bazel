@@ -1,3 +1,4 @@
+# gazelle:resolve py rust_runner //tools/bazel:rust_runner
 load("@rules_python//python:defs.bzl", "py_binary")
 load("@tl3_pip//:requirements.bzl", "requirement")
 load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
@@ -101,7 +102,10 @@ py_library(
 tl3_py_test(
     name = "test_bazel_parity",
     srcs = ["test_bazel_parity.py"],
-    deps = [":bazel_parity"],
+    deps = [
+        ":bazel_parity",
+        "//tools/bazel:rust_runner",
+    ],
 )
 
 tl3_py_test(
@@ -299,4 +303,18 @@ py_binary(
     name = "check_no_secret_leak",
     srcs = ["check_no_secret_leak.py"],
     visibility = ["//visibility:public"],
+)
+
+tl3_py_test(
+    name = "test_docs_security",
+    srcs = ["test_docs_security.py"],
+    data = ["//:instruction_docs"],
+    deps = ["//tools/ci:child_env"],
+)
+
+py_binary(
+    name = "fail_fast_proof",
+    srcs = ["fail_fast_proof.py"],
+    visibility = ["//visibility:public"],
+    deps = [":bazel_gate"],
 )

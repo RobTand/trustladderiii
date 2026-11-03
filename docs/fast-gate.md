@@ -25,9 +25,11 @@ Baselines use original main `87119190` plus the measurement driver. The final so
 
 `cargo-nextest` was unavailable. The Cargo-artifact runner handles native tests and this repository's many `harness = false` binaries without passing them unsupported libtest flags. It emits every duration and writes `target/ci-test-times.json`.
 
-## Enforced budgets
+## Time budget warnings
 
-The default is 10 seconds. The initial explicit slow list uses the maximum observed duration across dl380g10, sparky and sparklina, multiplied by 1.5 and rounded up to five seconds. Tests with that margin above 10 seconds are listed explicitly. The list includes fixture tails, which expose remaining work to optimize.
+Per-test timing overruns are warnings and never trigger a retry. Assertion
+failures and hard Bazel timeouts still fail. The default warning threshold is
+10 seconds. The initial explicit slow list uses the maximum observed duration across dl380g10, sparky and sparklina, multiplied by 1.5 and rounded up to five seconds. Tests with that margin above 10 seconds are listed explicitly. The list includes fixture tails, which expose remaining work to optimize.
 
 A PR cannot increase the default, add an exception or raise an exception's limit. The runner compares the policy against the PR base SHA or merge-group base SHA, fetching missing target history in shallow CI checkouts. Initial installation is allowed only when the target has no policy. Missing or skipped native test results fail. Diagnostics stay on stderr so partial background messages cannot swallow stdout completion records.
 
