@@ -89,6 +89,44 @@ def test_reserve_blocks_edits_even_when_model_calls_a_hidden_tool(maker_request,
     assert len(model.calls) == 5, "four bounded tool turns and one tools-free final reply"
 
 
+def test_exploration_without_implementation_warns_halfway_and_keeps_the_reserve(maker_request, monkeypatch):
+    model = install(monkeypatch, maker_request, turns=8, reserve=2, actions=[
+        ("write", {"path": "test_greeting.py", "content": "def test_hello(): assert False\n"}),
+        *[("read", {"path": "greeting.py"})] * 7])
+    events = []
+    runtime.run(maker_request, events.append)
+    budgets = snapshots(model)
+    assert not budgets[3].get("warning")
+    assert "Stop broad exploration" in budgets[4].get("warning", ""), budgets[4]
+    assert budgets[4]["tool_turns"]["remaining"] == 4
+    assert budgets[4]["implementation_started"] is False, "a test edit is not implementation progress"
+    assert "write" in model.calls[4][1], "the warning must leave implementation capacity"
+    assert "write" not in model.calls[6][1], "finalization remains inside the same cap"
+    assert len(model.calls) == 9
+    assert events[-1]["reply"]["budget_exhaustion"]["tool_turns"] == {"used": 8, "allowed": 8}
+    assert Path(maker_request["worktree"], "greeting.py").read_text().startswith("def greet")
+
+
+def test_implementation_progress_suppresses_the_halfway_warning_and_survives_restore(maker_request, monkeypatch):
+    model = install(monkeypatch, maker_request, turns=8, reserve=2, actions=[
+        ("write", {"path": "greeting.py", "content": "def greet(): return 'hello'\n"})])
+    budgets = []
+    original = runtime.ExplorationMiddleware
+
+    def construct(*args, **kwargs):
+        budget = original(*args, **kwargs)
+        budgets.append(budget)
+        return budget
+
+    monkeypatch.setattr(runtime, "ExplorationMiddleware", construct)
+    runtime.run(maker_request, lambda _: None)
+    assert snapshots(model)[4].get("implementation_started") is True
+    assert not snapshots(model)[4].get("warning")
+    restored = original(budgets[0].budget, "maker")
+    restored.restore(budgets[0].state())
+    assert restored.remaining()["implementation_started"] is True
+
+
 def test_cap_with_unfinished_work_produces_typed_preserved_diagnostic(maker_request, monkeypatch):
     root = Path(maker_request["worktree"])
     maker_request["inputs"]["plan"]["files"].append("CHANGELOG.md")

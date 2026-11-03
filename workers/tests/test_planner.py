@@ -85,6 +85,27 @@ def test_seven_file_public_output_adoption_requires_a_split_before_maker_work(pl
     assert split["execution"]["aggregate_allowed_tool_turns"] == 128
 
 
+def test_execution_fit_requires_declared_exploration_and_refuses_the_three_file_search_shape(planner_request, monkeypatch):
+    from tl3_workers.roles import planner
+
+    monkeypatch.chdir(planner_request["worktree"])
+    proposal = copy.deepcopy(LEAF)
+    proposal["files"].append("implementation.py")
+    proposal.pop("estimated_exploration_turns", None)
+    planner.check_reply(planner_request["inputs"], proposal)
+    assert any("exploration" in item.lower() for item in proposal["violations"]), proposal
+    assert proposal["execution"]["fits"] is False, "structure alone cannot establish execution fit"
+    proposal = copy.deepcopy(LEAF)
+    proposal["files"].append("implementation.py")
+    # PB #2718 spent 21 searches, 21 reads and one glob before implementation.
+    proposal["estimated_exploration_turns"] = 43
+    planner.check_reply(planner_request["inputs"], proposal)
+    assert proposal["forecast"]["fits"] is True
+    assert proposal["execution"]["components"]["exploration_operations"] == 43
+    assert proposal["execution"]["fits"] is False
+    assert any("execution budget" in item.lower() for item in proposal["violations"])
+
+
 def test_execution_split_uses_existing_path_and_retains_aggregate_estimates(planner_request, monkeypatch):
     from tl3_workers.roles import planner
 
