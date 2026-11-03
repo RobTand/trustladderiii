@@ -112,6 +112,7 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/github.rs": ["tests/support/**", "tests/fixtures/decisions/**", "tests/fixtures/steering/**", "tests/worker_model.py", "tests/worker_replies.py", "tests/worker_transport.py"],
     "tests/looks.rs": ["tests/fixtures/bell/**", "tests/fixtures/waits/**", "tests/worktree_fixture/**"],
     "tests/prismabuild.rs": ["tests/support/**", "tests/fixtures/bell/**", "tests/fixtures/pb.py", "tests/prismabuild_fixture/**"],
+    "tests/publishing_drain.rs": ["tests/publishing/drain_deadline.rs"],
     "tests/publishing.rs": ["tests/support/**", "tests/fixtures/pb.py", "tests/prismabuild_fixture/**", "tests/worktree_fixture/**"],
     "tests/reproducing_rebase.rs": ["tests/worktree_fixture/**"],
     "tests/scenario_watchdog.rs": ["tests/support/scenario.rs"],

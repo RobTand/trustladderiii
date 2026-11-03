@@ -102,7 +102,8 @@ class RustDependencyTests(unittest.TestCase):
             bins=["tl3", "tl3d"], declared_tests={
                 name: {"path": "tests/" + name + ".rs"}
                 for name in ["core_defects", "workers", "publishing", "prismabuild",
-                             "github", "hindsight", "writer_references", "writer_blocker"]})
+                             "github", "hindsight", "writer_references", "writer_blocker",
+                             "mergify", "simulation"]})
 
     def dependencies(self, target):
         pending, found = [":" + target], set()
@@ -156,7 +157,10 @@ class RustDependencyTests(unittest.TestCase):
         self.assertIn("tests/worker_replies.py", deps)
 
     def test_measured_controller_shard_configuration(self):
-        for name, count in [("workers", 8), ("publishing", 0)]:
+        for name, count in [("workers", 8), ("publishing", 0),
+                            ("mergify", 8), ("github-flow", 50),
+                            ("github-notices", 32), ("simulation", 16),
+                            ("core_defects", 0)]:
             with self.subTest(name=name):
                 self.assertEqual(self.rules[":test_test_" + name].get("shard_count"), count)
         worker = self.rules[":test_test_workers"]
