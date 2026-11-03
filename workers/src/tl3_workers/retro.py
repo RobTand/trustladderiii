@@ -5,9 +5,9 @@ the run: its usage stays out of the execution allowance and the run's usage
 totals, and any failure is recorded, never raised.
 
 The protocol allows no event after the reply, so the retro runs before it. It
-reports one model turn of progress, then gets a hard deadline well inside the
-agent worker's 120-second silence allowance, so it can never get the run
-stopped before the accepted reply is delivered.
+reports one model turn of progress, then gets a hard deadline of at most half
+the agent worker's silence and no-progress allowances, so it can never get the
+run stopped before the accepted reply is delivered.
 """
 
 from contextlib import nullcontext
@@ -26,9 +26,9 @@ SPAN = "tl3.maker_retro"
 DEADLINE_S = 60
 
 
-def deadline(silence_secs=None):
-    """At most DEADLINE_S, and at most half the worker's silence allowance when known."""
-    return DEADLINE_S if silence_secs is None else min(DEADLINE_S, silence_secs / 2)
+def deadline(silence_secs=None, no_progress_secs=None):
+    """At most DEADLINE_S, and at most half of each of the worker's allowances that is known."""
+    return min([DEADLINE_S, *(allowance / 2 for allowance in (silence_secs, no_progress_secs) if allowance is not None)])
 RESULT_BYTES = 5_120
 ITEM_CHARS = 240
 FIELDS = ("slowed_by", "missing", "checks", "noise")
@@ -125,7 +125,7 @@ def _traced(model, control, capture, limit):
     return record
 
 
-def run(model, control, emit=None, silence_secs=None):
+def run(model, control, emit=None, silence_secs=None, no_progress_secs=None):
     """Run the retro once, within its deadline, and record it. Never raises."""
     from tl3_workers.facts import current as current_facts
     from tl3_workers.tracing import active, failure
@@ -138,7 +138,7 @@ def run(model, control, emit=None, silence_secs=None):
     try:
         if emit is not None:
             emit({"event": "progress", "unit": "model_turn"})
-        limit = deadline(silence_secs)
+        limit = deadline(silence_secs, no_progress_secs)
         context = contextvars.copy_context()
         result = {}
         # A daemon thread: past the deadline the reply goes out, and process

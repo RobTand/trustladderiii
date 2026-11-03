@@ -129,8 +129,9 @@ pub struct Supervisor {
     protected_paths: crate::scope::ProtectedPaths,
     repositories: Vec<tl3_config::Repository>,
     limits: tl3_config::Limits,
-    // The worker bounds the maker's retro by this allowance (#648).
+    // The worker bounds the maker's retro by these allowances (#648).
     silence_secs: u32,
+    no_progress_secs: u32,
     store: tl3_config::Store,
     records_root: PathBuf,
     materials_provider: Option<crate::production::Materials>,
@@ -177,6 +178,7 @@ impl Supervisor {
             repositories: config.github.repos.clone(),
             limits: config.limits.clone(),
             silence_secs: config.allowances.agent_worker.silence_secs,
+            no_progress_secs: config.allowances.agent_worker.no_progress_secs,
             store: config.store.clone(),
             records_root: records_root.to_owned(),
             materials_provider: None,
@@ -571,6 +573,7 @@ impl Supervisor {
             "protocol": 1,
             "operation": {"node": delivery.node().0, "generation": delivery.generation, "kind": role},
             "role": role, "test_cpus": test_cpus, "silence_secs": self.silence_secs,
+            "no_progress_secs": self.no_progress_secs,
             "model": self.models.worker_model(model), "key_file": self.models.key_file,
             "inputs": inputs, "worktree": worktree,
             "hindsight_key_file": self.hindsight.api_key_file,
