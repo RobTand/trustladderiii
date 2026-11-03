@@ -13,7 +13,6 @@ from tl3_harness.limits import validate_check_plan
 from tl3_harness.trees import is_test, test_function_source, bound_names, validate_helper_setup
 from tl3_workers.tools import Worktree
 from tl3_workers.recall import check_citations
-from tl3_workers.scope import plan_errors
 
 
 class PlanConsistencyError(ValueError):
@@ -206,7 +205,6 @@ def check_reply(inputs, reply, *, rehearsals=None):
         paths.update(reply["files"])
 
     if reply["kind"] in {"leaf", "split"}:
-        violations.extend(plan_errors(inputs, paths))
         for path in sorted(paths):
             if any(PurePosixPath(path).full_match(pattern) for pattern in inputs["protected_paths"]):
                 violations.append(f"Declared file matches a protected path: {path}")

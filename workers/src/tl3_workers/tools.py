@@ -255,6 +255,8 @@ class Evidence:
                      "status": "completed", "tree": result["tree"],
                      "fresh": all(receipt["status"] == "executed" for receipt in result["receipts"]),
                      "totals": result["totals"], "receipts": result["receipts"]}
+            if "execution" in result:
+                entry["execution"] = result["execution"]
             if selectors[0]:
                 entry["base_semantics"] = "untouched_base"
             if "runs" in result:

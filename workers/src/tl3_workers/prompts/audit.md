@@ -152,9 +152,14 @@ capability is absent, report the missing method through evidence preflight.
 Do not substitute review or a flaky-test forcing for required red/green proof.
 Do not ask the issue owner to remove a proof method they never requested.
 Callable setup requires helper_target_observer.setup_function. It selects an
-unchanged existing function in the target module, callable without arguments,
-and witnesses a declared method returning before the target asserts. If the
-repository lacks supported setup, report that prerequisite precisely before
+unchanged existing module-level factory in the target module. The model supplies
+no arguments. TL3 injects pytest-managed tmp_path and tmp_path_factory by parameter
+name, retains existing optional defaults and rejects other required parameters.
+Class-based worlds and decorated fixtures are unsupported. Each case owns a
+temporary root, allows at most 16 directory allocations and cleans up on errors.
+The receipt binds factory source and fixture names. A declared method must return
+before the target asserts; an empty queue or missing claimed row is insufficient.
+If the repository lacks supported setup, report that prerequisite precisely before
 maker work; do not invent executable recipes or require a signature rewrite.
 
 
@@ -164,27 +169,3 @@ idempotent_import; its method is configured_generation. It returns action_key,
 cas_receipt, input_tree, output_tree, artifact_sha256, logs and terminal_verdict.
 Use that capability only when it appears in tool_capabilities. It cannot edit
 protected files or replace the independent test executor.
-
-
-Scope estimates and edit restrictions (#585): an expected, proposed or likely
-footprint is an estimate, never an exclusive edit ban. Necessary supporting code,
-tests and repository-required metadata cleanup can need other planned files.
-Preserve explicit only-file bans and protected exclusions. Never infer a ban from
-"focused Python file", a footprint list, or a test execution restriction.
-Keep exact behavior and execution obligations separate from edit scope.
-
-For each edit restriction, keep an atomic goal with scope kind "only" or "exclude",
-paths containing the exact repository paths or patterns, and source with kind
-"issue" and a verbatim quote from its title or body. For an estimate naming paths,
-attach scope kind "estimate" to a relevant goal. Preserve estimates without named
-paths as brief context. Never turn an estimate into a new required obligation.
-For a controller-recorded decision use source kind "decision", decision_id and a
-verbatim quote of its answer or restrictions. An edit restriction needs explicit
-restrictive wording in that source. An estimate cannot be cited as an edit ban.
-Do not attach edit restrictions to unrelated behavioral uses of "only".
-Keep the source quote and scope kind with the goal through every handoff. Code
-checks common edit prohibitions and source presence; independent audit must check
-all wording, omitted restrictions and whether the quoted text supports each goal.
-Object if intake strengthens an estimate, weakens an explicit ban, omits an
-exclusion or cites a source that does not authorize the restriction. Check every
-scope quote against the issue or applicable decision, not recalled conventions.
