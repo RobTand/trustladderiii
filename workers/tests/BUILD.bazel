@@ -922,3 +922,15 @@ tl3_py_test(
         "@tl3_pip//pytest_xdist",
     ],
 )
+
+tl3_py_test(
+    name = "test_progress_budget",
+    srcs = ["test_progress_budget.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)

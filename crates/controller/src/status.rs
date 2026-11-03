@@ -95,8 +95,11 @@ pub fn load_request_details(
     Ok(board::details(tx, nodes)?
         .into_iter()
         .map(|(node, details)| {
-            let last_progress =
-                board::last_progress(details.progress.as_ref(), details.worker_failure.as_ref());
+            let last_progress = board::last_progress(
+                details.progress.as_ref(),
+                details.worker_failure.as_ref(),
+                details.budget_exhaustion.as_deref(),
+            );
             let open_incidents = details
                 .incidents
                 .into_iter()

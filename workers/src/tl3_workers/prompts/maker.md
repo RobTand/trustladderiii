@@ -71,7 +71,13 @@ are advisory; only Checking supplies the RED verdict.
 
 ## Budget
 
-Each turn ends with a TL3 budget notice. Obey the latest notice. Start the non-test implementation by implementation_due_at_tool_turn. Finish edits, metadata such as CHANGELOG, and generation before the finalization reserve. In the reserve, only verification tools work.
+Each turn ends with a TL3 budget notice. Obey the latest notice. Continue while
+making progress, within the high backstop and request credit. Progress means a
+successful write or edit that changes the diff, a new test selection or result,
+or previously unseen read, grep or glob content. Repeated identical calls never
+count. The no-progress window counts consecutive tool turns without progress.
+The finalization reserve starts near that window or the backstop. New evidence
+can restore working turns when the backstop still has room. Start the non-test implementation by implementation_due_at_tool_turn. Finish edits, metadata such as CHANGELOG, and generation before the finalization reserve. In the reserve, only verification tools work.
 
 Before you reply, read back your final edits, run the final checks and read the final diff. A pass on an older tree does not verify your final files. Your done reply carries the receipts of runs on your final files, so run the tests again after your last edit. Keep enough allowance for the final JSON. When the context is nearly full, finish the open tool steps, then reply.
 

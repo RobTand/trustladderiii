@@ -24,7 +24,7 @@ def test_long_maker_session_bounds_context_and_commits(tmp_path, maker_request, 
     root = Path(maker_request['worktree'])
     before = git(root, 'rev-parse', 'HEAD')
     # Match the live maker's 50 tool turns, using real confined reads and writes.
-    (root / 'evidence.txt').write_text(('source evidence ' * 30 + '\n') * 60)
+    (root / 'evidence.txt').write_text(''.join(f'{i}: ' + 'source evidence ' * 30 + '\n' for i in range(200)))
     git(root, 'add', 'evidence.txt')
     git(root, 'commit', '--quiet', '-m', 'Repository evidence fixture')
     before = git(root, 'rev-parse', 'HEAD')
@@ -37,7 +37,7 @@ def test_long_maker_session_bounds_context_and_commits(tmp_path, maker_request, 
             AIMessage(content='Previous visit completed.'),
         ])))
     observed = []
-    script = [turn(calls=[{'name': 'read', 'args': {'path': 'evidence.txt'},
+    script = [turn(calls=[{'name': 'read', 'args': {'path': 'evidence.txt', 'offset': i, 'limit': 50},
                            'id': str(i), 'type': 'tool_call'}]) for i in range(48)]
     script += [write_turn(), turn(calls=[{'name': 'read', 'args': {'path': 'greeting.py'},
                                          'id': 'verify', 'type': 'tool_call'}]), turn(DONE)]
@@ -100,10 +100,10 @@ def test_maker_budget_exhaustion_finishes_without_claiming_unmade_changes(maker_
     monkeypatch.setattr(runtime, 'create_model', lambda _: EndlessMaker(responses=[]))
     events = []
     runtime.run(maker_request, events.append)
-    assert len(agent_calls(observed)) == 65, 'maker allows 64 tool turns and one final answer'
+    assert len(agent_calls(observed)) == 18, 'one new read, 16 non-progress turns and one final answer'
     reply = events[-1]['reply']
     assert reply['kind'] == 'cant_meet'
-    assert reply['budget_exhaustion']['dimension'] == 'tool_turns'
-    assert reply['budget_exhaustion']['tool_turns'] == {'used': 64, 'allowed': 64}
+    assert reply['budget_exhaustion']['dimension'] == 'no_progress'
+    assert reply['budget_exhaustion']['tool_turns'] == {'used': 17, 'allowed': 512}
     assert reply['budget_exhaustion']['unfinished_obligations']
     assert 'execution_budget_exhausted' in reply['report']

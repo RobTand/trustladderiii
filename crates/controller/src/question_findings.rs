@@ -170,7 +170,7 @@ fn split(plan: &Value) -> Option<Value> {
     }
     let reason = match plan["reason"].as_str()? {
         "does_not_fit" => "is too large to make as one change",
-        "execution_budget" => "exceeds the maker's usable execution budget before work starts",
+        "execution_budget" => "exceeds the maker's execution budget backstop before work starts",
         "multiple_repos" => "spans more than one repository",
         _ => "ran out of room in a single attempt",
     };
@@ -183,7 +183,7 @@ fn split(plan: &Value) -> Option<Value> {
         )
     {
         report.push_str(&format!(
-            " Its execution estimate is {estimate} tool turns against {usable} usable turns."
+            " Its execution estimate is {estimate} tool turns against the {usable}-turn backstop."
         ));
     }
     let pieces: Vec<_> = plan["pieces"]
@@ -558,7 +558,7 @@ mod tests {
     fn execution_budget_split_reports_the_constraint_before_maker_work() {
         let plan = json!({"kind": "split", "reason": "execution_budget",
             "forecast": {"tokens": 1200, "fit_tokens": 100000, "file_tokens": {}},
-            "execution": {"estimated_tool_turns": 60, "usable_tool_turns": 56},
+            "execution": {"estimated_tool_turns": 513, "usable_tool_turns": 512},
             "pieces": [{"brief": "Implement and prove behavior.", "files": ["a.py"]},
                 {"brief": "Update metadata and verify.", "files": ["CHANGELOG.md"]}]});
         let found = split(&plan).unwrap();
@@ -566,7 +566,7 @@ mod tests {
         assert!(report.contains("execution budget"), "{report}");
         assert!(report.contains("before work starts"), "{report}");
         assert!(
-            report.contains("60 tool turns") && report.contains("56 usable"),
+            report.contains("513 tool turns") && report.contains("512-turn backstop"),
             "{report}"
         );
         assert!(!report.contains("ran out of room"), "{report}");

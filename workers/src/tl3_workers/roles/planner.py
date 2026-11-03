@@ -31,7 +31,7 @@ EXPLORATION_DECLARATION = {
 def execution_budget_details(execution):
     components = ", ".join(f"{name}={value}" for name, value in execution["components"].items())
     return (f"estimated {execution['estimated_tool_turns']} tool turns, "
-            f"usable {execution['usable_tool_turns']} after the finalization reserve. "
+            f"backstop {execution['allowed_tool_turns']}. "
             f"Components: {components}.")
 
 
@@ -281,7 +281,7 @@ def check_reply(inputs, reply, *, rehearsals=None):
                 violations.append(f"Declared file can't be used: {error}. Leave it out.")
             if reason == "execution_budget":
                 if not estimate["fits"] or estimate["estimated_tool_turns"] >= execution["estimated_tool_turns"]:
-                    violations.append("Every execution-budget piece must fit the usable execution allowance and reduce demand. "
+                    violations.append("Every execution-budget piece must fit the execution backstop and reduce demand. "
                                       + execution_budget_details(estimate))
                 if not child["fits"]:
                     violations.append("Every execution-budget piece must also fit the token forecast.")
