@@ -206,9 +206,11 @@ def check_reply(inputs, reply, *, rehearsals=None, read_sources=None):
             covered.update(cited)
         edit_errors, uncovered = edit_violations(inputs["ingest"]["goals"], reply)
         violations.extend(edit_errors)
-        if not invalid_selectors:
+        if not invalid_selectors or file_selections:
             try:
-                validate_check_plan(tuple(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']),
+                validate_check_plan(tuple(Check(f'check-{i + 1}', Kind(check['kind']),
+                                                tuple(node for item in check['node_ids']
+                                                      for node in file_selections.get(item, (item,))),
                                                 (forcings.get(i) if check['kind'] == 'demonstrating' else None),
                                                 Proof.parse(check['proof']) if 'proof' in check else None,
                                                 check.get('declared_symptom'))
@@ -360,8 +362,10 @@ def base_file_selection(path, read_sources):
     except (OSError, ValueError, UnicodeError, SyntaxError, RecursionError, MemoryError):
         return (), 'Base test definitions are unavailable.'
     nodes = []
+    selection_bytes = 0
 
     def scan(body, prefix):
+        nonlocal selection_bytes
         seen = set()
         for node in body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -383,6 +387,10 @@ def base_file_selection(path, read_sources):
                         return problem
                 elif node.name.startswith('test_'):
                     selector = prefix + '::' + node.name
+                    selection_bytes += len(selector.encode()) + 2
+                    # Leave half the existing repair prompt for instructions and diagnostics.
+                    if selection_bytes > REPAIR_MESSAGE_BYTES // 2:
+                        return 'base discovery exceeds the bounded correction message limit'
                     Check('planned', Kind.REGRESSION, (selector,))
                     if test_function_source(source, selector) is None:
                         return 'ambiguous test definitions'
@@ -423,9 +431,6 @@ def base_file_selection(path, read_sources):
         return (), f'Cannot establish complete base selection: {problem}.'
     if not nodes:
         return (), 'Base test definitions are unavailable.'
-    # Leave room for the existing 2 KiB repair message's instructions and diagnostics.
-    if sum(len(node.encode()) + 2 for node in nodes) > 1024:
-        return (), 'Base test discovery exceeds the bounded correction message limit.'
     if read_sources.get(path) != source:
         return (), 'Complete already-read base definitions are required for correction.'
     return tuple(nodes), None

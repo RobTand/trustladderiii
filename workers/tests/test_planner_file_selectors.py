@@ -35,7 +35,15 @@ def file_plan(planner_request, monkeypatch):
     (root / FILE).write_text(SOURCE)
     (root / 'pyproject.toml').write_text('[tool.tl3.harness]\ntest-files = ["tests/**/*.py"]\n')
     planner_request['inputs']['repair_plan_consistency'] = True
+    tool = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+            'runner_features': ['base_head', 'native_threads_1'],
+            'artifacts': ['logs', 'terminal_verdict', 'cas_receipt'],
+            'methods': ['red_green'], 'protected_files': []}
+    planner_request['inputs']['tool_capabilities'] = [tool]
+    planner_request['inputs']['ingest']['evidence_contract'] = [
+        {**copy.deepcopy(tool), 'requirement': 'Retain base/head proof, receipts and thread bounds.'}]
     draft = copy.deepcopy(LEAF)
+    draft['evidence_contract'] = []
     draft['estimated_exploration_turns'] = 7
     draft['estimated_tool_turns'] = 46
     draft['checks'][2]['node_ids'] = [
