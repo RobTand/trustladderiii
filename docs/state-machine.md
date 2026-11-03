@@ -527,6 +527,18 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
   adds no work generation, model-ladder retry or automatic restart. See the
   authoritative Planning section in `docs/state-table.md`.
 
+  The recorded stop steps are `checks_failed`, `changes_requested`,
+  `ci_failed`, `maker_cant_meet`, `maker_needs_files`, `maker_out_of_room`,
+  `reviewer_out_of_room`, `plan_cant_meet`, and `publication_body`.
+
+  **TL3-created publication body refusal**
+  ([#629](https://github.com/RobTand/trustladderiii/issues/629)) uses the same
+  review stop even when `fail_fast` is off. Only `OpenPr` can stop at
+  `publication_body` after `BodyPolicyRefused`. It spends no credit, retains the
+  bounded publication diagnostic, and never asks Rob to repair TL3's generated
+  body. For every other effect kind, `BodyPolicyRefused` is an ordinary permanent
+  effect failure with the existing incident and owner-question handling.
+
   A stop for TL3 review closes as Stopped with reason `tl3_review`. It spends no credit and asks Rob nothing. The summary names the failing step and its evidence, says to comment `restart`, and leaves the issue open (Q49). A postmortem is owed as `needed_fix`, and one line goes to the operations issue for the coordinator, who restarts the request after the TL3 fix ships, or at once on a stronger model when the work itself was the cause. tl3d sets the flag on the stored world at every start, so it applies to requests already open.
 
   **The coordinator's reading, not Rob's words, flagged to him in #482.** These steps aren't retries after a failure, so `fail_fast` leaves them as they are:

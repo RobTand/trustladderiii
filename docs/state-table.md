@@ -300,6 +300,18 @@ Code computes a signature for each failure from the upstream's error class, and 
 
 **Stop for TL3 review:** go to Stopping(Stopped) and record the failing step on the node. Spend nothing and ask Rob nothing. The closing summary names the step and its evidence and, as for any stop, says to comment `restart` and leaves the issue open (Q49). A postmortem is owed as `needed_fix`, and one line goes to the operations issue for the coordinator.
 
+The recorded steps are `checks_failed`, `changes_requested`, `ci_failed`,
+`maker_cant_meet`, `maker_needs_files`, `maker_out_of_room`,
+`reviewer_out_of_room`, `plan_cant_meet`, and `publication_body`.
+
+**Publication body refusal** ([#629](https://github.com/RobTand/trustladderiii/issues/629)):
+only an `OpenPr` effect receiving `BodyPolicyRefused` stops for TL3 review at
+`publication_body`. This routes a TL3-created local body refusal to the existing
+review stop, regardless of `fail_fast`. It spends no credit, retains the bounded
+publication diagnostic, and never asks Rob. For any other effect kind,
+`BodyPolicyRefused` is an ordinary permanent effect failure and follows the
+existing incident and owner-question rules.
+
 ## Node phases, slice one
 
 Slice one runs one issue whose root plans as a single leaf. The root's owner is Rob, so in slice one every pass-up goes to AwaitingRob. From slice two on, a node with a parent goes to Escalated instead.

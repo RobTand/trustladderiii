@@ -357,15 +357,32 @@ fn check_apply(event: Event) -> World {
 /// `attempt` past the first leaf plan's 1, re-plans, or enters Planning other
 /// than through Rob's answer, and the planner never re-runs on `cant_meet`.
 /// A stop for TL3 review spends nothing and asks nothing. Without the flag,
-/// nothing stops for TL3 review.
+/// only a TL3-created OpenPr body refusal stops for TL3 review (#629).
 fn check_fail_fast(before: &World, after: &World, event: Event) {
     let mut i = 0;
     while i < before.nodes.len() {
         let b = &before.nodes[i];
         let n = &after.nodes[i];
         let stopped = n.review_stop != b.review_stop;
+        let publication_body = matches!(
+            event,
+            Event::Ack {
+                node,
+                seq,
+                ack: Ack::BodyPolicyRefused,
+            } if node.index() == Some(i)
+                && b.effect.is_some_and(|e| {
+                    e.seq == seq && !e.cancelling && e.kind == EffectKind::OpenPr
+                })
+        );
+        if publication_body {
+            assert_eq!(n.review_stop, Some(ReviewStop::PublicationBody));
+        }
         if !before.fail_fast {
-            assert!(!stopped, "only fail_fast stops for TL3 review");
+            assert!(
+                !stopped || publication_body,
+                "without fail_fast only an OpenPr body refusal stops for TL3 review"
+            );
         } else {
             assert!(
                 n.attempt <= b.attempt.max(1),
@@ -407,12 +424,12 @@ fn check_fail_fast(before: &World, after: &World, event: Event) {
                     "fail_fast asks can't-meet only after a broken rule"
                 );
             }
-            if stopped {
-                assert!(b.review_stop.is_none());
-                assert_eq!(n.phase, Phase::Stopping(Outcome::Stopped));
-                assert_eq!(n.credit, b.credit);
-                assert!(n.question.is_none());
-            }
+        }
+        if stopped {
+            assert!(b.review_stop.is_none());
+            assert_eq!(n.phase, Phase::Stopping(Outcome::Stopped));
+            assert_eq!(n.credit, b.credit);
+            assert!(n.question.is_none());
         }
         i += 1;
     }
@@ -751,10 +768,57 @@ proof!(apply_run_failed, check_apply(reply(Reply::RunFailed)));
 proof!(apply_ack_confirmed, check_apply(ack(Ack::Confirmed)));
 proof!(apply_ack_retryable, check_apply(ack(Ack::Retryable)));
 proof!(apply_ack_permanent, check_apply(ack(Ack::Permanent)));
-proof!(
-    apply_ack_body_policy_refused,
-    check_apply(ack(Ack::BodyPolicyRefused))
-);
+proof!(apply_ack_body_policy_refused, {
+    let event = ack(Ack::BodyPolicyRefused);
+    let Event::Ack { seq, .. } = event else {
+        unreachable!()
+    };
+    let before = check_apply(event);
+    let b = &before.nodes[0];
+    let open_pr = b
+        .effect
+        .is_some_and(|e| e.seq == seq && !e.cancelling && e.kind == EffectKind::OpenPr);
+    kani::cover!(open_pr && before.fail_fast, "OpenPr refusal with fail_fast");
+    kani::cover!(
+        open_pr && !before.fail_fast,
+        "OpenPr refusal without fail_fast"
+    );
+    kani::cover!(
+        b.effect.is_some_and(|e| e.seq != seq),
+        "a stale refusal is ignored"
+    );
+    kani::cover!(
+        b.effect.is_some_and(|e| e.seq == seq && e.cancelling),
+        "a cancelled effect only clears its delivery"
+    );
+    let mut refused = before.clone();
+    let mut refused_out = Outbox::new();
+    apply(&mut refused, event, &mut refused_out);
+    if open_pr {
+        assert!(
+            refused_out.is_empty(),
+            "publication refusal never asks Rob or raises an incident"
+        );
+    } else {
+        let mut permanent = before.clone();
+        let mut permanent_out = Outbox::new();
+        apply(
+            &mut permanent,
+            Event::Ack {
+                node: NodeId(0),
+                seq,
+                ack: Ack::Permanent,
+            },
+            &mut permanent_out,
+        );
+        assert_eq!(refused, permanent);
+        assert_eq!(refused_out, permanent_out);
+        kani::cover!(
+            b.effect.is_some_and(|e| e.seq == seq && !e.cancelling),
+            "other effect kinds retain permanent failure handling"
+        );
+    }
+});
 proof!(apply_pr_closed, check_apply(fact(Fact::PrClosedByPerson)));
 proof!(
     apply_pr_dequeued,
