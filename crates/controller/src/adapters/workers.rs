@@ -4,8 +4,8 @@ use tl3_worktrees::{CommitId, Worktrees};
 pub mod writer;
 pub use writer::{FakeWriter, Writer};
 
-mod facts;
 mod evidence;
+mod facts;
 mod fake;
 mod json;
 pub(crate) mod ladder;
