@@ -1,4 +1,4 @@
-"""Prove per-test cleanup within the harness's bounded tmpfs."""
+"""Prove per-test cleanup within the action's private disk scratch."""
 import json
 from pathlib import Path
 import shutil
@@ -8,7 +8,7 @@ import tempfile
 from tl3_harness import Check, Container, Kind, Verdict, run_checks
 from tl3_harness.model import Outcome
 from tl3_harness.test_tool import run_current
-from tl3_harness.execution import TMPFS_MIB, require_admission, result_json
+from tl3_harness.execution import require_admission, result_json
 from tl3_harness.trees import git
 from verify_reproducing import save
 
@@ -38,7 +38,7 @@ def verify(container):
         print(json.dumps(summary), flush=True)
         assert summary['status'] == 'completed'
         assert summary['totals'] == {'passed': 2, 'failed': 1, 'error': 0, 'skipped': 0}
-        print(json.dumps({'scratch_verification': 'passed', 'tests': 4, 'mib_per_test': 384, 'tmpfs_mib': TMPFS_MIB}), flush=True)
+        print(json.dumps({'scratch_verification': 'passed', 'tests': 4, 'mib_per_test': 384}), flush=True)
 
 
 if __name__ == '__main__':

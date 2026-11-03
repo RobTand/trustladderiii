@@ -326,7 +326,7 @@ def run(tree, container, command, generated_files, protected_paths, files, timeo
 def main():
     try:
         contract = json.loads(Path("generator.json").read_text())
-        result = run(Path("checkout").resolve(), Container(sys.argv[1], exec_scratch="--exec-scratch" in sys.argv),
+        result = run(Path("checkout").resolve(), Container(sys.argv[1]),
                      **contract)
     except (OSError, RuntimeError, ValueError):
         result = {"status": "failed", "exit_code": None, "message": "Generator action infrastructure failed."}

@@ -107,10 +107,11 @@ impl Controller {
             class: class.into(),
         };
         let id = crate::looks::incident_id(snapshot, format!("input.{}", commit.rows.len()));
-        let summary = format!(
+        let mut summary = format!(
             "{} Other requests can continue.",
             crate::looks::incident_summary(title, &signature, needs_rob, None)
         );
+        crate::worker_inputs::append(&mut summary, crate::worker_inputs::of(&error));
         let incident = Incident {
             id: id.clone(),
             node,
@@ -123,7 +124,9 @@ impl Controller {
             post_key: Some(format!("incident:{id}")),
             // Reading or translating upstream input failed.
             cause: Some(
-                if class == "redaction_infra" || class == crate::postmortems::PAUSED {
+                if matches!(class, "redaction_infra" | "worker_input_schema")
+                    || class == crate::postmortems::PAUSED
+                {
                     crate::looks::Cause::Tl3
                 } else {
                     crate::looks::Cause::Upstream

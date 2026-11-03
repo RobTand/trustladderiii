@@ -2743,16 +2743,18 @@ fn postmortem_retries_and_pace(settings: &tl3_config::Store) {
         ("owed", 1, None, Some("worker_failed")),
         "a worker failure is owed again"
     );
-    // A postmortem owed later runs before the retry.
+    // The oldest owed postmortem stays first, including its retries (#642).
     let snapshot = store.load().unwrap();
     let mut change = Commit::new("newer", json!("newer"), &snapshot);
     change.postmortems = vec![owed("question:3")];
     store.commit(&change).unwrap();
-    let next = store.owed_postmortem().unwrap().unwrap();
-    assert_eq!(
-        next.trigger, "question:3",
-        "the retry waits behind newer rows"
-    );
+    assert_eq!(store.owed_postmortem().unwrap().unwrap().id, first.id);
+    let next = store
+        .postmortems("1")
+        .unwrap()
+        .into_iter()
+        .find(|record| record.trigger == "question:3")
+        .unwrap();
     run(&mut store, next.id, "postmortem:2:a", Some("invalid_reply"));
     assert_eq!(
         store.postmortem(next.id).unwrap().unwrap().record.status,

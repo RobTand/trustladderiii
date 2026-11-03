@@ -191,7 +191,10 @@ class ExplorationMiddleware(AgentMiddleware):
         return result
 
     def wrap_tool_call(self, request, handler):
-        if self.role == "maker" and (self.final or self.finalizing and request.tool_call["name"] not in FINALIZATION_TOOLS):
+        if self.final or self.repairing:
+            return ToolMessage(content="Tools are unavailable for this turn.",
+                               tool_call_id=request.tool_call["id"], status="error")
+        if self.role == "maker" and self.finalizing and request.tool_call["name"] not in FINALIZATION_TOOLS:
             return ToolMessage(content="The finalization reserve permits verification and readback only. "
                                "New edits and generation are unavailable. Report unfinished work precisely.",
                                tool_call_id=request.tool_call["id"], status="error")
@@ -213,8 +216,6 @@ class ExplorationMiddleware(AgentMiddleware):
             # Proxy providers may hoist system messages into the cached prefix.
             notice = HumanMessage(content=BUDGET_PREFIX + json.dumps(self.remaining(), sort_keys=True))
             messages.append(notice)
-            if self.finalizing:
-                request = request.override(tools=[tool for tool in request.tools if tool.name in FINALIZATION_TOOLS])
         request = request.override(messages=messages)
         bound = input_estimate(request)
         context = self._context(bound)
@@ -262,7 +263,7 @@ class ExplorationMiddleware(AgentMiddleware):
                                                     "context_tokens" if context_full else "input_tokens")
                 if notice is not None:
                     notice.content = BUDGET_PREFIX + json.dumps(self.remaining("final"), sort_keys=True)
-                request = request.override(tools=[], tool_choice=None,
+                request = request.override(tool_choice="none",
                                            messages=messages + [HumanMessage(content=FINISH)])
                 bound = input_estimate(request)
             if self.spent + predicted > self.budget.input_tokens:

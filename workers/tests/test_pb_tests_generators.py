@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import pytest
+from pb_fixtures import supported_fake_runtime as supported_fake_runtime
 from tl3_workers.pb_tests import TestSettings
 from tl3_workers.tools import build_tools
 
@@ -296,7 +297,8 @@ def test_generator_tool_has_no_model_selected_command_or_arguments(generator_rep
         assert tool.args == {}
 
 
-def test_generator_image_command_cannot_be_shadowed_by_a_repository_file(tmp_path):
+def test_generator_image_command_cannot_be_shadowed_by_a_repository_file(tmp_path, monkeypatch):
+    monkeypatch.setattr("tl3_harness.execution.scratch_directory", lambda: tmp_path)
     from tl3_harness import generator
     (tmp_path / "python3").write_text("#!/usr/bin/env bash\nexit 7\n")
     (tmp_path / "python3").chmod(0o755)
@@ -329,7 +331,8 @@ def test_generator_rejects_mode_changes_in_action_and_artifact_validation(before
 
 @pytest.mark.parametrize("entrypoint", ["./generate.py", "tools/generate.py", "/checkout/generate.py",
                                        "/proc/self/cwd/generate.py"])
-def test_generator_never_resolves_a_maker_written_shebang(tmp_path, entrypoint):
+def test_generator_never_resolves_a_maker_written_shebang(tmp_path, entrypoint, monkeypatch):
+    monkeypatch.setattr("tl3_harness.execution.scratch_directory", lambda: tmp_path)
     from tl3_harness import generator
     script = tmp_path / ("generate.py" if entrypoint.startswith("/") else entrypoint.removeprefix("./"))
     script.parent.mkdir(parents=True, exist_ok=True)

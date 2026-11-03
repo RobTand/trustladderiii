@@ -127,13 +127,15 @@ def test_regression_cannot_excuse_an_unavailable_base_test(base):
     assert judge(check, {check.tests[0]: base}, {check.tests[0]: Outcome.PASSED}).verdict == Verdict.FAIL
 
 
-def test_container_has_only_explicit_read_only_mounts_and_no_host_environment(tmp_path):
+def test_container_has_only_explicit_mounts_and_no_host_environment(tmp_path, monkeypatch):
+    monkeypatch.setattr("tl3_harness.execution.scratch_directory", lambda: tmp_path / "scratch")
+    (tmp_path / "scratch").mkdir()
     command = container_command(tmp_path, Container(IMAGE), ("tests/test_x.py::test_x",))
     assert command[:2] == ["docker", "run"]
     for flag in ("--network=none", "--read-only", "--cap-drop=ALL", "--pull=never"):
         assert flag in command
     mounts = [command[index + 1] for index, value in enumerate(command) if value == "--mount"]
-    assert len(mounts) == 2 and all(mount.endswith(",readonly") for mount in mounts)
+    assert len(mounts) == 3 and sum(mount.endswith(",readonly") for mount in mounts) == 2
     assert not any("/mnt/shared" in mount or "docker.sock" in mount for mount in mounts)
     assert "--cpuset-cpus" not in command
 
@@ -526,6 +528,7 @@ def test_container_preserves_admitted_native_thread_bounds(tmp_path, monkeypatch
         monkeypatch.delenv(name, raising=False)
         if cpus is not None:
             monkeypatch.setenv(name, cpus)
+    monkeypatch.setattr("tl3_harness.execution.scratch_directory", lambda: tmp_path)
     command = container_command(tmp_path, Container(IMAGE), ())
     for name in names:
         assert f"{name}={cpus or '1'}" in command

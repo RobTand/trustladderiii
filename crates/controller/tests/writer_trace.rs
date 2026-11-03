@@ -39,7 +39,7 @@ print(json.dumps({"event": "reply", "role": "writer", "reply": {"text": "The cha
 fn input(request: Option<WriteFor>) -> WriteRequest {
     WriteRequest {
         kind: MessageKind::Summary,
-        facts: json!({"issue_title": "A change", "request": "Make a change", "outcome": "Delivered"}),
+        facts: json!({"issue_title": "A change", "request": "Make a change", "outcome": "Delivered", "unmet_goals": []}),
         violations: vec![],
         request,
     }

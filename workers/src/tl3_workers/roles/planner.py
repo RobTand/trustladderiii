@@ -233,17 +233,22 @@ def check_reply(inputs, reply, *, rehearsals=None):
             if any(PurePosixPath(path).full_match(pattern) for pattern in inputs["protected_paths"]):
                 violations.append(f"Declared file matches a protected path: {path}")
 
-    if reply["kind"] == "leaf" and inputs["forecast"].get("generator"):
+    if reply["kind"] in {"leaf", "split"} and inputs["forecast"].get("generator"):
         with Worktree(".") as tree:
-            paths.update(configured_outputs(tree, inputs["forecast"], inputs["protected_paths"]))
-        reply["files"] = sorted(paths)
+            outputs = configured_outputs(tree, inputs["forecast"], inputs["protected_paths"])
+        paths.update(outputs)
+        if reply["kind"] == "leaf":
+            reply["files"] = sorted(paths)
+        else:
+            for piece in reply["pieces"]:
+                piece["files"] = sorted(set(piece["files"]) | set(outputs))
 
     forecaster = Forecaster(inputs["forecast"])
     forecast = forecaster.measure(inputs["ingest"]["brief"], paths)
     check_count = (len(reply["checks"]) if reply["kind"] == "leaf" else len(goals))
     execution = execution_forecast(paths, check_count, declared=reply.get("estimated_tool_turns", 0),
                                    exploration=reply.get("estimated_exploration_turns"),
-                                   generator=bool(inputs["forecast"].get("generator")))
+                                   config=inputs["forecast"])
     if reply["kind"] == "leaf" and execution["exploration_declared"] and not execution["fits"]:
         violations.append(f"The leaf exceeds the execution budget: estimated {execution['estimated_tool_turns']} "
                           f"tool turns, usable {execution['usable_tool_turns']} after the finalization reserve. "
@@ -272,7 +277,7 @@ def check_reply(inputs, reply, *, rehearsals=None):
             estimate = execution_forecast(piece["files"], len(piece["goal_ids"]),
                                           declared=piece.get("estimated_tool_turns", 0),
                                           exploration=piece.get("estimated_exploration_turns"),
-                                          generator=bool(inputs["forecast"].get("generator")))
+                                          config=inputs["forecast"])
             pieces.append(estimate)
             for error in forecaster.problems:
                 violations.append(f"Declared file can't be used: {error}. Leave it out.")

@@ -491,6 +491,15 @@ mod tests {
 
 #[cfg(test)]
 impl Materials {
+    pub(crate) fn fixture_client(config: &tl3_config::Config, client: tl3_github::GitHub) -> Self {
+        Self {
+            clients: [(1, client)].into(),
+            worktrees: config.worktrees_root.clone(),
+            local_repository: None,
+            branches: crate::branches::Branches::new(&config.github.repos).unwrap(),
+        }
+    }
+
     pub(crate) fn fixture(worktrees: std::path::PathBuf) -> Self {
         Self {
             clients: Default::default(),

@@ -97,12 +97,14 @@ impl Controller {
         commit
             .rows
             .push(put("notice_incidents", marker.into(), json!(incidents)));
-        let summary = format!(
+        let mut summary = format!(
             "{} The {} could not be posted. Failure class {}.",
             crate::looks::incident_summary(&request.title, &signature, needs_rob, None),
             kind(delivery),
             class.replace('_', " ")
         );
+        let input_failure = crate::worker_inputs::retained(snapshot, commit, &delivery.key)?;
+        crate::worker_inputs::append(&mut summary, input_failure.as_ref());
         let mut post = delivery.clone();
         post.key = format!("incident:{id}");
         post.marker_key = None;
@@ -142,7 +144,10 @@ impl Controller {
                 signature,
                 effect: Some(delivery.key.clone()),
                 post_key: Some(post.key.clone()),
-                cause: Some(crate::looks::Cause::Upstream),
+                cause: Some(crate::looks::Cause::of(
+                    crate::executor::Upstream::GitHub,
+                    class
+                )),
             }),
         ));
         commit.rows.push(put(

@@ -309,9 +309,6 @@ pub struct Limits {
     /// Q54 (#440): stop for TL3 review instead of retrying the work.
     #[serde(default, deserialize_with = "fail_fast_setting")]
     pub fail_fast: bool,
-    /// #486: postmortems the spare-capacity runner may claim per UTC day.
-    #[serde(default = "default_postmortems_per_day")]
-    pub postmortems_per_day: u32,
     /// #486: one postmortem run's whole wall-clock allowance, in seconds. A run
     /// past it fails with the `deadline` class.
     #[serde(default = "default_postmortem_deadline_secs")]
@@ -334,10 +331,6 @@ fn default_agent_pool() -> u8 {
 fn fail_fast_setting<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
     bool::deserialize(deserializer)
         .map_err(|_| serde::de::Error::custom("limits.fail_fast must be true or false"))
-}
-
-fn default_postmortems_per_day() -> u32 {
-    10
 }
 
 fn default_postmortem_deadline_secs() -> u32 {
@@ -399,8 +392,6 @@ pub struct Repository {
     /// CPU and memory reservation for this repository's PrismaBuild tests and generators.
     #[serde(default)]
     pub test_demand: Option<TestDemand>,
-    #[serde(default)]
-    pub exec_scratch: bool,
     /// Run up to this many existing tests that import the change, and pass on the base,
     /// as one more regression check (#359). Absent means off.
     #[serde(default)]

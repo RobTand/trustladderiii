@@ -85,7 +85,7 @@ class BudgetModel(FakeMessagesListChatModel):
     final_reply: dict = {"kind": "cant_meet", "report": "CHANGELOG and final checks unfinished."}
 
     def bind_tools(self, tools, **kwargs):
-        self.offered = {tool.name for tool in tools}
+        self.offered = {tool.name for tool in tools} if kwargs.get("tool_choice") != "none" else set()
         return self
 
     def _generate(self, messages, **kwargs):
@@ -141,7 +141,7 @@ def test_reserve_blocks_edits_even_when_model_calls_a_hidden_tool(maker_request,
     runtime.run(maker_request, lambda _: None)
     assert Path(maker_request["worktree"], "greeting.py").read_text() == "preserved\n"
     assert {"read", "diff", "run_tests"} <= agent_calls(model.calls)[2][1]
-    assert not {"write", "edit", "run_generator", "recall"} & agent_calls(model.calls)[2][1]
+    assert agent_calls(model.calls)[2][1] == agent_calls(model.calls)[0][1], "finalization retains the full tool list"
     assert any("finalization reserve" in m.text for m in agent_calls(model.calls)[-1][0] if m.type == "tool")
     assert len(agent_calls(model.calls)) == 5, "four bounded tool turns and one tools-free final reply"
 
@@ -158,7 +158,7 @@ def test_exploration_without_implementation_warns_halfway_and_keeps_the_reserve(
     assert budgets[4]["tool_turns"]["remaining"] == 4
     assert budgets[4]["implementation_started"] is False, "a test edit is not implementation progress"
     assert "write" in agent_calls(model.calls)[4][1], "the warning must leave implementation capacity"
-    assert "write" not in agent_calls(model.calls)[6][1], "finalization remains inside the same cap"
+    assert agent_calls(model.calls)[6][1] == agent_calls(model.calls)[0][1], "dispatch enforces the finalization restriction"
     assert len(agent_calls(model.calls)) == 9
     assert events[-1]["reply"]["budget_exhaustion"]["tool_turns"] == {"used": 8, "allowed": 8}
     assert Path(maker_request["worktree"], "greeting.py").read_text().startswith("def greet")
@@ -240,7 +240,7 @@ def test_restoring_allowance_does_not_restore_edit_capacity(maker_request, monke
     events = []
     runtime.run(maker_request, events.append)
     assert len(agent_calls(model.calls)) == 2
-    assert "write" not in agent_calls(model.calls)[0][1]
+    assert "write" in agent_calls(model.calls)[0][1], "restored finalization still advertises stable definitions"
     assert snapshots(model)[0]["tool_turns"]["remaining"] == 1
     assert events[-1]["reply"]["budget_exhaustion"]["input_tokens"]["used"] == 500
     assert Path(maker_request["worktree"], "greeting.py").read_text().startswith("def greet")

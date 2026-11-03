@@ -1,5 +1,6 @@
 """The run_tests factory. The role supplies the base and execution settings."""
 from dataclasses import dataclass
+from functools import cache
 import hashlib
 import json
 import os
@@ -13,6 +14,7 @@ import tempfile
 
 from tl3_harness import execution
 from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT
+from tl3_harness.scratch import environment as scratch_environment
 from tl3_harness.node_ids import selects
 from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
 from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, OUTCOMES, bounded, infrastructure, options
@@ -26,11 +28,8 @@ class TestSettings:
     cpus: int = 1
     mem_gb: int = 2
     quiet_seconds: int = 120
-    exec_scratch: bool = False
 
     def __post_init__(self):
-        if type(self.exec_scratch) is not bool:
-            raise ValueError("exec_scratch must be a boolean")
         if not re.fullmatch(r"(?:[\w./:-]+@)?sha256:[0-9a-f]{64}", self.image):
             raise ValueError("Use an immutable container image digest")
         if not Path(self.tools_path).is_absolute():
@@ -129,17 +128,65 @@ def _git(root, *args):
                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
 
 
+@cache
+def _machine_record_supported(runtime: str) -> bool:
+    """Probe once per runtime path and process, without queue or CAS access."""
+    try:
+        with tempfile.TemporaryFile(mode="w+b") as output:
+            result = subprocess.run([sys.executable, runtime, "--machine-record-capability"],
+                                    stdout=output, stderr=subprocess.DEVNULL)
+            output.seek(0)
+            raw = output.read(4097)
+        if result.returncode or len(raw) > 4096 or not raw.endswith(b"\n") or raw.count(b"\n") != 1:
+            return False
+        value = json.loads(raw.decode("utf-8"))
+        return (isinstance(value, dict) and set(value) == {"schema", "machine_record_fd"}
+                and value["schema"] == "prismabuild.machine_record_capability.v1"
+                and type(value["machine_record_fd"]) is int and value["machine_record_fd"] >= 1)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
 def _json_command(command):
-    with tempfile.TemporaryFile() as output:
-        result = subprocess.run(command, stdout=output, stderr=subprocess.DEVNULL)
-        output.seek(0)
-        raw = output.read(2_097_153)
-    if len(raw) > 2_097_152:
-        raise ValueError("PrismaBuild response exceeded its limit")
-    value = json.loads(raw)
-    if not isinstance(value, dict):
-        raise ValueError("PrismaBuild response must be an object")
-    return result.returncode, value
+    if not _machine_record_supported(str(Path(command[1]).resolve())):
+        raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_capability",
+                               "machine_record_unsupported")
+    cause = "machine_record_io_failed"
+    try:
+        with tempfile.TemporaryFile(mode="w+b") as channel:
+            fd = channel.fileno()
+            if fd <= 2:
+                raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_channel",
+                                       "machine_record_descriptor_unavailable")
+            os.fchmod(fd, 0o600)
+            # PB flags precede the payload separator. Public output is never a
+            # result source, even when the private channel is empty or corrupt.
+            args = [*command[:2], "--machine-record-fd", str(fd), *command[2:]]
+            result = subprocess.run(args, pass_fds=(fd,), stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL)
+            channel.seek(0)
+            raw = channel.read(2_097_153)
+        if result.returncode < 0:
+            raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_channel",
+                                   "machine_record_command_killed")
+        if not raw and result.returncode and "--detach" in command:
+            raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_submission",
+                                   f"submission_refused_exit_{result.returncode}")
+        if not raw:
+            cause = "machine_record_empty"
+        elif len(raw) > 2_097_152:
+            cause = "machine_record_too_large"
+        elif not raw.endswith(b"\n"):
+            cause = "machine_record_unterminated"
+        else:
+            cause = "machine_record_invalid_json"
+            value = json.loads(raw.decode("utf-8"))
+            if isinstance(value, dict):
+                return result.returncode, value
+            cause = "machine_record_not_object"
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_channel", cause) from error
+    raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_channel", cause)
 
 
 def _summary(ending, key):
@@ -308,7 +355,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                 tree = _stage(worktree, root, base_sha)
                 contract = {"tree": tree, "trusted": _git(root, "write-tree", "--prefix=trusted/").strip(),
                             "image": settings.image, "cpus": settings.cpus, "mem_gb": settings.mem_gb,
-                            "quiet_seconds": settings.quiet_seconds, "exec_scratch": settings.exec_scratch,
+                            "quiet_seconds": settings.quiet_seconds, "scratch": scratch_environment(),
                             "selectors": selected, "base_sha": base_sha, "repeat": repeat,
                             "parallel": parallel, "priority": priority, "timeout_seconds": timeout_seconds,
                             "forcing": forcing.as_json() if forcing is not None else None,
@@ -335,6 +382,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                            *(("--priority", str(priority)) if priority is not None else ()),
                            "--container-image", settings.image,
                            "--progress-phase", f"tests={settings.quiet_seconds}",
+                           *[arg for name, value in scratch_environment().items() for arg in ("--env", f"{name}={value}")],
                            *[arg for name in NATIVE_THREAD_ENVIRONMENT
                              for arg in ("--env", f"{name}={max(1, settings.cpus // max(1, parallel))}")],
                            "--detach", "--",
@@ -343,8 +391,6 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                     command.extend(["--forcing", json.dumps(forcing.as_json(), sort_keys=True)])
                 if timeout_seconds is not None:
                     command[2:2] = ["--timeout-s", str(timeout_seconds)]
-                if settings.exec_scratch:
-                    command.append("--exec-scratch")
                 # Defaults add nothing, so a default call keeps its action identity.
                 if declared_symptom is not None:
                     command.extend(["--declared-symptom", json.dumps(declared_symptom, sort_keys=True)])

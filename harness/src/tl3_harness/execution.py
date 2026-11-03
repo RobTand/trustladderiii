@@ -15,13 +15,13 @@ from .model import (ALWAYS_CHECK, SELECTED_CHECK, Check, FailureNotes, Forcing, 
 from .node_ids import validate_always_tests
 from .report import InvalidReport, decode, parse
 from .supervision import ExecutionFailure, ExecutionOutcome, Supervised
+from .scratch import directory as scratch_directory
 from . import selection
 from .trees import (UnsupportedEntry, added_names, changed_configuration, changed_existing_tests,
                     changed_files, changed_protected, commit, configuration, export, git, is_test, own_base,
                     test_edits, helper_test_edits, validate_helper_setup)
 
 
-TMPFS_MIB = 512
 MAX_SELECTED_TESTS = 1000
 
 
@@ -60,24 +60,23 @@ class SelectedObservation:
 @dataclass(frozen=True)
 class Container:
     image: str
-    exec_scratch: bool = False
 
     def __post_init__(self):
-        if type(self.exec_scratch) is not bool:
-            raise HarnessInputError("exec_scratch must be a boolean")
         if not re.fullmatch(r"(?:[\w./:-]+@)?sha256:[0-9a-f]{64}", self.image):
             raise HarnessInputError("use an immutable image ID or manifest digest")
 
 
 def container_command(tree: Path, container: Container, tests: tuple[str, ...]) -> list[str]:
     harness = Path(__file__).resolve().parent
+    scratch = scratch_directory()
+    owner = scratch.parent.stat()
     return [
         "docker", "run", "--interactive", "--rm", "--pull=never", "--network=none", "--read-only",
-        "--cap-drop=ALL", "--security-opt=no-new-privileges", "--user=65534:65534",
+        "--cap-drop=ALL", "--security-opt=no-new-privileges", f"--user={owner.st_uid}:{owner.st_gid}",
         "--pids-limit=128", "--ipc=private", "--workdir=/checkout",
         "--mount", f"type=bind,src={tree},dst=/checkout,readonly",
         "--mount", f"type=bind,src={harness},dst=/harness,readonly",
-        "--tmpfs", f"/tmp:rw,nosuid,nodev,{'exec' if container.exec_scratch else 'noexec'},size={TMPFS_MIB}m,mode=1777",
+        "--mount", f"type=bind,src={scratch},dst=/tmp",
         "--env", "HOME=/tmp", "--env", "TMPDIR=/tmp", "--env", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1",
         *[arg for name in NATIVE_THREAD_ENVIRONMENT
           for arg in ("--env", f"{name}={os.environ.get(name, '1')}")],

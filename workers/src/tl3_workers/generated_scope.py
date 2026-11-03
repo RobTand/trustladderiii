@@ -6,6 +6,19 @@ import re
 from tl3_harness.generator import path_parts
 
 
+def generator_owned_outputs(paths, forecast):
+    """Only configured ownership grants the generator's execution allowance.
+
+    A header or familiar basename alone cannot prove the configured command
+    produces a file. Include new glob matches even before they exist on disk.
+    """
+    if not forecast.get("generator"):
+        return set()
+    return {path for path in paths
+            if any(PurePosixPath(path).full_match(pattern)
+                   for pattern in forecast.get("generated_files", ()))}
+
+
 def configured_outputs(worktree, forecast, protected=()):
     if not forecast.get("generator"):
         return []
@@ -13,8 +26,8 @@ def configured_outputs(worktree, forecast, protected=()):
     outputs = {pattern for pattern in patterns if not any(char in pattern for char in "*?[")}
     if any(any(char in pattern for char in "*?[") for pattern in patterns):
         with worktree._directory(()) as root:
-            outputs.update(name for name, directory in worktree._walk(root)
-                           if not directory and any(PurePosixPath(name).full_match(pattern) for pattern in patterns))
+            outputs.update(generator_owned_outputs(
+                (name for name, directory in worktree._walk(root) if not directory), forecast))
     for name in outputs:
         path_parts(name)
     return sorted(name for name in outputs

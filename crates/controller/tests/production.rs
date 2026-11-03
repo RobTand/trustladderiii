@@ -144,7 +144,7 @@ print(json.dumps({'event':'reply','role':'writer','reply':{'text':'The requested
     config.models.writer[0].budget_tokens = 4321;
     let input = WriteRequest {
         kind: MessageKind::Summary,
-        facts: json!({"issue_title":"A change","request":"Make a change","outcome":"Delivered"}),
+        facts: json!({"issue_title":"A change","request":"Make a change","outcome":"Delivered", "unmet_goals": []}),
         violations: vec![],
         request: None,
     };

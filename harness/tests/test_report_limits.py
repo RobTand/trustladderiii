@@ -31,7 +31,8 @@ def test_collection_above_64_kib_has_a_normal_report(tmp_path, monkeypatch):
     assert len(collection) > 65_536
 
 
-def test_large_selection_does_not_become_one_large_exec_argument(tmp_path):
+def test_large_selection_does_not_become_one_large_exec_argument(tmp_path, monkeypatch):
+    monkeypatch.setattr(execution, "scratch_directory", lambda: tmp_path)
     tests = tuple(f'test_many.py::test_{i}_' + 'x' * 90 for i in range(2000))
     command = execution.container_command(tmp_path, IMAGE, tests)
     assert max(len(arg.encode()) for arg in command) < 131_072

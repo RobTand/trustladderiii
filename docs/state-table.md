@@ -1,6 +1,6 @@
 # TL3 state table
 
-Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47, Q48, Q50 and Q51, and on 2026-11-02 with Q54, and on 2026-11-03 with the Q27 declared-symptom RED approval (#592). Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
+Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47, Q48, Q50 and Q51, and on 2026-11-02 with Q54, and on 2026-11-03 with the Q27 declared-symptom RED approval (#592) and Q39 postmortem lane (#642). Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
 
 **Changing the rules.** Any change to a rule in this file needs Rob's approval. That includes a new rule that comes from a bug Kani or a test finds. A clarification that changes no rule doesn't need it (Q27).
 
@@ -126,7 +126,7 @@ Every rule above is a safety property, except the progress witness. Liveness und
 |---|---|---|
 | Node | Request root, split node, leaf | The work |
 | Gate | Repo | Slots, file locks and planning admission |
-| Agent pool | Fleet | Admission for every agent run. Slice one uses one account, first come, first served. |
+| Agent pool | Fleet | Admission for delivery agent runs. Postmortems have a separate controller lane (Q39 amended, #642). Slice one uses one account, first come, first served. |
 | Effect | Outside action | Delivering one action under its contract |
 
 ## Events
@@ -299,11 +299,11 @@ Code computes a signature for each failure from the upstream's error class, and 
 - A restart on the same release clears nothing. Upstream incidents keep the rules above.
 
 Postmortem pause recovery (#632) uses this incident-clear path outside the
-kernel. Clearing or recovering its pause resets the failure boundary and the
-counted daily allowance, retaining the claim ledger and the configured limit.
-One validation claim runs with the existing deadline, still subject to model
-quota and Q39 spare capacity. Its failure immediately re-pauses with an incident;
-its success resumes ordinary pacing. No pool slot is reserved.
+kernel. Clearing or recovering its pause resets the failure boundary, retaining
+the claim ledger. One validation claim runs with the existing deadline and model
+quota. No other postmortem starts until it succeeds; its failure immediately
+re-pauses with an incident. Success resumes the two-slot lane. No delivery pool
+slot is reserved or consumed (#642).
 
 **Delivery failures** follow the same rule, counted per effect. Every second retryable failure raises an incident, and only Rob can clear the effect's second incident.
 
@@ -758,10 +758,11 @@ Slice one uses one account. Each agent run takes a ticket, then waits for a free
 - **Waiting.** A waiter is granted once no waiter of better priority, and no older waiter of its own priority, remains. If no better-priority run arrives while it waits, that takes at most as many grants as there are waiters ahead of it. Better-priority work that keeps arriving can hold it back indefinitely; as in Q30, starvation is accepted.
 - `tl3 status` and the console's cards show each waiting run's priority and place in line.
 
+Rob amended Q39 on 2026-11-03 (#642): "postmortems should not eat the same budget as everything else. Everything gets a postmortem regardless of budget." Every closed node owes a postmortem, including clean merges regardless of the former sample share (Q32 amended). Postmortems run in their own controller lane, at most two concurrently, oldest owed first. They never wait for or consume agent-pool capacity and have no daily allowance. Model quota for the models actually used, the failure-streak pause and recovery validation (#632), and the deadline still apply. Delivery grants are unchanged.
+
 From slice two on:
 
 - Runs are granted in the gate's order, by rank with ties going to the older run, within each account's capacity (Q39). How rank combines with priority is decided when slice two starts.
-- Postmortem runs come after every delivery run, so they use only spare capacity. Under constant load they wait (Q39).
 - A quota reset the provider announces is a wake-up event. When every model in a step's ladder is out, the earliest reset wakes it (Q53).
 
 ## Looks and stalls

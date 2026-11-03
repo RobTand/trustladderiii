@@ -312,6 +312,7 @@ def test_real_missing_container_runtime_stays_infrastructure(fixture, monkeypatc
     # Invoke the real container launcher with a PATH that cannot contain Docker.
     # No test process can start, even on a worker that happens to have a daemon.
     monkeypatch.setenv('PATH', str(fixture / 'no-container-runtime'))
+    monkeypatch.setattr(execution, 'scratch_directory', lambda: fixture)
     monkeypatch.setattr(test_tool, 'container_command', execution.container_command)
     try:
         result = test_tool.run_current(fixture, CONTAINER, ('test_value.py::test_pass',))
