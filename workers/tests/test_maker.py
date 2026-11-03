@@ -25,6 +25,8 @@ import worker_process
 from worker_process import run_real_entrypoint, start_worker
 
 
+# The retro (#648) reports one model turn before the reply, except after out_of_room.
+RETRO_TURN = {"event": "progress", "unit": "model_turn"}
 DONE = {
     "kind": "done",
     "self_check": [
@@ -167,6 +169,7 @@ def test_non_done_replies_through_protocol_do_not_commit(tmp_path, maker_request
     assert result.exit_code == 0, result.stderr
     assert result.events == [
         {"event": "progress", "unit": "model_turn"},
+        *([] if reply["kind"] == "out_of_room" else [RETRO_TURN]),
         {"event": "reply", "role": "maker", "reply": reply},
     ]
     assert git(root, "rev-parse", "HEAD") == before
@@ -191,7 +194,7 @@ def test_done_commits_real_changes_and_reports_head(tmp_path, maker_request):
         "TL3 <tl3@example.invalid>\nTL3 <tl3@example.invalid>"
     )
     assert [event["unit"] for event in result.events[:-1]] == [
-        "model_turn", "tool_result", "model_turn", "tool_result", "model_turn",
+        "model_turn", "tool_result", "model_turn", "tool_result", "model_turn", RETRO_TURN["unit"],
     ]
 
 
@@ -786,6 +789,7 @@ def test_maker_rejects_shell_and_other_undeclared_tools(tmp_path, maker_request,
         {"event": "progress", "unit": "model_turn"},
         {"event": "progress", "unit": "tool_result"},
         {"event": "progress", "unit": "model_turn"},
+        RETRO_TURN,
         {"event": "reply", "role": "maker", "reply": response},
     ]
     assert not (Path(maker_request["worktree"]) / "forbidden").exists()
