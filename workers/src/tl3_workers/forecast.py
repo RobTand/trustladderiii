@@ -188,7 +188,9 @@ def forecast_fit(brief, file_tokens, config, encoding=None, problems=()):
 def execution_forecast(files, checks, *, declared=0, generator=False):
     """Conservative planning estimate, separate from token fit and actual usage.
 
-    A file needs location/read, implementation, metadata/test edits and readback.
+    A file allows five edits, two implementation reads, a search and readback.
+    PB #2717 used 35 edits, 20 reads and seven searches across seven files
+    before exhausting its 64 turns; five total operations/file missed that shape.
     Checks need red, head and final runs plus evidence inspection. The model may
     account for more work, but cannot undercut this structural estimate.
     """
@@ -196,7 +198,7 @@ def execution_forecast(files, checks, *, declared=0, generator=False):
 
     budget = ROLE.exploration_budget
     reserve = min(budget.finalization_turns, budget.tool_turns)
-    components = {"file_operations": 5 * len(set(files)), "check_operations": 4 * checks,
+    components = {"file_operations": 9 * len(set(files)), "check_operations": 4 * checks,
                   "scope_operations": 2, "generation_operations": int(generator)}
     estimated = max(sum(components.values()), declared)
     usable = max(0, budget.tool_turns - reserve)

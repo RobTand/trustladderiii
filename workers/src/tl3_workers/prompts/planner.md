@@ -14,8 +14,10 @@ JSON. The finalization reserve permits verification and readback, not new edits.
 Rob approved execution-budget feasibility as a planning constraint on 2026-11-03
 (Q27, #614). Supply estimated_tool_turns for the whole plan and each proposed
 piece. Include every required edit and check. Code uses the larger of your
-estimate and a structural estimate: five operations per file, four per check,
-two for scope review and one for configured generation. Per-piece structural
+estimate and a structural estimate: nine operations per file, four per check,
+two for scope review and one for configured generation. The per-file floor
+allows five edits, two implementation reads, a search and final readback;
+increase your estimate when a file needs more work. Per-piece structural
 estimates use at least one check per goal; include additional checks in your estimate.
 A leaf whose estimate exceeds the usable allowance is refused before maker work.
 The new split reason execution_budget permits 2 to 8 pieces even when tokens fit.
