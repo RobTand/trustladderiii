@@ -311,3 +311,10 @@ tl3_py_test(
     data = ["//:instruction_docs"],
     deps = ["//tools/ci:child_env"],
 )
+
+py_binary(
+    name = "fail_fast_proof",
+    srcs = ["fail_fast_proof.py"],
+    visibility = ["//visibility:public"],
+    deps = [":bazel_gate"],
+)

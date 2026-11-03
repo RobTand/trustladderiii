@@ -193,7 +193,35 @@ receive the scope list. Changes matching `FALLBACK` (Bazel, Cargo and uv
 locks and manifests, toolchains, workflows, `tools/bazel/`) test everything
 and mark the PR as touching every scope.
 
+Draft merge-queue PRs use `batch-draft` mode. The gate reads complete BEP
+JSON lines from a temporary file and sends SIGINT to the Bazel client on the
+first non-quarantined FAILED, TIMEOUT, or build failure. Ordinary PRs allow
+up to 60 seconds to collect more failures, ending the grace period if Bazel
+finishes naturally. `gate-result.json` records `aborted_early` with the first
+label and reason, plus `not_run` for selected targets with no test result.
+An abort fails the gate and skips further input checks and builds.
+
+Time-budget warnings have PASSED test results and cannot trigger fail-fast.
+TL3 currently has no quarantine table. `QUARANTINE` and the workspace's
+`quarantine` parameter accept canonical labels when a table is added.
+
 Each push to `main` runs every test on amd64 and arm64. A failure names the
 merged PRs and says whether their selection included the failing test. The
 job summary and the `post-merge-<sha>` artifact hold one `POST_MERGE_RECORD`
 JSON line per run.
+
+## Time budget warnings
+
+Per-test CPU, wall-only, and wall-backstop overruns are warnings. A Rust
+binary whose tests pass still passes its Bazel target. Its undeclared
+outputs include `budget-warnings.json`, with the test name, measured seconds,
+limit, and timing metric. The Python runner has no per-test timing policy.
+
+The gate collects these records as `budget_warnings`, adding each Bazel
+label. PRs and queue batches report the warnings in `gate-result.json` and
+the job summary. Post-merge results also identify the architecture and retain
+warnings in `POST_MERGE_RECORD`.
+
+The gate never reruns a test because of elapsed time. Assertion failures and
+Bazel's hard `TIMEOUT` status still fail, with no retry. Recorded budgets and
+exception lists still cannot grow against the target branch without review.

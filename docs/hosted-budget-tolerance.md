@@ -24,8 +24,8 @@ and `cpu_sampling`. Receipts using this accounting have
 calibrated policy value and `CPU_FLOOR_SECONDS`, fixed at five CPU seconds.
 The floor applies to both the default and explicit per-scenario overrides,
 including tail entries. CPU limits have no hosted multiplier. A
-scenario must meet both its effective CPU limit and a wall backstop of 10 times its
-effective wall limit, including the runner multiplier below.
+scenario warns when it exceeds its effective CPU limit or a wall backstop of
+10 times its effective wall limit, including the runner multiplier below.
 Bazel's target timeout still stops binaries that never finish.
 
 The fixture startup diagnostic tells the runner that a server is expected.
@@ -51,10 +51,10 @@ wall-only exception. The receipt and a real Postgres CPU-failure check are
 recorded in `docs/bazel-budget-calibration.json`; this fleet receipt does not
 calibrate the BuildBuddy caps.
 
-CPU overruns and wall-only budget overruns can receive the Gate's one
-budget-only rerun. A wall-backstop overrun starts with
-`Per-test wall backstop exceeded` and never writes `budget-overrun.txt`, even
-if CPU also overran. A possible hang therefore does not consume a second run.
+CPU, wall-only, and wall-backstop overruns produce `budget-warnings.json`.
+They pass when the tests pass. The gate reports `budget_warnings` in its
+result and job summary and never reruns a target because of time. A Bazel
+`TIMEOUT` remains a failure with no rerun.
 
 Wall limits, CPU limits, their slow lists, and static wall-only exception
 lists may only shrink against the target branch. Removing CPU enforcement
@@ -189,8 +189,8 @@ change needs new measurements and review.
 The four observed overruns pass with these factors. The x64 scope scenario
 at 11.251s now has a 12.500s effective limit. ARM's synchronous token bridge
 at 15.343s now has a 17.250s effective limit. A wall-only default-budget test above
-12.500s on x64 or 11.500s on ARM still fails. The Bazel Gate reruns a
-budget-only failing target once. Functional failures never receive this rerun.
+12.500s on x64 or 11.500s on ARM now produces a warning. The Bazel Gate
+never reruns a target because of time.
 Functional failures, skipped tests and missing results still fail.
 
 ## Reproduce the calibration

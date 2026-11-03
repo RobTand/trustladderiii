@@ -1,4 +1,4 @@
-"""Run Cargo test binaries concurrently and enforce per-test CPU budgets with wall time backstops."""
+"""Run Cargo test binaries concurrently and report per-test CPU and wall time budget warnings."""
 
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -69,7 +69,7 @@ def check_budget(results, config, baseline, runner_class='baseline', cpu_seconds
     if runner_class not in BUDGET_MULTIPLIERS:
         raise ValueError(f'Unknown runner class: {runner_class}')
     multiplier = BUDGET_MULTIPLIERS[runner_class]
-    failures, backstops = [], []
+    warnings = []
     for name, elapsed in sorted(results.items()):
         wall_limit = config['slow'].get(name, config['seconds']) * multiplier
         wall_only = (cpu is None or sys.platform in config.get('wall_only_platforms', {})
@@ -77,23 +77,18 @@ def check_budget(results, config, baseline, runner_class='baseline', cpu_seconds
                      or any(fnmatchcase(name, pattern) for pattern in config.get('wall_only', {})))
         if wall_only:
             if elapsed > wall_limit:
-                failures.append(f'{name}: wall {elapsed:.3f}s > {wall_limit:.3f}s '
-                                f'({runner_class} x{multiplier})')
+                warnings.append({'test': name, 'measured': elapsed, 'limit': wall_limit, 'metric': 'wall'})
             continue
         measured = (cpu_seconds or {}).get(name)
         if measured is None or not math.isfinite(measured) or measured < 0:
             raise RuntimeError(f'Missing CPU timing or invalid CPU sample: {name}')
         cpu_limit = max(cpu['slow'].get(name, cpu['seconds']), CPU_FLOOR_SECONDS)
         if measured > cpu_limit:
-            failures.append(f'{name}: CPU {measured:.3f}s > {cpu_limit:.3f}s')
+            warnings.append({'test': name, 'measured': measured, 'limit': cpu_limit, 'metric': 'cpu'})
         backstop = wall_limit * WALL_BACKSTOP_MULTIPLIER
         if elapsed > backstop:
-            backstops.append(f'{name}: wall backstop {elapsed:.3f}s > {backstop:.3f}s')
-    if backstops:
-        # A possible hang must never receive the Gate's budget-only rerun.
-        raise RuntimeError('Per-test wall backstop exceeded:\n' + '\n'.join(backstops + failures))
-    if failures:
-        raise RuntimeError('Per-test time budget exceeded:\n' + '\n'.join(failures))
+            warnings.append({'test': name, 'measured': elapsed, 'limit': backstop, 'metric': 'wall_backstop'})
+    return warnings
 
 
 def process_cpu_sample(pid):
@@ -385,14 +380,16 @@ def test_workspace(manifest, jobs=None, report=None, enforce=True, shard=None):
               'runner_class': current_class, 'budget_multiplier': BUDGET_MULTIPLIERS[current_class], **cpu_details}
     for name, seconds in sorted(results.items()):
         print(json.dumps({'test': name, 'seconds': seconds}), flush=True)
+    output['budget_warnings'] = (check_budget(
+        results, config, baseline, runner_class=current_class, cpu_seconds=cpu_seconds,
+        cpu_fallbacks=cpu_details['cpu_fallbacks']) if enforce else [])
+    for warning in output['budget_warnings']:
+        print(json.dumps({'budget_warning': warning}), flush=True)
     path = report or ROOT / 'target/ci-test-times.json'
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(output, indent=2, sort_keys=True) + '\n')
     print(json.dumps({'test_wall_seconds': output['seconds'], 'jobs': jobs,
                       'timings': str(path)}), flush=True)
-    if enforce:
-        check_budget(results, config, baseline, runner_class=current_class, cpu_seconds=cpu_seconds,
-                     cpu_fallbacks=cpu_details['cpu_fallbacks'])
     return output
 
 
@@ -404,7 +401,7 @@ if __name__ == '__main__':
     parser.add_argument('--report', type=Path)
     parser.add_argument('--shard', type=shards.parse_shard, help='Zero-based INDEX/TOTAL')
     parser.add_argument('--prepare-only', action='store_true', help='Build targets and install test dependencies without running suites')
-    parser.add_argument('--measure', action='store_true', help='Report timings without enforcing budgets')
+    parser.add_argument('--measure', action='store_true', help='Report timings without budget warnings')
     args = parser.parse_args()
     if args.prepare_only:
         prepare_binaries(collect_binaries(args.manifest_path))
