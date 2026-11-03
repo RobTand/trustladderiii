@@ -189,6 +189,25 @@ fn recorded_endings() {
         );
     }
 }
+fn memory_oom_is_retained_in_check_evidence() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture(root.path(), "memory_limit_oom");
+    adapter.execute(&delivery).unwrap();
+    let ended = completion(&mut adapter, &delivery);
+    let encoded = serde_json::to_string(&ended).unwrap();
+    assert!(
+        encoded.contains("memory_limit_oom"),
+        "retain the PB termination reason: {encoded}"
+    );
+    assert!(encoded.contains("2147483648"), "retain the scope peak");
+    assert!(encoded.contains("137"), "retain the return code");
+    assert!(
+        !observed(ended).0,
+        "OOM is infrastructure evidence, not a test report"
+    );
+}
+
 fn harness_error_is_named_tl3_side() {
     // #326: the trusted harness rejected TL3's own check input inside the action.
     let root = tempfile::tempdir().unwrap();
@@ -2336,6 +2355,10 @@ fn main() {
             live_waits_do_not_look_on_bell_reset,
         ),
         ("declared_wait_uses_bell", declared_wait_uses_bell as fn()),
+        (
+            "memory_oom_is_retained_in_check_evidence",
+            memory_oom_is_retained_in_check_evidence as fn(),
+        ),
         ("recorded_endings", recorded_endings as fn()),
         (
             "retirement_refuses_active_or_unreadable_jobs",

@@ -21,7 +21,7 @@ def finish(key, request):
         save(root / "ready" / f"{key}.json", {"schema": "prismaquant.prismabuild.pool_item.v1",
              "action_key": key, "published_unix": 100, "attempt_history": []})
         return
-    state = mode if mode in ("failed", "withdrawn") else "failed" if mode == "harness_error" else "done"
+    state = mode if mode in ("failed", "withdrawn") else "failed" if mode in ("harness_error", "memory_limit_oom") else "done"
     original = next((recordings / state).glob("*.json"))
     old_key = original.stem
     text = original.read_text().replace(old_key, key)
@@ -31,6 +31,8 @@ def finish(key, request):
         relative = link["outcome"]
         source = recordings / relative.replace(key, old_key)
         save(root / relative, json.loads(source.read_text().replace(old_key, key)))
+    if mode == "memory_limit_oom":
+        value["detail"].update(returncode=137, termination_reason="memory_limit_oom")
     save(root / state / f"{key}.json", value)
     (root / "ready" / f"{key}.json").unlink(missing_ok=True)
     report = {"schema": "tl3.checks.v1", "effect_key": request["effect_key"],
@@ -63,6 +65,7 @@ def finish(key, request):
     save(root / f"{key}.ending", {"schema": "prismabuild.endings.v1", "complete": True,
         "endings": [{"action_key": key, "status": "executed" if state == "done" else state,
             "succeeded": state == "done", "exit_code": 0 if state == "done" else None,
+            "diagnostics": {"returncode": 137, "resource_profile": {"scope": {"memory_peak_bytes": 2147483648}}} if mode == "memory_limit_oom" else {},
             "result": None if state == "withdrawn" else {"verified": True, "receipt_sha256": "a" * 64 if state == "done" else None,
                        "stdout": {"path": str(log), "bytes": len(raw.encode()),
                                   "sha256": hashlib.sha256(raw.encode()).hexdigest()}}}]})
