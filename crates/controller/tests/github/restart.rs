@@ -591,3 +591,62 @@ pub(super) fn duplicate_request(settings: &tl3_config::Store) {
     );
     println!("test restart_duplicate_request_reopens_issue ... ok");
 }
+
+pub(super) fn revoked_issue(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("hold-merges"), "hold").unwrap();
+    let api = Server::new();
+    let mut controller =
+        steering::race_controller(settings, root.path(), &api, json!({"kind":"restart"}));
+    controller.intake(labelled()).unwrap();
+    drain(&mut controller);
+    let context: Value =
+        serde_json::from_str(include_str!("../fixtures/decisions/pq2662.json")).unwrap();
+    let mut store = Store::open(settings).unwrap();
+    let mut commit = tl3_store::Commit::new("reviewed-q10", json!({}), &store.load().unwrap());
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "request_decisions".into(),
+        id: "0".into(),
+        value: context,
+    });
+    store.commit(&commit).unwrap();
+    api.state.lock().unwrap().issue_body =
+        Some("Do not update the retention pin. Preserve the original two-file scope.".into());
+    restart_comment(&mut controller, 20100);
+    drain(&mut controller);
+    let snapshot = store.load().unwrap();
+    let latest = snapshot
+        .rows
+        .iter()
+        .filter(|r| r.table == "request_decisions")
+        .max_by_key(|r| r.id.parse::<u64>().unwrap())
+        .unwrap();
+    assert_eq!(
+        latest.value["decision_ids"],
+        json!([]),
+        "current issue text must revoke the restored pin approval"
+    );
+    let history = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "decisions" && r.id == "pq2662-q10")
+        .expect("revoked approval keeps one durable history record");
+    assert!(
+        history.value["supersession_reason"]
+            .as_str()
+            .unwrap()
+            .contains("current issue")
+    );
+    let request = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "requests" && r.id == latest.id)
+        .unwrap();
+    assert!(
+        request.value["source"]
+            .as_str()
+            .unwrap()
+            .contains("Do not update")
+    );
+    println!("test restart_current_issue_revokes_approval ... ok");
+}

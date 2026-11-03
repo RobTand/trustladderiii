@@ -1157,7 +1157,27 @@ impl Executor for RaceWorkers {
             return Ok(tl3_controller::executor::Completion::confirmed(vec![
                 Observation::Classified {
                     key: delivery.key.clone(),
-                    reply: Some(self.reply.clone()),
+                    reply: Some(
+                        if let Some(inputs) = delivery
+                            .steering
+                            .as_ref()
+                            .and_then(|task| match task {
+                                tl3_controller::steering::Task::Classify { inputs, .. } => {
+                                    Some(inputs)
+                                }
+                                _ => None,
+                            })
+                            .filter(|inputs| inputs.get("reconcile_issue").is_some())
+                        {
+                            let forbid = inputs["reconcile_issue"]["body"]
+                                .as_str()
+                                .unwrap_or("")
+                                .contains("Do not update");
+                            json!({"kind":"reconcile_decisions", "assessments": inputs["decision_context"]["decisions"].as_array().unwrap().iter().map(|d| json!({"id":d["id"], "contradicted":forbid, "reason":if forbid {"current issue forbids the pin update"} else {"current issue does not contradict this approval"}})).collect::<Vec<_>>()})
+                        } else {
+                            self.reply.clone()
+                        },
+                    ),
                 },
             ]));
         }

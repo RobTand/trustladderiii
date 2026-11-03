@@ -84,3 +84,82 @@ pub(crate) fn inherit(
     ));
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn snapshot(context: Value) -> Snapshot {
+        Snapshot {
+            revision: tl3_store::Revision::ZERO,
+            epoch: tl3_store::Epoch::ZERO,
+            rows: vec![tl3_store::WorldRow {
+                table: "request_decisions".into(),
+                id: "0".into(),
+                value: context,
+                version: tl3_store::Revision::ZERO,
+                arrival: 0,
+            }],
+            pending_effects: vec![],
+            credit: vec![],
+            interned: vec![],
+        }
+    }
+
+    #[test]
+    fn replacement_keeps_references_instead_of_copying_history() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/decisions/pq2662.json")).unwrap();
+        let snapshot = snapshot(fixture);
+        let mut commit = tl3_store::Commit::new("replace", json!({}), &snapshot);
+        inherit(&snapshot, &mut commit, NodeId(0), NodeId(1)).unwrap();
+        let context = commit
+            .rows
+            .iter()
+            .find_map(|r| match r {
+                tl3_store::RowChange::Put { table, id, value }
+                    if table == "request_decisions" && id == "1" =>
+                {
+                    Some(value)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(
+            context.get("decisions").is_none(),
+            "request versions must not copy decision history"
+        );
+        assert_eq!(context["decision_ids"], json!(["pq2662-q10"]));
+        assert_eq!(
+            commit
+                .rows
+                .iter()
+                .filter(
+                    |r| matches!(r, tl3_store::RowChange::Put { table, .. } if table == "decisions")
+                )
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn live_decision_context_is_bounded() {
+        let mut fixture: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/decisions/pq2662.json")).unwrap();
+        let decision = fixture["decisions"][0].clone();
+        fixture["decisions"] = json!(
+            (0..65)
+                .map(|id| {
+                    let mut d = decision.clone();
+                    d["id"] = json!(format!("decision-{id}"));
+                    d
+                })
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            Context::load(&snapshot(fixture), NodeId(0)).is_err(),
+            "live decisions must have an explicit bound"
+        );
+    }
+}
