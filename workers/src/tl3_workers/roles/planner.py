@@ -234,6 +234,10 @@ def check_reply(inputs, reply, *, rehearsals=None):
                 violations.append("Every proposed piece must have a smaller forecast than its parent.")
     if rehearsals is not None and rehearsals.failure:
         violations.append(rehearsals.failure['message'])
+    elif rehearsals is not None and reply['kind'] == 'cant_meet':
+        rejected = next((item for item in reversed(rehearsals.candidates) if item['status'] == 'refused'), None)
+        if rejected is not None:
+            violations.append(rejected['message'])
     if uncovered or missing_forced:
         mismatch = PlanConsistencyError(uncovered, missing_forced, draft=reply)
         # Only these intrinsic inconsistencies enter the existing tool-free repair.
