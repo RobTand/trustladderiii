@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 from jsonschema import ValidationError
 import tiktoken
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+from langchain_core.messages import AIMessage, HumanMessage
 
 from tl3_workers.evidence import RESERVED_ENVIRONMENT, RESERVED_PREFIXES
 from tl3_workers.contracts import validate
@@ -36,6 +38,28 @@ SPLIT = {
 }
 CANT_MEET = {"kind": "cant_meet", "report": "The required API decision is unresolved.",
              "files": []}
+
+
+class PlannerModel(FakeMessagesListChatModel):
+    calls: list = []
+    offered: bool = False
+
+    def bind_tools(self, tools, **kwargs):
+        self.offered = bool(tools)
+        return self
+
+    def _generate(self, messages, **kwargs):
+        self.calls.append((copy.deepcopy(messages), self.offered))
+        self.offered = False
+        return super()._generate(messages, **kwargs)
+
+
+def planner_model(monkeypatch, *replies):
+    from tl3_workers import runtime
+
+    model = PlannerModel(responses=[AIMessage(content=json.dumps(reply)) for reply in replies], calls=[])
+    monkeypatch.setattr(runtime, 'create_model', lambda _: model)
+    return model
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -793,12 +817,14 @@ def test_declared_edit_may_not_be_frozen(planner_request, digests_plan, frozen, 
 
 
 def test_declared_edit_needs_a_demonstrating_check(planner_request, digests_plan):
+    from tl3_workers.roles.planner import UncoveredEditedTests
+
     digests_plan['edits_tests'] = [FROZEN]
     digests_plan['checks'] = digests_plan['checks'][:2]
     digests_plan['checks'][0]['goal_ids'] = [0]
-    violations = planned(planner_request, digests_plan)
-    assert any(f'`{FROZEN}` is in edits_tests but no demonstrating check names it' in item
-               for item in violations), violations
+    with pytest.raises(UncoveredEditedTests, match='no demonstrating check names it') as raised:
+        planned(planner_request, digests_plan)
+    assert raised.value.node_ids == (FROZEN,)
 
 
 @pytest.mark.parametrize('edited,files,reason', [
@@ -1173,3 +1199,184 @@ def test_request_149_keeps_reserved_protections(planner_request, request_149_pla
     assert repr(name) in violation
     if name in {'OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS'}:
         assert f'{name}=1 is a runner-owned native-thread bound' in violation
+
+
+PBWAIT_TESTS = 'tests/test_pbwait_finds_a_later_submission.py'
+LATE = f'{PBWAIT_TESTS}::test_finds_a_later_submission'
+CONTROL = f'{PBWAIT_TESTS}::test_a_key_nothing_ever_records_still_gives_up_as_waiting'
+
+
+@pytest.fixture
+def request156(planner_request, monkeypatch):
+    root = Path(planner_request['worktree'])
+    (root / PBWAIT_TESTS).write_text(
+        'def test_finds_a_later_submission():\n    assert True\n\n'
+        'def test_a_key_nothing_ever_records_still_gives_up_as_waiting():\n'
+        '    wait_s = 0.0\n    verdict = "waiting"\n    assert verdict == "waiting"\n')
+    planner_request['inputs']['ingest']['goals'] = [
+        {'description': 'Find a later submission deterministically.', 'verification': 'test'},
+        {'description': 'Keep the no-submission control returning waiting with wait_s=0.0.',
+         'verification': 'test'},
+    ]
+    tool = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+            'runner_features': ['base_head', 'native_threads_1'],
+            'artifacts': ['logs', 'terminal_verdict', 'cas_receipt'],
+            'methods': ['red_green'], 'protected_files': []}
+    planner_request['inputs']['tool_capabilities'] = [tool]
+    planner_request['inputs']['ingest']['evidence_contract'] = [
+        {**copy.deepcopy(tool), 'requirement': 'Retain base/head proof and native thread bounds.'}]
+    monkeypatch.chdir(root)
+    return {
+        'kind': 'leaf', 'files': ['greeting.py', PBWAIT_TESTS],
+        'edits_tests': [LATE, CONTROL],
+        'checks': [{'kind': 'demonstrating', 'node_ids': [LATE], 'goal_ids': [0, 1]}],
+        'no_design_questions': True, 'lands_on_its_own': True, 'evidence_contract': [],
+    }
+
+
+@pytest.mark.parametrize('correction', ['check', 'unchanged', 'cant_meet'])
+def test_request156_gets_one_tool_free_consistency_correction(planner_request, request156, monkeypatch, correction):
+    from tl3_workers import runtime
+    from tl3_workers.forecast import Forecaster
+
+    fixed = copy.deepcopy(request156)
+    if correction == 'check':
+        fixed['checks'][0]['node_ids'].append(CONTROL)
+    elif correction == 'unchanged':
+        fixed['edits_tests'].remove(CONTROL)
+        fixed['checks'].append({'kind': 'regression', 'node_ids': [CONTROL], 'goal_ids': [1]})
+    else:
+        fixed = {**copy.deepcopy(CANT_MEET), 'evidence_contract': []}
+    # The final forecast must measure the corrected footprint, not the discarded draft.
+    fixed['files'].append('tests/test_existing.py')
+    measurements = []
+    original = Forecaster.measure
+
+    def measure(self, brief, paths):
+        measurements.append(set(paths))
+        return original(self, brief, paths)
+
+    monkeypatch.setattr(Forecaster, 'measure', measure)
+    model = planner_model(monkeypatch, request156, fixed)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2, 'the inconsistent draft must reach the existing correction boundary'
+    history, offered = model.calls[1]
+    assert model.calls[0][1] and not offered
+    assert isinstance(history[-1], HumanMessage)
+    assert CONTROL in history[-1].text and 'no demonstrating check' in history[-1].text
+    assert 'Tools are unavailable' in history[-1].text
+    assert json.loads(next(m.text for m in history if isinstance(m, HumanMessage)))['ingest'] == planner_request['inputs']['ingest']
+    result = events[-1]['reply']
+    assert result['kind'] == fixed['kind'] and result['violations'] == []
+    assert result['files'] == fixed['files']
+    assert measurements == [set(request156['files']), set(fixed['files'])]
+    assert result['evidence_contract'] == planner_request['inputs']['ingest']['evidence_contract']
+    assert result['evidence_errors'] == []
+    assert sum(event['event'] == 'reply' for event in events) == 1
+    if correction != 'cant_meet':
+        assert result['checks'] == fixed['checks'] and result['edits_tests'] == fixed['edits_tests']
+
+
+def test_request156_second_mismatch_stops_with_both_named_diagnostics(planner_request, request156, monkeypatch):
+    from tl3_workers import runtime
+    from tl3_workers.tracing import failure_tags
+    from tl3_workers.turns import InvalidReply
+
+    second = copy.deepcopy(request156)
+    second['checks'][0]['node_ids'] = [CONTROL]
+    model = planner_model(monkeypatch, request156, second, LEAF)
+    events = []
+    with pytest.raises(InvalidReply) as raised:
+        runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    assert CONTROL in str(raised.value.errors[0])
+    assert LATE in str(raised.value.errors[1])
+    diagnostics = failure_tags(raised.value)['failure_message']
+    assert CONTROL in diagnostics and LATE in diagnostics
+    assert not any(event['event'] == 'reply' for event in events)
+
+
+@pytest.mark.parametrize('first', [{'kind': 'not-a-plan'}, {**LEAF, 'forecast': {'fits': True}}])
+def test_request156_shares_the_single_format_correction(planner_request, request156, monkeypatch, first):
+    from tl3_workers import runtime
+    from tl3_workers.turns import InvalidReply
+
+    model = planner_model(monkeypatch, first, request156, LEAF)
+    with pytest.raises(InvalidReply) as raised:
+        runtime.run(planner_request, lambda _: None)
+    assert CONTROL in str(raised.value.errors[1])
+    assert len(model.calls) == 2
+
+
+@pytest.mark.parametrize('obstacle', ['goal', 'protected', 'unsupported', 'test_only'])
+def test_request156_corrected_reply_is_fully_rechecked(planner_request, request156, monkeypatch, obstacle):
+    from tl3_workers import runtime
+
+    fixed = copy.deepcopy(request156)
+    fixed['checks'][0]['node_ids'].append(CONTROL)
+    if obstacle == 'goal':
+        fixed['checks'][0]['goal_ids'] = [0]
+    elif obstacle == 'protected':
+        fixed['files'].append('conftest.py')
+    elif obstacle == 'unsupported':
+        requirement = copy.deepcopy(planner_request['inputs']['ingest']['evidence_contract'][0])
+        requirement['executor'] = 'buildbuddy_remote_bazel'
+        fixed['evidence_contract'] = [requirement]
+    else:
+        Path(planner_request['worktree'], 'pyproject.toml').write_text(
+            '[tool.tl3.harness]\ntest-files = ["tests/**/*.py"]\n')
+        fixed['files'] = [PBWAIT_TESTS]
+    model = planner_model(monkeypatch, request156, fixed, LEAF)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    result = events[-1]['reply']
+    assert result['kind'] == 'cant_meet' if obstacle == 'unsupported' else result['violations']
+
+
+@pytest.mark.parametrize('obstacle', ['cant_meet', 'unsupported', 'protected', 'out_of_room', 'forcing', 'test_only'])
+def test_request156_substantive_stops_do_not_get_consistency_correction(planner_request, request156, monkeypatch, obstacle):
+    from tl3_workers import runtime
+
+    if obstacle == 'cant_meet':
+        request156 = {**CANT_MEET, 'evidence_contract': []}
+    elif obstacle == 'unsupported':
+        planner_request['inputs']['tool_capabilities'] = []
+    elif obstacle == 'protected':
+        request156['files'].append('conftest.py')
+    elif obstacle == 'out_of_room':
+        planner_request['inputs']['must_split'] = True
+    elif obstacle == 'forcing':
+        request156['checks'][0]['forcing'] = {
+            'symptom': 'Delay submission.', 'environment': {'OMP_NUM_THREADS': '1'}, 'patches': []}
+    else:
+        Path(planner_request['worktree'], 'pyproject.toml').write_text(
+            '[tool.tl3.harness]\ntest-files = ["tests/**/*.py"]\n')
+        request156['files'] = [PBWAIT_TESTS]
+    model = planner_model(monkeypatch, request156, LEAF)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 1
+    result = events[-1]['reply']
+    if obstacle in {'cant_meet', 'unsupported'}:
+        assert result['kind'] == 'cant_meet'
+        if obstacle == 'unsupported':
+            assert result['evidence_errors']
+    else:
+        assert result['violations']
+        assert any(CONTROL in violation and 'no demonstrating check' in violation
+                   for violation in result['violations'])
+
+
+def test_request156_trace_diagnostics_redact_model_text():
+    from tl3_workers.roles.planner import UncoveredEditedTests
+    from tl3_workers.tracing import failure_tags
+    from tl3_workers.turns import InvalidReply
+
+    secret = 'sk-proj-' + 'aB7cD9eF2gH4jK6mN8pQ0rS3tU5vW1xY'
+    error = UncoveredEditedTests([CONTROL + '[api_key=' + secret + ']'])
+    tags = failure_tags(InvalidReply(error, error))
+    assert secret not in json.dumps(tags)
+    assert CONTROL in tags['failure_message']
+    assert 'repaired reply: edited tests without demonstrating checks:' in tags['failure_message']

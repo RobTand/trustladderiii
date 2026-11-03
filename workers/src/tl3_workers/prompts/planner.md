@@ -104,7 +104,13 @@ those marked for review. Return exactly one of these proposals:
   not a node ID; to guard existing behavior, name the existing tests that cover it.
   List in edits_tests, by node ID, every existing test whose definition the
   change modifies, and declare its file; omit edits_tests when the change edits
-  no existing test. A goal that asks the maker to change an existing test, for
+  no existing test. Every declared edit needs a demonstrating check. If code
+  asks you to reconcile an uncovered edit, use only facts already read. Supply
+  the required check, or remove the edit declaration only when the unchanged
+  test already meets the goals. Never remove a required edit, weaken a goal,
+  invent a base failure or count a passing control as red. Return cant_meet
+  when the required proof is unavailable.
+  A goal that asks the maker to change an existing test, for
   example to extend, patch, update, fix or rewrite it, needs that test in
   edits_tests; code refuses a plan whose goal asks that of a test a regression
   or behavior-preserving check names. Name such a test in a demonstrating check, never in a regression

@@ -1217,8 +1217,14 @@ def safe_span(span, redactor=None, role="unknown", model="unknown", payload_limi
 
 
 def failure_tags(error):
+    from tl3_workers.roles.planner import UncoveredEditedTests
     from tl3_workers.turns import InvalidReply, Unrepairable
 
+    if isinstance(error, UncoveredEditedTests):
+        # Node IDs are model text. Redact before retaining each draft's diagnostic.
+        message = 'edited tests without demonstrating checks: ' + ', '.join(error.node_ids)
+        return {"failure_class": "UncoveredEditedTests",
+                "failure_message": Redactor(None).text(message)[:220]}
     if isinstance(error, InvalidReply):
         first, second = (failure_tags(item)["failure_message"] for item in error.errors)
         return {"failure_class": "InvalidReply",

@@ -14,6 +14,21 @@ from tl3_workers.tools import Worktree
 from tl3_workers.recall import check_citations
 
 
+class UncoveredEditedTests(ValueError):
+    """A draft's edit declarations disagree with its demonstrating checks."""
+
+    def __init__(self, node_ids):
+        self.node_ids = tuple(node_ids)
+        self.violations = [
+            f"`{node_id}` is in edits_tests but no demonstrating check names it. "
+            "Name it in a demonstrating check that fails on the base by an assertion."
+            for node_id in self.node_ids]
+        super().__init__("\n".join(self.violations) +
+                         "\nReconcile the declaration and checks using already-read facts. "
+                         "Drop an edit only if it is unnecessary for the goals. "
+                         "Do not weaken goals or invent base failures; return cant_meet if needed.")
+
+
 def check_reply(inputs, reply):
     if "forecast" in reply or "violations" in reply or "decision_context" in reply:
         raise ValueError("only code may supply planning evidence")
@@ -21,6 +36,7 @@ def check_reply(inputs, reply):
     check_citations(inputs, reply)
     goals = set(range(len(inputs["ingest"]["goals"])))
     violations = []
+    uncovered = []
     paths = set()
     if reply["kind"] == "leaf":
         if inputs["must_split"]:
@@ -64,7 +80,8 @@ def check_reply(inputs, reply):
             if not cited <= goals:
                 violations.append("A check cites an unknown goal.")
             covered.update(cited)
-        violations.extend(edit_violations(inputs["ingest"]["goals"], reply))
+        edit_errors, uncovered = edit_violations(inputs["ingest"]["goals"], reply)
+        violations.extend(edit_errors)
         if "Checks must name exact pytest node IDs." not in violations:
             try:
                 validate_check_plan(tuple(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']),
@@ -120,6 +137,13 @@ def check_reply(inputs, reply):
                 violations.append(f"Declared file can't be used: {error}. Leave it out.")
             if child["tokens"] >= forecast["tokens"]:
                 violations.append("Every proposed piece must have a smaller forecast than its parent.")
+    if uncovered:
+        mismatch = UncoveredEditedTests(uncovered)
+        # Only this intrinsic inconsistency enters the existing tool-free repair.
+        # Substantive plan failures still reach the controller under Q54.
+        if not violations:
+            raise mismatch
+        violations.extend(mismatch.violations)
     if "decision_context" in inputs:
         reply["decision_context"] = inputs["decision_context"]
     reply["forecast"] = forecast
@@ -197,8 +221,10 @@ def function(node_id):
 
 def edit_violations(goals, reply):
     """Regression and behavior-preserving checks run tests exactly as the base wrote them,
-    so a test the change edits can only be shown by a demonstrating check (#438)."""
+    so a test the change edits can only be shown by a demonstrating check (#438).
+    Return substantive violations separately from uncovered edit declarations."""
     violations = []
+    uncovered = []
     frozen, demonstrated = {}, set()
     for index, check in enumerate(reply["checks"]):
         for node_id in check["node_ids"]:
@@ -229,8 +255,7 @@ def edit_violations(goals, reply):
                               "can't name it: those checks run tests exactly as the base wrote them. "
                               "Name it only in a demonstrating check.")
         if function(node_id) not in demonstrated:
-            violations.append(f"`{node_id}` is in edits_tests but no demonstrating check names it. "
-                              "Name it in a demonstrating check that fails on the base by an assertion.")
+            uncovered.append(node_id)
     patterns = test_files()
     # The base run applies every test-file edit, so a head that changes only test files is its own base.
     test_only = bool(reply["files"]) and patterns is not None and all(
@@ -257,7 +282,7 @@ def edit_violations(goals, reply):
                           "base run applies the leaf's test edits, so base and head run the same test. A change "
                           "to tests alone needs a forced reproduction (Q55) on its demonstrating check; if no "
                           "forcing can be written, return can't meet.")
-    return violations
+    return violations, uncovered
 
 
 ROLE = Role(
