@@ -33,6 +33,7 @@ use std::{
     thread,
     time::Duration,
 };
+use support::scenario::progress as scenario_progress;
 use tl3_controller::{
     Bootstrap, Boundary, Controller, LabelledIssue, Repository, adapters,
     adapters::mergify::{Adapter, Translator},
@@ -481,8 +482,10 @@ impl Server {
     }
 }
 fn drain(controller: &mut Controller) {
+    scenario_progress("mergify: drain ingress");
     ingress::drain(controller).unwrap();
     for _ in 0..300 {
+        scenario_progress("mergify: controller step");
         if !controller.drive_once().unwrap() {
             return;
         }
@@ -535,6 +538,7 @@ fn queued_for(
         })
         .unwrap();
     for _ in 0..300 {
+        scenario_progress("mergify: controller step");
         let progressed = controller
             .drive_once_with(|boundary, key| {
                 if boundary == Boundary::BeforeDispatch {
@@ -710,6 +714,7 @@ fn reused_check_dequeues_twice(settings: &tl3_config::Store, generic: bool) {
     let mut controller = queued(settings, &api, root.path(), true);
     let id = api.state.lock().unwrap().queue_check()["id"].clone();
     for episode in 1..=2 {
+        scenario_progress(format!("enqueue replay: episode {episode}"));
         {
             let mut state = api.state.lock().unwrap();
             state.checks = fixture(if generic { "dequeued" } else { "interrupted" }, "checks");
@@ -1245,6 +1250,7 @@ fn ignored_events(settings: &tl3_config::Store) {
     let mut controller = queued(settings, &api, root.path(), true);
     let translator = Translator::new(api.clients()).unwrap();
     for action in ["completed", "created"] {
+        scenario_progress(format!("ignored check events: {action}"));
         for (name, app) in [
             ("Mergify Merge Queue", json!({"id": 99, "slug": "other"})),
             ("Summary", json!({"id": 10562, "slug": "mergify"})),
@@ -1286,6 +1292,7 @@ fn ignored_events(settings: &tl3_config::Store) {
     );
     assert_eq!(api.state.lock().unwrap().reads, reads);
     for action in ["closed", "synchronize", "unlabeled"] {
+        scenario_progress(format!("ignored pull events: {action}"));
         let mut body = pull_event(&api, action);
         body["pull_request"]["head"]["ref"] = json!("mergify/merge-queue/main/pr-100");
         body["pull_request"]["user"]["login"] = json!("mergify[bot]");
@@ -1791,6 +1798,7 @@ fn stalled_merge_progress(settings: &tl3_config::Store) {
     assert_kernel_facts(settings, 0);
     // Each selected check field participates in the token comparison.
     for field in ["id", "status", "conclusion", "title"] {
+        scenario_progress(format!("merge progress: {field}"));
         let previous = progress(&mut controller).current;
         {
             let mut state = api.state.lock().unwrap();
@@ -2004,6 +2012,7 @@ fn marker_retirement(settings: &tl3_config::Store, confirmed: bool) {
     api.state.lock().unwrap().merged(false);
     api.state.lock().unwrap().checks = fixture("merged", "checks");
     for _ in 0..300 {
+        scenario_progress("mergify: controller step");
         controller.drive_once().unwrap();
         if controller
             .snapshot()
@@ -2163,6 +2172,7 @@ fn rate_limited_read_defers_quota(settings: &tl3_config::Store, status: u16) {
         })
         .unwrap();
     for _ in 0..300 {
+        scenario_progress("mergify: controller step");
         if !controller
             .drive_once_with(|boundary, key| {
                 if boundary == Boundary::BeforeDispatch {
@@ -2251,6 +2261,7 @@ fn permanent_github_read(settings: &tl3_config::Store, status: u16, class: &str,
     let attempts = std::cell::Cell::new(0);
     let settle = |controller: &mut Controller| {
         for _ in 0..300 {
+            scenario_progress("mergify: controller step");
             if !controller
                 .drive_once_with(|boundary, key| {
                     if boundary == Boundary::BeforeDispatch {
@@ -2364,6 +2375,7 @@ fn failed_catch_up_retries_held_enqueue(settings: &tl3_config::Store) {
         .unwrap();
     let mut enqueue = None;
     for _ in 0..300 {
+        scenario_progress("mergify: controller step");
         if !controller
             .drive_once_with(|boundary, key| {
                 if boundary == Boundary::BeforeDispatch {
@@ -2880,11 +2892,38 @@ fn main() {
         database.stop();
         return;
     }
+    // Main solo receipt 52ead699-eee6-4075-87af-78f664661a50, rounded seconds.
+    // The last two groups retain waiting_requeue's six- and three-marker fixtures.
+    let seconds = [
+        1, 1, 1, 2, 1, 1, 1, 1, 3, 2, 2, 1, 2, 1, 1, 1, 2, 2, 1, 2, 1, 1, 1, 2, 1, 2, 3, 3, 1, 2,
+        2, 3, 2, 1, 1, 1, 1, 2, 1, 2, 2, 1, 2, 2, 2, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 4, 2, 3,
+        2, 3, 2, 3, 2, 3, 3, 4, 3, 2, 3, 2, 3, 2, 4, 2, 2, 3, 2, 3, 4, 3, 2, 2, 1, 1, 2, 1, 2, 2,
+        2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 3, 3, 2, 2, 6, 2, 2, 2, 2, 2, 2, 1, 1, 2, 3, 3, 3, 2, 2, 1,
+        2, 2, 2, 2, 2, 2, 2, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 1, 1, 1, 2, 2, 2, 2, 2,
+        2, 2, 2, 2, 2, 2, 1, 2, 1, 3, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 69, 15,
+    ];
+    let groups: Vec<_> = seconds
+        .iter()
+        .enumerate()
+        .map(|(index, seconds)| {
+            let markers = match index {
+                174 => 6,
+                175 => 3,
+                _ => 1,
+            };
+            (index, markers, *seconds)
+        })
+        .collect();
+    let mut shard = support::scenario_shard::Shard::from_groups(&groups);
     let mut scenario_count = 0;
     macro_rules! scenario {
         ($call:expr) => {{
-            $call;
+            let group = scenario_count;
             scenario_count += 1;
+            shard.run(group, || {
+                scenario_progress(stringify!($call));
+                $call;
+            });
         }};
     }
     scenario!(executor_recovery());
@@ -3145,8 +3184,10 @@ fn main() {
     for action in ["unlabeled", "closed", "synchronize"] {
         scenario!(person_actions(&database.create(action), action));
     }
-    scenario!(ignored_events(&database.create("ignored")));
-    println!("test ignored events ... ok");
+    scenario!({
+        ignored_events(&database.create("ignored"));
+        println!("test ignored events ... ok");
+    });
     for mode in [
         "settles",
         "churn",
@@ -3214,9 +3255,10 @@ fn main() {
         ));
     }
     database.stop();
-    waiting_requeue::run();
-    scenario_count += 6;
-    waiting_requeue::review();
-    scenario_count += 3;
-    println!("{scenario_count} Mergify scenarios passed; no skips; no live upstream calls");
+    shard.run(scenario_count, waiting_requeue::run);
+    scenario_count += 1;
+    shard.run(scenario_count, waiting_requeue::review);
+    scenario_count += 1;
+    assert_eq!(scenario_count, groups.len());
+    shard.finish("Mergify");
 }

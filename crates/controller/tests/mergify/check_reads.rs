@@ -26,6 +26,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         .into_iter()
         .enumerate()
         {
+            scenario_progress(format!("check_reads: gap case {index}"));
             controller
                 .observe(
                     &format!("gap-{index}"),
@@ -197,6 +198,7 @@ fn clear_gap(controller: &mut Controller, id: &str, sequence: u64) {
         )
         .unwrap();
     for _ in 0..100 {
+        scenario_progress("check_reads: controller step");
         if controller.snapshot().unwrap().rows.iter().any(|row| {
             row.table == "operations_comments"
                 && row.id.ends_with(&format!("/{}", 90000 + sequence))
@@ -235,6 +237,7 @@ fn reopen(controller: &mut Controller, api: &Server, source: &str) {
         .unwrap();
     assert_eq!(incident.value["open"], true);
     for sequence in 1..=2 {
+        scenario_progress(format!("check_reads: replay {sequence}"));
         clear_gap(controller, &incident.id, sequence);
         report_gap(controller, api, source);
         let snapshot = controller.snapshot().unwrap();

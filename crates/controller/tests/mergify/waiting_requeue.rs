@@ -162,6 +162,7 @@ fn setup_at(prior: bool, intended: bool) -> (support::Database, Fixture, Control
     let mut delivery = None;
     if prior {
         for _ in 0..300 {
+            scenario_progress("waiting_requeue: controller step");
             if intended
                 && let Some(effect) =
                     controller
@@ -317,7 +318,9 @@ fn dispatch_rechecks_head_conditions_and_human_decisions() {
         "missing-proof",
         "permission-read",
     ] {
+        scenario_progress(format!("waiting_requeue {mode}: fixture"));
         let (_db, f, mut c) = setup(true);
+        scenario_progress(format!("waiting_requeue {mode}: prepared"));
         f.grace(&mut c);
         {
             let mut state = f.api.state.lock().unwrap();
@@ -452,7 +455,9 @@ fn no_prior_dequeue_never_recovers_and_later_approved_head_has_its_own_budget() 
 
 fn refused_or_unacknowledged_requeue_uses_bounded_existing_recovery() {
     for mode in ["reply", "permission", "rejected", "unknown"] {
+        scenario_progress(format!("waiting_requeue {mode}: fixture"));
         let (_db, f, mut c) = setup(true);
+        scenario_progress(format!("waiting_requeue {mode}: prepared"));
         if mode == "reply" {
             f.api.state.lock().unwrap().command_reply = Some(requeue::restricted_reply());
         }
@@ -562,6 +567,7 @@ pub(super) fn run() {
     ];
     let mut failures = Vec::new();
     for (name, case) in cases {
+        scenario_progress(format!("waiting_requeue {name}: case"));
         if std::panic::catch_unwind(*case).is_err() {
             eprintln!("FAILED #608 {name}");
             failures.push(*name);
@@ -594,6 +600,7 @@ fn recorded_human_removal_before_first_dispatch_requires_explicit_resume() {
     )
     .unwrap();
     for _ in 0..20 {
+        scenario_progress("waiting_requeue: controller step");
         c.drive_once().unwrap();
         if c.snapshot().unwrap().rows.iter().any(|row| {
             row.table == "queue_facts" && row.value["evidence"]["DequeuedByPerson"]["event"] == 100
@@ -748,6 +755,7 @@ pub(super) fn review() {
             consumed_head_budget_also_blocks_legacy_dispatch_path,
         ),
     ] {
+        scenario_progress(format!("waiting_requeue review {name}: case"));
         if std::panic::catch_unwind(case).is_err() {
             eprintln!("FAILED #608 review {name}");
             failures.push(name);

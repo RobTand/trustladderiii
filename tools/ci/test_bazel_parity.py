@@ -216,6 +216,36 @@ class StaticParityTests(unittest.TestCase):
 
 
 class RustRunnerReceiptTests(unittest.TestCase):
+    def run_sharded(self, binary):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'bazel'))
+        import rust_runner
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = {'TEST_TOTAL_SHARDS': '2', 'TEST_SHARD_INDEX': '1',
+                           'TEST_SHARD_STATUS_FILE': str(Path(temporary, 'status')),
+                           'TEST_UNDECLARED_OUTPUTS_DIR': temporary, 'TL3_BUDGETS': 'record'}
+            with patch.dict(os.environ, environment), \
+                 patch.object(sys, 'argv', ['runner', 'fixture', binary, 'custom', '-']), \
+                 patch.object(rust_runner, 'prepare'), \
+                 patch.object(rust_runner, 'link_workspace'), \
+                 patch.object(rust_runner, 'check_workspace'), \
+                 patch.object(rust_runner.rust_gate, 'execute_binary',
+                              return_value={binary + '::one': 0.25}) as execute:
+                rust_runner.main()
+            self.assertTrue(Path(temporary, 'status').exists())
+            receipt = json.loads(Path(temporary, 'inventory.json').read_text())
+            self.assertEqual(receipt['shard'], {'index': 1, 'total': 2})
+            self.assertEqual(receipt['rust'], {binary: ['one']})
+            execute.assert_called_once()
+
+    def test_long_controller_scenarios_accept_sharding(self):
+        for name in ['mergify', 'publishing', 'github-flow', 'github-notices', 'simulation']:
+            with self.subTest(binary=name):
+                self.run_sharded('tl3-controller/' + name)
+
+    def test_non_allowlisted_binary_refuses_sharding(self):
+        with self.assertRaisesRegex(RuntimeError, 'shard-aware custom harness'):
+            self.run_sharded('tl3-controller/unlisted')
+
     def test_shard_receipt_does_not_claim_scalar_action_resource_metrics(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'bazel'))
         import rust_runner
