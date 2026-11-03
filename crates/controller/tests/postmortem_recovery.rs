@@ -463,3 +463,147 @@ fn new_release_recovers_the_pause_for_a_validation_run() {
     );
     assert!(f.pause_id().is_none());
 }
+
+#[test]
+fn lane_starts_while_delivery_waits_for_pool() {
+    let mut f = Fixture::new();
+    f.capacity(true);
+    assert!(
+        f.controller
+            .world()
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|n| n.ticket.is_some() && !n.pool)
+    );
+    f.controller.run_postmortems(pace(10));
+    drain(&mut f.controller);
+    assert_eq!(
+        f.claims(),
+        2,
+        "delivery waiters do not block the postmortem lane"
+    );
+}
+
+#[test]
+fn lane_starts_with_delivery_pool_full() {
+    let mut f = Fixture::new();
+    f.capacity(false);
+    assert_eq!(
+        f.controller
+            .world()
+            .unwrap()
+            .nodes
+            .iter()
+            .filter(|n| n.pool)
+            .count(),
+        1
+    );
+    f.controller.run_postmortems(pace(10));
+    drain(&mut f.controller);
+    assert_eq!(
+        f.claims(),
+        2,
+        "a full delivery pool does not block postmortems"
+    );
+}
+
+#[test]
+fn lane_drains_past_the_old_daily_count() {
+    let mut f = Fixture::new();
+    f.judge.borrow_mut().finished = true;
+    f.controller.run_postmortems(pace(1));
+    drain(&mut f.controller);
+    assert_eq!(
+        f.claims(),
+        4,
+        "every owed postmortem runs, without a daily ceiling"
+    );
+}
+
+#[test]
+fn lane_has_two_slots_and_claims_oldest_first() {
+    let mut f = Fixture::new();
+    raw(&f.settings).execute(
+        "UPDATE tl3_postmortems SET owed_at = '2026-01-01'::timestamptz + (45 - issue) * interval '1 minute'", &[]).unwrap();
+    f.controller.run_postmortems(pace(10));
+    drain(&mut f.controller);
+    let running: Vec<i64> = raw(&f.settings)
+        .query(
+            "SELECT issue FROM tl3_postmortems WHERE status = 'running' ORDER BY owed_at",
+            &[],
+        )
+        .unwrap()
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(
+        running,
+        [45, 44],
+        "two oldest claims run while the third waits"
+    );
+    drain(&mut f.controller);
+    assert_eq!(f.claims(), 2, "driving again cannot exceed the lane limit");
+    f.judge.borrow_mut().finished = true;
+    drain(&mut f.controller);
+    assert_eq!(
+        f.claims(),
+        4,
+        "completions free the slots for the remaining work"
+    );
+}
+
+#[test]
+fn delivery_grants_are_unchanged_by_running_postmortems() {
+    let mut f = Fixture::new();
+    f.controller.run_postmortems(pace(10));
+    drain(&mut f.controller);
+    assert!(f.claims() > 0);
+    f.capacity(true);
+    let world = f.controller.world().unwrap();
+    assert_eq!(world.nodes.iter().filter(|n| n.pool).count(), 1);
+    assert!(
+        world
+            .nodes
+            .iter()
+            .any(|n| n.pool && n.phase == tl3_kernel::Phase::Making)
+    );
+    assert!(world.nodes.iter().any(|n| n.ticket.is_some() && !n.pool));
+    assert_eq!(world.pool_capacity, 1);
+}
+
+#[test]
+fn lane_status_reports_running_owed_and_block() {
+    let mut f = Fixture::new();
+    f.controller.run_postmortems(pace(10));
+    drain(&mut f.controller);
+    let view = status::load(&mut Reader::open(&f.settings).unwrap()).unwrap();
+    for rendered in [status::render_text(&view), status::render_html(&view)] {
+        assert!(
+            rendered.contains("Postmortems: 2 running, 2 owed"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Postmortems blocked: lane_full"),
+            "{rendered}"
+        );
+    }
+}
+
+#[test]
+fn recovery_waits_for_the_single_validation_before_filling_lane() {
+    let mut f = Fixture::new();
+    let id = f.pause();
+    f.judge.borrow_mut().finished = false;
+    f.clear(&id);
+    drain(&mut f.controller);
+    assert_eq!(f.claims(), 4, "recovery starts just one validation");
+    f.judge.borrow_mut().failing = None;
+    f.judge.borrow_mut().finished = true;
+    drain(&mut f.controller);
+    assert_eq!(
+        f.claims(),
+        7,
+        "successful validation resumes the whole backlog"
+    );
+}
