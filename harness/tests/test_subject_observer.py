@@ -332,6 +332,7 @@ def test_review662_inferred_proof_cannot_skip_assertion_reason(repository):
 @pytest.mark.parametrize('support', [
     'TOKEN = globals(); TOKEN["helper"] = lambda: ("new", VERSION)',
     'TOKEN = "context"; globals().__ior__({"helper": lambda: ("new", VERSION)})',
+    'TOKEN = setattr(__import__("sys").modules[__name__], "helper", lambda: ("new", VERSION))',
     'TOKEN = globals()',
     'TOKEN = locals()',
     'TOKEN = vars()',
@@ -453,3 +454,57 @@ def test_rereview662_wrapped_subject_code_cannot_be_replaced_indirectly(reposito
     results, _, _ = round_result(repository, {path: before}, {path: after}, check)
     assert results[0].verdict == Verdict.FAIL, results
     assert 'proof_subject_integrity' in results[0].tests[0].message, results
+
+
+@pytest.mark.parametrize('actual,declared,fail,expected', [
+    ('helper `new` result', 'helper `new` result', False, Verdict.PASS),
+    ('helper `new` result', 'helper `new` result', True, Verdict.PASS),
+    ('declared result\nsecond line', 'declared result\nsecond line', False, Verdict.PASS),
+    ('declared result\nUNDECLARED DETAIL', 'declared result', False, Verdict.FAIL),
+], ids=['backticks', 'pytest-fail', 'multiline', 'undeclared-line'])
+def test_review662_reason_binding_preserves_the_original_message(repository, actual, declared, fail, expected):
+    path = 'tests/test_reason.py'
+    before = 'def helper(): return "old"\n'
+    observer = (f'    if helper() != "new": pytest.fail({actual!r})\n' if fail else
+                f'    assert helper() == "new", {actual!r}\n')
+    after = before.replace('"old"', '"new"') + 'import pytest\ndef test_observer():\n' + observer
+    check = Check('exact reason', Kind.DEMONSTRATING, (path + '::test_observer',),
+                  proof=model.Proof((path + '::helper',), (), declared))
+    results, _, _ = round_result(repository, {path: before}, {path: after}, check)
+    assert results[0].verdict == expected, results
+    assert results[0].tests[0].base == Outcome.ASSERTION, results
+
+
+@pytest.mark.parametrize('existing', [False, True], ids=['new-module', 'existing-module'])
+@pytest.mark.parametrize('observer', [
+    'import app\ndef test_observer():\n    assert globals()["app"].helper() == "new", "old helper"\n',
+    'import importlib\ndef test_observer():\n    assert importlib.import_module("app").helper() == "new", "old helper"\n',
+], ids=['globals', 'importlib'])
+def test_review662_namespace_apis_remain_available_to_observers(repository, existing, observer):
+    path = 'tests/test_observer.py'
+    before = {'app.py': 'def helper(): return "old"\n'}
+    if existing:
+        before[path] = 'def test_control(): pass\n'
+    after = {'app.py': before['app.py'].replace('"old"', '"new"'), path: observer}
+    check = Check('normal observer', Kind.DEMONSTRATING, (path + '::test_observer',),
+                  proof=model.Proof(('app.py::helper',), (), 'old helper'))
+    results, _, _ = round_result(repository, before, after, check)
+    assert results[0].verdict == Verdict.PASS, results
+    assert results[0].tests[0].base == Outcome.ASSERTION, results
+
+
+@pytest.mark.parametrize('support', [False, True], ids=['base-initialization', 'support-calls-base'])
+def test_review662_base_subject_can_update_state_during_import(repository, support):
+    path = 'tests/test_counter.py'
+    before = 'COUNT = 0\ndef helper():\n    global COUNT\n    COUNT += 1\n    return "old"\n'
+    observer = 'def test_observer():\n    assert helper() == "new", "old helper"\n'
+    if support:
+        after = before.replace('"old"', '"new"') + 'TOKEN = helper()\n' + observer.replace('helper()', 'TOKEN')
+    else:
+        before += observer + 'helper()\n'
+        after = before.replace('return "old"', 'return "new"')
+    check = Check('stateful import', Kind.DEMONSTRATING, (path + '::test_observer',),
+                  proof=model.Proof((path + '::helper',), (path + '::TOKEN',) if support else (), 'old helper'))
+    results, _, _ = round_result(repository, {path: before}, {path: after}, check)
+    assert results[0].verdict == Verdict.PASS, results
+    assert results[0].tests[0].base == Outcome.ASSERTION, results
