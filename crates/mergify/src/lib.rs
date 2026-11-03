@@ -431,6 +431,36 @@ pub fn unmet_conditions(check: &CheckRun) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Positive versioned evidence that every queue entry condition is met, but the
+/// PR has neither a queue rule nor an active queue attempt. Missing fields are
+/// unknown, unlike `unmet_conditions`, which is also used for display.
+pub fn eligible_waiting(check: &CheckRun) -> bool {
+    if check.status != "completed" || check.conclusion.as_deref() != Some("neutral") {
+        return false;
+    }
+    let Some(payload) = check
+        .output
+        .as_ref()
+        .and_then(|output| output.summary.as_deref())
+        .and_then(payload_bytes)
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+    else {
+        return false;
+    };
+    payload["version"] == 1
+        && payload["state"] == "waiting"
+        && ["queue_rule_name", "queued_at", "speculative_check_pr"]
+            .iter()
+            .all(|field| payload.get(*field).is_some_and(serde_json::Value::is_null))
+        && payload["required_conditions"]
+            .as_array()
+            .is_some_and(|conditions| {
+                conditions
+                    .iter()
+                    .all(|condition| condition["match"] == true)
+            })
+}
+
 /// The selected check belongs to Mergify on the original PR head.
 pub fn merged_via_queue(observation: &Observation) -> bool {
     observation.check.as_ref().is_some_and(|check| {
