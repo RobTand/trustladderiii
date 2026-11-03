@@ -68,3 +68,13 @@ pub fn progress(marker: impl Into<String>) {
         }
     });
 }
+
+// Test seam for exercising the absolute cap without a ten-minute fixture.
+pub fn run_with_limits<T>(
+    name: &str,
+    inactivity: Duration,
+    _absolute: Duration,
+    scenario: impl FnOnce() -> T,
+) -> T {
+    run(name, inactivity, scenario)
+}
