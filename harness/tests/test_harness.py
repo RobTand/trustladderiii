@@ -355,12 +355,19 @@ def test_helper_evidence_rejects_ambiguous_or_smuggled_definitions(tmp_path, tam
                           ('tests/test_product.py::test_diagnostic',))
 
 
+@pytest.mark.parametrize('bound', [False, True], ids=['new-observer', 'dynamic-base-binding'])
 @pytest.mark.parametrize('separate', [False, True])
 @pytest.mark.parametrize('irrelevant', [False, True])
-def test_helper_round_receipt_and_ordinary_overlay_cannot_bypass(tmp_path, monkeypatch, separate, irrelevant):
+def test_helper_round_receipt_and_ordinary_overlay_cannot_bypass(tmp_path, monkeypatch, separate, irrelevant, bound):
     from tl3_harness import execution, HelperEvidence
     base_tree, head_tree, _ = helper_trees(tmp_path)
     repo = base_tree
+    existing = "\ndef _existing_failing_test():\n    assert False\n\nglobals()['test_diagnostic'] = _existing_failing_test\n" if bound else ''
+    if bound:
+        path = repo / ('tests/test_observer.py' if separate else 'tests/test_product.py')
+        path.write_text(('' if separate else HELPER_BASE) + existing)
+        if not separate:
+            (head_tree / 'tests/test_product.py').write_text(HELPER_HEAD + existing + HELPER_OBSERVER)
     (repo / 'pyproject.toml').write_text(
         '[tool.tl3.harness]\ncommand=["python", "-m", "pytest"]\ntest-files=["tests/*.py"]\n')
     git(repo, 'init', '-q')
@@ -373,7 +380,7 @@ def test_helper_round_receipt_and_ordinary_overlay_cannot_bypass(tmp_path, monke
     observer = 'tests/test_product.py::test_diagnostic'
     if separate:
         source = HELPER_HEAD
-        (repo / 'tests/test_observer.py').write_text(HELPER_OBSERVER.replace(
+        (repo / 'tests/test_observer.py').write_text(existing + HELPER_OBSERVER.replace(
             'def test_diagnostic():', 'def test_diagnostic():\n    from test_product import _execute'))
         observer = 'tests/test_observer.py::test_diagnostic'
     (repo / 'tests/test_product.py').write_text(source)
@@ -388,6 +395,10 @@ def test_helper_round_receipt_and_ordinary_overlay_cannot_bypass(tmp_path, monke
     check = Check('diagnostic', Kind.DEMONSTRATING, (observer,),
                   helper_evidence=HelperEvidence('tests/test_product.py::_execute', (HELPER_FAILURE_CASE,)))
     result, = run_checks(repo, base, head, (check,), container=Container(IMAGE))
+    if bound:
+        assert result.verdict == Verdict.FAIL, result
+        assert 'base' in result.tests[0].message.lower(), result
+        return
     assert result.verdict == Verdict.PASS, result
     assert (result.tests[0].base, result.tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
     receipt = json.loads(execution.result_json((result,)))[0]
