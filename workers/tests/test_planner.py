@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 import pytest
-from jsonschema import ValidationError
+from jsonschema import Draft202012Validator, ValidationError
 import tiktoken
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage
@@ -86,6 +86,7 @@ def test_seven_file_public_output_adoption_requires_a_split_before_maker_work(pl
 
 
 def test_execution_fit_requires_declared_exploration_and_refuses_the_three_file_search_shape(planner_request, monkeypatch):
+    from tl3_workers import runtime
     from tl3_workers.forecast import execution_forecast
     from tl3_workers.roles import planner
 
@@ -94,7 +95,7 @@ def test_execution_fit_requires_declared_exploration_and_refuses_the_three_file_
     proposal["files"].append("implementation.py")
     proposal.pop("estimated_exploration_turns", None)
     with pytest.raises(ValidationError, match='estimated_exploration_turns'):
-        validate('planner-reply', proposal)
+        runtime._checked(planner.ROLE, planner_request['inputs'], proposal)
     assert execution_forecast(proposal['files'], len(proposal['checks']))['fits'] is False, \
         'structure alone cannot establish execution fit'
     proposal = copy.deepcopy(LEAF)
@@ -187,18 +188,27 @@ def test_missing_exploration_estimate_gets_one_tool_free_format_repair(planner_r
     correction = model.calls[1][0][-1].text
     assert 'estimated_exploration_turns' in correction
     assert 'required' in correction
+    prompt = model.calls[0][0][0].text.split('It must match this schema:\n', 1)[1]
+    sent_schema, _ = json.JSONDecoder().raw_decode(prompt)
+    with pytest.raises(ValidationError, match='estimated_exploration_turns'):
+        Draft202012Validator(sent_schema).validate(missing)
     assert reply['kind'] == 'leaf' and reply['violations'] == []
     assert reply['execution']['exploration_declared'] is True
     assert len([event for event in events if event['event'] == 'reply']) == 1
 
 
 @pytest.mark.parametrize('where', ['leaf', 'split', 'piece'])
-def test_exploration_estimate_is_schema_required(where):
+def test_exploration_estimate_is_required_at_the_worker_format_boundary(where):
+    from tl3_workers import runtime
+    from tl3_workers.roles import planner
+
     proposal = copy.deepcopy(LEAF if where == 'leaf' else SPLIT)
     target = proposal['pieces'][0] if where == 'piece' else proposal
     del target['estimated_exploration_turns']
+    # A worker from the previous release may still finish after a deployment (#372).
+    validate('planner-reply', proposal)
     with pytest.raises(ValidationError, match='estimated_exploration_turns') as error:
-        validate('planner-reply', proposal)
+        runtime._checked(planner.ROLE, {}, proposal)
     assert error.value.validator == 'required'
 
 
