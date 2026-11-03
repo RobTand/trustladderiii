@@ -290,3 +290,34 @@ def test_new_observer_class_carries_its_needed_decorator_import(repository):
     results, _, _ = round_result(repository, {'tests/test_world.py': before}, {'tests/test_world.py': after},
         Check('class context', Kind.DEMONSTRATING, ('tests/test_world.py::TestWorld::test_value',), proof=proof))
     assert results[0].verdict == Verdict.PASS, results
+
+
+@pytest.mark.parametrize('support', [
+    'TOKEN = helper = lambda: ("new", VERSION)',
+    'TOKEN = "context"; helper = lambda: ("new", VERSION)',
+    '(TOKEN, helper) = ("context", lambda: ("new", VERSION))',
+    'TOKEN = "context"; globals()["helper"] = lambda: ("new", VERSION)',
+    'TOKEN = "context"; globals().update(helper=lambda: ("new", VERSION))',
+])
+def test_review662_support_cannot_rebind_base_subject(repository, support):
+    path = 'tests/test_subject.py'
+    before = 'VERSION = 0\ndef helper(): return ("old", VERSION)\n'
+    after = ('VERSION = 1\n' + support + '\n'
+             'def test_observer():\n    assert helper() == ("new", 1), "declared result"\n')
+    proof = model.Proof((path + '::helper',), (path + '::TOKEN',), 'declared result')
+    results, _, _ = round_result(repository, {path: before}, {path: after},
+        Check('support rebind', Kind.DEMONSTRATING, (path + '::test_observer',), proof=proof))
+    assert results[0].verdict == Verdict.FAIL, results
+    assert 'bind' in results[0].tests[0].message, results
+
+
+def test_review662_inferred_proof_cannot_skip_assertion_reason(repository):
+    path = 'tests/test_subject.py'
+    before = 'EXPECTED = False\ndef helper(): return "old"\n'
+    after = ('EXPECTED = True\ndef helper(): return "new"\n'
+             'def test_observer():\n    assert EXPECTED, "unrelated assertion"\n'
+             '    assert helper() == "new", "declared result"\n')
+    results, _, _ = round_result(repository, {path: before}, {path: after},
+        Check('unbound reason', Kind.DEMONSTRATING, (path + '::test_observer',)))
+    assert results[0].verdict == Verdict.FAIL, results
+    assert 'assertion reason' in results[0].tests[0].message, results

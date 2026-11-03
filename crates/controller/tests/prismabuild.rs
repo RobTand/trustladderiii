@@ -839,6 +839,14 @@ fn forced_check_is_staged_and_reaches_review() {
 }
 
 fn declared_symptom_identity_is_staged_and_reaches_review() {
+    declared_symptom_identity(false);
+}
+
+fn review662_explicit_subject_symptom_keeps_receipt_bindings() {
+    declared_symptom_identity(true);
+}
+
+fn declared_symptom_identity(explicit_subject: bool) {
     use sha2::{Digest, Sha256};
     for tamper in [
         "none",
@@ -857,6 +865,11 @@ fn declared_symptom_identity_is_staged_and_reaches_review() {
         let declaration = serde_json::json!({"node":value["plan"][0]["tests"][0],
             "exception":"builtins.TimeoutError", "phase":"call", "repeat":1, "parallel":0});
         value["plan"][0]["declared_symptom"] = declaration.clone();
+        let proof = serde_json::json!({"subjects":["test_value.py::_git"],
+            "observer_support":[], "red_message":"not an assertion"});
+        if explicit_subject {
+            value["plan"][0]["proof"] = proof.clone();
+        }
         delivery.checks = Some(serde_json::from_value::<CheckRun>(value).unwrap());
         let planned = &delivery.checks.as_ref().unwrap().plan[0];
         let records = serde_json::json!([{"event":"start", "schema":1}]);
@@ -880,6 +893,14 @@ fn declared_symptom_identity_is_staged_and_reaches_review() {
         let mut result = serde_json::json!({"name":planned.name,"kind":"demonstrating","custody":"in-process",
             "verdict":"pass", "declared_symptom":declaration,"symptom_evidence":evidence,
             "tests":[{"test":planned.tests[0],"base":"error","head":"passed","pre_existing":false,"passed":true}]});
+        if explicit_subject {
+            let mut observers = serde_json::Map::new();
+            observers.insert(planned.tests[0].clone(), "c".repeat(64).into());
+            result["proof"] = serde_json::json!({"rule":"subject-observer-v1", "declaration":proof,
+                "mode":"pytest-outcome", "subjects":{"test_value.py::_git":{"base":"a".repeat(64),"head":"b".repeat(64)}},
+                "source_base_tree_sha256":"f".repeat(64), "base_tree_sha256":"d".repeat(64), "head_tree_sha256":"e".repeat(64),
+                "observer_sha256":observers, "support_sha256":{}});
+        }
         if tamper == "missing" {
             result.as_object_mut().unwrap().remove("symptom_evidence");
         }
@@ -2598,6 +2619,10 @@ fn main() {
         (
             "declared_symptom_identity_is_staged_and_reaches_review",
             declared_symptom_identity_is_staged_and_reaches_review as fn(),
+        ),
+        (
+            "review662_explicit_subject_symptom_keeps_receipt_bindings",
+            review662_explicit_subject_symptom_keeps_receipt_bindings as fn(),
         ),
         (
             "subject_observer_identity_is_staged_and_reaches_review",

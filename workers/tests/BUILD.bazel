@@ -636,6 +636,7 @@ tl3_py_test(
     srcs = ["test_subject_observer_contract.py"],
     deps = [
         ":conftest",
+        ":worker_process",
         "//harness/src/tl3_harness",
         "//workers/src",
     ],
