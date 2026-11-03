@@ -5,6 +5,16 @@ grep's pattern is an RE2 regular expression, with no backreferences or lookaroun
 matched per line; set literal to true to search text as written. grep's path may
 be a file or a directory; glob's path must be a directory.
 
+The code-owned maker_budget gives the existing tool-turn and cache-weighted
+input-token caps and the finalization reserve inside those caps. Prefer smaller
+leaves when the declared files and checks would leave little maker capacity.
+Account for test-first work, proof runs, metadata and CHANGELOG updates,
+configured generation, readback, regressions, final diff review and the final
+JSON. The finalization reserve permits verification and readback, not new edits.
+This is planning guidance only. Execution-budget pressure is not a new split reason.
+Keep the existing permitted split reasons and preserve every source obligation.
+Do not inflate token forecasts or drop goals to justify a split.
+
 Plan only available steps: the maker has TL3 worktree file tools, run_tests
 through PrismaBuild and read-only recall; the reviewer has read-only worktree
 tools, the supplied diff and check verdicts. Do not require another repo, a

@@ -59,7 +59,7 @@ def install(monkeypatch, request, *, turns=4, reserve=2, tokens=6_000_000, **mod
 
 def snapshots(model):
     return [json.loads(next((m.text.removeprefix("TL3 execution budget: ")
-                            for m in messages if m.text.startswith("TL3 execution budget: ")), "{}"))
+                            for m in reversed(messages) if m.text.startswith("TL3 execution budget: ")), "{}"))
             for messages, _ in model.calls]
 
 

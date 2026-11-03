@@ -238,6 +238,11 @@ def _run(request, emit):
             model_inputs = request["inputs"]
             if role.name in {"ingest", "audit", "planner"}:
                 model_inputs = {"forcing_capabilities": forcing_capabilities(run_test_cpus.get()), **model_inputs}
+            if role.name == "planner":
+                maker_budget = ROLES["maker"].exploration_budget
+                model_inputs = {**model_inputs, "maker_budget": {
+                    "tool_turns": maker_budget.tool_turns, "input_tokens": maker_budget.input_tokens,
+                    "finalization_turns": maker_budget.finalization_turns}}
             ledger = getattr(worktree, 'forcing_rehearsals', None)
             if ledger is not None and (ledger.candidates or ledger.active):
                 model_inputs = {**model_inputs, 'forcing_rehearsal_state': {

@@ -6,7 +6,7 @@ import math
 import os
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import AIMessage, HumanMessage, messages_from_dict, messages_to_dict
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage, messages_from_dict, messages_to_dict
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from tl3_workers.turns import RepairUnavailable
@@ -17,6 +17,15 @@ class ExplorationBudget:
     tool_turns: int = 4
     input_tokens: int = 300_000
     history_bytes: int = 32_768
+    finalization_turns: int = 0
+
+
+FINALIZATION_TOOLS = frozenset({"list", "read", "glob", "grep", "diff", "run_tests"})
+BUDGET_PREFIX = "TL3 execution budget: "
+
+
+class BudgetUnavailable(Exception):
+    """No further model call fits the existing allowance."""
 
 
 @dataclass(frozen=True)
@@ -144,6 +153,8 @@ class ExplorationMiddleware(AgentMiddleware):
         self.in_flight_reserve = 0
         self.repairing = False
         self.final = False
+        self.exhaustion = None
+        self.finalizing = False
         self.compacted = False
         # Only a compaction that freed room has a later threshold to approach again.
         self.compacted_below = False
@@ -155,10 +166,35 @@ class ExplorationMiddleware(AgentMiddleware):
         return (estimate if self.last_estimate is None else
                 max(0, self.last_input + estimate - self.last_estimate))
 
+    def remaining(self, phase=None):
+        return {"tool_turns": {"used": min(self.turns, self.budget.tool_turns),
+                               "allowed": self.budget.tool_turns,
+                               "remaining": max(0, self.budget.tool_turns - self.turns)},
+                "input_tokens": {"used": self.spent, "allowed": self.budget.input_tokens,
+                                 "remaining": max(0, self.budget.input_tokens - self.spent)},
+                "finalization_turns": min(self.budget.finalization_turns, self.budget.tool_turns),
+                "phase": phase or ("final" if self.exhaustion else
+                                   "finalizing" if self.finalizing else "working")}
+
+    def wrap_tool_call(self, request, handler):
+        if self.role == "maker" and (self.final or self.finalizing and request.tool_call["name"] not in FINALIZATION_TOOLS):
+            return ToolMessage(content="The finalization reserve permits verification and readback only. "
+                               "New edits and generation are unavailable. Report unfinished work precisely.",
+                               tool_call_id=request.tool_call["id"], status="error")
+        return handler(request)
+
     def wrap_model_call(self, request, handler):
         source = request.messages
         messages = (self.compaction_prefix + source[self.compaction_offset:]
                     if self.compacted else list(source))
+        self.finalizing = (self.role == "maker" and self.budget.tool_turns - self.turns
+                           <= min(self.budget.finalization_turns, self.budget.tool_turns))
+        notice = None
+        if self.role == "maker":
+            notice = SystemMessage(content=BUDGET_PREFIX + json.dumps(self.remaining(), sort_keys=True))
+            messages.append(notice)
+            if self.finalizing:
+                request = request.override(tools=[tool for tool in request.tools if tool.name in FINALIZATION_TOOLS])
         request = request.override(messages=messages)
         bound = input_estimate(request)
         context = self._context(bound)
@@ -166,7 +202,7 @@ class ExplorationMiddleware(AgentMiddleware):
                        and any(isinstance(message, AIMessage) for message in messages))
         if compact_now:
             messages = retained(messages, self.budget.history_bytes)
-            self.compaction_prefix = messages
+            self.compaction_prefix = [m for m in messages if m is not notice]
             self.compaction_offset = len(source)
             self.compacted = True
             request = request.override(messages=messages)
@@ -194,23 +230,33 @@ class ExplorationMiddleware(AgentMiddleware):
         reserve = math.ceil(max(reserve, context) * cold_weight)
         context_full = (self.compacted_below and not compact_now and len(source) > self.compaction_offset
                         and context >= self.context_size * 0.7)
-        final = (self.turns >= self.budget.tool_turns or context_full
+        final = (self.exhaustion is not None or self.turns >= self.budget.tool_turns or context_full
                  or self.spent + predicted + reserve > self.budget.input_tokens)
         self.in_flight_reserve = 0 if final else reserve
         if self.final:
-            raise ValueError("missing final model reply")
+            raise BudgetUnavailable("The final reply already consumed the remaining execution allowance.")
         if final:
             self.final = True
+            self.exhaustion = self.exhaustion or ("tool_turns" if self.turns >= self.budget.tool_turns else
+                                                "context_tokens" if context_full else "input_tokens")
+            if notice is not None:
+                notice.content = BUDGET_PREFIX + json.dumps(self.remaining("final"), sort_keys=True)
             request = request.override(tools=[], tool_choice=None,
                                        messages=messages + [HumanMessage(content=FINISH)])
             bound = input_estimate(request)
         if self.spent + predicted > self.budget.input_tokens:
-            raise ValueError(f"{self.role} input exceeds exploration budget")
+            raise BudgetUnavailable("No final model call fits the remaining input-token allowance.")
         response = handler(request)
+        if notice is not None:
+            # Persist budget notices with the call they preceded so subsequent
+            # requests retain their append-only cache prefix and crash history.
+            response.result.insert(0, notice)
         if final:
             for message in response.result:
                 if isinstance(message, AIMessage):
                     message.response_metadata["tl3_budget_exhausted"] = True
+                    message.tool_calls = []
+                    message.invalid_tool_calls = []
         return self._account(response, bound)
 
     def charge_dropped(self):
@@ -225,7 +271,7 @@ class ExplorationMiddleware(AgentMiddleware):
                 "last_estimate": self.last_estimate, "cache_active": self.cache_active,
                 "compacted": self.compacted, "compacted_below": self.compacted_below,
                 "compaction_offset": self.compaction_offset,
-                "compaction_prefix": messages_to_dict(self.compaction_prefix)}
+                "compaction_prefix": messages_to_dict(self.compaction_prefix), "exhaustion": self.exhaustion}
 
     def restore(self, state):
         prefix = messages_from_dict(state["compaction_prefix"])
@@ -238,6 +284,7 @@ class ExplorationMiddleware(AgentMiddleware):
         (self.cache_active, self.compacted, self.compacted_below) = flags
         self.last_estimate = state["last_estimate"]
         self.compaction_prefix = prefix
+        self.exhaustion = state.get("exhaustion")
 
     def _account(self, response, bound):
         usage = [message.usage_metadata for message in response.result if isinstance(message, AIMessage)]
@@ -250,5 +297,5 @@ class ExplorationMiddleware(AgentMiddleware):
             (item.get("input_token_details") or {}).get("cache_read", 0)
             or (item.get("input_token_details") or {}).get("cache_creation", 0) for item in usage)
         self.last_estimate = bound
-        self.turns += 1
+        self.turns += int(not self.final and not self.repairing)
         return response

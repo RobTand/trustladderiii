@@ -88,7 +88,21 @@ pub(crate) fn review_stop(step: ReviewStop, sources: &Sources) -> Option<Value> 
         | ReviewStop::CiFailed
         | ReviewStop::MakerCantMeet => rung(sources, CANT_MEET),
     }?;
-    Some(json!({"source": found["source"], "report": found["report"]}))
+    let mut result = json!({"source": found["source"], "report": found["report"]});
+    if matches!(
+        step,
+        ReviewStop::MakerCantMeet | ReviewStop::MakerOutOfRoom | ReviewStop::MakerNeedsFiles
+    ) && let Some(reply) = (sources.fresh)("maker_replies")
+        && reply["budget_exhaustion"]["kind"] == "execution_budget_exhausted"
+    {
+        result["budget_exhaustion"] = reply["budget_exhaustion"].clone();
+        result["report"] = json!(format!(
+            "Execution budget exhausted. {} {}",
+            reply["budget_exhaustion"],
+            found["report"].as_str().unwrap_or_default()
+        ));
+    }
+    Some(result)
 }
 
 fn caused(report: &str) -> Option<Value> {

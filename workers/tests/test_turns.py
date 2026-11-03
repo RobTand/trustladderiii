@@ -406,14 +406,15 @@ def test_resume_keeps_an_exhausted_budget(maker_request, tmp_path, monkeypatch):
     def killed(*args):
         raise Killed()
 
-    commit = maker._commit
-    monkeypatch.setattr(maker, "_commit", killed)
+    budget_reply = maker._budget_reply
+    monkeypatch.setattr(maker, "_budget_reply", killed)
     interrupted(maker_request, monkeypatch, [reply(test_maker.DONE)])
     assert json.loads(visit.read_text())["budget_exhausted"] is True
-    # The rerun's done without a change ends as cant_meet, not with another turn.
-    monkeypatch.setattr(maker, "_commit", commit)
+    # A tools-free done with unverified obligations is now a typed budget stop.
+    monkeypatch.setattr(maker, "_budget_reply", budget_reply)
     model, events = rerun(maker_request, monkeypatch, [reply(test_maker.DONE), reply(test_maker.DONE)])
-    assert events[-1]["reply"] == {"kind": "cant_meet", "report": "no code change was made"}
+    assert events[-1]["reply"]["kind"] == "cant_meet"
+    assert events[-1]["reply"]["budget_exhaustion"]["tool_turns"] == {"used": 0, "allowed": 0}
     assert len(model.calls) == 1
 
 
