@@ -619,8 +619,10 @@ fn drain_with_budget(
     let start = Instant::now();
     loop {
         let mut changed = false;
+        let mut idle = false;
         for _ in 0..500 {
             if !drive_once(c) {
+                idle = true;
                 break;
             }
             changed = true;
@@ -647,7 +649,8 @@ fn drain_with_budget(
             }
         }
         let reached_planner = expected == (Phase::Planning { must_split: true }) && !observed;
-        if (!changed || reached_planner) && c.world().unwrap().nodes[0].phase == expected {
+        if ((idle && !observed) || reached_planner) && c.world().unwrap().nodes[0].phase == expected
+        {
             return;
         }
         assert!(
