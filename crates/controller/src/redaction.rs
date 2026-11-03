@@ -89,3 +89,17 @@ pub(crate) fn text(text: &str) -> String {
     *process = None;
     "[REDACTED]".into()
 }
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+pub(crate) enum Failure {
+    Missing,
+    Crash,
+    Timeout,
+    Oversized,
+}
+
+#[cfg(test)]
+pub(crate) fn with_failure<T>(_: Failure, run: impl FnOnce() -> T) -> T {
+    run()
+}

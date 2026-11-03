@@ -1217,6 +1217,76 @@ mod tests {
         );
     }
 
+    #[test]
+    fn helper_failure_prevents_publishing_proof() {
+        let (snapshot, mut delivery) = fixture();
+        delivery.evidence = Some(
+            capture(
+                &snapshot,
+                &Commit::new("publish", json!({}), &snapshot),
+                &delivery,
+            )
+            .unwrap(),
+        );
+        let mut failed = 0;
+        for failure in [
+            crate::redaction::Failure::Missing,
+            crate::redaction::Failure::Crash,
+            crate::redaction::Failure::Timeout,
+            crate::redaction::Failure::Oversized,
+        ] {
+            let result = crate::redaction::with_failure(failure, || {
+                publication(&delivery, "Publish red/green proof in the PR")
+            });
+            if let Err(error) = result {
+                assert_eq!(crate::looks::failure_class(&error), "redaction_infra");
+                failed += 1;
+            }
+        }
+        assert_eq!(
+            failed, 4,
+            "helper failure must error before returning any PR body"
+        );
+    }
+
+    #[test]
+    fn helper_failure_prevents_closing_summary() {
+        let (snapshot, mut delivery) = fixture();
+        delivery.evidence = Some(
+            capture(
+                &snapshot,
+                &Commit::new("stop", json!({}), &snapshot),
+                &delivery,
+            )
+            .unwrap(),
+        );
+        let mut failed = 0;
+        for failure in [
+            crate::redaction::Failure::Missing,
+            crate::redaction::Failure::Crash,
+            crate::redaction::Failure::Timeout,
+            crate::redaction::Failure::Oversized,
+        ] {
+            let result = crate::redaction::with_failure(failure, || {
+                let input = writer_input(
+                    &delivery,
+                    Some(Notice::Summary(Outcome::Stopped)),
+                    "Fix process departure",
+                    "Fix the test",
+                )?;
+                checked_draft(&mut FakeWriter, "summary", input, &Default::default())
+            });
+            if let Err(error) = result {
+                assert_eq!(crate::looks::failure_class(&error), "redaction_infra");
+                failed += 1;
+            }
+        }
+        assert_eq!(
+            failed, 4,
+            "helper failure must error before returning closing text"
+        );
+    }
+
     fn escaped_field_deliveries() -> Vec<Delivery> {
         let mut deliveries = Vec::new();
         for key in ["cookie", "token", "apikey", "passwd"] {
