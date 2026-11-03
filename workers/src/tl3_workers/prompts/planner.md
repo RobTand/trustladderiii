@@ -168,12 +168,12 @@ required exact branch or branch_prefix. Keep the full original wording in the
 brief; audit checks that this contract preserves it. Branch stability is owned
 by the controller's persistent branch convention, never by the maker.
 Controller-owned PR creation and Q55 proof are supported system actions, not
-missing maker capabilities. Only mandatory execution evidence belongs in #524's
-evidence_contract. Do not invent Git or PR evidence executors for ordinary
+missing maker capabilities. When #524 supplies evidence_contract and tool_capabilities, only mandatory
+execution evidence belongs in that contract. Do not invent Git or PR evidence executors for ordinary
 publication. Preserve genuine unsupported external evidence as exact blockers.
 The run_tests receipt exposes action key, exit status and receipt/log digests;
 command, measured affinity and resource details are not exposed by that tool.
-If the request requires those details, retain them in evidence_contract for
-preflight; do not call them observed. Optional contention remains optional.
+If the request requires those details, name the exact capability gap; when
+evidence_contract is available retain them there for preflight. Do not call them observed. Optional contention remains optional.
 At review, judge maker implementation and scope against actual independent check
 verdicts; publication remains pending until Publishing enforces its guards.

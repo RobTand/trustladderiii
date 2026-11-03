@@ -39,8 +39,11 @@ pub(crate) fn load(snapshot: &Snapshot, node: NodeId) -> Result<Option<Vec<Value
 
 /// Ownership comes from the accepted intake, never from a maker's self-report.
 pub(crate) fn handover(goals: &[Value], checks: &[Value]) -> Result<()> {
-    let expected: BTreeSet<_> = goals.iter().map(|goal| &goal["id"]).collect();
-    let supplied: BTreeSet<_> = checks.iter().map(|check| &check["goal_id"]).collect();
+    let expected: BTreeSet<_> = goals.iter().map(|goal| goal["id"].as_str()).collect();
+    let supplied: BTreeSet<_> = checks
+        .iter()
+        .map(|check| check["goal_id"].as_str())
+        .collect();
     if expected != supplied || goals.len() != checks.len() {
         return Err(Error::Invalid(
             "maker must account for every obligation exactly once",

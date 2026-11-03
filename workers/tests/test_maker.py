@@ -1553,7 +1553,7 @@ def test_request_123_honest_handover_with_downstream_pending(request_123_handove
 def test_request_123_pending_handover_commits_through_real_worker(tmp_path, request_123_handover):
     request, reply = request_123_handover
     del request["inputs"]["plan"]["checks"][0]["forcing"]
-    result = start_worker(tmp_path, request, [write_turn(), turn(reply)])
+    result = start_worker(tmp_path, request, [write_turn("test_greeting.py", "def test_hello(): assert True\n"), turn(reply)])
     assert result.exit_code == 0, result.stderr
     assert result.events[-1]["reply"]["kind"] == "done"
     assert result.events[-1]["reply"]["self_check"] == reply["self_check"]

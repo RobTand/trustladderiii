@@ -52,9 +52,6 @@ pub(crate) fn capture(snapshot: &Snapshot, commit: &Commit, node: NodeId) -> Res
             RowChange::Put { table, id, value } if relevant(table, id) => {
                 rows.insert((table, id), value);
             }
-            RowChange::Delete { table, id } => {
-                rows.remove(&(table.as_str(), id.as_str()));
-            }
             _ => {}
         }
     }
@@ -63,8 +60,14 @@ pub(crate) fn capture(snapshot: &Snapshot, commit: &Commit, node: NodeId) -> Res
         match table {
             "goals" => facts.goals = serde_json::from_value(value.clone())?,
             "maker_replies" => {
-                facts.maker_handover = Some(json!({"kind":value["kind"], "head":value["head"],
-                "self_check":value["self_check"]}))
+                if value["kind"] == "done"
+                    && value["self_check"]
+                        .as_array()
+                        .is_some_and(|checks| crate::goals::handover(&facts.goals, checks).is_ok())
+                {
+                    facts.maker_handover = Some(json!({"kind":value["kind"], "head":value["head"],
+                        "self_check":value["self_check"]}));
+                }
             }
             "check_reports" => facts.checks.push(value.clone()),
             "review_evidence" => facts.reviews.push(value.clone()),
@@ -163,7 +166,10 @@ pub(crate) fn publication(delivery: &Delivery, _request: &str) -> Result<String>
                                 && result["tests"].as_array().is_some_and(|tests| {
                                     !tests.is_empty()
                                         && tests.iter().all(|test| {
-                                            test["head"] == "passed"
+                                            (test["head"] == "passed"
+                                                || (result["kind"] == "regression"
+                                                    && test["pre_existing"] == true))
+                                                && test["passed"] == true
                                                 && (result.get("forcing").is_none()
                                                     || (test["base"] == "assertion"
                                                         && test["head_forced"] == "passed"))
@@ -190,7 +196,7 @@ pub(crate) fn publication(delivery: &Delivery, _request: &str) -> Result<String>
         "pass":record["pass"], "results":record["results"].as_array().unwrap().iter().map(|result| {
             json!({"name":result["name"], "kind":result["kind"], "verdict":result["verdict"],
                 "forced":result.get("forcing").is_some(), "tests":result["tests"].as_array().unwrap().iter().map(|test| {
-                    json!({"test":test["test"],"base":test["base"],"head":test["head"],"head_forced":test["head_forced"]})
+                    json!({"test":test["test"],"base":test["base"],"head":test["head"],"head_forced":test["head_forced"],"passed":test["passed"],"pre_existing":test["pre_existing"]})
                 }).collect::<Vec<_>>()})
         }).collect::<Vec<_>>()})).collect();
     let encoded = serde_json::to_string(&json!({"checks":proof,"review":"approve"}))?
