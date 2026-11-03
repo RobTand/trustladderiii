@@ -1,6 +1,6 @@
 # TL3 state table
 
-Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47, Q48, Q50 and Q51, and on 2026-11-02 with Q54. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
+Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47, Q48, Q50 and Q51, and on 2026-11-02 with Q54, and on 2026-11-03 with the Q27 declared-symptom RED approval (#592). Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
 
 **Changing the rules.** Any change to a rule in this file needs Rob's approval. That includes a new rule that comes from a bug Kani or a test finds. A clarification that changes no rule doesn't need it (Q27).
 
@@ -194,21 +194,27 @@ Rob's answers never fail for lack of credit. An answer that needs credit adds wh
 
 A node's forecast is computed by code: the token count of its slice of the brief and of its declared files, plus an overhead calibrated from MLflow. The starting constants are set in config.
 
+**Execution feasibility (Q27, Rob, 2026-11-03, [#614 approval](https://github.com/RobTand/trustladderiii/issues/614#issuecomment-6602791347)).** Code also estimates the maker's tool-turn demand. The estimate requires an explicit exploration allowance in addition to the structural floor for implementation, test-first proof, metadata, configured generation, readback and final verification. Structure alone cannot establish execution fit. It must fit the maker's existing allowance minus its finalization reserve. Token fit alone does not establish execution feasibility. These are separate measurements; execution pressure must not inflate the token forecast.
+
 **A node is a leaf** when all of these hold:
 
 - the forecast fits, under about 100k of the 150k. That is a starting value, tuned later from MLflow data (Q4);
+- the execution estimate fits the maker's usable tool-turn allowance after reserving finalization capacity (Q27, Rob, 2026-11-03);
 - it is in one repo;
 - every measure has a check;
 - its footprint avoids protected paths, which in slice one include CI, Mergify and, until its second review arrives, test configuration;
 - the planner states that no design questions remain and that the change lands on its own (Agent).
 
-**A split is allowed** for one of three reasons, and the plan must name which:
+**A split is allowed** for one of four reasons, and the plan must name which:
 
 - the forecast doesn't fit;
+- the execution estimate exceeds the maker's usable allowance before maker work starts, even if the token forecast fits (`execution_budget`, Q27, Rob, 2026-11-03);
 - the work spans several repos, in which case it must split by repo, one child per repo;
 - a leaf ran out of room.
 
 Every split has at least 2 children. Every child's forecast must be smaller than its parent's, except in a repo split.
+
+For an execution-budget split, every child's execution estimate must instead be smaller than its parent's and fit its usable allowance; its token forecast must also fit. Such a proposal contains at most 8 pieces. Every source obligation must remain covered by the pieces' goal references. Code records per-piece estimates and their aggregate demand and allowance with the plan. The existing split path, credit ledger, admissions and durable operation identities still apply. Splitting never restores spent maker allowance or retries failed work. Q54 is unchanged.
 
 **A plan breaks a rule** when it does any of these:
 
@@ -227,10 +233,10 @@ Each leaf's plan lists checks of three kinds, which Rob confirmed on 2026-10-30 
 
 | Kind | Used for | Passes when |
 |---|---|---|
-| **Demonstrating** | A measure that changes behavior | Each named test fails on the base and passes on the leaf's commit. The base run applies only the leaf's test changes. On the base, the failure must be an assertion, or a missing name the leaf adds. |
+| **Demonstrating** | A measure that changes behavior | Each named test fails on the base and passes on the leaf's commit. The base run applies only the leaf's test changes. On the base, the failure must be an assertion, a missing name the leaf adds, or the explicitly declared symptom below. |
 | **Demonstrating, helper target/observer** | A deterministic fix to an existing helper in a configured Python test file (#549) | Only the named new observers overlay the real base. Every observer fails by assertion there and passes with the head helper. Named known-bad data invocations use pytest's module import context and must still raise AssertionError with both helpers. See Q27 below. |
 | **Regression** | Showing that nothing which worked is now broken | It passes on the leaf's commit. A test already failing on the base is recorded as pre-existing and excused. Base results are cached per base commit. |
-| **Demonstrating, forced** | Making a named flaky test deterministic (Q55) | The check carries the plan's forcing, which the harness applies outside the test. Each named test fails by assertion on the base, running the old test as the base wrote it under the forcing. On the leaf's commit it passes both under the forcing and without it. Review judges whether the forcing models the flake's symptom. |
+| **Demonstrating, forced** | Making a named flaky test deterministic (Q55) | The check carries the plan's forcing, which the harness applies outside the test. Each named test fails by assertion or its explicitly declared symptom on the base, running the old test as the base wrote it under the forcing. On the leaf's commit it passes both under the forcing and without it. Review judges whether the forcing models the flake's symptom. |
 | **Behavior-preserving** | A measure that changes no behavior, such as a refactor | It passes on both trees. Review judges the rest. |
 | **Reproducing** | A review finding about behavior, fixed in a fix round | Each named test fails on the commit that was reviewed and passes on the fixed commit. The run on the reviewed commit applies only the round's test changes. On the reviewed commit, the failure must be an assertion, or a missing name the round adds. |
 
@@ -246,9 +252,15 @@ TL3 owns the check harness, and the code under test can't change it:
 - A forcing is data from the plan: environment variables, and patches that give a module or class attribute inside the served repository a JSON value, a returned JSON value, a raised builtin exception other than `AssertionError`, or a delay of up to 5 seconds per call and 10 seconds per test. It reaches the read-only runner with the test selection, and only the test container applies it.
 - The harness commits progress to PrismaBuild after each test, so a long suite stays visibly alive.
 
-A job that produces no report never ran its tests, so it is an infrastructure failure. A demonstrating test that errors on the base for any other reason shows nothing, so the round fails.
+A job that produces no report never ran its tests, so it is an infrastructure failure. A demonstrating test that errors on the base for any reason outside its declared symptom shows nothing, so the round fails.
 
 A forced test that passes on the base under its forcing shows the forcing doesn't reproduce the flake, so the round fails. So does a head that fails under the forcing, or fails without it. A forcing the harness can't apply fails the round with a message naming the forcing. Repeating a test until it fails is not evidence (Q55).
+
+**Declared symptom RED,** approved by [Rob's Q27 approval, 2026-11-03](https://github.com/RobTand/trustladderiii/issues/592#issuecomment-6602790849), is an additional mode for demonstrating checks and Q55 forced reproductions. Assertion RED remains the default. The plan declares the exact exception class, exact test node, and `call` or `setup` phase in advance. The exception must arise from the original test's own code or fixture. An unrelated setup error, import failure, infrastructure failure, missing report, or outer hang never counts.
+
+The declared check runs the unchanged base test and fixture, then the edited head. It declares a fixed repeat count from 1 to 10 and parallel setting of 0 or 2 to 4, within `run_tests` limits. All runs use identical forcing, repeat, and parallel settings. RED requires at least one matching base occurrence and no unrelated failures. GREEN requires zero matching occurrences and successful completion of every head run. Q55 also requires ordinary head success. Zero base occurrences is not RED; report the observed numerator and declared denominator precisely. Never retry until failure.
+
+Keep every run's report and receipt bound to the exact base, head, selectors, declaration, and forcing. Preserve pre-maker forcing rehearsal and reachability, independent checking, frozen forcing, and final review. This approval changes no fail-fast, retry, incident, or restart rule.
 
 ## Failures
 
@@ -286,6 +298,13 @@ Code computes a signature for each failure from the upstream's error class, and 
 - If the operation fails again on the new release, the failure rules above raise an incident, which stays open until the next release or Rob's `clear incident`.
 - A restart on the same release clears nothing. Upstream incidents keep the rules above.
 
+Postmortem pause recovery (#632) uses this incident-clear path outside the
+kernel. Clearing or recovering its pause resets the failure boundary and the
+counted daily allowance, retaining the claim ledger and the configured limit.
+One validation claim runs with the existing deadline, still subject to model
+quota and Q39 spare capacity. Its failure immediately re-pauses with an incident;
+its success resumes ordinary pacing. No pool slot is reserved.
+
 **Delivery failures** follow the same rule, counted per effect. Every second retryable failure raises an incident, and only Rob can clear the effect's second incident.
 
 **Work failures** are failed checks, review findings and CI test failures. They follow the rules for rounds and attempts under "A failed round".
@@ -293,6 +312,18 @@ Code computes a signature for each failure from the upstream's error class, and 
 **Fail fast,** from Rob's decision on 2026-11-02 (Q54; which steps count as retries is the coordinator's reading, flagged to Rob in #482): `[limits] fail_fast` is false by default, which keeps every rule as written. When it is true, each row below marked "`fail_fast`" stops the request for TL3 review instead of retrying the work. Infrastructure failures, Q50 blockers and Q53 quota fallback are not work retries and are unchanged. tl3d sets the flag on the stored world each time it opens, and the kernel reads it at the moment of the retry, so it applies to requests already open.
 
 **Stop for TL3 review:** go to Stopping(Stopped) and record the failing step on the node. Spend nothing and ask Rob nothing. The closing summary names the step and its evidence and, as for any stop, says to comment `restart` and leaves the issue open (Q49). A postmortem is owed as `needed_fix`, and one line goes to the operations issue for the coordinator.
+
+The recorded steps are `checks_failed`, `changes_requested`, `ci_failed`,
+`maker_cant_meet`, `maker_needs_files`, `maker_out_of_room`,
+`reviewer_out_of_room`, `plan_cant_meet`, and `publication_body`.
+
+**Publication body refusal** ([#629](https://github.com/RobTand/trustladderiii/issues/629)):
+only an `OpenPr` effect receiving `BodyPolicyRefused` stops for TL3 review at
+`publication_body`. This routes a TL3-created local body refusal to the existing
+review stop, regardless of `fail_fast`. It spends no credit, retains the bounded
+publication diagnostic, and never asks Rob. For any other effect kind,
+`BodyPolicyRefused` is an ordinary permanent effect failure and follows the
+existing incident and owner-question rules.
 
 ## Node phases, slice one
 
@@ -345,11 +376,16 @@ A node that spans several repos is admitted at once, because its plan must split
 The controller supplies the planner with these inputs, alongside the brief,
 goals and forecast settings:
 
+- `maker_budget`: worker code supplies the maker's actual hard tool-turn and input-token allowances and the finalization reserve within them. The planner declares exploration separately and estimates all required work against the usable allowance, including proof, metadata and final verification. A final leaf that exceeds it is refused. An initial execution-budget split uses the existing Plan: split path and preserves every obligation. It is not a retry after maker failure.
+
 - `must_split`: true after a maker ran out of room or a fresh reviewer ran out of room, otherwise false. A leaf
   reply is rejected when it is true.
 - `findings`: everything learned before a re-plan, including failed checks and
   review findings, as a list of text reports. It is empty for initial planning.
   The planner uses these findings when choosing its next plan.
+- `repair_plan_consistency`: true in production, enabling the bounded draft
+  correction Rob approved on 2026-11-03 under Q27/Q54 in
+  [#573](https://github.com/RobTand/trustladderiii/issues/573#issuecomment-6602791857).
 - `protected_paths`: repo-relative glob patterns for files a leaf or split may
   not declare. Code rejects matching declarations. The controller's defaults
   include `.github/**`, `.mergify.yml`, `**/conftest.py`, `pytest.ini`, `.pytest.ini`,
@@ -357,12 +393,31 @@ goals and forecast settings:
   check harness refuses to run changed. `**` matches zero or more path
   segments, including a root `conftest.py`.
 
+Before completing a leaf reply, the planner may use its existing single
+tool-free correction when its only defects are an edited test absent from
+demonstrating checks or a forced demonstrating check naming tests absent from
+the base. This is the Q27/Q54 exception Rob approved on 2026-11-03, linked above.
+The correction stays in the same worker run and accounting limits and uses
+only already-read facts. It stays bound to the original draft's files, goals,
+existing check kinds and forcings. It may only add missing demonstrating
+coverage, swap forced non-base selections for base nodes, or drop an uncovered
+unnecessary edit. An appended demonstrating check may carry no forcing or
+reuse a draft forcing unchanged. It may honestly return can't meet.
+
+Added files, a wider footprint, unrelated checks or edits, changed forcings
+and new goals remain plan violations and therefore PlanCantMeet. Substantive
+plan failures, unsupported requirements, protected-path conflicts, out-of-room
+conditions and actual work failures do not enter this correction. A second
+inconsistent reply ends correction with both named diagnostics. Existing
+format-validation failure handling is unchanged. The harness and reviewer
+still judge actual Q55 proof.
+
 | Event | Condition | Next | Effects |
 |---|---|---|---|
 | Plan: can't meet, with required protected paths (Q57) | Controller verifies concrete paths against defaults plus global and repository lists | Stopping(NotActionable) | No retry, credit spent or Rob question, regardless of `fail_fast` |
 | Plan: leaf | The leaf rules hold | Ready(fresh) | |
 | Plan: split | Slice one | AwaitingRob(needs splitting) | Ask Rob to narrow the request, showing the proposed pieces |
-| Plan: can't meet, with a report | `fail_fast` (Q54) | Stop for TL3 review | See "Failures". The planner worker reports a plan that breaks a rule as can't meet, so a rule-breaking plan arrives here and stops at once. |
+| Plan: can't meet, with a report | `fail_fast` (Q54) | Stop for TL3 review | See "Failures". The planner worker reports a completed plan that breaks a rule as can't meet, so a rule-breaking completed plan arrives here and stops at once. Only the bounded draft correction described above may precede completion. |
 | Plan: can't meet, with a report | First time | Planning | Re-run with the next model on the planner's ladder, in a new generation |
 | Plan: can't meet, with a report | Second time | AwaitingRob(can't meet, continue to Planning) | |
 | Plan breaks a rule | First time | Planning | Re-run with the reason, in a new generation |

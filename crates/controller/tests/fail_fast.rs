@@ -388,6 +388,7 @@ enum Source {
     Review,
     Ci,
     Maker,
+    Budget,
     Planner,
 }
 
@@ -444,6 +445,16 @@ fn stop_with(source: Source, operations: bool) -> Stopped {
                         "findings": []})),
                     (Source::Maker, Role::Make) => ("maker", json!({"kind": "cant_meet",
                         "report": "The goal needs a schema change outside the plan."})),
+                    (Source::Budget, Role::Make) => ("maker", json!({"kind": "cant_meet",
+                        "report": "Final verification remains unfinished.",
+                        "budget_exhaustion": {
+                            "kind": "execution_budget_exhausted", "dimension": "tool_turns",
+                            "tool_turns": {"used": 64, "allowed": 64},
+                            "input_tokens": {"used": 123456, "allowed": 6000000},
+                            "operation": {"node": 0, "generation": 0, "kind": "make"},
+                            "preserved_work": {"head": "a".repeat(40), "tree": "b".repeat(40)},
+                            "unfinished_obligations": ["CHANGELOG.md update", "final regression checks"]
+                        }})),
                     (Source::Planner, Role::Plan) => ("planner", json!({"kind": "leaf",
                         "files": ["value.py"],
                         "checks": [{"kind": "regression", "node_ids": ["test_value.py::test_total"], "goal_ids": [0]}],
@@ -631,6 +642,37 @@ fn each_failing_step_records_its_own_evidence() {
 }
 
 #[test]
+fn maker_budget_exhaustion_reaches_the_stop_report_and_operations_notice() {
+    let mut stopped = stop_with(Source::Budget, true);
+    assert_eq!(stopped.node.phase, Phase::Closed(Outcome::Stopped));
+    assert_eq!(stopped.node.review_stop, Some(ReviewStop::MakerCantMeet));
+    let diagnostic = &stopped.record["findings"]["budget_exhaustion"];
+    assert_eq!(diagnostic["kind"], "execution_budget_exhausted");
+    assert_eq!(diagnostic["tool_turns"]["used"], 64);
+    assert_eq!(diagnostic["preserved_work"]["tree"], "b".repeat(40));
+    assert!(stopped.record["text"].as_str().unwrap().contains("budget"));
+    let notes = operations_notes(&stopped.posted);
+    assert_eq!(notes.len(), 1);
+    let text = notes[0].note.as_deref().unwrap();
+    assert!(text.contains("execution_budget_exhausted"), "{text}");
+    assert!(
+        text.contains("64/64") && text.contains("123456/6000000"),
+        "{text}"
+    );
+    assert!(
+        text.contains("CHANGELOG.md update") && text.contains("final regression checks"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("Restart it"),
+        "exhaustion must not suggest a blind restart: {text}"
+    );
+    let snapshot = stopped.controller.snapshot().unwrap();
+    assert!(!snapshot.rows.iter().any(|r| r.table == "questions"));
+    assert_operations_note(&stopped.posted, "maker_cant_meet");
+}
+
+#[test]
 fn without_an_operations_issue_no_note_is_posted() {
     let stopped = stop_with(Source::Maker, false);
     assert_eq!(stopped.node.review_stop, Some(ReviewStop::MakerCantMeet));
@@ -810,6 +852,7 @@ fn stage_owned_handover_keeps_fail_fast_and_independent_checking() {
                             tests: vec!["test_deep.py::test_deep_path".into()],
                             forcing: Some(forcing()),
                             helper_evidence: None,
+                            declared_symptom: None,
                         }],
                     };
                     return Ok(Completion::confirmed(vec![
@@ -989,4 +1032,118 @@ fn stage_owned_handover_keeps_fail_fast_and_independent_checking() {
         }
     }
     database.stop();
+}
+
+#[test]
+fn t629_local_body_defect_stops_for_tl3_review_without_owner_question() {
+    struct BodyRefusal {
+        fake: adapters::github::Fake,
+        posted: Posted,
+    }
+    impl Executor for BodyRefusal {
+        fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+            self.posted.lock().unwrap().push(delivery.clone());
+            if matches!(
+                delivery.output,
+                Output::Effect {
+                    kind: EffectKind::OpenPr,
+                    ..
+                }
+            ) {
+                tl3_controller::pr_body::validate(
+                    "Change type: test\nChange type: fix\nprivate synthetic-secret body",
+                    &[tl3_config::BodyLine {
+                        label: "Change type".into(),
+                        values: vec!["test".into(), "fix".into()],
+                        default: "test".into(),
+                    }],
+                )?;
+                panic!("conflicting body must be refused");
+            }
+            self.fake.execute(delivery)
+        }
+        fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            self.fake.reconcile(delivery)
+        }
+    }
+    let mut database = support::Database::start();
+    let settings = database.create("t629_body_refusal");
+    let root = tempfile::tempdir().unwrap();
+    let posted = Arc::new(Mutex::new(Vec::new()));
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::GitHub,
+        BodyRefusal {
+            fake: adapters::github::Fake::new(root.path()),
+            posted: posted.clone(),
+        },
+    );
+    let mut controller =
+        Controller::open(Store::open(&settings).unwrap(), registry, bootstrap(true)).unwrap();
+    controller.intake(labelled()).unwrap();
+    drain(&mut controller);
+    let node = controller.world().unwrap().nodes[0];
+    assert_eq!(
+        node.phase,
+        Phase::Closed(Outcome::Stopped),
+        "TL3's body refusal must use its review stop"
+    );
+    assert!(node.question.is_none());
+    assert_eq!(node.credit.spent, 0);
+    let posted = posted.lock().unwrap();
+    assert!(
+        !posted.iter().any(|d| matches!(
+            d.output,
+            Output::Notice {
+                notice: Notice::Ask { .. },
+                ..
+            }
+        )),
+        "no owner question may be dispatched"
+    );
+    assert_eq!(
+        posted
+            .iter()
+            .filter(|d| matches!(
+                d.output,
+                Output::Effect {
+                    kind: EffectKind::OpenPr,
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    let note = posted
+        .iter()
+        .find(|d| {
+            d.issue == OPERATIONS
+                && d.note
+                    .as_deref()
+                    .is_some_and(|text| text.contains("tl3_review"))
+        })
+        .expect("operations review note");
+    for required in [
+        "pr_policy",
+        "Change type",
+        "expected_count",
+        "found_count",
+        "conflicting",
+    ] {
+        assert!(note.note.as_ref().unwrap().contains(required));
+    }
+    assert!(!format!("{posted:?}").contains("synthetic-secret"));
+    let snapshot = controller.snapshot().unwrap();
+    assert!(
+        snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == "publication_failures" && r.value["class"] == "pr_policy")
+    );
+    assert!(
+        !snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents" && r.value["open"] == true)
+    );
 }

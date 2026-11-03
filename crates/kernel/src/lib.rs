@@ -273,6 +273,7 @@ pub enum ReviewStop {
     MakerOutOfRoom,
     ReviewerOutOfRoom,
     PlanCantMeet,
+    PublicationBody,
 }
 
 /// Where a node goes when Rob says carry on.
@@ -650,6 +651,8 @@ pub enum Ack {
     Confirmed,
     Retryable,
     Permanent,
+    /// A TL3-created local body defect; only OpenPr can stop for this cause.
+    BodyPolicyRefused,
 }
 
 /// A request's priority from its issue (Q39): best first, then unranked.
@@ -1591,6 +1594,7 @@ pub fn proof_of_event(event: &Event) -> &'static str {
             Ack::Confirmed => "apply_ack_confirmed",
             Ack::Retryable => "apply_ack_retryable",
             Ack::Permanent => "apply_ack_permanent",
+            Ack::BodyPolicyRefused => "apply_ack_body_policy_refused",
         },
         Event::Fact { fact, .. } => match fact {
             // Merges are heavy, so they get one proof per phase: pr_merged_<phase>.
@@ -2232,6 +2236,10 @@ fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack, out: &mut Outbox) {
         Ack::Confirmed => confirmed(&mut w.nodes[i], e.kind),
         Ack::Retryable => delivery_failed(w, i, e.kind, out),
         Ack::Permanent => effect_failed(w, i, e.kind, out),
+        Ack::BodyPolicyRefused if e.kind == EffectKind::OpenPr => {
+            stop_for_review(&mut w.nodes[i], ReviewStop::PublicationBody);
+        }
+        Ack::BodyPolicyRefused => effect_failed(w, i, e.kind, out),
     }
 }
 

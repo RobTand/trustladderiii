@@ -73,7 +73,7 @@ class Summary:
         self.outcomes = {}
 
     def add(self, test, outcome, message="", truncated=False, target_hits=None, forcing_refusal=None,
-            forcing_tampered=False):
+            forcing_tampered=False, failures=None):
         self.result["totals"][outcome] += 1
         item = {"test": test, "outcome": outcome, "message": message[:MESSAGE_CHARS]}
         if target_hits is not None:
@@ -82,6 +82,8 @@ class Summary:
             item["forcing_refusal"] = forcing_refusal
         if forcing_tampered:
             item['forcing_tampered'] = True
+        if failures is not None:
+            item['failures'] = failures
         self.outcomes[test] = item
         clipped = truncated or len(message) > MESSAGE_CHARS
         self.result["tests"].append(item)
@@ -93,7 +95,8 @@ class Summary:
             self.result["note"] = "Truncated: test entries or failure messages were cut. Totals include all results."
 
 
-def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=None):
+def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=None,
+                 declared_symptom=None, records=None):
     require_admission()
     summary = Summary() if summary is None else summary
     missing = {test for test in tests if not (tree / test.split("::", 1)[0]).exists()}
@@ -109,13 +112,19 @@ def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=No
     seen = set()
     collection_error = False
     with tempfile.TemporaryFile() as selection:
-        selection.write(json.dumps(tests if forcing is None else
-                                   {"tests": tests, "forcing": forcing.as_json()}).encode())
+        request = tests
+        if forcing is not None or declared_symptom is not None:
+            request = {'tests': tests, 'forcing': forcing.as_json() if forcing else {}}
+            if declared_symptom is not None:
+                request['declared_symptom'] = declared_symptom
+        selection.write(json.dumps(request).encode())
         selection.seek(0)
         with Supervised(command, selection, tests) as process:
             try:
                 for line in process.records():
                     record = decode(line)
+                    if records is not None:
+                        records.append(record)
                     if not started:
                         if record != {"event": "start", "schema": 1}:
                             raise ValueError("missing report header")
@@ -124,6 +133,15 @@ def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=No
                         raise ValueError("records after finish")
                     elif record.get("event") == "result":
                         expected = {"event", "test", "outcome", "message", "truncated"}
+                        failures = record.get('failures')
+                        if declared_symptom is not None:
+                            expected.add('failures')
+                            if (not isinstance(failures, list) or len(failures) > 3
+                                    or any(not isinstance(f, dict) or set(f) != {'exception', 'phase', 'source'}
+                                           or not isinstance(f['exception'], str) or len(f['exception']) > 300
+                                           or f['phase'] not in ('call', 'setup', 'teardown')
+                                           or type(f['source']) is not bool for f in failures)):
+                                raise ValueError('invalid symptom report')
                         hits = record.get("target_hits")
                         if forcing is not None and forcing.patches:
                             expected.add("target_hits")
@@ -155,7 +173,7 @@ def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=No
                             raise ValueError("invalid test result")
                         seen.add(record["test"])
                         summary.add(record["test"], record["outcome"], record["message"], record["truncated"], hits, refusal,
-                                    tampered)
+                                    tampered, failures)
                         progress.commit(record["test"])
                     elif record.get("event") == "collection-error":
                         collection_error = True
@@ -194,9 +212,11 @@ def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=No
         return summary.result
 
 
-def run_current(tree, container, tests, parallel=0, summary=None, *, forcing=None):
+def run_current(tree, container, tests, parallel=0, summary=None, *, forcing=None,
+                declared_symptom=None, records=None):
     try:
-        return bounded(_run_current(tree, container, tests, parallel, summary, forcing=forcing))
+        return bounded(_run_current(tree, container, tests, parallel, summary, forcing=forcing,
+                                    declared_symptom=declared_symptom, records=records))
     except ExecutionFailure as failure:
         if failure.outcome == ExecutionOutcome.TEST_TIMEOUT:
             # Discard partial passes: a run that cannot finish has no GREEN verdict.
@@ -253,6 +273,22 @@ def run(tree, container, tests, *, repeat=1, parallel=0, forcing=None):
     return summary.result
 
 
+def run_symptom(tree, container, tests, declaration, *, forcing=None):
+    from .model import validate_symptom
+    from .symptoms import receipt
+    validate_symptom(declaration, tests)
+    runs = []
+    for number in range(1, declaration['repeat'] + 1):
+        records = []
+        result = run_current(tree, container, tests, declaration['parallel'], forcing=forcing,
+                             declared_symptom=declaration, records=records)
+        runs.append(receipt(records, result, declaration, number))
+        if runs[-1]['outcome'] == 'unavailable':
+            break
+    result['symptom_runs'] = runs
+    return result
+
+
 def main():
     # This file is copied with the trusted harness, outside the served tree.
     parser = argparse.ArgumentParser()
@@ -262,15 +298,29 @@ def main():
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--parallel", type=int, default=0)
     parser.add_argument("--forcing")
+    parser.add_argument('--declared-symptom')
     # A per-call value that only makes the PrismaBuild action key unique, so repeats run fresh.
     parser.add_argument("--fresh")
     args = parser.parse_args()
     try:
         forcing = Forcing.parse(json.loads(args.forcing)) if args.forcing else None
-        result = run(Path("checkout").resolve(), Container(args.image, exec_scratch=args.exec_scratch),
-                     tuple(json.loads(args.selectors)), repeat=args.repeat, parallel=args.parallel, forcing=forcing)
+        if args.declared_symptom:
+            declaration = json.loads(args.declared_symptom)
+            if (args.repeat, args.parallel) != (declaration['repeat'], declaration['parallel']):
+                raise ValueError('symptom campaign settings changed')
+            result = run_symptom(Path('checkout').resolve(), Container(args.image, exec_scratch=args.exec_scratch),
+                                 tuple(json.loads(args.selectors)), declaration, forcing=forcing)
+            result['declared_symptom'] = declaration
+        else:
+            result = run(Path("checkout").resolve(), Container(args.image, exec_scratch=args.exec_scratch),
+                         tuple(json.loads(args.selectors)), repeat=args.repeat, parallel=args.parallel, forcing=forcing)
         if forcing is not None:
             result.update(forcing=forcing.as_json(), selectors=json.loads(args.selectors))
+        if args.declared_symptom:
+            result['selectors'] = json.loads(args.selectors)
+            for receipt in result['symptom_runs']:
+                print('TL3_SYMPTOM_RUN ' + json.dumps(receipt, sort_keys=True, separators=(',', ':')), flush=True)
+                del receipt['records']
     except (OSError, RuntimeError, ValueError):
         result = infrastructure("Test infrastructure failed before a complete report was available.")
     result = bounded(result)

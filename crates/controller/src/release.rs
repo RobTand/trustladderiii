@@ -52,8 +52,11 @@ impl Controller {
             .filter(|row| row.table == "incidents" && row.value["open"] == true)
         {
             let incident: looks::Incident = crate::decode_stored(row.value.clone())?;
-            if incident.cause() != looks::Cause::Tl3
-                || !(incident.blocking || incident.effect.is_some())
+            // Older releases recorded this TL3-side pause as an upstream input incident.
+            let postmortem_pause = incident.signature.class == crate::postmortems::PAUSED;
+            if !postmortem_pause
+                && (incident.cause() != looks::Cause::Tl3
+                    || !(incident.blocking || incident.effect.is_some()))
             {
                 continue;
             }

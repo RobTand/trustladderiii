@@ -905,11 +905,16 @@ impl Store {
 
     /// Postmortem claims made since the start of the current UTC day (#486).
     pub fn postmortem_claims_today(&mut self) -> Result<u32> {
+        self.postmortem_claims_today_since(0)
+    }
+
+    /// Claims today after the last recovery boundary. Earlier claims stay in the ledger.
+    pub fn postmortem_claims_today_since(&mut self, since: i64) -> Result<u32> {
         let count: i64 = self
             .client
             .query_one(
-                "SELECT count(*) FROM tl3_postmortem_claims WHERE claimed_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'",
-                &[],
+                "SELECT count(*) FROM tl3_postmortem_claims WHERE revision > $1 AND claimed_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'",
+                &[&since],
             )?
             .get(0);
         Ok(u32::try_from(count).unwrap_or(u32::MAX))

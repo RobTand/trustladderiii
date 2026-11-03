@@ -1,19 +1,31 @@
 """Report plan measurements and rule violations to the controller."""
 
 from copy import deepcopy
+import ast
 from pathlib import PurePosixPath
 import re
 import tomllib
 
+from jsonschema import Draft202012Validator
+
 from tl3_workers.roles.base import Role
 from tl3_workers.evidence import preflight
-from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES
+from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES, MAX_EXECUTION_PIECES, execution_forecast
 from tl3_harness import Check, Forcing, HarnessInputError, Kind, HelperEvidence
 from tl3_harness.limits import validate_check_plan
 from tl3_harness.trees import is_test, test_function_source, bound_names, validate_helper_setup
 from tl3_workers.tools import Worktree
 from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.recall import check_citations
+
+
+# Fresh proposals require estimates; the transport still accepts workers that
+# started before a deploy (#372). Use the same requirement in the model prompt.
+EXPLORATION_DECLARATION = {
+    "if": {"properties": {"kind": {"enum": ["leaf", "split"]}}, "required": ["kind"]},
+    "then": {"required": ["estimated_exploration_turns"],
+             "properties": {"pieces": {"items": {"required": ["estimated_exploration_turns"]}}}},
+}
 
 
 class PlanConsistencyError(ValueError):
@@ -55,7 +67,7 @@ class PlanConsistencyError(ValueError):
             return
         if set(reply['files']) != set(draft['files']) and not added:
             errors.append('Correction changes the draft footprint.')
-        mutable = {'checks', 'edits_tests', 'forecast', 'violations', 'decision_context', 'evidence_errors', 'forcing_rehearsals'}
+        mutable = {'checks', 'edits_tests', 'forecast', 'execution', 'violations', 'decision_context', 'evidence_errors', 'forcing_rehearsals'}
         if ({key: value for key, value in reply.items() if key not in mutable}
                 != {key: value for key, value in draft.items() if key not in mutable}):
             errors.append('Correction changes declarations outside the test consistency error.')
@@ -77,6 +89,9 @@ class PlanConsistencyError(ValueError):
                 if ('forcing' in check
                         and not any(check['forcing'] == original.get('forcing') for original in checks)):
                     errors.append('Correction adds a forcing absent from the draft.')
+                if ('declared_symptom' in check and not any(
+                        check['declared_symptom'] == original.get('declared_symptom') for original in checks)):
+                    errors.append('Correction adds a declared symptom absent from the draft.')
                 continue
             original = checks[index]
             if ({key: value for key, value in check.items() if key != 'node_ids'}
@@ -97,12 +112,14 @@ class PlanConsistencyError(ValueError):
 def check_reply(inputs, reply, *, rehearsals=None):
     if rehearsals is not None:
         rehearsals.raise_infrastructure()
+    Draft202012Validator(EXPLORATION_DECLARATION).validate(reply)
     if any(field in reply for field in ("forecast", "violations", "decision_context", "forcing_rehearsals")):
         raise ValueError("only code may supply planning evidence")
     preflight(inputs, reply, planning=True)
     check_citations(inputs, reply)
     goals = set(range(len(inputs["ingest"]["goals"])))
-    violations = []
+    violations = (["Execution forecasts are supplied by worker code; omit execution from the model reply."]
+                  if reply.pop("execution", None) is not None else [])
     uncovered = []
     missing_forced = []
     paths = set()
@@ -128,9 +145,12 @@ def check_reply(inputs, reply, *, rehearsals=None):
                 oversized, exists = base_definition(evidence.target)
                 if oversized or not exists or patterns is None or not is_test(path, patterns) or path not in reply["files"]:
                     raise ValueError("target must name an existing helper in a declared configured test file")
+                with Worktree(".") as tree, tree._file(path) as stream:
+                    source = stream.read(HARD_CAP_BYTES + 1)
+                problem = helper_target_problem(source, evidence.target)
+                if problem:
+                    violations.append(f"Invalid helper evidence: {problem}")
                 if evidence.setup_functions:
-                    with Worktree(".") as tree, tree._file(path) as stream:
-                        source = stream.read(HARD_CAP_BYTES + 1)
                     validate_helper_setup(source, evidence)
                 for observer in check["node_ids"]:
                     parts = observer.split("::")
@@ -161,7 +181,7 @@ def check_reply(inputs, reply, *, rehearsals=None):
                     violations.append("Checks must name exact pytest node IDs.")
                     continue
                 # A forced check runs the old test on the base, so it must exist there too.
-                if check["kind"] in {"regression", "behavior-preserving"} or "forcing" in check:
+                if check["kind"] in {"regression", "behavior-preserving"} or "forcing" in check or "declared_symptom" in check:
                     path = node_id.split("::")[0]
                     oversized, exists = base_definition(node_id)
                     if oversized:
@@ -181,7 +201,8 @@ def check_reply(inputs, reply, *, rehearsals=None):
             try:
                 validate_check_plan(tuple(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']),
                                                 (forcings.get(i) if check['kind'] == 'demonstrating' else None),
-                                                HelperEvidence.parse(check['helper_evidence']) if 'helper_evidence' in check else None)
+                                                HelperEvidence.parse(check['helper_evidence']) if 'helper_evidence' in check else None,
+                                                check.get('declared_symptom'))
                                           for i, check in enumerate(reply['checks']) if check['node_ids']))
             except ValueError as error:
                 violations.append(str(error))
@@ -219,6 +240,14 @@ def check_reply(inputs, reply, *, rehearsals=None):
 
     forecaster = Forecaster(inputs["forecast"])
     forecast = forecaster.measure(inputs["ingest"]["brief"], paths)
+    check_count = (len(reply["checks"]) if reply["kind"] == "leaf" else len(goals))
+    execution = execution_forecast(paths, check_count, declared=reply.get("estimated_tool_turns", 0),
+                                   exploration=reply.get("estimated_exploration_turns"),
+                                   generator=bool(inputs["forecast"].get("generator")))
+    if reply["kind"] == "leaf" and execution["exploration_declared"] and not execution["fits"]:
+        violations.append(f"The leaf exceeds the execution budget: estimated {execution['estimated_tool_turns']} "
+                          f"tool turns, usable {execution['usable_tool_turns']} after the finalization reserve. "
+                          "Preserve every obligation in bounded pieces with reason execution_budget before maker work.")
     # A file the tools can't use is a plan problem, not a crash (#321).
     for error in forecaster.problems:
         violations.append(f"Declared file can't be used: {error}. Leave it out.")
@@ -232,12 +261,31 @@ def check_reply(inputs, reply, *, rehearsals=None):
             violations.append("No maker has run out of room.")
         if reason == "does_not_fit" and forecast["fits"]:
             violations.append("The forecast fits. Splitting needs a permitted reason.")
+        if reason == "execution_budget":
+            if execution["fits"]:
+                violations.append("The execution estimate fits; execution_budget is not a permitted reason for this plan.")
+            if len(reply["pieces"]) > MAX_EXECUTION_PIECES:
+                violations.append(f"Execution-budget decomposition permits at most {MAX_EXECUTION_PIECES} pieces.")
+        pieces = []
         for piece in reply["pieces"]:
             child = forecaster.measure(piece["brief"], piece["files"])
+            estimate = execution_forecast(piece["files"], len(piece["goal_ids"]),
+                                          declared=piece.get("estimated_tool_turns", 0),
+                                          exploration=piece.get("estimated_exploration_turns"),
+                                          generator=bool(inputs["forecast"].get("generator")))
+            pieces.append(estimate)
             for error in forecaster.problems:
                 violations.append(f"Declared file can't be used: {error}. Leave it out.")
-            if child["tokens"] >= forecast["tokens"]:
+            if reason == "execution_budget":
+                if not estimate["fits"] or estimate["estimated_tool_turns"] >= execution["estimated_tool_turns"]:
+                    violations.append("Every execution-budget piece must fit the usable execution allowance and reduce demand.")
+                if not child["fits"]:
+                    violations.append("Every execution-budget piece must also fit the token forecast.")
+            elif child["tokens"] >= forecast["tokens"]:
                 violations.append("Every proposed piece must have a smaller forecast than its parent.")
+        execution["pieces"] = pieces
+        execution["aggregate_tool_turns"] = sum(piece["estimated_tool_turns"] for piece in pieces)
+        execution["aggregate_allowed_tool_turns"] = sum(piece["allowed_tool_turns"] for piece in pieces)
     if rehearsals is not None and rehearsals.failure:
         violations.append(rehearsals.failure['message'])
     elif rehearsals is not None and reply['kind'] == 'cant_meet':
@@ -262,7 +310,44 @@ def check_reply(inputs, reply, *, rehearsals=None):
     if "decision_context" in inputs:
         reply["decision_context"] = inputs["decision_context"]
     reply["forecast"] = forecast
+    reply["execution"] = execution
     reply["violations"] = list(dict.fromkeys(violations))
+
+
+def helper_target_problem(source, target):
+    """Reject unsupported target shapes and data constructors without importing them.
+
+    Call chains may supply a failure contract. Independent execution still
+    establishes whether the declared cases reach the intended assertion.
+    """
+    name = target.split('::')[1]
+    definitions = [node for node in ast.parse(source).body
+                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                   and node.name == name]
+    if (len(definitions) != 1 or not isinstance(definitions[0], ast.FunctionDef)
+            or definitions[0].decorator_list):
+        return 'helper target must be one existing undecorated synchronous top-level function'
+
+    def has_assertion(node):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            return False
+        if isinstance(node, ast.Assert):
+            return True
+        if isinstance(node, ast.Raise):
+            exception = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
+            if isinstance(exception, ast.Name) and exception.id == 'AssertionError':
+                return True
+        return any(has_assertion(child) for child in ast.iter_child_nodes(node))
+
+    returns_dictionary = any(isinstance(node, ast.Return) and isinstance(node.value, ast.Dict)
+                             for statement in definitions[0].body for node in ast.walk(statement))
+    calls_other_code = any(isinstance(node, ast.Call) for node in ast.walk(definitions[0]))
+    if (returns_dictionary and not calls_other_code
+            and not any(has_assertion(statement) for statement in definitions[0].body)):
+        return ('helper target constructs a dictionary without an assertion failure contract; this '
+                'helper cannot preserve the old test assertion. Consider an existing test with '
+                'a supported forcing, or report the remaining source obligation and unsupported target shape.')
+    return None
 
 
 def base_definition(node_id, *, binding=False):
@@ -397,7 +482,7 @@ def edit_violations(goals, reply):
                                   "behavior with other existing tests.")
     # Q55: a forced reproduction recreates the flake outside the test, so it can show a test-only change.
     demonstrating = [check for check in reply["checks"] if check["kind"] == "demonstrating"]
-    forced = bool(demonstrating) and all(valid_forcing(check) or "helper_evidence" in check for check in demonstrating)
+    forced = bool(demonstrating) and all(valid_forcing(check) or "helper_evidence" in check or "declared_symptom" in check for check in demonstrating)
     if test_only and (edited or demonstrated or names_frozen) and not forced:
         violations.append("This leaf changes only tests, so an ordinary demonstrating check can't show it: the "
                           "base run applies the leaf's test edits, so base and head run the same test. A change "
@@ -411,7 +496,7 @@ ROLE = Role(
     prompt="planner.md",
     input_schema="planner-input",
     reply_schema="planner-reply",
-    code_only_fields=("forecast", "violations", "decision_context", "evidence_errors", "forcing_rehearsals"),
+    code_only_fields=("forecast", "execution", "violations", "decision_context", "evidence_errors", "forcing_rehearsals"),
     tools={
         "rehearse_forcing": "Rehearse exact existing base tests with a Q55 forcing through PrismaBuild before returning a forced leaf. Completed unusable candidates allow a distinct bounded proposal; identical candidates are cached. Infrastructure exits to controller recovery. Exhaustion or no usable final receipt requires cant_meet. No commands or head execution.",
         "list": "List worktree directories to locate material for the plan.",

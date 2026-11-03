@@ -8,6 +8,8 @@ MAX_RESULT_BYTES = 8 * 1024 * 1024
 RESULT_ENVELOPE_BYTES = 65536
 MAX_DETAILED_FAILURES = 20
 MAX_MESSAGE_CHARS = 1000
+# Three phases, each with at most 200 Unicode exception-class characters.
+PHASE_RUN_BYTES = 3 * (200 * 12 + 100) + 100
 PLAN_SIZE_ERROR = f'Check plan exceeds the {MAX_REPORT_LINE_BYTES}-byte report limit; reduce the selected tests or parameter cases.'
 RESULT_SIZE_ERROR = f'Check plan exceeds the {MAX_RESULT_BYTES}-byte result limit; reduce the selected tests or checks.'
 
@@ -30,6 +32,9 @@ def validate_check_plan(plan):
                 'failure_driver_sha256': '0' * 64,
                 'failure_preservation': [{'base': 'infrastructure-failure', 'head': 'infrastructure-failure'}
                                          for _ in check.helper_evidence.failure_cases]}
+        if getattr(check, 'declared_symptom', None) is not None:
+            header['declared_symptom'] = check.declared_symptom
+            size += 384 * 1024
         size += len(json.dumps(header, separators=(',', ':'))) + 1
         for test in check.tests:
             case = {'test': test, 'base': 'uncollected', 'head': 'uncollected',
@@ -37,6 +42,8 @@ def validate_check_plan(plan):
             if 'forcing' in header:
                 case['head_forced'] = 'uncollected'
             size += len(json.dumps(case, separators=(',', ':'))) + 1
+            sides = 3 if 'forcing' in header else 2
+            size += sides * (PHASE_RUN_BYTES + len(json.dumps(test)))
         if size > MAX_RESULT_BYTES:
             raise ValueError(RESULT_SIZE_ERROR)
 

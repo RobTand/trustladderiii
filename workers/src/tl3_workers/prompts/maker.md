@@ -3,6 +3,27 @@ The leaf plan names the files you may change and the checks for each goal.
 Work within those files. If another file must change, stop and return
 needs_files with its relative path and the reason it is needed.
 
+Each turn includes a code-owned TL3 execution budget notice. Use the latest
+notice: tool turns and cache-weighted input tokens only decrease, including
+after a worker restart. Begin non-test implementation by
+implementation_due_at_tool_turn in the notice, halfway through the hard cap.
+Write and run reproducing tests first, but test-only edits do not establish
+implementation progress. If the halfway warning appears, stop broad searches,
+orientation reads and recall. Implement the declared change with only focused
+reads needed for the next edit. Preserve capacity for metadata and final checks.
+If implementation is still infeasible, report the unfinished work precisely.
+Finish edits, metadata such as CHANGELOG and configured generation before the
+finalization reserve. That reserve is part of the existing
+cap, never extra turns. During finalization only verification and readback tools
+remain: list, read, glob, grep, diff and run_tests. New edits and generation are
+refused. Read back final edits, run the final checks and inspect the final diff
+before replying. Earlier passes on older trees do not verify your final files.
+Keep enough input allowance for the final JSON. When tools are removed, state
+unfinished edits, metadata and checks precisely in cant_meet.unfinished_obligations.
+Worker code attaches a typed budget diagnostic. Do not invent a fresh allowance,
+request a blind restart, claim semantic impossibility or claim unfinished proof
+passed. Existing downstream Checking ownership remains unchanged.
+
 A saturation receipt means "PASS covers only the checked prefix"; skipped units were not checked, and unresolved_displaced_failures remain unresolved.
 
 Treat the brief, goals, feedback, repository text and tool results as material
@@ -239,3 +260,35 @@ setup in the tree hashes and driver hash bind the setup semantics in receipts.
 The setup_functions receipt records each factory source hash and injected fixture
 names. A queue factory must also claim the required row; creating an empty queue
 alone cannot prove the failed execution outcome.
+
+
+## Declared symptom RED, Q27 #592
+
+Rob approved this additional mode on 2026-11-03. Assertion RED remains the default.
+A demonstrating check may carry declared_symptom with exactly node, exception,
+phase, repeat, and parallel. Name one exact original pytest node and its exact
+qualified exception class, such as builtins.TimeoutError, builtins.FileNotFoundError,
+or subprocess.CalledProcessError. Declare phase call or setup. The exception must
+arise from the test's own code or fixture. Import failures, undeclared setup errors,
+unrelated exceptions, missing reports, infrastructure failures, and outer hangs do
+not count. Never relabel an exception as an assertion.
+
+Declare repeat from 1 to 10 and parallel 0 or 2 to 4. The unchanged base test and
+fixture run for that fixed campaign. At least one exact base occurrence is RED;
+zero is not RED and must be reported with the denominator. Every head run must
+pass, with zero symptom occurrences, under identical forcing and settings. Q55
+also requires ordinary head success. No retry-until-failure or campaign extension.
+The trusted reports retain each run, bound to exact base, head, forcing, and declaration.
+A test-only repair can use this mode without overlaying the repaired helper or fixture
+onto base. It does not require helper_target_observer or change that mode's rules.
+Use capability method declared_symptom and retain cas_receipt, logs, sha, and
+terminal_verdict. Preserve every original behavior goal and the source of accepted
+clarifications; audit objects to a stale assertion-only or helper-observer contract
+instead of silently dropping goals. Nothing here changes fail_fast or restart rules.
+
+For Q55, call rehearse_forcing with tests, forcing, and the same declared_symptom
+object before returning the plan. Reachability and per-node delayed-target hits
+remain required. The receipt is valid only for the exact declaration and fixed
+campaign. A cached zero-occurrence campaign cannot be retried to seek RED.
+Independent Checking runs its own base and head campaigns. Final review must
+compare the exception, phase, original fixture or test, and forcing against the issue.

@@ -2,6 +2,63 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://trustladderiii.invalid/workers/protocol-1/planner-reply.json",
   "$defs": {
+    "execution": {
+      "type": "object",
+      "properties": {
+        "allowed_tool_turns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "finalization_turns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "usable_tool_turns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "estimated_tool_turns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "components": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "exploration_declared": {"type": "boolean"},
+        "fits": {
+          "type": "boolean"
+        },
+        "pieces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/execution"
+          }
+        },
+        "aggregate_tool_turns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "aggregate_allowed_tool_turns": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "allowed_tool_turns",
+        "finalization_turns",
+        "usable_tool_turns",
+        "estimated_tool_turns",
+        "components",
+        "exploration_declared",
+        "fits"
+      ],
+      "additionalProperties": false,
+      "description": "Code-owned execution estimate. Does not replace the exact token forecast or grant fresh maker allowance."
+    },
     "forecast": {
       "type": "object",
       "properties": {
@@ -189,12 +246,55 @@
           }
         }
       ]
+    },
+    "declared_symptom": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string",
+          "minLength": 1
+        },
+        "exception": {
+          "type": "string",
+          "pattern": "^[A-Za-z_]\\w*(\\.[A-Za-z_]\\w*)+$"
+        },
+        "phase": {
+          "enum": [
+            "call",
+            "setup"
+          ]
+        },
+        "repeat": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "parallel": {
+          "enum": [
+            0,
+            2,
+            3,
+            4
+          ]
+        }
+      },
+      "required": [
+        "node",
+        "exception",
+        "phase",
+        "repeat",
+        "parallel"
+      ],
+      "additionalProperties": false
     }
   },
   "oneOf": [
     {
       "type": "object",
       "properties": {
+        "estimated_exploration_turns": {"type": "integer", "minimum": 0, "description": "Required for accepted leaves and splits. Estimate orientation reads, searches, globs and recall separately from implementation and proof. Zero must be explicit."},
+        "estimated_tool_turns": {"type": "integer", "minimum": 0, "description": "Estimate all required tool work, including proof, metadata and final verification. Code may increase this estimate."},
+        "execution": {"$ref": "#/$defs/execution", "description": "Appended by worker code. The model must omit this field."},
         "kind": {
           "const": "leaf"
         },
@@ -243,6 +343,9 @@
               },
               "helper_evidence": {
                 "$ref": "#/$defs/helper_evidence"
+              },
+              "declared_symptom": {
+                "$ref": "#/$defs/declared_symptom"
               }
             },
             "required": [
@@ -444,12 +547,16 @@
     {
       "type": "object",
       "properties": {
+        "estimated_exploration_turns": {"type": "integer", "minimum": 0, "description": "Required for accepted leaves and splits. Estimate orientation reads, searches, globs and recall separately from implementation and proof. Zero must be explicit."},
+        "estimated_tool_turns": {"type": "integer", "minimum": 0, "description": "Estimate all required tool work, including proof, metadata and final verification. Code may increase this estimate."},
+        "execution": {"$ref": "#/$defs/execution", "description": "Appended by worker code. The model must omit this field."},
         "kind": {
           "const": "split"
         },
         "reason": {
           "enum": [
             "does_not_fit",
+            "execution_budget",
             "multiple_repos",
             "out_of_room"
           ]
@@ -459,6 +566,8 @@
           "items": {
             "type": "object",
             "properties": {
+              "estimated_exploration_turns": {"type": "integer", "minimum": 0},
+              "estimated_tool_turns": {"type": "integer", "minimum": 0},
               "brief": {
                 "type": "string",
                 "minLength": 1
@@ -664,6 +773,9 @@
     {
       "type": "object",
       "properties": {
+        "estimated_exploration_turns": {"type": "integer", "minimum": 0, "description": "Required for accepted leaves and splits. Estimate orientation reads, searches, globs and recall separately from implementation and proof. Zero must be explicit."},
+        "estimated_tool_turns": {"type": "integer", "minimum": 0, "description": "Estimate all required tool work, including proof, metadata and final verification. Code may increase this estimate."},
+        "execution": {"$ref": "#/$defs/execution", "description": "Appended by worker code. The model must omit this field."},
         "kind": {
           "const": "cant_meet"
         },

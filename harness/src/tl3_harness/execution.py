@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 import json
 import hashlib
 import os
@@ -50,6 +50,7 @@ class SelectedRun:
 class SelectedObservation:
     outcomes: dict[str, Outcome]
     collection: tuple[str, ...]
+    phases: dict = field(default_factory=dict)
 
     @property
     def identity(self):
@@ -197,7 +198,7 @@ def refused(plan: tuple[Check, ...], message: str) -> tuple[Result, ...]:
     """A failing round that tells the maker what to undo; nothing ran."""
     return tuple(Result(check.name, check.kind, Verdict.FAIL, tuple(
         TestResult(test, Outcome.UNCOLLECTED, Outcome.UNCOLLECTED, False, False, message[:MAX_MESSAGE_CHARS])
-        for test in check.tests)) for check in plan)
+        for test in check.tests), forcing=check.forcing, declared_symptom=check.declared_symptom) for check in plan)
 
 
 def listed(instruction: str, changed: list[str]) -> str:
@@ -372,7 +373,9 @@ def selected_base(tool: TestTool, old: Path, container: Container, candidates: t
                 break
         contract = SelectedRun(tuple(batch), remaining, prefix=True, allow_empty=bool(before))
         tests = tuple(member for unit in batch for member in unit)
-        observed = tool.run(old, container, tests, root / f"selected-base-{index}.jsonl", progress, selected=contract)
+        base_messages = FailureNotes()
+        observed = tool.run(old, container, tests, root / f"selected-base-{index}.jsonl", progress,
+                            messages=base_messages, selected=contract)
         if contract.refusal:
             prefix = f"Previously failing execution units cannot fit the {limit}-test budget: " if group in required else ""
             raise HarnessInputError(prefix + contract.refusal)
@@ -393,7 +396,8 @@ def selected_base(tool: TestTool, old: Path, container: Container, candidates: t
                 break
             collection = tuple(test for test in contract.collected if test.split("::", 1)[0] in candidate)
             outcomes = {member: observed.get(member, Outcome.NO_REPORT) for member in candidate}
-            observation = SelectedObservation(outcomes, collection)
+            observation = SelectedObservation(outcomes, collection,
+                {member: base_messages.phases[member] for member in candidate if member in base_messages.phases})
             before[candidate] = observation
             if collection and Outcome.NO_REPORT not in outcomes.values():
                 _SELECTED_BASE[(*key, candidate)] = observation
@@ -420,7 +424,7 @@ def selected_head(tool: TestTool, new: Path, container: Container, kept: tuple[t
     tests = tuple(member for group in kept for member in group)
     expected = tuple(test for group in kept for test in before[group].collection)
     contract = SelectedRun(kept, limit, expected)
-    messages, notes = {}, {}
+    messages, notes = FailureNotes(), {}
     after = tool.run(new, container, tests, root / "selected-head.jsonl", progress,
                      messages=messages, selected=contract)
     if contract.refusal:
@@ -430,7 +434,7 @@ def selected_head(tool: TestTool, new: Path, container: Container, kept: tuple[t
     failing = [group for group in kept if any(after.get(member) != Outcome.PASSED for member in group)]
     retried = set()
     for index, group in enumerate(failing[:MAX_DETAILED_FAILURES]):
-        retry_messages = {}
+        retry_messages = FailureNotes()
         retry_contract = SelectedRun((group,), len(before[group].collection), before[group].collection)
         retry = tool.run(new, container, group, root / f"selected-retry-{index}.jsonl", progress,
                          messages=retry_messages, selected=retry_contract)
@@ -446,6 +450,9 @@ def selected_head(tool: TestTool, new: Path, container: Container, kept: tuple[t
                                  "Not counted against the change.")
             elif member in retry_messages:
                 messages[member] = retry_messages[member]
+            messages.phases.pop(member, None)
+            if member in retry_messages.phases:
+                messages.phases[member] = retry_messages.phases[member]
             after[member] = retry.get(member, Outcome.NO_REPORT)
     base_outcomes = {member: before[group].outcomes[member] for group in kept for member in group}
     failed_members = set()
@@ -468,7 +475,10 @@ def selected_head(tool: TestTool, new: Path, container: Container, kept: tuple[t
                 messages[member] = ("The execution group ended its process on the head without a complete "
                                     "report; this complete group passed on the base.")
             notes[member] = (receipt + "\n" + (notes.get(member) or messages.get(member, ""))).strip()[:MAX_MESSAGE_CHARS]
-    result = judge(Check(SELECTED_CHECK, Kind.REGRESSION, tests), base_outcomes, after, messages=messages)
+    base_notes = FailureNotes()
+    base_notes.phases = {member: phases for group in kept for member, phases in before[group].phases.items()}
+    result = judge(Check(SELECTED_CHECK, Kind.REGRESSION, tests), base_outcomes, after,
+                   messages=messages, base_notes=base_notes)
     return replace(result, tests=tuple(replace(test, passed=test.passed and test.test not in failed_members,
                                               message=notes[test.test]) for test in result.tests))
 
@@ -582,6 +592,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         changed = tool.changed_existing_tests(old, new, ordinary)
         demonstrating = tuple(dict.fromkeys(test for check in plan
                                             if check.kind == Kind.DEMONSTRATING and check.forcing is None and check.helper_evidence is None
+                                            and check.declared_symptom is None
                                             for test in check.tests))
         candidates = (selected_candidates(repo, tool, old, new, config, base, head, plan, selected_tests, selected_failures)
                       if selected_tests else ())
@@ -606,7 +617,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         base_notes = {Kind.DEMONSTRATING: FailureNotes(), Kind.REPRODUCING: FailureNotes()}
         cache_key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container, ordinary)
         if ordinary and cache_key not in _BASE_RESULTS:
-            before_messages = {}
+            before_messages = FailureNotes()
             observed = tool.run(old, container, ordinary, root / "base.jsonl", progress, messages=before_messages)
             if Outcome.NO_REPORT not in observed.values():
                 _BASE_RESULTS[cache_key] = observed, before_messages
@@ -647,13 +658,24 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         # A forced check runs the old test on the original base and the new test on the
         # head, both under its forcing; the ordinary head run is the unforced one (#393).
         forced = {}
-        for index, check in enumerate(check for check in plan if check.forcing is not None):
-            notes, head_messages = FailureNotes(), {}
+        for index, check in enumerate(check for check in plan if check.forcing is not None and check.declared_symptom is None):
+            notes, head_messages = FailureNotes(), FailureNotes()
             forced_base = tool.run(old, container, check.tests, root / f"forced-base-{index}.jsonl", progress,
                                    messages=notes, forcing=check.forcing)
             forced_head = tool.run(new, container, check.tests, root / f"forced-head-{index}.jsonl", progress,
                                    messages=head_messages, forcing=check.forcing)
             forced[check.name] = forced_base, notes, forced_head, head_messages
+        symptom_results = {}
+        for check in plan:
+            if check.declared_symptom is None:
+                continue
+            from .test_tool import run_symptom
+            from .symptoms import judge_symptom
+            observed = run_symptom(old, container, check.tests, check.declared_symptom, forcing=check.forcing)
+            fixed = run_symptom(new, container, check.tests, check.declared_symptom, forcing=check.forcing)
+            ordinary_head = (run_symptom(new, container, check.tests, check.declared_symptom)
+                             if check.forcing else fixed)
+            symptom_results[check.name] = judge_symptom(check, observed, fixed, ordinary_head, base, head)
         helper_outcomes = {}
         for check in helpers:
             staged, identity = helper_runs[check.name]
@@ -676,8 +698,11 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                 return refused(plan, f"Invalid helper failure preservation: {error}")
             identity.update(preservation)
             helper_outcomes[check.name] = outcomes, notes, identity
-        messages = {}
-        after = tool.run(new, container, tests, root / "head.jsonl", progress, messages=messages)
+        messages = FailureNotes()
+        ordinary_tests = tuple(test for test in tests if any(
+            test in check.tests and check.declared_symptom is None for check in plan))
+        after = (tool.run(new, container, ordinary_tests, root / "head.jsonl", progress, messages=messages)
+                 if ordinary_tests else {})
         after.update(dict.fromkeys(stale, Outcome.MISSING))
         # A collection/plan refusal is also UNCOLLECTED, but proves nothing about missing nodes.
         stale.update(test for test in always_tests if "::" in test
@@ -688,6 +713,9 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                        Kind.REGRESSION: before, Kind.BEHAVIOR_PRESERVING: before}
         results = []
         for check in plan:
+            if check.name in symptom_results:
+                results.append(symptom_results[check.name])
+                continue
             if check.name in helper_outcomes:
                 outcomes, notes, identity = helper_outcomes[check.name]
                 result = judge(check, outcomes, after, messages=messages, base_notes=notes)
@@ -712,7 +740,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                                      forced=forced_head, forced_messages=head_messages))
                 continue
             result = judge(check, comparisons[check.kind], after, messages=messages,
-                           base_notes=base_notes.get(check.kind))
+                           base_notes=(base_notes.get(check.kind) if check.kind in base_notes else before_messages))
             if check.kind in (Kind.REGRESSION, Kind.BEHAVIOR_PRESERVING):
                 restored = tuple(replace(test, passed=False, message=(
                     f"Restore the existing test `{test.test}`; existing tests may not be changed to satisfy a check.")[:1000])
@@ -850,6 +878,10 @@ def result_json(results: tuple[Result, ...]) -> str:
         pair[1]['passed']))
     retained = {id(test) for _, test in [pair for pair in priority if pair[1]['message']][:MAX_DETAILED_FAILURES]}
     for result, report in zip(results, reports):
+        if result.declared_symptom is None:
+            del report['declared_symptom']
+        if result.symptom_evidence is None:
+            del report['symptom_evidence']
         # Unforced results keep their earlier shape; a forced one carries its forcing for review (#393).
         if result.selection is None:
             del report["selection"]
@@ -860,6 +892,8 @@ def result_json(results: tuple[Result, ...]) -> str:
         else:
             report['forcing'] = result.forcing.as_json()
         for test in report['tests']:
+            if test['phases'] is None:
+                del test['phases']
             if test['head_forced'] is None:
                 del test['head_forced']
             if id(test) in retained:

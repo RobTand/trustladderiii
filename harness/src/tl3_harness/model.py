@@ -13,6 +13,20 @@ class HarnessInputError(ValueError):
     """TL3's own check input is malformed: TL3's error, never the repo's or PrismaBuild's (Q51)."""
 
 
+def validate_symptom(value, tests):
+    if (not isinstance(value, dict) or set(value) != {'node', 'exception', 'phase', 'repeat', 'parallel'}
+            or tuple(tests) != (value.get('node'),)
+            or value.get('phase') not in ('call', 'setup')
+            or not isinstance(value.get('exception'), str)
+            or not re.fullmatch(r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+', value['exception'])
+            or value['exception'].rsplit('.', 1)[-1] in (
+                'Exception', 'BaseException', 'AssertionError', 'ForcingError', 'ForcingTampered')
+            or type(value.get('repeat')) is not int or not 1 <= value['repeat'] <= 10
+            or type(value.get('parallel')) is not int or value['parallel'] not in (0, 2, 3, 4)):
+        raise HarnessInputError('A declared symptom needs one exact node, a qualified exception class, '
+                                'call/setup phase, repeat 1 to 10 and parallel 0 or 2 to 4.')
+
+
 class Kind(StrEnum):
     DEMONSTRATING = "demonstrating"
     REGRESSION = "regression"
@@ -55,6 +69,7 @@ class FailureNotes(dict):
     def __init__(self):
         super().__init__()
         self.details: dict[str, Failure] = {}
+        self.phases: dict[str, dict] = {}
 
 
 FORCING_LIMIT = 8
@@ -215,8 +230,13 @@ class Check:
     tests: tuple[str, ...]
     forcing: Forcing | None = None
     helper_evidence: HelperEvidence | None = None
+    declared_symptom: dict | None = None
 
     def __post_init__(self):
+        if self.declared_symptom is not None:
+            validate_symptom(self.declared_symptom, self.tests)
+            if self.kind != Kind.DEMONSTRATING or self.helper_evidence is not None:
+                raise HarnessInputError('A declared symptom requires a demonstrating check without helper observers.')
         if self.helper_evidence is not None and (self.kind != Kind.DEMONSTRATING or self.forcing is not None
                                                 or not isinstance(self.helper_evidence, HelperEvidence)):
             raise HarnessInputError("helper evidence requires an unforced demonstrating check")
@@ -244,6 +264,7 @@ class TestResult:
     message: str = ""
     # A forced check's head run under the forcing; `base` is then the base under it (#393).
     head_forced: Outcome | None = None
+    phases: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -256,6 +277,8 @@ class Result:
     forcing: Forcing | None = None
     helper_evidence: dict | None = None
     selection: dict | None = None
+    declared_symptom: dict | None = None
+    symptom_evidence: dict | None = None
 
 
 MESSAGE_LIMIT = 1000
@@ -273,6 +296,18 @@ def base_refusal(check: Check, test: str, before: Outcome, notes: FailureNotes |
     failure = (notes.details if notes is not None else {}).get(test)
     if before != Outcome.ERROR or failure is None:
         return ""
+    facts = notes.phases.get(test, {})
+    if any(facts.get(phase, {}).get('outcome') == 'failed' for phase in ('setup', 'teardown')):
+        failures = []
+        for phase in ('setup', 'call', 'teardown'):
+            fact = facts.get(phase, {})
+            if fact.get('outcome') == 'failed':
+                classification = 'an assertion failure' if fact['assertion'] else 'an error'
+                exception = (failure.exception if phase == failure.phase else fact['exception']) or 'an unknown exception'
+                failures.append(f"{classification} {WHEN[phase]} (`{exception}`)")
+        return (f"On the base this test had {'; and '.join(failures)}. "
+                f"A setup or teardown failure blocks assertion RED, so it does not {verb} the change. "
+                "Fix the setup or teardown error and keep the assertion in the test body.")
     what = f"`{failure.exception}`" if failure.exception else "an error"
     match failure.phase:
         case "collection":
@@ -297,6 +332,10 @@ def forced_base_refusal(test: str, before: Outcome, notes: FailureNotes | None) 
         return (f"The plan's forcing could not be applied: {failure.exception}. The forcing is part of the "
                 "plan, so no change to the code or tests can fix it; report the goal as not met and quote "
                 "this message.")
+    facts = (notes.phases if notes is not None else {}).get(test, {})
+    if any(facts.get(phase, {}).get('outcome') == 'failed' for phase in ('setup', 'teardown')):
+        check = Check('forced base', Kind.DEMONSTRATING, (test,))
+        return base_refusal(check, test, before, notes).replace('On the base ', 'On the base under the forcing ', 1)
     match before:
         case Outcome.ASSERTION:
             return ""
@@ -358,7 +397,12 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
                 message = message[:MESSAGE_LIMIT - len(TRUNCATED)] + TRUNCATED
         if not passed and not message:
             message = f"Check {check.kind}: base {before}, head {after}."
-        tests.append(TestResult(test, before, after, pre_existing, passed, message[:MESSAGE_LIMIT], during))
+        phases = {}
+        for side, notes in (('base', base_notes), ('head', messages), ('head_forced', forced_messages)):
+            if fact := getattr(notes, 'phases', {}).get(test):
+                phases[side] = fact
+        tests.append(TestResult(test, before, after, pre_existing, passed, message[:MESSAGE_LIMIT], during,
+                                phases or None))
     verdict = (Verdict.INFRASTRUCTURE_FAILURE if infrastructure else
                Verdict.PASS if all(test.passed for test in tests) else Verdict.FAIL)
-    return Result(check.name, check.kind, verdict, tuple(tests), forcing=check.forcing)
+    return Result(check.name, check.kind, verdict, tuple(tests), forcing=check.forcing, declared_symptom=check.declared_symptom)

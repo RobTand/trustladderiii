@@ -1,10 +1,29 @@
-"""A supervisor-shaped test client. It never selects a production model."""
+"""Shared worker clients and PrismaBuild fixtures. No production models."""
 
+from copy import deepcopy
 from dataclasses import dataclass
+import hashlib
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
+
+import pytest
+
+from tl3_workers.forcing_rehearsal import ForcingRehearsals
+from tl3_workers.pb_tests import TestSettings
+from tl3_workers.roles import planner
+from tl3_workers.tools import Worktree, build_tools
+import pb_fixtures as shared
+
+
+IMAGE = shared.IMAGE
+KEY = shared.KEY
+call = shared.call
+configured_generator = shared.configured_generator
+generator_repo = shared.generator_repo
+submission = shared.submission
 
 
 @dataclass
@@ -101,3 +120,219 @@ class SchemaFollowingModel(FakeMessagesListChatModel):
 '''.replace('FIELDS', repr(fields))
     monkeypatch.setattr(__import__(__name__), 'LAUNCH', LAUNCH.replace(
         'model = FakeMessagesListChatModel(', setup + '\nmodel = SchemaFollowingModel('))
+
+
+def prepare_base_submission(submission, base_value="base", head_value="head"):
+    root, scripts = submission
+
+    def git(*args):
+        return subprocess.check_output([
+            "git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+            "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args,
+        ], cwd=root, text=True).strip()
+
+    git("init", "--quiet", "--template=")
+    (root / "example_module.py").write_text(f"value = {base_value!r}\n")
+    test_source = ("from example_module import value\ndef test_value():\n"
+                   "    if value == 'error': raise RuntimeError('fixture error')\n"
+                   "    assert value == 'head'\n"
+                   "def test_other(): assert value == 'head'\ndef test_pass(): pass\n")
+    if base_value != "missing":
+        (root / "test_code.py").write_text(test_source)
+    git("add", ".")
+    git("commit", "--quiet", "-m", "Check base")
+    base = git("rev-parse", "HEAD")
+    (root / "test_code.py").write_text(test_source)
+    (root / "example_module.py").write_text("value = 'earlier maker commit'\n")
+    git("add", ".")
+    git("commit", "--quiet", "-m", "Earlier maker round")
+    head = git("rev-parse", "HEAD")
+    (root / "example_module.py").write_text(f"value = {head_value!r}\n")
+    before = git("status", "--porcelain")
+    script = scripts / "pbrun.py"
+    script.write_text(script.read_text().replace(
+        'assert (root / "checkout/uncommitted.py").read_bytes() == b"current dirty bytes\\x00\\xff"\n', "",
+    ).replace(
+        'print(json.dumps({"schema":',
+        '''import subprocess
+sys.path.insert(0, str(root / "trusted"))
+from tl3_harness.test_tool import Summary
+selected = args[args.index("--") + 6]
+run = subprocess.run([sys.executable, str(root / "trusted/tl3_harness/runner.py"),
+                      selected, str(root / "checkout"), "--summary"], capture_output=True, text=True)
+assert run.returncode in (0, 1, 4, 5), run.stdout + run.stderr
+summary = Summary()
+for line in run.stdout.splitlines():
+    record = json.loads(line)
+    if record["event"] == "result":
+        summary.add(record["test"], record["outcome"], record["message"])
+(here / "response.json").write_text(json.dumps(summary.result))
+record = here / "submissions.json"
+submissions = json.loads(record.read_text()) if record.exists() else []
+submissions.append(json.loads(selected))
+record.write_text(json.dumps(submissions))
+print(json.dumps({"schema":''',
+    ).replace('"action_key": "a" * 64', '"action_key": ("a" if len(submissions) == 1 else "c") * 64'))
+    waiter = scripts / "pbwait.py"
+    waiter.write_text(waiter.read_text().replace('"action_key": "a" * 64', '"action_key": sys.argv[-1]'))
+    return base, head, before, git
+
+
+def invoke(submission, response, arguments):
+    root, scripts = submission
+    (scripts / "response.json").write_text(json.dumps(response))
+    with Worktree(root) as tree:
+        tree.test_settings = TestSettings(IMAGE, scripts, cpus=1, mem_gb=2)
+        tool = build_tools(tree, {"run_tests": "Run worktree tests through PrismaBuild."})[0]
+        return tool.invoke(arguments), tree
+
+
+def submitted(submission):
+    return json.loads((submission[1] / "submitted.json").read_text())
+
+
+@pytest.fixture
+def generator_backend(tmp_path, monkeypatch):
+    # Exercise real git-index generation and artifact validation. Only the fleet
+    # transport and Docker launch are replaced; these tests themselves run remotely.
+    from tl3_harness import generator
+    from tl3_workers import pb_generators
+    monkeypatch.setattr(generator, "require_admission", lambda: None)
+    monkeypatch.setattr(generator, "container_command", lambda tree, container, argv, cidfile: argv)
+    calls = []
+    artifacts = {}
+
+    def command(args):
+        if args[1].endswith("pbrun.py"):
+            root = Path(args[args.index("--cwd") + 1])
+            contract = json.loads((root / "generator.json").read_text())
+            result = generator.run(root / "checkout", generator.Container(IMAGE), **contract)
+            raw = (generator.PREFIX + json.dumps(result) + "\n").encode()
+            log = tmp_path / f"generator-{len(calls)}.log"
+            log.write_bytes(raw)
+            artifacts[KEY] = {"action_key": KEY, "status": "executed", "exit_code": 0,
+                              "diagnostics": {"elapsed_s": 123.5},
+                              "succeeded": True, "result": {"verified": True,
+                              "receipt_sha256": "b" * 64, "stdout": {
+                                  "path": str(log), "bytes": len(raw),
+                                  "sha256": hashlib.sha256(raw).hexdigest()}}}
+            calls.append(args)
+            return 0, {"schema": "prismabuild.submission.v1", "action_key": KEY}
+        return 0, {"schema": "prismabuild.endings.v1", "complete": True,
+                   "endings": [artifacts[KEY]]}
+
+    monkeypatch.setattr(pb_generators, "_json_command", command)
+    return calls, artifacts
+
+
+NODE = 'tests/test_adoption.py::test_adopt'
+
+
+FORCING = {'symptom': 'Publishing waits for a slow decision.', 'environment': {},
+           'patches': [{'target': 'publisher.Publisher.decide', 'delay_seconds': 0.001}]}
+
+
+SOURCE = '''
+class Publisher:
+    def decide(self):
+        return True
+
+    def try_adopt(self):
+        return True
+
+    def publish(self):
+        if self.try_adopt():
+            return True
+        return self.decide()
+'''
+
+
+TEST = '''
+from publisher import Publisher
+import time
+
+def test_adopt():
+    start = time.monotonic()
+    assert Publisher().publish()
+    assert time.monotonic() - start < 0.5
+'''
+
+
+def git(root, *args):
+    return subprocess.run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                           *args], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+
+
+@pytest.fixture
+def rehearsal(tmp_path, monkeypatch):
+    root = tmp_path / 'repo'
+    (root / 'tests').mkdir(parents=True)
+    (root / 'publisher.py').write_text(SOURCE)
+    (root / 'tests/test_adoption.py').write_text(TEST)
+    (root / 'pyproject.toml').write_text('[tool.tl3.harness]\ntest-files=["tests/*.py"]\n')
+    git(root, 'init', '-q')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'base')
+    base = git(root, 'rev-parse', 'HEAD')
+    inputs = {'base_sha': base, 'tests': {'image': IMAGE, 'tools_path': str(tmp_path)},
+              'must_split': False, 'findings': [], 'protected_paths': [],
+              'ingest': {'brief': 'Preserve adoption, no copying and no publication wait.',
+                         'goals': [{'description': 'Make the adoption test deterministic.', 'verification': 'test'}]},
+              'forecast': {'fit_tokens': 100000, 'context_tokens': 150000, 'overhead_tokens': {'tools': 1}}}
+    calls = []
+    from tl3_workers import pb_tests
+
+    def submit(command):
+        if 'pbrun.py' in command[1]:
+            calls.append(command)
+            staged = Path(command[command.index('--cwd') + 1])
+            # A fake PB transport drives the real staged harness and runner on free remote compute.
+            # Only the admission/container seams are replaced; the served code is never mocked.
+            script = '''
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path('trusted').resolve()))
+from tl3_harness import test_tool
+from tl3_harness import execution
+import json
+execution.require_admission = test_tool.require_admission = lambda: None
+import os
+os.environ['PRISMABUILD_ACTION_PROGRESS_PATH'] = str(Path('progress.json').resolve())
+os.environ['PRISMABUILD_ACTION_PROGRESS_TOKEN'] = 'fixture'
+test_tool.container_command = lambda tree, container, tests: [sys.executable, '-I', '-B',
+    str(Path(execution.__file__).with_name('runner.py')), '-', str(tree)]
+sys.argv = ['action.py', *json.loads(sys.argv[1])]
+test_tool.main()
+'''
+            args = command[command.index('action.py') + 1:]
+            child = subprocess.run([sys.executable, '-c', script, json.dumps(args)], cwd=staged,
+                                   capture_output=True, text=True, check=True)
+            log = tmp_path / 'action.log'
+            log.write_text(child.stdout)
+            return 0, {'schema': 'prismabuild.submission.v1', 'action_key': 'a' * 64}
+        import hashlib
+        log = tmp_path / 'action.log'
+        raw = log.read_bytes()
+        return 0, {'schema': 'prismabuild.endings.v1', 'complete': True, 'endings': [
+            {'action_key': 'a' * 64, 'status': 'executed', 'exit_code': 0, 'succeeded': True,
+             'result': {'verified': True, 'receipt_sha256': 'b' * 64,
+                        'stdout': {'path': str(log), 'bytes': len(raw),
+                                   'sha256': hashlib.sha256(raw).hexdigest()}}}]}
+    monkeypatch.setattr(pb_tests, '_json_command', submit)
+    monkeypatch.setattr(planner.Forecaster, 'measure', lambda *a: {'fits': True})
+    monkeypatch.chdir(root)
+    with Worktree(root) as tree:
+        yield ForcingRehearsals(tree, inputs), root, inputs, calls
+
+
+def plan(forcing=FORCING):
+    return {'kind': 'leaf', 'estimated_exploration_turns': 0,
+            'files': ['tests/test_adoption.py'], 'edits_tests': [NODE],
+            'checks': [{'kind': 'demonstrating', 'node_ids': [NODE], 'goal_ids': [0],
+                        'forcing': deepcopy(forcing)}], 'no_design_questions': True, 'lands_on_its_own': True}
+
+
+def reachable():
+    result = deepcopy(FORCING)
+    result['patches'] = [{'target': 'publisher.Publisher.try_adopt', 'delay_seconds': 1}]
+    return result

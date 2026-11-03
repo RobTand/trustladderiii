@@ -32,6 +32,8 @@ pub struct Check {
     pub forcing: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub helper_evidence: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_symptom: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -80,6 +82,11 @@ pub(crate) fn validate_plan_size(plan: &[Check]) -> Result<()> {
                 "failure_preservation":evidence["failure_cases"].as_array().ok_or(Error::Invalid("helper evidence requires failure cases"))?.iter().map(|_| serde_json::json!({
                     "base":"infrastructure-failure", "head":"infrastructure-failure"})).collect::<Vec<_>>()});
         }
+        if let Some(symptom) = &check.declared_symptom {
+            header["declared_symptom"] = symptom.clone();
+            // Up to thirty reports, each with a bounded pytest traceback and identity.
+            result_bytes += 384 * 1024;
+        }
         result_bytes += ascii_json_bytes(&header)? + 1;
         for test in &check.tests {
             let mut case = serde_json::json!({
@@ -90,6 +97,10 @@ pub(crate) fn validate_plan_size(plan: &[Check]) -> Result<()> {
                 case["head_forced"] = "uncollected".into();
             }
             result_bytes += ascii_json_bytes(&case)? + 1;
+            // Match the harness reservation: three bounded phase facts and the concrete node per side.
+            let sides = if check.forcing.is_some() { 3 } else { 2 };
+            result_bytes +=
+                sides * (3 * (200 * 12 + 100) + 100 + ascii_json_bytes(&serde_json::json!(test))?);
         }
         if result_bytes > super::results::MAX_RESULT_BYTES {
             return Err(Error::Invalid(

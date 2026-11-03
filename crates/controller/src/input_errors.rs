@@ -122,11 +122,13 @@ impl Controller {
             effect: None,
             post_key: Some(format!("incident:{id}")),
             // Reading or translating upstream input failed.
-            cause: Some(if class == "redaction_infra" {
-                crate::looks::Cause::Tl3
-            } else {
-                crate::looks::Cause::Upstream
-            }),
+            cause: Some(
+                if class == "redaction_infra" || class == crate::postmortems::PAUSED {
+                    crate::looks::Cause::Tl3
+                } else {
+                    crate::looks::Cause::Upstream
+                },
+            ),
             input_failure: Some(InputFailure {
                 scope: scope.into(),
                 target,

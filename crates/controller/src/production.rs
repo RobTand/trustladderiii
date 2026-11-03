@@ -247,6 +247,9 @@ pub(crate) fn maker_inputs(
         if let Some(forcing) = check.get("forcing") {
             planned["forcing"] = forcing.clone();
         }
+        if let Some(symptom) = check.get("declared_symptom") {
+            planned["declared_symptom"] = symptom.clone();
+        }
         if let Some(evidence) = check.get("helper_evidence") {
             planned["helper_evidence"] = evidence.clone();
         }

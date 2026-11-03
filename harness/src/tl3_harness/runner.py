@@ -325,7 +325,8 @@ def describe(error):
 
 
 class Reporter:
-    def __init__(self, tests, descriptor, summary=False, parallel=False, patches=(), selection=None):
+    def __init__(self, tests, descriptor, summary=False, parallel=False, patches=(), selection=None,
+                 declared_symptom=None, worker=False):
         self.tests = tests
         self.descriptor = descriptor
         self.summary = summary
@@ -333,6 +334,9 @@ class Reporter:
         self.parallel = parallel
         self.patches = patches
         self.selection = selection
+        self.declared_symptom = declared_symptom
+        self.worker = worker
+        self.failures = {}
         self.target_hits = {}
         self.forcing_tampered = {}
         self.forcing_refusals = {}
@@ -396,6 +400,8 @@ class Reporter:
                     raise
 
     def emit(self, **record):
+        if self.worker:
+            return
         data = (json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n").encode(errors='backslashreplace')
         while data:
             data = data[os.write(self.descriptor, data):]
@@ -450,6 +456,10 @@ class Reporter:
             self.emit(event="collection", tests=[])
             pytest.exit(str(error), returncode=4)
         self.emit_collection_errors()
+        retained = set(selected)
+        dropped = [item for item in items if item not in retained]
+        if dropped:
+            config.hook.pytest_deselected(items=dropped)
         items[:] = selected
         self.emit(event="collection", tests=[item.nodeid for item in selected],
                   **({"saturation": saturation} if saturation else {}))
@@ -492,12 +502,29 @@ class Reporter:
         if call.excinfo and isinstance(call.excinfo.value, ForcingTampered):
             message = str(call.excinfo.value) + '\n' + message
         if self.summary:
+            if self.declared_symptom is not None and report.failed and call.excinfo:
+                error = call.excinfo.value
+                frames = list(call.excinfo.traceback)
+                own = any(Path(str(frame.path)).resolve().is_relative_to(Path.cwd()) for frame in frames)
+                # A forcing that raises an exception itself is never the old test's symptom.
+                injected = any(Path(str(frame.path)).resolve() == Path(__file__).resolve() for frame in frames)
+                failure = {'exception': type(error).__module__ + '.' + type(error).__qualname__,
+                           'phase': call.when, 'source': own and not injected}
+                self.failures.setdefault(item.nodeid, []).append(failure)
+                report.tl3_symptom_failure = failure
+            report.tl3_assertion = bool(assertion)
+            if report.when == 'teardown':
+                report.tl3_target_hits = self.target_hits.get(item.nodeid, {})
+                report.tl3_forcing_tampered = self.forcing_tampered.get(item.nodeid)
+                report.tl3_forcing_refusal = self.forcing_refusals.get(item.nodeid)
             self.phases.setdefault(item.nodeid, []).append(
                 (report.when, outcome, message[:1000], len(message) > 1000, assertion))
             return report
         self.emit(event="phase", test=item.nodeid, when=report.when,
                   outcome=outcome, assertion=bool(assertion and outcome == "failed"), missing=missing,
                   exception=describe(call.excinfo.value) if report.failed and call.excinfo else "",
+                  exception_type=(type(call.excinfo.value).__module__ + '.' + type(call.excinfo.value).__qualname__)[:200]
+                  if report.failed and call.excinfo else "",
                   message=message[:1000])
         return report
 
@@ -509,6 +536,16 @@ class Reporter:
             crash = getattr(getattr(report.longrepr, "reprcrash", None), "message", "") or ""
             assertion = (report.when == "call" and report.failed
                          and crash.startswith(("AssertionError", "assert ", "Failed")))
+            if self.declared_symptom is not None:
+                assertion = getattr(report, 'tl3_assertion', False)
+                if failure := getattr(report, 'tl3_symptom_failure', None):
+                    self.failures.setdefault(report.nodeid, []).append(failure)
+                if report.when == 'teardown':
+                    self.target_hits[report.nodeid] = getattr(report, 'tl3_target_hits', {})
+                    if tampered := getattr(report, 'tl3_forcing_tampered', None):
+                        self.forcing_tampered[report.nodeid] = tampered
+                    if refusal := getattr(report, 'tl3_forcing_refusal', None):
+                        self.forcing_refusals[report.nodeid] = refusal
             outcome = "skipped" if hasattr(report, "wasxfail") else report.outcome
             message = str(report.longrepr) if report.failed else ""
             self.phases.setdefault(report.nodeid, []).append(
@@ -526,6 +563,8 @@ class Reporter:
         message = "\n".join(p[2] for p in failures)
         hits = self.target_hits.pop(report.nodeid, {})
         extra = {"target_hits": hits} if self.patches else {}
+        if self.declared_symptom is not None:
+            extra['failures'] = self.failures.pop(report.nodeid, [])
         tampered = self.forcing_tampered.pop(report.nodeid, None)
         if tampered is not None:
             outcome = 'error'
@@ -543,14 +582,28 @@ class Reporter:
         if self.accounting_directory is not None and os.getpid() == self.accounting_owner:
             shutil.rmtree(self.accounting_directory)
 
+    @pytest.hookimpl(optionalhook=True)
+    def pytest_configure_node(self, node):
+        node.workerinput['tl3_symptom'] = {'tests': self.tests, 'patches': self.patches,
+                                          'declared_symptom': self.declared_symptom}
+
+
+def pytest_configure(config):
+    data = getattr(config, 'workerinput', {}).get('tl3_symptom')
+    if data and data['declared_symptom'] is not None:
+        config.pluginmanager.register(Reporter(data['tests'], -1, summary=True, patches=data['patches'],
+                                               declared_symptom=data['declared_symptom'], worker=True))
+
 
 def main():
     tests = json.load(sys.stdin) if sys.argv[1] == "-" else json.loads(sys.argv[1])
     forcing = {}
     selection = None
+    declared_symptom = None
     if isinstance(tests, dict):
         # A forced check's selection carries the plan's forcing, which the host validated (#393).
         selection = tests.get("selection")
+        declared_symptom = tests.get('declared_symptom')
         tests, forcing = tests["tests"], tests.get("forcing", {})
         os.environ.update(forcing.get("environment", {}))
     descriptor = os.dup(1)
@@ -565,7 +618,8 @@ def main():
     os.chdir(checkout)
     sys.path.insert(0, str(Path.cwd()))
     reporter = Reporter(tests, descriptor, summary, parallel=bool(summary and parallel),
-                        patches=tuple(forcing.get("patches", ())), selection=selection)
+                        patches=tuple(forcing.get("patches", ())), selection=selection,
+                        declared_symptom=declared_symptom)
     # Start before pytest loads the checkout's conftest files, ini options and
     # plugins. Any exit after this point may come from the code under test.
     reporter.pytest_sessionstart()
@@ -577,7 +631,14 @@ def main():
             reporter.emit(event="unavailable", message="pytest-xdist is not installed in the test image")
             reporter.pytest_sessionfinish(0)
             return 0
-        return int(pytest.main(["--rootdir=.", "-p", "xdist.plugin", "-n", str(parallel),
+        worker_plugin = []
+        if declared_symptom is not None:
+            harness = Path(__file__).resolve().parent
+            sys.path.insert(0, str(harness.parent))
+            # Pytest owns the short plugin name "runner". Use the mounted package's name.
+            os.environ['PYTHONPATH'] = str(harness.parent)
+            worker_plugin = ['-p', f'{harness.name}.runner']
+        return int(pytest.main(["--rootdir=.", "-p", "xdist.plugin", *worker_plugin, "-n", str(parallel),
                                 "--", *(tests or ["."])], plugins=[reporter]))
     if summary:
         return int(pytest.main(["--rootdir=.", "--", *(tests or ["."])], plugins=[reporter]))

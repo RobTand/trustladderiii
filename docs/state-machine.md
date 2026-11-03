@@ -1,6 +1,6 @@
 # TL3 state machine
 
-Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. On 2026-10-29 and 30, I grilled him on every open branch of the specs; his 41 decisions are listed under "Decisions from the grilling", and the text cites them as Q1 to Q41. Two later decisions that day, Q42 and Q43, and Q44, Q45, Q46 and the amendment to Q29 from 2026-10-31 are listed with them, along with Q48, Q50 and Q51 from 2026-11-01, and Q54 from 2026-11-02. The stack it runs on is in `docs/stack.md`.
+Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. On 2026-10-29 and 30, I grilled him on every open branch of the specs; his 41 decisions are listed under "Decisions from the grilling", and the text cites them as Q1 to Q41. Two later decisions that day, Q42 and Q43, and Q44, Q45, Q46 and the amendment to Q29 from 2026-10-31 are listed with them, along with Q48, Q50 and Q51 from 2026-11-01, and Q54 from 2026-11-02 and the Q27 declared-symptom RED approval (#592) from 2026-11-03. The stack it runs on is in `docs/stack.md`.
 
 **Precedence.** `docs/state-table.md` is the source of truth for the kernel: its phases, events, rules and numbers. This document keeps the reasoning and Rob's decisions. Where the two disagree, the state table wins, and the disagreement is a bug in this document.
 
@@ -37,10 +37,10 @@ Agreed:
 Agreed for the fit limit (Q4); the rest is proposed:
 
 - Split into the largest piece that fits, not the smallest.
-- Every split has at least 2 children, and there is no upper limit.
-- Code measures each child's forecast. Every child must be smaller than its parent, except when the split is by repo.
+- Every split has at least 2 children. Execution-budget split proposals have at most 8 pieces under Rob's 2026-11-03 Q27 approval below; other splits keep their existing bounds.
+- Code measures each child's forecast. Every child must be smaller than its parent, except when the split is by repo. An execution-budget split instead lowers each child's execution estimate and requires both tool-turn and token fit.
 - A node is a leaf when four things hold:
-  - **It fits:** forecast peak context is under about 100k of the 150k. The 100k is a starting value, tuned later from MLflow data. Slice one can't split yet, so it asks Rob to narrow a request that doesn't fit (Q4).
+  - **It fits:** forecast peak context is under about 100k of the 150k, and required tool work fits the maker's allowance minus finalization capacity. The context limit is a starting value, tuned later from MLflow data. Slice one still uses its existing narrowing path (Q4).
   - **It is checkable:** each measure has a check.
   - **It is decided:** no design questions remain.
   - **It lands alone:** it is one reviewable change that keeps main passing on its own, in one repo.
@@ -100,7 +100,7 @@ Agreed on 2026-10-29. Rob asked for self-review, adversarial review against pred
 
 **Checks must be able to fail.** Proposed after review round 2, and agreed by Rob on 2026-10-30 (Q40). A check that only passes proves nothing, but demanding that every check fail on the old code would reject the normal case, because existing tests pass there. So each check is one of three kinds:
 
-- **Demonstrating:** a new test that fails on the old code with only the new tests added, by a real assertion rather than a setup error, and passes on the new code.
+- **Demonstrating:** a new test that fails on the old code with only the new tests added, by a real assertion or an explicitly declared symptom under Q27 #592, and passes on the new code.
 - **Regression:** existing tests that must still pass. Failures that already happen on the old code are excused.
 - **Behavior-preserving:** for refactors, the tests pass on both versions, and review judges the rest.
 
@@ -504,7 +504,40 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 - **Q54 Fail fast: stop for TL3 review instead of retrying:** Rob, 2026-11-02, in full: "can we stop retries under TL3 so that we can fail faster. we're just burning tokens on retries that end up being our issues to resolve." The coordinator turned that into #440 with MLflow evidence: retries rescued 3 of 15 requests for about 6.9M tokens and burned about 36.6M on requests that failed anyway, every time because of TL3's own defects. `[limits] fail_fast` defaults to false, which keeps the rules above; the live config sets it true. With it on, each step that would retry the work stops the request for TL3 review instead:
   - round 1 fails, or the maker says `cant_meet`, instead of attempts 2 and 3 and the re-plan (Q22);
   - the maker or the fresh reviewer runs out of room, or the maker needs files that don't fit, instead of a split;
-  - the planner says `cant_meet`, instead of a re-run on its next model. The planner worker reports a plan that breaks a rule as `cant_meet` too, so a rule-breaking plan also stops at once.
+  - the planner says `cant_meet`, instead of a re-run on its next model. The planner worker reports a completed plan that breaks a rule as `cant_meet` too, so a rule-breaking completed plan also stops at once.
+
+  **Approved Q27/Q54 exception, Rob, 2026-11-03:**
+  [approval on #573](https://github.com/RobTand/trustladderiii/issues/573#issuecomment-6602791857)
+  enables #577's existing single tool-free planner correction in production
+  with `repair_plan_consistency: true`. Only an edited test missing
+  demonstrating coverage or a forced demonstrating selection absent from the
+  base may enter it, and only when there is no substantive violation. The
+  correction stays in the same worker run and accounting limits, uses only
+  already-read facts, and stays bound to the original draft's files, goals,
+  existing check kinds and forcings. It may only add missing demonstrating
+  coverage, swap forced non-base selections for base nodes, or drop an
+  uncovered unnecessary edit. An appended demonstrating check may have no
+  forcing or reuse a draft forcing unchanged. It may honestly return
+  `cant_meet`. Added files, a wider footprint, unrelated checks or edits,
+  changed forcings and new goals remain PlanCantMeet. A second inconsistent
+  reply ends correction with both named diagnostics. Substantive failures,
+  unsupported requirements, protected-path conflicts, out-of-room conditions
+  and actual work failures keep their existing paths. Q50 infrastructure
+  handling and Q55 base/head proof requirements are unchanged. This exception
+  adds no work generation, model-ladder retry or automatic restart. See the
+  authoritative Planning section in `docs/state-table.md`.
+
+  The recorded stop steps are `checks_failed`, `changes_requested`,
+  `ci_failed`, `maker_cant_meet`, `maker_needs_files`, `maker_out_of_room`,
+  `reviewer_out_of_room`, `plan_cant_meet`, and `publication_body`.
+
+  **TL3-created publication body refusal**
+  ([#629](https://github.com/RobTand/trustladderiii/issues/629)) uses the same
+  review stop even when `fail_fast` is off. Only `OpenPr` can stop at
+  `publication_body` after `BodyPolicyRefused`. It spends no credit, retains the
+  bounded publication diagnostic, and never asks Rob to repair TL3's generated
+  body. For every other effect kind, `BodyPolicyRefused` is an ordinary permanent
+  effect failure with the existing incident and owner-question handling.
 
   A stop for TL3 review closes as Stopped with reason `tl3_review`. It spends no credit and asks Rob nothing. The summary names the failing step and its evidence, says to comment `restart`, and leaves the issue open (Q49). A postmortem is owed as `needed_fix`, and one line goes to the operations issue for the coordinator, who restarts the request after the TL3 fix ships, or at once on a stronger model when the work itself was the cause. tl3d sets the flag on the stored world at every start, so it applies to requests already open.
 
@@ -690,14 +723,22 @@ Rob, 2026-11-02, answering #393: "yes, agreed." This is a reading of Q40 for def
 
 > For a change whose goal is to make a named flaky test deterministic, a **forced reproduction** counts as the red:
 > - The plan names a **forcing**: a patch, fixture or environment setting the harness applies. It deterministically recreates the flake's condition, for example "a real process holds PID 4242".
-> - With the forcing applied, the harness runs the **old test on the base code**, which must fail by assertion, and the **new test on the change**, which must pass. The new test must also pass without the forcing.
+> - With the forcing applied, the harness runs the **old test on the base code**, which must fail by assertion or its explicitly declared symptom, and the **new test on the change**, which must pass. The new test must also pass without the forcing.
 > - The maker can't alter the forcing's verdict, because it's applied by the harness outside the test being fixed. The reviewer judges whether the forcing really models the symptom the issue describes.
 > - Stress runs, meaning repeat until it fails, don't count.
 > - If no forcing can be written, the planner says "can't meet" once, with the reason. Under fail-fast (#440) the request then stops for TL3 review.
 
 The forcing is a field on a demonstrating check. It is declarative: a symptom, environment variables, and patches of attributes inside the served repository with a JSON value, a returned value, a builtin exception other than `AssertionError`, or a bounded delay. The planner writes it, so it is untrusted model output. The harness's host process only bounds it; the runner applies it inside the test container, under the same sandbox as the tests. The maker's edits can't reach it. The check's result echoes the forcing and the head's outcome under it, for review. The kernel is unchanged: it still sees a check pass or fail.
 
-A leaf that changes only tests (#444's `edits_tests` rule) is valid when every demonstrating check carries a valid forcing. Otherwise the planner reports that a change to tests alone needs a forced reproduction, or can't meet.
+A leaf that changes only tests (#444's `edits_tests` rule) is valid when every demonstrating check carries a valid forcing or an explicit declared-symptom contract. Otherwise the planner reports that a change to tests alone needs a forced reproduction, or can't meet.
+
+### Declared non-assertion symptoms
+
+[Rob's Q27 approval, 2026-11-03](https://github.com/RobTand/trustladderiii/issues/592#issuecomment-6602790849) extends demonstrating checks and Q55. Assertion RED remains the default. Before execution, the plan declares an exact exception class, exact original test node, and phase, either `call` or `setup`. The exception must come from the test's own code or fixture. PB #2643's `TimeoutError` from `Future.result` is a call symptom. PQ #3284's unwritable scratch fixture is a setup symptom. PB #2710's intermittent `FileNotFoundError` needs a fixed campaign. These errors remain errors; they are never renamed assertions.
+
+For intermittent symptoms, declare a fixed repeat count of 1 to 10 and parallel setting of 0 or 2 to 4, using the `run_tests` limits. Run the unchanged base and edited head under identical forcing and settings. RED requires at least one exact base occurrence. Zero base occurrences is not RED and must be reported with the declared denominator. GREEN requires zero matching head occurrences and every head run to pass. A forced reproduction also passes without forcing. No retry-until-failure is allowed.
+
+An undeclared setup error, import error, unrelated exception, infrastructure failure, missing report, or outer hang cannot supply RED. Keep every report and receipt bound to the immutable base, exact head, node, declaration, and forcing. Preserve pre-maker rehearsal, forcing reachability, independent checking, and final review. Q50 and Q54, bounded transitions, incident recovery, and explicit restart rules are unchanged. A test-only declared-symptom check runs the original fixture or helper on base instead of overlaying its repaired definition.
 
 ## Q57: requests that require protected paths
 
@@ -768,3 +809,38 @@ signature and dependencies. It rejects ambiguous targets and undeclared test
 edits. The existing evidence capability preflight advertises and checks method
 `helper_target_observer`. Regression and behavior-preserving definitions remain
 frozen; Q55 forcings keep their existing semantics. No kernel transition changes.
+
+## Q27: execution-budget feasibility (#614)
+
+Approved by Rob, 2026-11-03: [decision](https://github.com/RobTand/trustladderiii/issues/614#issuecomment-6602791347).
+
+> Execution-budget feasibility is a planning constraint: a plan that fits the token limit but would exceed the maker's tool/turn budget may be split before maker work, with bounded decomposition, every obligation preserved across the leaves, and aggregate accounting retained. Q54 (fail_fast) is unchanged.
+
+The planner receives the maker's current hard caps and finalization reserve.
+Code refuses a leaf whose estimated tool demand exceeds the usable allowance.
+The estimate includes proof, metadata, configured generation, final readback,
+regressions and scope review. Token and execution forecasts remain separate.
+The planner must explicitly estimate exploration as well as structural work.
+Code adds orientation reads, searches, globs and recall to the structural floor;
+a missing exploration declaration cannot establish execution fit. A declared
+total can increase the resulting estimate, never lower it.
+
+The new `execution_budget` split reason uses the existing PlanSplit reply and
+its existing transition. A proposal contains 2 to 8 pieces, preserves every
+source goal and records each piece's estimate and the aggregate demand and
+allowance. Each piece must fit both budgets and reduce execution demand.
+Slice one's existing narrowing path remains; this change creates no automatic
+maker continuation. Existing credit, admission and effect identities continue
+to bound and account for work. There is no kernel type or transition change.
+
+The maker's last 8 tool turns belong to verification and readback within its
+existing 64-turn cap. Edits and generation are refused during that reserve.
+Each turn reports the remaining budget in appended user content. By halfway
+through the cap, a maker without a completed edit to a declared non-test file
+is warned to stop broad exploration and implement with focused reads. Test-only
+edits do not satisfy that implementation milestone.
+The final JSON keeps its existing input-token reserve. Exhaustion records the
+limiting dimension, spent and allowed counts, exact preserved tree and
+unfinished obligations. It retains the existing fail_fast stop path and
+reaches the stop summary and operations notice as a typed budget diagnostic.
+No exhausted visit receives a fresh allowance or a blind automatic restart.

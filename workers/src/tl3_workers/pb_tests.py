@@ -216,6 +216,17 @@ def _summary(ending, key):
             raise ValueError("PrismaBuild returned no unique test summary")
         cause = "invalid_summary"
         result = json.loads(records[0])
+        if result.get('declared_symptom') is not None:
+            run_records = [json.loads(line.removeprefix('TL3_SYMPTOM_RUN ')) for line in raw.decode().splitlines()
+                           if line.startswith('TL3_SYMPTOM_RUN ')]
+            summaries = result.get('symptom_runs', [])
+            if len(run_records) != len(summaries):
+                raise ValueError('missing symptom run receipt')
+            for index, (record, summary) in enumerate(zip(run_records, summaries), 1):
+                encoded = json.dumps(record['records'], sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()
+                if (record['run'] != index or record['sha256'] != hashlib.sha256(encoded).hexdigest()
+                        or summary != {key: value for key, value in record.items() if key != 'records'}):
+                    raise ValueError('symptom run receipt changed')
         if (not isinstance(result, dict) or result.get("status") not in ("completed", "infrastructure_error", "not_available")
                 or not isinstance(result.get("tests"), list) or not isinstance(result.get("note"), str)
                 or not isinstance(result.get("totals"), dict) or set(result["totals"]) != set(OUTCOMES)
@@ -276,7 +287,7 @@ def _failure_receipt(ending, settings):
     return receipt
 
 
-def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None, forcing=None, timeout_seconds=None):
+def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None, forcing=None, timeout_seconds=None, declared_symptom=None):
     """Bind settings from role inputs, directly or via worktree.test_settings."""
     settings = settings if settings is not None else getattr(worktree, "test_settings", None)
     emit = emit if emit is not None else getattr(worktree, "progress_emit", lambda event: None)
@@ -321,6 +332,8 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                 if forcing is not None and result["status"] == "completed" and (
                         result.get("forcing") != forcing.as_json() or result.get("selectors") != list(selected)):
                     raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "forcing_or_selection_mismatch")
+                if declared_symptom is not None and result.get("declared_symptom") != declared_symptom:
+                    raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "symptom_mismatch")
                 return bounded(result, limit=SUMMARY_BYTES)
             if endings[0]["status"] not in ("waiting", "executed", "cache_hit"):
                 raise ValueError("PrismaBuild could not verify completion")
@@ -347,7 +360,8 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                             "quiet_seconds": settings.quiet_seconds, "exec_scratch": settings.exec_scratch,
                             "selectors": selected, "base_sha": base_sha, "repeat": repeat,
                             "parallel": parallel, "priority": priority, "timeout_seconds": timeout_seconds,
-                            "forcing": forcing.as_json() if forcing is not None else None}
+                            "forcing": forcing.as_json() if forcing is not None else None,
+                            "declared_symptom": declared_symptom}
                 identity = hashlib.sha256(json.dumps(contract, sort_keys=True).encode()).hexdigest()
                 worktree.pb_identity = identity
                 # Stage first. An old checkpoint is usable only for this immutable
@@ -381,6 +395,8 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                 if settings.exec_scratch:
                     command.append("--exec-scratch")
                 # Defaults add nothing, so a default call keeps its action identity.
+                if declared_symptom is not None:
+                    command.extend(["--declared-symptom", json.dumps(declared_symptom, sort_keys=True)])
                 if repeat != 1:
                     command.extend(["--repeat", str(repeat)])
                 if parallel:

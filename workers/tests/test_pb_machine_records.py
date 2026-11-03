@@ -230,7 +230,9 @@ def test_receipt_fake_cli_capability_branch(submission, script):
     result = subprocess.run([sys.executable, str(scripts / script), '--machine-record-capability'],
                             capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.endswith('\n') and result.stdout.count('\n') == 1
+    assert result.stdout == (
+        '{"schema":"prismabuild.machine_record_capability.v1","machine_record_fd":1}\n')
+    assert pb_tests._machine_record_supported(str((scripts / script).resolve()))
     capability = json.loads(result.stdout)
     assert capability == {
         'schema': 'prismabuild.machine_record_capability.v1', 'machine_record_fd': 1}

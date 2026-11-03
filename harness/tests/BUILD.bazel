@@ -183,3 +183,22 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_declared_symptom",
+    srcs = ["test_declared_symptom.py"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+        "@tl3_pip//pytest_xdist",  # keep: runner.py loads it in a subprocess
+    ],
+)
+
+tl3_py_test(
+    name = "test_failure_phases",
+    srcs = ["test_failure_phases.py"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
