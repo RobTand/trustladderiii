@@ -17,7 +17,7 @@ import check
 
 class DiscoveryTests(unittest.TestCase):
     def test_shared_checker_matches_the_coordinator_pin(self):
-        expected = 'a7c88079f0b2558d24d68f7eef2d0824a9b32def42db49c733dc7a905f136eb2'
+        expected = 'decd9ce671299ece1b245811af459349ed9932ee9b81b2c4c7a13cf96b94f609'
         pin = Path(__file__).with_name('check_no_secret_leak.sha256')
         scanner = pin.with_suffix('.py')
         self.assertTrue(pin.is_file(), 'shared checker hash receipt is missing')

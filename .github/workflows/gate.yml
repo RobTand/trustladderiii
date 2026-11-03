@@ -92,18 +92,22 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.14'
+      - name: Explain skipped fork artifact uploads
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true
+        run: |
+          echo 'artifact uploads skipped: fork PR has no secrets to scan for'
       - id: secret-check
         name: Check artifacts before upload
-        if: always()
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true)
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
           MERGIFY_TOKEN: ${{ secrets.MERGIFY_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
           python3 tools/ci/before_upload.py
-          --env BUILDBUDDY_API_KEY --env MERGIFY_TOKEN --env GITHUB_TOKEN gate-output/
+          --require BUILDBUDDY_API_KEY --require MERGIFY_TOKEN --env GITHUB_TOKEN gate-output/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always() && steps.secret-check.outcome == 'success'
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true) && steps.secret-check.outcome == 'success'
         with:
           name: bazel-gate
           path: gate-output/
@@ -259,18 +263,22 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.14'
+      - name: Explain skipped fork artifact uploads
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true
+        run: |
+          echo 'artifact uploads skipped: fork PR has no secrets to scan for'
       - id: secret-check
         name: Check artifacts before upload
-        if: always()
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true)
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
           MERGIFY_TOKEN: ${{ secrets.MERGIFY_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
           python3 tools/ci/before_upload.py
-          --env BUILDBUDDY_API_KEY --env MERGIFY_TOKEN --env GITHUB_TOKEN gate-output/
+          --require BUILDBUDDY_API_KEY --require MERGIFY_TOKEN --env GITHUB_TOKEN gate-output/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always() && steps.secret-check.outcome == 'success'
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true) && steps.secret-check.outcome == 'success'
         with:
           name: post-merge-${{ github.sha }}
           path: gate-output/
