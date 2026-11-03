@@ -90,7 +90,13 @@ those marked for review. Return exactly one of these proposals:
   It passes only when the old test fails by assertion on the base under the
   forcing and the new test passes on the change both with and without the
   forcing. The reviewer judges whether the forcing models the symptom the
-  request describes. Repeating a test until it fails does not count. If no
+  request describes. A forced demonstrating check cannot name an invented or
+  newly added test: it runs tests defined at the base. If code asks you to fix
+  such a selection, name real existing base nodes using already-read facts and
+  preserve every deterministic, mutant and other required goal. A passing
+  smoke check is not red proof. If no supported forcing on existing tests can
+  honestly demonstrate the goals, return cant_meet.
+  Repeating a test until it fails does not count. If no
   forcing can recreate the condition, return can't meet once with the reason.
   If no deterministic test can be written and the change edits code, confirm
   the goal with regression or behavior-preserving checks that fit the evidence,

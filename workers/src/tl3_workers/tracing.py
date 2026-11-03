@@ -1237,13 +1237,13 @@ class WorkerStageError(ValueError):
 
 
 def failure_tags(error):
-    from tl3_workers.roles.planner import UncoveredEditedTests
+    from tl3_workers.roles.planner import PlanConsistencyError
     from tl3_workers.turns import InvalidReply, Unrepairable
 
-    if isinstance(error, UncoveredEditedTests):
+    if isinstance(error, PlanConsistencyError):
         # Node IDs are model text. Redact before retaining each draft's diagnostic.
-        message = 'edited tests without demonstrating checks: ' + ', '.join(error.node_ids)
-        return {"failure_class": "UncoveredEditedTests",
+        message = 'planner check inconsistency: ' + ', '.join(error.node_ids)
+        return {"failure_class": "PlanConsistencyError",
                 "failure_message": Redactor(None).text(message)[:220]}
     if isinstance(error, WorkerStageError):
         from jsonschema import ValidationError

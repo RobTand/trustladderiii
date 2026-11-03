@@ -629,12 +629,13 @@ def test_forcing_belongs_only_on_demonstrating_checks(planner_request, deflake_w
 
 
 def test_forced_check_names_the_old_test_at_the_base(planner_request, deflake_worktree):
-    from tl3_workers.roles.planner import check_reply
+    from tl3_workers.roles.planner import PlanConsistencyError, check_reply
 
     test = 'tests/test_sampler.py::test_departure_is_stated'
     deflake_worktree['checks'][0]['node_ids'] = [test]
-    check_reply(planner_request['inputs'], deflake_worktree)
-    assert any(test in item and 'base' in item for item in deflake_worktree['violations'])
+    with pytest.raises(PlanConsistencyError, match='Existing check must name a test defined at the base') as raised:
+        check_reply(planner_request['inputs'], deflake_worktree)
+    assert raised.value.node_ids == (test,)
 
 
 def test_invalid_forcing_is_a_planner_violation(planner_request, deflake_worktree):
@@ -817,12 +818,12 @@ def test_declared_edit_may_not_be_frozen(planner_request, digests_plan, frozen, 
 
 
 def test_declared_edit_needs_a_demonstrating_check(planner_request, digests_plan):
-    from tl3_workers.roles.planner import UncoveredEditedTests
+    from tl3_workers.roles.planner import PlanConsistencyError
 
     digests_plan['edits_tests'] = [FROZEN]
     digests_plan['checks'] = digests_plan['checks'][:2]
     digests_plan['checks'][0]['goal_ids'] = [0]
-    with pytest.raises(UncoveredEditedTests, match='no demonstrating check names it') as raised:
+    with pytest.raises(PlanConsistencyError, match='no demonstrating check names it') as raised:
         planned(planner_request, digests_plan)
     assert raised.value.node_ids == (FROZEN,)
 
@@ -1383,13 +1384,127 @@ def test_request156_substantive_stops_do_not_get_consistency_correction(planner_
 
 
 def test_request156_trace_diagnostics_redact_model_text():
-    from tl3_workers.roles.planner import UncoveredEditedTests
+    from tl3_workers.roles.planner import PlanConsistencyError
     from tl3_workers.tracing import failure_tags
     from tl3_workers.turns import InvalidReply
 
     secret = 'sk-proj-' + 'aB7cD9eF2gH4jK6mN8pQ0rS3tU5vW1xY'
-    error = UncoveredEditedTests([CONTROL + '[api_key=' + secret + ']'])
+    error = PlanConsistencyError([CONTROL + '[api_key=' + secret + ']'])
     tags = failure_tags(InvalidReply(error, error))
     assert secret not in json.dumps(tags)
     assert CONTROL in tags['failure_message']
-    assert 'repaired reply: edited tests without demonstrating checks:' in tags['failure_message']
+    assert 'repaired reply: planner check inconsistency:' in tags['failure_message']
+
+
+RELAY_TESTS = 'tests/test_docker_shim_relays_termination_1599.py'
+SMOKE = f'{RELAY_TESTS}::test_a_term_reaches_the_client_and_the_receipt_names_the_container'
+CREATED = f'{RELAY_TESTS}::test_a_created_container_that_cannot_be_removed_is_start_unresolved'
+INVENTED = [f'{RELAY_TESTS}::test_a_created_container_whose_removal_is_denied_is_start_unresolved_in_virtual_time',
+            f'{RELAY_TESTS}::test_a_mutant_treating_created_as_stopped_fails_the_removal_denied_scenario']
+
+
+@pytest.fixture
+def request162(planner_request, monkeypatch):
+    root = Path(planner_request['worktree'])
+    (root / RELAY_TESTS).write_text(
+        'def test_a_term_reaches_the_client_and_the_receipt_names_the_container():\n    assert True\n\n'
+        'def test_a_created_container_that_cannot_be_removed_is_start_unresolved():\n    assert True\n')
+    (root / 'pyproject.toml').write_text('[tool.tl3.harness]\ntest-files = ["tests/**/*.py"]\n')
+    planner_request['inputs']['ingest']['goals'] = [
+        {'description': 'Drive rejected created-container removal with virtual time.', 'verification': 'test'},
+        {'description': 'Reject a mutant treating Running=False as proof of stop.', 'verification': 'test'},
+        {'description': 'Keep the OS signal smoke check.', 'verification': 'test'},
+    ]
+    monkeypatch.chdir(root)
+    return {
+        'kind': 'leaf', 'files': [RELAY_TESTS], 'edits_tests': [CREATED],
+        'checks': [{'kind': 'demonstrating', 'node_ids': [CREATED, *INVENTED], 'goal_ids': [0, 1],
+                    'forcing': {'symptom': 'Delay daemon replies during created-container cleanup.',
+                                'environment': {},
+                                'patches': [{'target': 'shim.DAEMON_DELAY', 'value': 1}]}},
+                   {'kind': 'regression', 'node_ids': [SMOKE], 'goal_ids': [2]}],
+        'no_design_questions': True, 'lands_on_its_own': True,
+    }
+
+
+@pytest.mark.parametrize('resolution', ['base_nodes', 'cant_meet', 'still_invented'])
+def test_request162_forced_check_gets_the_same_single_correction(planner_request, request162, monkeypatch, resolution):
+    from tl3_workers import runtime
+    from tl3_workers.turns import InvalidReply
+
+    fixed = copy.deepcopy(request162)
+    if resolution == 'base_nodes':
+        fixed['checks'][0]['node_ids'] = [CREATED]
+    elif resolution == 'cant_meet':
+        fixed = copy.deepcopy(CANT_MEET)
+        fixed['report'] = 'The existing base tests cannot honestly demonstrate the required mutant and deterministic goals.'
+    model = planner_model(monkeypatch, request162, fixed, LEAF)
+    events = []
+    if resolution == 'still_invented':
+        with pytest.raises(InvalidReply) as raised:
+            runtime.run(planner_request, events.append)
+        assert all(node in str(raised.value.errors[1]) for node in INVENTED)
+        assert not any(event['event'] == 'reply' for event in events)
+    else:
+        runtime.run(planner_request, events.append)
+        result = events[-1]['reply']
+        assert result['kind'] == fixed['kind'] and result['violations'] == []
+        if resolution == 'base_nodes':
+            assert result['checks'][0]['node_ids'] == [CREATED]
+            assert result['checks'][0]['goal_ids'] == [0, 1]
+            assert result['checks'][1] == request162['checks'][1]
+            assert result['checks'][0]['forcing'] == request162['checks'][0]['forcing']
+        else:
+            assert result['report'] == fixed['report']
+    assert len(model.calls) == 2
+    history, offered = model.calls[1]
+    assert not offered
+    assert all(node in history[-1].text for node in INVENTED)
+    assert 'Existing check must name a test defined at the base' in history[-1].text
+    inputs = json.loads(next(m.text for m in history if isinstance(m, HumanMessage)))
+    assert inputs['ingest']['goals'] == planner_request['inputs']['ingest']['goals']
+
+
+def test_request162_ordinary_missing_regression_still_stops(planner_request, request162, monkeypatch):
+    from tl3_workers import runtime
+
+    # Only the forced demonstrating mismatch is locally repairable.
+    request162['files'].append('greeting.py')
+    request162['checks'][0].pop('forcing')
+    request162['checks'][0]['kind'] = 'regression'
+    request162.pop('edits_tests')
+    model = planner_model(monkeypatch, request162, LEAF)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 1
+    assert all(any(node in v for v in events[-1]['reply']['violations']) for node in INVENTED)
+
+
+@pytest.mark.parametrize('obstacle', ['protected', 'forcing', 'out_of_room'])
+def test_request162_substantive_stops_bypass_correction(planner_request, request162, monkeypatch, obstacle):
+    from tl3_workers import runtime
+
+    if obstacle == 'protected':
+        request162['files'].append('conftest.py')
+    elif obstacle == 'forcing':
+        request162['checks'][0]['forcing']['environment'] = {'OMP_NUM_THREADS': '1'}
+    else:
+        planner_request['inputs']['must_split'] = True
+    model = planner_model(monkeypatch, request162, LEAF)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 1
+    assert all(any(node in v for v in events[-1]['reply']['violations']) for node in INVENTED)
+
+
+def test_request162_correction_cannot_drop_mutant_coverage(planner_request, request162, monkeypatch):
+    from tl3_workers import runtime
+
+    fixed = copy.deepcopy(request162)
+    fixed['checks'][0]['node_ids'] = [CREATED]
+    fixed['checks'][0]['goal_ids'] = [0, 2]
+    model = planner_model(monkeypatch, request162, fixed)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    assert 'Every maker and checking goal must have a check.' in events[-1]['reply']['violations']

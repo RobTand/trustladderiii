@@ -14,18 +14,22 @@ from tl3_workers.tools import Worktree
 from tl3_workers.recall import check_citations
 
 
-class UncoveredEditedTests(ValueError):
-    """A draft's edit declarations disagree with its demonstrating checks."""
+class PlanConsistencyError(ValueError):
+    """A draft's checks disagree with its edit declarations or forced base selection."""
 
-    def __init__(self, node_ids):
-        self.node_ids = tuple(node_ids)
+    def __init__(self, uncovered, missing_forced=()):
+        self.node_ids = (*uncovered, *missing_forced)
         self.violations = [
             f"`{node_id}` is in edits_tests but no demonstrating check names it. "
             "Name it in a demonstrating check that fails on the base by an assertion."
-            for node_id in self.node_ids]
+            for node_id in uncovered]
+        self.violations.extend(f"Existing check must name a test defined at the base: {node_id}"
+                               for node_id in missing_forced)
         super().__init__("\n".join(self.violations) +
                          "\nReconcile the declaration and checks using already-read facts. "
                          "Drop an edit only if it is unnecessary for the goals. "
+                         "A forced check must name existing base tests and preserve every required goal, "
+                         "including deterministic and mutant proof; do not treat a passing smoke as red. "
                          "Do not weaken goals or invent base failures; return cant_meet if needed.")
 
 
@@ -37,6 +41,7 @@ def check_reply(inputs, reply):
     goals = set(range(len(inputs["ingest"]["goals"])))
     violations = []
     uncovered = []
+    missing_forced = []
     paths = set()
     if reply["kind"] == "leaf":
         if inputs["must_split"]:
@@ -75,7 +80,10 @@ def check_reply(inputs, reply):
                     if oversized:
                         violations.append(f"Existing check's test file is over the {HARD_CAP_BYTES}-byte limit: {path}")
                     elif not exists:
-                        violations.append(f"Existing check must name a test defined at the base: {node_id}")
+                        if check["kind"] == "demonstrating" and "forcing" in check:
+                            missing_forced.append(node_id)
+                        else:
+                            violations.append(f"Existing check must name a test defined at the base: {node_id}")
             cited = set(check["goal_ids"])
             if not cited <= goals:
                 violations.append("A check cites an unknown goal.")
@@ -137,9 +145,9 @@ def check_reply(inputs, reply):
                 violations.append(f"Declared file can't be used: {error}. Leave it out.")
             if child["tokens"] >= forecast["tokens"]:
                 violations.append("Every proposed piece must have a smaller forecast than its parent.")
-    if uncovered:
-        mismatch = UncoveredEditedTests(uncovered)
-        # Only this intrinsic inconsistency enters the existing tool-free repair.
+    if uncovered or missing_forced:
+        mismatch = PlanConsistencyError(uncovered, missing_forced)
+        # Only these intrinsic inconsistencies enter the existing tool-free repair.
         # Substantive plan failures still reach the controller under Q54.
         if not violations:
             raise mismatch
