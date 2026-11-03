@@ -98,6 +98,12 @@ def test_review662_mixed_checks_keep_their_own_source_partitions(rehearsal, monk
     from tl3_harness.trees import export, configuration
     from tl3_workers import pb_tests
     ledger, root, inputs, _ = rehearsal
+    from worker_process import git
+    (root / 'pyproject.toml').write_text('[tool.tl3.harness]\ncommand=["python", "-m", "pytest"]\ntest-files=["tests/*.py"]\n')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'declare checking command')
+    inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    ledger.worktree.check_base_sha = inputs['base_sha']
     path = 'tests/test_adoption.py'
     node = path + '::test_new_observer'
     (root / path).write_text((root / path).read_text() + '\ndef test_new_observer(): assert False, "new observer"\n')
