@@ -1019,8 +1019,10 @@ impl Executor for Adapter {
         )?;
         match self.read_enqueue(delivery)? {
             Reconciliation::Found(completion) => {
-                self.records
-                    .deliver(delivery, Completion::confirmed(vec![]))?;
+                if completion.ack == Ack::Confirmed {
+                    self.records
+                        .deliver(delivery, Completion::confirmed(vec![]))?;
+                }
                 Ok(*completion)
             }
             _ => Err(Error::Invalid(

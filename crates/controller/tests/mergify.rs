@@ -2651,7 +2651,12 @@ fn legacy_intent_ignores_completed_at() {
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("--review-requeue") {
         waiting_requeue::review();
-        println!("3 Mergify scenarios passed; no skips; no live upstream calls");
+        let mut database = support::Database::start();
+        for mode in ["no-acceptance", "reply-restricted", "refusal", "permission"] {
+            requeue::scenario(&database.create(&format!("review_{mode}")), mode);
+        }
+        database.stop();
+        println!("7 Mergify scenarios passed; no skips; no live upstream calls");
         return;
     }
     if std::env::args().nth(1).as_deref() == Some("--waiting-requeue") {
