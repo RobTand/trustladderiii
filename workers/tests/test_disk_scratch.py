@@ -4,7 +4,7 @@ from pathlib import Path
 from test_pb_tests import submission, call, Summary  # noqa: F401
 
 
-def test_pytest_submission_seals_registered_disk_scratch(submission):
+def test_pytest_submission_seals_registered_disk_scratch(submission):  # noqa: F811
     result = call(submission, Summary().result)
     assert result['status'] == 'completed'
     args = json.loads((submission[1] / 'submitted.json').read_text())

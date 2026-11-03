@@ -24,8 +24,8 @@ def environment():
 
 def registered_leaf():
     # The admitted progress helper belongs to the action's pinned PB generation.
-    runtime = Path(os.environ['PRISMABUILD_ACTION_PROGRESS_HELPER']).resolve().parents[1]
-    sys.path.insert(0, str(runtime / 'src'))
+    sdk_source = Path(os.environ['PRISMABUILD_ACTION_PROGRESS_HELPER']).resolve().parents[1]
+    sys.path.insert(0, str(sdk_source))
     # gazelle:ignore prismabuild
     # gazelle:ignore prismabuild.client
     from prismabuild import client
