@@ -186,3 +186,29 @@ is false. It allows compiled libraries and executables on the harness's private
 the other container restrictions still apply. Tmpfs is RAM charged to the
 PrismaBuild action's declared memory demand. See the
 [design note](../../docs/design/executable-scratch.md) for containment and risk.
+
+## Request evidence preflight
+
+`planning.tool_capabilities` declares the evidence the installed `run_tests`
+protocol can produce. Omit it for the PrismaBuild pytest defaults in
+`example.toml`, or set it to `[]` to disable execution evidence. Configuration
+can narrow the installed capabilities. It cannot grant a new executor, artifact,
+forcing mechanism or permission to edit protected files.
+
+Ingest and audit derive `evidence_contract` from the original request. Planning
+preserves those requirements and adds any it discovers. Each requirement names
+the executor, runner features, artifacts, execution method and necessary edits
+to protected files. One configured tool must meet every dimension. The worker
+and controller compare the contract against the capabilities saved with the
+request. Unsupported requirements reach the existing `PlanCantMeet` path before
+a maker starts, with the exact missing capability in the report. With fail-fast
+enabled, that path stops without credit spent. No kernel rule changes here.
+
+For example, a mandatory BuildBuddy base and head run under pinned CPU
+contention requires `buildbuddy_remote_bazel`, `pinned_cpu_contention`,
+`invocation_url` and `forced_reproduction.contention_wrapper`. PrismaBuild
+pytest repetition, parallelism, CAS receipts and Q55 environment or Python
+patch forcings do not meet that contract. Implement the missing adapter before
+advertising those capabilities. Contract extraction remains agent judgment;
+the structured comparison and prevention of dropped intake requirements are
+code checks. Old in-flight requests without capabilities keep their protocol.

@@ -322,6 +322,20 @@
             "additionalProperties": false
           },
           "description": "Repository conventions the checkout shows, each with evidence, kept for later requests. Code checks the quote."
+        },
+        "evidence_contract": {
+          "$ref": "ingest-reply.json#/$defs/evidence_contract"
+        },
+        "evidence_errors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "uniqueItems": true,
+          "maxItems": 1024,
+          "description": "Code-owned unsupported evidence requirements."
         }
       },
       "required": [
@@ -518,6 +532,20 @@
             "additionalProperties": false
           },
           "description": "Repository conventions the checkout shows, each with evidence, kept for later requests. Code checks the quote."
+        },
+        "evidence_contract": {
+          "$ref": "ingest-reply.json#/$defs/evidence_contract"
+        },
+        "evidence_errors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "uniqueItems": true,
+          "maxItems": 1024,
+          "description": "Code-owned unsupported evidence requirements."
         }
       },
       "required": [
@@ -690,6 +718,20 @@
             "additionalProperties": false
           },
           "description": "Repository conventions the checkout shows, each with evidence, kept for later requests. Code checks the quote."
+        },
+        "evidence_contract": {
+          "$ref": "ingest-reply.json#/$defs/evidence_contract"
+        },
+        "evidence_errors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "uniqueItems": true,
+          "maxItems": 1024,
+          "description": "Code-owned unsupported evidence requirements."
         }
       },
       "required": [

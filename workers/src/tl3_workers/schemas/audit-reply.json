@@ -25,6 +25,20 @@
           "minItems": 1,
           "uniqueItems": true,
           "description": "Concrete repository-relative paths that MUST change to meet the request's goals. Report only when the whole request cannot land usefully without these edits; never for inspected files, excluded edits, or an optional part. The controller verifies the effective protected-path list."
+        },
+        "evidence_contract": {
+          "$ref": "ingest-reply.json#/$defs/evidence_contract"
+        },
+        "evidence_errors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "uniqueItems": true,
+          "maxItems": 1024,
+          "description": "Code-owned unsupported evidence requirements."
         }
       },
       "required": [
@@ -56,6 +70,20 @@
           "minItems": 1,
           "uniqueItems": true,
           "description": "Concrete repository-relative paths that MUST change to meet the request's goals. Report only when the whole request cannot land usefully without these edits; never for inspected files, excluded edits, or an optional part. The controller verifies the effective protected-path list."
+        },
+        "evidence_contract": {
+          "$ref": "ingest-reply.json#/$defs/evidence_contract"
+        },
+        "evidence_errors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "uniqueItems": true,
+          "maxItems": 1024,
+          "description": "Code-owned unsupported evidence requirements."
         }
       },
       "required": [

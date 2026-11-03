@@ -1398,6 +1398,11 @@ fn heal_rerun_workflows_are_workflow_file_names() {
 
 #[test]
 fn evidence_tools_are_explicit_configuration() {
-    let source = EXAMPLE.replace("[planning]", "[planning]\ntool_capabilities = []");
-    assert!(Config::parse(&source).is_ok(), "operators must be able to disable evidence tools");
+    let mut document: toml::Value = EXAMPLE.parse().unwrap();
+    document["planning"]["tool_capabilities"] = toml::Value::Array(vec![]);
+    let source = toml::to_string(&document).unwrap();
+    assert!(
+        Config::parse(&source).is_ok(),
+        "operators must be able to disable evidence tools"
+    );
 }

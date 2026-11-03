@@ -24,6 +24,13 @@
       },
       "uniqueItems": true,
       "description": "Effective defaults, global and repository protected-path patterns. These edits belong outside TL3."
+    },
+    "tool_capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "ingest-reply.json#/$defs/tool_capability"
+      },
+      "maxItems": 64
     }
   },
   "required": [

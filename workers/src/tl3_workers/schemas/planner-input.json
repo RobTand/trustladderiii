@@ -112,6 +112,16 @@
       "minLength": 1,
       "maxLength": 512,
       "description": "Why no memories were supplied, when recall was unavailable."
+    },
+    "tool_capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "ingest-reply.json#/$defs/tool_capability"
+      },
+      "maxItems": 64
+    },
+    "audit_evidence_contract": {
+      "$ref": "ingest-reply.json#/$defs/evidence_contract"
     }
   },
   "required": [
