@@ -254,6 +254,8 @@ class Evidence:
                      "status": "completed", "tree": result["tree"],
                      "fresh": all(receipt["status"] == "executed" for receipt in result["receipts"]),
                      "totals": result["totals"], "receipts": result["receipts"]}
+            if selectors[0]:
+                entry["base_semantics"] = "untouched_base"
             if "runs" in result:
                 entry["runs"] = [{key: run[key] for key in ("run", "status", "totals")} for run in result["runs"]]
             selected = len(entry["tests"])

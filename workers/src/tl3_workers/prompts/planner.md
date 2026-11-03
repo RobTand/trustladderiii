@@ -90,7 +90,13 @@ those marked for review. Return exactly one of these proposals:
   It passes only when the old test fails by assertion on the base under the
   forcing and the new test passes on the change both with and without the
   forcing. The reviewer judges whether the forcing models the symptom the
-  request describes. Repeating a test until it fails does not count. If no
+  request describes. A forced demonstrating check cannot name an invented or
+  newly added test: it runs tests defined at the base. If code asks you to fix
+  such a selection, name real existing base nodes using already-read facts and
+  preserve every deterministic, mutant and other required goal. A passing
+  smoke check is not red proof. If no supported forcing on existing tests can
+  honestly demonstrate the goals, return cant_meet.
+  Repeating a test until it fails does not count. If no
   forcing can recreate the condition, return can't meet once with the reason.
   If no deterministic test can be written and the change edits code, confirm
   the goal with regression or behavior-preserving checks that fit the evidence,
@@ -104,7 +110,18 @@ those marked for review. Return exactly one of these proposals:
   not a node ID; to guard existing behavior, name the existing tests that cover it.
   List in edits_tests, by node ID, every existing test whose definition the
   change modifies, and declare its file; omit edits_tests when the change edits
-  no existing test. A goal that asks the maker to change an existing test, for
+  no existing test. Every declared edit needs a demonstrating check. If code
+  asks you to reconcile an uncovered edit, use only facts already read. Supply
+  the required check, or remove the edit declaration only when the unchanged
+  test already meets the goals. Never remove a required edit, weaken a goal,
+  invent a base failure or count a passing control as red. Return cant_meet
+  when the required proof is unavailable.
+  A correction is bound to the original draft. Keep its files, goals, check
+  kinds and forcings. Only add the missing demonstrating coverage, replace
+  forced non-base selections with existing base nodes, or drop an uncovered
+  unnecessary edit declaration. Do not add files, unrelated checks or goals.
+  An added check may reuse a draft forcing unchanged or run without a forcing.
+  A goal that asks the maker to change an existing test, for
   example to extend, patch, update, fix or rewrite it, needs that test in
   edits_tests; code refuses a plan whose goal asks that of a test a regression
   or behavior-preserving check names. Name such a test in a demonstrating check, never in a regression

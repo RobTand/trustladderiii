@@ -23,6 +23,7 @@ from langchain_openai import ChatOpenAI
 from tl3_workers.evidence import forcing_capabilities, forcing_guidance
 from tl3_workers.contracts import read_json, read_reply, schema, validate
 from tl3_workers.roles import ROLES
+from tl3_workers.roles.planner import PlanConsistencyError
 from tl3_workers.tools import Worktree, build_tools
 from tl3_workers.memory import Summary, current
 from tl3_workers.recall import redacted_memories
@@ -230,8 +231,22 @@ def _run(request, emit):
             if role.name in {"ingest", "audit", "planner"}:
                 model_inputs = {"forcing_capabilities": forcing_capabilities(run_test_cpus.get()), **model_inputs}
             history = [HumanMessage(content=json.dumps(model_inputs, ensure_ascii=False))]
+            draft_error = None
+
+            def checked(text):
+                nonlocal draft_error
+                try:
+                    result = _checked(role, request["inputs"], read_reply(text))
+                except PlanConsistencyError as error:
+                    if draft_error is None:
+                        draft_error = error
+                    raise
+                if draft_error is not None:
+                    draft_error.constrain(result)
+                return result
+
             reply = repaired(control, history, lambda: _run_agent(agent, history, emit),
-                             lambda text: _checked(role, request["inputs"], read_reply(text)))
+                             checked)
         else:
             reply = role.run(model, request, worktree, emit)
             if not role.validates_reply:
