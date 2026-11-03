@@ -1226,6 +1226,34 @@ mod tests {
     }
 
     #[test]
+    fn helper_failure_does_not_prevent_recording_completed_facts() {
+        let (snapshot, delivery) = fixture();
+        let mut captured = 0;
+        for failure in [
+            crate::redaction::Failure::Missing,
+            crate::redaction::Failure::Crash,
+            crate::redaction::Failure::Timeout,
+            crate::redaction::Failure::Oversized,
+        ] {
+            let result = crate::redaction::with_failure(failure, || {
+                capture(
+                    &snapshot,
+                    &Commit::new("capture", json!({}), &snapshot),
+                    &delivery,
+                )
+            });
+            if let Ok(facts) = result {
+                assert_eq!(facts.checks[0]["results"][0]["verdict"], "pass");
+                captured += 1;
+            }
+        }
+        assert_eq!(
+            captured, 4,
+            "helper outages must not discard completed check facts"
+        );
+    }
+
+    #[test]
     fn helper_failure_prevents_publishing_proof() {
         let (snapshot, mut delivery) = fixture();
         delivery.evidence = Some(
