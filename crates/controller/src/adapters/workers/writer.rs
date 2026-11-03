@@ -761,7 +761,11 @@ fn title_hint(violation: &Violation, field: &str, masked: &str, policy: &Policy)
     let title = policy
         .request_title
         .as_deref()
-        .filter(|title| !title.is_empty() && masked.contains(*title))?;
+        .filter(|title| !title.is_empty())?;
+    let bare = bare_title_spans(masked, title);
+    if bare.is_empty() {
+        return None;
+    }
     if !message::check_prose(title, policy).is_err_and(|errors| errors.contains(violation)) {
         return None;
     }
@@ -782,12 +786,30 @@ fn title_hint(violation: &Violation, field: &str, masked: &str, policy: &Policy)
         "The {field} {problem} '{word}' from the issue title. Keep the title unchanged \
          and write all of it inside ASCII double quotes: \"{title}\"."
     );
-    let outside = masked.replace(title, " ");
+    let mut outside = masked.to_owned();
+    for span in bare.into_iter().rev() {
+        outside.replace_range(span, " ");
+    }
     if message::check_prose(&outside, policy).is_err_and(|errors| errors.contains(violation)) {
         hint.push(' ');
         hint.push_str(&describe(violation, field, &outside, policy));
     }
     Some(hint)
+}
+
+/// Occurrences of `title` that do not run into a neighbouring word character, as the
+/// checker's `\b` rules see words: "Capture stdout" is not bare inside "Capture stdout_file".
+fn bare_title_spans(text: &str, title: &str) -> Vec<std::ops::Range<usize>> {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let starts_word = title.chars().next().is_some_and(word);
+    let ends_word = title.chars().next_back().is_some_and(word);
+    text.match_indices(title)
+        .map(|(start, found)| start..start + found.len())
+        .filter(|span| {
+            !(starts_word && text[..span.start].chars().next_back().is_some_and(word))
+                && !(ends_word && text[span.end..].chars().next().is_some_and(word))
+        })
+        .collect()
 }
 
 const DISPLAY_PUNCTUATION: [char; 16] = [
