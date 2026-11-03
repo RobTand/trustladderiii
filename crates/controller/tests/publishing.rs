@@ -605,6 +605,16 @@ fn prepare_workers() -> PathBuf {
     root.join(".venv/bin/python")
 }
 fn drain(c: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store, expected: Phase) {
+    drain_with_budget(c, source, store, expected, Duration::from_secs(90));
+}
+
+fn drain_with_budget(
+    c: &mut Controller,
+    source: &mut WorkerOutputSource,
+    store: &mut Store,
+    expected: Phase,
+    budget: Duration,
+) {
     let (sender, receiver) = mpsc::channel();
     let start = Instant::now();
     loop {
@@ -641,7 +651,7 @@ fn drain(c: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store,
             return;
         }
         assert!(
-            start.elapsed() < Duration::from_secs(90),
+            start.elapsed() < budget,
             "publishing did not settle: {:?}",
             c.world().unwrap().nodes[0]
         );
@@ -955,6 +965,30 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         return;
     }
     drain(&mut c, &mut source, &mut store, Phase::Queued);
+    if mode == "repo-conventions" {
+        c.observe(
+            "settlement-last-progress",
+            Observation::ScratchPruned {
+                reference: "already-pruned".into(),
+            },
+        )
+        .unwrap();
+        // No time remains, but consuming the final input reaches an idle Queued node.
+        drain_with_budget(
+            &mut c,
+            &mut source,
+            &mut store,
+            Phase::Queued,
+            Duration::ZERO,
+        );
+        assert!(
+            c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .all(|row| row.table != "inbox")
+        );
+    }
     tl3_controller::memory::flush(&mut store, &config.hindsight)
         .expect("publishing fixture must acknowledge memories instead of retrying a closed port");
     if mode == "repo-conventions" {
