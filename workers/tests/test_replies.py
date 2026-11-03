@@ -8,7 +8,7 @@ import pytest
 
 from tl3_workers import runtime
 from tl3_workers.turns import InvalidReply
-import test_maker
+import message_invariants as test_maker
 import test_workers
 
 

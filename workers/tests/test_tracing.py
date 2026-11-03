@@ -1218,3 +1218,14 @@ def test_trace_has_no_memory_tags_without_memories(request_doc, monkeypatch, exp
     keys = {attr.key for attr in root.attributes}
     assert 'mlflow.traceTag.memory_recalled' not in keys
     assert 'mlflow.traceTag.memory_flagged' not in keys
+
+
+def test_trace_exposes_selected_request_base_and_link_origin(request_doc, monkeypatch, exporters, receiver):
+    uri, packets = receiver
+    run_fake(request_doc, monkeypatch, exporters, uri, trace={
+        'repo': 'RobTand/tl3-sandbox', 'issue': 101, 'request': '7', 'attempt': 2, 'round': 1,
+        'base_sha': 'b' * 40, 'request_origin': '6'})
+    root = next(span for span in decode(packets) if not span.parent_span_id)
+    attrs = {attr.key: attr.value.string_value for attr in root.attributes}
+    assert attrs.get('mlflow.traceTag.base_sha') == 'b' * 40
+    assert attrs.get('mlflow.traceTag.request_origin') == '6'

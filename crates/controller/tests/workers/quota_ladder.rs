@@ -284,3 +284,142 @@ pub(super) fn removed_model_resumes_on_open(settings: &tl3_config::Store, legacy
     assert_eq!(f.planner_models(), ["default-model", "alternate-model"]);
     let _ = &f.config;
 }
+
+fn put_quota(f: &mut Fixture, model: &str, reset: u64) {
+    let snapshot = f.controller.snapshot().unwrap();
+    let mut commit = Commit::new(
+        format!("fixture-quota:{model}:{}", snapshot.revision.get()),
+        json!({"fixture_quota": model}),
+        &snapshot,
+    );
+    commit.rows.push(RowChange::Put {
+        table: "model_quotas".into(),
+        id: model.into(),
+        value: json!({"reset_ms": reset}),
+    });
+    f.store.commit(&commit).unwrap();
+}
+
+// Stop before consuming the real worker's ending, so quota can be reported
+// by another run while this successful reply is already in flight.
+fn pending_success(settings: &tl3_config::Store) -> (Fixture, Observation) {
+    let mut f = fixture(settings, &["default-model"], json!({}));
+    let mut ending = None;
+    wait(|| {
+        ending = f
+            .controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .find_map(|row| {
+                if row.table != "inbox" {
+                    return None;
+                }
+                match serde_json::from_value::<Observation>(row.value.clone()).unwrap() {
+                    observation @ Observation::WorkerReply { .. } => Some(observation),
+                    _ => None,
+                }
+            });
+        if ending.is_some() {
+            return true;
+        }
+        f.controller.drive_once().unwrap();
+        false
+    });
+    let ending = ending.unwrap();
+    assert!(
+        matches!(&ending, Observation::WorkerReply { model: Some(model), .. } if model == "default-model")
+    );
+    put_quota(&mut f, "default-model", real_now() + 600_000);
+    put_quota(&mut f, "unrelated-model", real_now() + 600_000);
+    (f, ending)
+}
+
+fn consume_success(f: &mut Fixture) {
+    wait(|| {
+        if f.controller.world().unwrap().nodes[0].phase != Phase::Ingesting {
+            return true;
+        }
+        f.controller.drive_once().unwrap();
+        false
+    });
+}
+
+pub(super) fn success_clears_quota(settings: &tl3_config::Store) {
+    let (mut f, _) = pending_success(settings);
+    consume_success(&mut f);
+    assert_eq!(
+        f.model_quota("default-model"),
+        None,
+        "a real reply ends the model's quota in its ending commit"
+    );
+    assert!(
+        f.model_quota("unrelated-model").is_some(),
+        "only the model that replied is cleared"
+    );
+}
+
+pub(super) fn success_clears_quota_status(settings: &tl3_config::Store) {
+    let (mut f, _) = pending_success(settings);
+    consume_success(&mut f);
+    let status =
+        tl3_controller::status::load(&mut tl3_store::Reader::open(settings).unwrap()).unwrap();
+    assert!(
+        !status
+            .quota_models
+            .iter()
+            .any(|line| line.contains("default-model"))
+    );
+    assert!(
+        !tl3_controller::status::render_text(&status).contains("default-model is out of quota")
+    );
+    assert!(
+        !tl3_controller::status::render_html(&status).contains("default-model is out of quota")
+    );
+}
+
+pub(super) fn later_quota_is_recorded(settings: &tl3_config::Store) {
+    let (mut f, _) = pending_success(settings);
+    consume_success(&mut f);
+    let reset = real_now() + 300_000;
+    f.controller
+        .observe(
+            "later-quota",
+            Observation::Quota {
+                key: "later-worker".into(),
+                reset_ms: reset,
+                model: Some("default-model".into()),
+            },
+        )
+        .unwrap();
+    f.controller.drive_once().unwrap();
+    assert_eq!(
+        f.model_quota("default-model"),
+        Some(reset),
+        "a later quota ending creates a fresh record, even with an earlier announced reset"
+    );
+}
+
+pub(super) fn replay_keeps_later_quota(settings: &tl3_config::Store) {
+    let (mut f, ending) = pending_success(settings);
+    consume_success(&mut f);
+    let reset = real_now() + 900_000;
+    put_quota(&mut f, "default-model", reset);
+    f.controller
+        .observe("success-replay", ending.clone())
+        .unwrap();
+    f.controller.drive_once().unwrap();
+    assert_eq!(
+        f.model_quota("default-model"),
+        Some(reset),
+        "a replayed success must not delete newer quota evidence"
+    );
+    let revision = f.controller.snapshot().unwrap().revision;
+    f.controller.observe("success-replay", ending).unwrap();
+    assert_eq!(
+        f.controller.snapshot().unwrap().revision,
+        revision,
+        "the same ending is idempotent"
+    );
+}

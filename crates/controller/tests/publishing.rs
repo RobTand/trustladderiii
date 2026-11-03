@@ -2078,13 +2078,16 @@ fn stage_obligations_block_publication() {
         "pass",
         "pre-existing",
     ] {
+        progress(format!("stage_obligations {case}: fixture"));
         let root = tempfile::tempdir().unwrap();
         let f = Arc::new(Fixture::create(root.path()));
         let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
         f.adapter().execute(&prepare).unwrap();
+        progress(format!("stage_obligations {case}: prepared"));
         let mut push = f.delivery(EffectKind::Push, 2);
         push.head_sha = Some(f.head(&prepare));
         f.adapter().execute(&push).unwrap();
+        progress(format!("stage_obligations {case}: pushed"));
         let server = Server::new(f.clone());
         let mut open = push.clone();
         open.key = format!("stage-{case}");

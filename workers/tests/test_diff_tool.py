@@ -16,7 +16,7 @@ from tl3_workers import diff as diff_module
 from tl3_workers import forecast, runtime
 from tl3_workers.roles import ROLES
 from tl3_workers.tools import OUTPUT_LIMITS, READ_TOOLS, TOOL_FACTORIES, Worktree, build_tools
-from test_maker import maker_request, turn  # noqa: F401
+from message_invariants import maker_request, turn  # noqa: F401
 from test_reviewer import APPROVE, review_request  # noqa: F401
 
 
