@@ -361,7 +361,7 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
             }
             "audits" if *row == id.as_str() => facts.audit = Some(fields(value, &["verdict"])),
             "goals" if *row == id.as_str() => {
-                facts.goals = serde_json::from_value(value.clone())?;
+                facts.goals = serde_json::from_value((*value).clone())?;
             }
             "saved_scratch" if value["node"] == json!(delivery.node()) => {
                 if let Some(reference) = value["reference"].as_str() {
