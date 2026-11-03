@@ -495,6 +495,7 @@ impl Materials {
         Self {
             clients: [(1, client)].into(),
             worktrees: config.worktrees_root.clone(),
+            local_repository: None,
             branches: crate::branches::Branches::new(&config.github.repos).unwrap(),
         }
     }
