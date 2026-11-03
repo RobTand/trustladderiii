@@ -1,4 +1,3 @@
-use super::safe;
 use crate::findings::{CiGapReason as Gap, CiNodeStatus, CiRetrieval, CiTargetResult, CiTestNode};
 use reqwest::redirect::Policy;
 use serde::Deserialize;
@@ -14,6 +13,12 @@ const MAX_NODES: usize = 200;
 pub(super) struct Budget {
     remaining: usize,
     deadline: Instant,
+}
+
+impl Budget {
+    pub(super) fn remaining_time(&self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
+    }
 }
 
 impl Default for Budget {
@@ -32,41 +37,26 @@ pub(super) struct Client {
 }
 
 impl Client {
-    pub(super) fn configured() -> Result<Self, Gap> {
-        let key = match std::env::var("BUILDBUDDY_API_KEY") {
-            Ok(key) if !key.trim().is_empty() => key,
-            _ => {
-                let home = std::env::var_os("HOME").ok_or(Gap::AccessUnavailable)?;
-                let path = std::path::PathBuf::from(home).join(".config/buildbuddy/api_key");
-                let metadata = std::fs::metadata(&path).map_err(|_| Gap::AccessUnavailable)?;
-                if !metadata.is_file() || metadata.len() > 4096 {
-                    return Err(Gap::AccessUnavailable);
-                }
-                std::fs::read_to_string(path).map_err(|_| Gap::AccessUnavailable)?
-            }
-        };
-        let key = key.trim().to_owned();
-        if key.is_empty() || key.len() > 4096 {
-            return Err(Gap::AccessUnavailable);
-        }
+    pub(super) fn configured(config: &tl3_config::BuildBuddy) -> Result<Self, Gap> {
+        let key = config
+            .diagnostic_key()
+            .map_err(|_| Gap::AccessUnavailable)?
+            .ok_or(Gap::AccessUnavailable)?;
         Ok(Self {
             api: "https://app.buildbuddy.io/api/v1/".into(),
             key,
         })
     }
 
-    pub(super) fn sanitize(&self, text: &str, cap: usize) -> String {
-        safe(
-            &super::terminal_text(text).replace(&self.key, "[redacted]"),
-            cap,
-        )
+    pub(super) fn remove_key(&self, text: &str) -> String {
+        super::terminal_text(text).replace(&self.key, "[redacted]")
     }
 
     pub(super) async fn resolve(
         &self,
         repo: &str,
         sha: &str,
-        check: u64,
+        binding: &tl3_github::WorkflowJob,
         parent: &str,
         expected: &BTreeSet<String>,
         budget: &mut Budget,
@@ -79,7 +69,8 @@ impl Client {
                 .build()
                 .ok(),
             budget,
-            check,
+            check: binding.id,
+            binding,
             retrievals: Vec::new(),
             results: Vec::new(),
         };
@@ -123,6 +114,14 @@ struct Invocation {
     command: String,
     #[serde(default, alias = "child_invocations")]
     child_invocations: Vec<Id>,
+    #[serde(default, alias = "build_metadata")]
+    build_metadata: Vec<Metadata>,
+}
+
+#[derive(Deserialize)]
+struct Metadata {
+    key: String,
+    value: String,
 }
 
 #[derive(Deserialize)]
@@ -172,6 +171,7 @@ struct Session<'a> {
     http: Option<reqwest::Client>,
     budget: &'a mut Budget,
     check: u64,
+    binding: &'a tl3_github::WorkflowJob,
     retrievals: Vec<CiRetrieval>,
     results: Vec<CiTargetResult>,
 }
@@ -240,6 +240,7 @@ impl Session<'_> {
             let mut request = json!({"selector":selector,"page_token":page});
             if method == "GetInvocation" {
                 request["include_child_invocations"] = json!(true);
+                request["include_metadata"] = json!(true);
             }
             let bytes = self.call(method, request).await?;
             let mut value: Value =
@@ -321,6 +322,18 @@ impl Session<'_> {
             if child.command != "test" {
                 continue;
             }
+            for (key, expected) in [
+                ("TL3_CI_RUN_ID", self.binding.run_id.to_string()),
+                ("TL3_CI_RUN_ATTEMPT", self.binding.run_attempt.to_string()),
+                ("TL3_CI_CHECK_NAME", self.binding.name.clone()),
+            ] {
+                let mut values = child.build_metadata.iter().filter(|entry| entry.key == key);
+                if values.next().map(|entry| &entry.value) != Some(&expected)
+                    || values.next().is_some()
+                {
+                    return Err(Gap::WrongCiRun);
+                }
+            }
             let id = &child.id.invocation_id;
             // Read the complete inventory, so a truncated job log cannot hide another failed target.
             let targets: Vec<Target> = self
@@ -386,12 +399,15 @@ impl Session<'_> {
                     let log = self.file(&action.file, "test.log").await?;
                     let mut nodes = nodes(&xml)?;
                     for node in &mut nodes {
-                        node.test = self.client.sanitize(&node.test, 4096);
-                        node.message = self.client.sanitize(&node.message, 1000);
+                        node.test = self.client.remove_key(&node.test);
+                        node.message = self.client.remove_key(&node.message);
                     }
                     self.results.push(CiTargetResult {
                         repository: repo.into(),
                         check: self.check,
+                        ci_run: self.binding.run_id,
+                        ci_run_attempt: self.binding.run_attempt,
+                        check_name: self.binding.name.clone(),
                         sha: sha.into(),
                         parent_invocation: parent.into(),
                         invocation: id.clone(),
@@ -400,7 +416,7 @@ impl Session<'_> {
                         run: action.run,
                         attempt: action.attempt,
                         nodes,
-                        excerpt: self.client.sanitize(&excerpt(&log), 2000),
+                        excerpt: self.client.remove_key(&excerpt(&log)),
                     });
                 }
                 if !self.results[before..]

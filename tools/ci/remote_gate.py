@@ -80,7 +80,13 @@ def run_request(args):
                   {'run': 'export PATH="$HOME/.local/bin:$PATH" && '
                           'scanner_python=$(python3 tools/ci/child_env.py uv python find 3.14) && '
                           '"$scanner_python" ' + shlex.join(command)}],
-        'env': {'GIT_REPO_DEFAULT_BRANCH': 'main'},
+        'env': {'GIT_REPO_DEFAULT_BRANCH': 'main', **({
+            'TL3_CI_RUN_ID': os.environ['GITHUB_RUN_ID'],
+            'TL3_CI_RUN_ATTEMPT': os.environ['GITHUB_RUN_ATTEMPT'],
+            'TL3_CI_CHECK_NAME': 'Bazel',
+        } if os.environ.get('GITHUB_JOB') == 'bazel'
+             and os.environ.get('GITHUB_RUN_ID', '').isdecimal()
+             and os.environ.get('GITHUB_RUN_ATTEMPT', '').isdecimal() else {})},
         'platform_properties': {
             # The runner hosts only the Bazel client; actions go to remote execution.
             'EstimatedCPU': str(args.cpu),

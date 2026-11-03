@@ -376,6 +376,19 @@
                 "excerpt": {
                   "type": "string",
                   "maxLength": 2000
+                },
+                "ci_run": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "ci_run_attempt": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "check_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
                 }
               },
               "required": [

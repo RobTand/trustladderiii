@@ -670,6 +670,9 @@ def main():
     args = parser.parse_args()
     output = Path(os.environ.get('BUILDBUDDY_ARTIFACTS_DIRECTORY', ROOT / 'gate-artifacts'))
     metadata = {'COMMIT_SHA': args.head, 'BRANCH_NAME': args.branch}
+    for key in ('TL3_CI_RUN_ID', 'TL3_CI_RUN_ATTEMPT', 'TL3_CI_CHECK_NAME'):
+        if key in os.environ:
+            metadata[key] = os.environ[key]
     result = {'schema': SCHEMA, 'mode': args.mode, 'base': args.base, 'head': args.head}
     try:
         workspace = Workspace(mode=args.mode)

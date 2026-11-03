@@ -856,6 +856,7 @@ impl GitHub {
             .0
             .http
             .get(url)
+            .timeout(Duration::from_secs(5))
             .bearer_auth(token)
             .header("X-GitHub-Api-Version", API_VERSION)
             .header("User-Agent", "tl3-github")
@@ -895,6 +896,7 @@ impl GitHub {
                 .0
                 .http
                 .get(url)
+                .timeout(Duration::from_secs(5))
                 .send()
                 .await
                 .map_err(|_| Error::Transport)?;
@@ -924,13 +926,15 @@ impl GitHub {
         let mut read = 0;
         while let Some(chunk) = response.chunk().await.map_err(|_| Error::Transport)? {
             prefix.extend_from_slice(&chunk[..chunk.len().min(CAP.saturating_sub(prefix.len()))]);
+            let available = (8 * 1024 * 1024usize).saturating_sub(read);
+            let chunk = &chunk[..chunk.len().min(available)];
             read += chunk.len();
-            if read > 8 * 1024 * 1024 {
-                return Err(Error::Response);
-            }
-            tail.extend_from_slice(&chunk);
+            tail.extend_from_slice(chunk);
             if tail.len() > CAP {
                 tail.drain(..tail.len() - CAP);
+            }
+            if read == 8 * 1024 * 1024 {
+                break;
             }
         }
         let truncated = partial || read > CAP;
@@ -1090,6 +1094,16 @@ impl GitHub {
             format!("{}/actions/runs", repo_path(repo)?),
             vec![("head_sha".into(), head.into())],
             Some("workflow_runs"),
+        )
+        .await
+    }
+
+    pub async fn workflow_job(&self, repo: &str, job: u64) -> Result<WorkflowJob, Error> {
+        self.request(
+            Method::GET,
+            format!("{}/actions/jobs/{job}", repo_path(repo)?),
+            vec![],
+            None,
         )
         .await
     }

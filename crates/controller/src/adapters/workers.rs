@@ -62,6 +62,7 @@ pub(super) fn isolate_credentials(
     File::open(&directory)?.sync_all()?;
     request["key_file"] = json!(key);
     command.env("CREDENTIALS_DIRECTORY", &directory);
+    command.env_remove("BUILDBUDDY_API_KEY");
     Ok(())
 }
 
@@ -1101,6 +1102,7 @@ impl Executor for Supervisor {
         // A recorded failed run is not a health check. Verify the supervisor can
         // still launch its configured worker runtime without making a model call.
         Ok(Command::new(&self.settings.python)
+            .env_remove("BUILDBUDDY_API_KEY")
             .args(["-c", "import tl3_workers"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())

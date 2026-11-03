@@ -38,7 +38,7 @@ async fn evidence(mode: &str) -> (QueueCiEvidence, Vec<Request>) {
                 "/repos/owner/project/actions/jobs/7" => json!({"id":7,"run_id":6,"run_attempt":1,"name":"Bazel","head_sha":if mode == "job-head-mismatch" {"old-head"} else {HEAD},"status":"completed","conclusion":"failure"}),
                 "/repos/owner/project/actions/jobs/8" | "/repos/owner/project/actions/jobs/9" => json!({"id":if request.url.path().ends_with('8') {8} else {9},"run_id":if mode == "aggregate-other-run" {66} else {6},"run_attempt":1,"name":if request.url.path().ends_with('8') {"Python"} else {"Rust"},"head_sha":HEAD,"status":"completed","conclusion":"failure"}),
                 "/repos/owner/project/actions/jobs/8/logs" | "/repos/owner/project/actions/jobs/9/logs" => {
-                    return ResponseTemplate::new(200).set_body_string(if mode == "aggregate-lint" {"Independent lint failure"} else {"The Bazel gate failed python: see the Bazel job"});
+                    return ResponseTemplate::new(200).set_body_string(if mode == "aggregate-lint" {"Independent lint failure"} else if request.url.path().contains("/9/") {"The Bazel gate failed rust: see the Bazel job"} else {"The Bazel gate failed python: see the Bazel job"});
                 }
                 "/api/v1/GetInvocation" => {
                     let id = body["selector"]["invocation_id"].as_str().unwrap();

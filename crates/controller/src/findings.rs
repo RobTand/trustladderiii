@@ -47,6 +47,8 @@ pub enum CiDecision {
 #[serde(rename_all = "snake_case")]
 pub enum CiGapReason {
     AccessUnavailable,
+    RedactionUnavailable,
+    WrongCiRun,
     MissingInvocation,
     WrongInvocation,
     WrongRepository,
@@ -99,6 +101,12 @@ pub struct CiTestNode {
 pub struct CiTargetResult {
     pub repository: String,
     pub check: u64,
+    #[serde(default)]
+    pub ci_run: u64,
+    #[serde(default)]
+    pub ci_run_attempt: u64,
+    #[serde(default)]
+    pub check_name: String,
     pub sha: String,
     pub parent_invocation: String,
     pub invocation: String,

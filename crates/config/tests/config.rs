@@ -1773,10 +1773,35 @@ fn repository_generator_deadline_is_optional_and_bounded() {
 
 #[test]
 fn review606_buildbuddy_access_requires_an_explicit_controller_secret_setting() {
+    use std::os::unix::fs::PermissionsExt;
+
+    assert!(
+        Config::parse(EXAMPLE)
+            .unwrap()
+            .buildbuddy
+            .diagnostic_key()
+            .unwrap()
+            .is_none()
+    );
     let text =
         format!("{EXAMPLE}\n[buildbuddy]\napi_key_file = '/run/credentials/tl3d/buildbuddy-key'\n");
     assert!(
         Config::parse(&text).is_ok(),
         "controller BuildBuddy access needs a configured secret path"
     );
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("synthetic-key");
+    fs::write(&path, "synthetic-controller-access\n").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    let access = tl3_config::BuildBuddy {
+        api_key_file: Some(path.clone()),
+    };
+    assert_eq!(
+        access.diagnostic_key().unwrap().as_deref(),
+        Some("synthetic-controller-access")
+    );
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(access.diagnostic_key().is_err());
+    fs::remove_file(&path).unwrap();
+    assert!(access.diagnostic_key().is_err());
 }

@@ -63,8 +63,9 @@ fn terminal_text(text: &str) -> String {
     clean
 }
 
-fn safe(text: &str, cap: usize) -> String {
-    static URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"https?://[^\s<>"']+"#).unwrap());
+fn safe(text: &str, cap: usize) -> std::result::Result<String, CiGapReason> {
+    static URL: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#"(?i)https?://[^\s<>"']+"#).unwrap());
     let text = terminal_text(text);
     let text = text
         .lines()
@@ -72,11 +73,15 @@ fn safe(text: &str, cap: usize) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     let text = URL.replace_all(&text, "[private URL omitted]");
-    findings::clipped(&crate::memory::redact_text(&text), cap)
+    let text = crate::redaction::text(&text).map_err(|_| CiGapReason::RedactionUnavailable)?;
+    Ok(findings::clipped(&text, cap))
 }
 
 fn public_url(text: &str) -> Option<String> {
     let text = terminal_text(text);
+    if crate::redaction::text(&text).ok()?.as_str() != text {
+        return None;
+    }
     let url = reqwest::Url::parse(&text).ok()?;
     (url.scheme() == "https"
         && url.host_str() == Some("github.com")
@@ -91,13 +96,21 @@ fn public_url(text: &str) -> Option<String> {
 
 pub(crate) fn bounded(mut details: QueueCiEvidence) -> QueueCiEvidence {
     let was_complete = details.complete;
+    let mut redaction_error = None;
+    let mut redact = |text: &str, cap| match safe(text, cap) {
+        Ok(text) => text,
+        Err(reason) => {
+            redaction_error = Some(reason);
+            String::new()
+        }
+    };
     details.complete &=
         details.checks.len() <= 20 && details.failed_tests.len() <= findings::MAX_FAILED_TESTS;
     details.checks.truncate(20);
     details.failed_tests.truncate(findings::MAX_FAILED_TESTS);
     let mut remaining = findings::MAX_REPORT_CHARS;
     for check in &mut details.checks {
-        check.name = safe(&check.name, 256.min(remaining));
+        check.name = redact(&check.name, 256.min(remaining));
         remaining = remaining.saturating_sub(check.name.chars().count());
         check.url = check
             .url
@@ -106,44 +119,58 @@ pub(crate) fn bounded(mut details: QueueCiEvidence) -> QueueCiEvidence {
             .filter(|url| url.chars().count() <= remaining);
         remaining =
             remaining.saturating_sub(check.url.as_deref().unwrap_or_default().chars().count());
-        check.summary = safe(&check.summary, findings::MAX_MESSAGE_CHARS.min(remaining));
+        check.summary = redact(&check.summary, findings::MAX_MESSAGE_CHARS.min(remaining));
         remaining = remaining.saturating_sub(check.summary.chars().count());
     }
     for test in &mut details.failed_tests {
-        let id = safe(&test.test, 4096.min(remaining));
+        let id = redact(&test.test, 4096.min(remaining));
         details.complete &= id == test.test;
         test.test = id;
         remaining = remaining.saturating_sub(test.test.chars().count());
-        test.message = safe(&test.message, findings::MAX_MESSAGE_CHARS.min(remaining));
+        test.message = redact(&test.message, findings::MAX_MESSAGE_CHARS.min(remaining));
         remaining = remaining.saturating_sub(test.message.chars().count());
     }
     details.complete &= details.target_results.len() <= 16;
     details.target_results.truncate(16);
     let mut node_count = 0;
     for result in &mut details.target_results {
+        for field in [
+            &mut result.repository,
+            &mut result.sha,
+            &mut result.parent_invocation,
+            &mut result.invocation,
+            &mut result.target,
+            &mut result.check_name,
+        ] {
+            let value = redact(field, 4096.min(remaining));
+            details.complete &= value == *field;
+            *field = value;
+            remaining = remaining.saturating_sub(field.chars().count());
+        }
         let available = 200usize.saturating_sub(node_count);
         details.complete &= result.nodes.len() <= available;
         result.nodes.truncate(available);
         node_count += result.nodes.len();
         for node in &mut result.nodes {
-            let id = safe(&node.test, 4096.min(remaining));
+            let id = redact(&node.test, 4096.min(remaining));
             details.complete &= id == node.test;
             node.test = id;
             remaining = remaining.saturating_sub(node.test.chars().count());
-            node.message = safe(&node.message, findings::MAX_MESSAGE_CHARS.min(remaining));
+            node.message = redact(&node.message, findings::MAX_MESSAGE_CHARS.min(remaining));
             remaining = remaining.saturating_sub(node.message.chars().count());
         }
-        result.excerpt = safe(&result.excerpt, 2000.min(remaining));
+        result.excerpt = redact(&result.excerpt, 2000.min(remaining));
         remaining = remaining.saturating_sub(result.excerpt.chars().count());
     }
-    details.retrievals.truncate(52);
+    details.retrievals.truncate(72);
+    details.complete &= redaction_error.is_none();
     if was_complete && !details.complete {
         details.gaps.push(CiEvidenceGap {
             check: details
                 .target_results
                 .first()
                 .map_or(0, |result| result.check),
-            reason: CiGapReason::Oversized,
+            reason: redaction_error.unwrap_or(CiGapReason::Oversized),
         });
     }
     details.gaps.truncate(20);
@@ -176,8 +203,9 @@ pub(super) async fn read_checks(
     repo: &str,
     head: &str,
     checks: &[CheckRun],
+    access: &tl3_config::BuildBuddy,
 ) -> QueueCiEvidence {
-    let client = remote::Client::configured().ok();
+    let client = remote::Client::configured(access).ok();
     read_checks_inner(github, repo, head, checks, client.as_ref()).await
 }
 
@@ -190,6 +218,50 @@ async fn read_checks_with(
     remote: &remote::Client,
 ) -> QueueCiEvidence {
     read_checks_inner(github, repo, head, checks, Some(remote)).await
+}
+
+async fn job_binding(
+    github: &GitHub,
+    repo: &str,
+    head: &str,
+    check: &CheckRun,
+    budget: &remote::Budget,
+) -> std::result::Result<tl3_github::WorkflowJob, CiGapReason> {
+    let job = tokio::time::timeout(budget.remaining_time(), github.workflow_job(repo, check.id))
+        .await
+        .map_err(|_| CiGapReason::RetrievalLimit)?
+        .map_err(|_| CiGapReason::Unavailable)?;
+    let expected_url = format!(
+        "https://github.com/{repo}/actions/runs/{}/job/{}",
+        job.run_id, job.id
+    );
+    if check
+        .details_url
+        .as_deref()
+        .is_none_or(|url| !url.eq_ignore_ascii_case(&expected_url))
+        || job.id != check.id
+        || job.name != check.name
+        || job.head_sha != head
+        || job.run_id == 0
+        || job.run_attempt == 0
+        || job.status != "completed"
+        || job.conclusion != check.conclusion
+    {
+        return Err(CiGapReason::WrongCiRun);
+    }
+    Ok(job)
+}
+
+fn aggregate_reference(check: &CheckRun, log: &str) -> bool {
+    let language = match check.name.as_str() {
+        "Python" => "python",
+        "Rust" => "rust",
+        _ => return false,
+    };
+    let expected = format!("The Bazel gate failed {language}: see the Bazel job");
+    log.lines()
+        .rev()
+        .any(|line| line.trim_end().ends_with(&expected))
 }
 
 async fn read_checks_inner(
@@ -238,6 +310,8 @@ async fn read_checks_inner(
     };
     let mut seen = BTreeSet::new();
     let mut budget = remote::Budget::default();
+    let mut resolved_bazel = BTreeMap::new();
+    let mut aggregates = Vec::new();
     for check in failed.into_iter().take(20) {
         let mut summary = vec![format!(
             "Conclusion: {}",
@@ -252,26 +326,36 @@ async fn read_checks_inner(
         let mut prefix = String::new();
         let mut truncated = false;
         let mut gap = None;
+        let mut aggregate = false;
         if check
             .app
             .as_ref()
             .is_some_and(|app| app.slug == "github-actions")
         {
-            let log = github.job_log_tail(repo, check.id).await;
+            let log =
+                tokio::time::timeout(budget.remaining_time(), github.job_log_tail(repo, check.id))
+                    .await;
             details.retrievals.push(CiRetrieval {
                 check: check.id,
                 method: "GitHubJobLog".into(),
                 attempt: 1,
-                error: log.as_ref().err().map(|_| CiGapReason::Unavailable),
+                error: match &log {
+                    Ok(Ok(_)) => None,
+                    Ok(Err(_)) => Some(CiGapReason::Unavailable),
+                    Err(_) => Some(CiGapReason::RetrievalLimit),
+                },
             });
             match log {
-                Ok(log) => {
+                Ok(Ok(log)) => {
+                    aggregate =
+                        !log.truncated && aggregate_reference(check, &terminal_text(&log.text));
                     prefix = log.prefix;
                     text.push('\n');
                     text.push_str(&log.text);
                     truncated = log.truncated;
                 }
-                Err(_) => gap = Some(CiGapReason::Unavailable),
+                Ok(Err(_)) => gap = Some(CiGapReason::Unavailable),
+                Err(_) => gap = Some(CiGapReason::RetrievalLimit),
             }
         }
         text = terminal_text(&text);
@@ -287,14 +371,27 @@ async fn read_checks_inner(
             .map(|cap| cap[1].to_owned())
             .collect();
         let mut resolved = false;
+        let binding = if remote.is_some() && (parents.len() == 1 || aggregate) {
+            let binding = job_binding(github, repo, head, check, &budget).await;
+            details.retrievals.push(CiRetrieval {
+                check: check.id,
+                method: "GitHubJob".into(),
+                attempt: 1,
+                error: binding.as_ref().err().copied(),
+            });
+            Some(binding)
+        } else {
+            None
+        };
         if !expected.is_empty() || !parents.is_empty() {
             gap = match (parents.len(), remote) {
-                (1, Some(client)) => {
+                (1, Some(client)) if binding.as_ref().is_some_and(|value| value.is_ok()) => {
+                    let job = binding.as_ref().unwrap().as_ref().unwrap();
                     let resolution = client
                         .resolve(
                             repo,
                             head,
-                            check.id,
+                            job,
                             parents.first().unwrap(),
                             &expected,
                             &mut budget,
@@ -303,8 +400,16 @@ async fn read_checks_inner(
                     details.retrievals.extend(resolution.retrievals);
                     details.target_results.extend(resolution.results);
                     resolved = resolution.gap.is_none();
+                    if resolved && check.name == "Bazel" {
+                        resolved_bazel.insert((job.run_id, job.run_attempt), check.id);
+                    }
                     resolution.gap
                 }
+                (1, Some(_)) => binding
+                    .as_ref()
+                    .and_then(|value| value.as_ref().err())
+                    .copied()
+                    .or(Some(CiGapReason::WrongCiRun)),
                 (1, None) => Some(CiGapReason::AccessUnavailable),
                 _ => Some(CiGapReason::MissingInvocation),
             };
@@ -334,6 +439,17 @@ async fn read_checks_inner(
                 }
             }
         }
+        if aggregate && let Some(Ok(job)) = &binding {
+            aggregates.push((
+                check.id,
+                job.run_id,
+                job.run_attempt,
+                gap.unwrap_or(CiGapReason::IncompleteJobLog),
+            ));
+            gap = None;
+        } else if aggregate && let Some(Err(reason)) = &binding {
+            gap = Some(*reason);
+        }
         if let Some(reason) = gap {
             details.complete = false;
             details.gaps.push(CiEvidenceGap {
@@ -357,24 +473,49 @@ async fn read_checks_inner(
         } else {
             text
         };
-        let sanitize = |text: &str| match remote {
-            Some(remote) => remote.sanitize(text, findings::MAX_MESSAGE_CHARS),
-            None => safe(text, findings::MAX_MESSAGE_CHARS),
+        let remove_key = |text: &str| match remote {
+            Some(remote) => remote.remove_key(text),
+            None => text.to_owned(),
         };
         details.checks.push(CiFailure {
-            name: sanitize(&check.name),
-            summary: sanitize(&if resolved {
+            name: remove_key(&check.name),
+            summary: remove_key(&if resolved {
                 format!("Resolved remote target evidence:\n{diagnostic}")
             } else {
                 format!("{}\n{diagnostic}", summary.join("\n"))
             }),
-            url: check.details_url.as_deref().and_then(public_url),
+            url: check
+                .details_url
+                .as_deref()
+                .map(remove_key)
+                .as_deref()
+                .and_then(public_url),
         });
     }
+    for (check, run, attempt, reason) in aggregates {
+        if !resolved_bazel.contains_key(&(run, attempt)) {
+            details.complete = false;
+            details.gaps.push(CiEvidenceGap { check, reason });
+        }
+    }
     if let Some(remote) = remote {
+        for result in &mut details.target_results {
+            for field in [
+                &mut result.repository,
+                &mut result.sha,
+                &mut result.parent_invocation,
+                &mut result.invocation,
+                &mut result.target,
+                &mut result.check_name,
+            ] {
+                let value = remote.remove_key(field);
+                details.complete &= value == *field;
+                *field = value;
+            }
+        }
         for test in &mut details.failed_tests {
-            test.test = remote.sanitize(&test.test, 4096);
-            test.message = remote.sanitize(&test.message, findings::MAX_MESSAGE_CHARS);
+            test.test = remote.remove_key(&test.test);
+            test.message = remote.remove_key(&test.message);
         }
     }
     bounded(details)
@@ -384,6 +525,7 @@ pub(super) async fn read_queue(
     github: &GitHub,
     repo: &str,
     state: &tl3_mergify::Observation,
+    access: &tl3_config::BuildBuddy,
 ) -> QueueCiEvidence {
     static DRAFT: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\bdraft #([1-9][0-9]*)\b").unwrap());
@@ -398,7 +540,7 @@ pub(super) async fn read_queue(
         Some(number) => match github.pull_request(repo, number).await {
             Ok(pull) if is_merge_queue_pr(&pull) => {
                 match github.check_runs(repo, &pull.head.sha).await {
-                    Ok(checks) => read_checks(github, repo, &pull.head.sha, &checks).await,
+                    Ok(checks) => read_checks(github, repo, &pull.head.sha, &checks, access).await,
                     Err(_) => QueueCiEvidence::default(),
                 }
             }
@@ -410,6 +552,7 @@ pub(super) async fn read_queue(
                 repo,
                 &state.pull_request.head.sha,
                 &state.check_runs,
+                access,
             )
             .await
         }
@@ -532,8 +675,11 @@ mod tests {
             "pass\0\x08\x7fword=planted-secret",
             "\u{009b}31mpassword=planted-secret\u{009b}0m",
         ] {
-            assert_eq!(safe(text, 1000), "[redacted]");
+            assert_eq!(
+                safe(text, 1000).unwrap(),
+                crate::redaction::text("password=planted-secret").unwrap()
+            );
         }
-        assert_eq!(safe("a\t雪\nb", 1000), "a\t雪\nb");
+        assert_eq!(safe("a\t雪\nb", 1000).unwrap(), "a\t雪\nb");
     }
 }

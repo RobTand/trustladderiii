@@ -366,6 +366,7 @@ impl Attempt {
 }
 
 pub struct Adapter {
+    ci_access: tl3_config::BuildBuddy,
     clients: BTreeMap<u64, GitHub>,
     epoch: i64,
     records: Records,
@@ -383,9 +384,15 @@ struct BodyPolicy {
     reruns: Vec<String>,
 }
 impl Adapter {
+    pub fn with_ci_evidence(mut self, access: tl3_config::BuildBuddy) -> Self {
+        self.ci_access = access;
+        self
+    }
+
     pub fn new(clients: BTreeMap<u64, GitHub>, epoch: i64, records: &Path) -> Result<Self> {
         std::fs::create_dir_all(records)?;
         Ok(Self {
+            ci_access: Default::default(),
             clients,
             epoch,
             records: Records::new(records),
@@ -599,6 +606,7 @@ impl Adapter {
                 head,
                 &[],
                 snapshot.as_ref(),
+                &self.ci_access,
             ))?
             .into_iter()
             .map(Observation::Queue)
@@ -1182,6 +1190,7 @@ async fn queue_facts(
     expected_head: &str,
     open: &[RequiredCheck],
     snapshot: Option<&Snapshot>,
+    ci_access: &tl3_config::BuildBuddy,
 ) -> Result<Vec<QueueFact>> {
     let pull = &state.pull_request;
     if is_merge_queue_pr(pull) {
@@ -1295,6 +1304,7 @@ async fn queue_facts(
                         &repo_name,
                         &pull.head.sha,
                         &state.check_runs,
+                        ci_access,
                     )
                     .await;
                 }
@@ -1376,7 +1386,8 @@ async fn queue_facts(
             .unwrap_or(false)
         {
             if let Evidence::CiFailed { details, .. } = &mut fact.evidence {
-                *details = ci_evidence::read_queue(github, &full_name(repo), state).await;
+                *details =
+                    ci_evidence::read_queue(github, &full_name(repo), state, ci_access).await;
             }
             facts.push(fact);
         }
@@ -1529,12 +1540,19 @@ fn pending_enqueues(snapshot: &Snapshot, repo: &Repository, number: u64) -> Resu
 
 /// Sources read evidence; only the controller maps PRs to nodes and steps the kernel.
 pub struct Translator {
+    ci_access: tl3_config::BuildBuddy,
     clients: BTreeMap<u64, GitHub>,
     runtime: &'static tokio::runtime::Runtime,
 }
 impl Translator {
+    pub fn with_ci_evidence(mut self, access: tl3_config::BuildBuddy) -> Self {
+        self.ci_access = access;
+        self
+    }
+
     pub fn new(clients: BTreeMap<u64, GitHub>) -> Result<Self> {
         Ok(Self {
+            ci_access: Default::default(),
             clients,
             runtime: crate::executor::runtime()?,
         })
@@ -1599,6 +1617,7 @@ impl Translator {
                         &head,
                         &[],
                         Some(snapshot),
+                        &self.ci_access,
                     ))?);
                 }
             }
@@ -1728,6 +1747,7 @@ impl Translator {
             &item.approved,
             &item.missing,
             Some(snapshot),
+            &self.ci_access,
         ))
     }
     pub fn catch_up(
@@ -1771,6 +1791,7 @@ impl Translator {
                     &head,
                     &[],
                     Some(snapshot),
+                    &self.ci_access,
                 ))?);
             }
         }

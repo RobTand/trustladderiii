@@ -118,6 +118,17 @@ pub struct CheckSuiteId {
     pub id: u64,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct WorkflowJob {
+    pub id: u64,
+    pub run_id: u64,
+    pub run_attempt: u64,
+    pub name: String,
+    pub head_sha: String,
+    pub status: String,
+    pub conclusion: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct WorkflowRun {
     pub id: u64,
