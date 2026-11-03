@@ -1402,6 +1402,48 @@ def test_real_planner_tool_loop_refuses_or_binds_handoff(rehearsal, monkeypatch,
         assert reply['forcing_rehearsals'][0]['forced']['tests'][0]['outcome'] == 'passed'
 
 
+
+@pytest.mark.parametrize('stage', ['unforced', 'forced'])
+@pytest.mark.parametrize('status,message', [
+    ('not_available', 'Repository test settings are unavailable.'),
+    ('infrastructure_error', 'PrismaBuild submission failed: no eligible workers.'),
+    ('infrastructure_error', 'PrismaBuild execution failed: worker disconnected.'),
+])
+def test_rehearsal_failure_diagnostic_reaches_cant_meet(rehearsal, monkeypatch, stage, status, message):
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+    from tl3_workers import forcing_rehearsal, runtime
+
+    _, root, inputs, _ = rehearsal
+    original = forcing_rehearsal.make_test_tool
+
+    def test_tool(worktree, **kwargs):
+        if bool(kwargs.get('forcing')) == (stage == 'forced'):
+            return lambda *args, **options: {'status': status, 'message': message}
+        return original(worktree, **kwargs)
+
+    monkeypatch.setattr(forcing_rehearsal, 'make_test_tool', test_tool)
+    model = FakeMessagesListChatModel(responses=[
+        AIMessage(content='', tool_calls=[{'name': 'rehearse_forcing', 'id': 'force',
+                                          'args': {'tests': [NODE], 'forcing': reachable()}}]),
+        AIMessage(content='malformed reply after failed work'),
+        AIMessage(content=json.dumps(plan(reachable()))),
+    ])
+    monkeypatch.setattr(runtime, 'create_model', lambda _: model)
+    inputs['repair_plan_consistency'] = True
+    request = {'role': 'planner', 'worktree': str(root), 'inputs': inputs,
+               'operation': {'node': 1, 'generation': 0, 'kind': 'planning'},
+               'model': {'name': 'fixture', 'effort': 'high', 'budget_tokens': 32000}}
+    events = []
+    runtime.run(request, events.append)
+    reply = events[-1]['reply']
+    assert reply['kind'] == 'cant_meet'
+    assert model.i == 2, 'failed work must never enter another model correction turn'
+    assert status in reply['report']
+    assert message in reply['report']
+    assert reply['violations']
+
+
 def test_every_named_old_path_must_hit_the_delayed_target(rehearsal):
     ledger, root, inputs, _ = rehearsal
     (root / 'tests/test_adoption.py').write_text(TEST + '\ndef test_bypass():\n    assert Publisher().decide()\n')
