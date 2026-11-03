@@ -24,7 +24,8 @@ PB #2718 exhausted the former 64-turn cap after extensive orientation and search
 File count cannot predict exploration. Include every required edit and check.
 Code adds declared exploration to the structural floor and uses the larger of your
 estimate and a structural estimate: nine operations per file, four per check,
-two for scope review and one for configured generation. The per-file floor
+two for scope review, one for configured generation and one inspection per
+generator-owned output. The per-file floor
 allows five edits, two implementation reads, a search and final readback;
 increase your estimate when a file needs more work. Per-piece structural
 estimates use at least one check per goal; include additional checks in your estimate.

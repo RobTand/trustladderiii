@@ -192,6 +192,43 @@ def test_request236_generated_builds_fit_with_inspection_and_all_source_checks(r
                 tree._check_write(name)
 
 
+@pytest.mark.parametrize("declared", [0, 560])
+def test_leaf_budget_violation_names_every_component_and_value(request236, declared):
+    from tl3_workers.roles.planner import check_reply
+
+    inputs, proposal, ledger = request236
+    inputs["ingest"]["brief"] = "UNTRUSTED_REQUEST_TEXT"
+    proposal["estimated_exploration_turns"] = 500
+    proposal["estimated_tool_turns"] = declared
+    check_reply(inputs, proposal, rehearsals=ledger)
+    execution = proposal["execution"]
+    assert execution["estimated_tool_turns"] == max(528, declared)
+    violation, = [item for item in proposal["violations"] if item.startswith("The leaf exceeds the execution budget:")]
+    assert f"estimated {execution['estimated_tool_turns']} tool turns, backstop 512" in violation
+    for component, value in execution["components"].items():
+        assert f"{component}={value}" in violation, violation
+    assert "UNTRUSTED_REQUEST_TEXT" not in violation
+
+
+def test_piece_budget_violation_names_every_component_and_value(request236):
+    from tl3_workers.roles.planner import check_reply
+
+    inputs, _, _ = request236
+    proposal = {"kind": "split", "reason": "execution_budget", "estimated_exploration_turns": 600,
+                "pieces": [
+                    {"brief": "UNTRUSTED_PIECE_TEXT", "goal_ids": [index], "files": [REQUEST236_TEST],
+                     "estimated_exploration_turns": exploration} for index, exploration in enumerate((500, 501))]}
+    check_reply(inputs, proposal)
+    violations = [item for item in proposal["violations"] if item.startswith("Every execution-budget piece must fit")]
+    assert len(violations) == 2
+    for violation, execution in zip(violations, proposal["execution"]["pieces"]):
+        assert not execution["fits"]
+        assert f"estimated {execution['estimated_tool_turns']} tool turns, backstop 512" in violation
+        for component, value in execution["components"].items():
+            assert f"{component}={value}" in violation, violation
+        assert "UNTRUSTED_PIECE_TEXT" not in violation
+
+
 def test_five_authored_files_keep_the_original_68_turn_estimate(request236):
     from tl3_workers.roles.planner import check_reply
 
