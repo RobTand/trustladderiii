@@ -266,3 +266,89 @@ def test_reproducing_requires_available_tests_and_a_passing_fix(before, after):
     assert kind is not None, "reproducing checks must reject unavailable or broken tests"
     test = "tests/test_product.py::test_demonstrates"
     assert judge(Check("fix", kind, (test,)), {test: before}, {test: after}).verdict == Verdict.FAIL
+
+
+HELPER_BASE = '''import subprocess
+import sys
+
+def _execute(result):
+    if result.returncode:
+        raise AssertionError("mover failed")
+    return result
+'''
+HELPER_HEAD = HELPER_BASE.replace('"mover failed"', '"mover failed: " + result.stdout')
+HELPER_OBSERVER = '''
+def test_diagnostic():
+    import subprocess
+    import sys
+    from pathlib import Path
+    import tempfile
+    # Run the real helper in a deliberately failing, private inner pytest.
+    with tempfile.TemporaryDirectory() as directory:
+        inner = Path(directory) / "test_inner.py"
+        inner.write_text("import sys\\nsys.path.insert(0, " + repr(str(Path(__file__).parent)) + ")\\n"
+                         "from test_product import _execute\\nimport subprocess\\n"
+                         "def test_inner():\\n    _execute(subprocess.CompletedProcess([], 1, 'broken transfer'))\\n")
+        child = subprocess.run([sys.executable, '-m', 'pytest', '-q', str(inner)],
+                               capture_output=True, text=True)
+    assert child.returncode == 1
+    assert 'broken transfer' in child.stdout
+    import contextlib
+    import io
+    result = subprocess.CompletedProcess([], 0, 'quiet')
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+        assert _execute(result) is result
+    assert output.getvalue() == ''
+'''
+
+
+def helper_trees(tmp_path):
+    base, head, demo = [tmp_path / name for name in ('old', 'new', 'staged')]
+    for tree, source in ((base, HELPER_BASE), (head, HELPER_HEAD + HELPER_OBSERVER)):
+        (tree / 'tests').mkdir(parents=True)
+        (tree / 'tests/test_product.py').write_text(source)
+    shutil.copytree(base, demo)
+    return base, head, demo
+
+
+def test_helper_evidence_preserves_real_old_helper_and_identical_observer(tmp_path):
+    from tl3_harness.model import HelperEvidence
+    from tl3_harness.trees import helper_test_edits
+    base, head, demo = helper_trees(tmp_path)
+    evidence = HelperEvidence('tests/test_product.py::_execute')
+    tests = ('tests/test_product.py::test_diagnostic',)
+    identity = helper_test_edits(base, head, demo, ['tests/*.py'], evidence, tests)
+    assert (demo / 'tests/test_product.py').read_text() == HELPER_BASE + '\n' + HELPER_OBSERVER.lstrip()
+    names, before = run(demo, ['test_diagnostic'])
+    _, after = run(head, ['test_diagnostic'])
+    assert before[names[0]] == Outcome.ASSERTION
+    assert after[names[0]] == Outcome.PASSED
+    assert identity['base_target_sha256'] != identity['head_target_sha256']
+    assert identity['base_tree_sha256'] != identity['head_tree_sha256']
+    assert set(identity['observers']) == set(tests)
+
+
+@pytest.mark.parametrize('tamper', ['duplicate', 'decorator', 'import', 'undeclared', 'unchanged', 'fake-old'])
+def test_helper_evidence_rejects_ambiguous_or_smuggled_definitions(tmp_path, tamper):
+    from tl3_harness.model import HelperEvidence
+    from tl3_harness.trees import helper_test_edits
+    base, head, demo = helper_trees(tmp_path)
+    path = head / 'tests/test_product.py'
+    source = path.read_text()
+    if tamper == 'duplicate':
+        source += HELPER_HEAD
+    elif tamper == 'decorator':
+        source = source.replace('def _execute', '@staticmethod\ndef _execute')
+    elif tamper == 'import':
+        source = 'import os\n' + source
+    elif tamper == 'undeclared':
+        source += '\ndef other_helper(): return 2\n'
+    elif tamper == 'unchanged':
+        source = source.replace(HELPER_HEAD, HELPER_BASE)
+    else:
+        source += '\ndef fake_old(): raise AssertionError("mover failed")\n'
+    path.write_text(source)
+    with pytest.raises(ValueError, match='helper evidence'):
+        helper_test_edits(base, head, demo, ['tests/*.py'], HelperEvidence('tests/test_product.py::_execute'),
+                          ('tests/test_product.py::test_diagnostic',))

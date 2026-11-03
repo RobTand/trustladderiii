@@ -1069,3 +1069,18 @@ def test_evidence_contract_rechecks_current_capabilities(planner_request, monkey
     check_reply(inputs, reply)
     assert reply['kind'] == 'leaf'
     assert reply['evidence_errors'] == []
+
+
+def test_helper_target_observer_plan_is_supported(planner_request, digests_plan):
+    path = Path(planner_request['worktree']) / DIGESTS
+    path.write_text(path.read_text() + '\ndef _execute(result):\n    assert result.returncode == 0\n    return result\n')
+    planner_request['inputs']['ingest']['goals'] = [
+        {'description': 'Improve failed helper diagnostics while the inner pytest still fails.', 'verification': 'test'}]
+    digests_plan.update(files=[DIGESTS], checks=[{
+        'kind': 'demonstrating', 'node_ids': [f'{DIGESTS}::test_new_diagnostic'], 'goal_ids': [0],
+        'helper_evidence': {'target': f'{DIGESTS}::_execute'}}])
+    validate('planner-reply', digests_plan)
+    assert planned(planner_request, copy.deepcopy(digests_plan)) == []
+    digests_plan['checks'][0]['helper_evidence']['target'] = f'{DIGESTS}::missing'
+    digests_plan['files'].append('README.md')
+    assert any('helper evidence' in item for item in planned(planner_request, copy.deepcopy(digests_plan)))
