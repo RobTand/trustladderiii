@@ -83,6 +83,7 @@ tl3_py_test(
     srcs = ["test_pb_tests.py"],
     deps = [
         ":conftest",
+        ":pb_fixtures",
         "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//langchain_core",
@@ -320,8 +321,8 @@ tl3_py_test(
     deps = [
         ":conftest",
         ":message_invariants",
+        ":pb_fixtures",
         ":test_maker",
-        ":test_pb_tests",
         ":test_prompt_cache",
         ":test_reviewer",
         ":test_workers",
@@ -408,8 +409,18 @@ tl3_py_test(
     srcs = ["test_pb_machine_records.py"],
     deps = [
         ":conftest",
-        ":test_pb_tests",
+        ":pb_fixtures",
         "//harness/src/tl3_harness",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
+py_library(
+    name = "pb_fixtures",
+    srcs = ["pb_fixtures.py"],
+    visibility = ["//visibility:public"],
+    deps = [
         "//workers/src",
         "@tl3_pip//pytest",
     ],

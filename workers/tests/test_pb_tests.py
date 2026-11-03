@@ -15,101 +15,13 @@ from tl3_workers.roles import planner
 from tl3_harness.test_tool import SUMMARY_BYTES, Summary, infrastructure
 from tl3_workers.pb_tests import TestSettings, make_test_tool
 from tl3_workers.tools import Worktree, build_tools
+import pb_fixtures as shared
+from pb_fixtures import IMAGE, KEY, call, configured_generator
 
 
-IMAGE = "sha256:" + "1" * 64
-KEY = "a" * 64
-
-
-@pytest.fixture(autouse=True)
-def supported_fake_runtime(monkeypatch):
-    """Avoid per-fixture probes. Real probes run in test_pb_machine_records."""
-    from tl3_workers import pb_tests
-    monkeypatch.setattr(pb_tests, "_machine_record_supported", lambda runtime: True)
-
-
-def machine_cli(source):
-    """Adapt receipt-producing fakes to PB's private descriptor protocol."""
-    return '''import builtins
-import fcntl
-import json
-import os
-import sys
-if sys.argv[1:] == ["--machine-record-capability"]:
-    print(json.dumps(dict(schema="prismabuild.machine_record_capability.v1", machine_record_fd=1)))
-    raise SystemExit(0)
-if "--machine-record-fd" in sys.argv:
-    index = sys.argv.index("--machine-record-fd")
-    record_fd = int(sys.argv[index + 1])
-    del sys.argv[index:index + 2]
-    fcntl.fcntl(record_fd, fcntl.F_SETFD, fcntl.FD_CLOEXEC)
-    public_print = builtins.print
-    def emit_record(document, *args, **kwargs):
-        os.write(record_fd, (document + "\\n").encode())
-        public_print(document, *args, **kwargs)
-    builtins.print = emit_record
-''' + source
-
-
-@pytest.fixture
-def submission(tmp_path):
-    root = tmp_path / "worktree"
-    root.mkdir()
-    (root / "uncommitted.py").write_bytes(b"current dirty bytes\x00\xff")
-    (root / ".gitignore").write_text("uncommitted.py\n")
-    scripts = tmp_path / "tools"
-    scripts.mkdir()
-    (scripts / "pbrun.py").write_text('''
-import json
-from pathlib import Path
-import sys
-here = Path(__file__).parent
-args = sys.argv[1:]
-root = Path(args[args.index("--cwd") + 1])
-assert (root / "checkout/uncommitted.py").read_bytes() == b"current dirty bytes\\x00\\xff"
-assert (root / "trusted/tl3_harness/runner.py").is_file()
-assert (root / "action.py").is_file()
-assert not (root / "checkout/.git").exists()
-(here / "submitted.json").write_text(json.dumps(args))
-import subprocess
-(here / "tree.txt").write_text(subprocess.run(["git", "write-tree", "--prefix=checkout/"], cwd=root,
-                                              capture_output=True, text=True, check=True).stdout.strip())
-print(json.dumps({"schema": "prismabuild.submission.v1", "action_key": "a" * 64}))
-''')
-    (scripts / "pbwait.py").write_text('''
-import hashlib
-import json
-from pathlib import Path
-import sys
-here = Path(__file__).parent
-(here / "waited.json").write_text(json.dumps(sys.argv[1:]))
-result = json.loads((here / "response.json").read_text())
-log = here / "action.log"
-raw = ("TL3_TEST_SUMMARY " + json.dumps(result) + "\\n").encode()
-log.write_bytes(raw)
-ending = {"action_key": "a" * 64, "status": "executed", "succeeded": True, "exit_code": 0,
-          "result": {"verified": True, "receipt_sha256": "b" * 64,
-                     "stdout": {"path": str(log), "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}}}
-if (here / "override.json").exists():
-    ending.update(json.loads((here / "override.json").read_text()))
-print(json.dumps({"schema": "prismabuild.endings.v1", "complete": True, "endings": [ending]}))
-''')
-    for name in ("pbrun.py", "pbwait.py"):
-        script = scripts / name
-        script.write_text(machine_cli(script.read_text()))
-    return root, scripts
-
-
-def call(submission, response, tests=None, override=None):
-    root, scripts = submission
-    (scripts / "response.json").write_text(json.dumps(response))
-    if override is not None:
-        (scripts / "override.json").write_text(json.dumps(override))
-    with Worktree(root) as tree:
-        tree.test_settings = TestSettings(IMAGE, scripts)
-        tool = build_tools(tree, {"run_tests": "Run worktree tests through PrismaBuild."})[0]
-        assert set(tool.args) == {"tests", "base", "repeat", "parallel", "priority"}
-        return tool.invoke({} if tests is None else {"tests": tests})
+submission = shared.submission
+generator_repo = shared.generator_repo
+supported_fake_runtime = shared.supported_fake_runtime
 
 
 @pytest.mark.parametrize("outcome", ["passed", "failed", "error", "skipped"])
@@ -785,38 +697,6 @@ def test_sigkill_without_oom_reason_is_not_classified_as_oom(submission):
     })
     assert result["receipts"] == [{"action_key": KEY, "status": "failed", "exit_code": 137}]
     assert "memory_limit_oom" not in result["message"]
-@pytest.fixture
-def generator_repo(tmp_path):
-    """A served repo with a git-index generator, like request 132's Bazel workflow."""
-    root = tmp_path / "generated-repo"
-    root.mkdir()
-    script = '''import ast
-from pathlib import Path
-import subprocess
-import sys
-files = subprocess.check_output(["git", "ls-files", "-z"]).decode().split("\\0")
-lines = []
-for name in sorted(name for name in files if name.endswith(".py") and name != "generate.py"):
-    imports = [node.module for node in ast.walk(ast.parse(Path(name).read_text()))
-               if isinstance(node, ast.ImportFrom)]
-    lines.append(name + ":" + ",".join(imports))
-output = "# Generated by generate.py\\n" + "\\n".join(lines) + "\\n"
-if "--check" in sys.argv:
-    raise SystemExit(Path("tests/BUILD.bazel").read_text() != output)
-Path("tests/BUILD.bazel").write_text(output)
-'''
-    (root / "generate.py").write_text(script)
-    (root / "tests").mkdir()
-    (root / "tests/test_wait.py").write_text("from socket import socket\n")
-    (root / "tests/BUILD.bazel").write_text("# Generated by generate.py\ntests/test_wait.py:socket\n")
-    for args in (("init", "--quiet", "--template="), ("add", "."),
-                 ("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
-                  "commit", "--quiet", "-m", "Base")):
-        subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
-    (root / "tests/socket_support.py").write_text("def short_socket(): return 'short'\n")
-    (root / "tests/test_short_socket.py").write_text("from tests.socket_support import short_socket\ndef test_short(): assert short_socket() == 'short'\n")
-    (root / "tests/test_wait.py").write_text("from tests.socket_support import short_socket\n")
-    return root
 
 
 @pytest.fixture
@@ -851,20 +731,6 @@ def generator_backend(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pb_generators, "_json_command", command)
     return calls, artifacts
-
-
-def configured_generator(root, tmp_path, *, protected=(), files=None):
-    from tl3_workers.pb_generators import make_generator_tool
-    tree = Worktree(root)
-    tree.test_checkout = root
-    tree.test_settings = TestSettings(IMAGE, tmp_path / "tools")
-    tree.generated_files = ["**/BUILD.bazel"]
-    tree.generator = "python3 generate.py"
-    tree.protected_paths = protected
-    tree.generator_files = files or ["tests/BUILD.bazel", "tests/socket_support.py",
-                                    "tests/test_short_socket.py", "tests/test_wait.py"]
-    tree.generator_state = tmp_path / "generator-state.json"
-    return tree, make_generator_tool(tree)
 
 
 def test_request_132_git_index_generation_lands_before_independent_check(generator_repo, generator_backend, tmp_path):
@@ -927,8 +793,6 @@ def test_generator_cannot_override_protection(
         result = generate()
     assert result["status"] != "completed"
     assert fragment in result["message"], result
-
-
 
 def test_request_2709_test_only_plan_imports_configured_output(generator_repo, generator_backend, tmp_path):
     for name in ("socket_support.py", "test_short_socket.py"):
@@ -1492,8 +1356,6 @@ def test_real_planner_tool_loop_refuses_or_binds_handoff(rehearsal, monkeypatch,
         assert reply['kind'] == 'cant_meet' and 'zero-hit' in reply['report']
         assert reply['violations'] and 'zero-hit' in reply['violations'][0]
         assert reply['forcing_rehearsals'][0]['forced']['tests'][0]['outcome'] == 'passed'
-
-
 
 @pytest.mark.parametrize('stage', ['unforced', 'forced'])
 @pytest.mark.parametrize('status,message', [

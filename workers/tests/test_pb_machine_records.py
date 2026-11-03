@@ -8,8 +8,8 @@ import pytest
 from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
 from tl3_harness.test_tool import Summary
 from tl3_workers import pb_tests
-import test_pb_tests as shared
-from test_pb_tests import IMAGE, KEY, call, configured_generator
+import pb_fixtures as shared
+from pb_fixtures import IMAGE, KEY, call, configured_generator
 
 submission = shared.submission
 generator_repo = shared.generator_repo
