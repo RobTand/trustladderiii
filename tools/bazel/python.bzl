@@ -16,7 +16,7 @@ _PACKAGE_DATA = {
     "deploy/ci-runners": ["//:workflows"],
     # TL3_DEPLOY_HELPER: the deployment tests drive the real helper binary.
     "deploy/dl380g10": ["//crates/config:sources", "//crates/controller:example_tl3-deploy"],
-    "harness/tests": ["//harness:project_files"],
+    "harness/tests": ["//harness:project_files", "//harness/tools:verify_disk_scratch"],
     "tools/ci": [
         "//:bazel_config",
         "//:workflows",
@@ -31,7 +31,7 @@ _PACKAGE_DATA = {
 
 # Project code that pytest imports from the project root, as Light checks do.
 _PACKAGE_DEPS = {
-    "harness/tests": ["//harness/src/tl3_harness"],
+    "harness/tests": ["//harness/src/tl3_harness", "@rules_python//python/runfiles"],
     "workers/tests": ["//workers/src"],
 }
 

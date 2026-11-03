@@ -71,13 +71,3 @@ py_binary(
         "@rules_python//python/runfiles",
     ],
 )
-
-tl3_py_test(
-    name = "test_verify_disk_scratch",
-    srcs = ["test_verify_disk_scratch.py"],
-    data = [":verify_disk_scratch"],
-    deps = [
-        "//harness/src/tl3_harness",  # keep
-        "@rules_python//python/runfiles",  # keep
-    ],
-)

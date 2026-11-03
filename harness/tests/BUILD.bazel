@@ -201,3 +201,8 @@ tl3_py_test(
     srcs = ["test_disk_scratch.py"],
     deps = ["//harness/src/tl3_harness"],
 )
+
+tl3_py_test(
+    name = "test_verify_disk_scratch",
+    srcs = ["test_verify_disk_scratch.py"],
+)
