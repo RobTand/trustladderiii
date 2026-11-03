@@ -93,14 +93,19 @@ pub(crate) fn budget_text(budget: &Value) -> Option<String> {
     if budget["kind"] != "execution_budget_exhausted" {
         return None;
     }
-    let dimension = match budget["dimension"].as_str() {
-        Some(value @ ("no_progress" | "backstop" | "input_tokens")) => value,
-        _ => "unknown",
-    };
-    let progress = match budget["last_progress_kind"].as_str() {
-        Some(value @ ("write" | "edit" | "read" | "grep" | "glob" | "run_tests")) => value,
-        _ => "none",
-    };
+    let dimension = budget["dimension"]
+        .as_str()
+        .filter(|value| matches!(*value, "no_progress" | "backstop" | "input_tokens"))
+        .unwrap_or("unknown");
+    let progress = budget["last_progress_kind"]
+        .as_str()
+        .filter(|value| {
+            matches!(
+                *value,
+                "write" | "edit" | "read" | "grep" | "glob" | "run_tests"
+            )
+        })
+        .unwrap_or("none");
     Some(format!(
         "execution_budget_exhausted ({}): tool turns {}/{}, no-progress turns {}/{}, last progress {}; input tokens {}/{}.",
         dimension,
