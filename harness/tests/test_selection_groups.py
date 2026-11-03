@@ -368,3 +368,30 @@ def test_saturation_is_reported_even_when_no_admitted_unit_passes_base(frozen_re
     assert receipt['charged_cases'] == 1 and receipt['head_units'] == []
     assert receipt['skipped_units'] == [['tests/test_z.py']]
     assert receipt['skipped_checked'] is False
+
+
+def test_unverified_base_collection_does_not_reuse_unknown_budget(frozen_repo, monkeypatch):
+    repo, _ = frozen_repo
+    (repo / MODULE).write_text('from product import value\n'
+        'def test_a():\n    assert value() > 0\n'
+        'def test_b():\n    assert value() > 0\n'
+        'def test_c():\n    assert value() > 0\n')
+    tail = 'tests/test_tail.py'
+    (repo / tail).write_text('from product import value\ndef test_tail():\n    assert value() > 0\n')
+    base = save(repo, 'one three-case unit followed by another unit')
+    actual = execution.run_tree
+    attempted = []
+
+    def lost_collection(tree, container, tests, *args, **kwargs):
+        if tree.name == 'base' and kwargs.get('selected') is not None:
+            attempted.append(tests)
+            return dict.fromkeys(tests, Outcome.NO_REPORT)
+        return actual(tree, container, tests, *args, **kwargs)
+
+    monkeypatch.setattr(execution, 'run_tree', lost_collection)
+    results = selected(repo, base, head(repo), limit=3)
+    assert attempted == [(MODULE,)], 'unknown consumed cases cannot fund another collection batch'
+    receipt = json.loads(execution.result_json(results))[-1]['selection']
+    assert receipt['skipped_units'] == [[MODULE], [tail]]
+    assert 'unverified' in receipt['saturation']['reason'].lower()
+    assert receipt['head_units'] == [] and receipt['skipped_checked'] is False
