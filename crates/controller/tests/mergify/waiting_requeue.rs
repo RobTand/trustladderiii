@@ -114,6 +114,19 @@ fn setup_at(prior: bool, intended: bool) -> (support::Database, Fixture, Control
         {
             let mut state = api.state.lock().unwrap();
             state.checks = fixture("failed", "checks");
+            // This setup needs a diagnosed failure that warrants a maker fix.
+            // A queue summary alone is indeterminate under #606.
+            let summary = state.queue_check()["output"]["summary"]
+                .as_str()
+                .unwrap()
+                .replace("draft #", "draft ");
+            state.queue_check_mut()["output"]["summary"] = json!(summary);
+            let head = state.pull["head"]["sha"].clone();
+            state.checks.as_array_mut().unwrap().push(json!({
+                "id":900,"name":"Sandbox tests","head_sha":head,
+                "status":"completed","conclusion":"failure",
+                "output":{"summary":"FAILED tests/test_patch.py::test_assertion - assertion mismatch"}
+            }));
             state.pull["mergeable"] = json!(true);
             state.pull["mergeable_state"] = json!("clean");
             state.dequeued = true;
@@ -134,6 +147,11 @@ fn setup_at(prior: bool, intended: bool) -> (support::Database, Fixture, Control
             ingress::apply(&mut controller, input).unwrap();
         }
         assert!(controller.drive_once().unwrap());
+        let facts = queue_facts(&mut controller);
+        assert_eq!(
+            facts.last().unwrap()["evidence"]["CiFailed"]["details"]["complete"],
+            true
+        );
         assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Making);
         assert!(
             !queue_facts(&mut controller).is_empty(),
