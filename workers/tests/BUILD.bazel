@@ -401,3 +401,27 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_proof_obligations",
+    srcs = ["test_proof_obligations.py"],
+    deps = [
+        ":conftest",
+        "//harness/src/tl3_harness",
+        "//workers/src",
+        "@tl3_pip//jsonschema",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_proof_selection",
+    srcs = ["test_proof_selection.py"],
+    deps = [
+        ":conftest",
+        ":test_pb_tests",
+        "//harness/src/tl3_harness",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)

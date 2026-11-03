@@ -2186,3 +2186,4 @@ def test_uncertain_owner_uses_runtime_guard_and_preserves_typed_stop(rehearsal, 
     assert 'outside_served_repository' in reply['report'] and 'time' in reply['report']
     assert reply['forcing_rehearsals'][0]['refusal'] == refusal
     assert len(calls) == 4, 'a new planner ledger runs once; the guard still refuses the global owner'
+

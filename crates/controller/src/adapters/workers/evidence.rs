@@ -249,3 +249,33 @@ mod branch_tests {
         assert_eq!(inputs["ingest"]["goals"], goals);
     }
 }
+
+#[cfg(test)]
+mod proof_obligation_tests {
+    use super::*;
+
+    #[test]
+    fn t613_replaces_method_choices_without_erasing_source_proof() {
+        let capability = json!({"tool":"run_tests", "executor":"prismabuild_pytest",
+            "runner_features":["base_head"], "artifacts":["cas_receipt","terminal_verdict"],
+            "methods":["red_green"], "protected_files":[]});
+        let mut source = capability.clone();
+        source["requirement"] = json!("Show assertion RED and GREEN.");
+        source["provenance"] = json!({"kind":"source", "source":"issue.body", "quote":"Show assertion RED and GREEN."});
+        let mut method = source.clone();
+        method["provenance"] = json!({"kind":"method"});
+        method["methods"] = json!(["helper_target_observer"]);
+        let inputs = json!({"tool_capabilities":[capability], "ingest":{"evidence_contract":[source,method]},
+            "audit_evidence_contract":[method]});
+        let mut reply = json!({"kind":"leaf", "evidence_contract":[]});
+        preflight("planner", &inputs, &mut reply).unwrap();
+        assert_eq!(reply["kind"], "leaf", "{reply}");
+        assert_eq!(reply["evidence_contract"], json!([source]));
+        let mut explicit = inputs.clone();
+        explicit["ingest"]["evidence_contract"][0]["methods"] = json!(["helper_target_observer"]);
+        let mut refused = json!({"kind":"leaf", "evidence_contract":[]});
+        preflight("planner", &explicit, &mut refused).unwrap();
+        assert_eq!(refused["kind"], "cant_meet");
+        assert_eq!(refused["evidence_contract"], json!([explicit["ingest"]["evidence_contract"][0]]));
+    }
+}
