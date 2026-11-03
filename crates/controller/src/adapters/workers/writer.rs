@@ -772,9 +772,26 @@ fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> V
                 })
                 .unwrap_or(&text)
                 .trim_matches(['.', '!', '?', '"', '\'']);
+            if let (Violation::InternalVocabulary, Some(title)) = (violation, &policy.request_title)
+                && title_has_word(title, offending)
+            {
+                // PB #2757: only the exact title inside ASCII double quotes is exempt.
+                return format!(
+                    "The {field} {problem} '{offending}' from the issue title. Keep the title unchanged \
+                     and write all of it inside ASCII double quotes: \"{title}\"."
+                );
+            }
             format!("The {field} {problem} '{offending}'.")
         })
         .collect()
+}
+
+fn title_has_word(title: &str, word: &str) -> bool {
+    let word = word.to_lowercase();
+    !word.is_empty()
+        && title
+            .split(|c: char| !c.is_alphanumeric() && c != '-')
+            .any(|part| part.to_lowercase() == word)
 }
 
 fn short_question(text: &str) -> bool {
