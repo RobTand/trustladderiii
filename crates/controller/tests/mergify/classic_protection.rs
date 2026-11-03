@@ -317,8 +317,23 @@ fn restricted(settings: &tl3_config::Store, mode: &str) {
     }
     assert_eq!(
         controller.world().unwrap().nodes[0].phase,
-        Phase::Making,
-        "restricted reads must not discard queued CI failures"
+        Phase::Queued,
+        "a queued CI failure without diagnostics must use the infrastructure path"
+    );
+    let facts = queue_facts(&mut controller);
+    let failure = &facts.last().unwrap()["evidence"]["CiFailed"];
+    assert_eq!(failure["infra"], true);
+    assert_eq!(failure["details"]["decision"], "indeterminate");
+    assert!(
+        !failure["details"]["checks"].as_array().unwrap().is_empty(),
+        "restricted reads must not discard the original queued CI failure"
+    );
+    assert!(
+        Store::open(settings)
+            .unwrap()
+            .worker_document("0", "maker_findings")
+            .unwrap()
+            .is_none()
     );
     assert_eq!(
         controller

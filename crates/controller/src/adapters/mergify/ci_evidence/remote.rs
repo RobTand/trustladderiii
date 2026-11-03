@@ -237,13 +237,11 @@ impl Session<'_> {
         let mut page = String::new();
         let mut seen = BTreeSet::new();
         for _ in 0..4 {
-            let bytes = self
-                .call(
-                    method,
-                    json!({"selector":selector,"page_token":page,
-                "include_child_invocations":true}),
-                )
-                .await?;
+            let mut request = json!({"selector":selector,"page_token":page});
+            if method == "GetInvocation" {
+                request["include_child_invocations"] = json!(true);
+            }
+            let bytes = self.call(method, request).await?;
             let mut value: Value =
                 serde_json::from_slice(&bytes).map_err(|_| Gap::MalformedResponse)?;
             let batch: Vec<T> =

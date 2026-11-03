@@ -17,6 +17,13 @@ async fn evidence(mode: &str) -> (QueueCiEvidence, Vec<Request>) {
     Mock::given(wiremock::matchers::any())
         .respond_with(move |request: &Request| {
             let body: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
+            if matches!(request.url.path(), "/api/v1/GetTarget" | "/api/v1/GetAction")
+                && body.as_object().unwrap().keys().any(|key| {
+                    !matches!(key.as_str(), "selector" | "page_token")
+                })
+            {
+                return ResponseTemplate::new(400);
+            }
             let answer = match request.url.path() {
                 "/app/installations/3/access_tokens" => json!({
                     "token":"synthetic-github-token", "expires_at":"2099-01-01T00:00:00Z"
