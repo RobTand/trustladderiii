@@ -181,24 +181,32 @@ fn configured_evidence_preflight_does_not_accept_a_downgraded_leaf() {
         "protected_paths":[], "forecast":{"fit_tokens":100,"context_tokens":150,"overhead_tokens":{"prompt":0}}});
     let reply = json!({"kind":"leaf","files":["greeting.py"],"checks":[],
         "no_design_questions":true,"lands_on_its_own":true,"forecast":ingest(1)["forecast"],"violations":[]});
-    let bytes = format!(
-        "{}\n",
-        json!({"event":"reply","role":"planner","reply":reply})
-    );
-    let crate::executor::Observation::WorkerReply { reply, .. } =
-        super::super::source::parse_reply(bytes.as_bytes(), &delivery, &inputs).unwrap()
-    else {
-        panic!()
-    };
-    assert_eq!(reply["kind"], "cant_meet");
-    assert!(
-        reply["report"]
-            .as_str()
-            .unwrap()
-            .contains("buildbuddy_remote_bazel")
-    );
-    assert!(matches!(
-        map_reply("planner", &reply).unwrap(),
-        MappedReply::Kernel(Reply::PlanCantMeet)
-    ));
+    for proposal in [
+        reply,
+        json!({"kind":"split","reason":"out_of_room", "pieces":[
+        {"brief":"First part", "goal_ids":[0], "files":["greeting.py"]},
+        {"brief":"Second part", "goal_ids":[0], "files":["greeting.py"]}],
+        "forecast":ingest(1)["forecast"], "violations":[]}),
+    ] {
+        let bytes = format!(
+            "{}\n",
+            json!({"event":"reply","role":"planner","reply":proposal})
+        );
+        let crate::executor::Observation::WorkerReply { reply, .. } =
+            super::super::source::parse_reply(bytes.as_bytes(), &delivery, &inputs).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(reply["kind"], "cant_meet");
+        assert!(
+            reply["report"]
+                .as_str()
+                .unwrap()
+                .contains("buildbuddy_remote_bazel")
+        );
+        assert!(matches!(
+            map_reply("planner", &reply).unwrap(),
+            MappedReply::Kernel(Reply::PlanCantMeet)
+        ));
+    }
 }

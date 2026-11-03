@@ -994,3 +994,20 @@ def test_evidence_contract_requires_one_tool_to_supply_all_artifacts(planner_req
     check_reply(inputs, reply)
     assert reply['kind'] == 'leaf'
     assert reply['violations'] == []
+
+
+
+def test_evidence_contract_rechecks_current_capabilities(planner_request, monkeypatch):
+    from tl3_workers.roles.planner import check_reply
+    monkeypatch.chdir(planner_request['worktree'])
+    inputs = copy.deepcopy(planner_request['inputs'])
+    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+                  'runner_features': ['base_head'], 'artifacts': ['logs'],
+                  'methods': ['forced_reproduction.patches'], 'protected_files': []}
+    inputs['tool_capabilities'] = [capability]
+    inputs['ingest']['evidence_contract'] = [dict(capability, requirement='Keep the log and force the flake.')]
+    inputs['ingest']['evidence_errors'] = ['Unsupported evidence requirement: artifacts=logs.']
+    reply = dict(copy.deepcopy(LEAF), evidence_contract=[])
+    check_reply(inputs, reply)
+    assert reply['kind'] == 'leaf'
+    assert reply['evidence_errors'] == []
