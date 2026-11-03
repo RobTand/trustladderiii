@@ -601,6 +601,96 @@ fn selected_tests_are_staged_and_their_check_accepted() {
     );
 }
 
+fn phase_evidence_survives_exact_head_receipts() {
+    use serde_json::json;
+    let phases = json!({"base":{"test":"test_value.py::test_value",
+        "setup":{"outcome":"passed","exception":"","assertion":false},
+        "call":{"outcome":"failed","exception":"builtins.AssertionError","assertion":true},
+        "teardown":{"outcome":"failed","exception":"builtins.RuntimeError","assertion":false}},
+        "head":{"test":"test_value.py::test_value",
+        "setup":{"outcome":"passed","exception":"","assertion":false},
+        "call":{"outcome":"passed","exception":"","assertion":false},
+        "teardown":{"outcome":"passed","exception":"","assertion":false}}});
+    for damage in [
+        "none",
+        "wrong_head",
+        "digest",
+        "receipt",
+        "unknown",
+        "oversized",
+        "order",
+        "assertion",
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let delivery = run(root.path(), false);
+        let mut evidence = phases.clone();
+        match damage {
+            "unknown" => evidence["base"]["call"]["locals"] = json!({"request":"untrusted"}),
+            "oversized" => evidence["base"]["teardown"]["exception"] = "x".repeat(201).into(),
+            "order" => {
+                evidence["base"].as_object_mut().unwrap().remove("setup");
+            }
+            "assertion" => evidence["base"]["teardown"]["assertion"] = true.into(),
+            _ => (),
+        }
+        let mut adapter = fixture(
+            root.path(),
+            if damage == "wrong_head" {
+                "wrong_head"
+            } else {
+                "done"
+            },
+        );
+        fs::write(root.path().join("queue/recorded_results.json"), serde_json::to_vec(&json!([{
+            "name":"value", "kind":"demonstrating", "custody":"in-process", "verdict":"fail",
+            "tests":[{"test":"test_value.py::test_value", "base":"error", "head":"passed",
+                "pre_existing":false, "passed":false, "message":"Call assertion and teardown RuntimeError.", "phases":evidence}]
+        }])).unwrap()).unwrap();
+        adapter.execute(&delivery).unwrap();
+        if matches!(damage, "digest" | "receipt") {
+            let ending = fs::read_dir(root.path().join("queue"))
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .find(|p| p.extension().is_some_and(|e| e == "ending"))
+                .unwrap();
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&fs::read(&ending).unwrap()).unwrap();
+            if damage == "digest" {
+                value["endings"][0]["result"]["stdout"]["sha256"] = "b".repeat(64).into();
+            } else {
+                value["endings"][0]["result"]["receipt_sha256"] = serde_json::Value::Null;
+            }
+            fs::write(ending, serde_json::to_vec(&value).unwrap()).unwrap();
+        }
+        if matches!(damage, "digest" | "receipt") {
+            assert!(adapter.reconcile(&delivery).is_err(), "{damage}");
+            continue;
+        }
+        let ended = completion(&mut adapter, &delivery);
+        match &ended.observations[0] {
+            Observation::Checks {
+                report,
+                pass,
+                results,
+                ..
+            } => {
+                assert_eq!(*report, damage == "none", "{damage}");
+                assert!(
+                    !pass,
+                    "a call assertion with teardown failure must remain invalid RED"
+                );
+                if *report {
+                    assert_eq!(
+                        results[0]["tests"][0]["phases"], phases,
+                        "review must retain every phase"
+                    );
+                }
+            }
+            other => panic!("expected check evidence, got {other:?}"),
+        }
+    }
+}
+
 fn bounded_failure_details() {
     let root = tempfile::tempdir().unwrap();
     let mut delivery = run(root.path(), false);
@@ -2395,6 +2485,10 @@ fn main() {
     }
 
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).is_some_and(|arg| arg == "--failure-phases") {
+        phase_evidence_survives_exact_head_receipts();
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--repository-demand") {
         repository_test_demand_is_sealed_with_default_and_identity_fallback();
         return;
@@ -2522,6 +2616,10 @@ fn main() {
         (
             "forced_check_is_staged_and_reaches_review",
             forced_check_is_staged_and_reaches_review,
+        ),
+        (
+            "phase_evidence_survives_exact_head_receipts",
+            phase_evidence_survives_exact_head_receipts as fn(),
         ),
         (
             "declared_symptom_identity_is_staged_and_reaches_review",
