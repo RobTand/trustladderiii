@@ -471,6 +471,16 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         helper_outcomes = {}
         for check in helpers:
             staged, identity = helper_runs[check.name]
+            existing_messages = {}
+            existing = tool.run(old, container, check.tests, root / "helper-original-base.jsonl", progress,
+                                messages=existing_messages)
+            if any(existing[test] not in (Outcome.MISSING, Outcome.UNCOLLECTED) or existing_messages.get(test)
+                   for test in check.tests):
+                results = refused(plan, "Helper observers must be absent from base collection; "
+                                  "existing or unavailable tests cannot be replaced by observers.")
+                if Outcome.NO_REPORT in existing.values():
+                    results = tuple(replace(result, verdict=Verdict.INFRASTRUCTURE_FAILURE) for result in results)
+                return results
             notes = FailureNotes()
             outcomes = tool.run(staged, container, check.tests, root / "helper-base.jsonl", progress, messages=notes)
             try:

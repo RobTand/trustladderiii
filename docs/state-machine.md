@@ -731,7 +731,8 @@ invokes the real helper independently of the observers and requires
 AssertionError on both versions. The receipt retains these cases, the driver
 hash and both verdicts. Removing a helper assertion cannot pass by making a
 previously failing call succeed. Observer names already bound on base, including
-assignment aliases, are rejected. Trusted receipts retain
+assignment aliases, are rejected. The harness also probes untouched base
+collection to reject dynamically collected names. Trusted receipts retain
 both helper source hashes, observer hashes and staged tree hashes for review.
 The bounded Python mode accepts an undecorated top-level helper with unchanged
 signature and dependencies. It rejects ambiguous targets and undeclared test
