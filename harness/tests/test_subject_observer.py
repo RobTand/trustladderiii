@@ -386,11 +386,16 @@ def test_rereview662_declared_forcing_may_replace_its_dependency(repository):
     ('helper `new` result', 'helper `new` result', True, Verdict.PASS),
     ('declared result\nsecond line', 'declared result\nsecond line', False, Verdict.PASS),
     ('declared result\nUNDECLARED DETAIL', 'declared result', False, Verdict.FAIL),
-], ids=['backticks', 'pytest-fail', 'multiline', 'undeclared-line'])
+    ('declared result\nassert UNDECLARED DETAIL', 'declared result', 'raise', Verdict.FAIL),
+    ('declared result\nassert detail', 'declared result\nassert detail', 'raise', Verdict.PASS),
+    ('declared result\nassert detail', 'declared result\nassert detail', False, Verdict.PASS),
+], ids=['backticks', 'pytest-fail', 'multiline', 'undeclared-line',
+        'manual-undeclared-assert-line', 'manual-whole-reason', 'rewritten-whole-reason'])
 def test_review662_reason_binding_preserves_the_original_message(repository, actual, declared, fail, expected):
     path = 'tests/test_reason.py'
     before = 'def helper(): return "old"\n'
-    observer = (f'    if helper() != "new": pytest.fail({actual!r})\n' if fail else
+    observer = (f'    if helper() != "new": raise AssertionError({actual!r})\n' if fail == 'raise' else
+                f'    if helper() != "new": pytest.fail({actual!r})\n' if fail else
                 f'    assert helper() == "new", {actual!r}\n')
     after = before.replace('"old"', '"new"') + 'import pytest\ndef test_observer():\n' + observer
     check = Check('exact reason', Kind.DEMONSTRATING, (path + '::test_observer',),
@@ -433,3 +438,62 @@ def test_review662_base_subject_can_update_state_during_import(repository, suppo
     results, _, _ = round_result(repository, {path: before}, {path: after}, check)
     assert results[0].verdict == Verdict.PASS, results
     assert results[0].tests[0].base == Outcome.ASSERTION, results
+
+
+@pytest.mark.parametrize('support', [
+    'TOKEN = World.helper = lambda self: ("new", VERSION)',
+    '(TOKEN, World.helper) = ("context", lambda self: ("new", VERSION))',
+    'TOKEN = "context"; World.helper = lambda self: ("new", VERSION)',
+    'TOKEN = "context"; World.helper: object = lambda self: ("new", VERSION)',
+    'TOKEN = "context"; World.values["value"] = "new"',
+    'TOKEN = "context"; World.values["value"] += "new"',
+    'TOKEN = "context"; del World.helper',
+    'TOKEN = "context"; del World.values["value"]',
+], ids=['chained', 'tuple', 'attribute', 'annotated', 'subscript', 'augmented', 'delete-attribute', 'delete-subscript'])
+def test_final662_support_cannot_assign_or_delete_members(repository, support):
+    path = 'tests/test_members.py'
+    before = ('VERSION = 0\nclass World:\n    values = {"value": "old"}\n'
+              '    def helper(self): return (self.values["value"], VERSION)\n')
+    after = (before.replace('= 0', '= 1').replace('self.values["value"]', '"new"') + support + '\n'
+             'def test_observer():\n    assert World().helper() == ("new", 1), "declared result"\n')
+    check = Check('member write', Kind.DEMONSTRATING, (path + '::test_observer',),
+                  proof=model.Proof((path + '::World::helper',), (path + '::TOKEN',), 'declared result'))
+    results, _, _ = round_result(repository, {path: before}, {path: after}, check)
+    assert results[0].verdict == Verdict.FAIL, results
+    assert 'plain names' in results[0].tests[0].message, results
+    assert path in results[0].tests[0].message and 'World' in results[0].tests[0].message, results
+
+
+def test_final662_observer_can_update_an_unrelated_existing_counter(repository):
+    path = 'tests/test_counter.py'
+    before = 'VISITS = 0\ndef helper(): return "old"\n'
+    after = before.replace('"old"', '"new"') + (
+        'def test_observer():\n    global VISITS\n    VISITS += 1\n'
+        '    assert helper() == "new", "declared result"\n    assert VISITS == 1\n')
+    check = Check('observer bookkeeping', Kind.DEMONSTRATING, (path + '::test_observer',),
+                  proof=model.Proof((path + '::helper',), (), 'declared result'))
+    results, _, _ = round_result(repository, {path: before}, {path: after}, check)
+    assert results[0].verdict == Verdict.PASS, results
+    assert results[0].tests[0].base == Outcome.ASSERTION, results
+
+
+@pytest.mark.parametrize('existing', [False, True], ids=['appended', 'replaced'])
+def test_final662_splicing_preserves_crlf_subject_bytes_and_hash(repository, tmp_path, existing):
+    import hashlib
+    from tl3_harness.proof import assemble_proof
+    from tl3_harness.trees import configuration, export
+
+    repo, save = repository
+    path = 'tests/test_newlines.py'
+    subject = 'def helper(): return "old"\r\n'
+    observer = 'def test_observer():\n    assert helper() == "new", "old helper"\n'
+    base = save({path: subject + (observer.replace('\n', '\r\n') if existing else '')})
+    head = save({path: subject.replace('"old"', '"new"') + observer})
+    old, new, staged = (tmp_path / name for name in ('base', 'head', 'staged'))
+    export(repo, base, old)
+    export(repo, head, new)
+    check = Check('newlines', Kind.DEMONSTRATING, (path + '::test_observer',),
+                  proof=model.Proof((path + '::helper',), (), 'old helper'))
+    receipt = assemble_proof(old, new, staged, check, configuration(old))
+    assert (staged / path).read_bytes().startswith(subject.encode())
+    assert receipt['subjects'][path + '::helper']['base'] == hashlib.sha256(subject.encode()).hexdigest()

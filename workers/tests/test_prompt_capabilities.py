@@ -105,3 +105,11 @@ def test_helper_location_alone_does_not_mandate_observer_evidence(role):
     assert 'The subject/observer rule' in prompt
     assert 'ordinary failing test' in prompt
     assert 'For a fix to a helper inside configured test files, require method' not in prompt
+
+
+@pytest.mark.parametrize('role', ['maker', 'reviewer'])
+def test_base_receipts_describe_planned_subject_observer_and_untouched_modes(role):
+    prompt = prompt_text(role)
+    assert 'base_subject_head_observer' in prompt
+    assert 'untouched_base' in prompt
+    assert 'proof receipt' in prompt
