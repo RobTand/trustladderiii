@@ -753,6 +753,27 @@ fn request_vocabulary_does_not_exempt_other_words_or_rules() {
             .contains(&Violation::InternalVocabulary)
     );
     assert!(check_prose("For \"Fix the Leaf\", work can continue.", &policy).is_err());
+    // PB #2757: an internal word inside the title passes only inside ASCII double quotes.
+    let title = "Show the lineage of PrismaBuild runs";
+    let policy = request_policy(title, "");
+    assert!(
+        check_prose(
+            &format!("You asked for \"{title}\". The work starts next."),
+            &policy
+        )
+        .is_ok()
+    );
+    for unquoted in [
+        format!("You asked for {title}. The work starts next."),
+        format!("You asked for \u{201c}{title}\u{201d}. The work starts next."),
+    ] {
+        assert!(
+            check_prose(&unquoted, &policy)
+                .unwrap_err()
+                .contains(&Violation::InternalVocabulary),
+            "{unquoted}"
+        );
+    }
 }
 
 #[test]
