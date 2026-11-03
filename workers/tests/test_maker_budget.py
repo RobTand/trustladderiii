@@ -195,7 +195,7 @@ def test_cap_with_unfinished_work_produces_typed_preserved_diagnostic(maker_requ
     reply = events[-1]["reply"]
     diagnostic = reply.get("budget_exhaustion", {})
     assert diagnostic.get("kind") == "execution_budget_exhausted", reply
-    assert diagnostic["dimension"] == "tool_turns"
+    assert diagnostic["dimension"] == "backstop"
     assert diagnostic["tool_turns"] == {"used": 4, "allowed": 4}
     assert diagnostic["input_tokens"] == {"used": 500, "allowed": 6_000_000}
     assert diagnostic["operation"] == maker_request["operation"]

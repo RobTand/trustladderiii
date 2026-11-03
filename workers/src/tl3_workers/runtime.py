@@ -237,6 +237,7 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None,
     if role.exploration_budget is not None:
         # The allowance wraps the turn control, so it charges dropped calls and repairs.
         control.allowance = ExplorationMiddleware(role.exploration_budget, role.name, context_size)
+        worktree.allowance = control.allowance
         middleware.append(control.allowance)
     middleware.append(control)
     return create_deep_agent(
@@ -300,7 +301,8 @@ def _run(request, emit):
                 maker_budget = ROLES["maker"].exploration_budget
                 model_inputs = {**model_inputs, "maker_budget": {
                     "tool_turns": maker_budget.tool_turns, "input_tokens": maker_budget.input_tokens,
-                    "finalization_turns": maker_budget.finalization_turns}}
+                    "finalization_turns": maker_budget.finalization_turns,
+                    "no_progress_window": maker_budget.no_progress_window}}
             ledger = getattr(worktree, 'forcing_rehearsals', None)
             if ledger is not None and (ledger.candidates or ledger.active):
                 model_inputs = {**model_inputs, 'forcing_rehearsal_state': {

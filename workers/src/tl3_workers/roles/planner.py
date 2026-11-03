@@ -234,7 +234,7 @@ def check_reply(inputs, reply, *, rehearsals=None):
                                    config=inputs["forecast"])
     if reply["kind"] == "leaf" and execution["exploration_declared"] and not execution["fits"]:
         violations.append(f"The leaf exceeds the execution budget: estimated {execution['estimated_tool_turns']} "
-                          f"tool turns, usable {execution['usable_tool_turns']} after the finalization reserve. "
+                          f"tool turns, backstop {execution['allowed_tool_turns']}. "
                           "Preserve every obligation in bounded pieces with reason execution_budget before maker work.")
     # A file the tools can't use is a plan problem, not a crash (#321).
     for error in forecaster.problems:
@@ -266,7 +266,7 @@ def check_reply(inputs, reply, *, rehearsals=None):
                 violations.append(f"Declared file can't be used: {error}. Leave it out.")
             if reason == "execution_budget":
                 if not estimate["fits"] or estimate["estimated_tool_turns"] >= execution["estimated_tool_turns"]:
-                    violations.append("Every execution-budget piece must fit the usable execution allowance and reduce demand.")
+                    violations.append("Every execution-budget piece must fit the execution backstop and reduce demand.")
                 if not child["fits"]:
                     violations.append("Every execution-budget piece must also fit the token forecast.")
             elif child["tokens"] >= forecast["tokens"]:

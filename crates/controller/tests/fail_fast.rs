@@ -656,7 +656,10 @@ fn maker_budget_exhaustion_reaches_the_stop_report_and_operations_notice() {
     assert_eq!(notes.len(), 1);
     let text = notes[0].note.as_deref().unwrap();
     assert!(text.contains("execution_budget_exhausted"), "{text}");
-    assert!(text.contains("no-progress turns 16/16") && text.contains("last progress edit"), "{text}");
+    assert!(
+        text.contains("no-progress turns 16/16") && text.contains("last progress edit"),
+        "{text}"
+    );
     assert!(
         text.contains("83/512") && text.contains("123456/6000000"),
         "{text}"

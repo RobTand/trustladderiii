@@ -229,7 +229,7 @@ def test_maker_budget_notices_preserve_the_proxy_system_prefix(maker_request, tm
         assert not any(m["role"] == "system" for m in messages[1:]), "the proxy must never hoist changing notices"
         notice = messages[-1]
         assert notice["role"] == "user" and notice["content"].startswith("TL3 execution budget: ")
-        assert json.loads(notice["content"].removeprefix("TL3 execution budget: "))["tool_turns"]["remaining"] == [64, 63, 62, 61, 64][index]
+        assert json.loads(notice["content"].removeprefix("TL3 execution budget: "))["tool_turns"]["remaining"] == [512, 511, 510, 509, 512][index]
         if index in (1, 2):
             assert messages[-2]["role"] == "tool", "the user notice follows the completed tool result"
         if index:

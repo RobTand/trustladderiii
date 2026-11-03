@@ -200,10 +200,13 @@ impl Controller {
                     .collect::<Vec<_>>()
                     .join("; ");
                 let detail = format!(
-                    " execution_budget_exhausted ({}): tool turns {}/{}, input tokens {}/{}. Preserved tree {}. Unfinished: {}. Review the preserved work and budget before any authorized continuation.",
+                    " execution_budget_exhausted ({}): tool turns {}/{}, no-progress turns {}/{}, last progress {}; input tokens {}/{}. Preserved tree {}. Unfinished: {}. Review the preserved work and budget before any authorized continuation.",
                     budget["dimension"].as_str().unwrap_or("unknown"),
                     budget["tool_turns"]["used"],
                     budget["tool_turns"]["allowed"],
+                    budget["no_progress_turns"],
+                    budget["no_progress_window"],
+                    budget["last_progress_kind"].as_str().unwrap_or("none"),
                     budget["input_tokens"]["used"],
                     budget["input_tokens"]["allowed"],
                     budget["preserved_work"]["tree"]

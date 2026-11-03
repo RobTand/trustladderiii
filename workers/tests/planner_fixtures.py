@@ -408,7 +408,7 @@ FORGED_FORECAST = {
 
 
 def execution_split():
-    return {"kind": "split", "reason": "execution_budget", "estimated_tool_turns": 65, "estimated_exploration_turns": 0,
+    return {"kind": "split", "reason": "execution_budget", "estimated_tool_turns": 513, "estimated_exploration_turns": 0,
             "pieces": [
                 {"brief": "Implement and verify the greeting, including metadata.", "goal_ids": [0],
                  "files": ["greeting.py"], "estimated_tool_turns": 25, "estimated_exploration_turns": 0},

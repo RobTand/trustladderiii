@@ -3,6 +3,7 @@
 from contextlib import contextmanager, nullcontext
 import errno
 import glob as globlib
+import hashlib
 import json
 import os
 from pathlib import PurePosixPath
@@ -612,6 +613,14 @@ class Worktree:
         result["message"] = " ".join(filter(None, [note, result["message"]]))
         return result
 
+    def content_digest(self, path):
+        """Compare mutations through the same confined handle as file tools."""
+        try:
+            with self._file(path) as stream:
+                return hashlib.file_digest(stream.buffer, "sha256").hexdigest()
+        except FileNotFoundError:
+            return None
+
     def write(self, path: str, content: str) -> str:
         """Write UTF-8 text, creating parent directories as needed."""
         self._check_write(path)
@@ -678,7 +687,14 @@ def build_tools(worktree, descriptions):
             unavailable = None
             with _lock:
                 try:
+                    allowance = getattr(worktree, "allowance", None)
+                    tracking = allowance is not None and allowance.role == "maker" and allowance.budget.no_progress_window
+                    fresh = allowance.begin_tool(_name, kwargs) if tracking else False
+                    before = worktree.content_digest(kwargs["path"]) if tracking and _name in WRITE_TOOLS else None
                     result = _method(*args, **kwargs)
+                    if tracking:
+                        changed = (_name in WRITE_TOOLS and before != worktree.content_digest(kwargs["path"]))
+                        allowance.observe_tool(_name, kwargs, result, fresh=fresh, changed=changed)
                     if _name == "run_tests":
                         selectors = (bool(kwargs.get("base")), tuple(sorted(set(kwargs.get("tests") or ()))))
                         options = {"repeat": kwargs.get("repeat", 1), "parallel": kwargs.get("parallel", 0)}

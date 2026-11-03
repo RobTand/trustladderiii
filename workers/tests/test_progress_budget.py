@@ -1,4 +1,5 @@
 """#692: progress earns maker turns, with a bounded stall window and backstop."""
+# ruff: noqa: F811
 
 from copy import deepcopy
 from dataclasses import asdict, replace
@@ -12,7 +13,7 @@ import pytest
 
 from tl3_workers import runtime
 from tl3_workers.roles import maker
-from test_maker_budget import maker_request, snapshots  # noqa: F401
+from message_invariants import maker_request as maker_request
 from message_invariants import agent_calls
 
 
@@ -49,6 +50,12 @@ def run(maker_request, monkeypatch, actions, *, backstop=512, window=16, reserve
     events = []
     runtime.run(maker_request, events.append)
     return model, events[-1]['reply']
+
+
+def snapshots(model):
+    return [json.loads(next(m.text.removeprefix("TL3 execution budget: ")
+                            for m in reversed(messages) if m.text.startswith("TL3 execution budget: ")))
+            for messages, _ in agent_calls(model.calls)]
 
 
 def test_progressing_maker_continues_past_64_edit_and_test_turns(maker_request, monkeypatch):
@@ -103,3 +110,65 @@ def test_planner_feasibility_uses_backstop(estimate, fits):
     assert execution['fits'] is fits
     assert execution['allowed_tool_turns'] == 512
     assert execution['usable_tool_turns'] == 512, 'structural estimate already includes final verification'
+
+
+def test_noop_edits_and_identical_calls_do_not_reset_progress(maker_request, monkeypatch):
+    actions = [('read', {'path': 'greeting.py'})]
+    actions += [('edit', {'path': 'greeting.py', 'old': 'goodbye', 'new': 'goodbye'})] * 20
+    model, reply = run(maker_request, monkeypatch, actions)
+    assert reply['budget_exhaustion']['dimension'] == 'no_progress'
+    assert reply['budget_exhaustion']['last_progress_kind'] == 'read'
+    assert len(agent_calls(model.calls)) == 18
+
+
+def test_progress_fingerprints_and_streak_survive_visit_restore(maker_request, monkeypatch):
+    from tl3_workers.exploration import ExplorationMiddleware
+
+    allowances = []
+    def construct(*args, **kwargs):
+        allowance = ExplorationMiddleware(*args, **kwargs)
+        allowances.append(allowance)
+        return allowance
+
+    monkeypatch.setattr(runtime, 'ExplorationMiddleware', construct)
+    run(maker_request, monkeypatch, [('read', {'path': 'greeting.py'})] * 5)
+    original = allowances[0]
+    restored = ExplorationMiddleware(original.budget, 'maker')
+    restored.restore(json.loads(json.dumps(original.state())))
+    assert restored.no_progress_turns == original.no_progress_turns
+    assert restored.last_progress_kind == 'read'
+    assert not restored.begin_tool('read', {'path': 'greeting.py'})
+    restored.observe_tool('read', {'path': 'other.py'}, "def greet(): return 'goodbye'\n", fresh=True)
+    assert restored.no_progress_turns == original.no_progress_turns, 'new arguments with old content earn no allowance'
+
+
+def test_test_results_ignore_receipts_trees_and_logs_but_notice_new_failures():
+    from tl3_workers.exploration import ExplorationMiddleware
+
+    allowance = ExplorationMiddleware(maker.ROLE.exploration_budget, 'maker')
+    result = {'status': 'completed', 'totals': {'passed': 0, 'failed': 1},
+              'tests': [{'test': 'test.py::first', 'outcome': 'failed'}], 'tree': 'a',
+              'receipts': [{'action_key': 'first'}], 'log': 'first'}
+    args = {'tests': ['test.py']}
+    allowance.observe_tool('run_tests', args, result, fresh=True)
+    assert allowance.last_progress_kind == 'run_tests'
+    allowance.no_progress_turns = 7
+    result.update(tree='b', receipts=[{'action_key': 'second'}], log='second')
+    allowance.observe_tool('run_tests', args, result, fresh=True)
+    assert allowance.no_progress_turns == 7
+    result['tests'][0]['test'] = 'test.py::second'
+    allowance.observe_tool('run_tests', args, result, fresh=False)
+    assert allowance.no_progress_turns == 0
+
+
+def test_new_evidence_can_leave_no_progress_reserve(maker_request, monkeypatch):
+    actions = [('read', {'path': 'greeting.py'})] * 10
+    actions += [('read', {'path': 'greeting.py', 'limit': 1, 'offset': 1}),
+                ('write', {'path': 'greeting.py', 'content': 'implemented = True\n'})]
+    # The fresh read must contain content, not merely a different pagination argument.
+    Path(maker_request['worktree'], 'greeting.py').write_text('first\nsecond\n')
+    model, reply = run(maker_request, monkeypatch, actions)
+    assert snapshots(model)[10]['phase'] == 'finalizing'
+    assert snapshots(model)[11]['phase'] == 'working'
+    assert Path(maker_request['worktree'], 'greeting.py').read_text() == 'implemented = True\n'
+    assert 'budget_exhaustion' not in reply

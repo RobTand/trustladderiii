@@ -1,9 +1,11 @@
 """Per-run exploration limits, including room for a final answer."""
 
 from dataclasses import dataclass
+import hashlib
 import json
 import math
 import os
+from threading import Lock
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, messages_from_dict, messages_to_dict
@@ -18,10 +20,15 @@ class ExplorationBudget:
     input_tokens: int = 300_000
     history_bytes: int = 32_768
     finalization_turns: int = 0
+    no_progress_window: int = 0
 
 
 FINALIZATION_TOOLS = frozenset({"list", "read", "glob", "grep", "diff", "run_tests"})
 BUDGET_PREFIX = "TL3 execution budget: "
+
+
+class InvalidAllowanceState(ValueError):
+    """A visit checkpoint has unusable progress accounting."""
 
 
 class BudgetUnavailable(Exception):
@@ -148,6 +155,12 @@ class ExplorationMiddleware(AgentMiddleware):
         self.last_estimate = None
         self.cache_active = False
         self.turns = 0
+        self.no_progress_turns = 0
+        self.last_progress_kind = None
+        self.seen_calls = set()
+        self.seen_content = set()
+        self.seen_tests = set()
+        self._progress_lock = Lock()
         self.spent = 0
         self.in_flight = 0
         self.in_flight_reserve = 0
@@ -168,6 +181,48 @@ class ExplorationMiddleware(AgentMiddleware):
         return (estimate if self.last_estimate is None else
                 max(0, self.last_input + estimate - self.last_estimate))
 
+    def begin_tool(self, name, arguments):
+        """Call identity excludes provider ids and survives visit recovery."""
+        signature = self._fingerprint([name, arguments])
+        with self._progress_lock:
+            fresh = signature not in self.seen_calls
+            self.seen_calls.add(signature)
+        return fresh
+
+    @staticmethod
+    def _fingerprint(value):
+        return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+    def observe_tool(self, name, arguments, result, *, fresh, changed=False):
+        if self.role != "maker" or not self.budget.no_progress_window:
+            return
+        evidence = None
+        if name in {"read", "grep", "glob"}:
+            content = result if name == "read" else result.get("matches" if name == "grep" else "entries", [])
+            if content:
+                evidence = (self.seen_content, self._fingerprint(content))
+        elif name == "run_tests" and isinstance(result, dict):
+            # A changed verdict is new even when rerunning the same tests. Receipts,
+            # timings, tree ids and log text alone do not establish progress.
+            def verdict(run):
+                return {"status": run.get("status"), "totals": run.get("totals"),
+                        "failures": sorted((test.get("test"), test.get("outcome"))
+                                           for test in run.get("tests", [])
+                                           if test.get("outcome") in {"failed", "error"}),
+                        "groups": [verdict(group) for group in run.get("groups", [])]}
+            evidence = (self.seen_tests, self._fingerprint({
+                "selection": sorted(set(arguments.get("tests") or [])),
+                "base": bool(arguments.get("base")), "result": verdict(result)}))
+        with self._progress_lock:
+            progress = changed and name in {"write", "edit"}
+            if evidence is not None:
+                seen, signature = evidence
+                progress = signature not in seen
+                seen.add(signature)
+            if progress and (fresh or name == "run_tests"):
+                self.no_progress_turns = 0
+                self.last_progress_kind = name
+
     def remaining(self, phase=None):
         result = {"tool_turns": {"used": min(self.turns, self.budget.tool_turns),
                                "allowed": self.budget.tool_turns,
@@ -178,6 +233,8 @@ class ExplorationMiddleware(AgentMiddleware):
                 "phase": phase or ("final" if self.exhaustion else
                                    "finalizing" if self.finalizing else "working")}
         if self.role == "maker":
+            result.update(no_progress_window=self.budget.no_progress_window,
+                          no_progress_turns=self.no_progress_turns, last_progress_kind=self.last_progress_kind)
             deadline = (self.budget.tool_turns + 1) // 2
             result.update(implementation_started=self.implementation_started,
                           implementation_due_at_tool_turn=deadline)
@@ -209,8 +266,11 @@ class ExplorationMiddleware(AgentMiddleware):
         source = request.messages
         messages = (self.compaction_prefix + source[self.compaction_offset:]
                     if self.compacted else list(source))
-        self.finalizing = (self.role == "maker" and self.budget.tool_turns - self.turns
-                           <= min(self.budget.finalization_turns, self.budget.tool_turns))
+        reserve_turns = min(self.budget.finalization_turns, self.budget.tool_turns)
+        self.finalizing = (self.role == "maker" and (
+            self.budget.tool_turns - self.turns <= reserve_turns
+            or (self.budget.no_progress_window and
+                self.budget.no_progress_window - self.no_progress_turns <= reserve_turns)))
         notice = None
         if self.role == "maker":
             # Proxy providers may hoist system messages into the cached prefix.
@@ -252,15 +312,19 @@ class ExplorationMiddleware(AgentMiddleware):
             reserve = math.ceil(max(reserve, context) * cold_weight)
             context_full = (self.compacted_below and not compact_now and len(source) > self.compaction_offset
                             and context >= self.context_size * 0.7)
-            final = (self.exhaustion is not None or self.turns >= self.budget.tool_turns or context_full
+            stalled = (self.role == "maker" and self.budget.no_progress_window
+                       and self.no_progress_turns >= self.budget.no_progress_window)
+            final = (self.exhaustion is not None or self.turns >= self.budget.tool_turns or stalled or context_full
                      or self.spent + predicted + reserve > self.budget.input_tokens)
             self.in_flight_reserve = 0 if final else reserve
             if self.final:
                 raise BudgetUnavailable("The final reply already consumed the remaining execution allowance.")
             if final:
                 self.final = True
-                self.exhaustion = self.exhaustion or ("tool_turns" if self.turns >= self.budget.tool_turns else
-                                                    "context_tokens" if context_full else "input_tokens")
+                self.exhaustion = self.exhaustion or (
+                    ("backstop" if self.role == "maker" else "tool_turns")
+                    if self.turns >= self.budget.tool_turns else "no_progress" if stalled else
+                    "input_tokens" if self.role == "maker" else "context_tokens" if context_full else "input_tokens")
                 if notice is not None:
                     notice.content = BUDGET_PREFIX + json.dumps(self.remaining("final"), sort_keys=True)
                 request = request.override(tool_choice="none",
@@ -294,7 +358,10 @@ class ExplorationMiddleware(AgentMiddleware):
                 "compacted": self.compacted, "compacted_below": self.compacted_below,
                 "compaction_offset": self.compaction_offset,
                 "compaction_prefix": messages_to_dict(self.compaction_prefix), "exhaustion": self.exhaustion,
-                "implementation_started": self.implementation_started}
+                "implementation_started": self.implementation_started,
+                "no_progress_turns": self.no_progress_turns, "last_progress_kind": self.last_progress_kind,
+                "seen_calls": sorted(self.seen_calls), "seen_content": sorted(self.seen_content),
+                "seen_tests": sorted(self.seen_tests)}
 
     def restore(self, state):
         prefix = messages_from_dict(state["compaction_prefix"])
@@ -309,6 +376,22 @@ class ExplorationMiddleware(AgentMiddleware):
         self.compaction_prefix = prefix
         self.exhaustion = state.get("exhaustion")
         self.implementation_started = state.get("implementation_started") is True
+        no_progress = state.get("no_progress_turns", 0)
+        last_progress = state.get("last_progress_kind")
+        fingerprints = [state.get(name, []) for name in ("seen_calls", "seen_content", "seen_tests")]
+        if (type(no_progress) is not int or not 0 <= no_progress <= self.turns
+                or last_progress not in (None, "read", "grep", "glob", "write", "edit", "run_tests")
+                or any(not isinstance(values, list) or any(
+                    not isinstance(value, str) or len(value) != 64
+                    or any(char not in "0123456789abcdef" for char in value) for value in values)
+                       for values in fingerprints)):
+            raise InvalidAllowanceState("invalid maker progress checkpoint")
+        self.no_progress_turns = no_progress
+        self.last_progress_kind = last_progress
+        self.seen_calls, self.seen_content, self.seen_tests = map(set, fingerprints)
+        if self.role == "maker":
+            self.exhaustion = {"tool_turns": "backstop", "context_tokens": "input_tokens"}.get(
+                self.exhaustion, self.exhaustion)
 
     def _account(self, response, bound):
         usage = [message.usage_metadata for message in response.result if isinstance(message, AIMessage)]
@@ -321,5 +404,7 @@ class ExplorationMiddleware(AgentMiddleware):
             (item.get("input_token_details") or {}).get("cache_read", 0)
             or (item.get("input_token_details") or {}).get("cache_creation", 0) for item in usage)
         self.last_estimate = bound
-        self.turns += int(not self.final and not self.repairing)
+        if not self.final and not self.repairing:
+            self.turns += 1
+            self.no_progress_turns += 1
         return response
