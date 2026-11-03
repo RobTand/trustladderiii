@@ -193,6 +193,9 @@ def test_request233_source_goal_checks_the_selected_method(request233, monkeypat
     if method == 'symptom':
         check['declared_symptom'] = {'node': check['node_ids'][0], 'exception': 'builtins.FileNotFoundError',
                                      'phase': 'call', 'repeat': 10, 'parallel': 4}
+    if method == 'old_assertion':
+        check['proof'] = {'subjects': [path + '::_git'], 'observer_support': [],
+                          'red_message': 'automatic maintenance remains enabled'}
     if method in ('wrong_subject', 'supported'):
         check['proof'] = {'subjects': [path + ('::unrelated' if method == 'wrong_subject' else '::_git')],
                           'observer_support': [], 'red_message': 'automatic maintenance remains enabled'}
