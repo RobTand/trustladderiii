@@ -703,7 +703,7 @@ mod parity_tests {
         use std::io::Write;
         let mut matrix: Vec<String> =
             serde_json::from_str(include_str!("redaction/matrix.json")).unwrap();
-        assert_eq!(matrix.len(), 192);
+        assert_eq!(matrix.len(), 196);
         matrix.extend(
             serde_json::from_str::<Vec<String>>(include_str!("redaction/corpus.json")).unwrap(),
         );
@@ -725,8 +725,16 @@ mod parity_tests {
             .iter()
             .map(|text| super::text(text).unwrap_or_else(|error| panic!("{text:?}: {error:?}")))
             .collect::<Vec<_>>();
-        for ((input, actual), expected) in matrix.iter().zip(actual).zip(expected) {
-            assert_eq!(actual, expected, "Python redaction parity for {input:?}");
-        }
+        let mismatches = matrix
+            .iter()
+            .zip(actual)
+            .zip(expected)
+            .filter(|((_, actual), expected)| actual != expected)
+            .map(|((input, actual), expected)| (input, actual, expected))
+            .collect::<Vec<_>>();
+        assert!(
+            mismatches.is_empty(),
+            "Python redaction parity mismatches: {mismatches:?}"
+        );
     }
 }

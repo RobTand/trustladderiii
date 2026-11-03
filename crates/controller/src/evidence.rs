@@ -1300,7 +1300,7 @@ mod tests {
     fn escaped_field_deliveries() -> Vec<Delivery> {
         let names: Vec<String> =
             serde_json::from_str(include_str!("redaction/matrix.json")).unwrap();
-        assert_eq!(names.len(), 192);
+        assert_eq!(names.len(), 196);
         names
             .into_iter()
             .map(|name| {
@@ -1334,7 +1334,9 @@ mod tests {
                 let proof = publication(delivery, "Publish red/green proof in the PR").unwrap();
                 assert!(proof.contains("check-1"));
                 assert!(proof.contains("test_departure"));
-                proof.contains("Z7vQ9mN4pR6xT8cL2hK5sD3f")
+                ["Z7vQ9mN4pR6xT8cL2hK5sD3f", "amberquartz", "½", "Ⅻ"]
+                    .iter()
+                    .any(|secret| proof.contains(secret))
             })
             .count();
         assert_eq!(leaks, 0, "escaped field values leaked in published proof");
@@ -1356,7 +1358,9 @@ mod tests {
                     checked_draft(&mut FakeWriter, "summary", input, &Default::default()).unwrap();
                 assert!(text.contains("check-1"));
                 assert!(text.contains("checks passed"));
-                text.contains("Z7vQ9mN4pR6xT8cL2hK5sD3f")
+                ["Z7vQ9mN4pR6xT8cL2hK5sD3f", "amberquartz", "½", "Ⅻ"]
+                    .iter()
+                    .any(|secret| text.contains(secret))
             })
             .count();
         assert_eq!(leaks, 0, "escaped field values leaked in closing summary");

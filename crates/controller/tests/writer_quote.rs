@@ -193,3 +193,43 @@ fn scope_removals_preserve_recorded_paths_and_ignore_model_path_claims() {
         recorded
     );
 }
+
+#[test]
+fn removed_paths_are_redacted_in_the_actual_summary() {
+    let token = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+    let removed = format!("Changes not part of this request were removed: `src/{token}.rs`.");
+    let mut request = input("");
+    request.kind = MessageKind::Summary;
+    request.facts["removed_changes"] = json!(removed);
+    let text = checked_draft(
+        &mut Draft(String::new()),
+        "scope",
+        request,
+        &Policy::default(),
+    )
+    .unwrap();
+    assert!(
+        !text.contains(token),
+        "removed filename leaked in closing summary"
+    );
+    assert!(text.contains("src/[REDACTED].rs"));
+}
+
+#[test]
+fn removed_path_redaction_failure_prevents_a_summary() {
+    let mut request = input("");
+    request.kind = MessageKind::Summary;
+    request.facts["removed_changes"] = json!("x".repeat(1024 * 1024 + 1));
+    assert!(
+        matches!(
+            checked_draft(
+                &mut Draft(String::new()),
+                "scope",
+                request,
+                &Policy::default()
+            ),
+            Err(Error::RedactionInfra(_))
+        ),
+        "redaction infrastructure failure must stop rendering"
+    );
+}
