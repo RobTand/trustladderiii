@@ -340,6 +340,7 @@ class Evidence:
 class Worktree:
     def __init__(self, root, *, generated_files=(), generator=None):
         self._root = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        self._path = os.path.abspath(root)
         self._mutation_lock = Lock()
         self._memory = current.get()
         self.evidence = Evidence()
@@ -384,8 +385,13 @@ class Worktree:
                 "A generated output costs a 1,024-token regeneration allowance in the shared fit forecast.")
 
     def root_removed(self):
-        """Whether the checkout directory itself was deleted while open."""
-        return os.fstat(self._root).st_nlink == 0
+        """Whether the checkout directory itself was deleted or replaced while open."""
+        opened = os.fstat(self._root)
+        try:
+            current = os.stat(self._path, follow_symlinks=False)
+        except FileNotFoundError:
+            return True
+        return opened.st_nlink == 0 or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino)
 
     def __enter__(self):
         return self
@@ -684,11 +690,11 @@ def build_tools(worktree, descriptions):
                     raise ToolException(str(exc)) from exc
                 except MissingExecutable as exc:
                     if worktree.environment_errors_end_run:
-                        raise WorktreeUnavailable(f"{_name}: missing executable") from exc
+                        raise WorktreeUnavailable(f"{_name}: missing executable") from None
                     raise ToolException(f"{_name} is unavailable in this environment.") from exc
                 except FileNotFoundError as exc:
                     if worktree.environment_errors_end_run and worktree.root_removed():
-                        raise WorktreeUnavailable(f"{_name}: worktree removed") from exc
+                        raise WorktreeUnavailable(f"{_name}: worktree removed") from None
                     raise ToolException("File or directory not found.") from exc
                 except OSError as exc:
                     cls = environment_class(exc)
@@ -696,7 +702,7 @@ def build_tools(worktree, descriptions):
                         path = kwargs.get("path", ".") if _name in READ_TOOLS | WRITE_TOOLS else "the call's input"
                         raise ToolException(_path_error(_name, exc, path)) from exc
                     if worktree.environment_errors_end_run:
-                        raise WorktreeUnavailable(f"{_name}: {cls}") from exc
+                        raise WorktreeUnavailable(f"{_name}: {cls}") from None
                     error = worktree.evidence.tool_error(_name, cls)
                     raise ToolException(
                         f"Worktree tool rejected the path or operation. Tool error id: {error}."

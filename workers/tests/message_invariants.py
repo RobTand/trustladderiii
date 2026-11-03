@@ -15,3 +15,12 @@ def assert_tool_pairs(messages):
         else:
             assert not pending, "instruction interrupts pending tool results"
     assert not pending, f"missing tool results: {pending}"
+
+
+def agent_calls(calls):
+    """Recorded (messages, ...) model calls without the maker's retro turn (#648).
+
+    The retro follows the accepted reply and is tested on its own."""
+    from tl3_workers.retro import PROMPT
+
+    return [call for call in calls if not (call[0] and getattr(call[0][-1], "content", None) == PROMPT)]

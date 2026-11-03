@@ -228,7 +228,10 @@ py_library(
     name = "message_invariants",
     srcs = ["message_invariants.py"],
     visibility = ["//visibility:public"],
-    deps = ["@tl3_pip//langchain_core"],
+    deps = [
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+    ],
 )
 
 tl3_py_test(
