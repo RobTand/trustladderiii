@@ -6,6 +6,7 @@ import tiktoken
 import test_workers
 from test_workers import BRIEF
 from worker_process import start_worker
+from planner_fixtures import FORGED_FORECAST
 
 request_doc = test_workers.request_doc
 
@@ -37,11 +38,7 @@ def test_root_forecast_uses_declared_scope_and_shared_measurement(tmp_path, requ
     assert forecast["file_tokens"] == {"greeting.py": 3, "new.py": 0}
 
 
-FORGED = {**BRIEF, "files": [], "forecast": {
-    "tokenizer": "o200k_base", "brief_tokens": 1, "file_tokens": {},
-    "overhead_tokens": 10, "tokens": 11, "fit_tokens": 100,
-    "context_tokens": 150, "fits": True,
-}}
+FORGED = {**BRIEF, "files": [], "forecast": FORGED_FORECAST}
 
 
 @pytest.mark.parametrize("reply", [BRIEF, FORGED])

@@ -1,10 +1,10 @@
 {
   "figures": {
-    "loc_u_pct": 30.586039117079057,
+    "loc_u_pct": 27.7590275818444,
     "scc_max": 1,
-    "u_pct": 31.068524970963995
+    "u_pct": 26.31251353106733
   },
-  "reach_budget": 173,
+  "reach_budget": 144,
   "schema": "graph-impact.v1",
   "tolerances": {
     "loc_u_pct": 0.1,

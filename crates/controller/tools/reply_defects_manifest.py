@@ -43,7 +43,7 @@ if args.suite == "red":
     rows.append({**common, "anywhere": True, "argv": shell("""
 status=0
 cargo test --locked -p tl3-controller --lib defects -- --nocapture || status=1
-/home/rob/.local/bin/uv run --locked --project workers --python 3.14+gil pytest -c workers/pyproject.toml workers/tests/test_planner.py workers/tests/test_maker.py harness/tests/test_node_id_vectors.py -q -k 'exact_node_ids or controller_selection' || status=1
+/home/rob/.local/bin/uv run --locked --project workers --python 3.14+gil pytest -c workers/pyproject.toml workers/tests/test_planner_checks.py workers/tests/test_maker.py harness/tests/test_node_id_vectors.py -q -k 'exact_node_ids or controller_selection' || status=1
 cargo test --locked -p tl3-controller --test workers || status=1
 exit "$status"
 """)})
