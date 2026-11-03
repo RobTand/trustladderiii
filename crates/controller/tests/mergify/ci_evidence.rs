@@ -1,6 +1,7 @@
 use super::*;
 
 pub(super) const MODES: &[&str] = &[
+    "indeterminate",
     "outside",
     "repeat",
     "changed",
@@ -231,6 +232,23 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     let before = controller.world().unwrap().nodes[0];
     failure(&api, mode, false);
     observe(&mut controller, &api, &config);
+    if mode == "indeterminate" {
+        let after = controller.world().unwrap().nodes[0];
+        assert_ne!(
+            after.phase,
+            Phase::Making,
+            "incomplete target evidence must not start maker repair"
+        );
+        assert_eq!(after.round, before.round);
+        assert_eq!(after.credit.spent, before.credit.spent);
+        let facts = queue_facts(&mut controller);
+        assert_eq!(
+            facts.last().unwrap()["evidence"]["CiFailed"]["details"]["decision"],
+            "indeterminate"
+        );
+        println!("test ci_evidence_{mode} ... ok");
+        return;
+    }
     if matches!(
         mode,
         "outside" | "repeat" | "multiple-drafts" | "redelivery"

@@ -3,6 +3,22 @@ use crate::findings::{self, CiFailure, FailedTest, QueueCiEvidence};
 use regex::Regex;
 use std::{collections::BTreeSet, sync::LazyLock};
 
+mod remote;
+#[cfg(test)]
+mod remote_tests;
+
+// Replaced by trusted target retrieval after the acceptance tests are red.
+#[allow(dead_code)]
+async fn read_checks_with(
+    github: &GitHub,
+    repo: &str,
+    _head: &str,
+    checks: &[CheckRun],
+    _remote: &remote::Client,
+) -> QueueCiEvidence {
+    read_checks(github, repo, checks).await
+}
+
 fn terminal_text(text: &str) -> String {
     enum State {
         Text,
