@@ -2,7 +2,7 @@
 
 Usage: python compare.py BEFORE_LOG AFTER_LOG [AFTER_LOG ...]
 Fetch each log with /home/rob/tmp/tl3-build/bb_logs.py and a line limit large
- enough to include every PASSED line. Supply each target's log exactly once.
+enough to include every PASSED line. Supply each target's log exactly once.
 """
 import argparse
 from collections import Counter

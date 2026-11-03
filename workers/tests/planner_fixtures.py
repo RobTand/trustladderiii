@@ -2,6 +2,8 @@
 
 import copy
 import json
+import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -65,10 +67,15 @@ def planner_model(monkeypatch, *replies):
 
 @pytest.fixture(scope="session", autouse=True)
 def cache_tokenizer(tmp_path_factory):
-    # Provision public tokenizer data before the per-test socket denial. Worker
-    # subprocesses then use this cache while all model and tool calls stay offline.
+    # Bazel supplies the pinned tokenizer as a declared input. Copy it into the
+    # isolated session cache before socket denial, then verify it as usual.
+    directory = tmp_path_factory.mktemp("tokenizer")
+    if cache := os.environ.get("TIKTOKEN_CACHE_DIR"):
+        source = Path(cache) / "fb374d419588a4632f3f557e76b4b70aebbca790"
+        if source.is_file():
+            shutil.copyfile(source, directory / source.name)
     with pytest.MonkeyPatch.context() as patch:
-        patch.setenv("TIKTOKEN_CACHE_DIR", str(tmp_path_factory.mktemp("tokenizer")))
+        patch.setenv("TIKTOKEN_CACHE_DIR", str(directory))
         from tiktoken.load import read_file_cached
         from tl3_workers.forecast import TOKENIZER_URL, TOKENIZER_SHA256
         read_file_cached(TOKENIZER_URL, TOKENIZER_SHA256)
