@@ -389,6 +389,8 @@ mod hostile_tests {
             .unwrap();
         let identity = json!({"target":"tests/test_a.py::_execute",
             "base_target_sha256":"a".repeat(64), "head_target_sha256":"b".repeat(64),
+            "failure_cases":[{"args":[false],"kwargs":{}}], "failure_driver_sha256":"f".repeat(64),
+            "failure_preservation":[{"base":"passed","head":"passed"}],
             "base_tree_sha256":"c".repeat(64), "head_tree_sha256":"d".repeat(64),
             "observers":{"tests/test_a.py::test_a":"e".repeat(64)}});
         let review = |store: &mut Store, forcing: Option<Value>, helper: bool| {

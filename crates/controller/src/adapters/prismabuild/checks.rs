@@ -72,7 +72,10 @@ pub(crate) fn validate_plan_size(plan: &[Check]) -> Result<()> {
                 check.tests.iter().map(|t| (t, "0".repeat(64))).collect();
             header["helper_evidence"] = serde_json::json!({"target": evidence["target"],
                 "base_target_sha256":"0".repeat(64), "head_target_sha256":"0".repeat(64),
-                "base_tree_sha256":"0".repeat(64), "head_tree_sha256":"0".repeat(64), "observers":observers});
+                "base_tree_sha256":"0".repeat(64), "head_tree_sha256":"0".repeat(64), "observers":observers,
+                "failure_cases":evidence["failure_cases"], "failure_driver_sha256":"0".repeat(64),
+                "failure_preservation":evidence["failure_cases"].as_array()?.iter().map(|_| serde_json::json!({
+                    "base":"infrastructure-failure", "head":"infrastructure-failure"})).collect::<Vec<_>>()});
         }
         result_bytes += ascii_json_bytes(&header)? + 1;
         for test in &check.tests {

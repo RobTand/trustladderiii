@@ -118,10 +118,35 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 1000
+        },
+        "failure_cases": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "properties": {
+              "args": {
+                "type": "array",
+                "maxItems": 16,
+                "items": {}
+              },
+              "kwargs": {
+                "type": "object",
+                "maxProperties": 16
+              }
+            },
+            "required": [
+              "args",
+              "kwargs"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "required": [
-        "target"
+        "target",
+        "failure_cases"
       ],
       "additionalProperties": false
     }

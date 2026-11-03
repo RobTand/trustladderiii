@@ -320,6 +320,73 @@
                   "type": "string",
                   "pattern": "^[0-9a-f]{64}$"
                 }
+              },
+              "failure_cases": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "args": {
+                      "type": "array",
+                      "maxItems": 16,
+                      "items": {}
+                    },
+                    "kwargs": {
+                      "type": "object",
+                      "maxProperties": 16
+                    }
+                  },
+                  "required": [
+                    "args",
+                    "kwargs"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "failure_driver_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "failure_preservation": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "base": {
+                      "enum": [
+                        "passed",
+                        "assertion",
+                        "added-name",
+                        "error",
+                        "skipped",
+                        "missing",
+                        "uncollected",
+                        "no-report"
+                      ]
+                    },
+                    "head": {
+                      "enum": [
+                        "passed",
+                        "assertion",
+                        "added-name",
+                        "error",
+                        "skipped",
+                        "missing",
+                        "uncollected",
+                        "no-report"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "base",
+                    "head"
+                  ],
+                  "additionalProperties": false
+                }
               }
             },
             "required": [
@@ -328,7 +395,10 @@
               "head_target_sha256",
               "base_tree_sha256",
               "head_tree_sha256",
-              "observers"
+              "observers",
+              "failure_cases",
+              "failure_driver_sha256",
+              "failure_preservation"
             ],
             "additionalProperties": false
           }

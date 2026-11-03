@@ -9,7 +9,7 @@ from tl3_workers.evidence import preflight
 from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES
 from tl3_harness import Check, Forcing, HarnessInputError, Kind, HelperEvidence
 from tl3_harness.limits import validate_check_plan
-from tl3_harness.trees import is_test, test_function_source
+from tl3_harness.trees import is_test, test_function_source, bound_names
 from tl3_workers.tools import Worktree
 from tl3_workers.recall import check_citations
 
@@ -47,7 +47,7 @@ def check_reply(inputs, reply):
                 for observer in check["node_ids"]:
                     parts = observer.split("::")
                     if (len(parts) != 2 or not parts[1].isidentifier() or not parts[1].startswith("test_")
-                            or base_definition(observer)[1] or parts[0] not in reply["files"]):
+                            or base_definition(observer, binding=True)[1] or parts[0] not in reply["files"]):
                         raise ValueError("observers must name new top-level tests in declared files")
             except ValueError as error:
                 violations.append(f"Invalid helper evidence: {error}")
@@ -147,7 +147,7 @@ def check_reply(inputs, reply):
     reply["violations"] = list(dict.fromkeys(violations))
 
 
-def base_definition(node_id):
+def base_definition(node_id, *, binding=False):
     """Whether the base defines the test, after whether its file is over the hard cap."""
     # The whole module is parsed to find the test, so the
     # declared-file hard cap bounds it, not a page size.
@@ -158,6 +158,12 @@ def base_definition(node_id):
         return False, False
     if len(source.encode("utf-8")) > HARD_CAP_BYTES:
         return True, False
+    if binding:
+        try:
+            names = bound_names(source)
+        except SyntaxError:
+            return False, True
+        return False, node_id.split("::", 1)[1] in names or "*" in names
     return False, test_function_source(source, node_id) is not None
 
 

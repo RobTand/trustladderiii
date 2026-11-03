@@ -725,7 +725,13 @@ are unchanged.
 files, a demonstrating check may identify an existing helper target and new
 observer tests. Trusted staging keeps the real old helper on base and adds only
 the new observers; head uses the new helper with those same assertions. Every
-observer must fail by assertion on base and pass on head. Trusted receipts retain
+observer must fail by assertion on base and pass on head. The plan also declares
+bounded known-bad arguments as failure-preservation evidence. A trusted driver
+invokes the real helper independently of the observers and requires
+AssertionError on both versions. The receipt retains these cases, the driver
+hash and both verdicts. Removing a helper assertion cannot pass by making a
+previously failing call succeed. Observer names already bound on base, including
+assignment aliases, are rejected. Trusted receipts retain
 both helper source hashes, observer hashes and staged tree hashes for review.
 The bounded Python mode accepts an undecorated top-level helper with unchanged
 signature and dependencies. It rejects ambiguous targets and undeclared test

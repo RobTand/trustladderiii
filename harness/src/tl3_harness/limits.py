@@ -25,7 +25,11 @@ def validate_check_plan(plan):
         if getattr(check, 'helper_evidence', None) is not None:
             header['helper_evidence'] = {'target': check.helper_evidence.target,
                 **dict.fromkeys(('base_target_sha256', 'head_target_sha256', 'base_tree_sha256', 'head_tree_sha256'), '0' * 64),
-                'observers': dict.fromkeys(check.tests, '0' * 64)}
+                'observers': dict.fromkeys(check.tests, '0' * 64),
+                'failure_cases': check.helper_evidence.as_json()['failure_cases'],
+                'failure_driver_sha256': '0' * 64,
+                'failure_preservation': [{'base': 'infrastructure-failure', 'head': 'infrastructure-failure'}
+                                         for _ in check.helper_evidence.failure_cases]}
         size += len(json.dumps(header, separators=(',', ':'))) + 1
         for test in check.tests:
             case = {'test': test, 'base': 'uncollected', 'head': 'uncollected',

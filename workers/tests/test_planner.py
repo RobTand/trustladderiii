@@ -1091,7 +1091,8 @@ def test_helper_target_observer_plan_is_supported(planner_request, digests_plan,
     observer = 'tests/test_observer.py' if separate else DIGESTS
     digests_plan.update(files=list(dict.fromkeys([DIGESTS, observer])), checks=[{
         'kind': 'demonstrating', 'node_ids': [f'{observer}::test_new_diagnostic'], 'goal_ids': [0],
-        'helper_evidence': {'target': f'{DIGESTS}::_execute'}}])
+        'helper_evidence': {'target': f'{DIGESTS}::_execute', 'failure_cases': [
+            {'args': [{'$attributes': {'returncode': 1, 'stdout': 'broken transfer'}}], 'kwargs': {}}]}}])
     validate('planner-reply', digests_plan)
     assert planned(planner_request, copy.deepcopy(digests_plan)) == []
     digests_plan['checks'][0]['helper_evidence']['target'] = f'{DIGESTS}::missing'

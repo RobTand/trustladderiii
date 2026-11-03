@@ -387,6 +387,21 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
                     ]
                     .iter()
                     .any(|k| !hash(&identity[k]))
+                    || !hash(&identity["failure_driver_sha256"])
+                    || identity["failure_cases"] != declaration["failure_cases"]
+                    || declaration["failure_cases"]
+                        .as_array()
+                        .is_none_or(|cases| cases.is_empty() || cases.len() > 8)
+                    || identity["failure_preservation"]
+                        .as_array()
+                        .is_none_or(|items| {
+                            items.len()
+                                != declaration["failure_cases"].as_array().map_or(0, Vec::len)
+                                || (result.tests.iter().any(|t| t.passed)
+                                    && items.iter().any(|item| {
+                                        item["base"] != "passed" || item["head"] != "passed"
+                                    }))
+                        })
                     || identity["base_target_sha256"] == identity["head_target_sha256"]
                     || identity["base_tree_sha256"] == identity["head_tree_sha256"]
                     || identity["observers"].as_object().is_none_or(|o| {

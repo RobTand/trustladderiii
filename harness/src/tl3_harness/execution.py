@@ -1,5 +1,6 @@
 from dataclasses import asdict, dataclass, replace
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -411,6 +412,8 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             try:
                 if tool is not PYTEST:
                     raise ValueError("helper evidence requires the pytest tool")
+                if not check.helper_evidence.failure_cases:
+                    raise ValueError("helper evidence requires known-bad failure-preservation cases")
                 identity = helper_test_edits(old, new, staged, config["test-files"],
                                              check.helper_evidence, check.tests)
             except ValueError as error:
@@ -470,6 +473,12 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             staged, identity = helper_runs[check.name]
             notes = FailureNotes()
             outcomes = tool.run(staged, container, check.tests, root / "helper-base.jsonl", progress, messages=notes)
+            try:
+                preservation = helper_failure_preservation(tool, staged, new, check.helper_evidence,
+                                                          container, root, progress)
+            except ValueError as error:
+                return refused(plan, f"Invalid helper failure preservation: {error}")
+            identity.update(preservation)
             helper_outcomes[check.name] = outcomes, notes, identity
         messages = {}
         after = tool.run(new, container, tests, root / "head.jsonl", progress, messages=messages)
@@ -491,6 +500,13 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                     result = replace(result, verdict=(Verdict.INFRASTRUCTURE_FAILURE if result.verdict == Verdict.INFRASTRUCTURE_FAILURE else Verdict.FAIL), tests=tuple(
                         replace(test, passed=False, message="Helper observers must fail by assertion on the old helper.")
                         if outcomes[test.test] != Outcome.ASSERTION else test for test in result.tests))
+                if any(item[side] != Outcome.PASSED for item in identity["failure_preservation"]
+                       for side in ("base", "head")):
+                    infrastructure = any(item[side] == Outcome.NO_REPORT for item in identity["failure_preservation"]
+                                         for side in ("base", "head"))
+                    result = replace(result, verdict=Verdict.INFRASTRUCTURE_FAILURE if infrastructure else Verdict.FAIL, tests=tuple(
+                        replace(test, passed=False, message="Failure preservation requires every known-bad invocation "
+                                "to fail by assertion on both helpers.") for test in result.tests))
                 results.append(replace(result, helper_evidence=identity))
                 continue
             if check.name in forced:
@@ -510,6 +526,55 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         if kept:
             results.append(selected_head(tool, new, container, kept, selected_before, root, progress))
         return tuple(results)
+
+
+def helper_failure_preservation(tool, staged, head, evidence, container, root, progress):
+    """Trusted driver calls the real target with data, independently of observers."""
+    module, function = evidence.target.split("::")
+    source = """import json
+import runpy
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+
+def argument(value):
+    if isinstance(value, dict) and '$attributes' in value:
+        return SimpleNamespace(**value['$attributes'])
+    return value
+"""
+    for index, encoded in enumerate(evidence.failure_cases):
+        source += f"""
+
+def test_failure_{index}():
+    sys.path.insert(0, str(Path({module!r}).resolve().parent))
+    target = runpy.run_path({module!r})[{function!r}]
+    case = json.loads({encoded!r})
+    args = [argument(value) for value in case['args']]
+    kwargs = {{key: argument(value) for key, value in case['kwargs'].items()}}
+    try:
+        target(*args, **kwargs)
+    except AssertionError:
+        return
+    raise AssertionError('The known-bad helper invocation no longer fails by assertion')
+"""
+    name = '_tl3_helper_failure_preservation.py'
+    tests = tuple(f'{name}::test_failure_{index}' for index in range(len(evidence.failure_cases)))
+    outcomes = []
+    for label, tree in (("base", staged), ("head", head)):
+        path = tree / name
+        if path.exists():
+            raise ValueError("reserved helper failure-preservation driver path exists")
+        path.write_text(source)
+        try:
+            observed = tool.run(tree, container, tests, root / f"helper-failure-{label}.jsonl", progress)
+            outcomes.append([observed[test] for test in tests])
+        finally:
+            path.unlink()
+    return {"failure_cases": [json.loads(case) for case in evidence.failure_cases],
+            "failure_driver_sha256": hashlib.sha256(source.encode()).hexdigest(),
+            "failure_preservation": [{"base": before, "head": after}
+                                     for before, after in zip(*outcomes)]}
 
 
 def result_json(results: tuple[Result, ...]) -> str:

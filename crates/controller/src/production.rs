@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn helper_target_carries_to_the_maker() {
         let brief = json!({"brief":"Improve diagnostics", "goals":[{"description":"Explain failure", "verification":"test"}]});
-        let declaration = json!({"target":"test_helper.py::_execute"});
+        let declaration = json!({"target":"test_helper.py::_execute", "failure_cases":[{"args":[false],"kwargs":{}}]});
         let plan = json!({"kind":"leaf","files":["test_helper.py"],"checks":[
             {"kind":"demonstrating","node_ids":["test_helper.py::test_diagnostic"],"goal_ids":[0],"helper_evidence":declaration}]});
         assert_eq!(

@@ -241,7 +241,8 @@ report the missing method through the evidence preflight, without substituting
 review or a flaky-test forcing.
 
 For method `helper_target_observer`, use an unforced demonstrating check with
-`helper_evidence: {"target": "tests/test_helpers.py::_execute"}`. Its node_ids
+`helper_evidence: {"target": "tests/test_helpers.py::_execute", "failure_cases":
+[{"args": [{"$attributes": {"returncode": 1, "stdout": "broken transfer"}}], "kwargs": {}}]}`. Its node_ids
 are the new observer tests. Declare the target and observer files. One such
 check per plan may name multiple observers, in the same file or a separate
 configured test file. The target must be an existing undecorated top-level
@@ -249,4 +250,11 @@ Python function. Preserve its signature, imports and every other existing test
 definition. Add only new undecorated top-level observers. Put any new observer
 imports inside the observer. The harness appends those observers to the real
 base modules without copying the target fix. Every observer must fail by
-assertion on base and pass on head. Helper evidence is not a Q55 forcing.
+assertion on base and pass on head. Declare one to eight known-bad failure_cases
+with args and kwargs, at most 4096 JSON bytes total. Literal JSON values pass
+unchanged; {"$attributes": {...}} creates a SimpleNamespace argument. The trusted
+harness calls the real target and requires AssertionError on both versions.
+These cases preserve failures independently of observer assertions. Choose cases
+that exercise the helper's existing failure contract. Observer names must have
+no existing base binding, including assignment aliases. Helper evidence is not
+a Q55 forcing.

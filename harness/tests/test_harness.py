@@ -276,6 +276,7 @@ def _execute(result):
         raise AssertionError("mover failed")
     return result
 '''
+HELPER_FAILURE_CASE = json.dumps({'args': [{'$attributes': {'returncode': 1, 'stdout': 'broken transfer'}}], 'kwargs': {}})
 HELPER_HEAD = HELPER_BASE.replace('"mover failed"', '"mover failed: " + result.stdout')
 HELPER_OBSERVER = '''
 def test_diagnostic():
@@ -385,13 +386,15 @@ def test_helper_round_receipt_and_ordinary_overlay_cannot_bypass(tmp_path, monke
     monkeypatch.setattr(execution, 'container_command',
         lambda tree, container, tests: [sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)])
     check = Check('diagnostic', Kind.DEMONSTRATING, (observer,),
-                  helper_evidence=HelperEvidence('tests/test_product.py::_execute'))
+                  helper_evidence=HelperEvidence('tests/test_product.py::_execute', (HELPER_FAILURE_CASE,)))
     result, = run_checks(repo, base, head, (check,), container=Container(IMAGE))
     assert result.verdict == Verdict.PASS, result
     assert (result.tests[0].base, result.tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
     receipt = json.loads(execution.result_json((result,)))[0]
     assert receipt['helper_evidence']['target'] == 'tests/test_product.py::_execute'
     assert set(receipt['helper_evidence']['observers']) == {observer}
+    assert receipt['helper_evidence']['failure_preservation'] == [{'base': 'passed', 'head': 'passed'}]
+    assert receipt['helper_evidence']['failure_cases'] == [json.loads(HELPER_FAILURE_CASE)]
     ordinary, = run_checks(repo, base, head, (Check('ordinary', Kind.DEMONSTRATING, (observer,)),),
                           container=Container(IMAGE))
     assert ordinary.verdict == Verdict.FAIL
@@ -431,7 +434,8 @@ def test_helper_observer_cannot_shadow_base_binding(tmp_path, binding):
                           ('tests/test_product.py::test_diagnostic',))
 
 
-def test_helper_assertion_removal_cannot_pass_without_failure_preservation(tmp_path, monkeypatch):
+@pytest.mark.parametrize('declared_case', [False, True])
+def test_helper_assertion_removal_cannot_pass_without_failure_preservation(tmp_path, monkeypatch, declared_case):
     from tl3_harness import execution, HelperEvidence
     repo = tmp_path / 'repo'
     (repo / 'tests').mkdir(parents=True)
@@ -453,7 +457,16 @@ def test_helper_assertion_removal_cannot_pass_without_failure_preservation(tmp_p
     monkeypatch.setattr(execution, 'container_command',
         lambda tree, container, tests: [sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)])
     check = Check('assertion removal', Kind.DEMONSTRATING, ('tests/test_product.py::test_observer',),
-                  helper_evidence=HelperEvidence('tests/test_product.py::_check'))
+                  helper_evidence=HelperEvidence('tests/test_product.py::_check',
+                      (json.dumps({'args': [False], 'kwargs': {}}),) if declared_case else ()))
     result, = run_checks(repo, base, head, (check,), container=Container(IMAGE))
     assert result.verdict == Verdict.FAIL, result
     assert 'failure' in result.tests[0].message.lower(), result
+
+
+@pytest.mark.parametrize('cases', [[], [{}], [{'args': [], 'kwargs': {}, 'code': 'assert False'}],
+    [{'args': 'bad', 'kwargs': {}}], [{'args': [{'$attributes': 4}], 'kwargs': {}}]])
+def test_helper_failure_cases_are_bounded_data(cases):
+    from tl3_harness.model import HelperEvidence, HarnessInputError
+    with pytest.raises(HarnessInputError):
+        HelperEvidence.parse({'target': 'tests/test_product.py::_check', 'failure_cases': cases})

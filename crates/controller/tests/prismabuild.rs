@@ -732,13 +732,17 @@ fn forced_check_is_staged_and_reaches_review() {
 }
 
 fn helper_target_identity_is_staged_and_reaches_review() {
-    let declaration = serde_json::json!({"target":"test_value.py::_execute"});
+    let declaration = serde_json::json!({"target":"test_value.py::_execute",
+        "failure_cases":[{"args":[false],"kwargs":{}}]});
     for tamper in [
         "none",
         "target",
         "old_identity",
         "observer",
         "base_passed",
+        "missing_preservation",
+        "changed_cases",
+        "failure_lost",
         "missing",
     ] {
         let root = tempfile::tempdir().unwrap();
@@ -751,7 +755,9 @@ fn helper_target_identity_is_staged_and_reaches_review() {
         observers.insert(planned.tests[0].clone(), "c".repeat(64).into());
         let mut identity = serde_json::json!({"target":declaration["target"],
             "base_target_sha256":"a".repeat(64), "head_target_sha256":"b".repeat(64),
-            "base_tree_sha256":"d".repeat(64), "head_tree_sha256":"e".repeat(64), "observers":observers});
+            "base_tree_sha256":"d".repeat(64), "head_tree_sha256":"e".repeat(64), "observers":observers,
+            "failure_cases":declaration["failure_cases"], "failure_driver_sha256":"f".repeat(64),
+            "failure_preservation":[{"base":"passed", "head":"passed"}]});
         if tamper == "target" {
             identity["target"] = "test_value.py::fake_old".into();
         }
@@ -760,6 +766,18 @@ fn helper_target_identity_is_staged_and_reaches_review() {
         }
         if tamper == "observer" {
             identity["observers"] = serde_json::json!({});
+        }
+        if tamper == "missing_preservation" {
+            identity
+                .as_object_mut()
+                .unwrap()
+                .remove("failure_preservation");
+        }
+        if tamper == "changed_cases" {
+            identity["failure_cases"][0]["args"] = serde_json::json!([true]);
+        }
+        if tamper == "failure_lost" {
+            identity["failure_preservation"][0]["head"] = "assertion".into();
         }
         let mut result = serde_json::json!({"name":planned.name,"kind":"demonstrating","custody":"in-process",
             "verdict":"pass","helper_evidence":identity,"tests":[{"test":planned.tests[0],

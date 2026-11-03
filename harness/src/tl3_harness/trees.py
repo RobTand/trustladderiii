@@ -191,6 +191,18 @@ def tree_sha256(tree: Path) -> str:
     return digest.hexdigest()
 
 
+def bound_names(source: str) -> set[str]:
+    """Conservative static bindings, including aliases and compound statements."""
+    module = ast.parse(source)
+    names = {node.id for node in ast.walk(module)
+             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)}
+    names.update(node.name for node in ast.walk(module)
+                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)))
+    names.update(node.asname or node.name.split(".")[0] for node in ast.walk(module)
+                 if isinstance(node, ast.alias))
+    return names
+
+
 def helper_test_edits(base: Path, head: Path, destination: Path, patterns: list[str], evidence,
                       observers: tuple[str, ...]) -> dict:
     """Append new observers to base modules, leaving every old definition intact.
@@ -226,6 +238,12 @@ def helper_test_edits(base: Path, head: Path, destination: Path, patterns: list[
             except (SyntaxError, UnicodeError) as error:
                 reject(f"cannot parse {label} {name}: {type(error).__name__}")
             sources[label, name] = source
+            if label == "base":
+                bound = bound_names(source)
+                for observer in observers:
+                    path, function = observer.split("::")
+                    if path == name and (function in bound or "*" in bound):
+                        reject(f"observer is already bound on base: {observer}")
             remaining = []
             for node in module.body:
                 key = f"{name}::{getattr(node, 'name', '')}"

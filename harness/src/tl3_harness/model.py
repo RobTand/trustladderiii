@@ -145,6 +145,7 @@ class Forcing:
 @dataclass(frozen=True)
 class HelperEvidence:
     target: str
+    failure_cases: tuple[str, ...] = ()
 
     def __post_init__(self):
         if (not isinstance(self.target, str) or len(self.target) > 1000
@@ -153,14 +154,37 @@ class HelperEvidence:
                 or self.target.split("::")[1].startswith("test_")):
             raise HarnessInputError("helper evidence needs a relative Python path and top-level helper name")
 
+        if len(self.failure_cases) > 8 or sum(len(case.encode()) for case in self.failure_cases) > 4096:
+            raise HarnessInputError("helper failure preservation allows at most eight cases and 4096 bytes")
+        for encoded in self.failure_cases:
+            try:
+                case = json.loads(encoded)
+            except (ValueError, TypeError) as error:
+                raise HarnessInputError("helper failure cases must be JSON") from error
+            if (not isinstance(case, dict) or set(case) != {"args", "kwargs"}
+                    or not isinstance(case["args"], list) or len(case["args"]) > 16
+                    or not isinstance(case["kwargs"], dict) or len(case["kwargs"]) > 16
+                    or any(not key.isidentifier() for key in case["kwargs"])):
+                raise HarnessInputError("helper failure cases need bounded args and kwargs")
+            for value in [*case["args"], *case["kwargs"].values()]:
+                if isinstance(value, dict) and "$attributes" in value:
+                    if set(value) != {"$attributes"} or not isinstance(value["$attributes"], dict):
+                        raise HarnessInputError("$attributes must name one object of literal attributes")
+
     @classmethod
     def parse(cls, data):
-        if not isinstance(data, dict) or set(data) != {"target"}:
-            raise HarnessInputError("helper evidence names exactly one target")
-        return cls(data["target"])
+        if (not isinstance(data, dict) or set(data) != {"target", "failure_cases"}
+                or not isinstance(data["failure_cases"], list) or not data["failure_cases"]):
+            raise HarnessInputError("helper evidence needs a target and nonempty failure_cases")
+        try:
+            cases = tuple(json.dumps(case, sort_keys=True, separators=(",", ":"), allow_nan=False)
+                          for case in data["failure_cases"])
+        except (ValueError, TypeError) as error:
+            raise HarnessInputError("helper failure cases must be JSON literals") from error
+        return cls(data["target"], cases)
 
     def as_json(self):
-        return {"target": self.target}
+        return {"target": self.target, "failure_cases": [json.loads(case) for case in self.failure_cases]}
 
 
 @dataclass(frozen=True)

@@ -551,7 +551,10 @@ def test_review_receives_helper_identities_and_both_verdicts(review_request):
     identity = {'target': 'tests/test_helpers.py::_execute',
                 'base_target_sha256': 'a' * 64, 'head_target_sha256': 'b' * 64,
                 'base_tree_sha256': 'c' * 64, 'head_tree_sha256': 'd' * 64,
-                'observers': {'tests/test_helpers.py::test_diagnostic': 'e' * 64}}
+                'observers': {'tests/test_helpers.py::test_diagnostic': 'e' * 64},
+                'failure_cases': [{'args': [False], 'kwargs': {}}],
+                'failure_driver_sha256': 'f' * 64,
+                'failure_preservation': [{'base': 'passed', 'head': 'passed'}]}
     check = review_request['inputs']['checks'][0]
     check.update(kind='demonstrating', verdict='pass', helper_evidence=identity)
     check['tests'][0].update(test='tests/test_helpers.py::test_diagnostic',
