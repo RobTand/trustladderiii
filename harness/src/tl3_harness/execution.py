@@ -388,7 +388,14 @@ def selected_head(tool: TestTool, new: Path, container: Container, kept: tuple[t
                 messages[member] = retry_messages[member]
             after[member] = retry.get(member, Outcome.NO_REPORT)
     base_outcomes = {member: before[group].outcomes[member] for group in kept for member in group}
+    failed_members = set()
     for group in kept:
+        if any(after.get(member) != Outcome.PASSED for member in group):
+            failed_members.update(group)
+            for member in group:
+                if after.get(member) == Outcome.PASSED:
+                    notes[member] = ("This module passed, but a companion in its complete execution group failed. "
+                                     "Editing any companion excludes this unresolved failed group from selection.")
         identity = before[group].identity
         membership = ("identical base/head collection" if head_collections[group] == before[group].collection
                       else "head collection unverified; required base collection")
@@ -402,7 +409,8 @@ def selected_head(tool: TestTool, new: Path, container: Container, kept: tuple[t
                                     "report; this complete group passed on the base.")
             notes[member] = (receipt + "\n" + (notes.get(member) or messages.get(member, ""))).strip()[:MAX_MESSAGE_CHARS]
     result = judge(Check(SELECTED_CHECK, Kind.REGRESSION, tests), base_outcomes, after, messages=messages)
-    return replace(result, tests=tuple(replace(test, message=notes[test.test]) for test in result.tests))
+    return replace(result, tests=tuple(replace(test, passed=test.passed and test.test not in failed_members,
+                                              message=notes[test.test]) for test in result.tests))
 
 
 def stale_result(result: Result, stale: set[str]) -> Result:
@@ -703,9 +711,15 @@ def test_failure_{index}(request):
 
 def result_json(results: tuple[Result, ...]) -> str:
     reports = [asdict(result) for result in results]
-    detailed = 0
-    # Owner-configured rule notes must survive even when planned failures fill the message budget.
-    for result, report in sorted(zip(results, reports), key=lambda pair: pair[0].name != ALWAYS_CHECK):
+    # Owner rule notes retain their existing priority. Actual failures precede group
+    # companion notes and passing receipts, without increasing the shared allowance.
+    messages = [(result['name'], test) for result in reports for test in result['tests']]
+    priority = sorted(messages, key=lambda pair: (
+        pair[0] != ALWAYS_CHECK,
+        pair[1]['passed'] or pair[1]['head'] == Outcome.PASSED,
+        pair[1]['passed']))
+    retained = {id(test) for _, test in [pair for pair in priority if pair[1]['message']][:MAX_DETAILED_FAILURES]}
+    for result, report in zip(results, reports):
         # Unforced results keep their earlier shape; a forced one carries its forcing for review (#393).
         if result.helper_evidence is None:
             del report["helper_evidence"]
@@ -716,10 +730,8 @@ def result_json(results: tuple[Result, ...]) -> str:
         for test in report['tests']:
             if test['head_forced'] is None:
                 del test['head_forced']
-            # Passing messages include stale rule notes and selected reruns that found a flake.
-            if (not test['passed'] or test['message']) and detailed < MAX_DETAILED_FAILURES:
+            if id(test) in retained:
                 test['message'] = test['message'][:MAX_MESSAGE_CHARS].encode(errors='backslashreplace').decode()[:MAX_MESSAGE_CHARS]
-                detailed += 1
             else:
                 test['message'] = ''
     return json.dumps(reports, sort_keys=True, separators=(',', ':'))

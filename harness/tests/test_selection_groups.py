@@ -18,6 +18,7 @@ OTHER = 'tests/test_other.py::test_other'
 PLAN = (Check('other', Kind.REGRESSION, (OTHER,)),)
 CONFIG = '[tool.tl3.harness]\ncommand=["python", "-m", "pytest"]\ntest-files=["tests/*.py"]\n'
 CONTRACT = '''from pathlib import Path
+import os
 import json
 import pytest
 from product import value
@@ -37,9 +38,7 @@ def test_frozen_calls(row):
     USED.add(row)
 
 def test_bindings_are_shared():
-    marker = Path(__file__).with_name(".binding-ran")
-    if value() == 2 and not marker.exists():
-        marker.touch()
+    if value() == 2 and os.environ.get("TL3_GROUP_ATTEMPT") == "1":
         pytest.fail("one complete-group flake")
     assert callable(value)
 '''
@@ -66,8 +65,9 @@ def frozen_repo(tmp_path, monkeypatch):
     command = execution.container_command
 
     def real_runner(tree, container, tests):
+        attempt = 1 + sum(name == tree.name and members == tests for name, members in runs)
         runs.append((tree.name, tests))
-        return [sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)]
+        return ["/usr/bin/env", f"TL3_GROUP_ATTEMPT={attempt}", sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)]
 
     monkeypatch.setattr(execution, 'require_admission', lambda: None)
     monkeypatch.setattr(execution, 'container_command', real_runner)
@@ -181,10 +181,9 @@ def all_calls():
 def seen():
     return SEEN
 ''')
-    (repo / MODULE).write_text('from pathlib import Path\nfrom product import value\n'
+    (repo / MODULE).write_text('import os\nfrom product import value\n'
         'def test_first(seen):\n    seen.add("first")\n'
-        '    marker = Path(__file__).with_name(".first-ran")\n'
-        '    if value() == 2 and not marker.exists():\n        marker.touch()\n        assert False\n')
+        '    if value() == 2 and os.environ.get("TL3_GROUP_ATTEMPT") == "1":\n        assert False\n')
     (repo / 'tests/test_companion.py').write_text('def test_second(seen):\n    seen.add("second")\n')
     # The plan does not use this shared conftest's session guard.
     (repo / 'other.py').write_text('def test_other():\n    assert True\n')
@@ -201,13 +200,11 @@ def seen():
 
 def test_independent_module_flake_still_gets_a_bounded_retry(frozen_repo):
     repo, runs = frozen_repo
-    (repo / MODULE).write_text('''from pathlib import Path
+    (repo / MODULE).write_text('''import os
 from product import value
 
 def test_flaky():
-    marker = Path(__file__).with_name(".once")
-    if value() == 2 and not marker.exists():
-        marker.touch()
+    if value() == 2 and os.environ.get("TL3_GROUP_ATTEMPT") == "1":
         assert False, "independent flake"
 ''')
     base = save(repo, 'base')
