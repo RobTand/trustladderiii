@@ -563,7 +563,7 @@ fn writer_facts(
         request
     };
     if let Some(crate::steering::Task::ReplacementDropped { text, outcome }) = &delivery.steering {
-        let change = if outcome == Outcome::Merged {
+        let change = if *outcome == Outcome::Merged {
             "The old version merged before your change could start. Please file your change again."
         } else {
             "Work on the old version ended before your change could start. Please file your change again."
@@ -718,7 +718,7 @@ fn writer_facts(
                 Outcome::NotActionable => "This request could not be acted on.",
                 Outcome::Stopped => "Work on this request has stopped.",
                 Outcome::Replaced => "This request has been replaced. Work continues on your new request.",
-            }, "unmet_goals": [],
+            }, "unmet_goals": crate::evidence::unmet_goals(delivery.evidence.as_ref()),
             "evidence_status": if delivery.evidence.is_some() {"captured"} else {"not_captured"},
             "merge_status": if outcome == Outcome::Merged {"merged"} else {"not_recorded"},
             "evidence": delivery.evidence,

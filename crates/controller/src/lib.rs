@@ -1350,17 +1350,34 @@ impl Controller {
         // Preserve teardown evidence in the same transaction that can emit the summary.
         for observation in &completion.observations {
             match observation {
-                Observation::ScratchSaved { node, reference } => commit.rows.push(put(
-                    "saved_scratch",
-                    reference.clone(),
-                    json!({
-                        "node": node, "reference": reference,
-                    }),
-                )),
-                Observation::ScratchPruned { reference } => commit.rows.push(RowChange::Delete {
-                    table: "saved_scratch".into(),
-                    id: reference.clone(),
-                }),
+                Observation::ScratchSaved { node, reference } => {
+                    let value = json!({"node":node,"reference":reference});
+                    commit
+                        .rows
+                        .push(put("saved_scratch", reference.clone(), value));
+                    commit.rows.push(put(
+                        "scratch_evidence",
+                        reference.clone(),
+                        json!({"node":node,"reference":reference,"status":"saved"}),
+                    ));
+                }
+                Observation::ScratchPruned { reference } => {
+                    if let Some(saved) = snapshot
+                        .rows
+                        .iter()
+                        .find(|r| r.table == "saved_scratch" && r.id == *reference)
+                    {
+                        let mut value = saved.value.clone();
+                        value["status"] = json!("pruned");
+                        commit
+                            .rows
+                            .push(put("scratch_evidence", reference.clone(), value));
+                    }
+                    commit.rows.push(RowChange::Delete {
+                        table: "saved_scratch".into(),
+                        id: reference.clone(),
+                    });
+                }
                 _ => {}
             }
         }

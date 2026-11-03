@@ -15,6 +15,8 @@ pub struct Evidence {
     pub audit: Option<Value>,
     pub queue: Vec<Value>,
     pub scratch: Vec<String>,
+    #[serde(default)]
+    pub scratch_history: Vec<Value>,
     pub goals: Vec<Value>,
     pub remaining_failures: Vec<Value>,
     pub artifacts: Vec<String>,
@@ -65,6 +67,9 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
                 if let Some(reference) = value["reference"].as_str() {
                     facts.scratch.push(reference.into());
                 }
+            }
+            "scratch_evidence" if value["node"] == json!(delivery.node()) => {
+                facts.scratch_history.push(value.clone())
             }
             "queue_facts" => {
                 let fact: crate::adapters::mergify::QueueFact =
@@ -162,8 +167,12 @@ pub fn summary(delivery: &Delivery) -> String {
     let mut lines = Vec::new();
     for check in &facts.checks {
         let results = check["results"].as_array();
-        let passed = check["pass"] == true
-            || results.is_some_and(|r| !r.is_empty() && r.iter().all(|c| c["verdict"] == "pass"));
+        let passed = check["report"] != false
+            && (check["pass"] == true
+                || (check.get("pass").is_none()
+                    && results.is_some_and(|r| {
+                        !r.is_empty() && r.iter().all(|c| c["verdict"] == "pass")
+                    })));
         lines.push(if passed {
             "The recorded checks passed."
         } else {
@@ -213,13 +222,32 @@ pub fn summary(delivery: &Delivery) -> String {
 }
 
 fn proof_required(text: &str) -> bool {
+    static PUBLICATION: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\b(?:pr|pull request|publish(?:ed|ing)?)\b")
+            .expect("publication pattern")
+    });
     let text = text.to_lowercase();
-    ["pr", "pull request", "publish"]
-        .iter()
-        .any(|word| text.contains(word))
+    PUBLICATION.is_match(&text)
         && ["evidence", "proof", "red/green", "red and green"]
             .iter()
             .any(|word| text.contains(word))
+}
+
+/// Only explicit goal-cited blockers establish unmet goals.
+pub fn unmet_goals(evidence: Option<&Evidence>) -> Vec<String> {
+    let Some(evidence) = evidence else {
+        return Vec::new();
+    };
+    evidence
+        .goals
+        .iter()
+        .filter(|goal| {
+            evidence.remaining_failures.iter().any(|failure| {
+                failure["citation"]["kind"] == "goal" && failure["citation"]["id"] == goal["id"]
+            })
+        })
+        .filter_map(|goal| goal["description"].as_str().map(str::to_owned))
+        .collect()
 }
 
 fn current<'a>(records: &'a [Value], delivery: &Delivery) -> Vec<&'a Value> {
@@ -237,6 +265,15 @@ fn current<'a>(records: &'a [Value], delivery: &Delivery) -> Vec<&'a Value> {
 /// PR evidence is rendered by code from records for the published head.
 /// Missing proof fails before any GitHub write.
 pub fn publication(delivery: &Delivery, request: &str) -> Result<String> {
+    let red_green = |text: &str| {
+        let text = text.to_lowercase();
+        text.contains("red/green") || text.contains("red and green")
+    };
+    let needs_red_green = red_green(request)
+        || delivery
+            .evidence
+            .as_ref()
+            .is_some_and(|e| red_green(&serde_json::to_string(&e.goals).expect("JSON goals")));
     let required = proof_required(request)
         || delivery
             .evidence
@@ -253,12 +290,21 @@ pub fn publication(delivery: &Delivery, request: &str) -> Result<String> {
                 !results.is_empty()
                     && results.iter().all(|result| {
                         result["verdict"].as_str().is_some()
+                            && (!needs_red_green
+                                || result["kind"] != "demonstrating"
+                                || result["tests"].as_array().is_some_and(|tests| {
+                                    !tests.is_empty()
+                                        && tests.iter().all(|test| {
+                                            test["base"].as_str().is_some()
+                                                && test["head"].as_str().is_some()
+                                        })
+                                }))
                             && (result.get("forcing").is_none()
                                 || result["tests"].as_array().is_some_and(|tests| {
                                     !tests.is_empty()
                                         && tests
                                             .iter()
-                                            .all(|test| test.get("head_forced").is_some())
+                                            .all(|test| test["head_forced"].as_str().is_some())
                                 }))
                     })
             })
@@ -519,9 +565,48 @@ mod tests {
 
     #[test]
     fn pr_without_proof_requirement_can_have_no_recorded_checks() {
-        assert_eq!(
-            publication(&delivery(), "Update the documentation.").unwrap(),
-            ""
+        for request in ["Update the documentation.", "Improve evidence parsing."] {
+            assert_eq!(publication(&delivery(), request).unwrap(), "");
+        }
+    }
+
+    #[test]
+    fn repeated_publication_preserves_other_body_text_and_redacts_proof() {
+        let (s, mut d) = fixture();
+        d.evidence = Some(capture(&s, &Commit::new("publish", json!({}), &s), &d).unwrap());
+        d.evidence.as_mut().unwrap().checks[0]["diagnostic"] =
+            json!("password=secret-fixture-value");
+        let evidence = publication(&d, "Publish proof in the PR body").unwrap();
+        assert!(!evidence.contains("secret-fixture-value"));
+        let body = with_publication(
+            "Refs #2625.\nChange type: test\nUser explanation.",
+            &evidence,
         );
+        assert_eq!(with_publication(&body, &evidence), body);
+        assert!(body.contains("User explanation."));
+    }
+
+    #[test]
+    fn required_proof_comes_from_goals_and_needs_actual_forcing_results() {
+        let (s, mut d) = fixture();
+        d.evidence = Some(capture(&s, &Commit::new("publish", json!({}), &s), &d).unwrap());
+        d.evidence.as_mut().unwrap().checks[0]["results"][0]["tests"][0]["head_forced"] =
+            Value::Null;
+        assert!(publication(&d, "Fix the departure test").is_err());
+    }
+
+    #[test]
+    fn unmet_goals_are_only_the_reviewers_explicit_goal_blockers() {
+        let facts = Evidence {
+            goals: vec![
+                json!({"id":"g1","description":"Publish proof"}),
+                json!({"id":"g2","description":"Fix departure"}),
+            ],
+            remaining_failures: vec![
+                json!({"citation":{"kind":"goal","id":"g1"},"problem":"Proof is missing"}),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(unmet_goals(Some(&facts)), vec!["Publish proof"]);
     }
 }
