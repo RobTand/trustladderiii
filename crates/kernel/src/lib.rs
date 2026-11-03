@@ -688,7 +688,46 @@ impl Priority {
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+pub enum PrerequisiteKind {
+    Issue,
+    PullRequest,
+}
+
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+pub struct DependencyTarget {
+    pub kind: PrerequisiteKind,
+    pub number: u64,
+    pub request: Option<NodeId>,
+}
+
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+pub enum DependencyStatus {
+    Pending,
+    Delivered,
+    Abandoned,
+}
+
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Fact {
+    Dependency {
+        target: DependencyTarget,
+        status: DependencyStatus,
+    },
     PrMerged {
         head: HeadId,
         checks_passed: bool,
@@ -806,6 +845,8 @@ pub enum NoteKind {
     PrDequeued,
     OutsidePush,
     LateMerge,
+    DependencyAbandoned { number: u64 },
+    DependencyCycle { number: u64 },
 }
 
 #[cfg_attr(
@@ -1607,6 +1648,7 @@ pub fn proof_of_event(event: &Event) -> &'static str {
             Fact::IncidentCleared { .. } => "apply_incident_cleared",
             Fact::UpstreamStalled => "apply_upstream_stalled",
             Fact::Priority(_) => "apply_priority",
+            Fact::Dependency { .. } => "apply_dependency",
         },
         Event::Command { command, .. } => match command {
             Command::Stop => "apply_stop",
@@ -2328,6 +2370,7 @@ fn effect_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
 
 fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
     match fact {
+        Fact::Dependency { .. } => todo!("root merge prerequisite facts"),
         Fact::Priority(priority) => {
             if !w.nodes[i].phase.is_closed() {
                 w.nodes[i].priority = priority;
