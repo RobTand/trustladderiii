@@ -1071,7 +1071,16 @@ fn queue_failure(settings: &tl3_config::Store, conflict: bool, infra: bool) {
     assert_eq!(facts.len(), 1);
     assert_kernel_facts(settings, 1);
     if !conflict {
-        assert_eq!(facts[0]["evidence"]["CiFailed"]["infra"], infra);
+        assert_eq!(facts[0]["evidence"]["CiFailed"]["infra"], true);
+        assert_eq!(
+            facts[0]["evidence"]["CiFailed"]["details"]["decision"],
+            "indeterminate"
+        );
+        assert_eq!(
+            controller.world().unwrap().nodes[0].round,
+            0,
+            "a summary without test evidence cannot consume a work round"
+        );
     }
     assert_ne!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
     assert_eq!(api.state.lock().unwrap().pull["head"]["sha"], head);

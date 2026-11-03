@@ -90,6 +90,7 @@ fn public_url(text: &str) -> Option<String> {
 }
 
 pub(crate) fn bounded(mut details: QueueCiEvidence) -> QueueCiEvidence {
+    let was_complete = details.complete;
     details.complete &=
         details.checks.len() <= 20 && details.failed_tests.len() <= findings::MAX_FAILED_TESTS;
     details.checks.truncate(20);
@@ -135,7 +136,16 @@ pub(crate) fn bounded(mut details: QueueCiEvidence) -> QueueCiEvidence {
         result.excerpt = safe(&result.excerpt, 2000.min(remaining));
         remaining = remaining.saturating_sub(result.excerpt.chars().count());
     }
-    details.retrievals.truncate(640);
+    details.retrievals.truncate(52);
+    if was_complete && !details.complete {
+        details.gaps.push(CiEvidenceGap {
+            check: details
+                .target_results
+                .first()
+                .map_or(0, |result| result.check),
+            reason: CiGapReason::Oversized,
+        });
+    }
     details.gaps.truncate(20);
     details
 }

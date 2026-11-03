@@ -12,6 +12,7 @@ const KEY: &str = "synthetic-internal-material";
 
 async fn evidence(mode: &str) -> (QueueCiEvidence, Vec<Request>) {
     let server = MockServer::start().await;
+    let two_environments = mode == "two-environments";
     let mode = mode.to_owned();
     Mock::given(wiremock::matchers::any())
         .respond_with(move |request: &Request| {
@@ -90,7 +91,7 @@ async fn evidence(mode: &str) -> (QueueCiEvidence, Vec<Request>) {
         },
     )
     .unwrap();
-    let reproduction = if mode == "two-environments" {
+    let reproduction = if two_environments {
         "PB reproduction: EPERM: io_uring denied on base and head"
     } else {
         ""

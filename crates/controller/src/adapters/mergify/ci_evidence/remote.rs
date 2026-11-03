@@ -595,7 +595,7 @@ fn nodes(xml: &str) -> Result<Vec<CiTestNode>, Gap> {
             }
             Event::GeneralRef(text) => {
                 if let Some(node) = current.as_mut() {
-                    let reference = format!("&{text};");
+                    let reference = format!("&{};", &*text);
                     node.message.push_str(
                         &quick_xml::escape::unescape(&reference).map_err(|_| Gap::MalformedXml)?,
                     );
