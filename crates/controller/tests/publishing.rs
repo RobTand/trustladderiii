@@ -1851,7 +1851,10 @@ fn stage_obligations_block_publication() {
 
 fn main() {
     if env::args().nth(1).as_deref() == Some("--stage-obligations") {
-        scenario("stage_obligations_block_publication", stage_obligations_block_publication);
+        scenario(
+            "stage_obligations_block_publication",
+            stage_obligations_block_publication,
+        );
         println!("test stage_obligations_block_publication ... ok");
         println!("1 publishing scenarios passed; no skips");
         return;
@@ -1919,7 +1922,10 @@ fn main() {
         println!("test publishing_{mode} ... ok");
         return;
     }
-    scenario("stage_obligations_block_publication", stage_obligations_block_publication);
+    scenario(
+        "stage_obligations_block_publication",
+        stage_obligations_block_publication,
+    );
     println!("test stage_obligations_block_publication ... ok");
     scenario("publication_open_conflict", publication_open_conflict);
     println!("test publication_open_conflict ... ok");
@@ -1983,11 +1989,6 @@ fn main() {
         });
         println!("test {mode} ... ok");
     }
-<<<<<<< HEAD
-    database.stop();
-    println!("36 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
-=======
     scenario("publishing_database_stop", || database.stop());
-    println!("35 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
->>>>>>> origin/main
+    println!("36 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }
