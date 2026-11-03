@@ -1699,6 +1699,23 @@ impl Controller {
         event: Event,
         commit: &mut Commit,
     ) -> Result<()> {
+        // A dequeue receipt can precede queue admission, where the kernel
+        // intentionally ignores it. Only an accepted Resume releases that hold.
+        if let Event::Command {
+            node,
+            id,
+            command: tl3_kernel::Command::Resume,
+        } = event
+            && let Some(current) = world.nodes.get(node.0 as usize)
+            && id > current.last_cmd
+            && !current.phase.is_closed()
+        {
+            commit.rows.push(put(
+                "queue_resumes",
+                node.0.to_string(),
+                json!({"command": id}),
+            ));
+        }
         let closing_cause = match event {
             Event::Command {
                 node,
@@ -2116,6 +2133,10 @@ impl Controller {
                         " Recorded occurrence {occurrences}. {}",
                         diagnostic.render()
                     ));
+                }
+                if let Some(detail) = looks::queue_command_detail(&delivery, &class) {
+                    summary.push(' ');
+                    summary.push_str(&detail);
                 }
                 if class == "queue_unfinished"
                     && let Some(detail) = looks::queue_incident_detail(snapshot, node)?

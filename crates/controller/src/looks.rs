@@ -961,7 +961,14 @@ impl Controller {
                     return Ok(true);
                 }
                 Upstream::GitHub | Upstream::Mergify => {
-                    state.failure = Some("queue_unfinished".into());
+                    let class = if state.progress.as_deref().is_some_and(|progress| {
+                        progress.starts_with(crate::adapters::mergify::REQUEUE_PROGRESS_PREFIX)
+                    }) {
+                        "queue_requeue"
+                    } else {
+                        "queue_unfinished"
+                    };
+                    state.failure = Some(class.into());
                     self.save_allowance(state)?;
                     self.observe(
                         &format!("stall:{}:{}", state.delivery.key, state.progress_ms),
@@ -981,7 +988,7 @@ impl Controller {
                         self.look_failed(
                             state,
                             crate::Error::Permanent {
-                                class: "queue_unfinished",
+                                class,
                                 source: "the upstream never acknowledged the request".into(),
                             },
                         )?;
@@ -1102,6 +1109,15 @@ impl Controller {
             .app_login(request.repo.installation);
         let mut summary =
             incident_summary(&request.title, &signature, needs_rob, app_login.as_deref());
+        if let Some(progress) = state.progress.as_deref().filter(|progress| {
+            progress.starts_with(crate::adapters::mergify::REQUEUE_PROGRESS_PREFIX)
+        }) {
+            summary.push(' ');
+            summary.push_str(progress);
+        } else if let Some(detail) = queue_command_detail(&state.delivery, &signature.class) {
+            summary.push(' ');
+            summary.push_str(&detail);
+        }
         let mut commit = Commit::new(
             format!("incident:{id}"),
             json!({"read_outage":state.delivery.key}),
@@ -1662,11 +1678,13 @@ pub(crate) fn incident_summary(
         "pr_policy" => "refused publication because the body breaks repository policy",
         "no_progress" => "stopped making progress",
         "queue_unfinished" => "has not finished its queue check",
+        "queue_requeue" => "has left this change awaiting Mergify re-queue",
         "permission" => "refused access",
         "queue_command_permission" => {
             "could not post the queue command. Check TL3's GitHub App repository permission Issues: Read and write and approve any updated installation permissions"
         }
         "queue_command_refused" => "refused the queue command",
+        "queue_command_rejected" => "could not post the queue command because GitHub refused it",
         "actions_write_required" => {
             "cannot rerun workflows. Grant TL3's GitHub App repository permission Actions: Read and write, then approve the installation's updated permissions"
         }
@@ -1722,6 +1740,23 @@ pub(crate) fn incident_summary(
         String::new()
     };
     format!("For \"{title}\", {source} {reason}.{setup} {next}")
+}
+
+pub(crate) fn queue_command_detail(delivery: &Delivery, class: &str) -> Option<String> {
+    let reason = match class {
+        "queue_command_refused" => "command refused by Mergify after posting",
+        "queue_command_permission" | "queue_command_rejected" => {
+            "command refused by GitHub; no command sent"
+        }
+        _ => return None,
+    };
+    Some(format!(
+        "PR https://github.com/{}/{}/pull/{}, head {}: awaiting Mergify re-queue; {reason}.",
+        delivery.repository.owner,
+        delivery.repository.name,
+        delivery.pull_request?,
+        delivery.head_sha.as_deref()?
+    ))
 }
 
 pub(crate) fn queue_incident_detail(snapshot: &Snapshot, node: NodeId) -> Result<Option<String>> {
