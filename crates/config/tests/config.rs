@@ -1072,13 +1072,14 @@ fn deployment_model_defaults_pass_validation() {
         "rebaser",
         "comment_classifier",
         "writer",
+        "postmortem",
     ] {
         let ladder = defaults
             .get(role)
             .unwrap_or_else(|| panic!("models.toml must set {role}"));
         models.insert(role.into(), ladder.clone());
     }
-    assert_eq!(defaults.len(), 8, "models.toml sets only the role ladders");
+    assert_eq!(defaults.len(), 9, "models.toml sets only the role ladders");
     let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
     for maker in &config.models.maker {
         let reviewer = config.models.reviewer_for(&maker.family).unwrap();
@@ -1098,6 +1099,39 @@ fn deployment_model_defaults_pass_validation() {
             ("claude-opus-5-5", Some("high"))
         ]
     );
+    // #403: Opus writes postmortems and Sonnet grades; never Fable.
+    let postmortem: Vec<_> = config
+        .models
+        .postmortem
+        .iter()
+        .map(|model| model.name.as_str())
+        .collect();
+    assert_eq!(postmortem, ["claude-opus-5-5", "claude-sonnet-5-5"]);
+}
+
+#[test]
+fn postmortem_models_default_to_the_reviewer_and_the_writer() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    let names: Vec<_> = config
+        .models
+        .postmortem
+        .iter()
+        .map(|model| model.name.clone())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            config.models.reviewer[0].name.clone(),
+            config.models.writer[0].name.clone()
+        ]
+    );
+    let three = EXAMPLE.replace(
+        "[models]\n",
+        "[models]\npostmortem = [{ name = \"a\", family = \"a\", budget_tokens = 1000 }, { name = \"b\", family = \"b\", budget_tokens = 1000 }, { name = \"c\", family = \"c\", budget_tokens = 1000 }]\n",
+    );
+    assert_ne!(three, EXAMPLE);
+    let error = Config::parse(&three).err().unwrap().to_string();
+    assert!(error.contains("models.postmortem"), "{error}");
 }
 
 fn maker_ladder(rungs: &[(&str, &str, &str)]) -> String {
@@ -1320,6 +1354,23 @@ fn configured_extra_paths_are_protected() {
     sorted.sort();
     sorted.dedup();
     assert_eq!(paths, sorted);
+}
+
+#[test]
+fn fail_fast_defaults_off_and_takes_a_boolean() {
+    assert!(!Config::parse(EXAMPLE).unwrap().limits.fail_fast);
+    let omitted = EXAMPLE.replace("fail_fast = false\n", "");
+    assert_ne!(omitted, EXAMPLE);
+    assert!(!Config::parse(&omitted).unwrap().limits.fail_fast);
+    let on = changed(&["limits", "fail_fast"], Value::Boolean(true));
+    assert!(Config::parse(&on).unwrap().limits.fail_fast);
+    for wrong in [Value::Integer(1), Value::String("true".into())] {
+        let error = Config::parse(&changed(&["limits", "fail_fast"], wrong))
+            .unwrap_err()
+            .to_string();
+        assert!(error.starts_with("config TOML:"), "{error}");
+        assert!(error.contains("fail_fast"), "{error}");
+    }
 }
 
 #[test]

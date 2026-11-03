@@ -47,6 +47,8 @@ FALLBACK = [
 IRRELEVANT = [
     'docs/*', '*.md', 'assets/*', 'spikes/*', 'LICENSE', 'LICENSE.*', '.mergify.yml',
     '.github/*.md', '.github/ISSUE_TEMPLATE/*', '.github/CODEOWNERS',
+    # The Kani manifest writer; only PrismaBuild proof campaigns run it.
+    'crates/kernel/run.py',
 ]
 CONFIGS = {'amd64': 'remote', 'arm64': 'remote-arm64'}
 # .bazelrc's default names; test and build runs prefix their own.

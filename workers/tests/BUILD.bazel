@@ -172,7 +172,7 @@ tl3_py_test(
         "//workers/src",
         "@tl3_pip//jsonschema",
         "@tl3_pip//langchain_core",
-        "@tl3_pip//mlflow_tracing",
+        "@tl3_pip//mlflow_skinny",
         "@tl3_pip//opentelemetry_proto",
         "@tl3_pip//pytest",
     ],
@@ -345,7 +345,7 @@ tl3_py_test(
         ":worker_process",
         "//workers/src",
         "@tl3_pip//langchain_core",
-        "@tl3_pip//mlflow_tracing",
+        "@tl3_pip//mlflow_skinny",
         "@tl3_pip//opentelemetry_proto",
         "@tl3_pip//pytest",
     ],
@@ -369,6 +369,18 @@ tl3_py_test(
         ":test_reviewer",
         "//workers/src",
         "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_postmortem",
+    srcs = ["test_postmortem.py"],
+    deps = [
+        ":conftest",
+        "//workers/src",
+        "@tl3_pip//jsonschema",
+        "@tl3_pip//mlflow_skinny",
         "@tl3_pip//pytest",
     ],
 )

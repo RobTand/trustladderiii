@@ -44,7 +44,9 @@ if mode == "manifest":
         sys.exit("unknown proof name")
     rows = []
     for name in selected:
-        if name.startswith("gate_"):
+        if name.startswith("gate_leaf_progress_"):
+            memory = 16
+        elif name.startswith("gate_"):
             memory = 10
         elif name in {"apply_rebase_clean", "apply_rebase_needs_changes"}:
             memory = 48
@@ -52,7 +54,7 @@ if mode == "manifest":
             memory = 44
         elif name.startswith("progress_from_"):
             memory = 24
-        elif name in replies:
+        elif name in replies or name.startswith("fail_fast_"):
             memory = 44
         else:
             memory = 10

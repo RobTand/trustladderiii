@@ -256,6 +256,25 @@ pub enum QKind {
     CleanupFailed,
 }
 
+/// The step whose failure stopped a request for TL3 review under `fail_fast`
+/// (Q54, Rob, 2026-11-02).
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+pub enum ReviewStop {
+    ChecksFailed,
+    ChangesRequested,
+    CiFailed,
+    MakerCantMeet,
+    MakerNeedsFiles,
+    MakerOutOfRoom,
+    ReviewerOutOfRoom,
+    PlanCantMeet,
+}
+
 /// Where a node goes when Rob says carry on.
 #[cfg_attr(
     all(feature = "serde", not(kani)),
@@ -388,6 +407,10 @@ pub struct Node {
     #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
     pub review_restarted: bool,
     pub credit: Credit,
+    /// Set when `fail_fast` stopped the node for TL3 review instead of
+    /// retrying (Q54). A postmortem for it is owed as `needed_fix`.
+    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    pub review_stop: Option<ReviewStop>,
 }
 
 impl Node {
@@ -439,6 +462,7 @@ impl Node {
                 spent: 0,
                 merge_credited: false,
             },
+            review_stop: None,
         }
     }
 
@@ -555,6 +579,11 @@ pub struct World {
     pub next_ticket: u64,
     pub next_question: u64,
     file_sets: Vec<Vec<FileId>>,
+    /// Q54: a step that would retry the work stops the request for TL3
+    /// review instead. Config sets it at every open, so it applies to open
+    /// requests too.
+    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    pub fail_fast: bool,
 }
 
 #[cfg_attr(
@@ -933,6 +962,7 @@ impl World {
             next_ticket: 0,
             next_question: 0,
             file_sets: Vec::new(),
+            fail_fast: false,
         }
     }
 
@@ -1147,6 +1177,10 @@ impl World {
         }
         if !self.has_footprint(n.footprint) {
             return Err(Broken::Footprint);
+        }
+        // Only a stop for TL3 review records its step (Q54).
+        if n.review_stop.is_some() && !n.phase.is_stopping() && !n.phase.is_closed() {
+            return Err(Broken::ReviewStop);
         }
         if n.phase.is_closed() {
             if n.pos != 0 {
@@ -1468,6 +1502,7 @@ pub enum Broken {
     Merge,
     Closed,
     Gate,
+    ReviewStop,
 }
 
 // proof map start
@@ -1875,11 +1910,11 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
                 m.plan_retries = 0;
                 set_phase(m, Phase::Ready(Resume::Making));
             } else {
-                plan_retry(w, i, out);
+                plan_retry(w, i, false, out);
             }
         }
         Reply::PlanSplit => ask_rob(w, i, QKind::NeedsSplitting, Cont::Nowhere, 0, out),
-        Reply::PlanCantMeet => plan_retry(w, i, out),
+        Reply::PlanCantMeet => plan_retry(w, i, true, out),
         Reply::ProtectedPaths => enter_stopping(&mut w.nodes[i], Outcome::NotActionable),
         Reply::MakerDone { head } => {
             let m = &mut w.nodes[i];
@@ -1895,12 +1930,24 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
                 m.footprint = footprint;
                 m.holds = false;
                 set_phase(m, Phase::Ready(Resume::Making));
+            } else if fits && !files.is_empty() && w.fail_fast {
+                // Q54 stops retries, not credit decisions: Rob funds the extension.
+                let footprint = w.union_footprints(w.nodes[i].footprint, files);
+                w.nodes[i].footprint = footprint;
+                ask_rob(
+                    w,
+                    i,
+                    QKind::OutOfCredit,
+                    Cont::Ready(Resume::Making),
+                    1,
+                    out,
+                );
             } else {
-                out_of_room(w, i, out);
+                out_of_room(w, i, ReviewStop::MakerNeedsFiles, out);
             }
         }
-        Reply::MakerCantMeet => next_rung(w, i, out),
-        Reply::MakerOutOfRoom => out_of_room(w, i, out),
+        Reply::MakerCantMeet => next_rung(w, i, ReviewStop::MakerCantMeet, out),
+        Reply::MakerOutOfRoom => out_of_room(w, i, ReviewStop::MakerOutOfRoom, out),
         Reply::ChecksDone {
             pass, in_footprint, ..
         } => {
@@ -1909,7 +1956,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
                 m.checked = m.head;
                 set_phase(m, Phase::Reviewing);
             } else {
-                failed_round(w, i, out);
+                failed_round(w, i, ReviewStop::ChecksFailed, out);
             }
         }
         Reply::Approved { head } => {
@@ -1917,10 +1964,10 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
             m.approved = Some(head);
             set_phase(m, Phase::Publishing);
         }
-        Reply::ChangesRequested => failed_round(w, i, out),
+        Reply::ChangesRequested => failed_round(w, i, ReviewStop::ChangesRequested, out),
         Reply::ReviewerOutOfRoom => {
             if w.nodes[i].review_restarted {
-                out_of_room(w, i, out);
+                out_of_room(w, i, ReviewStop::ReviewerOutOfRoom, out);
             } else {
                 w.nodes[i].review_restarted = true;
                 recheck(w, i, Phase::Reviewing, out);
@@ -1970,22 +2017,33 @@ fn run_failed(w: &mut World, i: usize, out: &mut Outbox) {
     }
 }
 
-fn failed_round(w: &mut World, i: usize, out: &mut Outbox) {
+/// Q54 (Rob, 2026-11-02): under `fail_fast`, a step that would retry the work
+/// stops the request for TL3 review instead. It spends no credit and asks Rob
+/// nothing; the summary offers `restart`, as for any stop (Q49).
+fn stop_for_review(m: &mut Node, step: ReviewStop) {
+    m.review_stop = Some(step);
+    enter_stopping(m, Outcome::Stopped);
+}
+
+fn failed_round(w: &mut World, i: usize, step: ReviewStop, out: &mut Outbox) {
     let m = &mut w.nodes[i];
     if m.round == 0 {
         // The fix round resumes the maker's session. It's free.
         m.round = 1;
         set_phase(m, Phase::Making);
     } else {
-        next_rung(w, i, out);
+        next_rung(w, i, step, out);
     }
 }
 
 /// The ladder after a failed fix round: a bigger budget, then a different
 /// model, then one re-plan, then Rob. Each step costs 1.
-fn next_rung(w: &mut World, i: usize, out: &mut Outbox) {
+fn next_rung(w: &mut World, i: usize, step: ReviewStop, out: &mut Outbox) {
+    let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
-    if m.attempt < 3 {
+    if fail_fast {
+        stop_for_review(m, step);
+    } else if m.attempt < 3 {
         m.attempt += 1;
         m.review_restarted = false;
         m.round = 0;
@@ -2025,8 +2083,13 @@ fn next_rung(w: &mut World, i: usize, out: &mut Outbox) {
     }
 }
 
-fn out_of_room(w: &mut World, i: usize, out: &mut Outbox) {
+fn out_of_room(w: &mut World, i: usize, step: ReviewStop, out: &mut Outbox) {
+    let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
+    if fail_fast {
+        stop_for_review(m, step);
+        return;
+    }
     m.holds = false;
     if m.credit.can_spend(1) {
         m.credit.spend(1);
@@ -2044,11 +2107,17 @@ fn out_of_room(w: &mut World, i: usize, out: &mut Outbox) {
     }
 }
 
-fn plan_retry(w: &mut World, i: usize, out: &mut Outbox) {
+/// Under `fail_fast` the planner never re-runs on `cant_meet` (Q54). The
+/// planner worker reports a broken rule as `cant_meet` too, so a plan that
+/// doesn't fit (`cant_meet` false) can't arise live and keeps today's rule.
+fn plan_retry(w: &mut World, i: usize, cant_meet: bool, out: &mut Outbox) {
+    let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     m.plan_retries = m.plan_retries.saturating_add(1);
     let phase = m.phase;
-    if m.plan_retries < 2 {
+    if fail_fast && cant_meet {
+        stop_for_review(m, ReviewStop::PlanCantMeet);
+    } else if m.plan_retries < 2 {
         // Re-run once, with the reason or the next model on the planner's ladder.
         set_phase(m, phase);
     } else {
@@ -2247,7 +2316,7 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
                 effect.cancelling = true;
             }
             if !infra {
-                failed_round(w, i, out);
+                failed_round(w, i, ReviewStop::CiFailed, out);
                 return;
             }
             let m = &mut w.nodes[i];

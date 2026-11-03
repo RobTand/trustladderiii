@@ -30,6 +30,7 @@ pub mod memory;
 mod narrowing;
 mod notices;
 mod postmortems;
+pub use postmortems::PostmortemPace;
 pub mod pr_body;
 pub mod priority;
 pub mod production;
@@ -38,6 +39,7 @@ mod protected_requests;
 mod question_findings;
 mod redaction;
 pub mod release;
+mod review_stops;
 mod scope;
 mod snapshot;
 pub mod status;
@@ -162,6 +164,8 @@ pub struct Bootstrap {
     pub operations: Option<tl3_config::OperationsIssue>,
     pub slots: u8,
     pub pool: u8,
+    /// Q54: `limits.fail_fast`, set on the stored world at every open.
+    pub fail_fast: bool,
 }
 impl Bootstrap {
     pub fn github_repositories(&self) -> Vec<Repository> {
@@ -198,6 +202,7 @@ impl Bootstrap {
                 .try_into()
                 .map_err(|_| Error::Invalid("slot count exceeds kernel range"))?,
             pool: config.limits.agent_pool,
+            fail_fast: config.limits.fail_fast,
         })
     }
 }
@@ -251,6 +256,13 @@ pub struct Controller {
     clock: Box<dyn clock::Clock>,
     held_effects: BTreeMap<executor::Upstream, BTreeMap<String, String>>,
     allowances: tl3_config::Allowances,
+    /// tl3d judges owed postmortems at this pace (#403); see `run_postmortems`.
+    postmortems: Option<PostmortemPace>,
+    /// The revision tl3d started at: failed postmortem runs before it never
+    /// pause the runner (#486).
+    postmortem_since: i64,
+    /// The runner paused after failed runs and said so once in the journal.
+    postmortem_paused: bool,
     /// Starting credit reserve by priority, P0 first (#416). Empty keeps the kernel's.
     priority_reserve: BTreeMap<u8, u8>,
     request_protection: Vec<(Repository, Vec<String>)>,
@@ -319,11 +331,15 @@ impl Controller {
             clock: Box::new(clock),
             held_effects: BTreeMap::new(),
             allowances: tl3_config::Allowances::default(),
+            postmortems: None,
+            postmortem_since: 0,
+            postmortem_paused: false,
             priority_reserve: BTreeMap::new(),
             request_protection: Vec::new(),
         };
         controller.reconcile_capacity()?;
         controller.cleanup_ended_looks()?;
+        controller.recover_postmortems()?;
         Ok(controller)
     }
 
@@ -359,6 +375,10 @@ impl Controller {
         let pool_change = (configured_pool != world.pool_capacity)
             .then(|| json!({"stored": world.pool_capacity, "configured": configured_pool}));
         world.pool_capacity = configured_pool;
+        // Q54: the kernel reads the flag at each retry, so open requests follow it too.
+        let fail_fast_change = (self.bootstrap.fail_fast != world.fail_fast)
+            .then(|| json!({"stored": world.fail_fast, "configured": self.bootstrap.fail_fast}));
+        world.fail_fast = self.bootstrap.fail_fast;
         let mut changes = Vec::new();
         for (repo, gate) in world.gates.iter_mut().enumerate() {
             if configured == gate.w {
@@ -386,12 +406,17 @@ impl Controller {
                 additions.push((index, repository));
             }
         }
-        if changes.is_empty() && pool_change.is_none() && additions.is_empty() {
+        if changes.is_empty()
+            && pool_change.is_none()
+            && fail_fast_change.is_none()
+            && additions.is_empty()
+        {
             return Ok(());
         }
         let mut commit = Commit::new(
             format!("controller:gates:{}", snapshot.revision.get()),
-            json!({"gate_capacity": changes, "agent_capacity": pool_change, "repositories": additions}),
+            json!({"gate_capacity": changes, "agent_capacity": pool_change,
+                "fail_fast": fail_fast_change, "repositories": additions}),
             &snapshot,
         );
         for (index, repository) in additions {
@@ -924,6 +949,7 @@ impl Controller {
         if self.start_replacement(&snapshot)?
             || self.retire_comment(&snapshot)?
             || self.schedule_comment(&snapshot)?
+            || self.start_postmortem(&snapshot)?
         {
             return Ok(true);
         }
@@ -1114,11 +1140,11 @@ impl Controller {
                 continue;
             }
             let active = effect.state == EffectState::Confirmed
-                && if delivery.is_classifier() {
+                && if let Some(jobs) = delivery.job_table() {
                     snapshot
                         .rows
                         .iter()
-                        .any(|r| r.table == "comment_jobs" && r.id == delivery.key)
+                        .any(|r| r.table == jobs && r.id == delivery.key)
                 } else {
                     match delivery.output {
                         DeliveryOutput::Effect { kind, .. } => {
@@ -1396,7 +1422,10 @@ impl Controller {
                 &mut commit,
             )?;
         }
-        if completion.ack == Ack::Permanent
+        if completion.ack == Ack::Permanent && delivery.is_postmortem() {
+            // #403: a postmortem never posts or raises an incident; it fails.
+            self.postmortem_failed(&snapshot, &delivery, "launch_failed", &mut commit)?;
+        } else if completion.ack == Ack::Permanent
             && !matches!(delivery.output, DeliveryOutput::Effect { .. })
         {
             self.failed_notice(
@@ -1580,6 +1609,7 @@ impl Controller {
             .rows
             .extend(snapshot::changes(&before, snapshot::encode(&world)?));
         self.close_replacement(snapshot, &previous, &world, commit)?;
+        self.record_review_stops(snapshot, &previous, &world, commit)?;
         self.resolve_closed_effect_incidents(snapshot, &world, commit)?;
         self.record_postmortems(snapshot, &previous, &world, commit)?;
         self.resolve_stale_missing_checks(snapshot, &world, commit)?;
@@ -1811,6 +1841,7 @@ impl Controller {
                 }
             ) {
                 delivery.scope_removals = scope::summary(snapshot, node)?;
+                delivery.question_context = review_stops::context(snapshot, commit, node);
                 let references = &delivery
                     .evidence
                     .as_ref()
@@ -2247,6 +2278,14 @@ impl Controller {
             }
             Observation::Classified { key, reply } => {
                 return self.classified(snapshot, world, &key, reply, commit);
+            }
+            Observation::Postmortem {
+                key,
+                reply,
+                failure,
+            } => {
+                self.postmortem_finished(snapshot, &key, reply, failure, commit)?;
+                return Ok(None);
             }
             Observation::LinkedRequest {
                 repository,
@@ -3378,6 +3417,7 @@ fn observation_upstream(
         | Observation::LinkedRequest { .. }
         | Observation::PullRequest { .. } => Some(Upstream::GitHub),
         Observation::Classified { .. }
+        | Observation::Postmortem { .. }
         | Observation::WorkerReply { .. }
         | Observation::WorkerFailed { .. }
         | Observation::Plan { .. }

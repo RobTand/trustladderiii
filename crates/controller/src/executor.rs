@@ -30,6 +30,10 @@ pub enum CommentKind {
     ReplacementDropped,
     Restart,
     ConsoleNote,
+    /// Q54: a code-written line for the coordinator on the operations issue.
+    OperationsNote,
+    /// #403: a judged postmortem of a node, run by a worker outside the kernel.
+    Postmortem,
 }
 
 impl From<tl3_kernel::Out> for Output {
@@ -143,6 +147,14 @@ pub enum Observation {
     Classified {
         key: String,
         reply: Option<serde_json::Value>,
+    },
+    /// #403: a postmortem run's validated reply, or its fixed failure class.
+    Postmortem {
+        key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failure: Option<String>,
     },
     LinkedRequest {
         repository: crate::Repository,
@@ -447,7 +459,7 @@ pub fn upstream(output: Output) -> Upstream {
     use tl3_kernel::EffectKind::*;
     match output {
         Output::Comment {
-            kind: CommentKind::Classify,
+            kind: CommentKind::Classify | CommentKind::Postmortem,
             ..
         } => Upstream::Workers,
         Output::Comment { .. } | Output::Notice { .. } => Upstream::GitHub,

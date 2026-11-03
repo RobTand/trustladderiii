@@ -996,6 +996,7 @@ impl Controller {
         let mut delivery = state.delivery.clone();
         delivery.epoch = self.store.load()?.epoch.get();
         let completion = match self.adapters.adapter(&delivery)?.stop_stalled(&delivery) {
+            Ok(completion) if delivery.is_postmortem() => crate::postmortems::stalled(completion),
             Ok(completion) => completion,
             Err(error) => {
                 self.look_failed(state, error)?;
@@ -1034,6 +1035,10 @@ impl Controller {
         state.failure = Some(failure_class(&error).into());
         state.healthy = false;
         self.rearm(state);
+        // #403: a postmortem raises no incident; nothing waits on it.
+        if state.delivery.is_postmortem() {
+            return Ok(());
+        }
         let snapshot = self.store.load()?;
         if state.incident.as_ref().is_some_and(|id| {
             snapshot
@@ -1658,6 +1663,9 @@ pub(crate) fn incident_summary(
         "environment_blocked" => "reported that TL3's environment blocked the work",
         "git_remote" => "could not reach the Git remote",
         "harness" => "rejected TL3's own check input inside the PrismaBuild action",
+        crate::postmortems::PAUSED => {
+            "failed three postmortem runs in a row, so claims are paused and owed postmortems wait for tl3d to start again"
+        }
         _ => "could not finish the operation",
     };
     let next = if needs_rob {

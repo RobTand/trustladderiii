@@ -77,6 +77,7 @@ fn bootstrap() -> Bootstrap {
         rob: 24923402,
         slots: 1,
         pool: 1,
+        fail_fast: false,
     }
 }
 fn issue(seed: u64) -> LabelledIssue {
