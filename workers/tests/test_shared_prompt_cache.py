@@ -120,3 +120,37 @@ def test_cache_key_ignores_request_text_and_orientation_mapping_order(request_do
     after = runtime.create_model(request).model_kwargs["prompt_cache_key"]
     assert before == after
     assert "PRIVATE_REQUEST_MARKER" not in after
+
+
+@pytest.mark.parametrize("repair", [False, True])
+def test_claude_shared_prefix_keeps_a_rolling_marker_on_every_transport_call(request_doc, monkeypatch, repair):
+    request = shared_request(request_doc, "ingest")
+    request["model"]["name"] = "claude-sonnet-5-5"
+    Path(request["worktree"], "greeting.py").write_text("def greet(): return 'hello'\n")
+    sent = []
+
+    def respond(http_request):
+        sent.append(json.loads(http_request.content))
+        if len(sent) == 1 or len(sent) == 2 and not repair:
+            return response_frames("", tool_calls=[{
+                "index": 0, "id": f"read-{len(sent)}", "type": "function",
+                "function": {"name": "read", "arguments": json.dumps({"path": "greeting.py"})}}])
+        return response_frames("Invalid JSON requiring repair" if len(sent) == 2 else json.dumps(test_workers.BRIEF))
+
+    proxy = runtime.ProxyChatOpenAI
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        monkeypatch.setattr(runtime, "ProxyChatOpenAI", lambda **kwargs: proxy(http_client=client, **kwargs))
+        runtime.run(request, lambda _: None)
+    assert len(sent) == 3
+    assert [body["messages"][-1]["role"] for body in sent] == ["user", "tool", "user" if repair else "tool"]
+    prefixes = []
+    for body in sent:
+        messages = body["messages"]
+        assert messages[-1].get("cache_control") == {"type": "ephemeral"}, \
+            "every call needs a rolling marker on its latest turn, including tool results and repair notices"
+        assert all("cache_control" not in message for message in messages[:-1]), "old rolling markers must not accumulate"
+        prefix = messages[1]["content"][0]
+        assert prefix["cache_control"] == {"type": "ephemeral"}
+        prefixes.append(prefix)
+        assert json.dumps(body).count('"cache_control"') == 2, "shared plus rolling stays below Claude's four-marker limit"
+    assert prefixes == [prefixes[0]] * 3, "rolling markers must not mutate the shared prefix"
