@@ -604,7 +604,7 @@ def test_proxy_stream_requests_usage_and_serial_tools_and_uses_usage(
         events = []
         runtime.run(maker_request, events.append)
     assert len(requests) == 2
-    assert len(retros) == 1
+    assert len(retros) == (0 if kind == "out_of_room" else 1), "a full context ends without a retro"
     assert [event["unit"] for event in events[:-1]] == ["model_turn", "tool_result", "model_turn"]
     assert events[-1]["reply"]["kind"] == kind
     if kind == "done":
