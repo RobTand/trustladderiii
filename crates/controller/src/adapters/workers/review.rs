@@ -99,6 +99,36 @@ pub(super) fn inputs(
         if !edited.is_empty() {
             inputs["edited_selected_tests"] = json!(edited);
         }
+        // Missing head evidence cannot resolve a historical failure, even when no
+        // test file changed. This also covers edited, filtered and unverified units.
+        let displaced: Vec<_> = failures
+            .iter()
+            .filter_map(|test| test.as_str())
+            .filter(|test| {
+                let file = test.split("::").next().unwrap_or_default();
+                !report["results"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|result| result["name"] == "Existing tests that import the change")
+                    .any(|result| {
+                        result["tests"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .any(|current| {
+                                current["test"].as_str() == Some(file)
+                                    && matches!(
+                                        current["head"].as_str(),
+                                        Some("passed" | "assertion" | "error")
+                                    )
+                            })
+                    })
+            })
+            .collect();
+        if !displaced.is_empty() {
+            inputs["unresolved_displaced_failures"] = json!(displaced);
+        }
     }
     if base != run.base_sha {
         let scope_base = repository.merge_base(&run.base_sha, &head_id)?;
@@ -376,6 +406,44 @@ mod hostile_tests {
         assert_eq!(
             value["edited_selected_tests"],
             json!(["README.md::test_readme"])
+        );
+    }
+
+    #[test]
+    fn selection_displacement_surfaces_unedited_unchecked_historical_failures() {
+        let f = Repo::new();
+        let mut db = Database::start();
+        let mut store = Store::open(&db.create("displaced_selected")).unwrap();
+        store.put_worker_materials("0", &json!({})).unwrap();
+        let mut snapshot = documents(
+            &mut store,
+            &[
+                (
+                    "goals",
+                    json!([{"description":"Update the readme", "verification":"test"}]),
+                ),
+                ("check_reports", json!({})),
+            ],
+        );
+        let report = snapshot
+            .rows
+            .iter_mut()
+            .find(|r| r.table == "check_reports")
+            .unwrap();
+        report.id = format!("0:{}", f.head);
+        report.value = json!({"base_sha":f.base, "selected_failures":
+            ["tests/test_old.py", "tests/test_rechecked.py", "tests/test_unverified.py"],
+            "results":[{"name":"Existing tests that import the change", "kind":"regression",
+                "custody":"in-process", "verdict":"pass",
+                "tests":[{"test":"tests/test_rechecked.py", "passed":true, "base":"passed", "head":"passed", "pre_existing":false},
+                         {"test":"tests/test_unverified.py", "passed":false, "base":"passed", "head":"no-report", "pre_existing":false}],
+                "selection":{"limit":500,"charged_cases":480,"head_units":[["tests/test_rechecked.py"]],
+                    "skipped_units":[["tests/test_old.py"]], "skipped_checked":false}}]});
+        let value = inputs(&f.delivery(), &mut store, &snapshot, None).unwrap();
+        assert!(value.get("edited_selected_tests").is_none());
+        assert_eq!(
+            value["unresolved_displaced_failures"],
+            json!(["tests/test_old.py", "tests/test_unverified.py"])
         );
     }
 

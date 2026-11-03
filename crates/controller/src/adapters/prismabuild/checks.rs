@@ -16,6 +16,9 @@ pub struct CheckRun {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reproducing_unavailable: Option<String>,
     pub plan: Vec<Check>,
+    /// Controller-owned membership of selected units that failed in any earlier round.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_failures: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -205,6 +208,7 @@ pub(super) fn stage(
         "plan": run.plan, "image": image, "exec_scratch": exec_scratch,
         "protected_paths": protected_paths,
     });
+    request["selected_failures"] = serde_json::json!(run.selected_failures);
     request["always_tests"] = serde_json::json!(tests.always);
     if let Some(limit) = tests.selected {
         request["selected_tests"] = limit.into();
@@ -255,10 +259,13 @@ mod tests {
                 let harness = f.root.path().join("harness");
                 fs::create_dir(&harness).unwrap();
                 fs::write(harness.join("__init__.py"), "").unwrap();
+                let mut delivery = f.delivery();
+                delivery.checks.as_mut().unwrap().selected_failures =
+                    vec!["tests/test_old.py".into()];
                 let changed = stage(
                     &staged,
                     &harness,
-                    &f.delivery(),
+                    &delivery,
                     "sha256:fixture",
                     false,
                     &[],
@@ -267,6 +274,13 @@ mod tests {
                 .unwrap();
                 assert_eq!(changed, ["README.md"]);
                 assert!(staged.join("served.bundle").is_file());
+                let request: serde_json::Value =
+                    serde_json::from_slice(&fs::read(staged.join("request.json")).unwrap())
+                        .unwrap();
+                assert_eq!(
+                    request["selected_failures"],
+                    serde_json::json!(["tests/test_old.py"])
+                );
                 assert_eq!(
                     crate::git_tests::git(&staged, &["show", "HEAD:request.json"]),
                     fs::read_to_string(staged.join("request.json")).unwrap()

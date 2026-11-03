@@ -15,7 +15,7 @@ from tl3_harness import execution
 from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT
 from tl3_harness.node_ids import selects
 from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
-from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, infrastructure, options
+from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, OUTCOMES, bounded, infrastructure, options
 from tl3_harness.trees import export
 
 
@@ -143,37 +143,50 @@ def _json_command(command):
 
 
 def _summary(ending, key):
-    if (ending["action_key"] != key or ending["status"] not in ("executed", "cache_hit")
-            or ending["exit_code"] != 0 or not ending["succeeded"]):
-        raise ValueError("PrismaBuild action did not succeed")
-    evidence = ending["result"]
-    if evidence["verified"] is not True or not evidence["receipt_sha256"]:
-        raise ValueError("PrismaBuild result lacks verified receipt evidence")
-    log = evidence["stdout"]
-    if type(log["bytes"]) is not int or not 0 <= log["bytes"] <= 1_048_576:
-        raise ValueError("PrismaBuild result log exceeded its limit")
-    with open(log["path"], "rb") as stream:
-        raw = stream.read(1_048_577)
-    if len(raw) != log["bytes"] or hashlib.sha256(raw).hexdigest() != log["sha256"]:
-        raise ValueError("PrismaBuild result log changed")
-    records = [line[len(PREFIX):] for line in raw.decode().splitlines() if line.startswith(PREFIX)]
-    if len(records) != 1:
-        raise ValueError("PrismaBuild returned no unique test summary")
-    result = json.loads(records[0])
-    result["action_key"] = key
-    # What a maker cites and a reviewer can check against PrismaBuild's own record.
-    result["receipts"] = [{"action_key": key, "status": ending["status"], "exit_code": ending["exit_code"],
-                           "receipt_sha256": evidence["receipt_sha256"], "log_sha256": log["sha256"]}]
-    receipt = result["receipts"][0]
-    if type(ending.get("attempt")) is int and ending["attempt"] > 0:
-        receipt["attempt"] = ending["attempt"]
-    generation = (ending.get("publication") or {}).get("generation")
-    if isinstance(generation, str) and re.fullmatch("[0-9a-f]{64}", generation):
-        receipt["generation"] = generation
-    if (result["status"] not in ("completed", "infrastructure_error", "not_available")
-            or len(json.dumps(result).encode()) > SUMMARY_BYTES):
-        raise ValueError("PrismaBuild returned an invalid test summary")
-    return result
+    cause = "invalid_ending"
+    try:
+        if (ending["action_key"] != key or ending["status"] not in ("executed", "cache_hit")
+                or ending["exit_code"] != 0 or not ending["succeeded"]):
+            raise ValueError("PrismaBuild action did not succeed")
+        cause = "unverified_receipt"
+        evidence = ending["result"]
+        if (evidence["verified"] is not True or not isinstance(evidence["receipt_sha256"], str)
+                or not re.fullmatch("[0-9a-f]{64}", evidence["receipt_sha256"])):
+            raise ValueError("PrismaBuild result lacks verified receipt evidence")
+        cause = "invalid_log_receipt"
+        log = evidence["stdout"]
+        if type(log["bytes"]) is not int or not 0 <= log["bytes"] <= 1_048_576:
+            raise ValueError("PrismaBuild result log exceeded its limit")
+        with open(log["path"], "rb") as stream:
+            raw = stream.read(1_048_577)
+        if len(raw) != log["bytes"] or hashlib.sha256(raw).hexdigest() != log["sha256"]:
+            raise ValueError("PrismaBuild result log changed")
+        cause = "missing_unique_summary"
+        records = [line[len(PREFIX):] for line in raw.decode().splitlines() if line.startswith(PREFIX)]
+        if len(records) != 1:
+            raise ValueError("PrismaBuild returned no unique test summary")
+        cause = "invalid_summary"
+        result = json.loads(records[0])
+        if (not isinstance(result, dict) or result.get("status") not in ("completed", "infrastructure_error", "not_available")
+                or not isinstance(result.get("tests"), list) or not isinstance(result.get("note"), str)
+                or not isinstance(result.get("totals"), dict) or set(result["totals"]) != set(OUTCOMES)
+                or any(type(count) is not int or count < 0 for count in result["totals"].values())
+                or any(not isinstance(item, dict) or not isinstance(item.get("test"), str)
+                       or item.get("outcome") not in OUTCOMES for item in result["tests"])):
+            raise ValueError("Invalid summary structure")
+        result["action_key"] = key
+        # What a maker cites and a reviewer can check against PrismaBuild's own record.
+        result["receipts"] = [{"action_key": key, "status": ending["status"], "exit_code": ending["exit_code"],
+                               "receipt_sha256": evidence["receipt_sha256"], "log_sha256": log["sha256"]}]
+        receipt = result["receipts"][0]
+        if type(ending.get("attempt")) is int and ending["attempt"] > 0:
+            receipt["attempt"] = ending["attempt"]
+        generation = (ending.get("publication") or {}).get("generation")
+        if isinstance(generation, str) and re.fullmatch("[0-9a-f]{64}", generation):
+            receipt["generation"] = generation
+        return bounded(result, limit=SUMMARY_BYTES - 512)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", cause) from error
 
 
 def _failure_receipt(ending, settings):
@@ -256,7 +269,10 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                     result["demonstrating_proof"] = "pending_checking"
                 if tree is not None:
                     result["tree"] = tree
-                return result
+                if forcing is not None and result["status"] == "completed" and (
+                        result.get("forcing") != forcing.as_json() or result.get("selectors") != list(selected)):
+                    raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "forcing_or_selection_mismatch")
+                return bounded(result, limit=SUMMARY_BYTES)
             if endings[0]["status"] not in ("waiting", "executed", "cache_hit"):
                 raise ValueError("PrismaBuild could not verify completion")
 
@@ -288,6 +304,10 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                 # Stage first. An old checkpoint is usable only for this immutable
                 # input, selection, resources and trusted executor implementation.
                 reattach = getattr(worktree, "pb_reattach", {}).pop(base, None)
+                if (isinstance(reattach, dict) and getattr(worktree, "pb_strict_reattach", False)
+                        and (reattach.get("identity") != identity or reattach.get("tree") != tree)):
+                    key = reattach.get("key")
+                    raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "reattachment", "checkpoint_identity_changed")
                 if isinstance(reattach, dict) and reattach.get("identity") == identity and reattach.get("tree") == tree:
                     key = reattach["key"]
                     if not isinstance(key, str) or not re.fullmatch("[0-9a-f]{64}", key):
@@ -330,17 +350,20 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                 getattr(worktree, "pb_submitted", lambda key, base, tree: None)(key, base, tree)
                 phase = "retrieval"
                 result = wait(key, base, base_sha, tree, selected)
-                if forcing is not None and result["status"] == "completed" and (
-                        result.get("forcing") != forcing.as_json() or result.get("selectors") != list(selected)):
-                    raise ValueError("PrismaBuild returned a different forcing or selection")
                 return result
+        except ExecutionFailure as failure:
+            result = infrastructure(failure.message())
+            result.update(execution=failure.as_json(), selectors=list(selected))
+            if key:
+                result["action_key"] = key
+            return bounded(result, limit=SUMMARY_BYTES)
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
             failure = ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, phase, "unavailable_or_unverified")
             result = infrastructure(failure.message())
             result.update(execution=failure.as_json(), selectors=list(selected))
             if key:
                 result["action_key"] = key
-            return result
+            return bounded(result, limit=SUMMARY_BYTES)
 
     def run_tests(tests: list[str] | None = None, base: bool = False, repeat: int = 1,
                   parallel: int = 0, priority: int | None = None) -> dict:

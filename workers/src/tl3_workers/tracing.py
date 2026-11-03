@@ -1238,7 +1238,11 @@ class WorkerStageError(ValueError):
 
 def failure_tags(error):
     from tl3_workers.roles.planner import PlanConsistencyError
+    from tl3_workers.forcing_rehearsal import ForcingInfrastructureError
     from tl3_workers.turns import InvalidReply, Unrepairable
+
+    if isinstance(error, ForcingInfrastructureError):
+        return {"failure_class": "ForcingInfrastructureError", "failure_message": str(error)[:512]}
 
     if isinstance(error, PlanConsistencyError):
         # Node IDs are model text. Redact before retaining each draft's diagnostic.

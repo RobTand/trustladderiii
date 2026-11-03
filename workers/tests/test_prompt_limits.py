@@ -104,3 +104,8 @@ def test_run_tests_options_say_what_the_tool_enforces():
     assert "receipts" in text("maker")
     assert "repeat" in text("planner") and "parallel" in text("planner") and "receipts" in text("planner")
     assert "test_evidence" in text("reviewer")
+
+
+@pytest.mark.parametrize("name", ["maker.md", "reviewer.md"])
+def test_saturation_guidance_bounds_a_passing_check(name):
+    assert 'A saturation receipt means "PASS covers only the checked prefix"' in prompt_text(name)

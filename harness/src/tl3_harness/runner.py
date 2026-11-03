@@ -19,6 +19,10 @@ spec = importlib.util.spec_from_file_location("tl3_node_ids", Path(__file__).wit
 node_ids = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(node_ids)
 selects = node_ids.selects
+spec = importlib.util.spec_from_file_location("tl3_forcing_ownership", Path(__file__).with_name("forcing_ownership.py"))
+ownership = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ownership)
+ForcingError = ownership.ForcingError
 spec = importlib.util.spec_from_file_location("tl3_limits", Path(__file__).with_name("limits.py"))
 limits = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(limits)
@@ -90,10 +94,6 @@ def missing_name(error):
     return None
 
 
-class ForcingError(Exception):
-    """The plan's forcing could not be applied (#393)."""
-
-
 def forcing_owner(target):
     """The object holding the target's attribute. It must be a module whose file is in the
     checkout, or a class defined in one, so a forcing can't patch pytest, the standard
@@ -103,21 +103,20 @@ def forcing_owner(target):
     for split in range(len(parts) - 1, 0, -1):
         try:
             owner = importlib.import_module(".".join(parts[:split]))
-        except ModuleNotFoundError:
-            continue
+        except ModuleNotFoundError as error:
+            if error.name and (error.name == ".".join(parts[:split]) or ".".join(parts[:split]).startswith(error.name + ".")):
+                continue
+            raise ForcingError(target=target, module=".".join(parts[:split]), reason="import_failure") from error
+        except Exception as error:
+            raise ForcingError(target=target, module=".".join(parts[:split]), reason="import_failure") from error
         break
     else:
-        raise ForcingError(f"no module in the checkout provides {target}")
+        raise ForcingError(target=target, reason="module_not_found")
     for name in parts[split:-1]:
         if not hasattr(owner, name):
-            raise ForcingError(f"{target}: {name} not found")
+            raise ForcingError(target=target, module=getattr(owner, "__name__", "unknown"), reason="missing_attribute")
         owner = getattr(owner, name)
-    module = owner if isinstance(owner, types.ModuleType) else sys.modules.get(getattr(owner, "__module__", ""))
-    source = getattr(module, "__file__", None) if isinstance(owner, (types.ModuleType, type)) else None
-    if not source or not Path(source).resolve().is_relative_to(root):
-        raise ForcingError(f"{target} is outside the served repository")
-    if not hasattr(owner, parts[-1]):
-        raise ForcingError(f"{target} does not exist")
+    ownership.repository_owner(target, owner, root)
     return owner, parts[-1]
 
 
@@ -164,14 +163,16 @@ def describe(error):
 
 
 class Reporter:
-    def __init__(self, tests, descriptor, summary=False, parallel=False, patches=()):
+    def __init__(self, tests, descriptor, summary=False, parallel=False, patches=(), selection=None):
         self.tests = tests
         self.descriptor = descriptor
         self.summary = summary
         # Under xdist, workers run the tests and this plugin sees only their reports.
         self.parallel = parallel
         self.patches = patches
+        self.selection = selection
         self.target_hits = {}
+        self.forcing_refusals = {}
         self.phases = {}
         self.collection_errors = []
         self.reported = set()
@@ -206,7 +207,12 @@ class Reporter:
             for forcing in self.patches:
                 target = forcing["target"]
                 (mode, argument), = ((key, value) for key, value in forcing.items() if key != "target")
-                owner, name = forcing_owner(target)
+                try:
+                    owner, name = forcing_owner(target)
+                except ForcingError as error:
+                    if error.refusal is not None:
+                        self.forcing_refusals[request.node.nodeid] = error.refusal
+                    raise
                 counter = hits.setdefault(target, [0]) if mode == "delay_seconds" else None
                 patch.setattr(owner, name, forced_value(owner, name, mode, argument, budget=budget, counter=counter))
             yield
@@ -222,21 +228,53 @@ class Reporter:
             self.emit(event="start", schema=1)
 
     @pytest.hookimpl(trylast=True)
-    def pytest_collection_modifyitems(self, items):
+    def pytest_collection_modifyitems(self, items, config, session):
         if self.summary:
             return
         selected = [item for item in items if any(selects(test, item.nodeid) for test in self.tests)]
         try:
+            saturation = None
+            if self.selection is not None:
+                if config.option.keyword or config.option.markexpr or config.option.deselect:
+                    raise ValueError("Selected execution groups require complete modules; remove pytest deselection options.")
+                remaining = self.selection["limit"]
+                admitted = []
+                for group in self.selection["groups"]:
+                    members = [item for item in selected if item.nodeid.split("::", 1)[0] in group]
+                    names = [item.nodeid for item in members]
+                    if len(names) > remaining:
+                        if self.selection.get("prefix") and (admitted or self.selection.get("allow_empty")):
+                            saturation = {"unit": group, "cases": len(names), "remaining": remaining}
+                            break
+                        raise ValueError(f"Selected execution group {group} needs {len(names)} tests; "
+                                         f"remaining selected-test budget is {remaining}.")
+                    remaining -= len(names)
+                    expected = self.selection["expected"]
+                    if expected is not None and names != [name for name in expected if name.split("::", 1)[0] in group]:
+                        raise ValueError(f"Selected collection changed for execution group {group}; "
+                                         "base and head must have identical complete membership.")
+                    admitted.extend(members)
+                selected = admitted
+                if saturation:
+                    blocked = self.selection["groups"].index(saturation["unit"])
+                    skipped_files = {member for group in self.selection["groups"][blocked:] for member in group}
+                    discarded = [report for report in self.collection_errors
+                                 if report.nodeid.split("::", 1)[0] in skipped_files]
+                    # Pytest counted these collection failures before admission chose its
+                    # prefix. Unchecked suffix files cannot change that prefix's outcome.
+                    session.testsfailed -= len(discarded)
+                    self.collection_errors[:] = [report for report in self.collection_errors if report not in discarded]
             limits.validate_plan_size(item.nodeid for item in selected)
         except ValueError as error:
             self.collection_errors.clear()
             items.clear()
-            self.emit(event="plan-error", message=str(error))
+            self.emit(event="plan-error", message=str(error)[:1000])
             self.emit(event="collection", tests=[])
             pytest.exit(str(error), returncode=4)
         self.emit_collection_errors()
         items[:] = selected
-        self.emit(event="collection", tests=[item.nodeid for item in selected])
+        self.emit(event="collection", tests=[item.nodeid for item in selected],
+                  **({"saturation": saturation} if saturation else {}))
 
     def pytest_exception_interact(self, node, call, report):
         report.tl3_missing = missing_name(call.excinfo.value)
@@ -308,6 +346,9 @@ class Reporter:
         message = "\n".join(p[2] for p in failures)
         hits = self.target_hits.pop(report.nodeid, {})
         extra = {"target_hits": {target: count[0] for target, count in hits.items()}} if self.patches else {}
+        refusal = self.forcing_refusals.pop(report.nodeid, None)
+        if refusal is not None:
+            extra['forcing_refusal'] = refusal
         self.emit(event="result", test=report.nodeid, outcome=outcome, **extra,
                   message=message[:1000], truncated=len(message) > 1000 or any(p[3] for p in failures))
 
@@ -319,10 +360,12 @@ class Reporter:
 def main():
     tests = json.load(sys.stdin) if sys.argv[1] == "-" else json.loads(sys.argv[1])
     forcing = {}
+    selection = None
     if isinstance(tests, dict):
         # A forced check's selection carries the plan's forcing, which the host validated (#393).
-        tests, forcing = tests["tests"], tests["forcing"]
-        os.environ.update(forcing["environment"])
+        selection = tests.get("selection")
+        tests, forcing = tests["tests"], tests.get("forcing", {})
+        os.environ.update(forcing.get("environment", {}))
     descriptor = os.dup(1)
     with open(os.devnull, "wb") as sink:
         os.dup2(sink.fileno(), 1)
@@ -335,7 +378,7 @@ def main():
     os.chdir(checkout)
     sys.path.insert(0, str(Path.cwd()))
     reporter = Reporter(tests, descriptor, summary, parallel=bool(summary and parallel),
-                        patches=tuple(forcing.get("patches", ())))
+                        patches=tuple(forcing.get("patches", ())), selection=selection)
     # Start before pytest loads the checkout's conftest files, ini options and
     # plugins. Any exit after this point may come from the code under test.
     reporter.pytest_sessionstart()
