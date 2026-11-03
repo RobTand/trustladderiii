@@ -19,6 +19,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGenerationChunk
 from langchain_openai import ChatOpenAI
+from jsonschema import ValidationError
 
 from tl3_workers.evidence import forcing_capabilities, forcing_guidance
 from tl3_workers.contracts import read_json, read_reply, schema, validate
@@ -227,7 +228,8 @@ def _run(request, emit):
             worktree.hindsight_key_file = request.get("hindsight_key_file")
             worktree.progress_emit = emit
         if role.name == 'planner':
-            worktree.forcing_rehearsals = ForcingRehearsals(worktree, request['inputs'], checkout=request['worktree'])
+            worktree.forcing_rehearsals = ForcingRehearsals(
+                worktree, request['inputs'], checkout=request['worktree'], checkpoint=request.get('session_file'))
         if role.run is None:
             control = TurnControl()
             agent = build_agent(model, role, worktree, context_size=request["inputs"].get(
@@ -236,26 +238,42 @@ def _run(request, emit):
             model_inputs = request["inputs"]
             if role.name in {"ingest", "audit", "planner"}:
                 model_inputs = {"forcing_capabilities": forcing_capabilities(run_test_cpus.get()), **model_inputs}
+            ledger = getattr(worktree, 'forcing_rehearsals', None)
+            if ledger is not None and (ledger.candidates or ledger.active):
+                model_inputs = {**model_inputs, 'forcing_rehearsal_state': {
+                    'candidates': ledger.candidates, 'pending': ledger.active,
+                    'remaining_candidates': 8 - ledger.attempts}}
             history = [HumanMessage(content=json.dumps(model_inputs, ensure_ascii=False))]
             draft_error = None
 
             def checked(text):
                 nonlocal draft_error
-                # A completed failed rehearsal is substantive work evidence. Even malformed
-                # final text cannot route it into tool-free format or consistency correction.
-                ledger = getattr(worktree, 'forcing_rehearsals', None)
+                if ledger is not None:
+                    ledger.raise_infrastructure()
                 if ledger is not None and ledger.failure:
                     return _checked(role, request['inputs'], {
                         'kind': 'cant_meet', 'files': [], 'evidence_contract': [], 'report': ledger.failure['message']}, worktree=worktree)
                 try:
                     result = _checked(role, request["inputs"], read_reply(text), worktree=worktree)
                 except PlanConsistencyError as error:
+                    if ledger is not None and any(item['status'] == 'refused' for item in ledger.candidates):
+                        return refused_final()
                     if draft_error is None:
                         draft_error = error
+                    raise
+                except (ValueError, ValidationError):
+                    if ledger is not None and any(item['status'] == 'refused' for item in ledger.candidates):
+                        return refused_final()
                     raise
                 if draft_error is not None:
                     draft_error.constrain(result)
                 return result
+
+            def refused_final():
+                rejected = next(item for item in reversed(ledger.candidates) if item['status'] == 'refused')
+                return _checked(role, request['inputs'], {
+                    'kind': 'cant_meet', 'files': [], 'evidence_contract': [],
+                    'report': rejected['message']}, worktree=worktree)
 
             reply = repaired(control, history, lambda: _run_agent(agent, history, emit),
                              checked)

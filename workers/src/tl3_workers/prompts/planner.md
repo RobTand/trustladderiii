@@ -342,3 +342,19 @@ A Q55 leaf needs a validated `rehearse_forcing` receipt before the maker handoff
 A symbol that resolves can still have zero invocations on the selected old tests.
 Do not substitute a narrative for execution evidence or change the forcing after
 its validation. Independent Checking and review still prove the finished change.
+
+A completed zero-hit or no-assertion-RED rehearsal rejects that candidate. You may
+use the feedback for a distinct candidate within the eight-candidate budget.
+Identical positive and negative candidates reuse their recorded results. A final
+leaf still needs an exact validated receipt for every forcing. If none can meet
+the goal, or the budget is exhausted, return cant_meet once with the precise
+limit and evidence. Infrastructure failures leave the worker for the controller's
+existing recovery path. They are not proof failures or model-repair requests.
+Under the coordinator's reading of Q54, this bounded exploration happens before
+a final plan. It does not retry work after a final cant_meet.
+
+Forcing eligibility depends on the resolved object that owns the attribute.
+A repo-prefixed alias such as pkg.mod.time.monotonic still mutates shared time
+and is refused. Source-only owner preflight runs before rehearsal submission.
+Dynamic owners it cannot resolve safely are reported as a capability limit.
+The admitted runner repeats the object-level guard before patching anything.

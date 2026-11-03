@@ -593,6 +593,15 @@ impl Supervisor {
             let available = session.is_some() || session_file.exists();
             let needs_files = session.is_some_and(|session| session["needs_files"] == true);
             request["resume_session"] = json!(available && (delivery.round == 1 || needs_files));
+        } else if role == "planner" {
+            request["session_file"] = json!(
+                self.settings
+                    .runs
+                    .join("sessions")
+                    .join(&node)
+                    .join(format!("plan-{}", u8::from(delivery.replanned)))
+                    .join("planner-rehearsals.json")
+            );
         } else if role == "reviewer" {
             request["session_file"] = json!(
                 self.settings
