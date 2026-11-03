@@ -93,7 +93,7 @@ def test_file_correction_cannot_change_obligations(planner_request, file_plan, m
     if change == 'unknown':
         fixed['checks'][2]['node_ids'] = [FILE + '::test_unknown']
     elif change == 'kind':
-        fixed['checks'][2]['kind'] = 'demonstrating'
+        fixed['checks'][2]['kind'] = 'behavior-preserving'
     elif change == 'goal':
         fixed['checks'][2]['goal_ids'] = [0]
     elif change == 'scope':

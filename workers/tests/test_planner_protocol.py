@@ -109,7 +109,9 @@ def test_invalid_node_id_is_reported_to_controller(tmp_path, planner_request):
     proposal["checks"][0]["node_ids"] = ["../test.py::test_escape"]
     result = run_reply(tmp_path, planner_request, proposal)
     assert_rule_report(result)
-    assert result.events[-1]["reply"]["violations"] == ["Checks must name exact pytest node IDs."]
+    assert result.events[-1]["reply"]["violations"] == [
+        "Checks must name exact pytest node IDs. Replace `../test.py::test_escape` "
+        "with the exact test definitions this check needs."]
 
 
 @pytest.mark.parametrize("path", [

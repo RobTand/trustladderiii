@@ -51,7 +51,7 @@ def test_proof_correction_only_fills_missing_fields(planner_request, proof_plan,
     if change in {'subjects', 'observer_support'}:
         fixed['checks'][0]['proof'][change] = ['greeting.py']
     elif change == 'kind':
-        fixed['checks'][0]['kind'] = 'reproducing'
+        fixed['checks'][2]['kind'] = 'behavior-preserving'
     elif change == 'goal':
         fixed['checks'][0]['goal_ids'] = [0, 1]
     elif change == 'scope':
