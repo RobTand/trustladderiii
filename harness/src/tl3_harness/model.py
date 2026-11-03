@@ -98,7 +98,7 @@ class Forcing:
         for name, value in self.environment:
             if (not isinstance(name, str) or not ENVIRONMENT_NAME.fullmatch(name) or name in RESERVED_ENVIRONMENT
                     or name.startswith(RESERVED_PREFIXES)):
-                detail = (f"; {name}={NATIVE_THREAD_ENVIRONMENT[name]} is a runner-owned native-thread bound"
+                detail = (f"; {name} is a runner-owned native-thread bound set by the configured CPU demand"
                           if isinstance(name, str) and name in NATIVE_THREAD_ENVIRONMENT else "")
                 raise HarnessInputError(f"a forcing can't set the environment variable {name!r}{detail}")
             if not isinstance(value, str) or len(value) > FORCING_TEXT or "\x00" in value:

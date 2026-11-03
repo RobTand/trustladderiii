@@ -7,6 +7,7 @@ struct Settings {
     image: Option<String>,
     exec_scratch: bool,
     tests: AdditionalTests,
+    test_demand: Option<tl3_config::TestDemand>,
 }
 
 #[derive(Clone, Default)]
@@ -33,6 +34,7 @@ impl Images {
                         Settings {
                             image: repo.container_image.clone(),
                             exec_scratch: repo.exec_scratch,
+                            test_demand: repo.test_demand,
                             tests: AdditionalTests {
                                 selected: repo.selected_tests,
                                 always: repo.always_tests.clone(),
@@ -61,6 +63,11 @@ impl Images {
         self.settings(repo)
             .map(|settings| settings.tests.clone())
             .unwrap_or_default()
+    }
+
+    pub(super) fn test_demand(&self, repo: &Repository) -> Option<tl3_config::TestDemand> {
+        self.settings(repo)
+            .and_then(|settings| settings.test_demand)
     }
 
     pub(super) fn for_repository<'a>(&'a self, repo: &Repository, fallback: &'a str) -> &'a str {

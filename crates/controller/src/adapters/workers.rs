@@ -374,6 +374,12 @@ impl Supervisor {
             inputs["plan"]["files"] = json!(delivery.paths);
             inputs["context_size"] = json!(self.limits.context_tokens);
             inputs["tests"] = json!({"image": self.images.for_repository(&delivery.repository, &self.tests.container_image), "tools_path": self.tests.tools_dir});
+            let demand = self
+                .images
+                .test_demand(&delivery.repository)
+                .unwrap_or_default();
+            inputs["tests"]["cpus"] = json!(demand.cpus);
+            inputs["tests"]["mem_gb"] = json!(demand.mem_gb);
             if self.images.exec_scratch(&delivery.repository) {
                 inputs["tests"]["exec_scratch"] = json!(true);
             }
@@ -498,8 +504,13 @@ impl Supervisor {
                 repo.remove("materials");
             }
         }
+        let test_cpus = self
+            .images
+            .test_demand(&delivery.repository)
+            .unwrap_or_default()
+            .cpus;
         if matches!(role, "ingest" | "audit" | "planner") {
-            inputs["tool_capabilities"] = json!(self.planning.tool_capabilities);
+            inputs["tool_capabilities"] = json!(self.planning.effective_tool_capabilities(test_cpus));
             if generator_available {
                 inputs["tool_capabilities"].as_array_mut().unwrap().push(json!({
                     "tool": "run_generator", "executor": "prismabuild_generator",
@@ -529,7 +540,7 @@ impl Supervisor {
         let mut request = json!({
             "protocol": 1,
             "operation": {"node": delivery.node().0, "generation": delivery.generation, "kind": role},
-            "role": role, "model": self.models.worker_model(model), "key_file": self.models.key_file,
+            "role": role, "test_cpus": test_cpus, "model": self.models.worker_model(model), "key_file": self.models.key_file,
             "inputs": inputs, "worktree": worktree,
             "hindsight_key_file": self.hindsight.api_key_file,
             "trace": {
