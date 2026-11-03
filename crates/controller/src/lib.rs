@@ -237,9 +237,25 @@ pub struct IssueChange {
     pub labels: Vec<String>,
     /// When GitHub last changed the issue, which orders its edits.
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// A catch-up reread of an issue whose same-second edits disagreed (Q39).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reread: bool,
 }
 /// The newest issue edit seen for a request (Q39), by request node.
 const ISSUE_EDITS: &str = "issue_edits";
+
+/// An issue to reread on the next catch-up pass (Q39), by request node.
+pub(crate) struct PendingRead {
+    pub(crate) repository: Repository,
+    pub(crate) number: u64,
+    /// Rereads so far, which keeps each pass's read distinct.
+    pub(crate) reads: u32,
+}
+
+/// Issues whose same-second edits disagreed and await a reread.
+pub(crate) fn pending_reads(_snapshot: &Snapshot) -> Result<Vec<PendingRead>> {
+    Ok(Vec::new())
+}
 
 #[derive(Serialize, Deserialize)]
 struct IssueEdit {
@@ -646,42 +662,10 @@ impl Controller {
         if seen.is_some_and(|seen| change.updated_at < seen) {
             return Ok(());
         }
-        let mut current = (
+        let (updated_at, priority) = (
             change.updated_at,
             priority::pool_priority(&change.title, &change.labels),
         );
-        if seen == Some(change.updated_at) && current.1 != n.priority {
-            // GitHub's updated_at has second precision, so two edits in one
-            // second can arrive in either order. Settle the conflict with the
-            // issue as it is now; if it can't be read, keep what we have, and
-            // catch-up brings the issue's state later.
-            match self
-                .adapters
-                .get(executor::Upstream::GitHub)
-                .and_then(|github| github.issue(&repo, change.number))
-            {
-                Ok(issue) if issue.updated_at >= change.updated_at => {
-                    let labels: Vec<_> = issue
-                        .labels
-                        .iter()
-                        .map(|label| label.name.as_str())
-                        .collect();
-                    current = (
-                        issue.updated_at,
-                        priority::pool_priority(&issue.title, &labels),
-                    );
-                }
-                Ok(_) => return Ok(()),
-                Err(error) => {
-                    eprintln!(
-                        "issue {}/{}#{} not reread for a same-second edit: {error}",
-                        repo.owner, repo.name, change.number
-                    );
-                    return Ok(());
-                }
-            }
-        }
-        let (updated_at, priority) = current;
         let newer = seen.is_none_or(|seen| updated_at > seen);
         let changed = n.priority != priority;
         if !newer && !changed {

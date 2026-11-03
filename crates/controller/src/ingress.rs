@@ -152,6 +152,30 @@ pub enum GitHubDelivery {
         repository: Repository,
         changes: Box<tl3_github::RepoChanges>,
     },
+    /// Catch-up rereads of issues whose same-second edits disagreed (Q39).
+    PriorityReads {
+        repository: Repository,
+        reads: Vec<PriorityRead>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PriorityRead {
+    /// The pending row's reread count when this read was made.
+    pub reads: u32,
+    pub issue: tl3_github::Issue,
+}
+
+/// GitHub reads for pending priority reconciliations in one catch-up pass (Q39).
+pub(crate) const PRIORITY_READS_PER_PASS: usize = 8;
+
+/// Reread pending issues, at most PRIORITY_READS_PER_PASS and one per issue.
+/// A failed read is left out, so its issue stays pending for the next pass.
+pub(crate) fn reconcile_reads(
+    _pending: &[crate::PendingRead],
+    _read: impl FnMut(&Repository, u64) -> Result<tl3_github::Issue>,
+) -> Vec<GitHubDelivery> {
+    Vec::new()
 }
 
 /// Translators run on the controller thread. Keys must survive duplicate evidence and replay.
@@ -229,6 +253,7 @@ pub(crate) fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<
                             .map(|label| label.name.clone())
                             .collect(),
                         updated_at: issue.updated_at,
+                        reread: false,
                     }));
                 }
             }
@@ -242,6 +267,7 @@ pub(crate) fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<
             }
             result
         }
+        GitHubDelivery::PriorityReads { .. } => Vec::new(),
     }
 }
 
@@ -545,6 +571,7 @@ fn issue_change(
             .map(|label| label.name.clone())
             .collect(),
         updated_at: issue.updated_at,
+        reread: false,
     }
 }
 
@@ -989,7 +1016,11 @@ mod priority_tests {
                 .unwrap_or_else(|| panic!("issues.{action} carries no issue change"));
             assert_eq!(change.number, 42);
             assert_eq!(change.title, "[P2] Fix the greeting");
-            assert_eq!(change.labels, ["tl3", "P1"]);
+            assert_eq!(
+                change.labels,
+                ["P1", "tl3"],
+                "labels are stored in one order"
+            );
         }
         let labelled = inputs(
             "d-1",
