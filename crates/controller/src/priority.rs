@@ -63,17 +63,21 @@ fn reconciles(snapshot: &tl3_store::Snapshot) -> crate::Result<Vec<(String, crat
 impl crate::Controller {
     /// Reread the issues whose same-second edits disagreed and are due:
     /// oldest due first, at most REREADS_PER_TICK.
-    pub(crate) fn reconcile_due(&mut self) -> crate::Result<()> {
+    /// True when it reread anything.
+    pub(crate) fn reconcile_due(&mut self, snapshot: &tl3_store::Snapshot) -> crate::Result<bool> {
         let now = self.now_ms();
-        let mut due: Vec<_> = reconciles(&self.store.load()?)?
+        let mut due: Vec<_> = reconciles(snapshot)?
             .into_iter()
             .filter(|(_, row)| row.next_due_ms <= now)
             .collect();
+        if due.is_empty() {
+            return Ok(false);
+        }
         due.sort_by_key(|(id, row)| (row.next_due_ms, id.parse::<u64>().unwrap_or(u64::MAX)));
         for (id, row) in due.into_iter().take(REREADS_PER_TICK) {
             self.reread(&id, row, now)?;
         }
-        Ok(())
+        Ok(true)
     }
 
     fn reread(&mut self, id: &str, mut row: crate::Reconcile, now: u64) -> crate::Result<()> {

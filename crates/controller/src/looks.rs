@@ -463,10 +463,11 @@ impl Controller {
 
     fn looks(&mut self, force: bool, key: Option<&str>) -> Result<()> {
         self.retry_input_incident_posts()?;
-        if key.is_none() {
-            self.reconcile_due()?;
+        let mut snapshot = self.store.load()?;
+        // Same-second priority rereads that are due share this timer (Q39).
+        if key.is_none() && self.reconcile_due(&snapshot)? {
+            snapshot = self.store.load()?;
         }
-        let snapshot = self.store.load()?;
         let states = snapshot
             .rows
             .iter()
