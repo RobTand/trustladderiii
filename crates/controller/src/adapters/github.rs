@@ -436,6 +436,10 @@ impl Executor for Adapter {
         self.records.fence(self.epoch)?;
         if publishing::handles(delivery) {
             return match self.reconcile_publication(delivery) {
+                Err(Error::Permanent {
+                    class: "pr_evidence",
+                    ..
+                }) => Ok(Reconciliation::Found(Completion::permanent("pr_evidence"))),
                 Err(error) if error.is_github_not_found() => Err(error),
                 result => Ok(result.unwrap_or(Reconciliation::Pending)),
             };

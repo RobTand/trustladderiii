@@ -373,15 +373,15 @@ pub fn publication(delivery: &Delivery, request: &str) -> Result<String> {
 // Redact values before serializing. Redacting JSON text can consume its quotes,
 // and memory's generic hash filter also removes the IDs needed to verify proof.
 fn public_value(value: &Value, field: Option<&str>) -> Value {
-    if let (Some(field), Some(text)) = (field, value.as_str()) {
-        if matches!(
+    if let (Some(field), Some(text)) = (field, value.as_str())
+        && matches!(
             field,
             "head_sha" | "base_sha" | "action_key" | "receipt_sha256" | "log_sha256" | "tree"
-        ) && matches!(text.len(), 40 | 64)
-            && text.bytes().all(|byte| byte.is_ascii_hexdigit())
-        {
-            return value.clone();
-        }
+        )
+        && matches!(text.len(), 40 | 64)
+        && text.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return value.clone();
     }
     if field.is_some_and(|field| {
         let field = field.to_ascii_lowercase();
