@@ -312,13 +312,26 @@ def test_the_retro_deadline_is_half_the_silence_allowance(maker_request, monkeyp
     assert facts(tmp_path)["retro"]["status"] == "timeout"
 
 
+def test_the_retro_deadline_is_half_the_shorter_allowance(maker_request, monkeypatch, tmp_path):
+    # A no-progress allowance shorter than silence bounds the retro too (#661 review).
+    from tl3_workers import retro
+    used = []
+    real = retro.deadline
+    monkeypatch.setattr(retro, "deadline", lambda *args, **kwargs: used.append(real(*args, **kwargs)) or used[-1])
+    maker_request.update(silence_secs=120, no_progress_secs=20)
+    install(monkeypatch, maker_request, tmp_path)
+    runtime.run(maker_request, lambda event: None)
+    assert used == [10]
+
+
 def test_the_request_may_carry_the_silence_allowance(maker_request):
     from jsonschema import ValidationError
     from tl3_workers.contracts import validate
 
-    validate("request", {**maker_request, "silence_secs": 120})
-    with pytest.raises(ValidationError):
-        validate("request", {**maker_request, "silence_secs": 0})
+    validate("request", {**maker_request, "silence_secs": 120, "no_progress_secs": 20})
+    for field in ("silence_secs", "no_progress_secs"):
+        with pytest.raises(ValidationError):
+            validate("request", {**maker_request, field: 0})
 
 
 def test_retro_is_a_separate_span_on_the_maker_trace(maker_request, monkeypatch, tmp_path, exporters, receiver):

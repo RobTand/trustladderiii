@@ -13,6 +13,7 @@ fn planner_protected_paths_follow_the_request_repository() {
     config.planning.protected_paths.push("global/**".into());
     // The maker's retro deadline derives from this allowance (#648).
     config.allowances.agent_worker.silence_secs = 90;
+    config.allowances.agent_worker.no_progress_secs = 20;
     config.github.repos[0].test_demand = Some(tl3_config::TestDemand {
         cpus: 4,
         mem_gb: 12,
@@ -87,6 +88,7 @@ fn planner_protected_paths_follow_the_request_repository() {
         );
         assert_eq!(request["test_cpus"], cpus);
         assert_eq!(request["silence_secs"], 90);
+        assert_eq!(request["no_progress_secs"], 20);
         assert_eq!(request["inputs"]["repair_plan_consistency"], true);
         assert_eq!(request["inputs"]["base_sha"], f.base);
         assert_eq!(request["inputs"]["tests"]["cpus"], cpus);
