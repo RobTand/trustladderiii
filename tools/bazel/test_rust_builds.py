@@ -125,11 +125,10 @@ class RustDependencyTests(unittest.TestCase):
         # Schemas and prompts are compiled into the controller; keep them.
         self.assertIn("//workers:schemas", deps)
 
-    def test_fake_only_controller_uses_lightweight_packaged_redactor_runtime(self):
-        target = self.rules[":test_test_core_defects"]
-        self.assertIn("//tools/bazel:redactor_python", self.dependencies("test_test_core_defects"))
-        self.assertEqual(target["args"][3], "$(rootpath //tools/bazel:redactor_python)")
-        self.assertNotIn("//tools/bazel:worker_python", self.dependencies("test_test_core_defects"))
+    def test_controller_tests_do_not_add_redactor_runtime(self):
+        for target in self.rules:
+            self.assertNotIn("//tools/bazel:redactor_python", self.dependencies(target[1:]))
+
 
     def test_real_worker_scenarios_keep_the_python_environment(self):
         for name in ["workers", "publishing", "github-flow", "writer_references"]:

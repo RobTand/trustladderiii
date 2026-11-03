@@ -301,3 +301,32 @@ pub(crate) fn with_failure<T>(failure: Failure, run: impl FnOnce() -> T) -> T {
     });
     result
 }
+
+#[cfg(test)]
+mod parity_tests {
+    #[test]
+    fn matches_python_on_the_shared_matrix() {
+        use std::io::Write;
+        let matrix: Vec<String> =
+            serde_json::from_str(include_str!("redaction/matrix.json")).unwrap();
+        assert_eq!(matrix.len(), 192);
+        let mut child = std::process::Command::new(super::worker_python())
+            .args(["-I", "-c", "import json,sys; from tl3_workers.tracing import Redactor; r=Redactor(None); print(json.dumps([r.text(s,limit=len(s)) for s in json.load(sys.stdin)]))"])
+            .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped())
+            .spawn().unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&serde_json::to_vec(&matrix).unwrap())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success());
+        let expected: Vec<String> = serde_json::from_slice(&output.stdout).unwrap();
+        let actual = matrix
+            .iter()
+            .map(|text| super::text(text).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+    }
+}
