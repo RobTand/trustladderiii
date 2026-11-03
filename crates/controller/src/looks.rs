@@ -1684,6 +1684,7 @@ pub(crate) fn incident_summary(
             "could not post the queue command. Check TL3's GitHub App repository permission Issues: Read and write and approve any updated installation permissions"
         }
         "queue_command_refused" => "refused the queue command",
+        "queue_command_rejected" => "could not post the queue command because GitHub refused it",
         "actions_write_required" => {
             "cannot rerun workflows. Grant TL3's GitHub App repository permission Actions: Read and write, then approve the installation's updated permissions"
         }
@@ -1744,7 +1745,9 @@ pub(crate) fn incident_summary(
 pub(crate) fn queue_command_detail(delivery: &Delivery, class: &str) -> Option<String> {
     let reason = match class {
         "queue_command_refused" => "command refused by Mergify after posting",
-        "queue_command_permission" => "command refused by GitHub; no command sent",
+        "queue_command_permission" | "queue_command_rejected" => {
+            "command refused by GitHub; no command sent"
+        }
         _ => return None,
     };
     Some(format!(

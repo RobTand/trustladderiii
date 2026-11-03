@@ -669,6 +669,7 @@ impl Adapter {
             .as_ref()
             .is_some_and(|attempt| matches!(attempt.requeue, Some(Requeue::Refused)))
         {
+            self.retain_refused_command(delivery)?;
             return Ok(Reconciliation::Found(Box::new(Completion::permanent(
                 "queue_command_refused",
             ))));
@@ -693,6 +694,7 @@ impl Adapter {
                 .is_some()
             {
                 attempt.requeue = Some(Requeue::Refused);
+                self.retain_refused_command(delivery)?;
                 self.records.write(
                     &self.records.path(&delivery.key).with_extension("intent"),
                     &serde_json::to_vec(attempt)?,
@@ -736,26 +738,42 @@ impl Adapter {
                 | QueueState::DequeuedByPerson
         );
         let mut person_removed = false;
-        if let Some(attempt) = &baseline {
+        if baseline.is_some() || self.repaired_head(delivery)? {
             let github = &self.clients[&delivery.repository.installation];
             let events = self.runtime.block_on(
                 github.issue_events(&full_name(&delivery.repository), enqueue(delivery)?.0),
             )?;
-            let person_observations: Vec<_> = person_facts(
+            let snapshot = self
+                .store
+                .as_ref()
+                .map(|store| tl3_store::Store::open(store)?.load())
+                .transpose()?;
+            let mut person_observations = Vec::new();
+            for fact in person_facts(
                 &delivery.repository,
                 enqueue(delivery)?.0,
                 &events,
                 state.pull_request.merged_at.is_some(),
-            )
-            .into_iter()
-            .filter(|fact| match fact.evidence {
-                Evidence::DequeuedByPerson { event } | Evidence::ClosedByPerson { event } => {
+            ) {
+                let event = match fact.evidence {
+                    Evidence::DequeuedByPerson { event } | Evidence::ClosedByPerson { event } => {
+                        event
+                    }
+                    _ => continue,
+                };
+                let fresh = if let Some(attempt) = &baseline {
                     event > attempt.last_event
+                } else if let Some(snapshot) = &snapshot {
+                    // A new head must consume an unseen human hold before it
+                    // restores the queue label removed by cancellation.
+                    !fact.recorded(snapshot)?
+                } else {
+                    false
+                };
+                if fresh {
+                    person_observations.push(Observation::Queue(fact));
                 }
-                _ => false,
-            })
-            .map(Observation::Queue)
-            .collect();
+            }
             person_removed = !person_observations.is_empty();
             observations.extend(person_observations);
         }
@@ -783,7 +801,9 @@ impl Adapter {
         // A repaired head's eligible waiting check is not dequeue completion.
         // Its bounded recovery is reconciled by repository/PR/head below.
         if state.state == QueueState::Waiting
-            && (self.has_recovery(delivery)? || self.repaired_head(delivery)?)
+            && (self.has_recovery(delivery)?
+                || issue.labels.iter().any(|label| label.name == QUEUE_LABEL)
+                    && self.repaired_head(delivery)?)
         {
             return Ok(Reconciliation::Pending);
         }
@@ -881,7 +901,7 @@ impl Executor for Adapter {
     }
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.fence(delivery)?;
-        match self.completion(delivery)? {
+        match self.read_enqueue(delivery)? {
             Reconciliation::Found(completion) => {
                 if completion.ack == Ack::Confirmed
                     && !matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_))
@@ -979,7 +999,7 @@ impl Executor for Adapter {
             &self.records.path(&delivery.key).with_extension("applied"),
             b"true",
         )?;
-        match self.completion(delivery)? {
+        match self.read_enqueue(delivery)? {
             Reconciliation::Found(completion) => {
                 self.records
                     .deliver(delivery, Completion::confirmed(vec![]))?;

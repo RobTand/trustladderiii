@@ -217,7 +217,14 @@ fn prior_dequeue_survives_repaired_head_and_removed_label() {
     let (_db, f, mut c) = setup(true);
     assert_ne!(f.delivery.head_sha.as_deref(), Some(f.old_head.as_str()));
     assert!(!f.api.state.lock().unwrap().dequeued);
-    f.grace(&mut c);
+    f.advance(299);
+    f.look(&mut c);
+    assert_eq!(
+        f.commands(),
+        0,
+        "the enqueue starts the grace clock before any scheduled look"
+    );
+    f.advance(2);
     f.look(&mut c);
     assert_eq!(
         f.commands(),
@@ -251,6 +258,16 @@ fn requeue_intent_and_marker_survive_restart_lost_response_and_effect_retirement
     adapter.retire_delivery(&f.delivery).unwrap();
     let mut another = f.delivery.clone();
     another.key.push_str("-another-effect");
+    // A marked upstream command also reconciles when no local head receipt exists.
+    for entry in std::fs::read_dir(f.root.path().join("mergify")).unwrap() {
+        let path = entry.unwrap().path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "requeue")
+        {
+            std::fs::remove_file(path).unwrap();
+        }
+    }
     for _ in 0..4 {
         let _ = adapter.look(&another);
     }
@@ -270,6 +287,7 @@ fn dispatch_rechecks_head_conditions_and_human_decisions() {
         "paused",
         "hold",
         "human",
+        "human-no-label",
         "closed",
         "merged",
         "head",
@@ -304,7 +322,10 @@ fn dispatch_rechecks_head_conditions_and_human_decisions() {
                 "active" => {
                     state.checks = fixture("running", "checks");
                 }
-                "human" => {
+                "human" | "human-no-label" => {
+                    if mode == "human-no-label" {
+                        state.label = false;
+                    }
                     state.events.push(json!({"id":100,"event":"unlabeled","actor":{"id":42,"login":"RobTand"},"label":{"name":"tl3-queue"},"created_at":"2026-11-03T10:00:00Z"}));
                 }
                 "closed" => state.pull["state"] = json!("closed"),
@@ -327,6 +348,12 @@ fn dispatch_rechecks_head_conditions_and_human_decisions() {
         let mut adapter = f.adapter();
         let _ = adapter.look(&d);
         assert_eq!(f.commands(), 0, "dispatch guard: {mode}");
+        if mode == "human-no-label" {
+            assert!(
+                !f.api.state.lock().unwrap().label,
+                "an unseen human hold must prevent restoring the queue label"
+            );
+        }
     }
     let (_db, f, mut c) = setup(true);
     f.grace(&mut c);
@@ -401,13 +428,16 @@ fn no_prior_dequeue_never_recovers_and_later_approved_head_has_its_own_budget() 
 }
 
 fn refused_or_unacknowledged_requeue_uses_bounded_existing_recovery() {
-    for mode in ["reply", "permission", "unknown"] {
+    for mode in ["reply", "permission", "rejected", "unknown"] {
         let (_db, f, mut c) = setup(true);
         if mode == "reply" {
             f.api.state.lock().unwrap().command_reply = Some(requeue::restricted_reply());
         }
         if mode == "permission" {
             f.api.state.lock().unwrap().command_status = 403;
+        }
+        if mode == "rejected" {
+            f.api.state.lock().unwrap().command_status = 409;
         }
         f.grace(&mut c);
         f.look(&mut c);

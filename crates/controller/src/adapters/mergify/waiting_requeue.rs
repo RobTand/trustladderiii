@@ -1,5 +1,6 @@
 //! Recovery of an eligible repaired head after Mergify forgot its queue membership.
 use super::*;
+use sha2::{Digest, Sha256};
 use std::time::UNIX_EPOCH;
 
 pub(crate) const PROGRESS_PREFIX: &str = "mergify:awaiting Mergify re-queue";
@@ -30,11 +31,25 @@ impl Adapter {
             delivery.repository.name.to_ascii_lowercase()
         ))
     }
-    fn recovery(&self, delivery: &Delivery) -> Result<Option<Recovery>> {
-        let path = self
+    fn recovery_path(&self, delivery: &Delivery) -> Result<std::path::PathBuf> {
+        let digest = Sha256::digest(self.recovery_key(delivery)?);
+        Ok(self
             .records
-            .path(&self.recovery_key(delivery)?)
-            .with_extension("requeue");
+            .path(&format!("requeue:{digest:x}"))
+            .with_extension("requeue"))
+    }
+    pub(super) fn retain_refused_command(&self, delivery: &Delivery) -> Result<()> {
+        self.save_recovery(
+            delivery,
+            &Recovery {
+                eligible_since_ms: None,
+                command: Command::Refused,
+                command_key: delivery.key.clone(),
+            },
+        )
+    }
+    fn recovery(&self, delivery: &Delivery) -> Result<Option<Recovery>> {
+        let path = self.recovery_path(delivery)?;
         match std::fs::read(path) {
             Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -47,10 +62,7 @@ impl Adapter {
     fn save_recovery(&self, delivery: &Delivery, recovery: &Recovery) -> Result<()> {
         // This record belongs to the head, so retire_delivery must leave it intact.
         self.records.write(
-            &self
-                .records
-                .path(&self.recovery_key(delivery)?)
-                .with_extension("requeue"),
+            &self.recovery_path(delivery)?,
             &serde_json::to_vec(recovery)?,
         )
     }
@@ -128,17 +140,17 @@ impl Adapter {
             return Ok(false);
         }
         let events = self.runtime.block_on(github.issue_events(&repo, number))?;
-        let after = self
-            .baseline(delivery)?
-            .map_or(0, |attempt| attempt.last_event);
-        if person_facts(&delivery.repository, number, &events, false)
-            .iter()
-            .any(|fact| {
-                matches!(fact.evidence, Evidence::DequeuedByPerson { event }
-                | Evidence::ClosedByPerson { event } if event > after)
-            })
-        {
-            return Ok(false);
+        let snapshot = tl3_store::Store::open(self.store.as_ref().ok_or(Error::Invalid(
+            "re-queue recovery needs the controller store",
+        ))?)?
+        .load()?;
+        for fact in person_facts(&delivery.repository, number, &events, false) {
+            // A recorded person fact and an unpaused approved node prove that
+            // TL3 consumed the decision and Rob resumed it. An unseen removal
+            // cannot be hidden by a newer enqueue intent's event watermark.
+            if !fact.recorded(&snapshot)? {
+                return Ok(false);
+            }
         }
         let checks = self
             .runtime
@@ -154,11 +166,7 @@ impl Adapter {
             match recovery.command {
                 Command::Refused => return Ok(refused("queue_command_refused")),
                 Command::PermissionDenied => return Ok(refused("queue_command_permission")),
-                Command::Rejected => {
-                    return Err(Error::Invalid(
-                        "Mergify refused the bounded re-queue command",
-                    ));
-                }
+                Command::Rejected => return Ok(refused("queue_command_rejected")),
                 Command::Ready | Command::Sending | Command::Sent => {}
             }
         }
