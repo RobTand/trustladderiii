@@ -391,44 +391,23 @@ fn refused(
         assert_eq!(api.state.lock().unwrap().command_attempts, 1);
         return;
     }
-    if mode != "refusal-bound" {
-        let mut state = api.state.lock().unwrap();
-        state.command_status = 201;
-        state.lag = false;
+    for _ in 0..4 {
+        clock.0.set(clock.0.get() + Duration::from_secs(100_000));
+        controller.look_now().unwrap();
+        drain(controller);
     }
-    clock.0.set(clock.0.get() + Duration::from_secs(2));
-    controller.look_key(key).unwrap();
-    drain(controller);
     assert_eq!(
         api.state.lock().unwrap().command_attempts,
-        2,
-        "a definitive refusal permits another attempt"
+        1,
+        "a definitive refusal also consumes the shared head budget"
     );
-    if mode == "refusal-bound" {
-        let pending = controller
+    assert!(
+        controller
             .snapshot()
             .unwrap()
-            .pending_effects
-            .into_iter()
-            .find(|effect| effect.payload["output"]["Effect"]["kind"] == "Enqueue")
-            .unwrap();
-        controller.look_key(&pending.key).unwrap();
-        drain(controller);
-        assert!(
-            controller
-                .snapshot()
-                .unwrap()
-                .rows
-                .iter()
-                .any(|row| row.table == "incidents")
-        );
-        assert_eq!(
-            api.state.lock().unwrap().command_attempts,
-            2,
-            "refusals exhaust the existing retry allowance"
-        );
-    } else {
-        assert_eq!(api.state.lock().unwrap().requeues, 1);
-        assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
-    }
+            .rows
+            .iter()
+            .any(|row| row.table == "incidents"),
+        "refusal uses the existing incident path without another command"
+    );
 }
