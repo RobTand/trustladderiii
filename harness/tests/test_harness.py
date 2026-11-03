@@ -144,7 +144,7 @@ def test_requires_pb_admission(tmp_path, monkeypatch):
         run_checks(tmp_path, "base", "head", (), container=Container(IMAGE))
 
 
-@pytest.mark.parametrize("test", ["-k", "../test.py::test_x", "/test.py::test_x", "test.py", "test.py::"])
+@pytest.mark.parametrize("test", ["-k", "../test.py::test_x", "/test.py::test_x", "test.py::"])
 def test_rejects_selection_arguments(test):
     with pytest.raises(ValueError):
         Check("invalid", Kind.REGRESSION, (test,))

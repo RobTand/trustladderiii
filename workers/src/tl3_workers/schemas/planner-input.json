@@ -3,6 +3,11 @@
   "$id": "https://trustladderiii.invalid/workers/protocol-1/planner-input.json",
   "type": "object",
   "properties": {
+    "always_tests": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "description": "Repo-wide rule test files or node IDs that the harness runs as regression checks in every round. Follow these rules when planning test additions."
+    },
     "must_split": {
       "type": "boolean",
       "description": "True after a maker ran out of room. A leaf reply is rejected."

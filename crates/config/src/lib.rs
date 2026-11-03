@@ -315,6 +315,8 @@ pub struct Repository {
     /// as one more regression check (#359). Absent means off.
     #[serde(default)]
     pub selected_tests: Option<u32>,
+    #[serde(default)]
+    pub always_tests: Vec<String>,
     pub owner: String,
     pub name: String,
     pub installation_id: u64,
@@ -345,6 +347,7 @@ pub struct BodyLine {
 
 /// The harness's `MAX_SELECTED_TESTS`.
 pub const MAX_SELECTED_TESTS: u32 = 1000;
+pub const MAX_ALWAYS_TESTS: usize = 20;
 
 fn default_branch_template() -> String {
     tl3_worktrees::branch_template::DEFAULT_TEMPLATE.into()
@@ -769,6 +772,28 @@ impl Config {
                     format!("{field}.selected_tests"),
                     format!("must be 1 to {MAX_SELECTED_TESTS}, the harness's limit"),
                 ));
+            }
+            if repo.always_tests.len() > MAX_ALWAYS_TESTS {
+                return Err(invalid(
+                    format!("{field}.always_tests"),
+                    format!("always_tests accepts at most {MAX_ALWAYS_TESTS} entries"),
+                ));
+            }
+            for (entry, test) in repo.always_tests.iter().enumerate() {
+                let mut parts = test.split("::");
+                let path = parts.next().unwrap_or_default();
+                if !path.ends_with(".py")
+                    || path.starts_with(['/', '-'])
+                    || path.contains(['\\', ':', '*', '?', '[', ']'])
+                    || path.split('/').any(|part| matches!(part, "" | "." | ".."))
+                    || parts.any(str::is_empty)
+                    || test.chars().any(char::is_control)
+                {
+                    return Err(invalid(
+                        format!("{field}.always_tests[{entry}]"),
+                        "use a repo-relative pytest file or node ID without globs or parent traversal",
+                    ));
+                }
             }
             if repo.installation_id == 0 {
                 return Err(invalid(
