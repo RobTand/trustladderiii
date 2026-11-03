@@ -261,7 +261,7 @@ pub(super) fn io_child(settings: &tl3_config::Store, root: &Path) {
     drop(files);
     setrlimit(Resource::Nofile, original).unwrap();
     assert!(
-        matches!(result, Err(tl3_controller::Error::Io(error)) if error.raw_os_error() == Some(24)),
+        matches!(result, Err(tl3_controller::Error::WorkerSource(error)) if error.raw_os_error() == Some(24)),
         "EMFILE must fail the source loudly"
     );
     let mut restarted = supervisor.source();

@@ -75,6 +75,8 @@ pub enum Error {
     StoredJson(#[source] serde_json::Error),
     #[error("controller I/O failed")]
     Io(#[from] std::io::Error),
+    #[error("{0}")]
+    WorkerSource(#[from] adapters::workers::SourceError),
     #[error("upstream adapter failed: {0}")]
     Adapter(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
