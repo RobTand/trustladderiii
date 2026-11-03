@@ -235,10 +235,18 @@ fn linked_materials(settings: &tl3_config::Store, wrapped: bool) {
     assert_eq!(request["inputs"]["issue"]["title"], "Correct the greeting");
     let log = root_for(&config, &delivery.key).join("attempt-00000000/trace.jsonl");
     let wake = config.workers.runs.join(".traces/.wake");
+    let completion = log.with_file_name("facts.json");
+    let release = worker_package()
+        .parent()
+        .unwrap()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     assert_eq!(
         request["trace"],
         json!({"repo": "RobTand/tl3-sandbox", "issue": 1000, "request": "1", "attempt": 1, "round": 0,
-               "log": log, "wake": wake}),
+               "log": log, "wake": wake, "completion": completion, "release": release}),
         "worker metadata must identify its request without changing role inputs"
     );
     assert_eq!(
