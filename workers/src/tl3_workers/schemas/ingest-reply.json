@@ -22,7 +22,6 @@
                 "type": "string",
                 "minLength": 1
               },
-              "scope": {"$ref": "#/$defs/goal_scope"},
               "verification": {
                 "enum": [
                   "test",
@@ -276,80 +275,6 @@
     }
   ],
   "$defs": {
-    "goal_scope": {
-      "type": "object",
-      "properties": {
-        "kind": {
-          "enum": [
-            "estimate",
-            "only",
-            "exclude"
-          ]
-        },
-        "paths": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 3072
-          },
-          "minItems": 1,
-          "maxItems": 256,
-          "uniqueItems": true
-        },
-        "source": {
-          "oneOf": [
-            {
-              "type": "object",
-              "properties": {
-                "kind": {
-                  "const": "issue"
-                },
-                "quote": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 8192
-                }
-              },
-              "required": [
-                "kind",
-                "quote"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "properties": {
-                "kind": {
-                  "const": "decision"
-                },
-                "decision_id": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "quote": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 8192
-                }
-              },
-              "required": [
-                "kind",
-                "decision_id",
-                "quote"
-              ],
-              "additionalProperties": false
-            }
-          ]
-        }
-      },
-      "required": [
-        "kind",
-        "paths",
-        "source"
-      ],
-      "additionalProperties": false
-    },
     "forecast": {
       "type": "object",
       "properties": {
