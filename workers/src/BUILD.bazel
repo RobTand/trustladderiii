@@ -1,10 +1,22 @@
-load("@rules_python//python:defs.bzl", "py_binary")
+load("@rules_python//python:defs.bzl", "py_binary", stdlib_py_library = "py_library")
 load("//tools/bazel:python.bzl", "py_library")
 
 # gazelle:python_root
 # gazelle:python_generation_mode project
 # gazelle:python_default_visibility //visibility:public
 # gazelle:python_test_file_pattern *_test.py
+
+# The shared Redactor imports only stdlib; public-evidence tests need no model stack.
+# keep
+stdlib_py_library(
+    name = "redactor",
+    srcs = [
+        "tl3_workers/__init__.py",
+        "tl3_workers/tracing.py",
+    ],
+    imports = ["."],
+    visibility = ["//visibility:public"],
+)
 
 filegroup(
     name = "schemas",

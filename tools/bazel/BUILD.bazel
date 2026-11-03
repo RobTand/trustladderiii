@@ -95,6 +95,16 @@ py_binary(
     ],  # keep
 )
 
+# keep
+py_binary(
+    name = "redactor_python",
+    srcs = ["worker_python.py"],
+    deps = [
+        ":runtime",
+        "//workers/src:redactor",
+    ],
+)
+
 # gazelle:python_ignore_files worker_python.py
 
 py_binary(

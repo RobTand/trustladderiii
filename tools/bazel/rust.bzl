@@ -124,12 +124,17 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     controller = package == "crates/controller"
     binaries = _CONTROLLER_BINARIES.get(name, []) if controller else []
     workers = controller and name in _CONTROLLER_WORKERS
+    # Every controller test may render public evidence. Reuse the worker launcher
+    # with only its stdlib Redactor when a test does not run model workers.
+    python = "//tools/bazel:worker_python" if workers else "//tools/bazel:redactor_python" if controller else None
     env = {"CARGO_MANIFEST_DIR": WORKSPACE + "/" + package}
     for binary in binaries:
         env["CARGO_BIN_EXE_" + binary[1:]] = WORKSPACE + "/$(rootpath " + binary + ")"
     runtime = _CONTROLLER_RUNTIME.get(name, []) if controller else _RUNTIME.get(package, [])
+    if python:
+        runtime = runtime + [python]
     if workers:
-        runtime = runtime + ["//tools/bazel:worker_python", "@o200k_base//file"]
+        runtime = runtime + ["@o200k_base//file"]
     postgres = select({
         "@platforms//cpu:aarch64": ["@postgres_linux_arm64//:all"],
         "//conditions:default": ["@postgres_linux_amd64//:all"],
@@ -153,7 +158,7 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
             "$(rootpath :%s_binary)" % name,
             binary_id,
             harness,
-            "$(rootpath //tools/bazel:worker_python)" if workers else "-",
+            "$(rootpath %s)" % python if python else "-",
         ] + gate_args,
         data = depset(
             [":" + name + "_binary", "//tools/ci:rust-test-budget.json"] + binaries +
