@@ -256,3 +256,31 @@ def test_request233_rehearsal_tool_exposes_goal_binding(request233):
                   {'symptom': 'The archive race.', 'environment': {'CASE': 'race'}}, goal_ids=[0])
     assert result['status'] == 'refused' and 'source assertion proof' in result['message']
     assert calls == []
+
+
+@pytest.mark.parametrize('head_has_observer', [False, True], ids=['invented', 'head-only'])
+def test_request204_regression_selector_must_exist_on_selected_base(rehearsal, head_has_observer):
+    from worker_process import git
+    from tl3_workers.roles.planner import check_reply
+
+    _, root, inputs, calls = rehearsal
+    path = 'tests/test_bazel_inputs.py'
+    node = path + '::test_a_passing_file_records_its_inventory'
+    original = 'def test_existing_inventory_control(): assert True\n'
+    (root / path).write_text(original)
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'request 204 original base')
+    inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    inputs['ingest']['goals'] = [{'description': 'Record inventory for passing files.', 'verification': 'test'}]
+    if head_has_observer:
+        (root / path).write_text(original + 'def test_a_passing_file_records_its_inventory(): assert True\n')
+        git(root, 'add', '.')
+        git(root, 'commit', '-qm', 'head-only inventory observer')
+    assert 'test_a_passing_file_records_its_inventory' not in git(root, 'show', inputs['base_sha'] + ':' + path)
+    reply = {'kind': 'leaf', 'estimated_exploration_turns': 0, 'files': [path], 'edits_tests': [],
+             'no_design_questions': True, 'lands_on_its_own': True,
+             'checks': [{'kind': 'regression', 'node_ids': [node], 'goal_ids': [0]}]}
+    check_reply(inputs, reply)
+    assert any(node in message and 'base' in message and 'demonstrating' in message
+               for message in reply['violations']), reply
+    assert calls == [], 'an inapplicable selector must be refused before any admitted action'

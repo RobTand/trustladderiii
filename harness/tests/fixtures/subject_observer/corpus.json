@@ -225,5 +225,20 @@
         "tool": "run_tests"
       }
     ]
+  },
+  {
+    "request": 204,
+    "upstream_issue": 2691,
+    "trace": "tr-9a86109229e0e9257159577cdffbd7e9",
+    "earlier_repair_trace": "tr-ad208df2db4367d7d24351e4c38291ab",
+    "base_sha": "4f3be200be7685b06cafe73ea48e8f0e6f5255b2",
+    "head_sha": "7a6403b37f6097908313b5de9ff9648238658322",
+    "selector": "tests/test_bazel_inputs.py::test_a_passing_file_records_its_inventory",
+    "kind": "regression",
+    "earlier_trusted_feedback": "base uncollected, head uncollected",
+    "final_per_check_report": "unobserved",
+    "measured_stop": "checks_failed; completed Checking execution is not proof of passing checks",
+    "checking_action": "a109b8045801e363c72067978f10a8f97d1716b3dc041d2c94b8a628ef9b0d6f",
+    "source_obligations": []
   }
 ]

@@ -149,6 +149,31 @@ def test_missing_output(tmp_path):
     assert results[0].verdict == Verdict.PASS, results
 
 
+@pytest.mark.parametrize('kind', [Kind.REGRESSION, Kind.DEMONSTRATING])
+def test_request204_head_only_inventory_observer_cannot_repair_original_base_regression(repository, kind):
+    path = 'tests/test_bazel_inputs.py'
+    node = path + '::test_a_passing_file_records_its_inventory'
+    original = 'from inventory import recorded\ndef test_existing_control(): assert isinstance(recorded(), bool)\n'
+    observer = 'def test_a_passing_file_records_its_inventory(): assert recorded(), "passing file inventory missing"\n'
+    before = {'inventory.py': 'def recorded(): return False\n', path: original}
+    after = {'inventory.py': 'def recorded(): return True\n', path: original + observer}
+    proof = model.Proof((), (), 'passing file inventory missing') if kind == Kind.DEMONSTRATING else None
+    result, base, head = round_result(repository, before, after,
+        Check('inventory observer', kind, (node,), proof=proof))
+    control, = run_checks(repository[0], base, head,
+        (Check('existing inventory control', Kind.REGRESSION, (path + '::test_existing_control',)),),
+        container=Container(IMAGE))
+    assert control.verdict == Verdict.PASS
+    assert (control.tests[0].base, control.tests[0].head) == (Outcome.PASSED, Outcome.PASSED)
+    assert result[0].tests[0].head == Outcome.PASSED
+    if kind == Kind.REGRESSION:
+        assert result[0].verdict == Verdict.FAIL
+        assert result[0].tests[0].base == Outcome.UNCOLLECTED
+    else:
+        assert result[0].verdict == Verdict.PASS
+        assert result[0].tests[0].base == Outcome.ASSERTION
+
+
 def test_needed_observer_imports_are_derived_without_carrying_the_fix(repository):
     results, _, _ = round_result(repository, {'tests/test_queue.py': BASE},
         {'tests/test_queue.py': 'import pytest\n' + HEAD + OBSERVER.replace('    import pytest\n', '')},
