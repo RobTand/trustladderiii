@@ -214,7 +214,7 @@ class TestSizingTests(unittest.TestCase):
             exec(compile(source, str(directory / "BUILD.bazel"), "exec"), namespace)
         else:
             names = (["test_report_limits", "test_harness", "test_future_nested_suite"]
-                     if package == "harness/tests" else ["test_planner", "test_classifier", "test_pb_tests"])
+                     if package == "harness/tests" else ["test_sizing", "test_classifier", "test_pb_tests"])
             for name in names:
                 namespace["tl3_py_test"](name=name, srcs=[name + ".py"])
         self.postgres_packages = namespace["_POSTGRES"]
@@ -259,7 +259,7 @@ class TestSizingTests(unittest.TestCase):
 
     def test_sizing_preserves_network_and_leaves_other_tests_dynamic(self):
         rules = self.rules("workers/tests")
-        self.assertEqual(rules["test_planner"]["exec_properties"].get("dockerNetwork"), "bridge")
+        self.assertEqual(rules["test_sizing"]["exec_properties"].get("dockerNetwork"), "bridge")
         self.assertNotIn("EstimatedComputeUnits", rules["test_classifier"]["exec_properties"])
 
 

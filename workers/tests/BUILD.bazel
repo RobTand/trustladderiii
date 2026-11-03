@@ -4,6 +4,11 @@ py_library(
     name = "worker_process",
     srcs = ["worker_process.py"],
     visibility = ["//visibility:public"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
 )
 
 py_library(
@@ -83,25 +88,10 @@ tl3_py_test(
     srcs = ["test_pb_tests.py"],
     deps = [
         ":conftest",
+        ":worker_process",
         "//harness/src/tl3_harness",
         "//workers/src",
-        "@tl3_pip//langchain_core",
         "@tl3_pip//pytest",
-    ],
-)
-
-tl3_py_test(
-    name = "test_planner",
-    srcs = ["test_planner.py"],
-    deps = [
-        ":conftest",
-        ":test_sizing",
-        ":worker_process",
-        "//workers/src",
-        "@tl3_pip//jsonschema",
-        "@tl3_pip//langchain_core",
-        "@tl3_pip//pytest",
-        "@tl3_pip//tiktoken",
     ],
 )
 
@@ -155,6 +145,7 @@ tl3_py_test(
     srcs = ["test_sizing.py"],
     deps = [
         ":conftest",
+        ":planner_fixtures",
         ":test_workers",
         ":worker_process",
         "//workers/src",
@@ -304,8 +295,8 @@ tl3_py_test(
     srcs = ["test_large_files.py"],
     deps = [
         ":conftest",
+        ":planner_fixtures",
         ":test_maker",
-        ":test_planner",
         ":test_workers",
         ":worker_process",
         "//workers/src",
@@ -422,6 +413,221 @@ tl3_py_test(
         "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//jsonschema",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_pb_tests_base",
+    srcs = ["test_pb_tests_base.py"],
+    deps = [
+        ":conftest",
+        ":worker_process",
+        "//harness/src/tl3_harness",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_pb_tests_forcing",
+    srcs = ["test_pb_tests_forcing.py"],
+    deps = [
+        ":conftest",
+        ":worker_process",
+        "//harness/src/tl3_harness",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_pb_tests_generators",
+    srcs = ["test_pb_tests_generators.py"],
+    deps = [
+        ":conftest",
+        ":worker_process",
+        "//harness/src/tl3_harness",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_pb_tests_rehearsal",
+    srcs = ["test_pb_tests_rehearsal.py"],
+    deps = [
+        ":conftest",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_pb_tests_runtime",
+    srcs = ["test_pb_tests_runtime.py"],
+    deps = [
+        ":conftest",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_pb_tests_candidates",
+    srcs = ["test_pb_tests_candidates.py"],
+    deps = [
+        ":conftest",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_pb_tests_overlay",
+    srcs = ["test_pb_tests_overlay.py"],
+    deps = [
+        ":conftest",
+        ":worker_process",
+        "//harness/src/tl3_harness",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_pb_tests_execution_cache",
+    srcs = ["test_pb_tests_execution_cache.py"],
+    deps = [
+        ":conftest",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_pb_tests_exhaustion",
+    srcs = ["test_pb_tests_exhaustion.py"],
+    deps = [
+        ":conftest",
+        ":worker_process",
+    ],
+)
+
+py_library(
+    name = "planner_fixtures",
+    srcs = ["planner_fixtures.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+        "@tl3_pip//tiktoken",
+    ],
+)
+
+tl3_py_test(
+    name = "test_planner_checks",
+    srcs = ["test_planner_checks.py"],
+    deps = [
+        ":conftest",
+        ":planner_fixtures",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//jsonschema",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_planner_consistency",
+    srcs = ["test_planner_consistency.py"],
+    deps = [
+        ":conftest",
+        ":planner_fixtures",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_planner_context",
+    srcs = ["test_planner_context.py"],
+    deps = [
+        ":conftest",
+        ":planner_fixtures",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//jsonschema",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_planner_execution",
+    srcs = ["test_planner_execution.py"],
+    deps = [
+        ":conftest",
+        ":planner_fixtures",
+        "//workers/src",
+        "@tl3_pip//jsonschema",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_planner_forcing_evidence",
+    srcs = ["test_planner_forcing_evidence.py"],
+    deps = [
+        ":conftest",
+        ":planner_fixtures",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//jsonschema",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_planner_forecast",
+    srcs = ["test_planner_forecast.py"],
+    deps = [
+        ":conftest",
+        ":planner_fixtures",
+        "//workers/src",
+        "@tl3_pip//pytest",
+        "@tl3_pip//tiktoken",
+    ],
+)
+
+tl3_py_test(
+    name = "test_planner_frozen_tests",
+    srcs = ["test_planner_frozen_tests.py"],
+    deps = [
+        ":conftest",
+        ":planner_fixtures",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_planner_protocol",
+    srcs = ["test_planner_protocol.py"],
+    deps = [
+        ":conftest",
+        ":planner_fixtures",
+        "//workers/src",
         "@tl3_pip//pytest",
     ],
 )
