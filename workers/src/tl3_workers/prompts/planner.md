@@ -90,7 +90,13 @@ those marked for review. Return exactly one of these proposals:
   It passes only when the old test fails by assertion on the base under the
   forcing and the new test passes on the change both with and without the
   forcing. The reviewer judges whether the forcing models the symptom the
-  request describes. Repeating a test until it fails does not count. If no
+  request describes. A forced demonstrating check cannot name an invented or
+  newly added test: it runs tests defined at the base. If code asks you to fix
+  such a selection, name real existing base nodes using already-read facts and
+  preserve every deterministic, mutant and other required goal. A passing
+  smoke check is not red proof. If no supported forcing on existing tests can
+  honestly demonstrate the goals, return cant_meet.
+  Repeating a test until it fails does not count. If no
   forcing can recreate the condition, return can't meet once with the reason.
   If no deterministic test can be written and the change edits code, confirm
   the goal with regression or behavior-preserving checks that fit the evidence,
@@ -104,7 +110,18 @@ those marked for review. Return exactly one of these proposals:
   not a node ID; to guard existing behavior, name the existing tests that cover it.
   List in edits_tests, by node ID, every existing test whose definition the
   change modifies, and declare its file; omit edits_tests when the change edits
-  no existing test. A goal that asks the maker to change an existing test, for
+  no existing test. Every declared edit needs a demonstrating check. If code
+  asks you to reconcile an uncovered edit, use only facts already read. Supply
+  the required check, or remove the edit declaration only when the unchanged
+  test already meets the goals. Never remove a required edit, weaken a goal,
+  invent a base failure or count a passing control as red. Return cant_meet
+  when the required proof is unavailable.
+  A correction is bound to the original draft. Keep its files, goals, check
+  kinds and forcings. Only add the missing demonstrating coverage, replace
+  forced non-base selections with existing base nodes, or drop an uncovered
+  unnecessary edit declaration. Do not add files, unrelated checks or goals.
+  An added check may reuse a draft forcing unchanged or run without a forcing.
+  A goal that asks the maker to change an existing test, for
   example to extend, patch, update, fix or rewrite it, needs that test in
   edits_tests; code refuses a plan whose goal asks that of a test a regression
   or behavior-preserving check names. Name such a test in a demonstrating check, never in a regression
@@ -112,9 +129,9 @@ those marked for review. Return exactly one of these proposals:
   so the harness refuses an edit to a test they name. If the change edits only
   tests, such as a deflake that patches the flaky test, an ordinary
   demonstrating check can't show it, because the base run applies the leaf's
-  test edits and runs the same test. A change to tests alone needs a forced
-  reproduction (Q55, #393) on its demonstrating check; if no forcing can be
-  written, return can't meet. State no_design_questions and lands_on_its_own
+  test edits and runs the same test. A change to tests alone needs a forced reproduction (Q55, #393)
+  when it edits a named flaky test. A deterministic helper fix can instead use
+  helper target/observer evidence. If neither mode applies, return can't meet. State no_design_questions and lands_on_its_own
   only when true. If either is false, return can't meet with the unresolved
   question. In slice one, avoid CI, Mergify and test configuration, including
   conftest.py, pytest settings, tox, nox and test scripts called by CI. Both
@@ -235,7 +252,7 @@ and require the run artifacts; do not label it forced_reproduction.environment
 or place it in forcing.environment. Reserved names and prefixes come from
 forcing_capabilities and cannot be overridden. These capabilities describe what
 a future run can prove, never checks already completed.
-Its methods are head, base_head, red_green, forced_reproduction.environment and
+Its methods are head, base_head, red_green, helper_target_observer, forced_reproduction.environment and
 forced_reproduction.patches. Q55 environment and Python patches do not implement
 a pinned CPU artificial contention wrapper. BuildBuddy Remote Bazel evidence
 requires executor buildbuddy_remote_bazel, artifact invocation_url and, when
@@ -247,6 +264,33 @@ Code records evidence_errors. Do not supply that field yourself.
 Preserve ingest.evidence_contract and audit_evidence_contract. Add requirements
 found during planning. Code retains their union and converts any unsupported
 proposal into cant_meet with the exact missing capability before a maker runs.
+
+For a fix to a helper inside configured test files, require method
+`helper_target_observer` in evidence_contract. The target is the real existing
+helper and the observers are new tests of its behavior, including diagnostic
+text from a deliberately failing inner test. If that capability is absent,
+report the missing method through the evidence preflight, without substituting
+review or a flaky-test forcing.
+
+For method `helper_target_observer`, use an unforced demonstrating check with
+`helper_evidence: {"target": "tests/test_helpers.py::_execute", "failure_cases":
+[{"args": [{"$attributes": {"returncode": 1, "stdout": "broken transfer"}}], "kwargs": {}}]}`. Its node_ids
+are the new observer tests. Declare the target and observer files. One such
+check per plan may name multiple observers, in the same file or a separate
+configured test file. The target must be an existing undecorated top-level
+Python function. Preserve its signature, imports and every other existing test
+definition. Add only new undecorated top-level observers. Put any new observer
+imports inside the observer. The harness appends those observers to the real
+base modules without copying the target fix. Every observer must fail by
+assertion on base and pass on head. Declare one to eight known-bad failure_cases
+with args and kwargs, at most 4096 JSON bytes total. Literal JSON values pass
+unchanged; {"$attributes": {...}} creates a SimpleNamespace argument. The trusted
+harness calls the real target and requires AssertionError on both versions.
+These cases preserve failures independently of observer assertions. Choose cases
+that exercise the helper's existing failure contract. Observer names must have
+no existing base binding, including assignment aliases. Helper evidence is not
+a Q55 forcing.
+
 
 A repository with a configured generator also supplies run_generator with executor
 prismabuild_generator. Its runner_features are git_index, scoped_outputs and

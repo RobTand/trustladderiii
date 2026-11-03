@@ -99,6 +99,7 @@ tl3_py_test(
         ":worker_process",
         "//workers/src",
         "@tl3_pip//jsonschema",
+        "@tl3_pip//langchain_core",
         "@tl3_pip//pytest",
         "@tl3_pip//tiktoken",
     ],

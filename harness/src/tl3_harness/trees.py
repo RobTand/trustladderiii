@@ -1,4 +1,5 @@
 import ast
+import hashlib
 import os
 from pathlib import Path, PurePosixPath
 import subprocess
@@ -177,3 +178,112 @@ def changed_existing_tests(base: Path, head: Path, tests: tuple[str, ...]) -> se
         if before is not None and before != read(head):
             changed.add(test)
     return changed
+
+
+def tree_sha256(tree: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(path for path in tree.rglob("*") if path.is_file()):
+        name = path.relative_to(tree).as_posix().encode()
+        content = path.read_bytes()
+        for value in (name, str(path.stat().st_mode & 0o777).encode(), content):
+            digest.update(len(value).to_bytes(8, "big"))
+            digest.update(value)
+    return digest.hexdigest()
+
+
+def bound_names(source: str) -> set[str]:
+    """Conservative static bindings, including aliases and compound statements."""
+    module = ast.parse(source)
+    names = {node.id for node in ast.walk(module)
+             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)}
+    names.update(node.name for node in ast.walk(module)
+                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)))
+    names.update(node.asname or node.name.split(".")[0] for node in ast.walk(module)
+                 if isinstance(node, ast.alias))
+    return names
+
+
+def helper_test_edits(base: Path, head: Path, destination: Path, patterns: list[str], evidence,
+                      observers: tuple[str, ...]) -> dict:
+    """Append new observers to base modules, leaving every old definition intact.
+
+    The supported target is one existing top-level function with an unchanged
+    signature and imports. All other test edits must be the named new observers.
+    The complete module comparison rejects shadow definitions and dependencies
+    changed outside the declared target; no served code is imported here.
+    """
+    def reject(reason):
+        raise ValueError(f"Invalid helper evidence: {reason}")
+
+    target_path, target_name = evidence.target.split("::")
+    allowed = {evidence.target, *observers}
+    if len(allowed) != len(observers) + 1:
+        reject("target and observers must be distinct")
+    for observer in observers:
+        parts = observer.split("::")
+        if len(parts) != 2 or not parts[1].isidentifier() or not parts[1].startswith("test_"):
+            reject("observers must be new, top-level, unparameterized tests")
+    paths = {path.relative_to(tree).as_posix() for tree in (base, head)
+             for path in tree.rglob("*.py") if is_test(path.relative_to(tree).as_posix(), patterns)}
+    if target_path not in paths or not is_test(target_path, patterns):
+        reject("target must be inside a configured test file")
+    sources, definitions = {}, {}
+    for name in sorted(paths):
+        sides = []
+        for label, tree in (("base", base), ("head", head)):
+            path = tree / name
+            try:
+                source = path.read_text() if path.exists() else ""
+                module = ast.parse(source)
+            except (SyntaxError, UnicodeError) as error:
+                reject(f"cannot parse {label} {name}: {type(error).__name__}")
+            sources[label, name] = source
+            if label == "base":
+                bound = bound_names(source)
+                for observer in observers:
+                    path, function = observer.split("::")
+                    if path == name and (function in bound or "*" in bound):
+                        reject(f"observer is already bound on base: {observer}")
+            remaining = []
+            for node in module.body:
+                key = f"{name}::{getattr(node, 'name', '')}"
+                if key in allowed:
+                    if not isinstance(node, ast.FunctionDef) or node.decorator_list:
+                        reject(f"{key} must be an undecorated function")
+                    if (label, key) in definitions:
+                        reject(f"ambiguous definition: {key}")
+                    definitions[label, key] = node
+                else:
+                    remaining.append(node)
+            sides.append(ast.dump(ast.Module(body=remaining, type_ignores=[])))
+        if sides[0] != sides[1]:
+            reject(f"undeclared test code or import changes in {name}")
+    old = definitions.get(("base", evidence.target))
+    new = definitions.get(("head", evidence.target))
+    if old is None or new is None:
+        reject("target must exist once on base and head")
+    if ast.dump(old) == ast.dump(new):
+        reject("target must change")
+    for attribute in ("args", "returns", "type_params", "type_comment"):
+        def shape(node):
+            value = getattr(node, attribute, None)
+            return ast.dump(value) if isinstance(value, ast.AST) else repr(value)
+        if shape(old) != shape(new):
+            reject("target signature must stay unchanged")
+    receipts = {}
+    for observer in observers:
+        if ("base", observer) in definitions or ("head", observer) not in definitions:
+            reject(f"observer must be new on head: {observer}")
+        name = observer.split("::")[0]
+        source = test_function_source(sources["head", name], observer)
+        target = destination / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a") as stream:
+            stream.write("\n" + source)
+        receipts[observer] = hashlib.sha256(source.encode()).hexdigest()
+    def target_hash(label):
+        source = test_function_source(sources[label, target_path], evidence.target)
+        return hashlib.sha256(source.encode()).hexdigest()
+    return {"target": evidence.target, "base_target_sha256": target_hash("base"),
+            "head_target_sha256": target_hash("head"), "observers": receipts,
+            "base_tree_sha256": tree_sha256(destination), "head_tree_sha256": tree_sha256(head)}

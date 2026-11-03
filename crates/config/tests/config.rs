@@ -1699,6 +1699,16 @@ fn repository_always_tests_accepts_twenty_entries_and_names_the_limit_error() {
 }
 
 #[test]
+fn evidence_tools_support_helper_target_observer() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    assert!(
+        config.planning.tool_capabilities[0]
+            .methods
+            .contains(&"helper_target_observer".into())
+    );
+}
+
+#[test]
 fn delegated_attributions_accept_exact_standing_approval_line() {
     let line = "(Posted by the TL3 build coordinator under Rob's standing approval.)";
     let source = format!(

@@ -127,6 +127,22 @@ include findings, using an empty list when there are no non-blocking concerns.
 Do not change files, run tests, publish an approval check, or decide controller
 transitions. Return only the JSON object without Markdown fences or prose.
 
+A helper_evidence check names the real existing helper as target and its tests
+as new observers. The harness preserves every base definition and appends only
+those observers. It rejects changes outside the target and observers in test
+files, including changed imports, signatures, decorators and shadow definitions.
+The base observer must fail by assertion and head must pass. Declare at least
+one known-bad invocation in helper_evidence.failure_cases. Each case is data with
+args and kwargs; literal JSON values pass unchanged, while {"$attributes": {...}}
+creates a SimpleNamespace argument. The trusted driver calls the real target and
+requires AssertionError on both base and head, independently of the observer.
+Reject assertion removal or a changed helper that makes any known-bad case pass.
+The receipt records the cases, driver hash and both preservation verdicts. Do not substitute
+an invented old helper or avoid the real helper. Inspect the actual helper call
+and observer assertions against the issue. The receipt records target source
+hashes, identical observer hashes and both staged tree hashes. Frozen existing
+regression and behavior-preserving definitions, and Q55 forcings, retain their
+existing rules.
 
 Stage ownership (#552): preserve every original request obligation. Split mixed
 implementation/scope/PR goals into atomic obligations: stage maker for edits,

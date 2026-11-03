@@ -61,6 +61,7 @@ pub(crate) fn check(reply: &Value, current: crate::findings::CurrentReview<'_>) 
                 kind: Kind::Reproducing,
                 tests,
                 forcing: None,
+                helper_evidence: None,
             });
         } else {
             item["reason"] = mapping["reason"].clone();

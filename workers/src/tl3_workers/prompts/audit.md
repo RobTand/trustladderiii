@@ -140,6 +140,14 @@ omitted by ingest. Object when ingest loses an execution goal, required artifact
 executor, reproduction method or protected-file dependency. An unsupported
 contract remains unsupported even when its other goals can be implemented.
 
+For a fix to a helper inside configured test files, require method
+`helper_target_observer` in evidence_contract. The target is the real existing
+helper and the observers are new tests of its behavior, including diagnostic
+text from a deliberately failing inner test. If that capability is absent,
+report the missing method through the evidence preflight, without substituting
+review or a flaky-test forcing.
+
+
 A repository with a configured generator also supplies run_generator with executor
 prismabuild_generator. Its runner_features are git_index, scoped_outputs and
 idempotent_import; its method is configured_generation. It returns action_key,

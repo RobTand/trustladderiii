@@ -171,6 +171,7 @@ fn evidence_tools() -> Vec<ToolCapability> {
             "red_green",
             "head",
             "base_head",
+            "helper_target_observer",
             "forced_reproduction.environment",
             "forced_reproduction.patches",
         ]

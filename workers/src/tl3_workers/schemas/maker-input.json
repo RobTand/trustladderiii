@@ -135,7 +135,11 @@
               },
               "forcing": {
                 "$ref": "planner-reply.json#/$defs/forcing"
+              },
+              "helper_evidence": {
+                "$ref": "planner-reply.json#/$defs/helper_evidence"
               }
+
             },
             "required": [
               "name",

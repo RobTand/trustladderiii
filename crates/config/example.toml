@@ -179,7 +179,7 @@ command = ["-m", "tl3_workers", "run"]
 # Evidence capabilities of the installed tool. Omit for these defaults, or use
 # tool_capabilities = [] to disable execution evidence. Entries may narrow these
 # lists. A different executor needs an implemented adapter before configuration.
-tool_capabilities = [{ tool = "run_tests", executor = "prismabuild_pytest", runner_features = ["base_head", "repeat", "parallel", "always_tests", "native_threads_1"], artifacts = ["action_key", "cas_receipt", "sha", "logs", "terminal_verdict"], methods = ["red_green", "head", "base_head", "forced_reproduction.environment", "forced_reproduction.patches"], protected_files = [] }]
+tool_capabilities = [{ tool = "run_tests", executor = "prismabuild_pytest", runner_features = ["base_head", "repeat", "parallel", "always_tests", "native_threads_1"], artifacts = ["action_key", "cas_receipt", "sha", "logs", "terminal_verdict"], methods = ["red_green", "head", "base_head", "helper_target_observer", "forced_reproduction.environment", "forced_reproduction.patches"], protected_files = [] }]
 
 # Additions to the built-in defaults, which always apply and needn't be listed (#388).
 protected_paths = [".github/**", ".mergify.yml", ".mergify.yaml", "**/conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "noxfile.py", "setup.cfg", "pyproject.toml"]

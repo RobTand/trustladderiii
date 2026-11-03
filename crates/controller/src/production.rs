@@ -247,6 +247,9 @@ pub(crate) fn maker_inputs(
         if let Some(forcing) = check.get("forcing") {
             planned["forcing"] = forcing.clone();
         }
+        if let Some(evidence) = check.get("helper_evidence") {
+            planned["helper_evidence"] = evidence.clone();
+        }
         Ok(planned)
     }).collect::<Result<Vec<Value>>>()?;
     Ok(
@@ -371,6 +374,18 @@ mod tests {
         let inputs = maker_inputs(&brief, &plan).unwrap();
         assert_eq!(inputs["plan"]["checks"][0]["forcing"], forcing);
         assert!(inputs["plan"]["checks"][1].get("forcing").is_none());
+    }
+
+    #[test]
+    fn helper_target_carries_to_the_maker() {
+        let brief = json!({"brief":"Improve diagnostics", "goals":[{"description":"Explain failure", "verification":"test"}]});
+        let declaration = json!({"target":"test_helper.py::_execute", "failure_cases":[{"args":[false],"kwargs":{}}]});
+        let plan = json!({"kind":"leaf","files":["test_helper.py"],"checks":[
+            {"kind":"demonstrating","node_ids":["test_helper.py::test_diagnostic"],"goal_ids":[0],"helper_evidence":declaration}]});
+        assert_eq!(
+            maker_inputs(&brief, &plan).unwrap()["plan"]["checks"][0]["helper_evidence"],
+            declaration
+        );
     }
 
     #[test]

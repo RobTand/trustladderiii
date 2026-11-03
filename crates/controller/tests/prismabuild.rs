@@ -130,6 +130,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
                 kind: Kind::Demonstrating,
                 tests: vec!["test_value.py::test_value".into()],
                 forcing: None,
+                helper_evidence: None,
             }],
         }),
     }
@@ -747,6 +748,97 @@ fn forced_check_is_staged_and_reaches_review() {
         ),
         "a forced check needs its forced head outcome"
     );
+}
+
+fn helper_target_identity_is_staged_and_reaches_review() {
+    let declaration = serde_json::json!({"target":"test_value.py::_execute",
+        "failure_cases":[{"args":[false],"kwargs":{}}]});
+    for tamper in [
+        "none",
+        "target",
+        "old_identity",
+        "observer",
+        "base_passed",
+        "missing_preservation",
+        "changed_cases",
+        "failure_lost",
+        "missing",
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let mut delivery = run(root.path(), false);
+        let mut value = serde_json::to_value(delivery.checks.as_ref().unwrap()).unwrap();
+        value["plan"][0]["helper_evidence"] = declaration.clone();
+        delivery.checks = Some(serde_json::from_value::<CheckRun>(value).unwrap());
+        let planned = &delivery.checks.as_ref().unwrap().plan[0];
+        let mut observers = serde_json::Map::new();
+        observers.insert(planned.tests[0].clone(), "c".repeat(64).into());
+        let mut identity = serde_json::json!({"target":declaration["target"],
+            "base_target_sha256":"a".repeat(64), "head_target_sha256":"b".repeat(64),
+            "base_tree_sha256":"d".repeat(64), "head_tree_sha256":"e".repeat(64), "observers":observers,
+            "failure_cases":declaration["failure_cases"], "failure_driver_sha256":"f".repeat(64),
+            "failure_preservation":[{"base":"passed", "head":"passed"}]});
+        if tamper == "target" {
+            identity["target"] = "test_value.py::fake_old".into();
+        }
+        if tamper == "old_identity" {
+            identity["base_target_sha256"] = identity["head_target_sha256"].clone();
+        }
+        if tamper == "observer" {
+            identity["observers"] = serde_json::json!({});
+        }
+        if tamper == "missing_preservation" {
+            identity
+                .as_object_mut()
+                .unwrap()
+                .remove("failure_preservation");
+        }
+        if tamper == "changed_cases" {
+            identity["failure_cases"][0]["args"] = serde_json::json!([true]);
+        }
+        if tamper == "failure_lost" {
+            identity["failure_preservation"][0]["head"] = "assertion".into();
+        }
+        let mut result = serde_json::json!({"name":planned.name,"kind":"demonstrating","custody":"in-process",
+            "verdict":"pass","helper_evidence":identity,"tests":[{"test":planned.tests[0],
+            "base":if tamper == "base_passed" {"passed"} else {"assertion"},"head":"passed","pre_existing":false,"passed":true}]});
+        if tamper == "missing" {
+            result.as_object_mut().unwrap().remove("helper_evidence");
+        }
+        let mut adapter = fixture(root.path(), "done");
+        fs::write(
+            root.path().join("queue/recorded_results.json"),
+            serde_json::to_vec(&serde_json::json!([result])).unwrap(),
+        )
+        .unwrap();
+        adapter.execute(&delivery).unwrap();
+        let staged = fs::read_dir(root.path().join("queue"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.extension().is_some_and(|e| e == "request"))
+            .unwrap();
+        let request: serde_json::Value =
+            serde_json::from_slice(&fs::read(staged).unwrap()).unwrap();
+        assert_eq!(request["plan"][0]["helper_evidence"], declaration);
+        let ended = completion(&mut adapter, &delivery);
+        match &ended.observations[..] {
+            [
+                Observation::Checks {
+                    report,
+                    pass,
+                    results,
+                    ..
+                },
+            ] => {
+                assert_eq!(*report && *pass, tamper == "none", "{tamper}");
+                if tamper == "none" {
+                    assert_eq!(results[0]["helper_evidence"], identity);
+                    assert_eq!(results[0]["tests"][0]["base"], "assertion");
+                    assert_eq!(results[0]["tests"][0]["head"], "passed");
+                }
+            }
+            other => panic!("expected check observation, got {other:?}"),
+        }
+    }
 }
 
 fn pending_and_withdrawal() {
@@ -2349,6 +2441,10 @@ fn main() {
             "forced_check_is_staged_and_reaches_review",
             forced_check_is_staged_and_reaches_review,
         ),
+        (
+            "helper_target_identity_is_staged_and_reaches_review",
+            helper_target_identity_is_staged_and_reaches_review as fn(),
+        ),
         ("source_skips_bad_waits", source_skips_bad_waits as fn()),
         (
             "live_waits_do_not_look_on_bell_reset",
@@ -2460,7 +2556,7 @@ fn main() {
     quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
     println!("test unreadable_job_record_is_a_failed_read ... ok");
     database.stop();
-    println!("49 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("50 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
@@ -2915,6 +3011,7 @@ fn result_budget_rejects_repeated_checks() {
             kind: Kind::Regression,
             tests: vec!["test_value.py::test_value".into()],
             forcing: None,
+            helper_evidence: None,
         })
         .collect();
     let mut adapter = fixture(root.path(), "pending");
