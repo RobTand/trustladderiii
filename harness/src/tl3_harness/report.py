@@ -47,7 +47,16 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
             raise InvalidReport("invalid failure exception")
         record = {key: value for key, value in record.items() if key not in ("message", "exception")}
         match record:
-            case {"event": "collection", "tests": list(names)} if set(record) == {"event", "tests"}:
+            case {"event": "collection", "tests": list(names)} if set(record) in (
+                    {"event", "tests"}, {"event", "tests", "saturation"}):
+                if 'saturation' in record:
+                    value = record['saturation']
+                    if (not isinstance(value, dict) or set(value) != {'unit', 'cases', 'remaining'}
+                            or not isinstance(value['unit'], list) or not value['unit']
+                            or any(not isinstance(member, str) or member not in tests for member in value['unit'])
+                            or type(value['cases']) is not int or type(value['remaining']) is not int
+                            or not 0 <= value['remaining'] < value['cases']):
+                        raise InvalidReport("invalid selection saturation")
                 if (selected is not None or not all(isinstance(name, str) for name in names)
                         or len(set(names)) != len(names) or any(not any(selects(test, name) for test in tests) for name in names)):
                     raise InvalidReport("invalid test population")

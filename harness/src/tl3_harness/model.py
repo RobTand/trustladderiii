@@ -6,6 +6,7 @@ import re
 
 
 ALWAYS_CHECK = "Repository always tests"
+SELECTED_CHECK = "Existing tests that import the change"
 
 
 class HarnessInputError(ValueError):
@@ -227,7 +228,7 @@ class Check:
             raise HarnessInputError("a check repeats a test")
         for test in self.tests:
             path, *names = test.split("::")
-            if (not names and (self.kind != Kind.REGRESSION or self.name != ALWAYS_CHECK) or not all(names) or not path.endswith(".py")
+            if (not names and (self.kind != Kind.REGRESSION or self.name not in (ALWAYS_CHECK, SELECTED_CHECK)) or not all(names) or not path.endswith(".py")
                     or path.startswith(("/", "-")) or ".." in path.split("/")
                     or "\\" in path or "\x00" in test):
                 raise HarnessInputError(f"not a pytest selector: {test!r}")
@@ -254,6 +255,7 @@ class Result:
     custody: Custody = field(default=Custody.IN_PROCESS, init=False)
     forcing: Forcing | None = None
     helper_evidence: dict | None = None
+    selection: dict | None = None
 
 
 MESSAGE_LIMIT = 1000

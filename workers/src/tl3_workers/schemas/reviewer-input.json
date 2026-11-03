@@ -171,6 +171,12 @@
     "scope_diff": {
       "type": "string"
     },
+    "unresolved_displaced_failures": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "minItems": 1,
+      "description": "Historical selected failures without verified complete-unit head outcomes. These remain unresolved even when no test file was edited."
+    },
     "edited_selected_tests": {
       "type": "array",
       "items": {
@@ -291,6 +297,10 @@
           },
           "custody": {
             "const": "in-process"
+          },
+          "selection": {
+            "type": "object",
+            "description": "The trusted harness's bounded complete-unit admission and unchecked-suffix receipt."
           },
           "forcing": {
             "$ref": "planner-reply.json#/$defs/forcing"
