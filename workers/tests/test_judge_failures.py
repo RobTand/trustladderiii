@@ -101,7 +101,9 @@ def test_each_judge_cause_reaches_failed_span_and_run_record(
     assert reason["failure_stage"] == f"{stage} judge failure"
     assert reason["failure_message"].startswith(f"{stage} judge failure: {category}")
     if mode == "raised" and category in {"quota", "refusal", "http"}:
-        assert str({"quota": 429, "refusal": 403, "http": 502}[category]) in reason["failure_message"]
+        status = str({"quota": 429, "refusal": 403, "http": 502}[category])
+        assert status in reason["failure_message"]
+        assert reason["failure_http_status"] == status
     records = [json.loads(line) for line in log.read_text().splitlines()]
     packet = ExportTraceServiceRequest.FromString(base64.b64decode(
         next(item["otlp"] for item in records if item["kind"] == "final")))

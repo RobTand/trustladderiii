@@ -11,6 +11,8 @@ mod fake;
 mod input_contract_tests;
 mod json;
 pub(crate) mod ladder;
+#[cfg(test)]
+mod postmortem_failure_tests;
 mod process;
 pub(crate) mod protocol;
 pub(crate) mod reproducing;
