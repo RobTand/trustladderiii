@@ -227,7 +227,7 @@ Agreed (Q32); the model trials arrive in slice three. The judge's postmortem was
 
 **Cleanup runs first and right away.** A merge moves the leaf to Stopping. Teardown stops anything still running, removes the worktree and deletes the branch, checking before each step so that a rerun does nothing. Only then does the leaf close and its parent hear about it. The code is already on main and the transcripts are in MLflow, so the postmortem doesn't need the worktree.
 
-**The postmortem runs in the background.** It never holds up delivery. Code grades are recorded when the node closes (#403). The judge's postmortem runs on the workers' `postmortem` role (#403). It is recorded as owed work, so a crash can't lose it, and it runs at low priority on spare quota.
+**The postmortem runs in the background.** It never holds up delivery. Code grades are recorded when the node closes (#403). The judge's postmortem runs on the workers' `postmortem` role (#403). It is recorded as owed work, so a crash can't lose it, and it runs in its own two-slot lane, subject to the quota of the models it uses (Q39 amended, #642).
 
 **Port TL1's postmortem rather than redesigning it.** Start from TL1's rubric (`src/trustladder/rubric.toml`, version 1) and its judge prompt (`prompts/judge.md`):
 
@@ -560,7 +560,7 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 - **Q36 Rank:** the number of other pieces waiting on a piece, directly or through a chain of waits, with ties going to the older piece.
 - **Q37 Manual priority:** none in slices one and two. A label such as `tl3-urgent` could come later. Approved by Rob, 2026-11-02 (#416, #417): issue priorities `P0`–`P3` order agent-pool grants (Q39) and can raise starting credit.
 - **Q38 Shared files:** the age rule goes. Whichever piece unblocks more gets the file, with ties going to the older piece.
-- **Q39 Agent pool:** the same ordering. Postmortems run only on spare capacity. Approved by Rob, 2026-11-02 (#417), pulled forward from slice two: grants are strictly priority-first, P0 to P3 then unranked, with ties going to the older ticket. Starvation is accepted, as in Q30.
+- **Q39 Agent pool:** the same ordering. Approved by Rob, 2026-11-02 (#417), pulled forward from slice two: grants are strictly priority-first, P0 to P3 then unranked, with ties going to the older ticket. Starvation is accepted for delivery grants, as in Q30. Rob amended Q39 on 2026-11-03 (#642): "postmortems should not eat the same budget as everything else. Everything gets a postmortem regardless of budget." Postmortems have their own lane with at most two running concurrently, oldest owed first. They neither wait for nor consume agent-pool grants, have no daily allowance, and are never ordered behind delivery. Model quota for entry 0 and entry 1 if present, the failure-streak pause, single-run recovery validation (#632), and the deadline still apply.
 
 **Proofs**
 

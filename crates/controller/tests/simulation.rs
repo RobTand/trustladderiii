@@ -282,7 +282,10 @@ fn main() {
             "postmortem_quota_on_a_postmortem_model_stops_claims",
             postmortems::quota_on_a_postmortem_model_stops_claims,
         ),
-        ("postmortem_claims_per_day", postmortems::claims_per_day),
+        (
+            "postmortem_claims_without_daily_limit",
+            postmortems::claims_without_daily_limit,
+        ),
         (
             "postmortem_stalls_fail_with_no_progress",
             postmortems::stalls_fail_with_no_progress,

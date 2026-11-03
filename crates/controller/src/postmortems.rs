@@ -1,6 +1,6 @@
 //! Owed postmortems and code grades (#403, Q32). Both are recorded in the
-//! commit that makes them owed, outside the kernel. The runner then judges one
-//! postmortem at a time on spare agent-pool capacity (Q39).
+//! commit that makes them owed, outside the kernel. The runner uses a
+//! separate lane with at most two concurrent postmortems (Q39, #642).
 
 use crate::executor::{CommentKind, Completion, Delivery, Observation, Output};
 use crate::status::PostmortemBlock;
@@ -21,21 +21,8 @@ pub(crate) const JOBS: &str = "postmortem_jobs";
 /// Q32: a postmortem recommends at most three changes.
 pub(crate) const MAX_RECOMMENDATIONS: usize = 3;
 
-/// Q39: a postmortem starts only on spare agent-pool capacity, so it is the
-/// pool's lowest priority. Nothing may wait for a pool grant: a node with a
-/// ticket and no grant waits, whether for the pool or for a slot. And the
-/// nodes holding the pool, plus the postmortems already `running`, must be
-/// fewer than the pool's capacity. The kernel never sees a postmortem, so one
-/// that runs while new work starts uses one model session beyond the pool.
-/// #417's priority-first pool can order this test with its own.
-pub(crate) fn spare_pool_capacity(world: &World, running: usize) -> bool {
-    let waiting = world
-        .nodes
-        .iter()
-        .any(|node| node.ticket.is_some() && !node.pool);
-    let holders = world.nodes.iter().filter(|node| node.pool).count();
-    !waiting && holders + running < usize::from(world.pool_capacity)
-}
+/// Q39, Rob 2026-11-03 (#642): postmortems have their own lane.
+const CONCURRENCY: usize = 2;
 
 /// `rec-` and 16 hex digits of sha256 over the normalised target, operation,
 /// before and after: the same change counts the same in every postmortem.
@@ -424,24 +411,22 @@ pub(crate) fn stalled(mut completion: Completion) -> Completion {
     completion
 }
 
-/// How fast the spare-capacity runner may spend model quota (#486).
+/// The models whose quota the postmortem lane needs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PostmortemPace {
-    /// Claims per UTC day, so a backlog drains over days, not in one burst.
-    pub per_day: u32,
-    /// The postmortem ladder's models. While any of them has reported quota,
-    /// nothing is claimed: spare pool slots aren't spare quota.
+    /// Entry 0 writes the postmortem; entry 1, if present, grades it.
+    /// While either has reported quota, nothing is claimed.
     pub models: Vec<String>,
 }
 
 impl PostmortemPace {
     pub fn from_config(config: &tl3_config::Config) -> Self {
         Self {
-            per_day: config.limits.postmortems_per_day,
             models: config
                 .models
                 .postmortem
                 .iter()
+                .take(2)
                 .map(|model| model.name.clone())
                 .collect(),
         }
@@ -502,13 +487,12 @@ impl crate::Controller {
         self.postmortems = Some(pace);
     }
 
-    /// Claim the oldest owed postmortem when the pool has spare capacity, in
+    /// Claim the oldest owed postmortem when the lane has a free slot, in
     /// the commit that creates its worker delivery.
     pub(crate) fn start_postmortem(&mut self, snapshot: &Snapshot) -> Result<bool> {
         let Some(pace) = &self.postmortems else {
             return Ok(false);
         };
-        let per_day = pace.per_day;
         let quota = snapshot
             .rows
             .iter()
@@ -542,24 +526,18 @@ impl crate::Controller {
         let validation = recovery
             .as_ref()
             .is_some_and(|state| matches!(state.validation, Validation::Pending));
-        let allowance_since = recovery.as_ref().map_or(0, |state| state.since);
-        if !validation && self.store.postmortem_claims_today_since(allowance_since)? >= per_day {
-            return self.postmortem_blocked(snapshot, Some(PostmortemBlock::DailyAllowance));
-        }
-        // Recovery never bypasses model quota or Q39.
         if quota {
             return self.postmortem_blocked(snapshot, Some(PostmortemBlock::ModelQuota));
         }
         let world = crate::snapshot::decode(snapshot)?;
-        if world
-            .nodes
-            .iter()
-            .any(|node| node.ticket.is_some() && !node.pool)
+        if recovery
+            .as_ref()
+            .is_some_and(|state| matches!(state.validation, Validation::Running { .. }))
         {
-            return self.postmortem_blocked(snapshot, Some(PostmortemBlock::Q39WaitingDelivery));
+            return self.postmortem_blocked(snapshot, Some(PostmortemBlock::Validating));
         }
-        if running > 0 || !spare_pool_capacity(&world, running) {
-            return self.postmortem_blocked(snapshot, Some(PostmortemBlock::NoSpareCapacity));
+        if running >= CONCURRENCY {
+            return self.postmortem_blocked(snapshot, Some(PostmortemBlock::LaneFull));
         }
         let node = NodeId(
             owed.node
@@ -1450,44 +1428,6 @@ mod tests {
         assert!(
             stopped.contains(&("queue", None)),
             "an unmerged node has no queue grade"
-        );
-    }
-
-    fn world() -> World {
-        let mut world = World::new(&[2], 2);
-        for _ in 0..3 {
-            world.nodes.push(Node::new(RepoId(0)));
-        }
-        world
-    }
-
-    #[test]
-    fn a_postmortem_starts_only_on_spare_pool_capacity() {
-        let free = world();
-        assert!(spare_pool_capacity(&free, 0), "an idle pool has room");
-        let mut one = world();
-        one.nodes[0].pool = true;
-        assert!(spare_pool_capacity(&one, 0), "one of two grants is free");
-        assert!(
-            !spare_pool_capacity(&one, 1),
-            "a running postmortem counts against the pool"
-        );
-        let mut full = world();
-        full.nodes[0].pool = true;
-        full.nodes[1].pool = true;
-        assert!(!spare_pool_capacity(&full, 0), "every grant is held");
-        let mut waiting = world();
-        waiting.nodes[2].ticket = Some(7);
-        assert!(
-            !spare_pool_capacity(&waiting, 0),
-            "a node waiting for a grant goes first"
-        );
-        let mut holding = world();
-        holding.nodes[0].pool = true;
-        holding.nodes[0].ticket = Some(3);
-        assert!(
-            spare_pool_capacity(&holding, 0),
-            "a holder with a ticket waits for nothing"
         );
     }
 

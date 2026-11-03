@@ -18,9 +18,8 @@ const NONE_RECORDED: &str = "none recorded";
 #[serde(rename_all = "snake_case")]
 pub enum PostmortemBlock {
     PausedStreak,
-    DailyAllowance,
-    Q39WaitingDelivery,
-    NoSpareCapacity,
+    LaneFull,
+    Validating,
     ModelQuota,
 }
 
@@ -28,9 +27,8 @@ impl PostmortemBlock {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::PausedStreak => "paused_streak",
-            Self::DailyAllowance => "daily_allowance",
-            Self::Q39WaitingDelivery => "q39_waiting_delivery",
-            Self::NoSpareCapacity => "no_spare_capacity",
+            Self::LaneFull => "lane_full",
+            Self::Validating => "validating",
             Self::ModelQuota => "model_quota",
         }
     }
@@ -38,6 +36,8 @@ impl PostmortemBlock {
 
 #[derive(Debug, PartialEq)]
 pub struct Status {
+    pub postmortem_running: i64,
+    pub postmortem_owed: i64,
     pub postmortem_blocked: Option<PostmortemBlock>,
     pub requests: Vec<RequestStatus>,
     pub memory: MemoryStatus,
@@ -164,6 +164,9 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
             ))
         })
         .collect();
+    let postmortem_counts = tx.query_one(
+        "SELECT count(*) FILTER (WHERE status = 'running'), count(*) FILTER (WHERE status = 'owed') FROM tl3_postmortems", &[]
+    ).map_err(tl3_store::Error::from)?;
     let postmortem_blocked = tx
         .query_opt(
             "SELECT value FROM tl3_world WHERE table_name = $1 AND row_id = 'status'",
@@ -172,12 +175,18 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
         .map_err(tl3_store::Error::from)?
         .map(|row| {
             let value: serde_json::Value = row.get(0);
-            crate::decode_stored::<Option<PostmortemBlock>>(value["blocked"].clone())
+            // Old Q39 gates can remain stored until the runner's next pass.
+            match value["blocked"].as_str() {
+                Some("daily_allowance" | "q39_waiting_delivery" | "no_spare_capacity") => Ok(None),
+                _ => crate::decode_stored::<Option<PostmortemBlock>>(value["blocked"].clone()),
+            }
         })
         .transpose()?
         .flatten();
     tx.commit().map_err(tl3_store::Error::from)?;
     Ok(Status {
+        postmortem_running: postmortem_counts.get(0),
+        postmortem_owed: postmortem_counts.get(1),
         postmortem_blocked,
         requests: board
             .cards
@@ -238,6 +247,12 @@ pub fn render_text(status: &Status) -> String {
     for note in &status.quota_models {
         writeln!(output, "{}", plain(note)).expect("write to string");
     }
+    writeln!(
+        output,
+        "Postmortems: {} running, {} owed",
+        status.postmortem_running, status.postmortem_owed
+    )
+    .expect("write to string");
     if let Some(reason) = status.postmortem_blocked {
         writeln!(output, "Postmortems blocked: {}", reason.as_str()).expect("write to string");
     }
@@ -290,6 +305,12 @@ pub fn render_html(status: &Status) -> String {
     for note in &status.quota_models {
         write!(output, "<p>{}</p>", escape_html(&plain(note))).expect("write to string");
     }
+    write!(
+        output,
+        "<p>Postmortems: {} running, {} owed</p>",
+        status.postmortem_running, status.postmortem_owed
+    )
+    .expect("write to string");
     if let Some(reason) = status.postmortem_blocked {
         write!(output, "<p>Postmortems blocked: {}</p>", reason.as_str()).expect("write to string");
     }
@@ -359,6 +380,8 @@ mod tests {
             "long".repeat(32_768)
         );
         let model = Status {
+            postmortem_running: 0,
+            postmortem_owed: 0,
             postmortem_blocked: None,
             unassigned_incidents: vec![],
             quota_models: vec![],

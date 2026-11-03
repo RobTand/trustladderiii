@@ -1026,24 +1026,18 @@ it holds no pool grant, and no delivery work waits on it.
 - **When.** tl3d calls `run_postmortems` as it starts; a controller without it,
   such as a test whose workers run no postmortem role, leaves owed rows owed.
   `drive_once` then calls `start_postmortem` on every pass, so a postmortem
-  starts when a commit makes room, never on a timer. It starts only while no
-  postmortem is running and `spare_pool_capacity(world, running)` holds: no node
-  has a ticket without a grant, and the grant holders plus the running
-  postmortems are fewer than `pool_capacity`. That one function is the place a
-  priority-first pool (#417) orders postmortems last. The kernel never sees a
-  postmortem, so one that runs while new work starts can use one model session
-  beyond the pool.
-- **Pace (#486).** Spare slots aren't spare quota. `start_postmortem` asks the
-  store for an owed row first and decodes the world only when one exists. It
-  claims nothing while a model in the postmortem ladder (`PostmortemPace`, from
-  `models.postmortem`) has a `model_quotas` row, and at most
-  `limits.postmortems_per_day` (default 10) a UTC day, counted by claim time in
-  `tl3_postmortem_claims`. Recovery resets the counted allowance to claims after
-  the recovery revision. It preserves every earlier claim and outcome for audit;
-  the configured daily limit does not increase. The validation claim counts
-  toward the reset allowance. A day's limit or an ended quota is noticed on the
-  next drive pass, so owed rows drain over days, not in one burst.
-- **Claim.** The oldest owed row, first runs before retries, becomes `running` with a `run_key`, which is
+  starts when a commit makes room, never on a timer. The lane has two slots,
+  independent of delivery's agent pool. Pool holders and delivery waiters never
+  block it, and running postmortems never consume delivery grants (Q39 amended
+  by Rob on 2026-11-03, #642).
+- **Quota and recovery.** `start_postmortem` asks the store for an owed row first.
+  It claims nothing while either model the postmortem uses has a `model_quotas`
+  row: entry 0 writes the postmortem and entry 1, if present, grades it. There is
+  no daily allowance. Three consecutive failures pause new claims. Recovery
+  resets the failure boundary and retains every claim and outcome for audit.
+  A single validation run must succeed before the lane resumes; failure pauses
+  it again (#632). The existing deadline still applies.
+- **Claim.** The oldest owed row, including retries, becomes `running` with a `run_key`, which is
   also its delivery's key (`postmortem:<id>:<revision>`), in the commit that
   writes the delivery: its effect, its watch, its allowance and its
   `postmortem_jobs` row. `PostmortemUpdate::Claim` fails that commit if the row

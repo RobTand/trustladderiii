@@ -653,7 +653,6 @@ fn a_postmortem_request_carries_a_valid_case_file() {
         "the run's whole wall-clock allowance (#486)"
     );
     assert_eq!(config.limits.postmortem_deadline_secs, 1200);
-    assert_eq!(config.limits.postmortems_per_day, 10);
     assert!(
         inputs["case"]["grades"]
             .as_array()
