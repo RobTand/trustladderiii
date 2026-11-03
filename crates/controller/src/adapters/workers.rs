@@ -476,9 +476,10 @@ impl Supervisor {
                 .ok_or(Error::Invalid("worker materials must be an object"))?
                 .remove("standing_rules");
         }
-        // A narrowed request keeps the pristine issue for a later narrowing; no role reads it.
+        // The pristine issue and material provenance belong to the controller.
         if let Some(inputs) = inputs.as_object_mut() {
             inputs.remove("original_issue");
+            inputs.remove("request_origin");
         }
         // #422: recall upfront. Ingest reads the issue, the planner its brief and
         // goals, and the reviewer the repo's conventions. An outage degrades to none.
