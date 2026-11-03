@@ -247,6 +247,52 @@ mod tests {
     }
 
     #[test]
+    fn a_maker_retro_is_kept_with_its_own_usage() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path();
+        request(path);
+        write(&path.join("exit.json"), &json!({"code":0, "finished_ms":9000})).unwrap();
+        let retro = json!({"status":"recorded","input_tokens":7777,"cached_tokens":7000,
+            "output_tokens":50,"result":{"slowed_by":["Three reads repeated."],"missing":[],
+            "checks":[],"noise":[]}});
+        write(
+            &path.join("facts.json"),
+            &json!({"started_ms":1000, "finished_ms":9000, "outcome":"succeeded",
+            "model":"fixture-model", "release":null, "input_tokens":100, "cached_tokens":null,
+            "output_tokens":1, "usage_complete":true, "trace_id":null, "failure":null,
+            "retro": retro}),
+        )
+        .unwrap();
+        let facts = completed(path).unwrap().unwrap();
+        let stored = serde_json::to_value(&facts).unwrap();
+        assert_eq!(stored["retro"], retro);
+        assert_eq!(stored["input_tokens"], 100, "retro usage stays out of the run's totals");
+
+        for invalid in [json!("a sentence"), json!({"status":"guessed"})] {
+            write(
+                &path.join("facts.json"),
+                &json!({"started_ms":1000, "finished_ms":9000, "outcome":"succeeded",
+                "model":"fixture-model", "release":null, "input_tokens":100, "cached_tokens":null,
+                "output_tokens":1, "trace_id":null, "failure":null, "retro": invalid}),
+            )
+            .unwrap();
+            assert!(completed(path).is_err(), "{invalid}");
+        }
+        write(
+            &path.join("facts.json"),
+            &json!({"started_ms":1000, "finished_ms":9000, "outcome":"succeeded",
+            "model":"fixture-model", "release":null, "input_tokens":100, "cached_tokens":null,
+            "output_tokens":1, "trace_id":null, "failure":null}),
+        )
+        .unwrap();
+        let older = serde_json::to_value(completed(path).unwrap().unwrap()).unwrap();
+        assert!(
+            older.get("retro").is_none(),
+            "rows without a retro keep their stored form"
+        );
+    }
+
+    #[test]
     fn old_attempts_do_not_acquire_effect_times_as_worker_measurements() {
         let root = tempfile::tempdir().unwrap();
         request(root.path());
