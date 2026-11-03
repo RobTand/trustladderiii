@@ -273,7 +273,7 @@ def _crate_test(kind, package, name, source, harness, options):
     compile_data = options["compile_data"]
     if native.package_name() == "crates/controller":
         sources = [":library_sources", source] + native.glob(
-            (["tests/loom/**", "tests/fixtures/narrowing/**", "tests/fixtures/worker-replies-d8e4f2a8.jsonl"] if kind == "lib" else
+            (["tests/loom/**", "tests/fixtures/decisions/**", "tests/fixtures/narrowing/**", "tests/fixtures/worker-replies-d8e4f2a8.jsonl"] if kind == "lib" else
              ([source.removesuffix(".rs") + "/**"] if not source.startswith("//") else [])) +
             _CONTROLLER_TEST_SOURCES.get(source, []),
             allow_empty = True,
