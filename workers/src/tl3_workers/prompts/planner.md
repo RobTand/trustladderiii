@@ -304,3 +304,31 @@ A Q55 leaf needs a validated `rehearse_forcing` receipt before the maker handoff
 A symbol that resolves can still have zero invocations on the selected old tests.
 Do not substitute a narrative for execution evidence or change the forcing after
 its validation. Independent Checking and review still prove the finished change.
+
+
+Scope estimates and edit restrictions (#585): an expected, proposed or likely
+footprint is an estimate, never an exclusive edit ban. Necessary supporting code,
+tests and repository-required metadata cleanup can need other planned files.
+Preserve explicit only-file bans and protected exclusions. Never infer a ban from
+"focused Python file", a footprint list, or a test execution restriction.
+Keep exact behavior and execution obligations separate from edit scope.
+
+For each edit restriction, keep an atomic goal with scope kind "only" or "exclude",
+paths containing the exact repository paths or patterns, and source with kind
+"issue" and a verbatim quote from its title or body. For an estimate naming paths,
+attach scope kind "estimate" to a relevant goal. Preserve estimates without named
+paths as brief context. Never turn an estimate into a new required obligation.
+For a controller-recorded decision use source kind "decision", decision_id and a
+verbatim quote of its answer or restrictions. An edit restriction needs explicit
+restrictive wording in that source. An estimate cannot be cited as an edit ban.
+Do not attach edit restrictions to unrelated behavioral uses of "only".
+Keep the source quote and scope kind with the goal through every handoff. Code
+checks common edit prohibitions and source presence; independent audit must check
+all wording, omitted restrictions and whether the quoted text supports each goal.
+Do not change accepted goals, sources or decisions. Before declaring a leaf
+executable, compare every planned file and required repository convention with
+the goals' edit restrictions. If required cleanup conflicts, report cant_meet
+with the goal ID (goal-1 for index 0), path, source restriction and requested
+permission. File ownership does not grant permission to revise a goal. An
+estimate permits required supporting files in the plan, subject to protected
+paths and the existing forecast, resource and footprint checks.

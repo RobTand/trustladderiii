@@ -160,3 +160,26 @@ idempotent_import; its method is configured_generation. It returns action_key,
 cas_receipt, input_tree, output_tree, artifact_sha256, logs and terminal_verdict.
 Use that capability only when it appears in tool_capabilities. It cannot edit
 protected files or replace the independent test executor.
+
+
+Scope estimates and edit restrictions (#585): an expected, proposed or likely
+footprint is an estimate, never an exclusive edit ban. Necessary supporting code,
+tests and repository-required metadata cleanup can need other planned files.
+Preserve explicit only-file bans and protected exclusions. Never infer a ban from
+"focused Python file", a footprint list, or a test execution restriction.
+Keep exact behavior and execution obligations separate from edit scope.
+
+For each edit restriction, keep an atomic goal with scope kind "only" or "exclude",
+paths containing the exact repository paths or patterns, and source with kind
+"issue" and a verbatim quote from its title or body. For an estimate naming paths,
+attach scope kind "estimate" to a relevant goal. Preserve estimates without named
+paths as brief context. Never turn an estimate into a new required obligation.
+For a controller-recorded decision use source kind "decision", decision_id and a
+verbatim quote of its answer or restrictions. An edit restriction needs explicit
+restrictive wording in that source. An estimate cannot be cited as an edit ban.
+Do not attach edit restrictions to unrelated behavioral uses of "only".
+Keep the source quote and scope kind with the goal through every handoff. Code
+checks common edit prohibitions and source presence; independent audit must check
+all wording, omitted restrictions and whether the quoted text supports each goal.
+Preserve scope meaning in both the brief and goals. Never add "the only edited
+file" unless the issue or an applicable accepted decision explicitly requires it.

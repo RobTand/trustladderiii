@@ -56,9 +56,8 @@ def test_scope_source_survives_ingest_and_downstream_contracts(kind, description
     from tl3_workers.contracts import registry, schema
     from jsonschema import Draft202012Validator
     for name in ('maker-input', 'reviewer-input'):
-        contract = schema(name)
-        contract['required'] = ['goals']
-        Draft202012Validator(contract, registry=registry()).validate({'goals': identified})
+        contract = {'$ref': schema(name)['$id'] + '#/properties/goals'}
+        Draft202012Validator(contract, registry=registry()).validate(identified)
     assert reply['goals'] == goals
 
 
