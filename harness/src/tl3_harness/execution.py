@@ -543,8 +543,7 @@ def helper_failure_preservation(tool, staged, head, evidence, container, root, p
     """Trusted driver calls the real target with data, independently of observers."""
     module, function = evidence.target.split("::")
     source = """import json
-import runpy
-import sys
+import pytest
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -557,9 +556,9 @@ def argument(value):
     for index, encoded in enumerate(evidence.failure_cases):
         source += f"""
 
-def test_failure_{index}():
-    sys.path.insert(0, str(Path({module!r}).resolve().parent))
-    target = runpy.run_path({module!r})[{function!r}]
+def test_failure_{index}(request):
+    module = pytest.Module.from_parent(request.session, path=Path({module!r}).resolve()).obj
+    target = getattr(module, {function!r})
     case = json.loads({encoded!r})
     args = [argument(value) for value in case['args']]
     kwargs = {{key: argument(value) for key, value in case['kwargs'].items()}}

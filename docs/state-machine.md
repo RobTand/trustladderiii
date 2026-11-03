@@ -743,7 +743,8 @@ observer tests. Trusted staging keeps the real old helper on base and adds only
 the new observers; head uses the new helper with those same assertions. Every
 observer must fail by assertion on base and pass on head. The plan also declares
 bounded known-bad arguments as failure-preservation evidence. A trusted driver
-invokes the real helper independently of the observers and requires
+invokes the real helper through pytest's module importer, preserving the observer's
+module name and package context, independently of the observers. It requires
 AssertionError on both versions. The receipt retains these cases, the driver
 hash and both verdicts. Removing a helper assertion cannot pass by making a
 previously failing call succeed. Observer names already bound on base, including
