@@ -752,7 +752,7 @@ fn forced_check_is_staged_and_reaches_review() {
 
 fn helper_target_identity_is_staged_and_reaches_review() {
     let declaration = serde_json::json!({"target":"test_value.py::_execute",
-        "failure_cases":[{"args":[false],"kwargs":{}}]});
+        "failure_cases":[{"args":[{"$setup":"_failed_queue"}, false],"kwargs":{}}]});
     for tamper in [
         "none",
         "target",
@@ -761,6 +761,7 @@ fn helper_target_identity_is_staged_and_reaches_review() {
         "base_passed",
         "missing_preservation",
         "changed_cases",
+        "changed_setup",
         "failure_lost",
         "missing",
     ] {
@@ -794,6 +795,9 @@ fn helper_target_identity_is_staged_and_reaches_review() {
         }
         if tamper == "changed_cases" {
             identity["failure_cases"][0]["args"] = serde_json::json!([true]);
+        }
+        if tamper == "changed_setup" {
+            identity["failure_cases"][0]["args"][0]["$setup"] = "_different_queue".into();
         }
         if tamper == "failure_lost" {
             identity["failure_preservation"][0]["head"] = "assertion".into();

@@ -1725,3 +1725,40 @@ def test_appended_coverage_check_cannot_introduce_forcing(planner_request, reque
         assert result['checks'] == fixed['checks']
     else:
         assert 'Correction adds a forcing absent from the draft.' in result['violations']
+
+
+@pytest.mark.parametrize('setup', ['_failed_queue', '_missing_setup', '_needs_argument'])
+def test_helper_setup_is_preflighted_before_maker(planner_request, digests_plan, setup):
+    path = Path(planner_request['worktree']) / DIGESTS
+    path.write_text(path.read_text() + '\ndef _execute(q):\n    assert q.execute().returncode == 0\n'
+                    '\ndef _failed_queue():\n    return object()\n'
+                    '\ndef _needs_argument(value):\n    return value\n')
+    planner_request['inputs']['ingest']['goals'] = [
+        {'description': 'Improve helper failure text, preserving failure.', 'verification': 'test'}]
+    digests_plan.update(files=[DIGESTS], checks=[{
+        'kind': 'demonstrating', 'node_ids': [f'{DIGESTS}::test_new_diagnostic'], 'goal_ids': [0],
+        'helper_evidence': {'target': f'{DIGESTS}::_execute', 'failure_cases': [
+            {'args': [{'$setup': setup}], 'kwargs': {}}]}}])
+    validate('planner-reply', digests_plan)
+    violations = planned(planner_request, copy.deepcopy(digests_plan))
+    if setup == '_failed_queue':
+        assert violations == []
+    else:
+        assert any('setup' in item for item in violations), violations
+
+
+def test_helper_setup_requires_its_installed_capability():
+    from tl3_workers.evidence import preflight
+    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
+                  'artifacts': ['cas_receipt', 'terminal_verdict'],
+                  'methods': ['helper_target_observer'], 'protected_files': []}
+    reply = {'kind': 'leaf', 'files': ['tests/test_helpers.py'], 'evidence_contract': [],
+             'checks': [{'helper_evidence': {'target': 'tests/test_helpers.py::_execute', 'failure_cases': [
+                 {'args': [{'$setup': '_failed_queue'}], 'kwargs': {}}]}}]}
+    original = copy.deepcopy(reply)
+    preflight({'tool_capabilities': [capability]}, reply, planning=True)
+    assert reply['kind'] == 'cant_meet'
+    assert 'methods=helper_target_observer.setup_function' in reply['report']
+    capability['methods'].append('helper_target_observer.setup_function')
+    preflight({'tool_capabilities': [capability]}, original, planning=True)
+    assert original['kind'] == 'leaf' and original['evidence_errors'] == []
