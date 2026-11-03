@@ -391,3 +391,15 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_scope",
+    srcs = ["test_scope.py"],
+    deps = [
+        ":conftest",
+        "//workers/src",
+        "@tl3_pip//jsonschema",
+        "@tl3_pip//pytest",
+        "@tl3_pip//tiktoken",
+    ],
+)

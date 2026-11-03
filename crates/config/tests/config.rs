@@ -1709,6 +1709,16 @@ fn evidence_tools_support_helper_target_observer() {
 }
 
 #[test]
+fn evidence_tools_support_existing_helper_setup_functions() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    assert!(
+        config.planning.tool_capabilities[0]
+            .methods
+            .contains(&"helper_target_observer.setup_function".into())
+    );
+}
+
+#[test]
 fn delegated_attributions_accept_exact_standing_approval_line() {
     let line = "(Posted by the TL3 build coordinator under Rob's standing approval.)";
     let source = format!(

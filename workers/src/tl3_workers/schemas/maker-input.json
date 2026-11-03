@@ -21,6 +21,7 @@
           "description": {
             "$ref": "#/$defs/text"
           },
+          "scope": {"$ref": "ingest-reply.json#/$defs/goal_scope"},
           "verification": {
             "enum": [
               "test",

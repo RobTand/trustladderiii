@@ -40,12 +40,21 @@ def preflight(inputs, reply, *, planning=False):
         return
     if 'evidence_contract' not in reply:
         raise ValueError('derive evidence_contract from every mandatory execution requirement')
-    if planning and any('helper_evidence' in check for check in reply.get('checks', [])):
+    helper_checks = [check for check in reply.get('checks', []) if 'helper_evidence' in check] if planning else []
+    if helper_checks:
         reply['evidence_contract'].append({
             'requirement': 'Observe the real old and new test helper with identical new regression assertions.',
             'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
             'artifacts': ['cas_receipt', 'terminal_verdict'], 'methods': ['helper_target_observer'],
             'protected_files': []})
+        if any('$setup' in value for check in helper_checks
+               for case in check['helper_evidence'].get('failure_cases', [])
+               for value in [*case['args'], *case['kwargs'].values()] if isinstance(value, dict)):
+            reply['evidence_contract'].append({
+                'requirement': 'Construct helper arguments with unchanged existing repository setup functions.',
+                'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
+                'artifacts': ['cas_receipt', 'terminal_verdict'],
+                'methods': ['helper_target_observer.setup_function'], 'protected_files': []})
     contract = []
     for requirements in (inputs.get('ingest', {}).get('evidence_contract', []),
                          inputs.get('audit_evidence_contract', []), reply['evidence_contract']):

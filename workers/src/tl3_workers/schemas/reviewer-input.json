@@ -3,7 +3,9 @@
   "$id": "https://trustladderiii.invalid/workers/protocol-1/reviewer-input.json",
   "type": "object",
   "properties": {
-    "generation_evidence": {"$ref": "maker-reply.json#/$defs/generation_receipt"},
+    "generation_evidence": {
+      "$ref": "maker-reply.json#/$defs/generation_receipt"
+    },
     "memories": {
       "type": "array",
       "items": {
@@ -65,6 +67,7 @@
             "type": "string",
             "minLength": 1
           },
+          "scope": {"$ref": "ingest-reply.json#/$defs/goal_scope"},
           "verification": {
             "enum": [
               "test",
@@ -332,11 +335,16 @@
                     "args": {
                       "type": "array",
                       "maxItems": 16,
-                      "items": {}
+                      "items": {
+                        "$ref": "planner-reply.json#/$defs/helper_argument"
+                      }
                     },
                     "kwargs": {
                       "type": "object",
-                      "maxProperties": 16
+                      "maxProperties": 16,
+                      "additionalProperties": {
+                        "$ref": "planner-reply.json#/$defs/helper_argument"
+                      }
                     }
                   },
                   "required": [
