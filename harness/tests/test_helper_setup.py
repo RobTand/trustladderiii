@@ -53,7 +53,7 @@ def test_diagnostics():
 
 
 def evidence(setup='_failed_queue'):
-    return HelperEvidence(TARGET, (json.dumps({'args': [{'$setup': setup}, 'mover-key'], 'kwargs': {}}),))
+    return HelperEvidence(TARGET, (json.dumps({'args': [{'$setup': setup, '$call': 'execute'}, 'mover-key'], 'kwargs': {}}),))
 
 
 @pytest.fixture
@@ -93,7 +93,7 @@ def test_existing_setup_reaches_failed_outcome_and_binds_receipt(helper_repo, ke
     declaration = evidence()
     if keyword:
         declaration = HelperEvidence(TARGET, (json.dumps({
-            'args': [], 'kwargs': {'q': {'$setup': '_failed_queue'}, 'mover': 'mover-key'}}),))
+            'args': [], 'kwargs': {'q': {'$setup': '_failed_queue', '$call': 'execute'}, 'mover': 'mover-key'}}),))
     result = check_repo(helper_repo, declaration)
     assert result.verdict == Verdict.PASS, result
     assert (result.tests[0].base, result.tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
@@ -145,9 +145,11 @@ _rebound = _failed_queue
 
 
 @pytest.mark.parametrize('value', [
-    {'$setup': 'os.system'}, {'$setup': '_failed_queue', 'code': 'arbitrary()'},
+    {'$setup': 'os.system', '$call': 'execute'}, {'$setup': '_failed_queue', 'code': 'arbitrary()'},
     {'$setup': '_failed_queue', 'args': [1]}, {'$setup': 42},
     {'$setup': '_failed_queue', '$attributes': {}},
+    {'$setup': '_failed_queue'}, {'$setup': '_failed_queue', '$call': 'execute.run'},
+    {'$setup': '_failed_queue', '$call': '__class__'},
 ])
 def test_setup_declarations_accept_only_a_bounded_local_function_name(value):
     with pytest.raises(HarnessInputError, match='setup'):

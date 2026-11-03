@@ -1738,7 +1738,7 @@ def test_helper_setup_is_preflighted_before_maker(planner_request, digests_plan,
     digests_plan.update(files=[DIGESTS], checks=[{
         'kind': 'demonstrating', 'node_ids': [f'{DIGESTS}::test_new_diagnostic'], 'goal_ids': [0],
         'helper_evidence': {'target': f'{DIGESTS}::_execute', 'failure_cases': [
-            {'args': [{'$setup': setup}], 'kwargs': {}}]}}])
+            {'args': [{'$setup': setup, '$call': 'execute'}], 'kwargs': {}}]}}])
     validate('planner-reply', digests_plan)
     violations = planned(planner_request, copy.deepcopy(digests_plan))
     if setup == '_failed_queue':
@@ -1754,7 +1754,7 @@ def test_helper_setup_requires_its_installed_capability():
                   'methods': ['helper_target_observer'], 'protected_files': []}
     reply = {'kind': 'leaf', 'files': ['tests/test_helpers.py'], 'evidence_contract': [],
              'checks': [{'helper_evidence': {'target': 'tests/test_helpers.py::_execute', 'failure_cases': [
-                 {'args': [{'$setup': '_failed_queue'}], 'kwargs': {}}]}}]}
+                 {'args': [{'$setup': '_failed_queue', '$call': 'execute'}], 'kwargs': {}}]}}]}
     original = copy.deepcopy(reply)
     preflight({'tool_capabilities': [capability]}, reply, planning=True)
     assert reply['kind'] == 'cant_meet'

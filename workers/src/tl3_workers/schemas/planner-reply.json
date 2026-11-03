@@ -165,10 +165,17 @@
               "minLength": 1,
               "maxLength": 128,
               "pattern": "^(?!test_|__)[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "$call": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^(?!__)[A-Za-z_][A-Za-z0-9_]*$"
             }
           },
           "required": [
-            "$setup"
+            "$setup",
+            "$call"
           ],
           "additionalProperties": false
         },

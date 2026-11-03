@@ -172,10 +172,14 @@ class HelperEvidence:
             for value in [*case["args"], *case["kwargs"].values()]:
                 if isinstance(value, dict) and "$setup" in value:
                     name = value["$setup"]
-                    if (set(value) != {"$setup"} or not isinstance(name, str)
+                    call = value.get("$call")
+                    if (set(value) != {"$setup", "$call"} or not isinstance(name, str)
                             or not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,127}", name)
-                            or name.startswith(("test_", "__"))):
-                        raise HarnessInputError("$setup must name one local setup function, at most 128 characters")
+                            or name.startswith(("test_", "__")) or not isinstance(call, str)
+                            or not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,127}", call)
+                            or call.startswith("__")):
+                        raise HarnessInputError("$setup needs one local function and a $call method witness, "
+                                                "each at most 128 characters")
                 if isinstance(value, dict) and "$attributes" in value:
                     if set(value) != {"$attributes"} or not isinstance(value["$attributes"], dict):
                         raise HarnessInputError("$attributes must name one object of literal attributes")

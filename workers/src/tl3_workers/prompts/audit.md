@@ -126,7 +126,8 @@ and require the run artifacts; do not label it forced_reproduction.environment
 or place it in forcing.environment. Reserved names and prefixes come from
 forcing_capabilities and cannot be overridden. These capabilities describe what
 a future run can prove, never checks already completed.
-Its methods are head, base_head, red_green, forced_reproduction.environment and
+Its methods are head, base_head, red_green, helper_target_observer,
+helper_target_observer.setup_function, forced_reproduction.environment and
 forced_reproduction.patches. Q55 environment and Python patches do not implement
 a pinned CPU artificial contention wrapper. BuildBuddy Remote Bazel evidence
 requires executor buildbuddy_remote_bazel, artifact invocation_url and, when
@@ -150,6 +151,11 @@ this mode, require method `helper_target_observer` in evidence_contract. If the
 capability is absent, report the missing method through evidence preflight.
 Do not substitute review or a flaky-test forcing for required red/green proof.
 Do not ask the issue owner to remove a proof method they never requested.
+Callable setup requires helper_target_observer.setup_function. It selects an
+unchanged existing function in the target module, callable without arguments,
+and witnesses a declared method returning before the target asserts. If the
+repository lacks supported setup, report that prerequisite precisely before
+maker work; do not invent executable recipes or require a signature rewrite.
 
 
 A repository with a configured generator also supplies run_generator with executor
