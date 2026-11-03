@@ -13,8 +13,20 @@ const COLUMNS: [&str; 6] = [
 ];
 const NONE_RECORDED: &str = "none recorded";
 
+/// The first gate preventing owed postmortems from starting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PostmortemBlock {
+    PausedStreak,
+    DailyAllowance,
+    Q39WaitingDelivery,
+    NoSpareCapacity,
+    ModelQuota,
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Status {
+    pub postmortem_blocked: Option<PostmortemBlock>,
     pub requests: Vec<RequestStatus>,
     pub memory: MemoryStatus,
     pub unassigned_incidents: Vec<String>,
@@ -142,6 +154,7 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
         .collect();
     tx.commit().map_err(tl3_store::Error::from)?;
     Ok(Status {
+        postmortem_blocked: None,
         requests: board
             .cards
             .iter()
@@ -316,6 +329,7 @@ mod tests {
             "long".repeat(32_768)
         );
         let model = Status {
+            postmortem_blocked: None,
             unassigned_incidents: vec![],
             quota_models: vec![],
             memory: MemoryStatus::default(),
