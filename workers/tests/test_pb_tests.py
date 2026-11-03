@@ -584,3 +584,44 @@ def test_a_cache_hit_is_marked_as_not_fresh(submission):
     assert result["receipts"][0]["status"] == "cache_hit"
     [entry] = tree.evidence.test_evidence()
     assert entry["fresh"] is False
+
+
+@pytest.mark.parametrize("parallel", [0, 2])
+def test_configured_demand_reaches_maker_head_and_base_actions(submission, monkeypatch, parallel):
+    from tl3_workers import pb_tests
+    commands = []
+    original = pb_tests._json_command
+    def command(args):
+        if "--cwd" in args:
+            commands.append(args)
+        return original(args)
+    monkeypatch.setattr(pb_tests, "_json_command", command)
+    root, scripts = submission
+    base, _, _, _ = prepare_base_submission(submission, head_value="broken")
+    with Worktree(root) as tree:
+        tree.test_settings = TestSettings(IMAGE, scripts, cpus=4, mem_gb=12)
+        tree.check_base_sha = base
+        tree.test_checkout = root
+        result = make_test_tool(tree)(["test_code.py::test_value"], parallel=parallel)
+    assert result["status"] == "completed"
+    assert len(commands) == 2, "head failure automatically submits the base"
+    for index, args in enumerate(commands):
+        assert args[args.index("--cpus") + 1] == "4"
+        assert args[args.index("--demand") + 1] == f"mem_gb={12 * (max(1, parallel) if index == 0 else 1)}"
+        for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+            assert f"{name}={max(1, 4 // parallel) if parallel and index == 0 else 4}" in args
+
+
+def test_oom_retains_allowlisted_failure_receipt(submission):
+    result = call(submission, Summary().result, override={
+        "status": "failed", "succeeded": False, "exit_code": 137,
+        "reason": "memory_limit_oom",
+        "diagnostics": {"termination_reason": "memory_limit_oom",
+                        "resource_profile": {"scope": {"memory_peak_bytes": 2147483648}},
+                        "admission_private": "never retain"},
+    })
+    assert result["status"] == "infrastructure_error"
+    receipt = result["receipts"][0]
+    assert receipt == {"action_key": KEY, "status": "failed", "exit_code": 137,
+                       "termination_reason": "memory_limit_oom", "memory_peak_bytes": 2147483648}
+    assert "memory_limit_oom" in result["message"]

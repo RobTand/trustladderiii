@@ -144,14 +144,28 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
             "generated_files": ["**/BUILD.bazel"],
             "generator": "tools/bazel/generate.sh"})
     );
-    for demand in [None, Some(tl3_config::TestDemand { cpus: 4, mem_gb: 12 })] {
+    for demand in [
+        None,
+        Some(tl3_config::TestDemand {
+            cpus: 4,
+            mem_gb: 12,
+        }),
+    ] {
         let mut config = config.clone();
         config.github.repos[0].test_demand = demand;
         let supervisor = Supervisor::new(&config, &f.root.path().join("demand-records")).unwrap();
-        let request = supervisor.request(&delivery, "maker", &mut store, &snapshot).unwrap();
+        let request = supervisor
+            .request(&delivery, "maker", &mut store, &snapshot)
+            .unwrap();
         let expected = demand.unwrap_or(tl3_config::TestDemand { cpus: 1, mem_gb: 2 });
-        assert_eq!(request["inputs"]["tests"]["cpus"], expected.cpus, "maker CPU reservation");
-        assert_eq!(request["inputs"]["tests"]["mem_gb"], expected.mem_gb, "maker memory reservation");
+        assert_eq!(
+            request["inputs"]["tests"]["cpus"], expected.cpus,
+            "maker CPU reservation"
+        );
+        assert_eq!(
+            request["inputs"]["tests"]["mem_gb"], expected.mem_gb,
+            "maker memory reservation"
+        );
     }
     let sent = serde_json::to_string(inputs).unwrap().len();
     let limit = config.limits.context_tokens as usize;

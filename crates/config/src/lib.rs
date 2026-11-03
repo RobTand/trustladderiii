@@ -805,10 +805,16 @@ impl Config {
             github_name(&format!("{field}.name"), &repo.name, true)?;
             if let Some(demand) = repo.test_demand {
                 if !(1..=16).contains(&demand.cpus) {
-                    return Err(invalid(format!("{field}.test_demand.cpus"), "use 1 to 16 CPUs"));
+                    return Err(invalid(
+                        format!("{field}.test_demand.cpus"),
+                        "use 1 to 16 CPUs",
+                    ));
                 }
                 if !(1..=64).contains(&demand.mem_gb) {
-                    return Err(invalid(format!("{field}.test_demand.mem_gb"), "use 1 to 64 GiB"));
+                    return Err(invalid(
+                        format!("{field}.test_demand.mem_gb"),
+                        "use 1 to 64 GiB",
+                    ));
                 }
             }
             validate_protected_paths(&format!("{field}.protected_paths"), &repo.protected_paths)?;

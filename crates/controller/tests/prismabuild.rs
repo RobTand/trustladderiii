@@ -2762,21 +2762,47 @@ fn repository_test_demand_is_sealed_with_default_and_identity_fallback() {
     ] {
         let root = tempfile::tempdir().unwrap();
         let mut delivery = run(root.path(), false);
-        delivery.repository = Repository { owner: owner.into(), name: name.into(), installation };
+        delivery.repository = Repository {
+            owner: owner.into(),
+            name: name.into(),
+            installation,
+        };
         let text = include_str!("../../config/example.toml");
         let text = if configured {
-            text.replace("installation_id = 1", "installation_id = 1\ntest_demand = { cpus = 4, mem_gb = 12 }")
-        } else { text.to_owned() };
+            text.replace(
+                "installation_id = 1",
+                "installation_id = 1\ntest_demand = { cpus = 4, mem_gb = 12 }",
+            )
+        } else {
+            text.to_owned()
+        };
         let config = tl3_config::Config::parse(&text).unwrap();
         let mut adapter = fixture(root.path(), "pending").with_repositories(&config.github.repos);
         adapter.execute(&delivery).unwrap();
         let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
-            .unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
-        let seal = calls.iter().find(|args| args.iter().any(|arg| arg == "--seal-only")).unwrap();
-        assert!(seal.windows(2).any(|pair| pair == ["--cpus", &cpus.to_string()]), "expected {cpus} CPUs in {seal:?}");
-        assert!(seal.windows(2).any(|pair| pair == ["--demand", &format!("mem_gb={mem_gb},gpu=0")]), "expected {mem_gb} GiB in {seal:?}");
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let seal = calls
+            .iter()
+            .find(|args| args.iter().any(|arg| arg == "--seal-only"))
+            .unwrap();
+        assert!(
+            seal.windows(2)
+                .any(|pair| pair == ["--cpus", &cpus.to_string()]),
+            "expected {cpus} CPUs in {seal:?}"
+        );
+        assert!(
+            seal.windows(2)
+                .any(|pair| pair == ["--demand", &format!("mem_gb={mem_gb},gpu=0")]),
+            "expected {mem_gb} GiB in {seal:?}"
+        );
         for name in ["OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"] {
-            assert!(seal.windows(2).any(|pair| pair == ["--env", &format!("{name}={cpus}")]));
+            assert!(
+                seal.windows(2)
+                    .any(|pair| pair == ["--env", &format!("{name}={cpus}")])
+            );
         }
     }
 }

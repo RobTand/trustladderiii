@@ -6,23 +6,42 @@ const EXAMPLE: &str = include_str!("../example.toml");
 
 #[test]
 fn repository_test_demand_is_optional_and_bounded() {
-    assert!(Config::parse(EXAMPLE).unwrap().github.repos[0].test_demand.is_none());
+    assert!(
+        Config::parse(EXAMPLE).unwrap().github.repos[0]
+            .test_demand
+            .is_none()
+    );
     for (cpus, mem_gb) in [(1, 1), (4, 12), (16, 64)] {
-        let text = EXAMPLE.replace("installation_id = 1", &format!("installation_id = 1\ntest_demand = {{ cpus = {cpus}, mem_gb = {mem_gb} }}"));
-        let demand = Config::parse(&text).unwrap().github.repos[0].test_demand.unwrap();
+        let text = EXAMPLE.replace(
+            "installation_id = 1",
+            &format!("installation_id = 1\ntest_demand = {{ cpus = {cpus}, mem_gb = {mem_gb} }}"),
+        );
+        let demand = Config::parse(&text).unwrap().github.repos[0]
+            .test_demand
+            .unwrap();
         assert_eq!((demand.cpus, demand.mem_gb), (cpus, mem_gb));
     }
     for value in [
-        "{ cpus = 0, mem_gb = 12 }", "{ cpus = 17, mem_gb = 12 }",
-        "{ cpus = 4, mem_gb = 0 }", "{ cpus = 4, mem_gb = 65 }",
-        "{ cpus = -1, mem_gb = 12 }", "{ cpus = 4, mem_gb = -1 }",
-        "{ cpus = 1.5, mem_gb = 12 }", "{ cpus = 4, mem_gb = 2.5 }",
-        "{ cpus = true, mem_gb = 12 }", "{ cpus = 4, mem_gb = '12' }",
-        "{ cpus = 4 }", "{ mem_gb = 12 }", "{}",
+        "{ cpus = 0, mem_gb = 12 }",
+        "{ cpus = 17, mem_gb = 12 }",
+        "{ cpus = 4, mem_gb = 0 }",
+        "{ cpus = 4, mem_gb = 65 }",
+        "{ cpus = -1, mem_gb = 12 }",
+        "{ cpus = 4, mem_gb = -1 }",
+        "{ cpus = 1.5, mem_gb = 12 }",
+        "{ cpus = 4, mem_gb = 2.5 }",
+        "{ cpus = true, mem_gb = 12 }",
+        "{ cpus = 4, mem_gb = '12' }",
+        "{ cpus = 4 }",
+        "{ mem_gb = 12 }",
+        "{}",
         "{ cpus = 4, mem_gb = 12, gpu = true }",
         "{ cpus = 4, mem_gb = 12, gpu = false }",
     ] {
-        let text = EXAMPLE.replace("installation_id = 1", &format!("installation_id = 1\ntest_demand = {value}"));
+        let text = EXAMPLE.replace(
+            "installation_id = 1",
+            &format!("installation_id = 1\ntest_demand = {value}"),
+        );
         assert!(Config::parse(&text).is_err(), "accepted {value}");
     }
 }
