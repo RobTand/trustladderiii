@@ -1,5 +1,7 @@
+import hashlib
 import json
 import os
+import re
 import stat
 import subprocess
 
@@ -34,6 +36,9 @@ assert (root / "trusted/tl3_harness/runner.py").is_file()
 assert (root / "action.py").is_file()
 assert not (root / "checkout/.git").exists()
 (here / "submitted.json").write_text(json.dumps(args))
+import subprocess
+(here / "tree.txt").write_text(subprocess.run(["git", "write-tree", "--prefix=checkout/"], cwd=root,
+                                              capture_output=True, text=True, check=True).stdout.strip())
 print(json.dumps({"schema": "prismabuild.submission.v1", "action_key": "a" * 64}))
 ''')
     (scripts / "pbwait.py").write_text('''
@@ -65,7 +70,7 @@ def call(submission, response, tests=None, override=None):
     with Worktree(root) as tree:
         tree.test_settings = TestSettings(IMAGE, scripts)
         tool = build_tools(tree, {"run_tests": "Run worktree tests through PrismaBuild."})[0]
-        assert set(tool.args) == {"tests", "base"}
+        assert set(tool.args) == {"tests", "base", "repeat", "parallel", "priority"}
         return tool.invoke({} if tests is None else {"tests": tests})
 
 
@@ -74,7 +79,10 @@ def test_fake_submission_returns_outcomes_and_uses_only_test_action(submission, 
     summary = Summary()
     summary.add("tests/test_code.py::test_value", outcome, "fixture failure" if outcome == "failed" else "")
     result = call(submission, summary.result, ["tests/test_code.py::test_value"])
-    expected = {**summary.result, "action_key": KEY}
+    log = (submission[1] / "action.log").read_bytes()
+    expected = {**summary.result, "action_key": KEY, "receipts": [{
+        "action_key": KEY, "status": "executed", "exit_code": 0, "receipt_sha256": "b" * 64,
+        "log_sha256": hashlib.sha256(log).hexdigest()}], "tree": (submission[1] / "tree.txt").read_text()}
     if outcome in ("failed", "error"):
         summary.result["tests"][0].update(classification="unverified", base_outcome="unverified")
         expected["base"] = {key: value for key, value in infrastructure(
@@ -253,7 +261,7 @@ def test_staging_git_uses_closed_protocol_policy(submission, monkeypatch, tmp_pa
         if command[0] == "git":
             # Ask the real Git process for its effective policy with the same
             # global arguments, cwd and environment as the staging operation.
-            operation = next(i for i, arg in enumerate(command) if arg in ("init", "fetch", "add", "commit", "update-ref"))
+            operation = next(i for i, arg in enumerate(command) if arg in ("init", "fetch", "add", "commit", "update-ref", "write-tree"))
             probe = original([*command[:operation], "config", "--get", "protocol.allow"],
                 cwd=kwargs["cwd"], env=kwargs["env"], capture_output=True)
             policies.append(probe.stdout.strip())
@@ -480,3 +488,99 @@ def test_comparison_truncation_keeps_failures_before_passes(submission):
     assert [item["test"] for item in result["tests"] if item["outcome"] == "failed"] == failures
     assert sum(item["outcome"] == "passed" for item in result["tests"]) < 60
     assert result["totals"] == summary.result["totals"]
+
+
+def invoke(submission, response, arguments):
+    root, scripts = submission
+    (scripts / "response.json").write_text(json.dumps(response))
+    with Worktree(root) as tree:
+        tree.test_settings = TestSettings(IMAGE, scripts, cpus=1, mem_gb=2)
+        tool = build_tools(tree, {"run_tests": "Run worktree tests through PrismaBuild."})[0]
+        return tool.invoke(arguments), tree
+
+
+def submitted(submission):
+    return json.loads((submission[1] / "submitted.json").read_text())
+
+
+def test_default_submission_keeps_its_action_identity(submission):
+    summary = Summary()
+    summary.add("tests/test_code.py::test_value", "passed")
+    invoke(submission, summary.result, {"tests": ["tests/test_code.py::test_value"]})
+    args = submitted(submission)
+    assert "--priority" not in args
+    action = args[args.index("--") + 1:]
+    assert "--repeat" not in action and "--parallel" not in action and "--fresh" not in action
+
+
+def test_repeat_parallel_and_priority_reach_the_action_and_reservation(submission):
+    # #408: five fresh runs, one xdist run, at the request's priority.
+    summary = Summary()
+    summary.add("tests/test_code.py::test_value", "passed")
+    invoke(submission, summary.result, {"tests": ["tests/test_code.py::test_value"],
+                                        "repeat": 5, "parallel": 2, "priority": -10})
+    args = submitted(submission)
+    assert args[args.index("--priority") + 1] == "-10"
+    assert args[args.index("--cpus") + 1] == "2", "each xdist worker reserves a core"
+    assert args[args.index("--demand") + 1] == "mem_gb=4"
+    action = args[args.index("--") + 1:]
+    assert action[action.index("--repeat") + 1] == "5"
+    assert action[action.index("--parallel") + 1] == "2"
+    assert "--timeout-s" not in args, "repeat stays inside PrismaBuild's progress contract"
+
+
+@pytest.mark.parametrize("arguments", [
+    {"repeat": 0}, {"repeat": 11}, {"repeat": True}, {"parallel": 1}, {"parallel": 5},
+    {"priority": 1}, {"priority": -11},
+])
+def test_options_are_bounded(submission, arguments):
+    with Worktree(submission[0]) as tree:
+        tool = make_test_tool(tree, TestSettings(IMAGE, submission[1]))
+        with pytest.raises(ValueError, match="repeat|parallel|priority"):
+            tool(**arguments)
+    assert not (submission[1] / "submitted.json").exists()
+
+
+def test_results_carry_receipts(submission):
+    summary = Summary()
+    summary.add("tests/test_code.py::test_value", "passed")
+    result, tree = invoke(submission, summary.result, {"tests": ["tests/test_code.py::test_value"],
+                                                      "repeat": 2})
+    log = (submission[1] / "action.log").read_bytes()
+    assert result["receipts"] == [{
+        "action_key": KEY, "status": "executed", "exit_code": 0,
+        "receipt_sha256": "b" * 64,
+        "log_sha256": hashlib.sha256(log).hexdigest(),
+    }]
+    # The maker cites them and the reviewer sees them, bound to the tree PrismaBuild ran (#432).
+    evidence = tree.evidence.test_evidence()
+    staged = (submission[1] / "tree.txt").read_text()
+    assert re.fullmatch("[0-9a-f]{40}|[0-9a-f]{64}", staged)
+    assert evidence == [{"tests": ["tests/test_code.py::test_value"], "base": False,
+                         "repeat": 2, "parallel": 0, "status": "completed", "tree": staged, "fresh": True,
+                         "totals": summary.result["totals"], "receipts": result["receipts"]}]
+    restored = type(tree.evidence)()
+    restored.restore(tree.evidence.state())
+    assert restored.test_evidence() == evidence
+
+
+def test_repeated_runs_are_never_served_from_the_cache(submission):
+    # #432: each repeat>1 call is its own action, so PrismaBuild cannot replay a stored result.
+    summary = Summary()
+    summary.add("tests/test_code.py::test_value", "passed")
+    nonces = []
+    for _ in range(2):
+        invoke(submission, summary.result, {"tests": ["tests/test_code.py::test_value"], "repeat": 2})
+        action = submitted(submission)[submitted(submission).index("--") + 1:]
+        nonces.append(action[action.index("--fresh") + 1])
+    assert nonces[0] != nonces[1] and all(re.fullmatch("[0-9a-f]{32}", nonce) for nonce in nonces)
+
+
+def test_a_cache_hit_is_marked_as_not_fresh(submission):
+    summary = Summary()
+    summary.add("tests/test_code.py::test_value", "passed")
+    (submission[1] / "override.json").write_text(json.dumps({"status": "cache_hit"}))
+    result, tree = invoke(submission, summary.result, {"tests": ["tests/test_code.py::test_value"]})
+    assert result["receipts"][0]["status"] == "cache_hit"
+    [entry] = tree.evidence.test_evidence()
+    assert entry["fresh"] is False

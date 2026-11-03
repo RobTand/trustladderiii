@@ -46,6 +46,12 @@ fn main() {
         ("phase_entry_times", phase_entry_times),
         ("phase_backfill_from_schema_9", phase_backfill_from_schema_9),
         ("reader_role", reader_role),
+        ("postmortem_records", postmortem_records),
+        (
+            "postmortem_migration_on_schema_12",
+            postmortem_migration_on_schema_12,
+        ),
+        ("settings_editor", settings_editor),
         ("console_commands", console_commands),
         ("prompt_seeding", prompt_seeding),
         ("prompt_builtin_updates", prompt_builtin_updates),
@@ -689,9 +695,14 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .iter()
             .map(|row| row.get::<_, i32>(0))
             .collect::<Vec<_>>(),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
     );
-    for table in ["tl3_events", "tl3_credit"] {
+    for table in [
+        "tl3_events",
+        "tl3_credit",
+        "tl3_code_grades",
+        "tl3_phase_history",
+    ] {
         for sql in [
             format!("DELETE FROM {table}"),
             format!("TRUNCATE {table} CASCADE"),
@@ -2072,4 +2083,260 @@ fn console_login_granted_before_migration(settings: &tl3_config::Store) {
         .save("reviewer", "Review v2.", "Edited.", "Rob", base)
         .unwrap()
         .unwrap();
+}
+
+/// #403: owed postmortems and code grades commit with the fact that makes them.
+fn postmortem_records(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let mut listener = Listener::open(settings).unwrap();
+    assert_eq!(store.postmortem_sample_share().unwrap(), 0.1);
+    let owed = |trigger: &str, reason: &str| OwedPostmortem {
+        node: "1".into(),
+        trigger: trigger.into(),
+        reason: reason.into(),
+        sample_share: None,
+        repo: "owner/sandbox".into(),
+        issue: 12,
+        title: "Fix greeting".into(),
+    };
+    let grade = |dimension: &str, grade: Option<i16>| CodeGrade {
+        node: "1".into(),
+        trigger: "close".into(),
+        rubric_version: 1,
+        dimension: dimension.into(),
+        grade,
+        fact: json!({"attempts": 1}),
+    };
+    let mut change = seed(&mut store);
+    change.postmortems = vec![owed("close", "needed_fix")];
+    change.grades = vec![grade("reliability", Some(4)), grade("credit", None)];
+    store.commit(&change).unwrap();
+    store.commit(&change).unwrap();
+    let tables = listener.wait().unwrap();
+    assert!(tables.contains("tl3_postmortems"), "{tables:?}");
+    let snapshot = store.load().unwrap();
+    let mut again = Commit::new("again", json!("again"), &snapshot);
+    again.postmortems = vec![owed("close", "retry"), owed("question:3", "escalation")];
+    again.grades = vec![grade("reliability", Some(1))];
+    store.commit(&again).unwrap();
+    let records = store.postmortems("1").unwrap();
+    assert_eq!(
+        records
+            .iter()
+            .map(|r| (r.trigger.as_str(), r.reason.as_str(), r.status.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("close", "needed_fix", "owed"),
+            ("question:3", "escalation", "owed")
+        ],
+        "each trigger is owed once, whatever replays or later commits say"
+    );
+    let grades = store.code_grades("1").unwrap();
+    assert_eq!(
+        grades,
+        vec![grade("reliability", Some(4)), grade("credit", None)]
+    );
+    let mut client = raw(settings);
+    assert!(
+        client
+            .query_one(
+                "SELECT owed_at = committed_at FROM tl3_postmortems p JOIN tl3_events e ON e.event_key = 'event-1' WHERE p.trigger = 'close'",
+                &[],
+            )
+            .unwrap()
+            .get::<_, bool>(0),
+        "owed with the commit that made it owed"
+    );
+    // Phase changes are kept as history from now on, for time per phase.
+    let mut phase = |key: &str, value: serde_json::Value| {
+        let snapshot = store.load().unwrap();
+        let mut change = Commit::new(key, json!(key), &snapshot);
+        change.rows = vec![put("1", value)];
+        store.commit(&change).unwrap();
+    };
+    phase("same-phase", json!({"phase": "Making", "attempt": 2}));
+    phase("closed", json!({"phase": {"Closed": "Merged"}}));
+    let history: Vec<serde_json::Value> = client
+        .query(
+            "SELECT phase FROM tl3_phase_history WHERE node_id = '1' ORDER BY since, id",
+            &[],
+        )
+        .unwrap()
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(history, [json!("Making"), json!({"Closed": "Merged"})]);
+    let password = settings.password_file.as_deref().unwrap();
+    grant_reader(settings, "tl3_postmortem_reader", password).unwrap();
+    let mut reader = postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .user("tl3_postmortem_reader")
+        .dbname(&settings.database)
+        .password("tl3-disposable-test-password")
+        .connect(NoTls)
+        .unwrap();
+    for table in [
+        "tl3_postmortems",
+        "tl3_postmortem_recommendations",
+        "tl3_code_grades",
+        "tl3_phase_history",
+        "tl3_settings",
+    ] {
+        reader
+            .query(&format!("SELECT * FROM {table}"), &[])
+            .unwrap_or_else(|error| panic!("the console reads {table}: {error}"));
+    }
+    assert!(
+        client
+            .execute(
+                "UPDATE tl3_settings SET value = '1.5' WHERE key = 'postmortem_sample_share'",
+                &[],
+            )
+            .is_err(),
+        "the share stays between 0 and 1"
+    );
+}
+
+/// #403: migration 13 on a populated database keeps tl3_node_phases exact and
+/// starts the phase history from each node's current phase.
+fn postmortem_migration_on_schema_12(settings: &tl3_config::Store) {
+    let mut client = raw(settings);
+    client
+        .batch_execute(
+            "CREATE TABLE tl3_schema_migrations (version integer PRIMARY KEY, sql text NOT NULL)",
+        )
+        .unwrap();
+    let schema_12 = [
+        include_str!("../migrations/0001_store.sql"),
+        include_str!("../migrations/0002_world_arrival.sql"),
+        include_str!("../migrations/0003_workers.sql"),
+        include_str!("../migrations/0004_ingress.sql"),
+        include_str!("../migrations/0005_worker_retirement.sql"),
+        include_str!("../migrations/0006_worker_wait.sql"),
+        include_str!("../migrations/0007_hindsight.sql"),
+        include_str!("../migrations/0008_memory_parking.sql"),
+        include_str!("../migrations/0009_memory_recovery.sql"),
+        include_str!("../migrations/0010_change_feed.sql"),
+        include_str!("../migrations/0011_console_commands.sql"),
+        include_str!("../migrations/0012_prompts.sql"),
+    ];
+    for (index, sql) in schema_12.iter().enumerate() {
+        client.batch_execute(sql).unwrap();
+        client
+            .execute(
+                "INSERT INTO tl3_schema_migrations VALUES ($1, $2)",
+                &[&((index + 1) as i32), sql],
+            )
+            .unwrap();
+    }
+    client
+        .batch_execute(
+            "INSERT INTO tl3_events (event_key, revision, epoch, payload, result, committed_at) VALUES
+                 ('first', 1, 0, '1', '1', '2026-10-01 10:00:00+00'),
+                 ('second', 2, 0, '2', '2', '2026-10-02 11:30:00+00');
+             INSERT INTO tl3_world (table_name, row_id, value, version) VALUES
+                 ('nodes', '0', '{\"phase\": {\"Closed\": \"Merged\"}}', 1),
+                 ('nodes', '1', '{\"phase\": \"Making\", \"attempt\": 2}', 2);
+             UPDATE tl3_meta SET revision = 2;",
+        )
+        .unwrap();
+    let phases = |client: &mut Client, table: &str| -> Vec<(String, serde_json::Value, String)> {
+        client
+            .query(
+                &format!("SELECT node_id, phase, to_char(since AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM {table} ORDER BY node_id, since"),
+                &[],
+            )
+            .unwrap()
+            .iter()
+            .map(|row| (row.get(0), row.get(1), row.get(2)))
+            .collect()
+    };
+    let before = phases(&mut client, "tl3_node_phases");
+    assert_eq!(before.len(), 2);
+    let mut store = Store::open(settings).unwrap();
+    assert_eq!(
+        phases(&mut client, "tl3_node_phases"),
+        before,
+        "the trigger swap changes no entry time"
+    );
+    assert_eq!(
+        phases(&mut client, "tl3_phase_history"),
+        before,
+        "history starts from each node's current phase"
+    );
+    let snapshot = store.load().unwrap();
+    let mut change = Commit::new("same", json!("same"), &snapshot);
+    change.rows = vec![put("1", json!({"phase": "Making", "attempt": 3}))];
+    store.commit(&change).unwrap();
+    assert_eq!(
+        phases(&mut client, "tl3_node_phases"),
+        before,
+        "the same phase keeps its time"
+    );
+    let snapshot = store.load().unwrap();
+    let mut change = Commit::new("next", json!("next"), &snapshot);
+    change.rows = vec![put("1", json!({"phase": "Checking"}))];
+    store.commit(&change).unwrap();
+    let now = phases(&mut client, "tl3_node_phases");
+    assert_eq!(now[0], before[0]);
+    assert_eq!(now[1].1, json!("Checking"));
+    let history = phases(&mut client, "tl3_phase_history");
+    assert_eq!(history.len(), 3);
+    assert_eq!(history[2], now[1]);
+}
+
+/// #403, #333: the console's login may change the sample share within its
+/// bounds, and nothing else in the settings.
+fn settings_editor(settings: &tl3_config::Store) {
+    drop(Store::open(settings).unwrap());
+    let password = settings.password_file.as_deref().unwrap();
+    grant_reader(settings, "tl3_settings_test", password).unwrap();
+    let mut reader = postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .user("tl3_settings_test")
+        .dbname(&settings.database)
+        .password("tl3-disposable-test-password")
+        .connect(NoTls)
+        .unwrap();
+    let update = |client: &mut Client, value: &str| {
+        client.batch_execute(&format!(
+            "BEGIN READ WRITE;
+             UPDATE tl3_settings SET value = '{value}', updated_by = 'console', updated_at = now()
+                 WHERE key = 'postmortem_sample_share';
+             COMMIT;"
+        ))
+    };
+    update(&mut reader, "0.25").unwrap();
+    assert_eq!(
+        Store::open(settings)
+            .unwrap()
+            .postmortem_sample_share()
+            .unwrap(),
+        0.25
+    );
+    for value in ["1.5", "-0.1", "\"half\""] {
+        let error = update(&mut reader, value).unwrap_err();
+        assert_eq!(
+            error.code(),
+            Some(&postgres::error::SqlState::CHECK_VIOLATION),
+            "{value}: {error}"
+        );
+        reader.batch_execute("ROLLBACK").unwrap();
+    }
+    assert!(
+        reader
+            .batch_execute("BEGIN READ WRITE; UPDATE tl3_settings SET key = 'other'; COMMIT;")
+            .is_err(),
+        "the editor changes values only"
+    );
+    reader.batch_execute("ROLLBACK").unwrap();
+    assert_eq!(
+        Store::open(settings)
+            .unwrap()
+            .postmortem_sample_share()
+            .unwrap(),
+        0.25
+    );
 }

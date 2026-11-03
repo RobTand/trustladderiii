@@ -70,6 +70,7 @@ py_binary(
     name = "rust_builds",
     srcs = ["rust_builds.py"],
     visibility = ["//visibility:public"],
+    deps = ["//tools/ci:child_env"],
 )
 
 py_binary(
@@ -100,12 +101,14 @@ py_binary(
     name = "requirements",
     srcs = ["requirements.py"],
     visibility = ["//visibility:public"],
+    deps = ["//tools/ci:child_env"],
 )
 
 py_library(
     name = "runtime",
     srcs = ["runtime.py"],
     visibility = ["//visibility:public"],
+    deps = ["//tools/ci:child_env"],
 )
 
 tl3_py_test(
@@ -131,5 +134,18 @@ filegroup(
 tl3_py_test(
     name = "test_rust_builds",
     srcs = ["test_rust_builds.py"],
+    data = [
+        ":sources",
+        ":workspace_build_files",
+        "//crates/controller:sources",
+        "//crates/store:sources",
+        "//harness:project_files",
+    ],  # keep
     deps = [":rust_builds"],
+)
+
+py_binary(
+    name = "execution_receipt",
+    srcs = ["execution_receipt.py"],
+    visibility = ["//visibility:public"],
 )

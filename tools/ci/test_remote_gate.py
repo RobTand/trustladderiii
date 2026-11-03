@@ -1,8 +1,11 @@
 """The GitHub side must fail on every way a remote run can go wrong."""
+import io
 import json
+import os
 from pathlib import Path
 import shlex
 import unittest
+from unittest.mock import patch
 
 import remote_gate
 
@@ -67,6 +70,21 @@ class WaitTests(unittest.TestCase):
 
 
 class ResultTests(unittest.TestCase):
+    def test_merged_pr_lookup_keeps_its_token_out_of_git(self):
+        with patch.dict(os.environ, {'BEFORE': 'base', 'AFTER': 'head',
+                                    'GITHUB_REPOSITORY': 'owner/repo',
+                                    'GH_TOKEN': 'synthetic-fixture'}), \
+             patch.object(remote_gate.subprocess, 'check_output', return_value='sha1\nsha2\n') as git, \
+             patch.object(remote_gate.urllib.request, 'urlopen', side_effect=[
+                 io.BytesIO(b'[{"number": 12}, {"number": 2}]'),
+                 io.BytesIO(b'[{"number": 12}]')]) as request, \
+             patch.object(remote_gate, 'write_github') as write:
+            remote_gate.merged_prs()
+        self.assertFalse('GH_TOKEN' in git.call_args.kwargs['env'])
+        self.assertEqual(request.call_args.args[0].get_header('Authorization'),
+                         'Bearer synthetic-fixture')
+        write.assert_called_once_with('GITHUB_OUTPUT', 'prs=2,12\n')
+
     def test_result_is_read_from_the_artifact(self):
         client = FakeClient([remote_gate.DONE], {remote_gate.RESULT: json.dumps(result()).encode()})
         invocation = remote_gate.wait(client, 'id', 10, clock=lambda: 0, sleep=print)
@@ -149,9 +167,18 @@ class WorkflowTests(unittest.TestCase):
         check = self.workflow.index('test -n "$MERGIFY_TOKEN"')
         self.assertLess(check, self.workflow.index('action: scopes-upload'))
 
-    def test_post_merge_pr_lookup_fails_when_gh_fails(self):
-        lookup = self.workflow.index('prs=$(')
-        self.assertIn('set -o pipefail', self.workflow[lookup - 200:lookup])
+    def test_post_merge_pr_lookup_fails_when_the_api_fails(self):
+        self.assertIn('run: python3 tools/ci/remote_gate.py merged-prs', self.workflow)
+        with patch.dict(os.environ, {'BEFORE': 'base', 'AFTER': 'head',
+                                    'GITHUB_REPOSITORY': 'owner/repo',
+                                    'GH_TOKEN': 'synthetic-fixture'}), \
+             patch.object(remote_gate.subprocess, 'check_output', return_value='sha1\n'), \
+             patch.object(remote_gate.urllib.request, 'urlopen',
+                          side_effect=remote_gate.urllib.error.URLError('unavailable')), \
+             patch.object(remote_gate, 'write_github') as write:
+            with self.assertRaises(remote_gate.urllib.error.URLError):
+                remote_gate.merged_prs()
+        write.assert_not_called()
 
 
 class AggregateTests(unittest.TestCase):

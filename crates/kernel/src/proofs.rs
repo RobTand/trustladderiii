@@ -213,6 +213,26 @@ fn check_apply(event: Event) -> World {
     apply(&mut after, event.clone(), &mut out);
     // Not vacuous: some world in the bounds is one this event changes.
     kani::cover!(after != before, "the event changes the world");
+    if let Event::Reply {
+        generation,
+        reply: Reply::ProtectedPaths,
+        ..
+    } = event
+    {
+        let b = &before.nodes[0];
+        let n = &after.nodes[0];
+        if matches!(
+            b.phase,
+            Phase::Ingesting | Phase::Auditing | Phase::Planning { .. }
+        ) && b.current() == Some(Item::Await)
+            && b.run == Some(generation)
+        {
+            assert_eq!(n.phase, Phase::Stopping(Outcome::NotActionable));
+            assert_eq!(n.credit, b.credit);
+            assert!(n.question.is_none());
+            assert_eq!(n.plan_retries, b.plan_retries);
+        }
+    }
     if let Event::NewAdoption { repo, head, .. } = &event {
         if repo.index().is_some_and(|r| r < before.gates.len()) {
             assert_eq!(after.nodes.len(), before.nodes.len() + 1);
@@ -439,6 +459,10 @@ proof!(
 proof!(
     apply_ingest_early_end,
     check_apply(reply(Reply::IngestEarlyEnd(kani::any())))
+);
+proof!(
+    apply_protected_paths,
+    check_apply(reply(Reply::ProtectedPaths))
 );
 proof!(apply_audit_agrees, check_apply(reply(Reply::AuditAgrees)));
 proof!(

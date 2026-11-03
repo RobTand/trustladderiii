@@ -1,9 +1,11 @@
 from dataclasses import asdict
 from importlib.resources import files
+import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 from threading import Barrier, Event
 
 import httpx
@@ -81,6 +83,17 @@ def git(root, *args):
         ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", *args],
         cwd=root, env=env, check=True, capture_output=True, text=True,
     ).stdout.strip()
+
+
+@pytest.fixture(scope="session")
+def cache_tokenizer(tmp_path_factory):
+    from tiktoken.load import read_file_cached
+    from tl3_workers.forecast import TOKENIZER_URL, TOKENIZER_SHA256
+
+    data = read_file_cached(TOKENIZER_URL, TOKENIZER_SHA256)
+    cache = tmp_path_factory.mktemp("maker-tokenizer")
+    (cache / hashlib.sha1(TOKENIZER_URL.encode()).hexdigest()).write_bytes(data)
+    return str(cache)
 
 
 @pytest.fixture
@@ -654,6 +667,13 @@ def test_prompt_distinguishes_excused_regressions_and_unverified_evidence():
     assert "A failing check your change caused is never unverified." in prompt
 
 
+def test_prompt_tells_history_records_from_open_feedback():
+    # #316: superseded findings arrive as one-line records with resolved_round.
+    prompt = " ".join(files("tl3_workers").joinpath("prompts", "maker.md").read_text().split())
+    assert "A feedback item with resolved_round is a one-line record of history that a later review or check superseded; it is not a task." in prompt
+    assert "The full-text items without resolved_round are the open ones to fix." in prompt
+
+
 def test_prompt_requires_reds_the_harness_accepts():
     # #340: a module-level import of a new name errors on the base, and a flaky
     # test can pass there; neither demonstrates the change.
@@ -736,14 +756,42 @@ def test_maker_rejects_shell_and_other_undeclared_tools(tmp_path, maker_request,
 
 
 @pytest.mark.parametrize('fit_tokens,linked,expected', [(100000, False, True), (1, False, False), (100000, True, False)])
-def test_requested_file_fit_is_computed_by_worker_code(tmp_path, maker_request, fit_tokens, linked, expected):
+def test_requested_file_fit_is_computed_by_worker_code(tmp_path, maker_request, cache_tokenizer, fit_tokens, linked, expected):
     maker_request['inputs']['fit_tokens'] = fit_tokens
     root = Path(maker_request['worktree'])
     if linked:
         (root / 'helper.py').symlink_to(root / 'greeting.py')
-    result = start_worker(tmp_path, maker_request, [turn({'kind': 'needs_files', 'files': [{'path': 'helper.py', 'why': 'A shared helper is needed.'}]})])
+    result = start_worker(tmp_path, maker_request, [turn({'kind': 'needs_files', 'files': [{'path': 'helper.py', 'why': 'A shared helper is needed.'}]})],
+                          env_overrides={'TIKTOKEN_CACHE_DIR': cache_tokenizer})
     assert result.exit_code == 0, result.stderr
     assert result.events[-1]['reply']['fits'] is expected
+
+
+@pytest.mark.parametrize('content_source', ['brief', 'file'])
+@pytest.mark.parametrize('cache', ['available', 'disabled', 'empty', 'corrupt'])
+def test_requested_file_fit_counts_tokens_with_byte_fallback(tmp_path, maker_request, cache_tokenizer, content_source, cache):
+    maker_request['inputs']['fit_tokens'] = 100000
+    if content_source == 'brief':
+        maker_request['inputs']['brief'] = 'token ' * 18000
+    else:
+        root = Path(maker_request['worktree'])
+        for name in ('greeting.py', 'helper.py'):
+            (root / name).write_text('token ' * 6000)
+    directory = cache_tokenizer
+    if cache == 'disabled':
+        directory = ''
+    elif cache in ('empty', 'corrupt'):
+        directory = tmp_path / 'unavailable-tokenizer'
+        directory.mkdir()
+        if cache == 'corrupt':
+            (directory / 'fb374d419588a4632f3f557e76b4b70aebbca790').write_bytes(b'bad cache')
+        directory = str(directory)
+    result = start_worker(tmp_path, maker_request, [turn({
+        'kind': 'needs_files', 'files': [{'path': 'helper.py', 'why': 'Needed.'}],
+    })], env_overrides={'TIKTOKEN_CACHE_DIR': directory})
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1]['reply']['fits'] is (cache == 'available')
+    assert result.stderr == ''
 
 
 def test_model_cannot_claim_that_requested_files_fit(tmp_path, maker_request):
@@ -1022,6 +1070,26 @@ def test_review_fix_contract_accepts_named_tests_and_reasons(review_fix):
     assert Draft202012Validator(schema('maker-input')).is_valid(inputs), 'reviewed findings need identities'
     assert Draft202012Validator(schema('maker-reply')).is_valid({**reply, 'head': 'c' * 40}), 'done must carry reproductions'
     maker._check_reply(inputs, reply)
+
+
+def test_bounded_fix_round_contract_accepts_resolved_records_and_finding_refs(maker_request):
+    from tl3_workers.contracts import schema
+    from jsonschema import Draft202012Validator
+    inputs = maker_request['inputs']
+    inputs.update(round=1, reviewed_sha='b' * 40, feedback=[
+        {'kind': 'review_finding', 'id': 'review-1-0', 'reviewed_sha': 'a' * 40,
+         'report': 'Greeting fails for an empty name.', 'goal_ids': ['greeting'], 'resolved_round': 1},
+        {'kind': 'failed_check', 'report': 'Existing test failed.', 'goal_ids': [], 'resolved_round': 2},
+        {'kind': 'review_finding', 'id': 'review-3-0', 'reviewed_sha': 'b' * 40,
+         'report': 'Describe the signature in full.', 'goal_ids': ['greeting']},
+    ])
+    inputs['current_review_findings'] = [{'id': 'review-3-0', 'reviewed_sha': 'b' * 40}]
+    assert Draft202012Validator(schema('maker-input')).is_valid(inputs), 'one-line records and finding refs'
+    maker._check_inputs(inputs)
+    reply = {**DONE, 'reproductions': [{'finding_id': 'review-3-0', 'reason': 'A documentation fix.'}]}
+    maker._check_reply(inputs, reply)
+    inputs['feedback'][0]['resolved_round'] = 0
+    assert not Draft202012Validator(schema('maker-input')).is_valid(inputs), 'rounds start at 1'
 
 
 @pytest.mark.parametrize('invalid', ['omitted', 'partial', 'duplicate', 'unknown', 'old', 'selector'])
@@ -1333,3 +1401,116 @@ def test_maker_budget_exhaustion_finishes_without_claiming_unmade_changes(maker_
     assert len(observed) <= 65, 'maker allows at most 64 tool turns and one final answer'
     assert events[-1]['reply'] == {'kind': 'cant_meet', 'report':
                                   'no code change was made' if final_done else 'The work is incomplete.'}
+
+
+RECEIPT = {"action_key": "a" * 64, "status": "executed", "exit_code": 0,
+           "receipt_sha256": "b" * 64, "log_sha256": "c" * 64}
+
+
+def staged_tree(root):
+    # The tree of the worktree's current files, as pb_tests stages them for PrismaBuild.
+    with tempfile.TemporaryDirectory() as temporary:
+        env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        env.update(GIT_INDEX_FILE=str(Path(temporary) / "index"), GIT_CONFIG_NOSYSTEM="1",
+                   GIT_CONFIG_GLOBAL=os.devnull)
+        subprocess.run(["git", "add", "--all"], cwd=root, env=env, check=True, capture_output=True)
+        return subprocess.run(["git", "write-tree"], cwd=root, env=env, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+
+def receipts_factory(worktree):
+    def run_tests(tests: list[str] | None = None, base: bool = False, repeat: int = 1,
+                  parallel: int = 0, priority: int | None = None) -> dict:
+        return {"status": "completed", "totals": {"passed": 1, "failed": 0, "error": 0, "skipped": 0},
+                "tests": [], "note": "", "action_key": "a" * 64, "receipts": [RECEIPT],
+                "tree": staged_tree(worktree.test_checkout),
+                "repeat": repeat, "runs": [{"run": n + 1, "status": "completed",
+                                            "totals": {"passed": 1, "failed": 0, "error": 0, "skipped": 0},
+                                            "failed": []} for n in range(repeat)]}
+    return run_tests
+
+
+RUN_FIVE = AIMessage(**turn(calls=[{"name": "run_tests", "id": "test", "type": "tool_call",
+                                    "args": {"tests": ["test_greeting.py::test_hello"], "repeat": 5}}]))
+
+
+def test_done_reply_carries_the_run_tests_receipts(maker_request, monkeypatch):
+    # #408: the evidence the maker cites lands in its reply for the reviewer,
+    # for the tree that run tested, which is the committed head's tree (#432).
+    fake = FakeMessagesListChatModel(responses=[
+        AIMessage(**write_turn()),
+        AIMessage(**write_turn("test_greeting.py", "def test_hello(): pass\n")),
+        RUN_FIVE,
+        AIMessage(**turn(DONE)),
+    ])
+    monkeypatch.setitem(TOOL_FACTORIES, "run_tests", receipts_factory)
+    monkeypatch.setattr(runtime, "create_model", lambda request: fake)
+    events = []
+    runtime.run(maker_request, events.append)
+    reply = events[-1]["reply"]
+    assert reply["kind"] == "done"
+    [evidence] = reply["test_evidence"]
+    assert evidence["tests"] == ["test_greeting.py::test_hello"]
+    assert evidence["repeat"] == 5 and len(evidence["runs"]) == 5
+    assert evidence["receipts"] == [RECEIPT] and evidence["fresh"] is True
+    assert evidence["tree"] == git(Path(maker_request["worktree"]), "rev-parse", f"{reply['head']}^{{tree}}")
+    validate("maker-reply", reply)
+
+
+def test_runs_before_a_later_edit_are_not_evidence_for_the_head(maker_request, monkeypatch):
+    # #432: run, edit, done. The run tested a tree the head no longer has.
+    fake = FakeMessagesListChatModel(responses=[
+        AIMessage(**write_turn("test_greeting.py", "def test_hello(): pass\n")),
+        RUN_FIVE,
+        AIMessage(**write_turn()),
+        AIMessage(**turn(DONE)),
+    ])
+    monkeypatch.setitem(TOOL_FACTORIES, "run_tests", receipts_factory)
+    monkeypatch.setattr(runtime, "create_model", lambda request: fake)
+    events = []
+    runtime.run(maker_request, events.append)
+    reply = events[-1]["reply"]
+    assert reply["kind"] == "done"
+    assert "test_evidence" not in reply
+
+
+def test_test_evidence_is_bounded():
+    # #432: entries, selectors and strings are capped, and the worker keeps the whole list small.
+    from tl3_workers.tools import TEST_EVIDENCE_BYTES, Evidence
+
+    entry = {"tests": ["test_greeting.py::test_hello"], "base": False, "repeat": 1, "parallel": 0,
+             "status": "completed", "tree": "e" * 40, "fresh": True,
+             "totals": {"passed": 1, "failed": 0, "error": 0, "skipped": 0}, "receipts": [RECEIPT]}
+    done = {"kind": "done", "head": "f" * 40, "self_check": DONE["self_check"]}
+    validate("maker-reply", {**done, "test_evidence": [entry]})
+    for evidence in ([entry] * 11, [{**entry, "tests": ["t" * 2049]}], [{**entry, "tests": ["t"] * 257}],
+                     [{**entry, "receipts": [RECEIPT] * 2}], [{**entry, "tree": "not a tree"}]):
+        with pytest.raises(ValidationError):
+            validate("maker-reply", {**done, "test_evidence": evidence})
+    recorder = Evidence()
+    for index in range(10):
+        tests = tuple(f"test_{index}_{n}_" + "x" * 1900 for n in range(256))
+        recorder.test_result({"status": "completed", "totals": entry["totals"], "receipts": [RECEIPT],
+                              "tree": "e" * 40}, (False, tests), {"repeat": 1, "parallel": 0})
+    kept = recorder.test_evidence()
+    assert kept and len(json.dumps(kept).encode()) <= TEST_EVIDENCE_BYTES
+    assert kept[-1]["tests"][0].startswith("test_9_"), "the newest run is kept"
+    assert kept[-1]["tests_omitted"] == 256 - len(kept[-1]["tests"]) > 0
+    validate("maker-reply", {**done, "test_evidence": kept})
+
+
+def test_maker_input_carries_a_forced_check(maker_request):
+    # #393: the maker sees the forcing its deflake must survive.
+    check = maker_request['inputs']['plan']['checks'][0]
+    check['forcing'] = {"symptom": "A real, unrelated process holds PID 4242.", "environment": {},
+                        "patches": [{"target": "sampler.process_in_scope", "raises": "ValueError"}]}
+    validate('maker-input', maker_request['inputs'])
+    check['forcing']['code'] = 'print(1)'
+    with pytest.raises(ValidationError):
+        validate('maker-input', maker_request['inputs'])
+
+
+def test_maker_prompt_explains_forced_checks():
+    prompt = " ".join((Path(__file__).parents[1] / "src/tl3_workers/prompts/maker.md").read_text().split())
+    assert "forcing" in prompt
+    assert "both with and without the forcing" in prompt

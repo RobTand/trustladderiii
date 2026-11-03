@@ -107,6 +107,8 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (10, include_str!("../migrations/0010_change_feed.sql")),
     (11, include_str!("../migrations/0011_console_commands.sql")),
     (12, include_str!("../migrations/0012_prompts.sql")),
+    (13, include_str!("../migrations/0013_postmortems.sql")),
+    (14, include_str!("../migrations/0014_memory_curations.sql")),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,6 +148,132 @@ impl Store {
         tx.execute("INSERT INTO tl3_memory_outbox (operation_id, item) VALUES ($1, $2) ON CONFLICT (operation_id) DO NOTHING", &[&operation_id, item])?;
         tx.execute("UPDATE tl3_memory_outbox SET parked_reason = 'capacity', parked_at = CURRENT_TIMESTAMP WHERE sequence IN (SELECT sequence FROM tl3_memory_outbox WHERE parked_reason IS NULL ORDER BY sequence DESC OFFSET 10000)", &[])?;
         tx.commit()?;
+        Ok(())
+    }
+
+    /// #422: record one decision about a memory. A replayed operation is ignored.
+    pub fn record_memory_curation(
+        &mut self,
+        operation_id: &str,
+        curation: &MemoryCuration,
+    ) -> Result<()> {
+        self.client.execute(
+            "INSERT INTO tl3_memory_curations (operation_id, memory_id, state, verdict, source, request, run, claim, reason, evidence) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (operation_id) DO NOTHING",
+            &[&operation_id, &curation.memory_id, &curation.state, &curation.verdict, &curation.source,
+              &curation.request, &curation.run, &curation.claim, &curation.reason, &curation.evidence],
+        )?;
+        Ok(())
+    }
+
+    /// Every recorded memory curation, oldest first, for the audit trail.
+    pub fn memory_curations(&mut self) -> Result<Vec<serde_json::Value>> {
+        Ok(self.client.query(
+            "SELECT json_build_object('sequence', sequence, 'memory_id', memory_id, 'state', state, \
+             'verdict', verdict, 'source', source, 'request', request, 'run', run, 'claim', claim, \
+             'reason', reason, 'evidence', evidence, 'recorded_at', recorded_at, 'delivered_at', delivered_at, \
+             'http_status', http_status, 'announced_at', announced_at)::jsonb FROM tl3_memory_curations ORDER BY sequence",
+            &[],
+        )?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect())
+    }
+
+    /// Accepted curations Hindsight hasn't acknowledged, in decision order:
+    /// (sequence, memory id, state, reason).
+    pub fn pending_memory_curations(&mut self) -> Result<Vec<(i64, String, String, String)>> {
+        Ok(self.client.query(
+            "SELECT sequence, memory_id, state, reason FROM tl3_memory_curations \
+             WHERE verdict = 'accepted' AND state <> 'hidden' AND delivered_at IS NULL AND http_status IS NULL \
+             ORDER BY sequence LIMIT 64",
+            &[],
+        )?
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
+        .collect())
+    }
+
+    /// Hindsight acknowledged the curation, or refused it for good with `status`.
+    pub fn settle_memory_curation(&mut self, sequence: i64, status: Option<u16>) -> Result<()> {
+        let mut tx = self.client.transaction()?;
+        match status {
+            None => {
+                tx.execute(
+                    "UPDATE tl3_memory_curations SET delivered_at = CURRENT_TIMESTAMP WHERE sequence = $1",
+                    &[&sequence],
+                )?;
+                tx.execute("DELETE FROM tl3_memory_health WHERE singleton", &[])?;
+            }
+            Some(status) => {
+                tx.execute(
+                    "UPDATE tl3_memory_curations SET http_status = $2 WHERE sequence = $1",
+                    &[&sequence, &(status as i32)],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Of `ids`, those TL3 keeps out of recall: the latest accepted decision hides
+    /// the memory, or retires it before Hindsight has acknowledged. Delivered
+    /// retirements Hindsight filters itself.
+    pub fn withheld_memories(
+        &mut self,
+        ids: &[String],
+    ) -> Result<std::collections::BTreeSet<String>> {
+        Ok(self.client.query(
+            "SELECT memory_id FROM (SELECT DISTINCT ON (memory_id) memory_id, state, delivered_at \
+             FROM tl3_memory_curations WHERE verdict = 'accepted' AND memory_id = ANY($1) \
+             ORDER BY memory_id, sequence DESC) latest \
+             WHERE state = 'hidden' OR (state = 'invalidated' AND delivered_at IS NULL)",
+            &[&ids],
+        )?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect())
+    }
+
+    /// Accepted decisions about one memory since its last revert, oldest first:
+    /// (state, source, request).
+    pub fn memory_signals(
+        &mut self,
+        memory_id: &str,
+    ) -> Result<Vec<(String, String, Option<String>)>> {
+        Ok(self.client.query(
+            "SELECT state, source, request FROM tl3_memory_curations WHERE verdict = 'accepted' \
+             AND memory_id = $1 AND sequence > COALESCE((SELECT max(sequence) FROM tl3_memory_curations \
+             WHERE verdict = 'accepted' AND memory_id = $1 AND state = 'valid'), 0) ORDER BY sequence",
+            &[&memory_id],
+        )?
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2)))
+        .collect())
+    }
+
+    /// Hides and retirements not yet posted on the operations issue:
+    /// (sequence, operation id, row as in `memory_curations`).
+    pub fn unannounced_memory_curations(
+        &mut self,
+    ) -> Result<Vec<(i64, String, serde_json::Value)>> {
+        Ok(self.client.query(
+            "SELECT sequence, operation_id, json_build_object('memory_id', memory_id, 'state', state, \
+             'source', source, 'request', request, 'run', run, 'claim', claim, 'evidence', evidence)::jsonb \
+             FROM tl3_memory_curations WHERE verdict = 'accepted' AND state <> 'valid' AND announced_at IS NULL \
+             ORDER BY sequence LIMIT 64",
+            &[],
+        )?
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2)))
+        .collect())
+    }
+
+    pub fn announce_memory_curation(&mut self, sequence: i64) -> Result<()> {
+        self.client.execute(
+            "UPDATE tl3_memory_curations SET announced_at = CURRENT_TIMESTAMP WHERE sequence = $1",
+            &[&sequence],
+        )?;
         Ok(())
     }
 
@@ -607,6 +735,14 @@ impl Store {
                 }
             }
         }
+        for owed in &change.postmortems {
+            tx.execute("INSERT INTO tl3_postmortems (node_id, trigger, reason, sample_share, repo, issue, title, revision, owed_at) SELECT $1, $2, $3, $4, $5, $6, $7, revision, committed_at FROM tl3_events WHERE revision = $8 ON CONFLICT (node_id, trigger) DO NOTHING",
+                &[&owed.node, &owed.trigger, &owed.reason, &owed.sample_share, &owed.repo, &owed.issue, &owed.title, &revision.get()])?;
+        }
+        for grade in &change.grades {
+            tx.execute("INSERT INTO tl3_code_grades (node_id, trigger, rubric_version, dimension, grade, fact, revision, recorded_at) SELECT $1, $2, $3, $4, $5, $6, revision, committed_at FROM tl3_events WHERE revision = $7 ON CONFLICT (node_id, trigger, rubric_version, dimension) DO NOTHING",
+                &[&grade.node, &grade.trigger, &grade.rubric_version, &grade.dimension, &grade.grade, &grade.fact, &revision.get()])?;
+        }
         boundary(
             &mut self.boundary_hook,
             SavePoint::CreditWritten,
@@ -721,6 +857,70 @@ impl Store {
                 &[&document, &node],
             )?
             .map(|r| r.get(0)))
+    }
+
+    /// The share of clean merges sampled for a postmortem: a stored setting (#403).
+    pub fn postmortem_sample_share(&mut self) -> Result<f64> {
+        Ok(self
+            .client
+            .query_opt(
+                "SELECT (value #>> '{}')::double precision FROM tl3_settings WHERE key = 'postmortem_sample_share'",
+                &[],
+            )?
+            .map_or(0.0, |row| row.get(0)))
+    }
+
+    /// A node's postmortems, oldest first.
+    pub fn postmortems(&mut self, node: &str) -> Result<Vec<PostmortemRecord>> {
+        Ok(self
+            .client
+            .query(
+                "SELECT id, node_id, trigger, reason, sample_share, status FROM tl3_postmortems WHERE node_id = $1 ORDER BY id",
+                &[&node],
+            )?
+            .iter()
+            .map(|row| PostmortemRecord {
+                id: row.get(0),
+                node: row.get(1),
+                trigger: row.get(2),
+                reason: row.get(3),
+                sample_share: row.get(4),
+                status: row.get(5),
+            })
+            .collect())
+    }
+
+    /// A node's code grades, oldest first.
+    pub fn code_grades(&mut self, node: &str) -> Result<Vec<CodeGrade>> {
+        Ok(self
+            .client
+            .query(
+                "SELECT node_id, trigger, rubric_version, dimension, grade, fact FROM tl3_code_grades WHERE node_id = $1 ORDER BY id",
+                &[&node],
+            )?
+            .iter()
+            .map(|row| CodeGrade {
+                node: row.get(0),
+                trigger: row.get(1),
+                rubric_version: row.get(2),
+                dimension: row.get(3),
+                grade: row.get(4),
+                fact: row.get(5),
+            })
+            .collect())
+    }
+
+    /// The phases a node entered, with milliseconds since the Unix epoch, oldest first.
+    pub fn phase_history(&mut self, node: &str) -> Result<Vec<(serde_json::Value, i64)>> {
+        Ok(self
+            .client
+            .query(
+                "SELECT phase, (extract(epoch FROM since) * 1000)::bigint FROM tl3_phase_history WHERE node_id = $1 ORDER BY since, id",
+                &[&node],
+            )?
+            .iter()
+            .map(|row| (row.get(0), row.get(1)))
+            .collect())
     }
 
     /// Context committed with the kernel question and its notice delivery.
@@ -1014,6 +1214,8 @@ pub fn grant_reader(
          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO {role};
          DO $editor$ BEGIN CREATE ROLE tl3_prompt_editor NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $editor$;
          GRANT tl3_prompt_editor TO {role};
+         DO $editor$ BEGIN CREATE ROLE tl3_settings_editor NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $editor$;
+         GRANT tl3_settings_editor TO {role};
          ALTER ROLE {role} SET default_transaction_read_only = on;
          DO $grant$ BEGIN
              IF to_regprocedure('tl3_console_command(text, bigint, jsonb)') IS NOT NULL THEN

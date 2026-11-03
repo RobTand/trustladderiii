@@ -118,7 +118,7 @@ pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
     }))
 }
 
-pub(super) fn relative_file(path: &str) -> bool {
+pub(crate) fn relative_file(path: &str) -> bool {
     !path.is_empty()
         && !path.starts_with('/')
         && !path.contains(['\\', '\0'])
@@ -430,6 +430,14 @@ mod reply_defects {
                 "maker-input.json".into(),
                 serde_json::from_str(include_str!(
                     "../../../../../workers/src/tl3_workers/schemas/maker-input.json"
+                ))
+                .unwrap(),
+            ),
+            (
+                // maker-input.json takes a forced check's forcing from here (#393).
+                "planner-reply.json".into(),
+                serde_json::from_str(include_str!(
+                    "../../../../../workers/src/tl3_workers/schemas/planner-reply.json"
                 ))
                 .unwrap(),
             ),

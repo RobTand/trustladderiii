@@ -171,6 +171,59 @@ Missing, malformed, duplicate, inconsistent, or incomplete reports produce an
 infrastructure verdict. A collection error with a complete report is a test
 error. A demonstrating base setup or collection error fails its check.
 
+## Forced reproduction
+
+A demonstrating check can carry a `Forcing` (#393, Q55): the plan's declarative
+recreation of a flake's condition, for a change that makes a named flaky test
+deterministic. `Forcing.parse` reads its JSON:
+
+```python
+Check("deflake", Kind.DEMONSTRATING,
+      ("tests/test_action_resource_profile.py::test_rebuilt_sampler_keeps_local_io_after_shared_copy_failure",),
+      forcing=Forcing.parse({
+          "symptom": "A real, unrelated process holds PID 4242.",
+          "environment": {},
+          "patches": [{"target": "prismabuild.resource_scope._process_in_scope", "raises": "ValueError"}]}))
+```
+
+A forcing has a symptom of up to 1,000 characters and at least one of these:
+
+- up to 8 environment variables. The harness refuses names it owns: `HOME`,
+  `PATH`, `TMPDIR`, `TEMP`, `TMP`, the thread-count variables, and names
+  starting `PYTHON`, `PYTEST`, `LD_`, `TL3_` or `PRISMABUILD_`;
+- up to 8 patches. Each names a dotted `target` and exactly one of `value` (a
+  JSON literal), `returns` (a callable returning one), `raises` (a builtin
+  `Exception` subclass other than `AssertionError`), or `delay_seconds` (above
+  0 and at most 5, which wraps the original callable). Delays add up to at
+  most 10 seconds per test; later calls run undelayed.
+
+Literals are limited to 4 KiB of JSON. Only demonstrating checks take a forcing.
+
+The forcing reaches the read-only runner on stdin with the test selection. The
+runner sets the variables before pytest starts. An autouse fixture applies the
+patches before the test's own fixtures and undoes them after, so the test's own
+monkeypatches win while it runs. A target resolves only when the object that
+owns the attribute is a module whose file is in the checkout, or a class
+defined in one. Pytest, the standard library and the reporter can't be patched.
+A target that doesn't resolve is a `ForcingError` in setup, and the check
+reports that the plan's forcing could not be applied.
+
+A forced check runs three times:
+
+1. The original base, with the old test as the base wrote it, under the forcing.
+   The test must fail by a call-phase assertion. A missing name does not count.
+2. The head under the forcing. The test must pass.
+3. The head without the forcing, in the ordinary head run. The test must pass.
+
+`base` records run 1, `head_forced` run 2 and `head` run 3. The result echoes the
+forcing for review. Unforced results omit `forcing` and `head_forced`.
+
+Threat model: the forcing is model-written data. The host process never
+imports or runs it. It runs only in the test container, where repository code
+already runs. The maker can't change it, because it lives in the plan and is
+applied outside the test. Report custody is unchanged. A forcing can still
+force a failure unrelated to the flake; the reviewer judges that.
+
 ## Execution boundary
 
 The outer process reads committed Git blobs, ignoring dirty files and Git

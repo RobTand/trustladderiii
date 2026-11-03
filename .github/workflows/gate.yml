@@ -82,8 +82,27 @@ jobs:
             exit 1
           fi
           echo scopes_uploaded=true >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - name: Python with zstd support for artifact scanning
         if: always()
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+      - name: Explain skipped fork artifact uploads
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true
+        run: |
+          echo 'artifact uploads skipped: fork PR has no secrets to scan for'
+      - id: secret-check
+        name: Check artifacts before upload
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true)
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          MERGIFY_TOKEN: ${{ secrets.MERGIFY_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 tools/ci/before_upload.py
+          --require BUILDBUDDY_API_KEY --require MERGIFY_TOKEN --env GITHUB_TOKEN gate-output/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true) && steps.secret-check.outcome == 'success'
         with:
           name: bazel-gate
           path: gate-output/
@@ -102,14 +121,14 @@ jobs:
           persist-credentials: false
       - name: Install Rust
         run: |
-          rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
-          rustup default 1.99.1
+          python3 tools/ci/child_env.py rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+          python3 tools/ci/child_env.py rustup default 1.99.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
           shared-key: hosted-${{ runner.arch }}
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: python3 tools/ci/child_env.py cargo fmt --all -- --check
+      - run: python3 tools/ci/child_env.py cargo clippy --workspace --all-targets --locked -- -D warnings
 
   feature-builds:
     name: Compile ${{ matrix.mode }}
@@ -127,8 +146,8 @@ jobs:
           persist-credentials: false
       - name: Install Rust
         run: |
-          rustup toolchain install 1.99.1 --profile minimal
-          rustup default 1.99.1
+          python3 tools/ci/child_env.py rustup toolchain install 1.99.1 --profile minimal
+          python3 tools/ci/child_env.py rustup default 1.99.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
@@ -146,11 +165,11 @@ jobs:
         if: matrix.mode == 'kani'
         run: |
           if ! command -v cargo-kani >/dev/null; then
-            cargo install --locked kani-verifier --version 0.68.0
+            python3 tools/ci/child_env.py cargo install --locked kani-verifier --version 0.68.0
           fi
-          cargo kani setup
+          python3 tools/ci/child_env.py cargo kani setup
       - name: Compile test and proof targets without running them
-        run: python3 tools/ci/feature_gate.py '${{ matrix.mode }}'
+        run: python3 tools/ci/child_env.py python3 tools/ci/feature_gate.py '${{ matrix.mode }}'
 
   python-lint:
     name: Python lint and locks
@@ -169,9 +188,9 @@ jobs:
         with:
           version: '0.10.10'
       - name: Ruff and lockfiles of projects without tests
-        run: python tools/ci/check.py python-lint
+        run: python3 tools/ci/child_env.py python tools/ci/check.py python-lint
       - name: pip.parse requirements match uv.lock
-        run: python tools/bazel/requirements.py --check
+        run: python3 tools/ci/child_env.py python tools/bazel/requirements.py --check
 
   rust:
     name: Rust
@@ -224,12 +243,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
-        run: |
-          set -o pipefail
-          prs=$(git rev-list "$BEFORE..$AFTER" | while read -r sha; do
-            gh api "repos/${GITHUB_REPOSITORY}/commits/$sha/pulls" --jq '.[].number'
-          done | sort -nu | paste -sd, -)
-          echo "prs=$prs" >> "$GITHUB_OUTPUT"
+        run: python3 tools/ci/remote_gate.py merged-prs
       - name: Test everything on amd64 and arm64
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
@@ -239,8 +253,27 @@ jobs:
         run: >-
           python3 tools/ci/remote_gate.py main --base "$BEFORE" --head "$AFTER"
           --branch main --prs "$PRS" --timeout 130
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - name: Python with zstd support for artifact scanning
         if: always()
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+      - name: Explain skipped fork artifact uploads
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true
+        run: |
+          echo 'artifact uploads skipped: fork PR has no secrets to scan for'
+      - id: secret-check
+        name: Check artifacts before upload
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true)
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          MERGIFY_TOKEN: ${{ secrets.MERGIFY_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 tools/ci/before_upload.py
+          --require BUILDBUDDY_API_KEY --require MERGIFY_TOKEN --env GITHUB_TOKEN gate-output/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true) && steps.secret-check.outcome == 'success'
         with:
           name: post-merge-${{ github.sha }}
           path: gate-output/

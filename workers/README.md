@@ -399,6 +399,7 @@ The available names and arguments are:
 | `read` | `path`, `offset=0`, `limit=200`, `column=0`. UTF-8 text, paged by zero-based lines and character columns. |
 | `glob` | `pattern`, `path="."`, `offset=0`. A page of relative file and directory paths. `*` matches one segment, `**` recurses, and dotfiles are included. `path` must be a directory; a file path is an error that says so. |
 | `grep` | `pattern`, `path="."`, `offset=0`, `literal=false`. A page of matching lines, with relative paths, one-based line numbers, and matching text. `pattern` is an RE2 regular expression tried against each line; `literal=true` searches the text as written. `path` may be one file or a directory. Below a directory, non-UTF-8 files are skipped; a named non-UTF-8 file is an error. |
+| `diff` | `path="."`, `offset=0`. Maker and reviewer only, read-only. The worktree's change against its base (`check_base_sha` for the maker, `base_sha` for the reviewer), committed and uncommitted, including untracked files. The first page has `stat` (path, status, added, deleted) and `diff`, unified hunks cut by line; later pages have `diff` only. `next_offset` continues a truncated page. |
 | `write` | `path`, `content`. Create or overwrite UTF-8 text, creating parents. |
 | `edit` | `path`, `old`, `new`, `replace_all=false`. Exact replacement. `old` must be nonempty and unique unless `replace_all` is true. |
 
@@ -710,11 +711,65 @@ its first 1,024 and last 3,072; the root counts the rest in
 The MLflow server is LAN-only with no login; anyone on the LAN can read these
 prompts and repository contents. See the deployment README for access limits.
 
-One child exports the sanitized protobuf to the configured experiment. It uses
-no retries, one-second HTTP timeouts and a five-second process alarm. The worker
-never waits for that child. Export failures and initialization failures log a
-fixed diagnostic to stderr, without exception details, and preserve the role's
-result. Traces can be lost during an outage or if the supervisor kills a run.
-There is no retry backlog. Deep Agents remains the engine. Stored traces aren't
+### Live traces (#430)
+
+A run shows in MLflow while it works, marked `IN_PROGRESS`.
+
+- **Durable first.** Each ended span is redacted and appended to a span log
+  before any network call. The controller puts the log in the attempt
+  directory as `trace.jsonl`, through the request's `trace.log`. Without one,
+  the log is an unlinked temporary file. Each record is one JSON line written
+  in one append and synced: a `start` record with the trace and root span IDs,
+  settings and tags, then `span` records, an `end` record with the run's
+  outcome and final tags, and a `final` record that holds the end-of-run
+  packet. A final packet that is too large even without child content holds
+  the root alone.
+- **Shipped right away.** One shipper child reads the log and sends each new
+  record over OTLP, woken by one byte per record on a pipe. Records are
+  decoded once and queued; a failed send stays queued for the next span, or
+  the end. After a send that works following a failure, and after its first
+  send, the shipper writes the request's `trace.wake` file, so the controller
+  retries held logs once MLflow answers. Batches carry the run's tags as
+  resource attributes, which MLflow stores as trace tags before the root span
+  arrives. A zero-length `tl3.run_started` span makes the trace appear before
+  the first model turn ends.
+- **Same end state.** The final packet is the export described above. It
+  upserts the live spans by span ID and adds the root, which sets the trace's
+  state once and its outcome and token tags. Live content draws on its own
+  1 MiB budget; later live spans keep metadata and token usage only, until the
+  final packet gives the newest spans their content. Only the first 1,024
+  spans are sent live: in a longer run the final packet decides which later
+  spans stay, so MLflow never holds a live copy the final omits.
+- **Ended runs.** When an attempt ends or is stopped, the controller starts
+  `python -I -m tl3_workers.tracing flush <log>` with the log on stdin, unless
+  `trace.jsonl.shipped` exists. It starts flushers through `workers.launcher`,
+  so a tl3d restart or deploy leaves them running. The flusher sends the log
+  again and closes a trace the worker didn't:
+  - with an `end` record, by the run's own outcome and tags, so a finished run
+    never reads as crashed;
+  - after a deliberate stop of a live worker, which leaves `stopped.json`, as
+    `ERROR` with `outcome = stopped` and `failure_class = WorkerStopped` (Q49);
+  - otherwise as `ERROR` with `outcome = crashed`, `failure_class =
+    WorkerCrashed`, the exit code from `exit.json` and token sums over the
+    logged spans.
+
+  Span IDs make every resend idempotent. One flusher runs per log: it claims
+  `trace.jsonl.flushing` with its process identity, and the controller
+  replaces only a claim whose process has died.
+- **Retired runs.** Retirement removes the run root, but first moves an
+  unshipped log, with its `exit.json`, `launch.json` and `stopped.json`, to
+  `workers.runs/.traces/<run>-<attempt>/`. The model key isn't kept. Held logs
+  are flushed again on events only: tl3d opening, any attempt ending, and the
+  wake file. A held log whose release deploy removed is flushed with the
+  configured worker Python. Shipped held logs are removed. Held logs beyond
+  256 MiB are dropped oldest first, and the controller raises one operations
+  incident (`worker-trace-logs`) while it stays open.
+
+The shipper and flusher use one-second HTTP timeouts. The shipper's last sends
+after the worker ends have a five-second alarm, and the flusher has ten
+seconds. The worker never waits for either. Export failures and initialization
+failures log a fixed diagnostic to stderr, without exception details, and
+preserve the role's result. Deep Agents remains the engine. Stored traces aren't
 pruned yet; `deploy/dl380g10/README.md` gives their growth and how to reclaim
-space.
+space. `workers/tools/trial_live_traces.py` checks all of this against a real
+server, in the scratch experiment `tl3-430-scratch`, through PrismaBuild.

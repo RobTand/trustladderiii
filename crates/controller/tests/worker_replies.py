@@ -88,6 +88,9 @@ def scripted_reply(request, mode, marker):
         while True:
             time.sleep(1)
     reply = brief if request["role"] == "ingest" else {"verdict": "agree", "objections": []}
+    lesson = [m["id"] for m in request["inputs"].get("memories", []) if m["kind"] == "lesson"]
+    if mode == "plan-memories" and request["role"] == "ingest":
+        reply = {**brief, "memory_ids": lesson}
     if mode == "steering-guidance" and request["role"] == "planner" and marker.with_suffix(".guidance-requested").exists():
         publish_marker(marker.with_suffix(".guided"), "ready")
         while not marker.with_suffix(".release").exists():
@@ -105,6 +108,12 @@ def scripted_reply(request, mode, marker):
                 {"brief": "Fix greeting.", "goal_ids": [0], "files": ["greeting.py"]},
                 {"brief": "Test greeting.", "goal_ids": [0], "files": ["tests/test_greeting.py"]}]}
             if mode == "plan-bad-split": reply["pieces"] = reply["pieces"][:1]
+        elif mode == "plan-memories":
+            reply["memory_ids"] = lesson
+            reply["memory_flags"] = [{"id": lesson[0], "claim": "greet_user() returns 'hi'",
+                                      "reason": "greet() returns 'hello', not 'hi'.",
+                                      "evidence": {"path": "greeting.py", "start_line": 1, "end_line": 1,
+                                                   "quote": "def greet_user(): return 'hello'"}}]
         elif mode in {"plan-cant-meet", "steering-guidance"}:
             reply = {"kind": "cant_meet", "report": "Need a decision on the greeting.", "files": []}
     if mode == "early":

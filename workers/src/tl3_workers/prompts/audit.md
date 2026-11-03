@@ -18,6 +18,19 @@ review classification fits. Check citations against the supplied evidence.
 For an early end, independently check the reason for duplicate, already_done
 or not_actionable. Missing evidence is grounds for an objection.
 
+When Rob's answer narrowed or changed the request, the issue has labelled parts:
+"Rob's answer (the new scope; it wins where it conflicts with the original issue)",
+"Sections of the original issue that the answer refers to", "Question Rob
+answered", and "Original issue, narrowed by Rob's answer above". Check the brief
+against the answer and the original issue. For each listed section, check that
+the brief carries what the kept goals depend on, including facts the answer only
+refers to by heading, item number or phrase. Where the brief leaves such a fact
+out, or the answer refers to a section the brief does not carry, return
+"disagree" and name the section, or object. Return "disagree" if the brief
+carries goals or acceptance tests that Rob's answer excludes or does not ask for:
+a listed section is context, so the answer, not the section, decides which of
+its items are goals.
+
 Check that briefs ask only for available steps: the maker has TL3 worktree file
 tools, run_tests through PrismaBuild and read-only recall; the reviewer has
 read-only worktree tools, the supplied diff and check verdicts. Do not require
@@ -32,3 +45,19 @@ the issue or missing evidence. Do not rewrite the request, resolve the dispute,
 close an issue or decide a controller transition.
 
 Return only the JSON object, without Markdown fences or surrounding prose.
+
+## Requests that require protected paths (Q57)
+
+Use the supplied effective `protected_paths`, including repository additions.
+If the request's goals cannot be met without editing a protected path, report
+`protected_paths: ["concrete/path"]`. Ingest returns an `early_end` with outcome
+`not_actionable` and reason `protected_paths`. Audit may report the required paths
+with its verdict. Planning returns `cant_meet`, with a report explaining why the
+whole request needs those edits. Do not ask for an exception or a decision from Rob.
+The controller checks the paths and closes the TL3 request without a question.
+
+Check declared footprints and edits named in the goals first, before exploring.
+A path mentioned as context, an excluded change, or a file you merely read is
+not a blocker. Ordinary test files are allowed unless a supplied pattern matches.
+If useful unprotected work meets all goals on its own, plan that leaf. Do not
+plan an unusable half, such as a marker whose only consumer requires a protected edit.

@@ -1378,3 +1378,26 @@ fn a_priority_fact_refreshes_an_open_request_and_leaves_a_closed_one() {
     );
     assert_eq!(after.nodes[0], closed, "Closed is final");
 }
+
+#[test]
+fn protected_paths_close_from_ingest_audit_or_planning_without_credit_or_questions() {
+    for phase in ["Ingesting", "Auditing", "Planning"] {
+        let mut run = Run::new();
+        if phase != "Ingesting" {
+            run.reply(Reply::IngestDone { size: 1 });
+        }
+        if phase == "Planning" {
+            run.reply(Reply::AuditAgrees);
+        }
+        let before = run.node().credit;
+        run.reply(Reply::ProtectedPaths);
+        assert_eq!(run.phase(), Phase::Closed(Outcome::NotActionable));
+        assert_eq!(run.node().credit, before);
+        assert!(run.node().question.is_none());
+        assert!(!run.notices.iter().any(|n| matches!(n, Notice::Ask { .. })));
+        assert!(
+            run.notices
+                .contains(&Notice::Summary(Outcome::NotActionable))
+        );
+    }
+}

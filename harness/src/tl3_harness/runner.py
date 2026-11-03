@@ -1,5 +1,8 @@
 """Loaded from the read-only harness mount before any checkout imports."""
 import ast
+import builtins
+import copy
+import importlib
 import importlib.util
 import json
 import os
@@ -7,6 +10,7 @@ import shutil
 from pathlib import Path
 import sys
 import tempfile
+import time
 import types
 
 import pytest
@@ -86,6 +90,69 @@ def missing_name(error):
     return None
 
 
+class ForcingError(Exception):
+    """The plan's forcing could not be applied (#393)."""
+
+
+def forcing_owner(target):
+    """The object holding the target's attribute. It must be a module whose file is in the
+    checkout, or a class defined in one, so a forcing can't patch pytest, the standard
+    library or this reporter."""
+    root = Path.cwd()
+    parts = target.split(".")
+    for split in range(len(parts) - 1, 0, -1):
+        try:
+            owner = importlib.import_module(".".join(parts[:split]))
+        except ModuleNotFoundError:
+            continue
+        break
+    else:
+        raise ForcingError(f"no module in the checkout provides {target}")
+    for name in parts[split:-1]:
+        if not hasattr(owner, name):
+            raise ForcingError(f"{target}: {name} not found")
+        owner = getattr(owner, name)
+    module = owner if isinstance(owner, types.ModuleType) else sys.modules.get(getattr(owner, "__module__", ""))
+    source = getattr(module, "__file__", None) if isinstance(owner, (types.ModuleType, type)) else None
+    if not source or not Path(source).resolve().is_relative_to(root):
+        raise ForcingError(f"{target} is outside the served repository")
+    if not hasattr(owner, parts[-1]):
+        raise ForcingError(f"{target} does not exist")
+    return owner, parts[-1]
+
+
+# A forcing's delays add up to at most this per test; later calls run undelayed.
+MAX_TOTAL_DELAY_SECONDS = 10
+
+
+def forced_value(owner, name, mode, argument, sleep=time.sleep, budget=None):
+    if mode == "value":
+        return argument
+    if mode == "returns":
+        return lambda *args, **kwargs: copy.deepcopy(argument)
+    if mode == "raises":
+        error = getattr(builtins, argument, None)
+        if not (isinstance(error, type) and issubclass(error, Exception) and not issubclass(error, AssertionError)):
+            raise ForcingError(f"a forcing can't raise {argument}")
+
+        def raising(*args, **kwargs):
+            raise error("forced by the plan")
+        return raising
+    original = getattr(owner, name)
+    if not callable(original):
+        raise ForcingError(f"delay_seconds needs a callable target, not {type(original).__name__}")
+
+    budget = [MAX_TOTAL_DELAY_SECONDS] if budget is None else budget
+
+    def delayed(*args, **kwargs):
+        wait = min(argument, budget[0])
+        budget[0] -= wait
+        if wait:
+            sleep(wait)
+        return original(*args, **kwargs)
+    return delayed
+
+
 def describe(error):
     """`Type: first line` of the exception, kept apart from the traceback the 1,000-char limit cuts."""
     if isinstance(error, pytest.Collector.CollectError) and error.__cause__ is not None:
@@ -95,12 +162,16 @@ def describe(error):
 
 
 class Reporter:
-    def __init__(self, tests, descriptor, summary=False):
+    def __init__(self, tests, descriptor, summary=False, parallel=False, patches=()):
         self.tests = tests
         self.descriptor = descriptor
         self.summary = summary
+        # Under xdist, workers run the tests and this plugin sees only their reports.
+        self.parallel = parallel
+        self.patches = patches
         self.phases = {}
         self.collection_errors = []
+        self.reported = set()
         self.started = False
 
     @pytest.fixture(autouse=True)
@@ -121,6 +192,19 @@ class Reporter:
             # A writer can race removal. Preserve the test's outcome; the
             # container's fixed tmpfs still bounds and discards any residue.
             shutil.rmtree(tmp_path, ignore_errors=True)
+
+    @pytest.fixture(autouse=True)
+    def _tl3_forcing(self):
+        # Applied before the test's own fixtures and undone after them, so the test's own
+        # monkeypatches take precedence while it runs (#393).
+        budget = [MAX_TOTAL_DELAY_SECONDS]
+        with pytest.MonkeyPatch.context() as patch:
+            for forcing in self.patches:
+                target = forcing["target"]
+                (mode, argument), = ((key, value) for key, value in forcing.items() if key != "target")
+                owner, name = forcing_owner(target)
+                patch.setattr(owner, name, forced_value(owner, name, mode, argument, budget=budget))
+            yield
 
     def emit(self, **record):
         data = (json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n").encode(errors='backslashreplace')
@@ -156,6 +240,10 @@ class Reporter:
     def pytest_collectreport(self, report):
         if report.failed:
             if self.summary:
+                # Each xdist worker collects, so the same error can arrive more than once.
+                if report.nodeid in self.reported:
+                    return
+                self.reported.add(report.nodeid)
                 message = str(report.longrepr)
                 self.emit(event="collection-error", test=report.nodeid,
                           message=message[:1000], truncated=len(message) > 1000)
@@ -191,7 +279,20 @@ class Reporter:
         return report
 
     def pytest_runtest_logreport(self, report):
-        if not self.summary or report.when != "teardown":
+        if not self.summary:
+            return
+        if self.parallel:
+            # makereport ran in a worker. Its crash line tells an assertion from an error.
+            crash = getattr(getattr(report.longrepr, "reprcrash", None), "message", "") or ""
+            assertion = (report.when == "call" and report.failed
+                         and crash.startswith(("AssertionError", "assert ", "Failed")))
+            outcome = "skipped" if hasattr(report, "wasxfail") else report.outcome
+            message = str(report.longrepr) if report.failed else ""
+            self.phases.setdefault(report.nodeid, []).append(
+                (report.when, outcome, message[:1000], len(message) > 1000, assertion))
+        # xdist reports a crashed worker's test once, outside the three phases.
+        final = report.when == "teardown" or self.parallel and report.when not in ("setup", "call")
+        if not final:
             return
         phases = self.phases.pop(report.nodeid)
         failures = [phase for phase in phases if phase[1] == "failed"]
@@ -210,19 +311,37 @@ class Reporter:
 
 def main():
     tests = json.load(sys.stdin) if sys.argv[1] == "-" else json.loads(sys.argv[1])
+    forcing = {}
+    if isinstance(tests, dict):
+        # A forced check's selection carries the plan's forcing, which the host validated (#393).
+        tests, forcing = tests["tests"], tests["forcing"]
+        os.environ.update(forcing["environment"])
     descriptor = os.dup(1)
     with open(os.devnull, "wb") as sink:
         os.dup2(sink.fileno(), 1)
         os.dup2(sink.fileno(), 2)
-    summary = sys.argv[-1] == "--summary"
-    arguments = sys.argv[2:-1] if summary else sys.argv[2:]
+    flags = [argument for argument in sys.argv[2:] if argument.startswith("--")]
+    arguments = [argument for argument in sys.argv[2:] if not argument.startswith("--")]
+    summary = "--summary" in flags
+    parallel = next((int(flag.split("=", 1)[1]) for flag in flags if flag.startswith("--parallel=")), 0)
     checkout = arguments[0] if arguments else "/checkout"
     os.chdir(checkout)
     sys.path.insert(0, str(Path.cwd()))
-    reporter = Reporter(tests, descriptor, summary)
+    reporter = Reporter(tests, descriptor, summary, parallel=bool(summary and parallel),
+                        patches=tuple(forcing.get("patches", ())))
     # Start before pytest loads the checkout's conftest files, ini options and
     # plugins. Any exit after this point may come from the code under test.
     reporter.pytest_sessionstart()
+    if summary and parallel:
+        # The image supplies xdist. Load it once, by name, in this process and its workers,
+        # as the container's disabled plugin autoload already requires.
+        os.environ["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+        if importlib.util.find_spec("xdist") is None:
+            reporter.emit(event="unavailable", message="pytest-xdist is not installed in the test image")
+            reporter.pytest_sessionfinish(0)
+            return 0
+        return int(pytest.main(["--rootdir=.", "-p", "xdist.plugin", "-n", str(parallel),
+                                "--", *(tests or ["."])], plugins=[reporter]))
     if summary:
         return int(pytest.main(["--rootdir=.", "--", *(tests or ["."])], plugins=[reporter]))
     files = sorted({test.split("::")[0] for test in tests if Path(test.split("::")[0]).is_file()})

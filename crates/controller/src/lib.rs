@@ -26,10 +26,14 @@ pub mod looks;
 #[path = "../tests/loom/mod.rs"]
 mod loom_tests;
 pub mod memory;
+mod narrowing;
 mod notices;
+mod postmortems;
+pub mod pr_body;
 pub mod priority;
 pub mod production;
 pub mod prompts;
+mod protected_requests;
 mod question_findings;
 pub mod release;
 mod scope;
@@ -257,6 +261,7 @@ pub struct Controller {
     allowances: tl3_config::Allowances,
     /// Starting credit reserve by priority, P0 first (#416). Empty keeps the kernel's.
     priority_reserve: BTreeMap<u8, u8>,
+    request_protection: Vec<(Repository, Vec<String>)>,
 }
 impl Controller {
     pub fn open(store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
@@ -323,6 +328,7 @@ impl Controller {
             held_effects: BTreeMap::new(),
             allowances: tl3_config::Allowances::default(),
             priority_reserve: BTreeMap::new(),
+            request_protection: Vec::new(),
         };
         controller.reconcile_capacity()?;
         controller.cleanup_ended_looks()?;
@@ -643,9 +649,16 @@ impl Controller {
                         .map_err(|_| Error::Invalid("invalid request node"))?,
                 );
                 let replacement = steering::replacement_issue(snapshot, original, &pending.value)?;
-                commit.rows.push(put("request_links", node.clone(), json!({
+                let mut link = json!({
                     "original": original, "authorized_by": self.bootstrap.rob, "issue": replacement
-                })));
+                });
+                // #449: Rob's answer is the scope; ingest reads the original issue as context.
+                if let steering::Task::FileRequest { question, .. } =
+                    decode_stored(pending.value.clone())?
+                {
+                    link["narrowing"] = json!({"question": question});
+                }
+                commit.rows.push(put("request_links", node.clone(), link));
                 for table in ["replacement_pending", "replacement"] {
                     commit.rows.push(RowChange::Delete {
                         table: table.into(),
@@ -689,6 +702,30 @@ impl Controller {
     /// Upstream inbox keys must be stable across webhook redelivery and looks.
     pub fn observe(&mut self, key: &str, observation: Observation) -> Result<()> {
         let snapshot = self.store.load()?;
+        if let Observation::TraceLogsCapped { evicted } = observation {
+            // #430: an operations note (#81), once while it stays open.
+            let mut commit = Commit::new(
+                format!("trace-logs-capped:{key}:{}", snapshot.revision.get()),
+                json!({"trace_logs_capped": evicted}),
+                &snapshot,
+            );
+            self.input_failed(
+                &snapshot,
+                "worker-trace-logs",
+                None,
+                "Held worker span logs",
+                None,
+                executor::Upstream::Workers,
+                Error::Invalid(
+                    "held span logs reached their disk cap; the oldest unshipped ones were dropped",
+                ),
+                &mut commit,
+            )?;
+            if !commit.rows.is_empty() {
+                self.store.commit(&commit)?;
+            }
+            return Ok(());
+        }
         let news = observation_upstream(&snapshot, &observation)?;
         if let Observation::Queue(fact) = &observation {
             let identity = fact.identity();
@@ -1531,6 +1568,7 @@ impl Controller {
             .extend(snapshot::changes(&before, snapshot::encode(&world)?));
         self.close_replacement(snapshot, &previous, &world, commit)?;
         self.resolve_closed_effect_incidents(snapshot, &world, commit)?;
+        self.record_postmortems(snapshot, &previous, &world, commit)?;
         self.resolve_stale_missing_checks(snapshot, &world, commit)?;
         for (index, node) in world.nodes.iter().enumerate() {
             if previous
@@ -1650,7 +1688,15 @@ impl Controller {
                             .find(|r| r.table == "plans" && r.id == node.0.to_string())
                             .map(|r| r.value.clone())
                     });
-                let mut context = json!({"node": node, "question": question, "generation": n.generation, "pieces": plan.as_ref().and_then(|p| p.get("pieces")).cloned().unwrap_or(json!([])), "plan": plan});
+                let mut context = json!({"node": node, "question": question, "kind": n.question.map(|q| q.kind), "generation": n.generation, "pieces": plan.as_ref().and_then(|p| p.get("pieces")).cloned().unwrap_or(json!([])), "plan": plan});
+                // #403: every question to Rob owes a postmortem.
+                commit.postmortems.push(postmortems::owed(
+                    snapshot,
+                    node,
+                    format!("question:{question}"),
+                    postmortems::Reason::Escalation,
+                    None,
+                )?);
                 // #322: Rob sees the deciding worker's findings, not only the question kind.
                 let written = |table: &str| {
                     commit.rows.iter().rev().find_map(|row| match row {
@@ -1765,6 +1811,15 @@ impl Controller {
                     ));
                 }
             }
+            if matches!(
+                output,
+                Out::Notice {
+                    notice: tl3_kernel::Notice::Summary(tl3_kernel::Outcome::NotActionable),
+                    ..
+                }
+            ) {
+                protected_requests::closing_summary(self, snapshot, commit, &mut delivery)?;
+            }
             if let Out::Notice {
                 notice: tl3_kernel::Notice::Incident { needs_rob },
                 ..
@@ -1841,6 +1896,16 @@ impl Controller {
                                 .unwrap_or("worker run failed")
                         ));
                     }
+                }
+                if needs_rob {
+                    // #403: an incident that needs Rob owes a postmortem.
+                    commit.postmortems.push(postmortems::owed(
+                        snapshot,
+                        node,
+                        format!("incident:{id}"),
+                        postmortems::Reason::Escalation,
+                        None,
+                    )?);
                 }
                 commit.rows.push(put(
                     "incidents",
@@ -2132,25 +2197,28 @@ impl Controller {
             return Ok(None);
         }
 
-        let ci_checks = match &observation {
-            Observation::CiFailed { checks, .. } => checks
-                .iter()
-                .take(20)
-                .map(|check| findings::CiFailure {
-                    name: findings::clipped(&check.name, 256),
-                    summary: findings::clipped(&check.summary, findings::MAX_MESSAGE_CHARS),
-                    url: check.url.as_ref().map(|url| findings::clipped(url, 4096)),
-                })
-                .collect(),
-            _ => Vec::new(),
+        let mut ci_details = match &observation {
+            Observation::CiFailed { checks, .. } => findings::QueueCiEvidence {
+                checks: checks.clone(),
+                ..Default::default()
+            },
+            Observation::Queue(adapters::mergify::QueueFact {
+                evidence: adapters::mergify::Evidence::CiFailed { details, .. },
+                ..
+            }) => details.clone(),
+            _ => Default::default(),
         };
-        let mut failed_tests = Vec::new();
+        ci_details = adapters::mergify::ci_evidence::bounded(ci_details);
+        let ci_checks = ci_details.checks.clone();
+        let mut failed_tests = ci_details.failed_tests.clone();
         let mut outside_paths = Vec::new();
         let mut outside_paths_total = 0;
         let mut detailed_review = false;
         let event = match observation {
             // Older controllers queued ScratchSaved after writing it with completion.
-            Observation::ScratchSaved { .. } | Observation::ScratchPruned { .. } => {
+            Observation::ScratchSaved { .. }
+            | Observation::ScratchPruned { .. }
+            | Observation::TraceLogsCapped { .. } => {
                 return Ok(None);
             }
             Observation::Progress { key, checkpoint } => {
@@ -2175,7 +2243,7 @@ impl Controller {
             } => {
                 return self.linked_request(snapshot, repository, issue, original, commit);
             }
-            Observation::Queue(fact) => {
+            Observation::Queue(mut fact) => {
                 let identity = fact.identity();
                 if fact.recorded(snapshot)? {
                     return Ok(None);
@@ -2208,6 +2276,55 @@ impl Controller {
                         return Ok(None);
                     }
                 }
+                if let Evidence::CiFailed {
+                    head,
+                    infra,
+                    head_check: false,
+                    details,
+                    ..
+                } = &mut fact.evidence
+                {
+                    *details = adapters::mergify::ci_evidence::bounded(details.clone());
+                    let plan = check_run(snapshot, node, Some(head))?;
+                    let outside = adapters::mergify::ci_evidence::outside_change(
+                        &fact.repository,
+                        details,
+                        plan.as_ref(),
+                    );
+                    let repeated = snapshot
+                        .rows
+                        .iter()
+                        .filter(|row| row.table == "queue_facts")
+                        .any(|row| {
+                            row.value["repository"] == json!(&fact.repository)
+                                && row.value["number"] == fact.number
+                                && row.value["evidence"]["CiFailed"]["head"] == *head
+                                && row.value["evidence"]["CiFailed"]["infra"] == true
+                                && row.value["evidence"]["CiFailed"]["details"]["failed_tests"]
+                                    .as_array()
+                                    .is_some_and(|previous| {
+                                        previous.iter().any(|previous| {
+                                            details
+                                                .failed_tests
+                                                .iter()
+                                                .any(|test| previous["test"] == test.test)
+                                        })
+                                    })
+                        });
+                    if outside || repeated {
+                        *infra = outside && !repeated;
+                    }
+                    details.decision = Some(
+                        if repeated {
+                            "repeated_test"
+                        } else if outside {
+                            "outside_change"
+                        } else {
+                            "upstream_classification"
+                        }
+                        .into(),
+                    );
+                }
                 let value = json!(&fact);
                 if let Evidence::CiFailed { head, .. }
                 | Evidence::Conflict { head, .. }
@@ -2234,6 +2351,30 @@ impl Controller {
                         if enqueue_pending && commit_sha(snapshot, current.approved) == Some(&head)
                         {
                             self.missing_check_incident(snapshot, commit, node, &head, &required)?;
+                            commit.rows.push(put("queue_facts", identity, value));
+                        }
+                        return Ok(None);
+                    }
+                    Evidence::QueueBlocked {
+                        head,
+                        conditions,
+                        failed,
+                    } => {
+                        let waiting = current.phase == tl3_kernel::Phase::Queued
+                            || current.phase == tl3_kernel::Phase::Publishing
+                                && current.effect.is_some_and(|effect| {
+                                    effect.kind == tl3_kernel::EffectKind::Enqueue
+                                        && !effect.cancelling
+                                });
+                        if waiting && commit_sha(snapshot, current.approved) == Some(&head) {
+                            self.queue_blocked_incident(
+                                snapshot,
+                                commit,
+                                node,
+                                &head,
+                                &conditions,
+                                &failed,
+                            )?;
                             commit.rows.push(put("queue_facts", identity, value));
                         }
                         return Ok(None);
@@ -2542,6 +2683,11 @@ impl Controller {
                         }));
                     }
                 };
+                if let Some(protected) =
+                    self.protected_reply(snapshot, commit, node, &role, &reply)?
+                {
+                    mapped = adapters::workers::protocol::MappedReply::Kernel(protected);
+                }
                 if role == "planner" && reply["kind"] == "leaf" {
                     let checks = reply["checks"]
                         .as_array()
@@ -2553,6 +2699,7 @@ impl Controller {
                                 name: format!("check-{}", index + 1),
                                 kind: serde_json::from_value(check["kind"].clone())?,
                                 tests: adapters::workers::protocol::reply_field(check, "node_ids")?,
+                                forcing: check.get("forcing").cloned(),
                             })
                         })
                         .collect::<Result<Vec<_>>>()?;
@@ -2993,7 +3140,7 @@ impl Controller {
                 Some((
                     node,
                     findings::Kind::FailedCheck,
-                    findings::ci_report(&ci_checks),
+                    findings::ci_report(&ci_checks, &failed_tests),
                 ))
             }
             _ => None,
@@ -3194,6 +3341,7 @@ fn observation_upstream(
     Ok(match observation {
         Observation::Progress { .. }
         | Observation::Quota { .. }
+        | Observation::TraceLogsCapped { .. }
         | Observation::Kernel(Event::Fact {
             fact: Fact::UpstreamStalled,
             ..

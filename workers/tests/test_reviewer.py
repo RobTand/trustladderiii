@@ -197,7 +197,8 @@ def test_model_receives_review_material_and_confined_read_results(review_request
     assert len(human) == 1
     assert json.loads(human[0].content) == review_request["inputs"]
     results = {message.name: message for message in observed[1] if message.type == "tool"}
-    for name in READ_TOOLS:
+    # diff needs a Git checkout; test_diff_tool.py covers it.
+    for name in READ_TOOLS - {"diff"}:
         assert results[name].status == "success"
         assert "greeting.py" in results[name].content or "goodbye" in results[name].content
     assert results["write"].status == "error"
@@ -513,3 +514,42 @@ def test_q44_model_cannot_request_a_free_restart(review_request, session_model, 
     with pytest.raises(ValueError, match="model cannot report reviewer exhaustion"):
         runtime.run(review_request, events.append)
     assert not any(event["event"] == "reply" for event in events)
+
+
+FORCING = {"symptom": "A real, unrelated process holds PID 4242.", "environment": {},
+           "patches": [{"target": "sampler.process_in_scope", "raises": "ValueError"}]}
+
+
+def test_review_sees_a_forced_reproduction(review_request):
+    # #393: the reviewer judges whether the forcing models the issue's symptom.
+    from jsonschema import ValidationError
+    from tl3_workers.contracts import validate
+
+    check = review_request["inputs"]["checks"][0]
+    check.update(kind="demonstrating", verdict="pass", forcing=FORCING)
+    check["tests"][0].update(base="assertion", head="passed", head_forced="passed", passed=True)
+    validate("reviewer-input", review_request["inputs"])
+    check["tests"][0]["head_forced"] = "maybe"
+    with pytest.raises(ValidationError):
+        validate("reviewer-input", review_request["inputs"])
+
+
+def test_prompt_judges_the_forcing_against_the_symptom():
+    from importlib.resources import files
+    prompt = " ".join(files("tl3_workers").joinpath("prompts", "reviewer.md").read_text().split())
+    assert "forcing" in prompt
+    assert "models the symptom the issue describes" in prompt
+    # The PB #2625 fix replaces the forced target in the test itself; the reviewer must say why it passes.
+    assert ("the code or test handles the forced condition, or only because the new test replaces "
+            "the forced target with its own patch") in prompt
+
+
+def test_review_input_carries_the_issue_for_a_forcing(review_request):
+    from jsonschema import ValidationError
+    from tl3_workers.contracts import validate
+
+    review_request["inputs"]["issue"] = {"title": "Stop depending on PID 4242", "body": "PID 4242 may be live."}
+    validate("reviewer-input", review_request["inputs"])
+    review_request["inputs"]["issue"]["body"] = "x" * 16_001
+    with pytest.raises(ValidationError):
+        validate("reviewer-input", review_request["inputs"])

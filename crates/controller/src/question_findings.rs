@@ -180,14 +180,20 @@ fn planner(plan: &Value) -> Option<Value> {
         }
         _ => return None,
     };
-    reported("planner", &report, CANT_MEET)
+    let mut found = reported("planner", &report, CANT_MEET)?;
+    if plan["kind"] == "cant_meet" {
+        found["outcome"] = json!("cant_meet");
+    }
+    Some(found)
 }
 
 /// Evidence from a failed run: the maker's own report, or the failures it just got.
 fn rung(sources: &Sources, decision: &str) -> Option<Value> {
     match (sources.fresh)("maker_replies") {
         Some(reply) if reply["kind"] == "cant_meet" => {
-            reported("maker", reply["report"].as_str()?, decision)
+            let mut found = reported("maker", reply["report"].as_str()?, decision)?;
+            found["outcome"] = json!("cant_meet");
+            Some(found)
         }
         _ => failures(sources, decision),
     }
@@ -359,6 +365,42 @@ mod tests {
 
     const PLANNING: Cont = Cont::Planning { must_split: false };
     const MAKING: Cont = Cont::Ready(Resume::Making);
+
+    #[test]
+    fn real_2636_report_identifies_cant_meet_for_planner_and_maker() {
+        let reply: Value = serde_json::from_str(include_str!(
+            "../../../workers/tests/fixtures/question-findings/prismabuild-2636-planner-cant-meet.json"
+        )).unwrap();
+        for (source, cont, fresh, prior) in [
+            (
+                "planner",
+                PLANNING,
+                json!({"plans": reply}),
+                Phase::Planning { must_split: false },
+            ),
+            (
+                "maker",
+                MAKING,
+                json!({"maker_replies": reply}),
+                Phase::Making,
+            ),
+        ] {
+            let found = run(
+                &question(QKind::CantMeet, cont),
+                &fresh,
+                &json!({}),
+                &[],
+                prior,
+            )
+            .unwrap();
+            assert_eq!(found["source"], source);
+            assert_eq!(
+                found["outcome"], "cant_meet",
+                "the writer must distinguish an explicit refusal"
+            );
+            assert_eq!(found["report"], reply["report"]);
+        }
+    }
 
     #[test]
     fn planner_cant_meet_reports_carry_their_cause_and_question() {

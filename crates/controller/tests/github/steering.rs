@@ -345,7 +345,14 @@ pub(super) fn commands(settings: &tl3_config::Store) {
                 .as_str()
                 .is_some_and(|id| id.ends_with("/10004"))
     }));
-    assert_eq!(fs::read_dir(&d.runs).unwrap().count(), 1);
+    // `.traces` holds span logs of retired runs until they ship (#430).
+    assert_eq!(
+        fs::read_dir(&d.runs)
+            .unwrap()
+            .filter(|entry| entry.as_ref().unwrap().file_name() != ".traces")
+            .count(),
+        1
+    );
     assert_eq!(fs::read_dir(d.runs.join(".ready")).unwrap().count(), 0);
     println!("test steering_commands_remark_authorization_and_dedup ... ok");
 }
@@ -439,10 +446,18 @@ fn replacement_assertions(d: &mut Daemon) {
             .any(|r| r["role"] == "ingest" && r["operation"]["node"] == 1)
     });
     let requests = d.requests();
-    assert!(requests.iter().any(|r| r["role"] == "ingest"
-        && r["operation"]["node"] == 1
-        && r["inputs"]["issue"]["number"] == 12
-        && r["inputs"]["issue"]["body"] == "Return goodbye instead of hello."));
+    // #449: the answer is the scope and the original issue rides along as context.
+    let ingest = requests
+        .iter()
+        .find(|r| r["role"] == "ingest" && r["operation"]["node"] == 1)
+        .unwrap();
+    assert_eq!(ingest["inputs"]["issue"]["number"], 12);
+    let body = ingest["inputs"]["issue"]["body"].as_str().unwrap();
+    assert!(body.starts_with(
+        "## Rob's answer (the new scope; it wins where it conflicts with the original issue)\n"
+    ));
+    assert!(body.contains("Return goodbye instead of hello."));
+    assert!(body.contains("## Original issue, narrowed by Rob's answer above\nTitle: Add a blue button\n\nReturn hello."));
     let snapshot = d.store.load().unwrap();
     assert!(
         snapshot
@@ -606,6 +621,30 @@ pub(super) fn answer_recovery(settings: &tl3_config::Store) {
     assert_eq!(jobs[0].attempt, 0);
     fs::write(d.marker.with_extension("answer"), "go").unwrap();
     d.classified(15001);
+    // #422: the applied answer is retained as Rob's decision (Hindsight is down here).
+    let decisions: Vec<Value> = d
+        .store
+        .pending_memories(0)
+        .unwrap()
+        .into_iter()
+        .map(|(_, _, item)| item)
+        .filter(|item| {
+            item["tags"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("kind:decision"))
+        })
+        .collect();
+    assert_eq!(decisions.len(), 1, "one decision per applied answer");
+    let tags = decisions[0]["tags"].as_array().unwrap();
+    assert!(tags.contains(&json!("source:rob")), "{tags:?}");
+    assert!(
+        tags.iter()
+            .any(|t| t.as_str().unwrap().starts_with("repo:"))
+    );
+    let content = decisions[0]["content"].as_str().unwrap();
+    assert!(content.contains("Rob chose: continue"), "{content}");
+    assert!(content.contains("Answer the old question"), "{content}");
     d.wait(|s| s.node()["phase"].get("Closed").is_some());
     assert_eq!(d.node()["phase"], json!({"Closed": "Merged"}));
     d.settled();
@@ -636,6 +675,7 @@ pub(super) fn linked_reconciliation() {
         revert: false,
         since: "2026-10-30T01:00:00Z".into(),
         comment_issue: 25,
+        question: None,
     });
     api.state.lock().unwrap().lose_issue_reply = true;
     assert!(adapter.execute(&correction).is_err());
@@ -877,6 +917,18 @@ pub(super) fn answer_replacement(settings: &tl3_config::Store) {
     d.send(21001, "Use a smaller request");
     d.classified(21001);
     replacement_assertions(&mut d);
+    let body = d
+        .requests()
+        .iter()
+        .find(|r| r["role"] == "ingest" && r["operation"]["node"] == 1)
+        .unwrap()["inputs"]["issue"]["body"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        body.contains("## Question Rob answered\n"),
+        "an answer to a question names the question: {body}"
+    );
     println!("test steering_answer_change_request_reuses_issue ... ok");
 }
 

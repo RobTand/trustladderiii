@@ -13,6 +13,7 @@ load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 load("//tools/bazel:nonhermetic.bzl", "nonhermetic")
 load("//tools/bazel:python.bzl", "tl3_py_test")
+load("//tools/bazel:test_sizing.bzl", "test_size")
 
 # Cargo tests read env!("CARGO_MANIFEST_DIR") and some require it absolute.
 # rust_runner.py points this fixed path at the test's runfiles. Each test needs
@@ -75,9 +76,7 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
         "//conditions:default": ["@postgres_linux_amd64//:all"],
     }) if package in _POSTGRES else []
     tags, exec_properties = nonhermetic(name)
-    if controller:
-        # These binaries run Postgres, worker processes and git side by side.
-        exec_properties = dict(exec_properties, EstimatedCPU = "4", EstimatedMemory = "8GB")
+    exec_properties.update(test_size(package, name, postgres = package in _POSTGRES))
     runtime_data = kwargs.pop("data", [])
     harness = "libtest" if kwargs.get("use_libtest_harness", True) else "custom"
     rust_test(
@@ -105,6 +104,8 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
         tags = ["rust"] + tags,
         exec_properties = exec_properties,
         size = "large",
+        # Keep #472 for workers until #483 shards it and CPU calibration empties wall_only.
+        timeout = "eternal" if binary_id == "tl3-controller/workers" else "long",
     )
 
 def tl3_crate(package, crate, local_deps = [], features = [], build_script = False,

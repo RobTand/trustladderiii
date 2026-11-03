@@ -71,6 +71,9 @@ class FakeWorkspace:
     def budget_check(self, base):
         return []
 
+    def graph_check(self, base, head):
+        return {'errors': [], 'summary': 'U unchanged', 'mermaid': {}}
+
 
 class PlanTests(unittest.TestCase):
     def test_impacted_tests_are_selected_and_packages_become_scopes(self):
@@ -143,17 +146,20 @@ class PlanTests(unittest.TestCase):
 
 
 class BazelDiffCommandTests(unittest.TestCase):
-    def test_v42_commands_name_the_workspace_and_rule_targets(self):
-        generate, impacted = bazel_gate.diff_commands('java', 'diff.jar', '/repo', 'bazel',
-                                                      '/t/base.json', '/t/head.json', '/t/out.txt')
-        self.assertEqual(generate('/t/base.json')[3:], ['generate-hashes', '--workspacePath', '/repo',
-                                                        '--bazelPath', 'bazel', '--excludeExternalTargets',
-                                                        '--includeTargetType', '/t/base.json'])
+    def test_native_commands_export_edges_and_select_with_distances(self):
+        generate, impacted = bazel_gate.diff_commands('diff', '/repo', 'bazel',
+                                                      '/t/base.json', '/t/head.json', '/t/out.json', '/t/deps.json')
+        command = generate('/t/base.json', '/t/base-deps.json')
+        self.assertEqual(command[:2], ['diff', 'generate-hashes'])
+        self.assertIn('--includeTargetType', command)
+        self.assertEqual(command[command.index('--depEdgesFile') + 1], '/t/base-deps.json')
         self.assertIn('get-impacted-targets', impacted)
+        self.assertEqual(impacted[impacted.index('--depEdgesFile') + 1], '/t/deps.json')
         for flag, value in [('--workspacePath', '/repo'), ('--bazelPath', 'bazel'),
                             ('--targetType', 'Rule'), ('--startingHashes', '/t/base.json'),
-                            ('--finalHashes', '/t/head.json'), ('--output', '/t/out.txt')]:
+                            ('--finalHashes', '/t/head.json'), ('--output', '/t/out.json')]:
             self.assertEqual(impacted[impacted.index(flag) + 1], value)
+
 
 
 class SkipDiffTests(unittest.TestCase):
@@ -192,6 +198,34 @@ class ClassifyTests(unittest.TestCase):
 
 
 class GateTests(unittest.TestCase):
+    def test_mergify_batch_keeps_the_supplied_base_for_graph_and_selection(self):
+        batch_base, batch_head = 'c' * 40, 'd' * 40
+        workspace = FakeWorkspace(['crates/kernel/src/lib.rs'], [], {})
+        calls = []
+        def graph_check(base, head):
+            calls.append(('graph', base, head))
+            return {'errors': [], 'summary': 'unchanged'}
+        def bazel_diff(base, head):
+            calls.append(('selection', base, head))
+            return {'//crates/kernel:lib_test_tl3_kernel'}
+        workspace.graph_check = graph_check
+        workspace.bazel_diff = bazel_diff
+        bazel_gate.gate_pr(workspace, batch_base, batch_head, {})
+        self.assertEqual(calls, [('graph', batch_base, batch_head),
+                                 ('selection', batch_base, batch_head)])
+
+    def test_graph_regression_fails_even_a_docs_only_pr(self):
+        workspace = FakeWorkspace(['docs/bazel.md'], [], {})
+        calls = []
+        def graph_check(base, head):
+            calls.append((base, head))
+            return {'errors': ['U worsened'], 'summary': 'U 10% → 20%', 'mermaid': {}}
+        workspace.graph_check = graph_check
+        result = bazel_gate.gate_pr(workspace, 'a' * 40, 'b' * 40, {})
+        self.assertEqual(calls, [('a' * 40, 'b' * 40)])
+        self.assertEqual(result['graph_impact']['errors'], ['U worsened'])
+        self.assertFalse(bazel_gate.passed({**result, 'mode': 'pr'}))
+
     def test_pr_gate_runs_selection_on_amd64_and_reports_failures(self):
         workspace = FakeWorkspace(['crates/kernel/src/lib.rs'], ['//crates/kernel:lib_test_tl3_kernel'],
                                   {'//crates/kernel:lib_test_tl3_kernel': 'FAILED'})
@@ -309,6 +343,19 @@ class GateTests(unittest.TestCase):
                 rust_runner.enforce_budget({'b::fast': 1.0}, {'seconds': 99.0, 'slow': {}}, 'baseline', outputs,
                                            baseline=config)
             self.assertFalse(Path(outputs, bazel_gate.BUDGET_MARKER).exists())
+
+    def test_runner_reruns_cpu_overruns_but_never_wall_backstops(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'bazel'))
+        import rust_runner
+        config = {'seconds': 10, 'slow': {}, 'cpu': {'seconds': 2, 'slow': {}}}
+        for wall, cpu, retry in [(1, 6, True), (301, .1, False), (301, 6, False)]:
+            with self.subTest(wall=wall, cpu=cpu), tempfile.TemporaryDirectory() as outputs:
+                prefix = 'Per-test time budget exceeded' if retry else 'Per-test wall backstop exceeded'
+                with self.assertRaisesRegex(RuntimeError, prefix):
+                    rust_runner.enforce_budget({'b::scenario': wall}, config, 'buildbuddy-amd64',
+                                               outputs, cpu_seconds={'b::scenario': cpu})
+                self.assertEqual(Path(outputs, bazel_gate.BUDGET_MARKER).exists(), retry)
 
     def test_bazel_diff_error_fails_the_gate(self):
         workspace = FakeWorkspace(['crates/kernel/src/lib.rs'], [], {}, diff_error='bazel-diff exited 1')

@@ -111,7 +111,21 @@ the node's `brief`, `goals` with stable string IDs, `plan.checks`, and any
 accumulated `feedback`. A fix round requires feedback. The controller records
 failed checks, review requests and can't-meet reports in `maker_findings` in the
 same transaction as the kernel reply. The supervisor adds these to supplied
-findings on every subsequent attempt. Ingress supplies the brief slice and
+findings on every subsequent attempt.
+The maker sees a bounded view of that history (#316). A finding that a later review or
+check superseded is sent as a one-line record: kind, id, title and `resolved_round`, the
+count of feedback events (a review or a check failure) up to the event that superseded
+it. The latest review, the reviewed head's findings and an unsuperseded check failure keep
+their full text. `current_review_findings` lists ids only. The store keeps every finding,
+and the reviewer reads the full history.
+
+Supersession is positional, by the append order of `maker_findings` (`lib.rs` only
+pushes to it):
+
+- A newer check failure collapses the older ones.
+- A newer review collapses the findings of older reviews. That is safe because the
+  reviewer keeps the full history and re-raises anything still wrong.
+- An approving review adds no findings, so it collapses nothing. Ingress supplies the brief slice and
 detailed findings; the supervisor supplies authoritative `plan.files`,
 `attempt`, `round`, context and fit limits, PrismaBuild settings, and Hindsight
 endpoint and bank from the delivery and config. Other roles can also use named objects
@@ -166,9 +180,24 @@ Feedback items have `kind`, `report` and `goal_ids`. Actionable evidence adds
 `failed_tests` with `test` and `message`, `outside_paths`, and `ci_checks` with
 `name`, `summary` and optional `url`. The report describes the failure in plain
 language. `Observation::CiFailed` persists named CI evidence in the same
-transaction as its kernel fact. A bare non-infrastructure CI fact still records
-feedback, explicitly stating when the upstream supplied no check details.
-Infrastructure failures and stale replies do not add maker findings.
+transaction as its kernel fact. Merge queue failures read the failed draft's
+checks and bounded job-log tails through the GitHub App. When the queue check
+names several draft attempts, the collector uses the last one. Feedback includes check
+names, conclusions, titles, summaries, details URLs and parsed Bazel or pytest
+test IDs. ANSI escapes and control codes are removed before parsing and
+redaction. External text is clipped to 20 tests,
+1,000 characters per message and 16,000 per report.
+
+When every failed check supplies parsed failing tests, every test maps to an
+unchanged file, and the plan named none of the failing tests or checks, the controller journals an infrastructure
+failure with those IDs. The kernel requeues once without a maker or credit.
+A repeat on any of those tests takes normal failure handling with evidence,
+including after restart. Unknown mappings, absent IDs, unavailable plans,
+truncated logs and other incomplete evidence take normal handling. Recorded
+dequeues skip draft, job-log and diff collection on redelivery, including after
+restart. A bare non-infrastructure CI fact still records feedback
+stating when the upstream supplied no check details. Infrastructure failures
+and stale replies do not add maker findings.
 Reviewer blockers supply their problem, evidence and cited goal IDs to the next
 maker run, with up to 20 blockers per review. Each problem and evidence is
 capped at 1,000 characters, with a 16,000-character total per review. Accumulated maker reports enter the planner's
@@ -926,8 +955,21 @@ clipped to 6,000 characters, and pieces, files and items to 600 and to eight.
 The writer worker redacts findings with the MLflow redactor (#302), including
 the run's loaded model key, before the model turn. A question with findings must
 state its decision as one question. The obstacle is capped at 600 characters and
-the decision at 400. If every draft is rejected, the question still posts, with
-the fixed obstacle, the options and the kind's fixed decision.
+the decision at 400. Explicit planner and maker refusals carry
+`outcome: "cant_meet"`. Their questions must name at least one reported path or
+rule in the obstacle. Those exact paths are allowed in that question, while
+other paths and internal vocabulary remain subject to the usual checks. The
+writer explains the worker's proposed decisions within the three standard
+answers, including any required permission and a smaller request. When the report
+names no path or rule, the obstacle must share a distinctive word of at least
+five letters with its first sentence. When the report proposes an action, at
+least one option must name a reported blocker or proposed action.
+
+If every draft is rejected, the controller still posts a fixed question. For a
+can't-meet report, it redacts secrets and clips the first sentence naming the
+blocker to the obstacle's limit. If that sentence fails the message checks, the
+controller uses a fixed sentence naming a safe reported blocker. Unsafe details
+cannot suppress the question or bypass the message checks.
 
 Run `bash crates/controller/tools/verify-planning.sh` through PrismaBuild once
 with each host tag, `dl380g10`, `sparky` and `sparklina`. It runs controller and
@@ -942,6 +984,40 @@ storing a plan. Recovery reattaches to the same process and key with one attempt
 Stop proves the process has ended and stores no plan. The leaf, split, rejected
 leaf, invalid split and cannot-meet scenarios also check persistence, narrowing
 context and retry findings.
+
+## Postmortems
+
+Q32's postmortems are pulled forward (#403). `postmortems.rs` records them
+outside the kernel, in the commit that makes them owed, so a crash can't lose
+one and no delivery work waits on one.
+
+- **At close**, every node gets code grades under TL3's rubric
+  (`src/rubric.json`, version 1): reliability, escalation and queue outcome are
+  graded 1 to 5, and credit, questions, incidents and time per phase are recorded
+  as facts. The kernel zeroes its failure counters when a step succeeds, so the
+  world row `retries` counts each run, effect and plan retry in the commit where
+  its counter rises; reliability and selection read it. Time per phase is in
+  milliseconds from the phase history; the phase that ends at close is left out,
+  so the grades depend only on stored times. A postmortem is owed when the node asked Rob or raised an incident
+  that needed him (`escalation`), had a fix round, later attempt or replan
+  (`needed_fix`), had a run, effect or plan retry (`retry`), or closed without
+  merging (`closed_without_merge`). Otherwise a clean merge is `sampled` when it
+  falls in the stored share `postmortem_sample_share` (default 0.1); the record
+  keeps the share in force. Sampling hashes the request and node, so the same
+  node is always sampled the same way.
+- **Every question to Rob** owes one (`question:<id>`), and so does every kernel
+  incident that needs him (`incident:<id>`).
+- **Rob's console button**, `{"kind": "postmortem"}`, owes one (`rob:<command
+  id>`, `rob_asked`) on a closed request or one awaiting Rob. It's refused while
+  one is owed or running, and posts nothing on the issue.
+
+Early-end closes (duplicate, already done, not actionable) stay owed: a wrong
+early end is exactly the quiet error a postmortem should catch. The judge that
+writes postmortems arrives separately; until then owed rows accumulate. They
+drain as it runs them on spare capacity, at most one at a time. Their number is
+bounded by closes, questions and incidents, and `tl3_phase_history` grows by one
+row per phase change.
+The store tables are described in `crates/store/README.md`.
 
 ## Hindsight write-back
 
@@ -1047,6 +1123,90 @@ cuts, database restart, secret filtering, bounded records and cleanup. The
 worker scenarios also prove that requests close during a memory outage and
 leave their completed run records queued. Python's `test_memory.py` covers the
 shared runtime collector for every role.
+
+## Hindsight recall and curation (#422)
+
+**Recall.** `Supervisor::request()` calls `memory::recall` before every ingest,
+planner and reviewer launch, so recall is the first thing those roles see.
+
+- Ingest queries the repo, issue title and body. The planner queries the repo,
+  brief and goals.
+- Both get lessons, decisions and conventions first, then any other memory.
+- The reviewer gets only `kind:convention` memories tagged with its own repo.
+
+**Cross-repo policy.**
+
+- Ingest and planning recall is not filtered by repo. Each query names the repo,
+  so same-repo memories rank first, but a lesson from another repo can still be
+  supplied.
+- Every supplied memory carries its `repo` tag, if it has exactly one.
+- A run can hide or retire only memories tagged with its own repo. A memory with
+  no repo tag can't be retired by any run.
+- Rob can retire any memory with `tl3 memory`.
+
+**Bounds and headroom.**
+
+- At most 8 memories, 1,500 characters each and 8,000 in total. That is about
+  2,000 o200k tokens of English, inside the planner's and reviewer's context.
+- The forecast sizes the maker's context, and the maker gets no supplied
+  memories; its read-only `recall` tool is bounded separately. Supplied memories
+  therefore change no forecast.
+- The controller redacts memories with `safe_text`. The worker then applies
+  #302's redactor before any model turn.
+
+**Outages.**
+
+- Any failure gives the run `memories: []` and a `memory_note`. It is never an
+  incident or a wait.
+- One failed recall opens a breaker, so later launches skip recall without
+  contacting Hindsight. The breaker closes when Hindsight next acknowledges a
+  delivery, such as the next retained run record. Then the next launch tries
+  again. No timer is involved.
+- Retain can succeed while recall still hangs. Then each acknowledged retain
+  closes the breaker, and the next launch pays one recall timeout (5 s)
+  before it opens again. The cost is bounded by the retain rate, which is at
+  most one per retired worker run.
+
+**Wrong memories.** Ingest and planner runs read a pinned base checkout, so
+their flags are evidence about the repo. Each flag must:
+
+- quote the memory's claim verbatim from its content;
+- quote the repo, at most 40 cited lines, sharing an identifier with the claim.
+  An identifier is a name only code uses: at least 5 characters, with an
+  underscore, a digit, internal mixed case, `::`, `.` or `/`. A plain word like
+  `database` or `error` matches too many lines to tie evidence to a claim.
+- come from the file the memory names, when it names one by path or
+  extension.
+
+The flagged memory must also be cited, tagged with the run's repo, and not a
+decision. Code checks every condition at run retirement against the run's own
+worktree. A rejected flag is kept with its reason and changes nothing.
+
+`tl3_memory_curations` (migration 14) is the trail for every decision:
+
+- One accepted flag records `hidden`. TL3's recall drops the memory at once, and
+  Hindsight is not told.
+- A second accepted flag from a different request, or `tl3 memory confirm`,
+  records `invalidated`. The feed then sends `PATCH …/memories/{id}`, and
+  Hindsight retires the memory everywhere.
+- `tl3 memory invalidate` retires a memory on Rob's word. `tl3 memory revert`
+  sends `valid` and clears both states.
+- `tl3 memory list` prints the trail.
+
+The feed posts one line per hide and retirement on the operations issue. The
+line holds the memory id, the claim, the evidence, the source and the run. A
+per-row marker keeps a retried post from duplicating.
+
+Retained lessons carry `repo:`, `kind:` (`run`, `lesson`, `decision` or
+`convention`), `source:` and an optional `topic:`:
+
+- Rob's applied answers become decisions holding the question, his choice and
+  his words for that answer.
+- Verified planner conventions become conventions.
+- `memory::queue_lesson` is the entry point for postmortem lessons (#403).
+
+`cargo test -p tl3-controller --test hindsight_context --locked` covers this
+with a fake bank.
 ## Allowance looks and incidents
 
 `looks` stores active allowances and incidents in `tl3_world`. It uses the

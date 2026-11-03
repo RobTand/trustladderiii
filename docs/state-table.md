@@ -229,6 +229,7 @@ Each leaf's plan lists checks of three kinds, which Rob confirmed on 2026-10-30 
 |---|---|---|
 | **Demonstrating** | A measure that changes behavior | Each named test fails on the base and passes on the leaf's commit. The base run applies only the leaf's test changes. On the base, the failure must be an assertion, or a missing name the leaf adds. |
 | **Regression** | Showing that nothing which worked is now broken | It passes on the leaf's commit. A test already failing on the base is recorded as pre-existing and excused. Base results are cached per base commit. |
+| **Demonstrating, forced** | Making a named flaky test deterministic (Q55) | The check carries the plan's forcing, which the harness applies outside the test. Each named test fails by assertion on the base, running the old test as the base wrote it under the forcing. On the leaf's commit it passes both under the forcing and without it. Review judges whether the forcing models the flake's symptom. |
 | **Behavior-preserving** | A measure that changes no behavior, such as a refactor | It passes on both trees. Review judges the rest. |
 | **Reproducing** | A review finding about behavior, fixed in a fix round | Each named test fails on the commit that was reviewed and passes on the fixed commit. The run on the reviewed commit applies only the round's test changes. On the reviewed commit, the failure must be an assertion, or a missing name the round adds. |
 
@@ -240,10 +241,13 @@ TL3 owns the check harness, and the code under test can't change it:
 - The test command comes from the repo's test configuration, which a leaf can't change without a second review. See "Containment".
 - The harness selects the named tests itself. It collects and parses the report outside the container.
 - A named test that is missing, skipped or not collected fails its check.
-- One check job runs both trees, and the reviewed commit as a third when the round has reproducing checks.
+- One check job runs both trees, and the reviewed commit as a third when the round has reproducing checks. A forced check adds a run of the base and a run of the leaf's commit under its forcing.
+- A forcing is data from the plan: environment variables, and patches that give a module or class attribute inside the served repository a JSON value, a returned JSON value, a raised builtin exception other than `AssertionError`, or a delay of up to 5 seconds per call and 10 seconds per test. It reaches the read-only runner with the test selection, and only the test container applies it.
 - The harness commits progress to PrismaBuild after each test, so a long suite stays visibly alive.
 
 A job that produces no report never ran its tests, so it is an infrastructure failure. A demonstrating test that errors on the base for any other reason shows nothing, so the round fails.
+
+A forced test that passes on the base under its forcing shows the forcing doesn't reproduce the flake, so the round fails. So does a head that fails under the forcing, or fails without it. A forcing the harness can't apply fails the round with a message naming the forcing. Repeating a test until it fails is not evidence (Q55).
 
 ## Failures
 
@@ -303,6 +307,7 @@ in Ingesting and requests an ingest run, retaining the proposed head.
 
 | Event | Condition | Next | Effects |
 |---|---|---|---|
+| Required protected edits confirmed (Q57) | Concrete paths match the effective protected list | Stopping(NotActionable) | No credit spent or Rob question; record reason `protected_paths` |
 | Ingest done (brief and measures, which the ingest agent has checked against the issue) | | Auditing | Request an audit run |
 | Ingest proposes an early end | Duplicate, already done, or not actionable | Auditing | Request an audit of that verdict |
 
@@ -312,6 +317,7 @@ An independent agent checks ingest's output against the original issue. It can b
 
 | Event | Condition | Next | Effects |
 |---|---|---|---|
+| Required protected edits confirmed (Q57) | From declared goals, footprint or audit evidence | Stopping(NotActionable) | No credit spent or Rob question; record reason `protected_paths` |
 | Audit agrees with the measures | | Unplanned | Post the measures to the issue in plain language |
 | Audit agrees with an early end | | Stopping(Duplicate, AlreadyDone or NotActionable) | |
 | Audit disagrees | First time | Ingesting | Re-run ingest with the audit's objections, in a new generation |
@@ -348,12 +354,19 @@ goals and forecast settings:
 
 | Event | Condition | Next | Effects |
 |---|---|---|---|
+| Plan: can't meet, with required protected paths (Q57) | Controller verifies concrete paths against defaults plus global and repository lists | Stopping(NotActionable) | No retry, credit spent or Rob question, regardless of `fail_fast` |
 | Plan: leaf | The leaf rules hold | Ready(fresh) | |
 | Plan: split | Slice one | AwaitingRob(needs splitting) | Ask Rob to narrow the request, showing the proposed pieces |
 | Plan: can't meet, with a report | First time | Planning | Re-run with the next model on the planner's ladder, in a new generation |
 | Plan: can't meet, with a report | Second time | AwaitingRob(can't meet, continue to Planning) | |
 | Plan breaks a rule | First time | Planning | Re-run with the reason, in a new generation |
 | Plan breaks a rule | Second time | AwaitingRob(can't meet, continue to Planning) | |
+
+Q57 closes with reason `protected_paths`. Its summary names those paths, says
+the work belongs outside TL3, leaves the issue open and offers `restart` after
+narrowing. A durable one-line note goes to the operations issue. Merely mentioned
+or excluded paths do not trigger the rule. A partial leaf must still meet every
+goal and land on its own. Normal teardown is unchanged.
 
 ### Ready(resume point)
 

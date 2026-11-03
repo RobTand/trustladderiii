@@ -167,6 +167,47 @@ pub struct EffectTransition {
     pub to: EffectState,
 }
 
+/// A postmortem made owed by a commit (#403), so a crash can't lose it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OwedPostmortem {
+    pub node: String,
+    /// What made it owed, unique per node: close, question:<id>, incident:<id>
+    /// or rob:<console command id>.
+    pub trigger: String,
+    /// needed_fix, retry, escalation, closed_without_merge, sampled or rob_asked.
+    pub reason: String,
+    /// The sampled share in force, for reason sampled.
+    pub sample_share: Option<f64>,
+    pub repo: String,
+    pub issue: i64,
+    pub title: String,
+}
+
+/// One rubric dimension's grade from code. A later fact adds a grade.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CodeGrade {
+    pub node: String,
+    /// The fact that recorded it, such as close; unique per dimension and version.
+    pub trigger: String,
+    pub rubric_version: i32,
+    pub dimension: String,
+    /// 1 to 5, or none for a fact the rubric records without grading.
+    pub grade: Option<i16>,
+    pub fact: Value,
+}
+
+/// A postmortem's record, as the console reads it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PostmortemRecord {
+    pub id: i64,
+    pub node: String,
+    pub trigger: String,
+    pub reason: String,
+    pub sample_share: Option<f64>,
+    /// owed, running, done or failed.
+    pub status: String,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreditEntry {
     pub node: String,
@@ -268,6 +309,10 @@ pub struct Commit {
     pub effects: Vec<NewEffect>,
     pub transitions: Vec<EffectTransition>,
     pub credit: Vec<CreditEntry>,
+    /// Postmortems this commit makes owed (#403). A replay records each once.
+    pub postmortems: Vec<OwedPostmortem>,
+    /// Code grades this commit records. Grades are append-only.
+    pub grades: Vec<CodeGrade>,
     pub result: Value,
     /// Upgrade only: advance by one, after all active deliveries have drained.
     pub next_epoch: Option<Epoch>,
@@ -284,6 +329,8 @@ impl Commit {
             effects: Vec::new(),
             transitions: Vec::new(),
             credit: Vec::new(),
+            postmortems: Vec::new(),
+            grades: Vec::new(),
             result: Value::Null,
             next_epoch: None,
         }
@@ -310,4 +357,21 @@ pub struct WorkerProgress {
     /// Database observation time of this attempt claim, in Unix milliseconds.
     pub started_ms: i64,
     pub last_progress_ms: Option<i64>,
+}
+
+/// #422: one decision about a recalled memory, kept as an audit trail.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MemoryCuration {
+    pub memory_id: String,
+    /// `hidden` from TL3's recall, `invalidated` in Hindsight, or `valid` again.
+    pub state: &'static str,
+    /// `accepted` decisions are sent to Hindsight; `rejected` ones are only recorded.
+    pub verdict: &'static str,
+    pub source: String,
+    pub request: Option<String>,
+    pub run: Option<String>,
+    /// The memory's own words that the evidence contradicts.
+    pub claim: Option<String>,
+    pub reason: String,
+    pub evidence: serde_json::Value,
 }

@@ -140,6 +140,15 @@ fn delivery() -> Delivery {
         proposed: None,
     }
 }
+/// Entries of the runs directory besides `.traces`, which holds span logs of
+/// retired runs until they ship (#430).
+fn run_entries(runs: &Path) -> usize {
+    fs::read_dir(runs)
+        .unwrap()
+        .filter(|entry| entry.as_ref().unwrap().file_name() != ".traces")
+        .count()
+}
+
 fn root_for(config: &tl3_config::Config, key: &str) -> PathBuf {
     config
         .workers
@@ -224,9 +233,12 @@ fn linked_materials(settings: &tl3_config::Store, wrapped: bool) {
         "linked issues must replace the selected role's original issue"
     );
     assert_eq!(request["inputs"]["issue"]["title"], "Correct the greeting");
+    let log = root_for(&config, &delivery.key).join("attempt-00000000/trace.jsonl");
+    let wake = config.workers.runs.join(".traces/.wake");
     assert_eq!(
         request["trace"],
-        json!({"repo": "RobTand/tl3-sandbox", "issue": 1000, "request": "1", "attempt": 1, "round": 0}),
+        json!({"repo": "RobTand/tl3-sandbox", "issue": 1000, "request": "1", "attempt": 1, "round": 0,
+               "log": log, "wake": wake}),
         "worker metadata must identify its request without changing role inputs"
     );
     assert_eq!(
@@ -236,6 +248,82 @@ fn linked_materials(settings: &tl3_config::Store, wrapped: bool) {
     assert_eq!(
         request["inputs"]["repo"]["file_list"],
         json!(["greeting.py"])
+    );
+}
+
+/// #449: PB #2626's shape. Rob's answer narrows the request to items of a section and
+/// refers to the issue's protocol section; the new request's ingest input must keep both.
+fn narrowed_materials(settings: &tl3_config::Store, wrapped: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "normal");
+    let mut store = Store::open(settings).unwrap();
+    let original = include_str!("fixtures/narrowing/issue-2626.md");
+    let answer = include_str!("fixtures/narrowing/answer-q20.md");
+    let issue = json!({"number": 2626, "title": "[P2] Defer new GPU claims while a gate GPU lease is live on the host",
+        "body": original, "author": "requester", "comments": []});
+    let repo = json!({"readme": "PrismaBuild", "file_list": ["src/prismabuild/pool.py"]});
+    let materials = if wrapped {
+        let inputs = json!({"issue": issue, "repo": repo});
+        json!({"ingest": inputs, "audit": inputs, "repo": repo})
+    } else {
+        json!({"issue": issue, "repo": repo})
+    };
+    store.put_worker_materials("0", &materials).unwrap();
+    let mut commit = Commit::new("narrowed-materials", json!({}), &store.load().unwrap());
+    commit.rows.push(RowChange::Put {
+        table: "request_links".into(),
+        id: "1".into(),
+        value: json!({"original": 0, "issue": {
+            "number": 2626, "title": "[P2] Defer new GPU claims while a gate GPU lease is live on the host",
+            "body": answer, "state": "open", "updated_at": "2026-11-02T16:10:00Z", "pull_request": null
+        }, "narrowing": {"question": {"id": 20, "kind": "needs_splitting"}}}),
+    });
+    store.commit(&commit).unwrap();
+    let mut delivery = delivery();
+    delivery.output = Out::Effect {
+        node: NodeId(1),
+        seq: 1,
+        kind: EffectKind::StartRun(Role::Ingest),
+        head: None,
+    };
+    delivery.issue = 2626;
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    supervisor.execute(&delivery).unwrap();
+    assert!(!failed(&terminal(&mut supervisor, &delivery)));
+    let request: Value = serde_json::from_slice(
+        &fs::read(root_for(&config, &delivery.key).join("attempt-00000000/request.json")).unwrap(),
+    )
+    .unwrap();
+    let body = request["inputs"]["issue"]["body"].as_str().unwrap();
+    assert!(
+        body.starts_with(
+            "## Rob's answer (the new scope; it wins where it conflicts with the original issue)\n"
+        ),
+        "the answer leads as the scope: {body}"
+    );
+    assert!(body.contains(answer.trim()), "the answer is carried whole");
+    assert!(
+        body.contains("## Original issue, narrowed by Rob's answer above\n"),
+        "the original issue is labelled as context"
+    );
+    assert!(
+        body.contains("## Protocol `prismabuild.gpu_lease.v1`") && body.contains("`TTL_S = 30`"),
+        "the protocol section the answer refers to reaches ingest"
+    );
+    assert!(
+        body.contains("## Sections of the original issue that the answer refers to\n")
+            && body.contains("\n- Behaviour wanted\n")
+    );
+    assert!(
+        body.contains("## Question Rob answered\n"),
+        "the answered question is named"
+    );
+    assert_eq!(request["inputs"]["issue"]["number"], 2626);
+    assert_eq!(request["role"], "ingest");
+    // Every later role reads the same narrowed issue, even if the GitHub issue changes.
+    assert_eq!(
+        store.worker_materials("1").unwrap().unwrap()["issue"]["body"],
+        request["inputs"]["issue"]["body"]
     );
 }
 
@@ -387,6 +475,7 @@ fn main() {
         ] {
             planning::planning(&database.create(&mode.replace('-', "_")), mode);
         }
+        planning::memories(&database.create("plan_memories"));
         database.stop();
         return;
     }
@@ -420,6 +509,10 @@ fn main() {
         for wrapped in [false, true] {
             linked_materials(
                 &database.create(&format!("linked_materials_{wrapped}")),
+                wrapped,
+            );
+            narrowed_materials(
+                &database.create(&format!("narrowed_materials_{wrapped}")),
                 wrapped,
             );
         }
@@ -517,6 +610,13 @@ fn main() {
             wrapped,
         );
         println!("test linked_issue_role_materials_wrapped_{wrapped} ... ok");
+        narrowed_materials(
+            &database.create(&format!("narrowed_materials_{wrapped}")),
+            wrapped,
+        );
+        println!(
+            "test narrowed_request_ingest_carries_issue_scope_and_question_wrapped_{wrapped} ... ok"
+        );
     }
     simulation(&database.create("workers_sim"));
     println!("test real_ingest_audit_reaches_unplanned_and_posts_goals ... ok");
@@ -569,6 +669,14 @@ fn main() {
     println!("test feed_retirement_end_to_end ... ok");
     retirement(&database.create("workers_retirement"));
     println!("test retirement_requires_terminal_unwatched_effect_and_recovers_from_sigkill ... ok");
+    retirement_review::retirement_keeps_an_unshipped_span_log(
+        &database.create("span_log_retirement"),
+    );
+    println!("test retirement_keeps_an_unshipped_span_log ... ok");
+    retirement_review::trace_log_cap_raises_one_operations_incident(
+        &database.create("span_log_cap"),
+    );
+    println!("test trace_log_cap_raises_one_operations_incident ... ok");
     finish_fixture(database, "worker_memory");
     let mut database = Database::start();
     retirement_review::summaries_and_states(&database.create("retirement_summaries"));
@@ -604,6 +712,8 @@ fn main() {
         planning::planning(&database.create(&mode.replace('-', "_")), mode);
     }
     println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
+    planning::memories(&database.create("plan_memories"));
+    println!("test planner_memories_recall_and_flag ... ok");
     planning::stop(&database.create("planner_stop"));
     println!("test planner_stop ... ok");
     quota_scenarios(&mut database);
@@ -611,7 +721,7 @@ fn main() {
     let mut database = Database::start();
     maker::run(&mut database);
     finish_fixture(database, "maker");
-    println!("83 worker supervisor, planning and maker scenarios passed; no skips");
+    println!("88 worker supervisor, planning and maker scenarios passed; no skips");
 }
 
 /// PRD #327, C5: the writer drafts with the writer's active prompt version and
@@ -747,7 +857,7 @@ fn missing_prompt_holds_launch(settings: &tl3_config::Store) {
     );
     assert!(!root.path().join("entered").exists(), "no worker ran");
     assert_eq!(
-        fs::read_dir(&config.workers.runs).unwrap().count(),
+        run_entries(&config.workers.runs),
         1,
         "only the notification inbox exists"
     );
@@ -1916,7 +2026,7 @@ fn assert_retired(config: &tl3_config::Config, store: &mut Store) {
     assert!(store.worker_progress(None).unwrap().is_empty());
     assert!(store.worker_watches().unwrap().is_empty());
     assert_eq!(
-        fs::read_dir(&config.workers.runs).unwrap().count(),
+        run_entries(&config.workers.runs),
         1,
         "only the notification inbox remains"
     );
