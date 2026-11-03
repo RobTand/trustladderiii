@@ -729,95 +729,118 @@ fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> V
                         serde_json::to_string(reply).unwrap_or_default(),
                     )
                 });
-            // Every check runs on the text with the exact quoted title masked (message.rs
-            // without_title_quotes). A word from the bare title is fixed by quoting it (PB #2757, #2783).
-            let quote_title = |problem: &str, token: &str| {
-                let title = policy.request_title.as_deref()?;
-                title_has_word(title, token).then(|| {
-                    format!(
-                        "The {field} {problem} '{token}' from the issue title. Keep the title unchanged \
-                         and write all of it inside ASCII double quotes: \"{title}\"."
-                    )
-                })
-            };
-            let problem = match violation {
-                Violation::WrongReplyShape => {
-                    "has the wrong reply shape for the requested message kind"
-                }
-                Violation::Mention(token) => {
-                    if let Some(hint) = quote_title("has the user or team mention", token) {
-                        return hint;
-                    }
-                    return format!("Remove the user or team mention '{token}'.");
-                }
-                Violation::ForeignReference(token) => {
-                    if let Some(hint) = quote_title("has the foreign reference", token) {
-                        return hint;
-                    }
-                    return format!("Remove the foreign reference '{token}'; refer only to this request's issue or pull request.");
-                }
-                Violation::MissingDecision => {
-                    return "Add the decision: the one decision Rob must make, as a single question ending in a question mark.".into();
-                }
-                Violation::DecisionNotOneQuestion => {
-                    return "The decision must be one plain question ending in a question mark, with no other sentence.".into();
-                }
-                Violation::HtmlEntity(entity) => {
-                    if let Some(hint) = quote_title("has the HTML entity", entity) {
-                        return hint;
-                    }
-                    return format!("Replace the HTML entity '{entity}' in '{text}'; write the character itself, not an HTML entity.");
-                }
-                Violation::InternalVocabulary => "uses an internal word",
-                Violation::InternalNameOrId => "contains an internal name or identifier",
-                Violation::FilePath => "contains a file path",
-                Violation::Log => "contains log text",
-                Violation::MissingRequest | Violation::RequestDoesNotQuoteTitle => {
-                    "does not quote the original issue title exactly"
-                }
-                Violation::MissingObstacle => "has no obstacle text",
-                Violation::ObstacleTooLong => "has more than two obstacle sentences",
-                Violation::OptionCount => "does not contain two or three options",
-                Violation::MissingOptionAction(_) => "has an option without an action",
-                Violation::MissingOptionOutcome(_) => "has an option without an outcome",
-                Violation::MissingRecommendation => "has a recommendation outside the options",
-                Violation::MissingRecommendationReason => "has no recommendation reason",
-                Violation::MissingAnswerInstructions => "has no answer instructions",
-            };
-            let offending = text
-                .split_whitespace()
-                .find(|token| {
-                    message::check_prose(token, policy)
-                        .is_err_and(|errors| errors.contains(violation))
-                })
-                .unwrap_or(&text)
-                .trim_matches(['.', '!', '?', '"', '\'']);
-            if matches!(
-                violation,
-                Violation::InternalVocabulary
-                    | Violation::InternalNameOrId
-                    | Violation::FilePath
-                    | Violation::Log
-            ) && let Some(hint) = quote_title(problem, offending)
-            {
+            // Every check sees the text with each exact quoted title masked, so a
+            // correctly quoted title is never the cause (message.rs without_title_quotes).
+            let masked = message::without_title_quotes(&text, policy).into_owned();
+            if let Some(hint) = title_hint(violation, &field, &masked, policy) {
                 return hint;
             }
-            format!("The {field} {problem} '{offending}'.")
+            describe(violation, &field, &masked, policy)
         })
         .collect()
 }
 
-/// Whether `token` is a word, or a whole whitespace-separated token, of the title.
-fn title_has_word(title: &str, token: &str) -> bool {
-    let token = token.to_lowercase();
-    let punctuation = ['.', ',', ';', ':', '!', '?', '"', '\'', '(', ')', '[', ']'];
-    !token.is_empty()
-        && (title
-            .split(|c: char| !c.is_alphanumeric() && c != '-')
-            .any(|part| part.to_lowercase() == token)
-            || title
-                .split_whitespace()
-                .any(|part| part.trim_matches(punctuation).to_lowercase() == token))
+/// What a check that the quoted-title exemption covers calls the offending text.
+fn title_covered(violation: &Violation) -> Option<&'static str> {
+    Some(match violation {
+        Violation::InternalVocabulary => "uses an internal word",
+        Violation::InternalNameOrId => "contains an internal name or identifier",
+        Violation::FilePath => "contains a file path",
+        Violation::Log => "contains log text",
+        Violation::Mention(_) => "has the user or team mention",
+        Violation::ForeignReference(_) => "has the foreign reference",
+        Violation::HtmlEntity(_) => "has the HTML entity",
+        _ => return None,
+    })
+}
+
+/// Feedback when the bare issue title itself fails the check (PB #2757, #2783):
+/// quoting the unchanged title exempts it. The checker decides, not token splitting.
+fn title_hint(violation: &Violation, field: &str, masked: &str, policy: &Policy) -> Option<String> {
+    let problem = title_covered(violation)?;
+    let title = policy
+        .request_title
+        .as_deref()
+        .filter(|title| !title.is_empty() && masked.contains(*title))?;
+    if !message::check_prose(title, policy).is_err_and(|errors| errors.contains(violation)) {
+        return None;
+    }
+    let word = match violation {
+        Violation::Mention(token)
+        | Violation::ForeignReference(token)
+        | Violation::HtmlEntity(token) => token.clone(),
+        _ => title
+            .split_whitespace()
+            .find(|token| {
+                message::check_prose(token, policy).is_err_and(|errors| errors.contains(violation))
+            })
+            .unwrap_or(title)
+            .trim_matches(DISPLAY_PUNCTUATION)
+            .to_owned(),
+    };
+    let mut hint = format!(
+        "The {field} {problem} '{word}' from the issue title. Keep the title unchanged \
+         and write all of it inside ASCII double quotes: \"{title}\"."
+    );
+    let outside = masked.replace(title, " ");
+    if message::check_prose(&outside, policy).is_err_and(|errors| errors.contains(violation)) {
+        hint.push(' ');
+        hint.push_str(&describe(violation, field, &outside, policy));
+    }
+    Some(hint)
+}
+
+const DISPLAY_PUNCTUATION: [char; 16] = [
+    '.', ',', ';', ':', '!', '?', '"', '\'', '(', ')', '[', ']', '\u{201c}', '\u{201d}',
+    '\u{2018}', '\u{2019}',
+];
+
+fn describe(violation: &Violation, field: &str, text: &str, policy: &Policy) -> String {
+    let problem = match violation {
+        Violation::WrongReplyShape => "has the wrong reply shape for the requested message kind",
+        Violation::Mention(token) => {
+            return format!("Remove the user or team mention '{token}'.");
+        }
+        Violation::ForeignReference(token) => {
+            return format!(
+                "Remove the foreign reference '{token}'; refer only to this request's issue or pull request."
+            );
+        }
+        Violation::MissingDecision => {
+            return "Add the decision: the one decision Rob must make, as a single question ending in a question mark.".into();
+        }
+        Violation::DecisionNotOneQuestion => {
+            return "The decision must be one plain question ending in a question mark, with no other sentence.".into();
+        }
+        Violation::HtmlEntity(entity) => {
+            return format!(
+                "Replace the HTML entity '{entity}' in '{text}'; write the character itself, not an HTML entity."
+            );
+        }
+        Violation::InternalVocabulary => "uses an internal word",
+        Violation::InternalNameOrId => "contains an internal name or identifier",
+        Violation::FilePath => "contains a file path",
+        Violation::Log => "contains log text",
+        Violation::MissingRequest | Violation::RequestDoesNotQuoteTitle => {
+            "does not quote the original issue title exactly"
+        }
+        Violation::MissingObstacle => "has no obstacle text",
+        Violation::ObstacleTooLong => "has more than two obstacle sentences",
+        Violation::OptionCount => "does not contain two or three options",
+        Violation::MissingOptionAction(_) => "has an option without an action",
+        Violation::MissingOptionOutcome(_) => "has an option without an outcome",
+        Violation::MissingRecommendation => "has a recommendation outside the options",
+        Violation::MissingRecommendationReason => "has no recommendation reason",
+        Violation::MissingAnswerInstructions => "has no answer instructions",
+    };
+    let offending = text
+        .split_whitespace()
+        .find(|token| {
+            message::check_prose(token, policy).is_err_and(|errors| errors.contains(violation))
+        })
+        .unwrap_or(text)
+        .trim_matches(['.', '!', '?', '"', '\'']);
+    format!("The {field} {problem} '{offending}'.")
 }
 
 fn short_question(text: &str) -> bool {
