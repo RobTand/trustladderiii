@@ -8,21 +8,37 @@ generated Bazel inputs.
 ## Running tests
 
 Run Bazel on BuildBuddy, never with a local Bazel server on a fleet host.
-`bb remote` runs the Bazel client on a BuildBuddy runner, mirrors your
-uncommitted changes, and sends test actions to remote execution:
+Never run the `bb` CLI's `remote` command. Its argv carries the API key,
+which process listings expose.
+
+For committed workflows, use the in-repo Run API client,
+[`tools/ci/remote_gate.py`](../tools/ci/remote_gate.py). It reads
+`BUILDBUDDY_API_KEY` from the environment and sends the key only in an HTTP
+header. The client starts the gate on a BuildBuddy runner and checks the
+runner's result.
+
+On dl380g10, agents use `/home/rob/tmp/bazel-wave2/tools/bbrun.py` for narrow
+test runs. This helper lives outside the repository:
 
 ```sh
-GIT_REPO_DEFAULT_BRANCH=main \
-  bb remote \
-  --container_image=docker://gcr.io/flame-public/rbe-ubuntu24-04@sha256:5f0c01e5f6d79e58d7a996330de33aa38ce599bf8431eaf27521e7602daadf50 \
-  --runner_exec_properties=EstimatedCPU=8 --runner_exec_properties=EstimatedMemory=16GB \
-  test //crates/store:test_test_postgres --config=remote --jobs=16
+python3 -I /home/rob/tmp/bazel-wave2/tools/bbrun.py test \
+  --repo https://github.com/RobTand/trustladderiii.git \
+  --commit <pushed-SHA> --branch <branch> --timeout 10 \
+  -- bazel test --config=remote --jobs=16 //workers/tests:test_maker
 ```
 
-Authenticate `bb` through its runtime configuration. Never print a key or put
-one on a command line. While iterating, name only the targets you changed,
-such as `//workers/tests:test_maker`, and keep `--jobs=16`. The PR Gate runs
-the full suite. Read the verdict from the command's exit status and the invocation it links, not from the start message.
+Run only the targets your change touches. Do not run full suites during
+development. The PR Gate runs the full suite.
+Keep `--jobs=16` after the configuration flags. Read the verdict
+from the command's exit status and the invocation it links, not from the start
+message.
+
+Keep credentials out of logs and uploaded files:
+
+- Never list processes with `ps`, `pgrep`, or `/proc/*/cmdline`.
+- Never print the environment in a test, script, or log.
+- Never write BEP or build-event files into uploaded or artifacts directories.
+- Scrub API keys and tokens from every child process that is not Bazel.
 
 Local Bazel is only for short Gazelle, generation and query commands. Put
 `startup --max_idle_secs=300` in your own bazelrc (for example one passed with
@@ -58,8 +74,8 @@ the fix: `tools/bazel/generate.sh`.
 - `--config=ci`: gRPC and compact execution logs, CI build metadata, and the
   per-test receipts parity reads. CI adds `COMMIT_SHA` and `BRANCH_NAME`.
 
-Pass the API key header from the environment or a private rc file. Never commit
-it.
+Keep the API key in the environment for the Run API client. Never put the key
+in command arguments or committed files.
 
 ## Multi-process test sizes
 
@@ -177,7 +193,35 @@ receive the scope list. Changes matching `FALLBACK` (Bazel, Cargo and uv
 locks and manifests, toolchains, workflows, `tools/bazel/`) test everything
 and mark the PR as touching every scope.
 
+Draft merge-queue PRs use `batch-draft` mode. The gate reads complete BEP
+JSON lines from a temporary file and sends SIGINT to the Bazel client on the
+first non-quarantined FAILED, TIMEOUT, or build failure. Ordinary PRs allow
+up to 60 seconds to collect more failures, ending the grace period if Bazel
+finishes naturally. `gate-result.json` records `aborted_early` with the first
+label and reason, plus `not_run` for selected targets with no test result.
+An abort fails the gate and skips further input checks and builds.
+
+Time-budget warnings have PASSED test results and cannot trigger fail-fast.
+TL3 currently has no quarantine table. `QUARANTINE` and the workspace's
+`quarantine` parameter accept canonical labels when a table is added.
+
 Each push to `main` runs every test on amd64 and arm64. A failure names the
 merged PRs and says whether their selection included the failing test. The
 job summary and the `post-merge-<sha>` artifact hold one `POST_MERGE_RECORD`
 JSON line per run.
+
+## Time budget warnings
+
+Per-test CPU, wall-only, and wall-backstop overruns are warnings. A Rust
+binary whose tests pass still passes its Bazel target. Its undeclared
+outputs include `budget-warnings.json`, with the test name, measured seconds,
+limit, and timing metric. The Python runner has no per-test timing policy.
+
+The gate collects these records as `budget_warnings`, adding each Bazel
+label. PRs and queue batches report the warnings in `gate-result.json` and
+the job summary. Post-merge results also identify the architecture and retain
+warnings in `POST_MERGE_RECORD`.
+
+The gate never reruns a test because of elapsed time. Assertion failures and
+Bazel's hard `TIMEOUT` status still fail, with no retry. Recorded budgets and
+exception lists still cannot grow against the target branch without review.

@@ -64,6 +64,107 @@ class RustBuildsTests(unittest.TestCase):
         self.assertIn('"//crates/tl3-kernel:tl3_kernel"', builds['crates/tl3-user/BUILD.bazel'])
 
 
+class RustDependencyTests(unittest.TestCase):
+    """Evaluate the macro and follow its declared edges, including the build script.
+
+    Remote Bazel queries check the fully expanded graph as well.
+    The recorder lets this contract run as an ordinary remote Python test.
+    """
+
+    def setUp(self):
+        self.rules = {}
+
+        def record(**attributes):
+            self.rules[":" + attributes["name"]] = attributes
+
+        namespace = {
+            "load": lambda *args: None,
+            "native": SimpleNamespace(package_name=lambda: "crates/controller",
+                                      exports_files=lambda *args: None,
+                                      filegroup=record, glob=lambda patterns, **kwargs: [
+                                          path for path in patterns if "*" not in path]),
+            "all_crate_deps": lambda **kwargs: [],
+            "aliases": lambda **kwargs: {},
+            "nonhermetic": lambda name: ([], {}),
+            "select": lambda choices: choices["//conditions:default"],
+            "depset": lambda items: SimpleNamespace(to_list=lambda: list(dict.fromkeys(items))),
+            **{name: record for name in ["rust_test", "py_test", "rust_library",
+                                        "rust_binary", "cargo_build_script"]},
+        }
+        sizing = {}
+        path = Path(__file__).with_name("test_sizing.bzl")
+        exec(compile(path.read_text(), str(path), "exec"), sizing)
+        namespace["test_size"] = sizing["test_size"]
+        source = Path(__file__).with_name("rust.bzl").read_text()
+        exec(re.sub(r"^load\(.*\)$", "", source, flags=re.MULTILINE), namespace)
+        namespace["tl3_crate"](
+            package="tl3-controller", crate="tl3_controller", build_script=True,
+            bins=["tl3", "tl3d"], declared_tests={
+                name: {"path": "tests/" + name + ".rs"}
+                for name in ["core_defects", "workers", "publishing", "prismabuild",
+                             "github", "hindsight", "writer_references", "writer_blocker"]})
+
+    def dependencies(self, target):
+        pending, found = [":" + target], set()
+        while pending:
+            label = pending.pop()
+            if label in found:
+                continue
+            found.add(label)
+            rule = self.rules.get(label, {})
+            for attribute in ["srcs", "data", "compile_data", "deps"]:
+                pending.extend(rule.get(attribute, []))
+        return found
+
+    def test_fake_only_controller_test_does_not_depend_on_harness_or_worker_runtime(self):
+        deps = self.dependencies("test_test_core_defects")
+        self.assertFalse(sorted(label for label in deps if label.startswith("//harness")), deps)
+        self.assertNotIn("//tools/bazel:worker_python", deps)
+        self.assertNotIn("//workers:runtime_files", deps)
+        self.assertNotIn(":tl3d", deps)
+        # Schemas and prompts are compiled into the controller; keep them.
+        self.assertIn("//workers:schemas", deps)
+
+    def test_real_worker_scenarios_keep_the_python_environment(self):
+        for name in ["workers", "publishing", "github-flow", "writer_references"]:
+            with self.subTest(name=name):
+                self.assertIn("//tools/bazel:worker_python",
+                              self.dependencies("test_test_" + name))
+
+    def test_writer_blocker_keeps_its_compile_time_recording_without_worker_python(self):
+        binary = self.rules[":test_test_writer_blocker_binary"]
+        self.assertIn("//workers/tests:fixtures", binary["compile_data"])
+        self.assertNotIn("//tools/bazel:worker_python",
+                         self.dependencies("test_test_writer_blocker"))
+
+    def test_staged_harness_and_role_directory_inputs_are_kept(self):
+        for name in ["workers", "publishing", "prismabuild"]:
+            with self.subTest(name=name):
+                self.assertIn("//harness/src/tl3_harness",
+                              self.dependencies("test_test_" + name))
+        self.assertIn("//workers/src:role_files", self.dependencies("test_test_hindsight"))
+
+    def test_github_worker_fixtures_keep_their_shared_reply_module(self):
+        deps = self.dependencies("test_test_github-flow")
+        self.assertIn("tests/worker_model.py", deps)
+        self.assertIn("tests/worker_transport.py", deps)
+        self.assertIn("tests/worker_replies.py", deps)
+
+    def test_measured_controller_shard_configuration(self):
+        for name, count in [("workers", 8), ("publishing", 0)]:
+            with self.subTest(name=name):
+                self.assertEqual(self.rules[":test_test_" + name].get("shard_count"), count)
+        worker = self.rules[":test_test_workers"]
+        self.assertEqual(worker["timeout"], "eternal")
+        self.assertEqual(worker["exec_properties"], {
+            "EstimatedComputeUnits": "1", "EstimatedCPU": "3", "EstimatedMemory": "1GB",
+        })
+
+    def test_github_notices_do_not_pull_in_the_flow_group_workers(self):
+        self.assertNotIn("//tools/bazel:worker_python",
+                         self.dependencies("test_test_github-notices"))
+
+
 class TestSizingTests(unittest.TestCase):
     """Expand the real BUILD macros and inspect the test runner rules they emit."""
 

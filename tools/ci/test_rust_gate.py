@@ -12,6 +12,15 @@ import rust_gate
 
 
 class GateTests(unittest.TestCase):
+    def assertBudgetWarnings(self, warnings, pattern):
+        self.assertTrue(warnings)
+        for warning in warnings:
+            self.assertGreater(warning['measured'], warning['limit'])
+        description = '\n'.join(
+            f"{warning['test']}: {warning['metric'].replace('cpu', 'CPU').replace('_', ' ')} "
+            f"{warning['measured']:.3f}s > {warning['limit']:.3f}s" for warning in warnings)
+        self.assertRegex(description, pattern)
+
     def test_a_live_server_cannot_hide_another_fixture_that_disappeared(self):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = Path(temporary, 'tl3-store-pg-live')
@@ -103,9 +112,8 @@ class GateTests(unittest.TestCase):
                     policy['cpu']['seconds'] = test_cpu + server_cpu / 2
                     rust_gate.check_budget({key: wall[key]}, policy, policy,
                                            cpu_seconds={key: test_cpu})
-                    with self.assertRaisesRegex(RuntimeError, 'Per-test time budget exceeded:.*\n.*CPU'):
-                        rust_gate.check_budget({key: wall[key]}, policy, policy, cpu_seconds=cpu,
-                                               cpu_fallbacks=details['cpu_fallbacks'])
+                    self.assertBudgetWarnings(rust_gate.check_budget({key: wall[key]}, policy, policy, cpu_seconds=cpu,
+                                                   cpu_fallbacks=details['cpu_fallbacks']), 'CPU')
                 finally:
                     postmaster.communicate('\n')
 
@@ -125,9 +133,8 @@ class GateTests(unittest.TestCase):
                                          True, cpu_details=details)
             key = 'tl3-controller/publishing::query'
             self.assertIn('postmaster.pid', details['cpu_fallbacks'][key])
-            with self.assertRaisesRegex(RuntimeError, 'wall 30.000s > 10.000s'):
-                rust_gate.check_budget({key: 30}, self.cpu_policy(), self.cpu_policy(),
-                                       cpu_seconds={key: .1}, cpu_fallbacks=details['cpu_fallbacks'])
+            self.assertBudgetWarnings(rust_gate.check_budget({key: 30}, self.cpu_policy(), self.cpu_policy(),
+                                           cpu_seconds={key: .1}, cpu_fallbacks=details['cpu_fallbacks']), 'wall 30.000s > 10.000s')
 
     def cpu_policy(self):
         return {'seconds': 10, 'slow': {'slow': 20},
@@ -143,52 +150,51 @@ class GateTests(unittest.TestCase):
             with self.subTest(wall=wall):
                 rust_gate.check_budget({name: wall}, policy, policy,
                                        runner_class='buildbuddy-amd64', cpu_seconds={name: 100})
-        with self.assertRaisesRegex(RuntimeError, 'wall 30.001s > 30.000s'):
-            rust_gate.check_budget({name: 30.001}, policy, policy,
-                                   runner_class='buildbuddy-amd64', cpu_seconds={name: 0})
+        self.assertBudgetWarnings(rust_gate.check_budget({name: 30.001}, policy, policy,
+                                       runner_class='buildbuddy-amd64', cpu_seconds={name: 0}), 'wall 30.001s > 30.000s')
 
     def test_buildbuddy_stopgap_preserves_cpu_caps_and_tenfold_wall_backstop(self):
         policy = self.cpu_policy()
         policy['cpu']['seconds'] = 8
-        with self.assertRaisesRegex(RuntimeError, 'CPU 8.001s > 8.000s'):
-            rust_gate.check_budget({'scenario': 25}, policy, policy,
-                                   runner_class='buildbuddy-amd64', cpu_seconds={'scenario': 8.001})
+        self.assertBudgetWarnings(rust_gate.check_budget(
+            {'scenario': 25}, policy, policy, runner_class='buildbuddy-amd64',
+            cpu_seconds={'scenario': 8.001}), 'CPU 8.001s > 8.000s')
         rust_gate.check_budget({'scenario': 300}, policy, policy,
                                runner_class='buildbuddy-amd64', cpu_seconds={'scenario': 0})
-        with self.assertRaisesRegex(RuntimeError, 'wall backstop 300.001s > 300.000s'):
-            rust_gate.check_budget({'scenario': 300.001}, policy, policy,
-                                   runner_class='buildbuddy-amd64', cpu_seconds={'scenario': 0})
+        self.assertBudgetWarnings(rust_gate.check_budget({'scenario': 300.001}, policy, policy,
+                                       runner_class='buildbuddy-amd64', cpu_seconds={'scenario': 0}), 'wall backstop 300.001s > 300.000s')
 
     def test_cpu_floor_covers_recorded_short_scenario_noise(self):
         policy = {'seconds': 10, 'slow': {}, 'cpu': {'seconds': 1, 'slow': {}}}
         name = 'tl3-controller/prismabuild::recorded_records_reach_kernel'
         for measured in [1.08, 1.14, 1.5, 1.56, 5]:
             with self.subTest(measured=measured):
-                rust_gate.check_budget({name: 2}, policy, policy, cpu_seconds={name: measured})
-        with self.assertRaisesRegex(RuntimeError, 'CPU 5.001s > 5.000s'):
-            rust_gate.check_budget({name: 2}, policy, policy, cpu_seconds={name: 5.001})
+                self.assertEqual(rust_gate.check_budget(
+                    {name: 2}, policy, policy, cpu_seconds={name: measured}), [])
+        self.assertBudgetWarnings(rust_gate.check_budget(
+            {name: 2}, policy, policy, cpu_seconds={name: 5.001}), 'CPU 5.001s > 5.000s')
 
     def test_cpu_floor_keeps_regressions_and_larger_calibrated_caps_enforced(self):
         for calibrated, effective in [(1, 5), (8, 8)]:
             policy = {'seconds': 10, 'slow': {},
                       'cpu': {'seconds': 1, 'slow': {'scenario': calibrated}}}
             with self.subTest(calibrated=calibrated):
-                rust_gate.check_budget({'scenario': 2}, policy, policy,
-                                       cpu_seconds={'scenario': effective})
-                with self.assertRaisesRegex(RuntimeError, 'CPU'):
-                    rust_gate.check_budget({'scenario': 2}, policy, policy,
-                                           cpu_seconds={'scenario': 3 * effective})
+                self.assertEqual(rust_gate.check_budget(
+                    {'scenario': 2}, policy, policy, cpu_seconds={'scenario': effective}), [])
+                self.assertBudgetWarnings(rust_gate.check_budget(
+                    {'scenario': 2}, policy, policy, cpu_seconds={'scenario': 3 * effective}),
+                    f'CPU {3 * effective:.3f}s > {effective:.3f}s')
 
     def test_waiting_three_wall_budgets_passes_with_low_cpu(self):
         policy = self.cpu_policy()
         rust_gate.check_budget({'waiting': 30}, policy, policy, cpu_seconds={'waiting': 0.2})
 
-    def test_cpu_regression_and_wall_backstop_fail_independently(self):
+    def test_cpu_and_wall_backstop_warn_independently(self):
         policy = self.cpu_policy()
         for wall, cpu, message in [(1, 6, 'CPU'), (100.01, .2, 'wall backstop')]:
-            with self.subTest(message=message), self.assertRaisesRegex(RuntimeError, message):
-                rust_gate.check_budget({'scenario': wall}, policy, policy,
-                                       cpu_seconds={'scenario': cpu})
+            with self.subTest(message=message):
+                self.assertBudgetWarnings(rust_gate.check_budget({'scenario': wall}, policy, policy,
+                                           cpu_seconds={'scenario': cpu}), message)
         rust_gate.check_budget({'scenario': 100}, policy, policy, cpu_seconds={'scenario': 2})
 
     def test_cpu_limits_and_fallbacks_cannot_grow(self):
@@ -219,14 +225,12 @@ class GateTests(unittest.TestCase):
 
     def test_explicit_wall_only_fallbacks_and_missing_linux_samples(self):
         policy = self.cpu_policy()
-        with self.assertRaisesRegex(RuntimeError, 'database'):
-            rust_gate.check_budget({'database': 30}, policy, policy, cpu_seconds={'database': .1})
+        self.assertBudgetWarnings(rust_gate.check_budget({'database': 30}, policy, policy, cpu_seconds={'database': .1}), 'database')
         with self.assertRaisesRegex(RuntimeError, 'CPU.*missing|Missing CPU'):
             rust_gate.check_budget({'scenario': 1}, policy, policy, cpu_seconds={})
         with patch.object(sys, 'platform', 'darwin'):
             rust_gate.check_budget({'scenario': 10}, policy, policy, cpu_seconds={})
-            with self.assertRaisesRegex(RuntimeError, 'scenario'):
-                rust_gate.check_budget({'scenario': 30}, policy, policy, cpu_seconds={})
+            self.assertBudgetWarnings(rust_gate.check_budget({'scenario': 30}, policy, policy, cpu_seconds={}), 'scenario')
         for cpu in [float('nan'), float('inf'), -1]:
             with self.subTest(cpu=cpu), self.assertRaisesRegex(RuntimeError, 'CPU'):
                 rust_gate.check_budget({'scenario': 1}, policy, policy, cpu_seconds={'scenario': cpu})
@@ -268,7 +272,7 @@ class GateTests(unittest.TestCase):
             rust_gate.execute_binary({'name': 'credential-probe',
                                       'command': [sys.executable, '-c', code]}, False)
 
-    def test_recorded_hosted_noise_passes_but_clear_regressions_fail(self):
+    def test_recorded_hosted_noise_is_quiet_and_regressions_warn(self):
         bridge = 'tl3-controller/tl3_controller::adapters::worktrees::tests::github_installation_and_synchronous_token_bridge'
         policy = {'seconds': 10, 'slow': {bridge: 15}}
         samples = {
@@ -279,21 +283,18 @@ class GateTests(unittest.TestCase):
         for runner, results in samples.items():
             with self.subTest(runner=runner):
                 rust_gate.check_budget(results, policy, policy, runner_class=runner)
-                with self.assertRaisesRegex(RuntimeError, 'budget exceeded'):
-                    rust_gate.check_budget({name: policy['slow'].get(name, 10) * 2
-                                            for name in results}, policy, policy,
-                                           runner_class=runner)
-                with self.assertRaisesRegex(RuntimeError, 'budget exceeded'):
-                    rust_gate.check_budget(results, policy, policy)
+                self.assertBudgetWarnings(rust_gate.check_budget({name: policy['slow'].get(name, 10) * 2
+                                                for name in results}, policy, policy,
+                                               runner_class=runner), '.')
+                self.assertBudgetWarnings(rust_gate.check_budget(results, policy, policy), '.')
 
     def test_hosted_limits_have_fixed_boundaries_and_cannot_mask_policy_growth(self):
         baseline = {'seconds': 10, 'slow': {'bridge': 15}}
         for runner, limit in [('hosted-x64', 12.5), ('hosted-arm64', 11.5)]:
             with self.subTest(runner=runner):
                 rust_gate.check_budget({'fast': limit}, baseline, baseline, runner_class=runner)
-                with self.assertRaisesRegex(RuntimeError, 'fast'):
-                    rust_gate.check_budget({'fast': limit + .001}, baseline, baseline,
-                                           runner_class=runner)
+                self.assertBudgetWarnings(rust_gate.check_budget({'fast': limit + .001}, baseline, baseline,
+                                               runner_class=runner), 'fast')
                 for policy in [{'seconds': 11, 'slow': {}},
                                {'seconds': 10, 'slow': {'bridge': 16}},
                                {'seconds': 10, 'slow': {'new': 1}}]:
@@ -337,6 +338,12 @@ class GateTests(unittest.TestCase):
                 self.assertEqual(report['runner_class'], 'hosted-x64')
                 self.assertEqual(report['budget_multiplier'], 1.25)
                 self.assertEqual(report['tests']['fixture::one'], 11.251069221)
+                fixture.write_text(valid.replace('11.251069221', '56.0'))
+                report = rust_gate.test_workspace(Path('Cargo.toml'))
+                expected = [{'test': 'fixture::one', 'measured': 56.0, 'limit': 12.5, 'metric': 'wall'}]
+                self.assertEqual(report['budget_warnings'], expected)
+                saved = json.loads((root / 'target/ci-test-times.json').read_text())
+                self.assertEqual(saved['budget_warnings'], expected)
                 for content, message in [(valid + 'raise SystemExit(1)\n', 'exit'),
                                          (valid.replace('"event":"ok","name"',
                                                         '"event":"ignored","name"'), 'skipped')]:
@@ -377,13 +384,11 @@ class GateTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'grow'):
                 rust_gate.check_budget({}, enlarged, baseline)
 
-    def test_budget_rejects_slow_tests_without_an_exception(self):
+    def test_budget_warns_for_slow_tests_without_an_exception(self):
         config = {'seconds': 2, 'slow': {'worker::contract': 10}}
         rust_gate.check_budget({'worker::contract': 3, 'fast::one': 1}, config, config)
-        with self.assertRaisesRegex(RuntimeError, 'fast::one'):
-            rust_gate.check_budget({'fast::one': 3}, config, config)
-        with self.assertRaisesRegex(RuntimeError, 'worker::contract'):
-            rust_gate.check_budget({'worker::contract': 11}, config, config)
+        self.assertBudgetWarnings(rust_gate.check_budget({'fast::one': 3}, config, config), 'fast::one')
+        self.assertBudgetWarnings(rust_gate.check_budget({'worker::contract': 11}, config, config), 'worker::contract')
 
     def test_slow_list_and_budgets_can_only_shrink(self):
         baseline = {'seconds': 2, 'slow': {'contract': 10, 'removed': 20}}
@@ -434,6 +439,17 @@ class GateTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError,
                                             f'fixture/custom:.*declared {declared}.*received {actual}'):
                     rust_gate.execute_binary(binary, custom=True)
+
+    def test_computed_shard_summary_still_rejects_missing_or_duplicated_scenarios(self):
+        planned = ['first', 'second', 'third', 'added_independently']
+        for emitted in [planned[:-1], planned[:-1] + [planned[0]]]:
+            with self.subTest(emitted=emitted), tempfile.TemporaryDirectory() as temporary:
+                executable = Path(temporary, 'fixture.py')
+                executable.write_text(''.join(f'print("test {name} ... ok")\n' for name in emitted)
+                                      + f'print("{len(planned)} fixture scenarios passed; no skips")\n')
+                with self.assertRaisesRegex(RuntimeError, 'declared|duplicate'):
+                    rust_gate.execute_binary({'name': 'fixture/shard',
+                                              'command': [sys.executable, str(executable)]}, custom=True)
 
     def test_custom_harness_requires_one_scenario_count_declaration(self):
         for summaries in [[], ['1 fixture scenarios passed'] * 2]:
