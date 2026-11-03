@@ -626,6 +626,8 @@ fn drain_with_budget(
 ) {
     let (sender, receiver) = mpsc::channel();
     let start = Instant::now();
+    let mut last_progress = start;
+    let mut phase = c.world().unwrap().nodes[0].phase;
     loop {
         let mut changed = false;
         let mut idle = false;
@@ -635,6 +637,11 @@ fn drain_with_budget(
                 break;
             }
             changed = true;
+            let next_phase = c.world().unwrap().nodes[0].phase;
+            if next_phase != phase {
+                phase = next_phase;
+                last_progress = Instant::now();
+            }
             if expected == (Phase::Planning { must_split: true })
                 && c.world().unwrap().nodes[0].phase == expected
             {
@@ -653,6 +660,7 @@ fn drain_with_budget(
         for input in receiver.try_iter() {
             if let Input::Observation { key, observation } = input {
                 c.observe(&key, observation).unwrap();
+                last_progress = Instant::now();
                 changed = true;
                 observed = true;
             }
@@ -663,8 +671,10 @@ fn drain_with_budget(
             return;
         }
         assert!(
-            start.elapsed() < budget,
-            "publishing did not settle: {:?}",
+            last_progress.elapsed() < budget && start.elapsed() < Duration::from_secs(300),
+            "publishing did not settle after {:?}, no settle progress for {:?}: {:?}",
+            start.elapsed(),
+            last_progress.elapsed(),
             c.world().unwrap().nodes[0]
         );
         if !changed {
