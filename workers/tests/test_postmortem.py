@@ -535,7 +535,7 @@ def test_feedback_failure_names_stage_without_repair_or_provider_text(contract_b
     with pytest.raises(ValueError) as error:
         run(document)
     tags = tracing.failure_tags(error.value)
-    assert tags["failure_message"] == "postmortem judge failure"
+    assert tags["failure_message"] == "postmortem judge failure: other"
     assert KEY not in json.dumps(tags)
     assert len(calls) == 1
     assert not traces.logged
@@ -613,7 +613,7 @@ def test_grade_feedback_error_is_terminal_and_names_the_stage(contract_boundary,
         "correctness": lambda **kwargs: Feedback(error=RuntimeError(KEY))})
     with pytest.raises(ValueError) as error:
         run(document)
-    assert tracing.failure_tags(error.value)["failure_message"] == "grade judge failure"
+    assert tracing.failure_tags(error.value)["failure_message"] == "grade judge failure: other"
     assert not calls
     assert not traces.logged
 

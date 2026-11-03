@@ -893,3 +893,17 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_judge_failures",
+    srcs = ["test_judge_failures.py"],
+    deps = [
+        ":conftest",
+        ":test_postmortem",
+        "//workers/src",
+        "@tl3_pip//mlflow_skinny",
+        "@tl3_pip//opentelemetry_proto",
+        "@tl3_pip//pytest",
+        "@tl3_pip//requests",
+    ],
+)
