@@ -173,7 +173,9 @@ Every changed path must match `generated_files`, occur in the plan footprint,
 and avoid the effective protected paths. The action rejects the entire output
 for any other write, deletion, symlink, binary or invalid UTF-8 output. Limits
 are 128 changed files, 16 MiB per file and 32 MiB of output in total. There is no
-partial import after refusal. Model file tools reject hand edits of generated
+partial import after refusal. The snapshot is limited to 512 MiB. Writable scratch
+is memory-backed and charged to the admitted scope, so excessive writes cannot
+fill the worker disk. Model file tools reject hand edits of generated
 outputs and protected files. Generated headers alone never authorize execution.
 
 PrismaBuild's verified stdout artifact carries the output bytes. The maker

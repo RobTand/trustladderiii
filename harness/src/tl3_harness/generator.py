@@ -20,6 +20,7 @@ FILE_BYTES = 16 * 1_048_576
 OUTPUT_BYTES = 32 * 1_048_576
 ARTIFACT_BYTES = 48 * 1_048_576
 MAX_OUTPUTS = 128
+INPUT_BYTES = 512 * 1_048_576
 TIMEOUT = 120
 
 
@@ -151,10 +152,14 @@ def run(tree, container, command, generated_files, protected_paths, files, timeo
     if not argv or not generated_files or not 0 < timeout <= TIMEOUT:
         raise ValueError("generator requires a command, generated output patterns and a bounded timeout")
     before = manifest(tree)
+    if sum(entry["bytes"] for entry in before.values()) > INPUT_BYTES:
+        raise ValueError("generator input exceeds the 512-MiB snapshot limit")
     result = {"status": "failed", "exit_code": None, "message": "Generator did not complete.",
               "input_manifest": digest(before), "command": command,
               "identity": {"implementation": "tl3-generator-v1", "image": container.image}}
-    with tempfile.TemporaryDirectory(prefix="tl3-generator-") as temporary:
+    # Writable scratch is memory-backed and charged to the admitted scope,
+    # so a generator cannot fill the worker disk before diff validation.
+    with tempfile.TemporaryDirectory(prefix="tl3-generator-", dir="/dev/shm") as temporary:
         root = Path(temporary)
         root.chmod(0o755)
         copy = root / "checkout"
