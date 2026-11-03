@@ -22,6 +22,8 @@ pub enum PullRequestStatus {
 pub struct Evidence {
     #[serde(default)]
     pub pull_request_status: PullRequestStatus,
+    #[serde(default)]
+    pub stop_reason: Option<String>,
     pub checks: Vec<Value>,
     pub reviews: Vec<Value>,
     pub audit: Option<Value>,
@@ -34,55 +36,269 @@ pub struct Evidence {
     pub artifacts: Vec<String>,
 }
 
+/// The delivered effect is the durable archive. Failed posts retain live history.
 pub(crate) fn retire_delivered(
-    _snapshot: &Snapshot,
-    _commit: &mut Commit,
-    _delivery: &Delivery,
-    _ack: tl3_kernel::Ack,
+    snapshot: &Snapshot,
+    commit: &mut Commit,
+    delivery: &Delivery,
+    ack: tl3_kernel::Ack,
 ) {
-    todo!("retire evidence after durable closing delivery")
+    if ack != tl3_kernel::Ack::Confirmed
+        || !matches!(
+            delivery.output,
+            Output::Notice {
+                notice: Notice::Summary(_),
+                ..
+            }
+        )
+    {
+        return;
+    }
+    let prefix = format!("{}:", delivery.node().0);
+    for row in &snapshot.rows {
+        let owned = match row.table.as_str() {
+            "check_evidence" | "review_evidence" => row.id.starts_with(&prefix),
+            "scratch_evidence" => row.value["node"].as_u64() == Some(delivery.node().0),
+            _ => false,
+        };
+        if owned {
+            commit.rows.push(RowChange::Delete {
+                table: row.table.clone(),
+                id: row.id.clone(),
+            });
+        }
+    }
+}
+
+const MAX_ITEMS: usize = 32;
+const PROOF_BYTES: usize = 24_000;
+const RECORD_BYTES: usize = 8_000;
+pub(crate) const BODY_BYTES: usize = 60_000;
+
+fn fields(value: &Value, names: &[&str]) -> Value {
+    let mut out = serde_json::Map::new();
+    for name in names {
+        if let Some(value) = value.get(name) {
+            out.insert((*name).into(), public_value(value, Some(name)));
+        }
+    }
+    Value::Object(out)
+}
+
+fn complete_check(record: &Value, red_green: bool) -> bool {
+    record["proof_missing"] != true
+        && (!red_green || record["red_green_missing"] != true)
+        && record["results"].as_array().is_some_and(|results| {
+            !results.is_empty()
+                && results.iter().all(|result| {
+                    result["verdict"].as_str().is_some()
+                        && (!red_green
+                            || result["kind"] != "demonstrating"
+                            || result["tests"].as_array().is_some_and(|tests| {
+                                !tests.is_empty()
+                                    && tests.iter().all(|test| {
+                                        test["base"].as_str().is_some()
+                                            && test["head"].as_str().is_some()
+                                    })
+                            }))
+                        && (result.get("forcing").is_none()
+                            || result["tests"].as_array().is_some_and(|tests| {
+                                !tests.is_empty()
+                                    && tests
+                                        .iter()
+                                        .all(|test| test["head_forced"].as_str().is_some())
+                            }))
+                })
+        })
+}
+
+/// Select proof fields before cloning; reports and diagnostics can be megabytes.
+pub(crate) fn check_record(record: &Value) -> Value {
+    let mut out = fields(
+        record,
+        &[
+            "head_sha",
+            "base_sha",
+            "action_key",
+            "report",
+            "pass",
+            "url",
+            "receipt_sha256",
+            "truncated",
+        ],
+    );
+    out["proof_missing"] = json!(!complete_check(record, false));
+    out["red_green_missing"] = json!(!complete_check(record, true));
+    if let Some(results) = record["results"].as_array() {
+        out["failed_results"] = record
+            .get("failed_results")
+            .cloned()
+            .unwrap_or_else(|| json!(results.iter().filter(|r| r["verdict"] != "pass").count()));
+        out["forced_passed"] = record.get("forced_passed").cloned().unwrap_or_else(|| {
+            json!(
+                results
+                    .iter()
+                    .filter(|r| r.get("forcing").is_some())
+                    .flat_map(|r| r["tests"].as_array().into_iter().flatten())
+                    .filter(|t| t["head_forced"] == "passed")
+                    .count()
+            )
+        });
+        out["forced_other"] = record.get("forced_other").cloned().unwrap_or_else(|| {
+            json!(
+                results
+                    .iter()
+                    .filter(|r| r.get("forcing").is_some())
+                    .flat_map(|r| r["tests"].as_array().into_iter().flatten())
+                    .filter(|t| t["head_forced"] != "passed")
+                    .count()
+            )
+        });
+        out["result_count"] = record
+            .get("result_count")
+            .cloned()
+            .unwrap_or(json!(results.len()));
+        out["results"] = Value::Array(
+            results
+                .iter()
+                .take(MAX_ITEMS)
+                .map(|result| {
+                    let mut item = fields(result, &["name", "kind", "verdict", "url"]);
+                    if let Some(forcing) = result.get("forcing") {
+                        // Environment values and patch bodies are opaque inputs, not proof.
+                        let mut summary = fields(forcing, &["symptom"]);
+                        summary["environment_count"] = forcing
+                            .get("environment_count")
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                json!(forcing["environment"].as_object().map_or(0, |v| v.len()))
+                            });
+                        summary["patch_count"] =
+                            forcing.get("patch_count").cloned().unwrap_or_else(|| {
+                                json!(forcing["patches"].as_array().map_or(0, |v| v.len()))
+                            });
+                        item["forcing"] = summary;
+                    }
+                    if let Some(tests) = result["tests"].as_array() {
+                        item["test_count"] = result
+                            .get("test_count")
+                            .cloned()
+                            .unwrap_or(json!(tests.len()));
+                        item["tests"] = Value::Array(
+                            tests
+                                .iter()
+                                .take(MAX_ITEMS)
+                                .map(|test| {
+                                    fields(
+                                        test,
+                                        &["test", "base", "head", "head_forced", "passed", "url"],
+                                    )
+                                })
+                                .collect(),
+                        );
+                    }
+                    item
+                })
+                .collect(),
+        );
+    }
+    // Keep complete entries and explicit counts. Never slice serialized JSON.
+    while encode_proof(&out).expect("proof JSON").len() > RECORD_BYTES {
+        out["truncated"] = json!(true);
+        let results = out["results"].as_array_mut().expect("check results");
+        let last = results.last_mut().expect("one bounded result fits");
+        if let Some(tests) = last["tests"].as_array_mut().filter(|tests| tests.len() > 1) {
+            tests.pop();
+        } else if results.len() > 1 {
+            results.pop();
+        } else {
+            break;
+        }
+    }
+    out
+}
+
+fn review_record(record: &Value) -> Value {
+    let mut out = fields(record, &["head_sha", "verdict", "url"]);
+    out["blocking_findings"] = Value::Array(
+        record["blocking_findings"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .take(MAX_ITEMS)
+            .map(|finding| {
+                let mut out = fields(finding, &["problem"]);
+                if let Some(citation) = finding.get("citation") {
+                    out["citation"] = fields(citation, &["kind", "id"]);
+                }
+                out
+            })
+            .collect(),
+    );
+    out
 }
 
 /// Include writes made by the event that emits the delivery. Check reports and
 /// queue facts retired at close remain reporting evidence for that close.
 pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Result<Evidence> {
+    let id = delivery.node().0.to_string();
+    let prefix = format!("{id}:");
+    let relevant = |table: &str, row: &str, value: &Value| match table {
+        "check_evidence" | "review_evidence" | "check_reports" => row.starts_with(&prefix),
+        "nodes" | "audits" | "goals" | "close_reasons" => row == id,
+        "saved_scratch" | "scratch_evidence" => value["node"].as_u64() == Some(delivery.node().0),
+        "queue_facts" => {
+            value["number"].as_u64() == delivery.pull_request
+                && value["repository"]["owner"].as_str() == Some(delivery.repository.owner.as_str())
+                && value["repository"]["name"].as_str() == Some(delivery.repository.name.as_str())
+                && value["repository"]["installation"].as_u64()
+                    == Some(delivery.repository.installation)
+        }
+        _ => false,
+    };
+    // Borrow only this request's rows. Never copy or sort the whole snapshot.
     let mut rows: BTreeMap<_, _> = snapshot
         .rows
         .iter()
+        .filter(|row| relevant(&row.table, &row.id, &row.value))
         .map(|row| {
             (
-                (row.table.clone(), row.id.clone()),
-                (row.arrival, row.value.clone()),
+                (row.table.as_str(), row.id.as_str()),
+                (row.arrival, &row.value),
             )
         })
         .collect();
-    let last = snapshot.rows.iter().map(|r| r.arrival).max().unwrap_or(0);
+    let last = rows
+        .values()
+        .map(|(arrival, _)| *arrival)
+        .max()
+        .unwrap_or(0);
     for (index, row) in commit.rows.iter().enumerate() {
         match row {
-            RowChange::Put { table, id, value } => {
+            RowChange::Put { table, id, value } if relevant(table, id, value) => {
                 let arrival = rows
-                    .get(&(table.clone(), id.clone()))
+                    .get(&(table.as_str(), id.as_str()))
                     .map_or(last + index as i64 + 1, |r| r.0);
-                rows.insert((table.clone(), id.clone()), (arrival, value.clone()));
+                rows.insert((table.as_str(), id.as_str()), (arrival, value));
             }
             RowChange::Delete { table, id }
                 if !matches!(table.as_str(), "check_reports" | "queue_facts") =>
             {
-                rows.remove(&(table.clone(), id.clone()));
+                rows.remove(&(table.as_str(), id.as_str()));
             }
             _ => {}
         }
     }
-    let id = delivery.node().0.to_string();
-    let prefix = format!("{id}:");
     let mut facts = Evidence::default();
     let mut ordered: Vec<_> = rows.into_iter().collect();
     ordered.sort_by_key(|(_, (arrival, _))| *arrival);
     for ((table, row), (_, value)) in &ordered {
-        match table.as_str() {
-            "check_evidence" if row.starts_with(&prefix) => facts.checks.push(value.clone()),
-            "review_evidence" if row.starts_with(&prefix) => facts.reviews.push(value.clone()),
-            "nodes" if row == &id => {
+        match *table {
+            "check_evidence" if row.starts_with(&prefix) => facts.checks.push(check_record(value)),
+            "review_evidence" if row.starts_with(&prefix) => {
+                facts.reviews.push(review_record(value))
+            }
+            "nodes" if *row == id.as_str() => {
                 facts.pull_request_status = if value["merged"].as_u64().is_some() {
                     PullRequestStatus::Merged
                 } else if value["pr_open"] == true {
@@ -93,24 +309,46 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
                     PullRequestStatus::NotCaptured
                 };
             }
-            "audits" if row == &id => facts.audit = Some(value.clone()),
-            "goals" if row == &id => facts.goals = value.as_array().cloned().unwrap_or_default(),
+            "close_reasons" if *row == id.as_str() => {
+                facts.stop_reason = value["reason"].as_str().map(str::to_owned)
+            }
+            "audits" if *row == id.as_str() => facts.audit = Some(fields(value, &["verdict"])),
+            "goals" if *row == id.as_str() => {
+                facts.goals = value
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .take(MAX_ITEMS)
+                    .map(|goal| fields(goal, &["id", "description"]))
+                    .collect()
+            }
             "saved_scratch" if value["node"] == json!(delivery.node()) => {
                 if let Some(reference) = value["reference"].as_str() {
                     facts.scratch.push(reference.into());
                 }
             }
-            "scratch_evidence" if value["node"] == json!(delivery.node()) => {
-                facts.scratch_history.push(value.clone())
-            }
+            "scratch_evidence" if value["node"] == json!(delivery.node()) => facts
+                .scratch_history
+                .push(fields(value, &["node", "reference", "status"])),
             "queue_facts" => {
-                let fact: crate::adapters::mergify::QueueFact =
-                    crate::decode_stored(value.clone())?;
-                if fact.repository == delivery.repository
-                    && Some(fact.number) == delivery.pull_request
-                {
-                    facts.queue.push(serde_json::to_value(fact.evidence)?);
+                let raw = &value["evidence"];
+                let mut compact = serde_json::Map::new();
+                if let Some((kind, detail)) = raw.as_object().and_then(|v| v.iter().next()) {
+                    let mut selected =
+                        fields(detail, &["head", "infra", "head_check", "checks_passed"]);
+                    let checks = detail["details"]["checks"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .take(MAX_ITEMS)
+                        .map(|check| fields(check, &["name", "url"]))
+                        .collect::<Vec<_>>();
+                    if !checks.is_empty() {
+                        selected["details"] = json!({"checks":checks});
+                    }
+                    compact.insert(kind.clone(), selected);
                 }
+                facts.queue.push(Value::Object(compact));
             }
             _ => {}
         }
@@ -118,10 +356,10 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
     // Older releases only kept the current check report. Preserve its exact
     // results without inventing a run key or a top-level verdict.
     for ((table, row), (_, value)) in &ordered {
-        if table == "check_reports" && row.starts_with(&prefix) {
+        if *table == "check_reports" && row.starts_with(&prefix) {
             let head = &row[prefix.len()..];
             if !facts.checks.iter().any(|record| record["head_sha"] == head) {
-                let mut record = value.clone();
+                let mut record = check_record(value);
                 record["head_sha"] = json!(head);
                 facts.checks.push(record);
             }
@@ -133,7 +371,10 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
         .rev()
         .find(|c| c["head_sha"].as_str() == delivery.head_sha.as_deref())
     {
-        if check["pass"] == false || check["report"] == false {
+        if check["pass"] == false
+            || check["report"] == false
+            || check["failed_results"].as_u64().is_some_and(|n| n > 0)
+        {
             facts.remaining_failures.push(check.clone());
         } else {
             facts.remaining_failures.extend(
@@ -199,20 +440,39 @@ pub fn summary(delivery: &Delivery) -> String {
     let Some(facts) = &delivery.evidence else {
         return "Details of checks and review were not captured in this summary.".into();
     };
-    let mut lines = Vec::new();
+    let mut lines: Vec<String> = Vec::new();
     for check in &facts.checks {
         let results = check["results"].as_array();
         let passed = check["report"] != false
             && (check["pass"] == true
                 || (check.get("pass").is_none()
                     && results.is_some_and(|r| {
-                        !r.is_empty() && r.iter().all(|c| c["verdict"] == "pass")
+                        !r.is_empty()
+                            && check["failed_results"].as_u64().map_or_else(
+                                || r.iter().all(|c| c["verdict"] == "pass"),
+                                |n| n == 0,
+                            )
                     })));
-        lines.push(if passed {
-            "The recorded checks passed."
-        } else {
-            "Check results were recorded."
-        });
+        lines.push(
+            if passed {
+                "The recorded checks passed."
+            } else {
+                "Check results were recorded."
+            }
+            .into(),
+        );
+        for result in results.into_iter().flatten() {
+            let verdict = match result["verdict"].as_str() {
+                Some("pass") => "passed",
+                Some("fail") => "failed",
+                Some("infrastructure-failure") => "infrastructure failed",
+                _ => "verdict not captured",
+            };
+            lines.push(format!(
+                "Recorded check {}: {verdict}.",
+                label(result["name"].as_str().unwrap_or("unnamed"))
+            ));
+        }
         if results.is_some_and(|r| {
             r.iter().any(|c| {
                 c.get("forcing").is_some()
@@ -223,28 +483,36 @@ pub fn summary(delivery: &Delivery) -> String {
                     })
             })
         }) {
-            lines.push("These checks include forced reproduction results.");
+            lines.push("These checks include forced reproduction results.".into());
+            lines.push(format!(
+                "Forced reproduction results: {} passed, {} had another or uncaptured outcome.",
+                check["forced_passed"].as_u64().unwrap_or(0),
+                check["forced_other"].as_u64().unwrap_or(0)
+            ));
         }
     }
     for review in &facts.reviews {
-        lines.push(match review["verdict"].as_str() {
-            Some("approve") => "The independent review approved the change.",
-            Some("changes") => "The independent review requested changes.",
-            _ => "An independent review result was recorded.",
-        });
+        lines.push(
+            match review["verdict"].as_str() {
+                Some("approve") => "The independent review approved the change.",
+                Some("changes") => "The independent review requested changes.",
+                _ => "An independent review result was recorded.",
+            }
+            .into(),
+        );
     }
     if facts
         .audit
         .as_ref()
         .is_some_and(|a| a["verdict"] == "agree")
     {
-        lines.push("The request's independent audit agreed with its goals.");
+        lines.push("The request's independent audit agreed with its goals.".into());
     }
     if facts.queue.iter().any(|q| q.get("CiFailed").is_some()) {
-        lines.push("The merge queue later reported a check failure.");
+        lines.push("The merge queue later reported a check failure.".into());
     }
     if !facts.remaining_failures.is_empty() {
-        lines.push("Recorded failures remain unresolved.");
+        lines.push("Recorded failures remain unresolved.".into());
     }
     if !matches!(
         delivery.output,
@@ -254,16 +522,110 @@ pub fn summary(delivery: &Delivery) -> String {
         }
     ) && facts.pull_request_status != PullRequestStatus::Merged
     {
-        lines.push("A merge has not been recorded for this request.");
+        lines.push("A merge has not been recorded for this request.".into());
     }
     if facts.checks.is_empty() {
-        lines.push("Check results were not captured.");
+        lines.push("Check results were not captured.".into());
     }
     if facts.reviews.is_empty() {
-        lines.push("A review verdict was not captured.");
+        lines.push("A review verdict was not captured.".into());
+    }
+    lines.push(
+        match facts.pull_request_status {
+            PullRequestStatus::Open => "The pull request is open.",
+            PullRequestStatus::Closed => "The pull request is closed without a recorded merge.",
+            PullRequestStatus::Merged => "The pull request was merged.",
+            PullRequestStatus::NotCaptured => "The pull request status was not captured.",
+        }
+        .into(),
+    );
+    if let Some(last) = facts.queue.last() {
+        lines.push(
+            if last.get("Merged").is_some() {
+                "The last recorded queue state is merged."
+            } else if last.get("Conflict").is_some() {
+                "The last recorded queue state is a conflict."
+            } else if last.get("QueueBlocked").is_some() {
+                "The last recorded queue state is blocked."
+            } else if last.get("CiFailed").is_some() {
+                "The last recorded queue state is a check failure."
+            } else if last.get("DequeuedByPerson").is_some()
+                || last.get("DequeuedByCommand").is_some()
+            {
+                "The pull request was removed from the queue."
+            } else {
+                "Other queue activity was recorded."
+            }
+            .into(),
+        );
+    } else {
+        lines.push("The queue status was not captured.".into());
+    }
+    if matches!(
+        delivery.output,
+        Output::Notice {
+            notice: Notice::Summary(Outcome::Stopped | Outcome::NotActionable | Outcome::Replaced),
+            ..
+        }
+    ) {
+        lines.push(
+            match facts.stop_reason.as_deref() {
+                Some("user_stop") => "Work stopped because you asked to stop.",
+                Some("pr_closed") => "Work stopped because someone closed the pull request.",
+                Some("pr_dequeued") => {
+                    "Work stopped because someone removed the pull request from the queue."
+                }
+                Some("replaced") => "Work stopped because the request was replaced.",
+                Some("protected_paths") => {
+                    "Work stopped because the request requires changes to protected paths."
+                }
+                _ => "The reason for stopping was not captured.",
+            }
+            .into(),
+        );
+    }
+    for blocker in facts
+        .remaining_failures
+        .iter()
+        .filter_map(|v| v["problem"].as_str())
+    {
+        lines.push(format!("Recorded remaining blocker: {}.", label(blocker)));
+    }
+    for goal in unmet_goals(Some(facts)) {
+        lines.push(format!("Recorded unmet goal: {}.", label(&goal)));
+    }
+    if facts.remaining_failures.is_empty() {
+        lines.push("Remaining failures were not captured; this does not establish that every goal was completed.".into());
+    }
+    if !facts.scratch.is_empty() {
+        lines.push(format!(
+            "Unfinished work was saved in {} scratch reference(s).",
+            facts.scratch.len()
+        ));
+    }
+    if facts
+        .scratch_history
+        .iter()
+        .any(|v| v["status"] == "pruned")
+    {
+        lines.push("Previously saved scratch was pruned.".into());
     }
     lines.dedup();
     lines.join(" ")
+}
+
+pub(crate) fn label(text: &str) -> String {
+    let text: String = crate::memory::redact_text(text)
+        .chars()
+        .take(512)
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect();
+    serde_json::to_string(&text)
+        .expect("string label")
+        .replace('`', "'")
+        .replace('<', "[")
+        .replace('>', "]")
+        .replace('@', "[at]")
 }
 
 fn proof_required(text: &str) -> bool {
@@ -330,30 +692,9 @@ pub fn publication(delivery: &Delivery, request: &str) -> Result<String> {
         .map(|e| current(&e.checks, delivery))
         .unwrap_or_default();
     let complete = !checks.is_empty()
-        && checks.iter().all(|record| {
-            record["results"].as_array().is_some_and(|results| {
-                !results.is_empty()
-                    && results.iter().all(|result| {
-                        result["verdict"].as_str().is_some()
-                            && (!needs_red_green
-                                || result["kind"] != "demonstrating"
-                                || result["tests"].as_array().is_some_and(|tests| {
-                                    !tests.is_empty()
-                                        && tests.iter().all(|test| {
-                                            test["base"].as_str().is_some()
-                                                && test["head"].as_str().is_some()
-                                        })
-                                }))
-                            && (result.get("forcing").is_none()
-                                || result["tests"].as_array().is_some_and(|tests| {
-                                    !tests.is_empty()
-                                        && tests
-                                            .iter()
-                                            .all(|test| test["head_forced"].as_str().is_some())
-                                }))
-                    })
-            })
-        });
+        && checks
+            .iter()
+            .all(|record| complete_check(record, needs_red_green));
     if required && !complete {
         return Err(crate::Error::Permanent {class:"pr_evidence", source:"The request requires published proof, but completed evidence for this head was not captured".into()});
     }
@@ -365,18 +706,60 @@ pub fn publication(delivery: &Delivery, request: &str) -> Result<String> {
         .as_ref()
         .map(|e| current(&e.reviews, delivery))
         .unwrap_or_default();
-    // JSON escaping keeps external strings from introducing Markdown or markers.
-    let records = serde_json::to_string_pretty(&public_value(
-        &json!({"head_sha":delivery.head_sha,"checks":checks,"reviews":reviews}),
-        None,
-    ))?
-    .replace('`', "\\u0060")
-    .replace('<', "\\u003c")
-    .replace('>', "\\u003e")
-    .replace('@', "\\u0040");
+    let mut proof = json!({"head_sha":delivery.head_sha,"checks":[],"reviews":[],"artifacts":[],"truncated":false});
+    for (field, records) in [
+        (
+            "checks",
+            checks.into_iter().map(check_record).collect::<Vec<_>>(),
+        ),
+        (
+            "reviews",
+            reviews.into_iter().map(review_record).collect::<Vec<_>>(),
+        ),
+        (
+            "artifacts",
+            delivery
+                .evidence
+                .as_ref()
+                .into_iter()
+                .flat_map(|e| &e.artifacts)
+                .take(MAX_ITEMS)
+                .map(|link| public_value(&json!(link), None))
+                .collect::<Vec<_>>(),
+        ),
+    ] {
+        for record in records {
+            proof[field]
+                .as_array_mut()
+                .expect("proof array")
+                .push(record);
+            // JSON may escape Markdown characters to six bytes, so reserve for that expansion.
+            if encode_proof(&proof)?.len() > PROOF_BYTES - 512 {
+                proof[field].as_array_mut().expect("proof array").pop();
+                proof["truncated"] = json!(true);
+                break;
+            }
+        }
+    }
+    let records = encode_proof(&proof)?;
     Ok(format!(
         "<!-- tl3:recorded-evidence:start -->\n## Recorded evidence\n\n```json\n{records}\n```\n<!-- tl3:recorded-evidence:end -->"
     ))
+}
+
+fn encode_proof(value: &Value) -> Result<String> {
+    Ok(serde_json::to_string(value)?
+        .replace('`', "\\u0060")
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('@', "\\u0040"))
+}
+
+pub(crate) fn validate_body(body: &str) -> Result<()> {
+    if body.len() > BODY_BYTES {
+        return Err(crate::Error::Permanent {class:"pr_evidence", source:"PR body exceeds the 60000-byte publication budget; shorten the existing prose or publish report artifacts".into()});
+    }
+    Ok(())
 }
 
 // Redact values before serializing. Redacting JSON text can consume its quotes,
@@ -392,25 +775,27 @@ fn public_value(value: &Value, field: Option<&str>) -> Value {
     {
         return value.clone();
     }
-    if field.is_some_and(|field| {
-        let field = field.to_ascii_lowercase();
-        field.contains("password")
-            || field.contains("secret")
-            || field.contains("authorization")
-            || field.ends_with("_token")
-            || field.ends_with("_key")
-            || field == "credentials"
-    }) {
+    if field.is_some_and(crate::memory::sensitive_key) {
         return json!("[redacted]");
     }
     match value {
-        Value::String(text) => json!(crate::memory::redact_text(text)),
-        Value::Array(values) => {
-            Value::Array(values.iter().map(|v| public_value(v, None)).collect())
-        }
+        Value::String(text) => json!(
+            crate::memory::redact_text(text)
+                .chars()
+                .take(512)
+                .collect::<String>()
+        ),
+        Value::Array(values) => Value::Array(
+            values
+                .iter()
+                .take(MAX_ITEMS)
+                .map(|v| public_value(v, None))
+                .collect(),
+        ),
         Value::Object(values) => Value::Object(
             values
                 .iter()
+                .take(MAX_ITEMS)
                 .map(|(k, v)| (crate::memory::redact_text(k), public_value(v, Some(k))))
                 .collect(),
         ),
@@ -608,7 +993,7 @@ mod tests {
     }
 
     #[test]
-    fn writer_rejects_unsupported_negative_claims() {
+    fn summary_bypasses_untrusted_writer_verdicts() {
         let input = writer_input(
             &delivery(),
             Some(Notice::Summary(Outcome::Stopped)),
@@ -616,10 +1001,10 @@ mod tests {
             "Fix the test",
         )
         .unwrap();
-        assert!(matches!(
-            checked_draft(&mut FalseNegative, "summary", input, &Default::default()),
-            Err(crate::Error::MessageRejected)
-        ));
+        let text =
+            checked_draft(&mut FalseNegative, "summary", input, &Default::default()).unwrap();
+        assert!(!text.contains("No tests were run"));
+        assert!(text.contains("not captured"));
     }
 
     #[test]
@@ -864,6 +1249,40 @@ mod tests {
             "capture cloned full report data"
         );
         assert_eq!(captured.queue.len(), 1);
+    }
+
+    #[test]
+    fn compact_proof_preserves_verdicts_when_test_details_are_omitted() {
+        let (snapshot, mut delivery) = fixture();
+        let mut raw = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "check_reports")
+            .unwrap()
+            .value
+            .clone();
+        raw["head_sha"] = json!("reviewed-head");
+        raw["results"][0]["tests"] = json!((0..1000).map(|i| json!({"test":format!("test_case_{i}_{}", "x".repeat(512)),"base":"assertion","head":"passed","head_forced":"passed"})).collect::<Vec<_>>());
+        let record = check_record(&raw);
+        assert!(encode_proof(&record).unwrap().len() <= RECORD_BYTES);
+        assert_eq!(record["results"][0]["test_count"], 1000);
+        assert_eq!(record["forced_passed"], 1000);
+        delivery.evidence = Some(Evidence {
+            checks: vec![record],
+            stop_reason: Some("user_stop".into()),
+            ..Default::default()
+        });
+        let proof = publication(&delivery, "Publish red/green proof in the PR").unwrap();
+        assert!(proof.contains("head_forced") && proof.contains("test_case_0"));
+        assert!(summary(&delivery).contains("you asked to stop"));
+        assert!(validate_body(&"x".repeat(BODY_BYTES + 1)).is_err());
+        assert!(validate_body(&with_publication("Refs #2625.", &proof)).is_ok());
+        raw["results"][0]["tests"][999]["head_forced"] = Value::Null;
+        delivery.evidence.as_mut().unwrap().checks = vec![check_record(&raw)];
+        assert!(
+            publication(&delivery, "Publish proof in the PR").is_err(),
+            "omitted evidence cannot hide incomplete forcing proof"
+        );
     }
 
     #[test]

@@ -1444,6 +1444,7 @@ impl Controller {
             }
             self.queue_observation(&snapshot, &mut commit, key, index, observation)?;
         }
+        evidence::retire_delivered(&snapshot, &mut commit, &delivery, completion.ack);
         self.store.commit(&commit)?;
         self.remove_hold(&delivery);
         Ok(())
@@ -1456,7 +1457,60 @@ impl Controller {
         event: Event,
         commit: &mut Commit,
     ) -> Result<()> {
+        let closing_cause = match event {
+            Event::Command {
+                node,
+                command:
+                    tl3_kernel::Command::Stop
+                    | tl3_kernel::Command::Answer {
+                        answer: tl3_kernel::Answer::Stop,
+                        ..
+                    },
+                ..
+            } => Some((node, "user_stop")),
+            Event::Command {
+                node,
+                command:
+                    tl3_kernel::Command::ChangeRequest
+                    | tl3_kernel::Command::Answer {
+                        answer: tl3_kernel::Answer::ChangeRequest,
+                        ..
+                    },
+                ..
+            } => Some((node, "replaced")),
+            Event::Fact {
+                node,
+                fact: tl3_kernel::Fact::PrClosedByPerson,
+            } => Some((node, "pr_closed")),
+            Event::Fact {
+                node,
+                fact: tl3_kernel::Fact::PrDequeuedByPerson,
+            } => Some((node, "pr_dequeued")),
+            _ => None,
+        }
+        .filter(|(node, _)| {
+            world.nodes.get(node.0 as usize).is_some_and(|n| {
+                !matches!(
+                    n.phase,
+                    tl3_kernel::Phase::Stopping(_) | tl3_kernel::Phase::Closed(_)
+                )
+            })
+        });
         let (world, outputs) = tl3_kernel::step(world, event);
+        if let Some((node, reason)) = closing_cause
+            && world.nodes.get(node.0 as usize).is_some_and(|n| {
+                matches!(
+                    n.phase,
+                    tl3_kernel::Phase::Stopping(_) | tl3_kernel::Phase::Closed(_)
+                )
+            })
+        {
+            commit.rows.push(put(
+                "close_reasons",
+                node.0.to_string(),
+                json!({"reason":reason}),
+            ));
+        }
         self.record_kernel_result(snapshot, world, outputs, commit)?;
         commit.result = json!({"kernel_event": event});
         Ok(())
@@ -2544,8 +2598,10 @@ impl Controller {
                     commit.rows.push(put(
                         "check_evidence",
                         format!("{}:{generation:020}", node.0),
-                        json!({"head_sha":sha,"base_sha":base_sha,"action_key":action_key,
+                        evidence::check_record(
+                            &json!({"head_sha":sha,"base_sha":base_sha,"action_key":action_key,
                             "report":report,"pass":pass,"results":results}),
+                        ),
                     ));
                     let mut report = json!({"base_sha": base_sha, "results": results});
                     if !selected.is_empty() {

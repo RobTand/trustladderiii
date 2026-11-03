@@ -277,6 +277,23 @@ pub fn checked_draft(
         .as_str()
         .ok_or(Error::Invalid("writer needs the original issue title"))?
         .to_owned();
+    if input.kind == MessageKind::Summary {
+        let mut text = format!(
+            "Request {}.\n\n{}\n\n{}",
+            crate::evidence::label(&title),
+            input.facts["outcome"]
+                .as_str()
+                .unwrap_or("The request ended."),
+            input.facts["recorded_summary"]
+                .as_str()
+                .unwrap_or("Details of checks and review were not captured in this summary.")
+        );
+        if let Some(removed) = input.facts["removed_changes"].as_str() {
+            text.push_str("\n\n");
+            text.push_str(removed);
+        }
+        return Ok(text);
+    }
     let blocker = blocker_anchors(&input);
     let actions = proposed_actions(&input);
     let policy = Policy {
@@ -288,12 +305,6 @@ pub fn checked_draft(
             .collect(),
         ..policy.clone()
     };
-    let removed_changes = (input.kind == MessageKind::Summary)
-        .then(|| input.facts["removed_changes"].as_str().map(str::to_owned))
-        .flatten();
-    let recorded_summary = (input.kind == MessageKind::Summary)
-        .then(|| input.facts["recorded_summary"].as_str().map(str::to_owned))
-        .flatten();
     let change_quote = (input.kind == MessageKind::Note)
         .then(|| input.facts["change_quote"].as_str().map(str::to_owned))
         .flatten();
@@ -305,13 +316,6 @@ pub fn checked_draft(
             .is_some_and(serde_json::Value::is_object);
     for attempt in 0..3 {
         let reply = writer.draft(&format!("{key}:writer:{attempt}"), &input)?;
-        if input.kind == MessageKind::Summary
-            && let WriterReply::Text(text) = &reply
-            && unsupported_summary_negative(&text.text, &input.facts)
-        {
-            input.violations = vec!["Remove unsupported negative claims about work, tests, checks, audit, review or evidence. Missing records mean not captured, never not run. A stop or an unmerged change does not erase completed work. Use only the supplied facts.".into()];
-            continue;
-        }
         if let WriterReply::Question(question) = &reply
             && !names_blocker(&question.obstacle, &blocker)
         {
@@ -371,12 +375,6 @@ pub fn checked_draft(
         };
         match checked {
             Ok(mut text) => {
-                if let Some(recorded) = &recorded_summary {
-                    text = format!("{}\n\n{recorded}", text.trim_end());
-                }
-                if let Some(removed) = &removed_changes {
-                    text = format!("{}\n\n{removed}", text.trim_end());
-                }
                 if let Some(quote) = &change_quote {
                     // Indentation keeps Markdown inert; embedded markers must also be neutralised.
                     let quote = quote
@@ -747,32 +745,4 @@ fn short_question(text: &str) -> bool {
         && !text.contains(['\r', '\n', '\u{0085}', '\u{2028}', '\u{2029}'])
         && text.trim_end().ends_with('?')
         && text.matches('?').count() == 1
-}
-
-// This catches common factual negations. The prompt carries the broader rule;
-// deterministic recorded statements also survive a writer that omits history.
-fn unsupported_summary_negative(text: &str, facts: &Value) -> bool {
-    static NEGATIVE: LazyLock<regex::Regex> = LazyLock::new(|| {
-        regex::Regex::new(
-        r"(?i)\b(?:(?:no|neither|without)\s+(?:\w+[ /-]+){0,4}(?:tests?|checks?|audit|review|evidence|work|changes?|progress)\b|nothing\s+(?:was\s+)?(?:done|completed|implemented)|(?:tests?|checks?|audit|review|evidence|work)\s+(?:was|were|has|have)\s+(?:not|never)\s+(?:been\s+)?(?:run|done|completed|performed|produced|captured)|(?:did\s+not|didn't|never)\s+(?:run|test|check|audit|review|complete|implement))"
-    ).expect("summary negation pattern")
-    });
-    let text = text.replace(
-        &format!("\"{}\"", facts["issue_title"].as_str().unwrap_or("")),
-        "the request",
-    );
-    text.split(['.', '!', '?', '\n']).any(|sentence| {
-        NEGATIVE.is_match(sentence)
-            && !facts["unmet_goals"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|goal| {
-                    goal.as_str().is_some_and(|g| {
-                        g.trim_end_matches(['.', '!', '?'])
-                            .trim()
-                            .eq_ignore_ascii_case(sentence.trim())
-                    })
-                })
-    })
 }

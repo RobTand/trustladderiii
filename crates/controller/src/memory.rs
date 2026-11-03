@@ -26,7 +26,7 @@ fn clip(text: &str, limit: usize) -> &str {
     &text[..end]
 }
 
-fn sensitive_key(key: &str) -> bool {
+pub(crate) fn sensitive_key(key: &str) -> bool {
     let key = key.replace('\0', "").to_ascii_lowercase().replace('-', "_");
     matches!(
         key.as_str(),

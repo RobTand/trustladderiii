@@ -167,6 +167,7 @@ impl Adapter {
                         crate::pr_body::healed(body, rules, Some(request), &delivery.paths)
                             .unwrap_or_else(|| body.to_owned());
                     let body = crate::evidence::with_publication(&healed, &evidence);
+                    crate::evidence::validate_body(&body)?;
                     if pull.body.as_deref().unwrap_or_default() != body {
                         self.runtime.block_on(client.update_pull_request_body(
                             &repo,
@@ -207,6 +208,7 @@ impl Adapter {
                     GitHub::marker(&delivery.key)
                 );
                 let body = crate::evidence::with_publication(&body, &evidence);
+                crate::evidence::validate_body(&body)?;
                 // #447: a body the served repository's policy refuses is TL3's
                 // own failure. A permanent failure stops for review (#440's seam).
                 if !crate::pr_body::gaps(&body, rules).is_empty() {
@@ -275,7 +277,9 @@ impl Adapter {
                     .filter(|pr| pr.state == "open" || pr.merged_at.is_some())
                     .filter(|pr| {
                         let body = pr.body.as_deref().unwrap_or_default();
-                        crate::pr_body::gaps(body, self.body_lines(&delivery.repository)).is_empty()
+                        crate::evidence::validate_body(body).is_ok()
+                            && crate::pr_body::gaps(body, self.body_lines(&delivery.repository))
+                                .is_empty()
                             && crate::evidence::with_publication(body, &evidence) == body
                     })
                     .map(|pr| binding(delivery, &pr))
