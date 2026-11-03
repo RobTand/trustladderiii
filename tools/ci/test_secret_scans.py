@@ -1,5 +1,6 @@
 """Exercise upload commands with fake secrets and lint every workflow upload."""
 import contextlib
+import gzip
 import io
 import os
 from pathlib import Path
@@ -117,6 +118,87 @@ class WorkflowScanTests(unittest.TestCase):
 
 
 class RunnerScanTests(unittest.TestCase):
+    def test_runner_excludes_unscannable_files_and_rescans(self):
+        secret = 'fake-runner-secret-value'
+        nested = b'clean'
+        for _ in range(34):
+            nested = gzip.compress(nested)
+        cases = [('partial.zst', bytes.fromhex('28b52ffdff'), 'zstd: not scanned'),
+                 (secret + '.zst', bytes.fromhex('28b52ffdff'), 'zstd: not scanned'),
+                 ('broken.gz', b'\x1f\x8b\x08broken', 'gzip member unreadable'),
+                 ('nested.gz', nested, 'compressed nesting limit')]
+        for name, payload, reason in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                artifacts = Path(directory, 'artifacts')
+                artifacts.mkdir()
+                skipped = artifacts / name
+                skipped.write_bytes(payload)
+                (artifacts / 'gate-result.json').write_text('{}')
+                calls = []
+                real_run = subprocess.run
+
+                def scan(command, **kwargs):
+                    calls.append(command)
+                    # Run the real upload hook with compression imports unavailable.
+                    code = ('import runpy, sys; sys.modules["compression"] = None; '
+                            'sys.modules["compression.zstd"] = None; '
+                            'sys.argv.pop(0); runpy.run_path(sys.argv[0], run_name="__main__")')
+                    kwargs['capture_output'] = True
+                    kwargs['text'] = True
+                    return real_run([*command[:3], '-c', code, *command[3:]], **kwargs)
+
+                output = io.StringIO()
+                with patch.dict(os.environ, {'BUILDBUDDY_API_KEY': secret}, clear=True), \
+                     patch.object(bazel_gate.subprocess, 'run', side_effect=scan), \
+                     contextlib.redirect_stdout(output):
+                    status = bazel_gate.scan_artifacts(artifacts)
+                self.assertEqual(status, 0, output.getvalue())
+                self.assertFalse(skipped.exists(), output.getvalue())
+                self.assertEqual((artifacts / 'gate-result.json').read_text(), '{}')
+                self.assertEqual(len(calls), 2)
+                self.assertIn(repr(name.replace(secret, '')), output.getvalue())
+                self.assertIn(f'{len(payload)} bytes', output.getvalue())
+                self.assertIn(reason, output.getvalue())
+                self.assertNotIn(secret, output.getvalue())
+
+    def test_runner_rejects_secret_hits_and_unknown_scan_errors(self):
+        for code, diagnostic in ((1, 'secret detected'), (42, ''), (0, 'unknown error'),
+                                 (75, 'unknown error'), (75, 'unreadable directory, not scanned'),
+                                 (75, 'secret detected')):
+            with self.subTest(code=code, diagnostic=diagnostic), \
+                 tempfile.TemporaryDirectory() as directory:
+                artifacts = Path(directory)
+                skipped = artifacts / 'partial.zst'
+                skipped.write_bytes(b'opaque')
+                report = f'{skipped}: zstd: not scanned (compression.zstd unavailable)\n'
+                result = subprocess.CompletedProcess([], code, report + diagnostic + '\n', '')
+                with patch.dict(os.environ, {}, clear=True), \
+                     patch.object(bazel_gate.subprocess, 'run', return_value=result) as run, \
+                     contextlib.redirect_stdout(io.StringIO()):
+                    status = bazel_gate.scan_artifacts(artifacts)
+                self.assertNotEqual(status, 0)
+                self.assertEqual(run.call_count, 1)
+                self.assertEqual(list(artifacts.iterdir()), [])
+
+    def test_runner_requires_a_clean_second_scan(self):
+        for code, output in ((1, 'secret detected'), (42, ''), (0, 'unknown diagnostic'),
+                             (75, 'not scanned'), (0, 'not scanned')):
+            with self.subTest(code=code, output=output), tempfile.TemporaryDirectory() as directory:
+                artifacts = Path(directory)
+                skipped = artifacts / 'partial.zst'
+                skipped.write_bytes(b'opaque')
+                (artifacts / 'gate-result.json').write_text('{}')
+                first = subprocess.CompletedProcess([], 75,
+                    f'{skipped}: zstd: not scanned (compression.zstd unavailable)\n', '')
+                second = subprocess.CompletedProcess([], code, output, '')
+                with patch.dict(os.environ, {}, clear=True), \
+                     patch.object(bazel_gate.subprocess, 'run', side_effect=[first, second]) as run, \
+                     contextlib.redirect_stdout(io.StringIO()):
+                    status = bazel_gate.scan_artifacts(artifacts)
+                self.assertNotEqual(status, 0)
+                self.assertEqual(run.call_count, 2)
+                self.assertEqual(list(artifacts.iterdir()), [])
+
     def test_scan_supervisor_scrubs_the_gate_child_and_scans_after_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             artifacts = Path(directory, 'artifacts')

@@ -211,7 +211,7 @@ class ScannerCompressionTests(unittest.TestCase):
             output = io.StringIO()
             with patch.dict(os.environ, {'SCAN_FIXTURE': self.SECRET}), \
                  contextlib.redirect_stdout(output):
-                status = before_upload.main(['--env', 'SCAN_FIXTURE', str(artifact)])
+                status = before_upload.main(['--env', 'SCAN_FIXTURE', directory])
         self.assertNotIn(self.SECRET, output.getvalue())
         return status, output.getvalue()
 
@@ -220,6 +220,26 @@ class ScannerCompressionTests(unittest.TestCase):
         assert len(payload) < 256
         return (bytes.fromhex('28b52ffd20') + bytes([len(payload)])
                 + ((len(payload) << 3) | 1).to_bytes(3, 'little') + payload)
+
+    def test_upload_without_zstd_rejects_unscanned_members(self):
+        for payload, expected in ((b'clean', 0), (self.SECRET.encode(), 1),
+                                  (self.zstd_frame(b'clean'), 75),
+                                  (self.zstd_frame(self.SECRET.encode()), 75)):
+            with self.subTest(payload=payload[:4], expected=expected), \
+                 patch.dict(sys.modules, {'compression': None, 'compression.zstd': None}):
+                status, output = self.scan(payload)
+                if expected == 75:
+                    self.assertIn('zstd: not scanned (compression.zstd unavailable)', output)
+                self.assertEqual(status, expected, output)
+
+    def test_upload_rejects_other_not_scanned_statuses(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.dict(os.environ, {'SCAN_FIXTURE': ''}), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            Path(directory, 'clean.log').write_text('clean')
+            status = before_upload.main(['--env', 'SCAN_FIXTURE', directory])
+        self.assertIn('not available, not scanned', output.getvalue())
+        self.assertEqual(status, 75)
 
     def test_real_bazel_execution_log_is_clean(self):
         # Full Bazel 9.3.1 execution log from TL3 checkout t3-b997de7d,
