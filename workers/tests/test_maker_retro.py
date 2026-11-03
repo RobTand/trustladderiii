@@ -290,6 +290,32 @@ def test_a_slow_retro_cannot_delay_or_lose_the_reply(maker_request, monkeypatch,
     assert row["retro"]["status"] == "timeout"
 
 
+def test_the_retro_deadline_is_half_the_silence_allowance(maker_request, monkeypatch, tmp_path):
+    # A future, shorter allowance still leaves the reply time to go out.
+    maker_request["silence_secs"] = 1
+    release = threading.Event()
+    install(monkeypatch, maker_request, tmp_path, hold=release)
+    events = []
+    started = time.monotonic()
+    try:
+        runtime.run(maker_request, events.append)
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+    assert elapsed < 5, "a 1-second allowance gives the retro half a second"
+    assert events[-1] == {"event": "reply", "role": "maker", "reply": CANT_MEET}
+    assert facts(tmp_path)["retro"]["status"] == "timeout"
+
+
+def test_the_request_may_carry_the_silence_allowance(maker_request):
+    from jsonschema import ValidationError
+    from tl3_workers.contracts import validate
+
+    validate("request", {**maker_request, "silence_secs": 120})
+    with pytest.raises(ValidationError):
+        validate("request", {**maker_request, "silence_secs": 0})
+
+
 def test_retro_is_a_separate_span_on_the_maker_trace(maker_request, monkeypatch, tmp_path, exporters, receiver):
     uri, packets = receiver
     maker_request["mlflow"] = {"tracking_uri": uri, "experiment": "tl3-test"}
