@@ -135,6 +135,8 @@ forcing = json.loads(sys.argv[sys.argv.index('--forcing') + 1]) if '--forcing' i
 summary.add(node, 'failed' if forcing else 'passed', target_hits={'publisher.adopt': 1})
 if forcing:
     summary.result.update(forcing=forcing, selectors=[node])
+if (root / 'proof.json').is_file():
+    summary.result['proof'] = json.loads((root / 'proof.json').read_text())
 (here / 'response.json').write_text(json.dumps(summary.result))
 print(json.dumps({"schema":""")
         script.write_text(source)
