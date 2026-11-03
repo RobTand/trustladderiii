@@ -391,6 +391,8 @@ class Worktree:
             current = os.stat(self._path, follow_symlinks=False)
         except FileNotFoundError:
             return True
+        except OSError:
+            return False
         return opened.st_nlink == 0 or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino)
 
     def __enter__(self):
@@ -669,6 +671,9 @@ def build_tools(worktree, descriptions):
         lock = worktree._mutation_lock if name in WRITE_TOOLS | {"run_tests", "run_generator", "rehearse_forcing"} else nullcontext()
 
         def guarded(*args, _method=method, _lock=lock, _name=name, _summary=summary, **kwargs):
+            # Roles without a blocked reply stop on an environment failure (Q50). It is
+            # raised after the handler, so worker facts name it, not its OS error.
+            unavailable = None
             with _lock:
                 try:
                     result = _method(*args, **kwargs)
@@ -686,27 +691,27 @@ def build_tools(worktree, descriptions):
                     raise ToolException("Expected valid UTF-8 text.") from exc
                 except RecursionError as exc:
                     raise ToolException("The worktree is nested too deeply to walk.") from exc
-                except ValueError as exc:
-                    raise ToolException(str(exc)) from exc
                 except MissingExecutable as exc:
-                    if worktree.environment_errors_end_run:
-                        raise WorktreeUnavailable(f"{_name}: missing executable") from None
-                    raise ToolException(f"{_name} is unavailable in this environment.") from exc
-                except FileNotFoundError as exc:
-                    if worktree.environment_errors_end_run and worktree.root_removed():
-                        raise WorktreeUnavailable(f"{_name}: worktree removed") from None
-                    raise ToolException("File or directory not found.") from exc
+                    if not worktree.environment_errors_end_run:
+                        raise ToolException(f"{_name} is unavailable in this environment.") from exc
+                    unavailable = f"{_name}: missing executable"
+                except (ValueError, FileNotFoundError) as exc:
+                    if not (worktree.environment_errors_end_run and worktree.root_removed()):
+                        message = str(exc) if isinstance(exc, ValueError) else "File or directory not found."
+                        raise ToolException(message) from exc
+                    unavailable = f"{_name}: worktree removed"
                 except OSError as exc:
                     cls = environment_class(exc)
                     if cls is None:
                         path = kwargs.get("path", ".") if _name in READ_TOOLS | WRITE_TOOLS else "the call's input"
                         raise ToolException(_path_error(_name, exc, path)) from exc
-                    if worktree.environment_errors_end_run:
-                        raise WorktreeUnavailable(f"{_name}: {cls}") from None
-                    error = worktree.evidence.tool_error(_name, cls)
-                    raise ToolException(
-                        f"Worktree tool rejected the path or operation. Tool error id: {error}."
-                    ) from exc
+                    if not worktree.environment_errors_end_run:
+                        error = worktree.evidence.tool_error(_name, cls)
+                        raise ToolException(
+                            f"Worktree tool rejected the path or operation. Tool error id: {error}."
+                        ) from exc
+                    unavailable = f"{_name}: {cls}"
+            raise WorktreeUnavailable(unavailable)
 
         tools.append(StructuredTool.from_function(
             func=guarded, name=name, description=description,

@@ -17,10 +17,18 @@ def assert_tool_pairs(messages):
     assert not pending, f"missing tool results: {pending}"
 
 
-def agent_calls(calls):
-    """Recorded (messages, ...) model calls without the maker's retro turn (#648).
 
-    The retro follows the accepted reply and is tested on its own."""
+def is_retro(call):
+    """Whether a recorded model call is the maker's retro turn (#648).
+
+    A call is a message list, a (messages, ...) tuple or a Chat Completions payload."""
     from tl3_workers.retro import PROMPT
 
-    return [call for call in calls if not (call[0] and getattr(call[0][-1], "content", None) == PROMPT)]
+    messages = call["messages"] if isinstance(call, dict) else call[0] if isinstance(call, tuple) else call
+    last = messages[-1] if messages else None
+    return (last.get("content") if isinstance(last, dict) else getattr(last, "content", None)) == PROMPT
+
+
+def agent_calls(calls):
+    """Recorded model calls without the retro, which follows the accepted reply and has its own tests."""
+    return [call for call in calls if not is_retro(call)]

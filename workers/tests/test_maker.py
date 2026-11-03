@@ -14,7 +14,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 import pytest
-from message_invariants import assert_tool_pairs
+from message_invariants import agent_calls, assert_tool_pairs, is_retro
 
 from tl3_workers import runtime
 from tl3_workers.contracts import validate
@@ -546,13 +546,23 @@ DONE_TOKENS = (len(json.dumps(DONE)) + 2) // 3
 def test_proxy_stream_requests_usage_and_serial_tools_and_uses_usage(
     maker_request, monkeypatch, input_tokens, output_tokens, kind,
 ):
-    requests = []
+    requests, retros = [], []
     root = Path(maker_request["worktree"])
     before = git(root, "rev-parse", "HEAD")
     Path(maker_request["key_file"]).write_text("fixture-key")
 
     def respond(request):
         body = json.loads(request.content)
+        if is_retro(body):
+            # The retro turn (#648) is tool-free, so it sends no tool options.
+            retros.append(body)
+            assert "tools" not in body and "parallel_tool_calls" not in body
+            frame = {"id": "fixture-retro", "object": "chat.completion.chunk", "created": 0,
+                     "model": "fixture-model", "choices": [{"index": 0, "finish_reason": "stop", "delta": {
+                         "role": "assistant", "content": json.dumps(dict.fromkeys(
+                             ("slowed_by", "missing", "checks", "noise"), []))}}]}
+            return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                                  content="data: " + json.dumps(frame) + "\n\ndata: [DONE]\n\n")
         requests.append(body)
         assert request.url == "http://model.invalid/v1/chat/completions"
         assert body["stream"] is True
@@ -594,6 +604,7 @@ def test_proxy_stream_requests_usage_and_serial_tools_and_uses_usage(
         events = []
         runtime.run(maker_request, events.append)
     assert len(requests) == 2
+    assert len(retros) == 1
     assert [event["unit"] for event in events[:-1]] == ["model_turn", "tool_result", "model_turn"]
     assert events[-1]["reply"]["kind"] == kind
     if kind == "done":
@@ -1260,7 +1271,7 @@ def test_no_change_done_gets_one_feedback_turn(tmp_path, maker_request, monkeypa
     else:
         assert reply == {'kind': 'cant_meet', 'report': report if response == 'cant_meet' else 'no code change was made'}
         assert git(root, 'rev-parse', 'HEAD') == before
-    assert len(seen) == len(turns)
+    assert len(agent_calls(seen)) == len(turns)
     saved = json.loads(Path(maker_request['session_file']).read_text())
     assert any(message['data']['content'] == feedback for message in saved)
 
@@ -1448,7 +1459,7 @@ def test_long_maker_session_bounds_context_and_commits(tmp_path, maker_request, 
     runtime.run(maker_request, events.append)
     for messages in observed:
         assert_tool_pairs(messages)
-    assert len(observed) == 51, 'a long maker session can finish its planned edits'
+    assert len(agent_calls(observed)) == 51, 'a long maker session can finish its planned edits'
     assert max(sum(len(json.dumps(m.model_dump(), ensure_ascii=False).encode())
                    for m in messages if isinstance(m, (AIMessage, ToolMessage)))
                for messages in observed) > 65_536, 'history grows beyond the former rolling window'
@@ -1495,7 +1506,7 @@ def test_maker_budget_exhaustion_finishes_without_claiming_unmade_changes(maker_
     monkeypatch.setattr(runtime, 'create_model', lambda _: EndlessMaker(responses=[]))
     events = []
     runtime.run(maker_request, events.append)
-    assert len(observed) == 65, 'maker allows 64 tool turns and one final answer'
+    assert len(agent_calls(observed)) == 65, 'maker allows 64 tool turns and one final answer'
     reply = events[-1]['reply']
     assert reply['kind'] == 'cant_meet'
     assert reply['budget_exhaustion']['dimension'] == 'tool_turns'
