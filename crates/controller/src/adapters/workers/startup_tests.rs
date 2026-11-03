@@ -11,11 +11,16 @@ fn planner_protected_paths_follow_the_request_repository() {
     config.store = db.create("repo_protection");
     config.workers.runs = f.root.path().join("runs");
     config.planning.protected_paths.push("global/**".into());
+    config.github.repos[0].test_demand = Some(tl3_config::TestDemand {
+        cpus: 4,
+        mem_gb: 12,
+    });
     config.github.repos[0].protected_paths = vec!["CHANGELOG.md".into()];
     config.github.repos[0].generated_files = vec!["**/BUILD.bazel".into()];
     config.github.repos[0].generator = Some("bash tools/bazel/generate.sh".into());
     let mut other = config.github.repos[0].clone();
     other.name = "other-repo".into();
+    other.test_demand = None;
     other.protected_paths = vec!["other-only/**".into()];
     other.generator = None;
     config.github.repos.push(other);
@@ -62,6 +67,15 @@ fn planner_protected_paths_follow_the_request_repository() {
         let request = supervisor
             .request(&delivery, "planner", &mut store, &snapshot)
             .unwrap();
+        let cpus = if name == "TL3-SANDBOX" { 4 } else { 1 };
+        assert_eq!(request["test_cpus"], cpus);
+        let features = request["inputs"]["tool_capabilities"][0]["runner_features"]
+            .as_array()
+            .unwrap();
+        assert!(features.contains(&json!(format!("native_threads_{cpus}"))));
+        if cpus != 1 {
+            assert!(!features.contains(&json!("native_threads_1")));
+        }
         let forecast = &request["inputs"]["forecast"];
         assert_eq!(forecast["generated_files"], json!(["**/BUILD.bazel"]));
         assert_eq!(forecast["generator_available"], name == "TL3-SANDBOX");
@@ -174,6 +188,29 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
             .unwrap()
             .contains(&json!(".github/**"))
     );
+    for demand in [
+        None,
+        Some(tl3_config::TestDemand {
+            cpus: 4,
+            mem_gb: 12,
+        }),
+    ] {
+        let mut config = config.clone();
+        config.github.repos[0].test_demand = demand;
+        let supervisor = Supervisor::new(&config, &f.root.path().join("demand-records")).unwrap();
+        let request = supervisor
+            .request(&delivery, "maker", &mut store, &snapshot)
+            .unwrap();
+        let expected = demand.unwrap_or(tl3_config::TestDemand { cpus: 1, mem_gb: 2 });
+        assert_eq!(
+            request["inputs"]["tests"]["cpus"], expected.cpus,
+            "maker CPU reservation"
+        );
+        assert_eq!(
+            request["inputs"]["tests"]["mem_gb"], expected.mem_gb,
+            "maker memory reservation"
+        );
+    }
     let sent = serde_json::to_string(inputs).unwrap().len();
     let limit = config.limits.context_tokens as usize;
     assert!(

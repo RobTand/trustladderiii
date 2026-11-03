@@ -589,6 +589,87 @@ def test_a_cache_hit_is_marked_as_not_fresh(submission):
     assert entry["fresh"] is False
 
 
+@pytest.mark.parametrize("parallel", [0, 2])
+def test_configured_demand_reaches_maker_head_and_base_actions(submission, monkeypatch, parallel):
+    from tl3_workers import pb_tests
+    commands = []
+    original = pb_tests._json_command
+    def command(args):
+        if "--cwd" in args:
+            commands.append(args)
+        return original(args)
+    monkeypatch.setattr(pb_tests, "_json_command", command)
+    root, scripts = submission
+    base, _, _, _ = prepare_base_submission(submission, head_value="broken")
+    with Worktree(root) as tree:
+        tree.test_settings = TestSettings(IMAGE, scripts, cpus=4, mem_gb=12)
+        tree.check_base_sha = base
+        tree.test_checkout = root
+        result = make_test_tool(tree)(["test_code.py::test_value"], parallel=parallel)
+    assert result["status"] == "completed"
+    assert len(commands) == 2, "head failure automatically submits the base"
+    for index, args in enumerate(commands):
+        assert args[args.index("--cpus") + 1] == "4"
+        assert args[args.index("--demand") + 1] == f"mem_gb={12 * (max(1, parallel) if index == 0 else 1)}"
+        for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+            assert f"{name}={max(1, 4 // parallel) if parallel and index == 0 else 4}" in args
+
+
+def test_oom_retains_allowlisted_failure_receipt(submission):
+    result = call(submission, Summary().result, override={
+        "status": "failed", "succeeded": False, "exit_code": 137,
+        "reason": "memory_limit_oom",
+        "diagnostics": {"termination_reason": "memory_limit_oom",
+                        "resource_profile": {"scope": {"memory_peak_bytes": 2147483648}},
+                        "admission_private": "never retain"},
+    })
+    assert result["status"] == "infrastructure_error"
+    receipt = result["receipts"][0]
+    assert receipt == {"action_key": KEY, "status": "failed", "exit_code": 137,
+                       "termination_reason": "memory_limit_oom", "memory_peak_bytes": 2147483648}
+    assert "memory_limit_oom" in result["message"]
+
+
+@pytest.mark.parametrize("publication, recorded_key, expected", [
+    (123, KEY, True), (122, KEY, False), (123, "c" * 64, False),
+])
+def test_legacy_ending_retains_only_matching_publication_oom(submission, publication, recorded_key, expected):
+    # pbwait currently returns RC/peak but omits the exact termination reason.
+    root, scripts = submission
+    installed_tools = root.parent / "fleet/repo/tools"
+    installed_tools.mkdir(parents=True)
+    for name in ("pbrun.py", "pbwait.py"):
+        (installed_tools / name).write_text((scripts / name).read_text())
+    (installed_tools / "response.json").write_text(json.dumps(Summary().result))
+    (installed_tools / "override.json").write_text(json.dumps({
+        "status": "failed", "succeeded": False, "exit_code": None,
+        "reason": "action ended failed", "publication": {"published_unix": 123},
+        "diagnostics": {"returncode": 137,
+                        "resource_profile": {"scope": {"memory_peak_bytes": 2147483648}}},
+    }))
+    failed = root.parent / "fleet/pb-queue/failed"
+    failed.mkdir(parents=True)
+    (failed / f"{KEY}.json").write_text(json.dumps({
+        "action_key": recorded_key, "published_unix": publication,
+        "detail": {"termination_reason": "memory_limit_oom", "private": "not copied"},
+    }))
+    with Worktree(root) as tree:
+        result = make_test_tool(tree, TestSettings(IMAGE, installed_tools))()
+    assert result["status"] == "infrastructure_error"
+    receipt = result["receipts"][0]
+    assert receipt["exit_code"] == 137
+    assert receipt["memory_peak_bytes"] == 2147483648
+    assert (receipt.get("termination_reason") == "memory_limit_oom") is expected
+    assert "private" not in json.dumps(result)
+
+
+def test_sigkill_without_oom_reason_is_not_classified_as_oom(submission):
+    result = call(submission, Summary().result, override={
+        "status": "failed", "succeeded": False, "exit_code": 137,
+        "reason": "action ended failed",
+    })
+    assert result["receipts"] == [{"action_key": KEY, "status": "failed", "exit_code": 137}]
+    assert "memory_limit_oom" not in result["message"]
 @pytest.fixture
 def generator_repo(tmp_path):
     """A served repo with a git-index generator, like request 132's Bazel workflow."""
@@ -938,3 +1019,39 @@ def test_generator_never_resolves_a_maker_written_shebang(tmp_path, entrypoint):
                                           ["python3", str(script.relative_to(tmp_path))], tmp_path / "cid")
     assert "--entrypoint=python3" in command
     assert command[-2:] == [IMAGE, str(script.relative_to(tmp_path))]
+
+
+@pytest.mark.parametrize("cpus,mem_gb", [(1, 2), (4, 12)])
+def test_generator_uses_repository_demand_and_native_thread_budget(
+        generator_repo, generator_backend, tmp_path, cpus, mem_gb):
+    tree, generate = configured_generator(generator_repo, tmp_path)
+    tree.test_settings = TestSettings(IMAGE, tmp_path / "tools", cpus=cpus, mem_gb=mem_gb)
+    with tree:
+        assert generate()["status"] == "completed"
+    [args] = generator_backend[0]
+    assert args[args.index("--cpus") + 1] == str(cpus)
+    assert args[args.index("--demand") + 1] == f"mem_gb={mem_gb}"
+    for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+        assert f"{name}={cpus}" in args
+
+
+def test_generator_oom_retains_failure_receipt(generator_repo, tmp_path, monkeypatch):
+    from tl3_workers import pb_generators
+    ending = {"action_key": KEY, "status": "failed", "exit_code": 137, "succeeded": False,
+              "diagnostics": {"termination_reason": "memory_limit_oom",
+                              "resource_profile": {"scope": {"memory_peak_bytes": 2147483648}},
+                              "private": "not retained"}}
+    def command(args):
+        if args[1].endswith("pbrun.py"):
+            return 0, {"schema": "prismabuild.submission.v1", "action_key": KEY}
+        return 1, {"schema": "prismabuild.endings.v1", "complete": True, "endings": [ending]}
+    monkeypatch.setattr(pb_generators, "_json_command", command)
+    tree, generate = configured_generator(generator_repo, tmp_path)
+    with tree:
+        result = generate()
+    assert result["status"] == "failed"
+    assert result["receipts"] == [{"action_key": KEY, "status": "failed", "exit_code": 137,
+                                   "termination_reason": "memory_limit_oom", "memory_peak_bytes": 2147483648}]
+    assert "memory_limit_oom" in result["message"]
+    assert "private" not in json.dumps(result)
+    assert tree.generation_receipt == result

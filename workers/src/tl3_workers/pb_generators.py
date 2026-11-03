@@ -10,7 +10,7 @@ import sys
 import tempfile
 
 from tl3_harness import generator
-from tl3_workers.pb_tests import TestSettings, _git, _json_command, _stage
+from tl3_workers.pb_tests import TestSettings, _failure_receipt, _git, _json_command, _stage
 from tl3_workers.session import save
 
 
@@ -145,8 +145,8 @@ def make_generator_tool(worktree):
                             "--cwd", str(root), "--anywhere", "--cpus", str(settings.cpus),
                             "--demand", f"mem_gb={settings.mem_gb}", "--container-image", settings.image,
                             "--timeout-s", "180", "--progress-phase", "tests=180",
-                            "--env", "OMP_NUM_THREADS=1", "--env", "MKL_NUM_THREADS=1",
-                            "--env", "OPENBLAS_NUM_THREADS=1", "--detach", "--",
+                            *[arg for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")
+                              for arg in ("--env", f"{name}={settings.cpus}")], "--detach", "--",
                             "python3", "-I", "-B", "action.py", settings.image]
                     if settings.exec_scratch:
                         args.append("--exec-scratch")
@@ -172,8 +172,14 @@ def make_generator_tool(worktree):
                         waited["endings"][0]["action_key"] != key):
                     raise ValueError("PrismaBuild returned an invalid generator ending.")
                 if waited["complete"]:
-                    if code:
-                        raise ValueError("Generator action failed; inspect its PrismaBuild terminal record: " + key)
+                    if code or not waited["endings"][0].get("succeeded"):
+                        receipt = _failure_receipt(waited["endings"][0], settings)
+                        result = {"status": "failed", "action_key": key, "receipts": [receipt],
+                                  "message": "Generator action failed: " + json.dumps(receipt, sort_keys=True)}
+                        state.update(phase="failed", receipt=result)
+                        record()
+                        worktree.generation_receipt = result
+                        return result
                     break
                 if waited["endings"][0]["status"] not in ("waiting", "executed", "cache_hit"):
                     raise ValueError("PrismaBuild could not verify generator completion.")
