@@ -12,7 +12,7 @@ import pytest
 from tl3_workers import runtime
 from tl3_workers.turns import InvalidReply
 from message_invariants import assert_tool_pairs
-import test_maker
+import message_invariants as test_maker
 import test_prompt_cache
 import test_reviewer
 import test_workers

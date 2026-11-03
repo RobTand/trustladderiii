@@ -12,7 +12,7 @@ import pytest
 from tl3_workers import runtime
 from tl3_workers.tools import TOOL_FACTORIES, Worktree, build_tools
 from tl3_workers.turns import InvalidReply
-from test_maker import maker_request, turn  # noqa: F401
+from message_invariants import maker_request, turn  # noqa: F401
 
 KEY = "c" * 64
 OTHER = "d" * 64
