@@ -58,6 +58,33 @@ def execution_split():
                  "files": ["greeting.py", "new/api.py"], "estimated_tool_turns": 25}]}
 
 
+def test_seven_file_public_output_adoption_requires_a_split_before_maker_work(planner_request, monkeypatch):
+    from tl3_workers.roles import planner
+
+    # PB #2717: seven token-fitting files consumed 35 edits, 20 reads, seven
+    # searches and two test calls before completion. Five operations/file misses it.
+    monkeypatch.chdir(planner_request["worktree"])
+    proposal = copy.deepcopy(LEAF)
+    proposal["files"].extend(f"public_output_{i}.py" for i in range(5))
+    planner.check_reply(planner_request["inputs"], proposal)
+    assert proposal["forecast"]["fits"], "execution pressure must not falsify token fit"
+    assert any("execution budget" in item.lower() for item in proposal["violations"]), proposal
+    assert proposal["execution"]["estimated_tool_turns"] > 56
+    split = {"kind": "split", "reason": "execution_budget", "pieces": [
+        {"brief": "Adopt the public output and prove behavior, including metadata.",
+         "goal_ids": [0], "files": proposal["files"][:4]},
+        {"brief": "Finish adoption, preserve the interface and run final regressions.",
+         "goal_ids": [0, 1], "files": proposal["files"][4:]}]}
+    planner.check_reply(planner_request["inputs"], split)
+    assert split["violations"] == [], split
+    assert {path for piece in split["pieces"] for path in piece["files"]} == set(proposal["files"])
+    assert {goal for piece in split["pieces"] for goal in piece["goal_ids"]} == {0, 1}
+    assert all(piece["fits"] for piece in split["execution"]["pieces"])
+    assert split["execution"]["aggregate_tool_turns"] == sum(
+        piece["estimated_tool_turns"] for piece in split["execution"]["pieces"])
+    assert split["execution"]["aggregate_allowed_tool_turns"] == 128
+
+
 def test_execution_split_uses_existing_path_and_retains_aggregate_estimates(planner_request, monkeypatch):
     from tl3_workers.roles import planner
 
