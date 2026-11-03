@@ -22,6 +22,19 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result
             }
         }
     }
+    if role == "planner"
+        && reply["checks"]
+            .as_array()
+            .is_some_and(|checks| checks.iter().any(|c| c.get("helper_evidence").is_some()))
+    {
+        let requirement = json!({
+            "requirement":"Observe the real old and new test helper with identical new regression assertions.",
+            "tool":"run_tests", "executor":"prismabuild_pytest", "runner_features":["base_head"],
+            "artifacts":["cas_receipt", "terminal_verdict"], "methods":["helper_target_observer"], "protected_files":[]});
+        if !contract.contains(&requirement) {
+            contract.push(requirement);
+        }
+    }
     let mut errors = Vec::new();
     if role != "planner" && reply.get("evidence_contract").is_none() {
         return Err(Error::Invalid("worker evidence contract is missing"));

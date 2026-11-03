@@ -1557,3 +1557,13 @@ fn repository_always_tests_accepts_twenty_entries_and_names_the_limit_error() {
         "{error}"
     );
 }
+
+#[test]
+fn evidence_tools_support_helper_target_observer() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    assert!(
+        config.planning.tool_capabilities[0]
+            .methods
+            .contains(&"helper_target_observer".into())
+    );
+}

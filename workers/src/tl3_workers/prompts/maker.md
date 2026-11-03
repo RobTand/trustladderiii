@@ -144,3 +144,14 @@ plan before the maker may edit it.
 
 The controller reconciles restored decisions against the current issue before
 restart intake. Current issue text supersedes contradictory old approvals.
+
+A helper_evidence check names the real existing helper as target and its tests
+as new observers. The harness preserves every base definition and appends only
+those observers. It rejects changes outside the target and observers in test
+files, including changed imports, signatures, decorators and shadow definitions.
+The base observer must fail by assertion and head must pass. Do not substitute
+an invented old helper or avoid the real helper. Inspect the actual helper call
+and observer assertions against the issue. The receipt records target source
+hashes, identical observer hashes and both staged tree hashes. Frozen existing
+regression and behavior-preserving definitions, and Q55 forcings, retain their
+existing rules.

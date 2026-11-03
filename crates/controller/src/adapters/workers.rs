@@ -293,6 +293,9 @@ impl Supervisor {
                     if let Some(forcing) = c.get("forcing") {
                         check["forcing"] = forcing.clone();
                     }
+                    if let Some(evidence) = c.get("helper_evidence") {
+                        check["helper_evidence"] = evidence.clone();
+                    }
                     check
                 })
                 .collect::<Vec<_>>();

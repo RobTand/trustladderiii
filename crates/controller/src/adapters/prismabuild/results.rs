@@ -57,6 +57,8 @@ struct CheckResult {
     /// A forced check echoes its forcing so review can judge it (#393).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     forcing: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    helper_evidence: Option<serde_json::Value>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -329,6 +331,7 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             kind: Kind::Regression,
             tests: job.always_tests.clone(),
             forcing: None,
+            helper_evidence: None,
         });
     }
     // Only a job staged with selection may carry one trailing selected check (#359).
@@ -361,6 +364,47 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             }
         }
         if matches!(result.verdict, Verdict::Pass) != result.tests.iter().all(|t| t.passed) {
+            return None;
+        }
+        if let Some(declaration) = &check.helper_evidence {
+            if check.kind != Kind::Demonstrating || check.forcing.is_some() {
+                return None;
+            }
+            if let Some(identity) = &result.helper_evidence {
+                let hash = |v: &serde_json::Value| {
+                    v.as_str().is_some_and(|s| {
+                        s.len() == 64
+                            && s.bytes()
+                                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                    })
+                };
+                if identity["target"] != declaration["target"]
+                    || [
+                        "base_target_sha256",
+                        "head_target_sha256",
+                        "base_tree_sha256",
+                        "head_tree_sha256",
+                    ]
+                    .iter()
+                    .any(|k| !hash(&identity[k]))
+                    || identity["base_target_sha256"] == identity["head_target_sha256"]
+                    || identity["base_tree_sha256"] == identity["head_tree_sha256"]
+                    || identity["observers"].as_object().is_none_or(|o| {
+                        o.len() != check.tests.len()
+                            || check.tests.iter().any(|t| !o.get(t).is_some_and(hash))
+                    })
+                    || result.tests.iter().any(|t| {
+                        t.passed
+                            && (!matches!(t._base, Outcome::Assertion)
+                                || !matches!(t._head, Outcome::Passed))
+                    })
+                {
+                    return None;
+                }
+            } else if result.tests.iter().any(|t| t.passed) {
+                return None;
+            }
+        } else if result.helper_evidence.is_some() {
             return None;
         }
         // A forced check passes only on evidence from its forced head run (#393).

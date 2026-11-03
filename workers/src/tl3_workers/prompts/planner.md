@@ -103,9 +103,9 @@ those marked for review. Return exactly one of these proposals:
   so the harness refuses an edit to a test they name. If the change edits only
   tests, such as a deflake that patches the flaky test, an ordinary
   demonstrating check can't show it, because the base run applies the leaf's
-  test edits and runs the same test. A change to tests alone needs a forced
-  reproduction (Q55, #393) on its demonstrating check; if no forcing can be
-  written, return can't meet. State no_design_questions and lands_on_its_own
+  test edits and runs the same test. A change to tests alone needs helper target/observer evidence or a forced
+  reproduction (Q55, #393) on its demonstrating check. If neither mode applies,
+  return can't meet. State no_design_questions and lands_on_its_own
   only when true. If either is false, return can't meet with the unresolved
   question. In slice one, avoid CI, Mergify and test configuration, including
   conftest.py, pytest settings, tox, nox and test scripts called by CI. Both
@@ -206,3 +206,21 @@ Code records evidence_errors. Do not supply that field yourself.
 Preserve ingest.evidence_contract and audit_evidence_contract. Add requirements
 found during planning. Code retains their union and converts any unsupported
 proposal into cant_meet with the exact missing capability before a maker runs.
+
+For a fix to a helper inside configured test files, require method
+`helper_target_observer` in evidence_contract. The target is the real existing
+helper and the observers are new tests of its behavior, including diagnostic
+text from a deliberately failing inner test. If that capability is absent,
+report the missing method through the evidence preflight, without substituting
+review or a flaky-test forcing.
+
+For method `helper_target_observer`, use an unforced demonstrating check with
+`helper_evidence: {"target": "tests/test_helpers.py::_execute"}`. Its node_ids
+are the new observer tests. Declare the target and observer files. One such
+check per plan may name multiple observers, in the same file or a separate
+configured test file. The target must be an existing undecorated top-level
+Python function. Preserve its signature, imports and every other existing test
+definition. Add only new undecorated top-level observers. Put any new observer
+imports inside the observer. The harness appends those observers to the real
+base modules without copying the target fix. Every observer must fail by
+assertion on base and pass on head. Helper evidence is not a Q55 forcing.

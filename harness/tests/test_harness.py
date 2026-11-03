@@ -292,7 +292,7 @@ def test_diagnostic():
         child = subprocess.run([sys.executable, '-m', 'pytest', '-q', str(inner)],
                                capture_output=True, text=True)
     assert child.returncode == 1
-    assert 'broken transfer' in child.stdout
+    assert 'AssertionError: mover failed: broken transfer' in child.stdout
     import contextlib
     import io
     result = subprocess.CompletedProcess([], 0, 'quiet')
@@ -352,3 +352,47 @@ def test_helper_evidence_rejects_ambiguous_or_smuggled_definitions(tmp_path, tam
     with pytest.raises(ValueError, match='helper evidence'):
         helper_test_edits(base, head, demo, ['tests/*.py'], HelperEvidence('tests/test_product.py::_execute'),
                           ('tests/test_product.py::test_diagnostic',))
+
+
+@pytest.mark.parametrize('separate', [False, True])
+@pytest.mark.parametrize('irrelevant', [False, True])
+def test_helper_round_receipt_and_ordinary_overlay_cannot_bypass(tmp_path, monkeypatch, separate, irrelevant):
+    from tl3_harness import execution, HelperEvidence
+    base_tree, head_tree, _ = helper_trees(tmp_path)
+    repo = base_tree
+    (repo / 'pyproject.toml').write_text(
+        '[tool.tl3.harness]\ncommand=["python", "-m", "pytest"]\ntest-files=["tests/*.py"]\n')
+    git(repo, 'init', '-q')
+    def save():
+        git(repo, 'add', '.')
+        git(repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture')
+        return git(repo, 'rev-parse', 'HEAD').decode().strip()
+    base = save()
+    source = (head_tree / 'tests/test_product.py').read_text()
+    observer = 'tests/test_product.py::test_diagnostic'
+    if separate:
+        source = HELPER_HEAD
+        (repo / 'tests/test_observer.py').write_text(HELPER_OBSERVER.replace(
+            'def test_diagnostic():', 'def test_diagnostic():\n    from test_product import _execute'))
+        observer = 'tests/test_observer.py::test_diagnostic'
+    (repo / 'tests/test_product.py').write_text(source)
+    if irrelevant:
+        (repo / 'README.md').write_text('An irrelevant documentation edit.\n')
+    head = save()
+    monkeypatch.setattr(execution, 'require_admission', lambda: None)
+    monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(repo))
+    monkeypatch.setattr(Progress, 'commit', lambda *_: None)
+    monkeypatch.setattr(execution, 'container_command',
+        lambda tree, container, tests: [sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)])
+    check = Check('diagnostic', Kind.DEMONSTRATING, (observer,),
+                  helper_evidence=HelperEvidence('tests/test_product.py::_execute'))
+    result, = run_checks(repo, base, head, (check,), container=Container(IMAGE))
+    assert result.verdict == Verdict.PASS, result
+    assert (result.tests[0].base, result.tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
+    receipt = json.loads(execution.result_json((result,)))[0]
+    assert receipt['helper_evidence']['target'] == 'tests/test_product.py::_execute'
+    assert set(receipt['helper_evidence']['observers']) == {observer}
+    ordinary, = run_checks(repo, base, head, (Check('ordinary', Kind.DEMONSTRATING, (observer,)),),
+                          container=Container(IMAGE))
+    assert ordinary.verdict == Verdict.FAIL
+    assert ordinary.tests[0].base == Outcome.PASSED

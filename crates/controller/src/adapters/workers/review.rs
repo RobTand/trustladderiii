@@ -114,9 +114,11 @@ pub(super) fn inputs(
     }
     // #393: review judges a forcing against the issue's own symptom, not only the
     // planner's description of it. The issue is the text ingest read, bounded.
-    let forced = report["results"]
-        .as_array()
-        .is_some_and(|results| results.iter().any(|r| r.get("forcing").is_some()));
+    let forced = report["results"].as_array().is_some_and(|results| {
+        results
+            .iter()
+            .any(|r| r.get("forcing").is_some() || r.get("helper_evidence").is_some())
+    });
     if forced
         && let Some(issue) = store
             .worker_materials(&node)?

@@ -1084,3 +1084,18 @@ def test_helper_target_observer_plan_is_supported(planner_request, digests_plan)
     digests_plan['checks'][0]['helper_evidence']['target'] = f'{DIGESTS}::missing'
     digests_plan['files'].append('README.md')
     assert any('helper evidence' in item for item in planned(planner_request, copy.deepcopy(digests_plan)))
+
+
+def test_helper_preflight_requires_installed_target_observer_capability():
+    from tl3_workers.evidence import preflight
+    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
+                  'artifacts': ['cas_receipt', 'terminal_verdict'], 'methods': [], 'protected_files': []}
+    reply = {'kind': 'leaf', 'files': ['tests/test_helpers.py'], 'evidence_contract': [],
+             'checks': [{'helper_evidence': {'target': 'tests/test_helpers.py::_execute'}}]}
+    original = copy.deepcopy(reply)
+    preflight({'tool_capabilities': [capability]}, reply, planning=True)
+    assert reply['kind'] == 'cant_meet'
+    assert 'methods=helper_target_observer' in reply['report']
+    capability['methods'] = ['helper_target_observer']
+    preflight({'tool_capabilities': [capability]}, original, planning=True)
+    assert original['kind'] == 'leaf' and original['evidence_errors'] == []

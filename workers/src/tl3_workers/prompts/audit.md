@@ -107,3 +107,10 @@ Independently derive the contract from the original issue, including requirement
 omitted by ingest. Object when ingest loses an execution goal, required artifact,
 executor, reproduction method or protected-file dependency. An unsupported
 contract remains unsupported even when its other goals can be implemented.
+
+For a fix to a helper inside configured test files, require method
+`helper_target_observer` in evidence_contract. The target is the real existing
+helper and the observers are new tests of its behavior, including diagnostic
+text from a deliberately failing inner test. If that capability is absent,
+report the missing method through the evidence preflight, without substituting
+review or a flaky-test forcing.

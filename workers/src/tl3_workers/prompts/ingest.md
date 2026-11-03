@@ -113,3 +113,10 @@ forced_reproduction.contention_wrapper. Unrecognized mandatory requirements must
 keep their exact names and meaning; absence from the configured capabilities
 means unsupported. An empty tool_capabilities list supports no execution.
 Code records evidence_errors. Do not supply that field yourself.
+
+For a fix to a helper inside configured test files, require method
+`helper_target_observer` in evidence_contract. The target is the real existing
+helper and the observers are new tests of its behavior, including diagnostic
+text from a deliberately failing inner test. If that capability is absent,
+report the missing method through the evidence preflight, without substituting
+review or a flaky-test forcing.

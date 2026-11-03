@@ -22,6 +22,10 @@ def validate_check_plan(plan):
         if getattr(check, 'forcing', None) is not None:
             # A forced check's result echoes its forcing, and each test gains head_forced (#393).
             header['forcing'] = check.forcing.as_json()
+        if getattr(check, 'helper_evidence', None) is not None:
+            header['helper_evidence'] = {'target': check.helper_evidence.target,
+                **dict.fromkeys(('base_target_sha256', 'head_target_sha256', 'base_tree_sha256', 'head_tree_sha256'), '0' * 64),
+                'observers': dict.fromkeys(check.tests, '0' * 64)}
         size += len(json.dumps(header, separators=(',', ':'))) + 1
         for test in check.tests:
             case = {'test': test, 'base': 'uncollected', 'head': 'uncollected',

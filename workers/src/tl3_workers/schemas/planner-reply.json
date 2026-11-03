@@ -110,6 +110,20 @@
         "patches"
       ],
       "additionalProperties": false
+    },
+    "helper_evidence": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "additionalProperties": false
     }
   },
   "oneOf": [
@@ -161,6 +175,9 @@
               },
               "forcing": {
                 "$ref": "#/$defs/forcing"
+              },
+              "helper_evidence": {
+                "$ref": "#/$defs/helper_evidence"
               }
             },
             "required": [

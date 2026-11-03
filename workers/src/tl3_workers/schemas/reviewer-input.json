@@ -221,6 +221,46 @@
           },
           "forcing": {
             "$ref": "planner-reply.json#/$defs/forcing"
+          },
+          "helper_evidence": {
+            "type": "object",
+            "properties": {
+              "base_target_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "head_target_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "base_tree_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "head_tree_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "target": {
+                "type": "string"
+              },
+              "observers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            },
+            "required": [
+              "target",
+              "base_target_sha256",
+              "head_target_sha256",
+              "base_tree_sha256",
+              "head_tree_sha256",
+              "observers"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [

@@ -17,7 +17,7 @@ from .report import InvalidReport, decode, parse
 from . import selection
 from .trees import (UnsupportedEntry, added_names, changed_configuration, changed_existing_tests,
                     changed_files, changed_protected, commit, configuration, export, is_test, own_base,
-                    test_edits)
+                    test_edits, helper_test_edits)
 
 
 TMPFS_MIB = 512
@@ -397,10 +397,25 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                                        for test in check.tests if test not in stale))
         changed = tool.changed_existing_tests(old, new, ordinary)
         demonstrating = tuple(dict.fromkeys(test for check in plan
-                                            if check.kind == Kind.DEMONSTRATING and check.forcing is None
+                                            if check.kind == Kind.DEMONSTRATING and check.forcing is None and check.helper_evidence is None
                                             for test in check.tests))
         candidates = (selected_candidates(repo, tool, old, new, config, base, head, plan, selected_tests)
                       if selected_tests else ())
+        helpers = [check for check in plan if check.helper_evidence is not None]
+        if len(helpers) > 1:
+            return refused(plan, "Helper evidence supports one target check per plan, with all its observers.")
+        helper_runs = {}
+        for check in helpers:
+            staged = root / "helper-observers"
+            shutil.copytree(old, staged)
+            try:
+                if tool is not PYTEST:
+                    raise ValueError("helper evidence requires the pytest tool")
+                identity = helper_test_edits(old, new, staged, config["test-files"],
+                                             check.helper_evidence, check.tests)
+            except ValueError as error:
+                return refused(plan, str(error))
+            helper_runs[check.name] = staged, identity
         progress = Progress()
         base_notes = {Kind.DEMONSTRATING: FailureNotes(), Kind.REPRODUCING: FailureNotes()}
         cache_key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container, ordinary)
@@ -450,6 +465,12 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             forced_head = tool.run(new, container, check.tests, root / f"forced-head-{index}.jsonl", progress,
                                    messages=head_messages, forcing=check.forcing)
             forced[check.name] = forced_base, notes, forced_head, head_messages
+        helper_outcomes = {}
+        for check in helpers:
+            staged, identity = helper_runs[check.name]
+            notes = FailureNotes()
+            outcomes = tool.run(staged, container, check.tests, root / "helper-base.jsonl", progress, messages=notes)
+            helper_outcomes[check.name] = outcomes, notes, identity
         messages = {}
         after = tool.run(new, container, tests, root / "head.jsonl", progress, messages=messages)
         after.update(dict.fromkeys(stale, Outcome.MISSING))
@@ -462,6 +483,16 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                        Kind.REGRESSION: before, Kind.BEHAVIOR_PRESERVING: before}
         results = []
         for check in plan:
+            if check.name in helper_outcomes:
+                outcomes, notes, identity = helper_outcomes[check.name]
+                result = judge(check, outcomes, after, messages=messages, base_notes=notes)
+                # This mode requires an actual assertion, never a missing-name substitute.
+                if any(outcomes[test] != Outcome.ASSERTION for test in check.tests):
+                    result = replace(result, verdict=(Verdict.INFRASTRUCTURE_FAILURE if result.verdict == Verdict.INFRASTRUCTURE_FAILURE else Verdict.FAIL), tests=tuple(
+                        replace(test, passed=False, message="Helper observers must fail by assertion on the old helper.")
+                        if outcomes[test.test] != Outcome.ASSERTION else test for test in result.tests))
+                results.append(replace(result, helper_evidence=identity))
+                continue
             if check.name in forced:
                 forced_base, notes, forced_head, head_messages = forced[check.name]
                 results.append(judge(check, forced_base, after, messages=messages, base_notes=notes,
@@ -487,6 +518,8 @@ def result_json(results: tuple[Result, ...]) -> str:
     # Owner-configured rule notes must survive even when planned failures fill the message budget.
     for result, report in sorted(zip(results, reports), key=lambda pair: pair[0].name != ALWAYS_CHECK):
         # Unforced results keep their earlier shape; a forced one carries its forcing for review (#393).
+        if result.helper_evidence is None:
+            del report["helper_evidence"]
         if result.forcing is None:
             del report['forcing']
         else:

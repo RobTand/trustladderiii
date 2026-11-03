@@ -143,13 +143,38 @@ class Forcing:
 
 
 @dataclass(frozen=True)
+class HelperEvidence:
+    target: str
+
+    def __post_init__(self):
+        if (not isinstance(self.target, str) or len(self.target) > 1000
+                or not re.fullmatch(r"[\w./-]+\.py::[A-Za-z_]\w*", self.target)
+                or self.target.startswith(("/", "-")) or ".." in self.target.split("/")
+                or self.target.split("::")[1].startswith("test_")):
+            raise HarnessInputError("helper evidence needs a relative Python path and top-level helper name")
+
+    @classmethod
+    def parse(cls, data):
+        if not isinstance(data, dict) or set(data) != {"target"}:
+            raise HarnessInputError("helper evidence names exactly one target")
+        return cls(data["target"])
+
+    def as_json(self):
+        return {"target": self.target}
+
+
+@dataclass(frozen=True)
 class Check:
     name: str
     kind: Kind
     tests: tuple[str, ...]
     forcing: Forcing | None = None
+    helper_evidence: HelperEvidence | None = None
 
     def __post_init__(self):
+        if self.helper_evidence is not None and (self.kind != Kind.DEMONSTRATING or self.forcing is not None
+                                                or not isinstance(self.helper_evidence, HelperEvidence)):
+            raise HarnessInputError("helper evidence requires an unforced demonstrating check")
         if not self.name or not isinstance(self.kind, Kind) or not self.tests:
             raise HarnessInputError("a check needs a name, a kind and named tests")
         if self.forcing is not None and (self.kind != Kind.DEMONSTRATING or not isinstance(self.forcing, Forcing)):
@@ -184,6 +209,7 @@ class Result:
     tests: tuple[TestResult, ...]
     custody: Custody = field(default=Custody.IN_PROCESS, init=False)
     forcing: Forcing | None = None
+    helper_evidence: dict | None = None
 
 
 MESSAGE_LIMIT = 1000
