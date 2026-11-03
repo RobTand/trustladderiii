@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
 import tempfile
 import time
 from typing import Protocol
@@ -15,6 +14,7 @@ from .model import (ALWAYS_CHECK, Check, FailureNotes, Forcing, HarnessInputErro
                     NATIVE_THREAD_ENVIRONMENT, judge)
 from .node_ids import selects, validate_always_tests
 from .report import InvalidReport, decode, parse
+from .supervision import ExecutionFailure, ExecutionOutcome, Supervised
 from . import selection
 from .trees import (UnsupportedEntry, added_names, changed_configuration, changed_existing_tests,
                     changed_files, changed_protected, commit, configuration, export, is_test, own_base,
@@ -112,36 +112,42 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
     retained_bytes = 0
     # The container gets no writable report mount or PB token. Its event stream
     # is journalled and parsed by this host process, outside the checkout.
-    with report.open("wb") as journal, tempfile.TemporaryFile() as errors, tempfile.TemporaryFile() as selection:
+    with report.open("wb") as journal, tempfile.TemporaryFile() as selection:
         # The forcing travels with the selection to the read-only runner, outside the checkout (#393).
         selection.write(json.dumps(tests if forcing is None else
                                    {"tests": tests, "forcing": forcing.as_json()}).encode())
         selection.seek(0)
-        with subprocess.Popen(container_command(tree, container, tests), stdin=selection,
-                              stdout=subprocess.PIPE, stderr=errors) as child:
-            while line := child.stdout.readline(line_limit + 1):
-                retained_bytes += len(line)
-                if len(line) > line_limit or len(records) > record_limit or retained_bytes > MAX_REPORT_BYTES:
-                    invalid = True
-                    child.terminate()
-                    break
-                journal.write(line)
-                journal.flush()
-                os.fsync(journal.fileno())
-                try:
-                    record = decode(line)
-                except InvalidReport:
-                    invalid = True
-                    child.terminate()
-                    break
-                records.append(record)
-                if record.get("event") == "collection" and isinstance(record.get("tests"), list):
-                    record_limit = 4 * len(record["tests"]) + 16
-                    line_limit = min(MAX_REPORT_LINE_BYTES, max((len(json.dumps(test, ensure_ascii=False).encode(errors='backslashreplace'))
-                                                               for test in record['tests']), default=0) + 8192)
-                if record.get("event") == "phase" and record.get("when") == "teardown":
-                    progress.commit(record.get("test", ""))
-            exit_code = child.wait()
+        try:
+            with Supervised(container_command(tree, container, tests), selection, tests) as process:
+                for line in process.records():
+                    retained_bytes += len(line)
+                    if len(line) > line_limit or len(records) > record_limit or retained_bytes > MAX_REPORT_BYTES:
+                        invalid = True
+                        break
+                    journal.write(line)
+                    journal.flush()
+                    os.fsync(journal.fileno())
+                    try:
+                        record = decode(line)
+                    except InvalidReport:
+                        invalid = True
+                        break
+                    records.append(record)
+                    if record.get("event") == "collection" and isinstance(record.get("tests"), list):
+                        record_limit = 4 * len(record["tests"]) + 16
+                        line_limit = min(MAX_REPORT_LINE_BYTES, max((len(json.dumps(test, ensure_ascii=False).encode(errors='backslashreplace'))
+                                                                   for test in record['tests']), default=0) + 8192)
+                    if record.get("event") == "phase" and record.get("when") == "teardown":
+                        progress.commit(record.get("test", ""))
+                exit_code = process.exit_code
+        except ExecutionFailure as failure:
+            if messages is not None:
+                messages.update(dict.fromkeys(tests, failure.message()))
+            # UNCOLLECTED cannot be assertion RED, GREEN, or an allowed pre-existing error.
+            outcome = Outcome.UNCOLLECTED if failure.outcome == ExecutionOutcome.TEST_TIMEOUT else Outcome.NO_REPORT
+            return dict.fromkeys(tests, outcome)
+        except ValueError:
+            return dict.fromkeys(tests, Outcome.NO_REPORT)
     try:
         if invalid:
             raise InvalidReport("invalid report stream")

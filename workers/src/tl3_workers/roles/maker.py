@@ -331,7 +331,7 @@ def run(model, request, worktree, emit):
         if len(pending) == 1 and pending[0]["name"] == "run_tests" and saved["inflight"].get(pending[0]["id"]):
             # Wait on the test action the interrupted call submitted instead of submitting it again.
             inflight = {pending[0]["id"]: saved["inflight"][pending[0]["id"]]}
-            worktree.pb_reattach = {item["base"]: (item["key"], item.get("tree"))
+            worktree.pb_reattach = {item["base"]: item
                                     for item in inflight[pending[0]["id"]]}
         else:
             history, interrupted = _resumable(history, start)
@@ -361,7 +361,8 @@ def run(model, request, worktree, emit):
     def submitted(key, base, tree):
         for call in _pending_calls(history, start):
             if call["name"] == "run_tests":
-                inflight.setdefault(call["id"], []).append({"base": base, "key": key, "tree": tree})
+                inflight.setdefault(call["id"], []).append({"base": base, "key": key, "tree": tree,
+                                                           "identity": worktree.pb_identity})
         checkpoint()
 
     worktree.pb_submitted = submitted

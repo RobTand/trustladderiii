@@ -28,6 +28,7 @@ py_library(
         "report.py",
         "runner.py",
         "selection.py",
+        "supervision.py",
         "test_tool.py",
         "trees.py",
     ],

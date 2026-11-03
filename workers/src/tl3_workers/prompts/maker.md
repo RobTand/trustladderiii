@@ -147,7 +147,9 @@ tool inputs. Cite one piece of evidence from this run: the action_key of a
 run_tests result whose status is infrastructure_error, or a tool_error id that
 a tool returned. Only environment failures get a tool_error id, such as a
 permission, read-only or full-disk error. A wrong path never gets one. A run
-your tests ended early is marked origin test_run and is not evidence. A later
+your tests ended early is marked origin test_run and is not evidence. A trusted
+test_timeout is a correctable test execution failure, never an environment blocker
+or an assertion RED. Fix the test body or cleanup; it cannot count as GREEN. A later
 completed run of the same tests retires an earlier failure. Worker code checks
 the evidence, and a blocked reply it can't confirm becomes cant_meet. TL3
 retries confirmed blocked work without spending credit.

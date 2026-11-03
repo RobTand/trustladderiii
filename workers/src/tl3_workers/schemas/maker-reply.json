@@ -234,6 +234,18 @@
           "type": "boolean"
         },
         "base_semantics": {"const": "untouched_base"},
+        "execution": {
+          "type": "object",
+          "properties": {
+            "outcome": {"const": "test_timeout"},
+            "phase": {"enum": ["test_run", "cleanup"]},
+            "termination_reason": {"const": "no_progress"},
+            "test_started": {"const": true},
+            "test": {"type": "string", "maxLength": 2048}
+          },
+          "required": ["outcome", "phase", "termination_reason", "test_started"],
+          "additionalProperties": false
+        },
         "tree": {
           "type": "string",
           "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
@@ -282,6 +294,8 @@
               "exit_code": {
                 "type": "integer"
               },
+              "attempt": {"type": "integer", "minimum": 1},
+              "generation": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
               "receipt_sha256": {
                 "type": "string",
                 "pattern": "^[0-9a-f]{64}$"
