@@ -157,6 +157,7 @@ fn root_for(config: &tl3_config::Config, key: &str) -> PathBuf {
         .runs
         .join(key.bytes().map(|b| format!("{b:02x}")).collect::<String>())
 }
+#[track_caller]
 fn wait(mut condition: impl FnMut() -> bool) {
     let start = Instant::now();
     while !condition() {
@@ -585,6 +586,16 @@ fn main() {
         prepare_workers();
         let mut database = Database::start();
         match args.get(2).map(String::as_str) {
+            Some("success") => {
+                quota_ladder::success_clears_quota(&database.create("quota_success"))
+            }
+            Some("status") => {
+                quota_ladder::success_clears_quota_status(&database.create("quota_status"))
+            }
+            Some("later") => quota_ladder::later_quota_is_recorded(&database.create("quota_later")),
+            Some("replay") => {
+                quota_ladder::replay_keeps_later_quota(&database.create("quota_replay"))
+            }
             Some("fallback") => {
                 quota_ladder::planner_falls_back(&database.create("quota_planner_fallback"))
             }
@@ -759,6 +770,14 @@ fn missing_prompt_holds_launch(settings: &tl3_config::Store) {
 }
 
 fn quota_scenarios(database: &mut Database) {
+    quota_ladder::success_clears_quota(&database.create("quota_success"));
+    println!("test quota_success_clears_record ... ok");
+    quota_ladder::success_clears_quota_status(&database.create("quota_status"));
+    println!("test quota_success_clears_status ... ok");
+    quota_ladder::later_quota_is_recorded(&database.create("quota_later"));
+    println!("test quota_later_ending_records_again ... ok");
+    quota_ladder::replay_keeps_later_quota(&database.create("quota_replay"));
+    println!("test quota_replayed_success_keeps_later_record ... ok");
     quota_ladder::planner_falls_back(&database.create("quota_planner_fallback"));
     println!("test quota_planner_falls_back_to_next_model ... ok");
     quota_ladder::whole_ladder_waits(&database.create("quota_whole_ladder"));
