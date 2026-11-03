@@ -501,3 +501,21 @@ def test_failure_correlation_rejects_secrets_and_unbounded_headers(tmp_path, req
     with pytest.raises(InternalServerError), facts.observe(request_doc):
         raise InternalServerError("never stored", response=response, body=None)
     assert json.loads(completion.read_text())["failure"]["request_id"] is None
+
+
+@pytest.mark.parametrize('missing_last_usage', [False, True])
+def test_completion_distinguishes_complete_usage_from_partial_totals(tmp_path, request_doc, missing_last_usage):
+    from tl3_workers import facts
+    completion = tmp_path / 'facts.json'
+    request_doc['trace'] = {'completion': str(completion)}
+    usage = {'input_tokens': 11, 'output_tokens': 7, 'total_tokens': 18}
+    model = FakeMessagesListChatModel(responses=[
+        AIMessage(content='one', usage_metadata=usage),
+        AIMessage(content='two', usage_metadata=None if missing_last_usage else usage),
+    ])
+    with facts.observe(request_doc):
+        model.invoke('one')
+        model.invoke('two')
+    row = json.loads(completion.read_text())
+    assert row.get('usage_complete') is (not missing_last_usage)
+    assert row['input_tokens'] == (11 if missing_last_usage else 22)
