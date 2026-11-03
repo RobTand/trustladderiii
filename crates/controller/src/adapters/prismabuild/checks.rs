@@ -277,7 +277,6 @@ mod tests {
                     &harness,
                     &delivery,
                     "sha256:fixture",
-                    false,
                     &[],
                     &Default::default(),
                 )
