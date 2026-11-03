@@ -257,7 +257,7 @@ fn assert_delivery_methods(
 }
 
 #[test]
-fn scenario_shards_cover_every_group_once_and_balance_the_worker_fixture_groups() {
+fn scenario_shards_cover_every_worker_fixture_group_and_marker_once() {
     use support::scenario_shard::WORKER_GROUPS;
     let groups = WORKER_GROUPS;
     let mut owners = vec![0; groups.len()];
@@ -279,10 +279,75 @@ fn scenario_shards_cover_every_group_once_and_balance_the_worker_fixture_groups(
         loads.iter().sum::<usize>(),
         groups.iter().map(|group| group.markers()).sum::<usize>()
     );
+    assert!(loads.iter().all(|load| *load > 0), "{loads:?}");
+}
+
+#[test]
+fn scenario_shards_separate_the_measured_worker_hotspots() {
+    use support::scenario_shard::{Shard, WORKER_GROUPS, WorkerGroup};
+
+    // Wave-3 BuildBuddy child 705afa47: these three cases shared a 602 s shard.
+    let seconds = |group: WorkerGroup| match group {
+        WorkerGroup::MakerChecksFail => 242,
+        WorkerGroup::Restart => 187,
+        WorkerGroup::MakerCiFailure => 84,
+        // The seven other 11-marker shards averaged 7 s per marker.
+        _ => 7 * group.markers(),
+    };
+    let mut loads = [0; 8];
+    let mut owners = Vec::new();
+    for (index, load) in loads.iter_mut().enumerate() {
+        let mut shard = Shard::new(index, 8);
+        for group in WORKER_GROUPS.iter().copied() {
+            shard.run(group, || {
+                *load += seconds(group);
+                if matches!(
+                    group,
+                    WorkerGroup::MakerChecksFail
+                        | WorkerGroup::Restart
+                        | WorkerGroup::MakerCiFailure
+                ) {
+                    owners.push(index);
+                }
+            });
+        }
+        shard.finish("fixture");
+    }
     assert!(
-        loads.iter().max().unwrap() - loads.iter().min().unwrap() <= 1,
-        "fixture group sizes must inform the partition: {loads:?}"
+        loads.iter().all(|load| *load <= 300),
+        "estimated seconds per shard: {loads:?}"
     );
+    owners.sort_unstable();
+    owners.dedup();
+    assert_eq!(
+        owners.len(),
+        3,
+        "expensive cases must run on distinct shards"
+    );
+}
+
+#[test]
+fn scenario_shard_ownership_is_independent_of_declaration_order() {
+    use support::scenario_shard::{Shard, WORKER_GROUPS};
+
+    for total in [1, 2, 8] {
+        for index in 0..total {
+            let mut forward = Vec::new();
+            let mut reverse = Vec::new();
+            let mut shard = Shard::new(index, total);
+            for group in WORKER_GROUPS.iter().copied() {
+                shard.run(group, || forward.push(group));
+            }
+            shard.finish("fixture");
+            let mut shard = Shard::new(index, total);
+            for group in WORKER_GROUPS.iter().copied().rev() {
+                shard.run(group, || reverse.push(group));
+            }
+            shard.finish("fixture");
+            reverse.reverse();
+            assert_eq!(forward, reverse, "shard {index}/{total}");
+        }
+    }
 }
 
 #[test]

@@ -1,4 +1,8 @@
-use std::{collections::HashSet, env};
+use std::{
+    cmp::Reverse,
+    collections::{HashMap, HashSet},
+    env,
+};
 
 macro_rules! worker_groups {
     ($($group:ident: $markers:expr),* $(,)?) => {
@@ -58,11 +62,24 @@ worker_groups! {
     MakerCleanup: 1,
 }
 
+impl WorkerGroup {
+    fn estimated_seconds(self) -> usize {
+        // BuildBuddy child 705afa47-9d28-4941-aacf-19edf4b6503f, rounded seconds.
+        // The other seven 11-marker shards averaged 7 s per marker.
+        match self {
+            Self::MakerChecksFail => 242,
+            Self::Restart => 187,
+            Self::MakerCiFailure => 84,
+            _ => 7 * self.markers(),
+        }
+    }
+}
+
 /// Assign each declared scenario group to exactly one Bazel shard.
 /// Groups keep their original fixture lifetime and scenario timing markers.
 pub struct Shard {
     index: usize,
-    loads: Vec<usize>,
+    owners: HashMap<WorkerGroup, usize>,
     planned: HashSet<WorkerGroup>,
     selected: usize,
 }
@@ -82,9 +99,23 @@ impl Shard {
             total > 0 && index < total,
             "invalid Bazel shard index/count"
         );
+        let mut groups = WORKER_GROUPS.to_vec();
+        groups.sort_by_key(|group| Reverse(group.estimated_seconds()));
+        let mut loads = vec![0; total];
+        let mut owners = HashMap::new();
+        for group in groups {
+            let owner = loads
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, load)| *load)
+                .unwrap()
+                .0;
+            loads[owner] += group.estimated_seconds();
+            owners.insert(group, owner);
+        }
         Self {
             index,
-            loads: vec![0; total],
+            owners,
             planned: HashSet::new(),
             selected: 0,
         }
@@ -100,14 +131,7 @@ impl Shard {
             "duplicate scenario group: {group:?}"
         );
         let markers = group.markers();
-        let owner = self
-            .loads
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, load)| *load)
-            .unwrap()
-            .0;
-        self.loads[owner] += markers;
+        let owner = self.owners[&group];
         if owner == self.index {
             scenario();
             self.selected += markers;
