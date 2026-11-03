@@ -97,8 +97,9 @@ def install_proof_integrity(root):
     compile_source = builtins.compile
 
     def compile_proof(source, filename, mode, flags=0, dont_inherit=False, optimize=-1, **kwargs):
-        entry = modules.get(str(Path(os.fsdecode(filename)).resolve())) if isinstance(filename, (str, bytes, os.PathLike)) else None
-        if entry is not None and mode == 'exec' and not flags & ast.PyCF_ONLY_AST:
+        entry = (modules.get(os.path.abspath(os.fsdecode(filename)))
+                 if mode == 'exec' and not flags & ast.PyCF_ONLY_AST and isinstance(filename, (str, bytes, os.PathLike)) else None)
+        if entry is not None:
             name, data = entry
             if not isinstance(source, ast.Module):
                 source = compile_source(source, filename, mode, flags | ast.PyCF_ONLY_AST, dont_inherit, optimize, **kwargs)
@@ -630,6 +631,9 @@ class Reporter:
         message = str(report.longrepr) if report.failed else ""
         if call.excinfo and isinstance(call.excinfo.value, ForcingTampered):
             message = str(call.excinfo.value) + '\n' + message
+        if call.excinfo and isinstance(call.excinfo.value, ProofSubjectIntegrityError):
+            message = str(call.excinfo.value) + '\n' + message
+            report.longrepr = message
         if self.summary:
             if self.declared_symptom is not None and report.failed and call.excinfo:
                 error = call.excinfo.value
@@ -727,7 +731,7 @@ class Reporter:
 
 def pytest_configure(config):
     data = getattr(config, 'workerinput', {}).get('tl3_symptom')
-    if data and data['declared_symptom'] is not None:
+    if data and (data['declared_symptom'] is not None or Path('.tl3-proof-integrity.json').is_file()):
         config.pluginmanager.register(Reporter(data['tests'], -1, summary=True, patches=data['patches'],
                                                declared_symptom=data['declared_symptom'], worker=True))
 

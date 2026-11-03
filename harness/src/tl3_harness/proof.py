@@ -253,6 +253,7 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
                        in required - bound]
             if aliases:
                 statement.names = aliases
+                deny_namespace_apis(ast.unparse(statement), name)
                 imports.append(ast.unparse(statement))
                 bound.update(bound_names(imports[-1]))
         missing = required - bound
@@ -276,19 +277,21 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
     for subject in subjects:
         if unit(destination, subject) != unit(base, subject):
             raise ProofRefusal('assembled proof changed a base subject binding', subject.split('::')[0])
+    inferred = sorted({path.relative_to(tree).as_posix() for tree in (base, head)
+                       for path in tree.rglob('*') if path.is_file()
+                       and (not (base / path.relative_to(tree)).is_file()
+                            or not (head / path.relative_to(tree)).is_file()
+                            or (base / path.relative_to(tree)).read_bytes() != (head / path.relative_to(tree)).read_bytes())})
     if not outcome_observer or support:
-        for name in {subject.split('::')[0] for subject in subjects} - runtime.keys():
+        subject_modules = {subject.split('::')[0] for subject in subjects or inferred
+                           if subject.split('::')[0].endswith('.py')}
+        for name in subject_modules - runtime.keys():
             if (base / name).is_file():
                 runtime[name] = (written_bindings((base / name).read_text()), ())
         if runtime:
             (destination / INTEGRITY).write_text(json.dumps({
                 name: guard_runtime((destination / name).read_text(), name, protected, grafts)
                 for name, (protected, grafts) in sorted(runtime.items())}, sort_keys=True))
-    inferred = sorted({path.relative_to(tree).as_posix() for tree in (base, head)
-                       for path in tree.rglob('*') if path.is_file()
-                       and (not (base / path.relative_to(tree)).is_file()
-                            or not (head / path.relative_to(tree)).is_file()
-                            or (base / path.relative_to(tree)).read_bytes() != (head / path.relative_to(tree)).read_bytes())})
     def identity(tree, name):
         try:
             path = tree / name
