@@ -387,7 +387,11 @@ mod hostile_tests {
                     "body": body, "author": "unknown", "comments": []}}),
             )
             .unwrap();
-        let review = |store: &mut Store, forcing: Option<Value>| {
+        let identity = json!({"target":"tests/test_a.py::_execute",
+            "base_target_sha256":"a".repeat(64), "head_target_sha256":"b".repeat(64),
+            "base_tree_sha256":"c".repeat(64), "head_tree_sha256":"d".repeat(64),
+            "observers":{"tests/test_a.py::test_a":"e".repeat(64)}});
+        let review = |store: &mut Store, forcing: Option<Value>, helper: bool| {
             let mut snapshot = documents(
                 store,
                 &[
@@ -411,6 +415,9 @@ mod hostile_tests {
                 check["forcing"] = forcing;
                 check["tests"][0]["head_forced"] = json!("passed");
             }
+            if helper {
+                check["helper_evidence"] = identity.clone();
+            }
             report.value = json!({"base_sha": f.base, "results": [check]});
             inputs(&f.delivery(), store, &snapshot, None).unwrap()
         };
@@ -418,15 +425,22 @@ mod hostile_tests {
             &mut store,
             Some(json!({"symptom": "PID 4242 is live.", "environment": {},
                 "patches": [{"target": "sampler.process_in_scope", "raises": "ValueError"}]})),
+            false,
         );
         assert_eq!(forced["issue"]["title"], "Stop depending on PID 4242");
         let shown = forced["issue"]["body"].as_str().unwrap();
         assert!(shown.starts_with("PID 4242 may be live."));
         assert!(shown.chars().count() <= 16_000, "the issue body is bounded");
         assert!(
-            review(&mut store, None).get("issue").is_none(),
-            "only a forced check needs the issue"
+            review(&mut store, None, false).get("issue").is_none(),
+            "ordinary checks do not need the issue"
         );
+        let helper = review(&mut store, None, true);
+        let serialized: Value = serde_json::from_slice(&serde_json::to_vec(&helper).unwrap()).unwrap();
+        assert_eq!(serialized["checks"][0]["helper_evidence"], identity);
+        assert_eq!(serialized["checks"][0]["tests"][0]["base"], "assertion");
+        assert_eq!(serialized["checks"][0]["tests"][0]["head"], "passed");
+        assert_eq!(serialized["issue"], forced["issue"]);
     }
 
     #[test]
