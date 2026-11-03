@@ -395,6 +395,40 @@
                   ],
                   "additionalProperties": false
                 }
+              },
+              "setup_functions": {
+                "type": "object",
+                "maxProperties": 256,
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 128,
+                  "pattern": "^(?!test_|__)[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "fixtures": {
+                      "type": "array",
+                      "maxItems": 2,
+                      "uniqueItems": true,
+                      "items": {
+                        "enum": [
+                          "tmp_path",
+                          "tmp_path_factory"
+                        ]
+                      }
+                    },
+                    "source_sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "fixtures",
+                    "source_sha256"
+                  ],
+                  "additionalProperties": false
+                }
               }
             },
             "required": [

@@ -82,12 +82,19 @@ and new source and tree identities for review. See docs/state-table.md, Q27 #549
 Helper arguments can select existing setup with `{"$setup": "_failed_queue", "$call": "execute"}`
 when method `helper_target_observer.setup_function` is installed. The factory
 must already be an undecorated synchronous function in the target's base test
-module, callable without arguments and unchanged on head. Its return value is
-one target argument. The declared callable method must be replaceable. A trusted
+module and unchanged on head. The model supplies no factory arguments. TL3
+injects pytest-managed `tmp_path` and `tmp_path_factory` by parameter name,
+including positional-only and keyword-only parameters. Other optional parameters
+keep their existing defaults. Other required parameters, decorated fixtures,
+variadics and class-based worlds are unsupported. Its return value is one target argument. The declared callable method must be replaceable. A trusted
 forwarder requires its real return before accepting the target assertion, so a
-missing-row assertion cannot stand in for the failed outcome. No new code, imports or fixture dependency resolution is
+missing-row assertion cannot stand in for the failed outcome. The driver supplies
+its own fixtures even when the repository overrides them. Each case owns a
+temporary root, allows at most 16 directory allocations and removes the root
+after success or failure. No new code, imports or other fixture dependencies are
 accepted by this declaration. Setup exceptions cannot prove helper failure.
-The existing case, driver and tree identities bind setup in the receipt. The
+The receipt records factory source hashes and injected fixture names alongside
+the existing case, driver and tree identities. The
 helper must still raise AssertionError on both versions. Select this mode when
 ordinary staging cannot prove the requested change, rather than requiring it
 for every helper in a test file.
