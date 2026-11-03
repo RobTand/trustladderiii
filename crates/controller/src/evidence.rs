@@ -8,8 +8,20 @@ use tl3_kernel::{Notice, Outcome};
 use tl3_store::RowChange;
 use tl3_store::{Commit, Snapshot};
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PullRequestStatus {
+    #[default]
+    NotCaptured,
+    Open,
+    Closed,
+    Merged,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Evidence {
+    #[serde(default)]
+    pub pull_request_status: PullRequestStatus,
     pub checks: Vec<Value>,
     pub reviews: Vec<Value>,
     pub audit: Option<Value>,
@@ -61,6 +73,17 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
         match table.as_str() {
             "check_evidence" if row.starts_with(&prefix) => facts.checks.push(value.clone()),
             "review_evidence" if row.starts_with(&prefix) => facts.reviews.push(value.clone()),
+            "nodes" if row == &id => {
+                facts.pull_request_status = if value["merged"].as_u64().is_some() {
+                    PullRequestStatus::Merged
+                } else if value["pr_open"] == true {
+                    PullRequestStatus::Open
+                } else if value["had_pr"] == true && value["pr_open"] == false {
+                    PullRequestStatus::Closed
+                } else {
+                    PullRequestStatus::NotCaptured
+                };
+            }
             "audits" if row == &id => facts.audit = Some(value.clone()),
             "goals" if row == &id => facts.goals = value.as_array().cloned().unwrap_or_default(),
             "saved_scratch" if value["node"] == json!(delivery.node()) => {
@@ -136,7 +159,10 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
         facts.remaining_failures.push(queue.clone());
     }
     let mut links = BTreeSet::new();
-    collect_links(&serde_json::to_value(&facts)?, &mut links);
+    collect_links(
+        &json!({"checks":facts.checks,"reviews":facts.reviews,"queue":facts.queue}),
+        &mut links,
+    );
     facts.artifacts = links.into_iter().collect();
     facts.scratch.sort();
     facts.scratch.dedup();
@@ -178,7 +204,16 @@ pub fn summary(delivery: &Delivery) -> String {
         } else {
             "Check results were recorded."
         });
-        if results.is_some_and(|r| r.iter().any(|c| c.get("forcing").is_some())) {
+        if results.is_some_and(|r| {
+            r.iter().any(|c| {
+                c.get("forcing").is_some()
+                    && c["tests"].as_array().is_some_and(|tests| {
+                        tests
+                            .iter()
+                            .any(|test| test["head_forced"].as_str().is_some())
+                    })
+            })
+        }) {
             lines.push("These checks include forced reproduction results.");
         }
     }
@@ -208,7 +243,8 @@ pub fn summary(delivery: &Delivery) -> String {
             notice: Notice::Summary(Outcome::Merged),
             ..
         }
-    ) {
+    ) && facts.pull_request_status != PullRequestStatus::Merged
+    {
         lines.push("A merge has not been recorded for this request.");
     }
     if facts.checks.is_empty() {
@@ -321,17 +357,56 @@ pub fn publication(delivery: &Delivery, request: &str) -> Result<String> {
         .map(|e| current(&e.reviews, delivery))
         .unwrap_or_default();
     // JSON escaping keeps external strings from introducing Markdown or markers.
-    let records = serde_json::to_string_pretty(
+    let records = serde_json::to_string_pretty(&public_value(
         &json!({"head_sha":delivery.head_sha,"checks":checks,"reviews":reviews}),
-    )?
+        None,
+    ))?
     .replace('`', "\\u0060")
     .replace('<', "\\u003c")
     .replace('>', "\\u003e")
     .replace('@', "\\u0040");
-    let records = crate::memory::redact_text(&records);
     Ok(format!(
         "<!-- tl3:recorded-evidence:start -->\n## Recorded evidence\n\n```json\n{records}\n```\n<!-- tl3:recorded-evidence:end -->"
     ))
+}
+
+// Redact values before serializing. Redacting JSON text can consume its quotes,
+// and memory's generic hash filter also removes the IDs needed to verify proof.
+fn public_value(value: &Value, field: Option<&str>) -> Value {
+    if let (Some(field), Some(text)) = (field, value.as_str()) {
+        if matches!(
+            field,
+            "head_sha" | "base_sha" | "action_key" | "receipt_sha256" | "log_sha256" | "tree"
+        ) && matches!(text.len(), 40 | 64)
+            && text.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return value.clone();
+        }
+    }
+    if field.is_some_and(|field| {
+        let field = field.to_ascii_lowercase();
+        field.contains("password")
+            || field.contains("secret")
+            || field.contains("authorization")
+            || field.ends_with("_token")
+            || field.ends_with("_key")
+            || field == "credentials"
+    }) {
+        return json!("[redacted]");
+    }
+    match value {
+        Value::String(text) => json!(crate::memory::redact_text(text)),
+        Value::Array(values) => {
+            Value::Array(values.iter().map(|v| public_value(v, None)).collect())
+        }
+        Value::Object(values) => Value::Object(
+            values
+                .iter()
+                .map(|(k, v)| (crate::memory::redact_text(k), public_value(v, Some(k))))
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
 }
 
 /// Replace only our generated section. Repeated publication preserves other text.
@@ -412,6 +487,11 @@ mod tests {
             ),
             ("audits", "118", json!({"verdict":"agree"})),
             (
+                "nodes",
+                "118",
+                json!({"pr_open":false,"had_pr":true,"merged":null}),
+            ),
+            (
                 "queue_facts",
                 "queue-failure",
                 json!({"repository":d.repository,"number":2660,
@@ -453,6 +533,7 @@ mod tests {
             "pass"
         );
         assert_eq!(input.facts["evidence"]["reviews"][0]["verdict"], "approve");
+        assert_eq!(input.facts["evidence"]["pull_request_status"], "closed");
         assert_eq!(
             input.facts["evidence"]["queue"].as_array().unwrap().len(),
             1

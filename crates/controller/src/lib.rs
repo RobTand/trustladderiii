@@ -1754,29 +1754,15 @@ impl Controller {
                 }
             ) {
                 delivery.scope_removals = scope::summary(snapshot, node)?;
-                let mut references = std::collections::BTreeSet::new();
-                for value in snapshot
-                    .rows
-                    .iter()
-                    .filter(|r| r.table == "saved_scratch")
-                    .map(|r| &r.value)
-                    .chain(commit.rows.iter().filter_map(|row| match row {
-                        RowChange::Put { table, value, .. } if table == "saved_scratch" => {
-                            Some(value)
-                        }
-                        _ => None,
-                    }))
-                {
-                    if value["node"] == json!(node)
-                        && let Some(reference) = value["reference"].as_str()
-                    {
-                        references.insert(reference.to_owned());
-                    }
-                }
+                let references = &delivery
+                    .evidence
+                    .as_ref()
+                    .expect("captured summary evidence")
+                    .scratch;
                 if !references.is_empty() {
                     delivery.note = Some(format!(
                         "Saved unfinished work, kept for 30 days:\n{}",
-                        references.into_iter().collect::<Vec<_>>().join("\n")
+                        references.join("\n")
                     ));
                 }
             }
