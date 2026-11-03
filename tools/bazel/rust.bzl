@@ -56,6 +56,7 @@ _CONTROLLER_RUNTIME = [
     "//crates/prismabuild:sources",
     "//deploy/sandbox:evidence",
     "//harness:project_files",
+    # Includes the installed worker package and #302 Redactor used by public evidence.
     "//tools/bazel:worker_python",
     "//workers:runtime_files",
     "//workers/tests:worker_process",

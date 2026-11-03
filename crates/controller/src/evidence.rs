@@ -75,14 +75,14 @@ const PROOF_BYTES: usize = 24_000;
 const RECORD_BYTES: usize = 8_000;
 pub(crate) const BODY_BYTES: usize = 60_000;
 
-fn fields(value: &Value, names: &[&str]) -> Value {
+fn fields(value: &Value, names: &[&str]) -> Result<Value> {
     let mut out = serde_json::Map::new();
     for name in names {
         if let Some(value) = value.get(name) {
-            out.insert((*name).into(), public_value(value, Some(name)));
+            out.insert((*name).into(), public_value(value, Some(name))?);
         }
     }
-    Value::Object(out)
+    Ok(Value::Object(out))
 }
 
 fn complete_check(record: &Value, red_green: bool) -> bool {
@@ -113,7 +113,7 @@ fn complete_check(record: &Value, red_green: bool) -> bool {
 }
 
 /// Select proof fields before cloning; reports and diagnostics can be megabytes.
-pub(crate) fn check_record(record: &Value) -> Value {
+pub(crate) fn check_record(record: &Value) -> Result<Value> {
     let mut out = fields(
         record,
         &[
@@ -126,7 +126,7 @@ pub(crate) fn check_record(record: &Value) -> Value {
             "receipt_sha256",
             "truncated",
         ],
-    );
+    )?;
     out["proof_missing"] = json!(!complete_check(record, false));
     out["red_green_missing"] = json!(!complete_check(record, true));
     if let Some(results) = record["results"].as_array() {
@@ -163,10 +163,10 @@ pub(crate) fn check_record(record: &Value) -> Value {
                 .iter()
                 .take(MAX_ITEMS)
                 .map(|result| {
-                    let mut item = fields(result, &["name", "kind", "verdict", "url"]);
+                    let mut item = fields(result, &["name", "kind", "verdict", "url"])?;
                     if let Some(forcing) = result.get("forcing") {
                         // Environment values and patch bodies are opaque inputs, not proof.
-                        let mut summary = fields(forcing, &["symptom"]);
+                        let mut summary = fields(forcing, &["symptom"])?;
                         summary["environment_count"] = forcing
                             .get("environment_count")
                             .cloned()
@@ -194,12 +194,12 @@ pub(crate) fn check_record(record: &Value) -> Value {
                                         &["test", "base", "head", "head_forced", "passed", "url"],
                                     )
                                 })
-                                .collect(),
+                                .collect::<Result<Vec<_>>>()?,
                         );
                     }
-                    item
+                    Ok(item)
                 })
-                .collect(),
+                .collect::<Result<Vec<_>>>()?,
         );
     }
     // Keep complete entries and explicit counts. Never slice serialized JSON.
@@ -215,11 +215,11 @@ pub(crate) fn check_record(record: &Value) -> Value {
             break;
         }
     }
-    out
+    Ok(out)
 }
 
-pub(crate) fn review_record(record: &Value) -> Value {
-    let mut out = fields(record, &["head_sha", "verdict", "url"]);
+pub(crate) fn review_record(record: &Value) -> Result<Value> {
+    let mut out = fields(record, &["head_sha", "verdict", "url"])?;
     out["blocking_findings"] = Value::Array(
         record["blocking_findings"]
             .as_array()
@@ -227,15 +227,15 @@ pub(crate) fn review_record(record: &Value) -> Value {
             .flatten()
             .take(MAX_ITEMS)
             .map(|finding| {
-                let mut out = fields(finding, &["problem"]);
+                let mut out = fields(finding, &["problem"])?;
                 if let Some(citation) = finding.get("citation") {
-                    out["citation"] = fields(citation, &["kind", "id"]);
+                    out["citation"] = fields(citation, &["kind", "id"])?;
                 }
-                out
+                Ok(out)
             })
-            .collect(),
+            .collect::<Result<Vec<_>>>()?,
     );
-    out
+    Ok(out)
 }
 
 /// Include writes made by the event that emits the delivery. Check reports and
@@ -294,9 +294,9 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
     ordered.sort_by_key(|(_, (arrival, _))| *arrival);
     for ((table, row), (_, value)) in &ordered {
         match *table {
-            "check_evidence" if row.starts_with(&prefix) => facts.checks.push(check_record(value)),
+            "check_evidence" if row.starts_with(&prefix) => facts.checks.push(check_record(value)?),
             "review_evidence" if row.starts_with(&prefix) => {
-                facts.reviews.push(review_record(value))
+                facts.reviews.push(review_record(value)?)
             }
             "nodes" if *row == id.as_str() => {
                 facts.pull_request_status = if value["merged"].as_u64().is_some() {
@@ -312,7 +312,7 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
             "close_reasons" if *row == id.as_str() => {
                 facts.stop_reason = value["reason"].as_str().map(str::to_owned)
             }
-            "audits" if *row == id.as_str() => facts.audit = Some(fields(value, &["verdict"])),
+            "audits" if *row == id.as_str() => facts.audit = Some(fields(value, &["verdict"])?),
             "goals" if *row == id.as_str() => {
                 facts.goals = value
                     .as_array()
@@ -320,7 +320,7 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
                     .flatten()
                     .take(MAX_ITEMS)
                     .map(|goal| fields(goal, &["id", "description"]))
-                    .collect()
+                    .collect::<Result<Vec<_>>>()?
             }
             "saved_scratch" if value["node"] == json!(delivery.node()) => {
                 if let Some(reference) = value["reference"].as_str() {
@@ -329,20 +329,20 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
             }
             "scratch_evidence" if value["node"] == json!(delivery.node()) => facts
                 .scratch_history
-                .push(fields(value, &["node", "reference", "status"])),
+                .push(fields(value, &["node", "reference", "status"])?),
             "queue_facts" => {
                 let raw = &value["evidence"];
                 let mut compact = serde_json::Map::new();
                 if let Some((kind, detail)) = raw.as_object().and_then(|v| v.iter().next()) {
                     let mut selected =
-                        fields(detail, &["head", "infra", "head_check", "checks_passed"]);
+                        fields(detail, &["head", "infra", "head_check", "checks_passed"])?;
                     let checks = detail["details"]["checks"]
                         .as_array()
                         .into_iter()
                         .flatten()
                         .take(MAX_ITEMS)
                         .map(|check| fields(check, &["name", "url"]))
-                        .collect::<Vec<_>>();
+                        .collect::<Result<Vec<_>>>()?;
                     if !checks.is_empty() {
                         selected["details"] = json!({"checks":checks});
                     }
@@ -359,7 +359,7 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
         if *table == "check_reports" && row.starts_with(&prefix) {
             let head = &row[prefix.len()..];
             if !facts.checks.iter().any(|record| record["head_sha"] == head) {
-                let mut record = check_record(value);
+                let mut record = check_record(value)?;
                 record["head_sha"] = json!(head);
                 facts.checks.push(record);
             }
@@ -436,9 +436,9 @@ fn collect_links(value: &Value, links: &mut BTreeSet<String>) {
 }
 
 /// Plain statements whose scope is the record, not everything that may have run.
-pub fn summary(delivery: &Delivery) -> String {
+pub fn summary(delivery: &Delivery) -> Result<String> {
     let Some(facts) = &delivery.evidence else {
-        return "Details of checks and review were not captured in this summary.".into();
+        return Ok("Details of checks and review were not captured in this summary.".into());
     };
     let mut lines: Vec<String> = Vec::new();
     for check in &facts.checks {
@@ -470,7 +470,7 @@ pub fn summary(delivery: &Delivery) -> String {
             };
             lines.push(format!(
                 "Recorded check {}: {verdict}.",
-                label(result["name"].as_str().unwrap_or("unnamed"))
+                label(result["name"].as_str().unwrap_or("unnamed"))?
             ));
         }
         if results.is_some_and(|r| {
@@ -546,7 +546,7 @@ pub fn summary(delivery: &Delivery) -> String {
         ));
     }
     for link in facts.artifacts.iter().take(MAX_ITEMS) {
-        lines.push(format!("Recorded artifact: {}.", label(link)));
+        lines.push(format!("Recorded artifact: {}.", label(link)?));
     }
     if let Some(last) = facts.queue.last() {
         lines.push(
@@ -598,10 +598,10 @@ pub fn summary(delivery: &Delivery) -> String {
         .iter()
         .filter_map(|v| v["problem"].as_str())
     {
-        lines.push(format!("Recorded remaining blocker: {}.", label(blocker)));
+        lines.push(format!("Recorded remaining blocker: {}.", label(blocker)?));
     }
     for goal in unmet_goals(Some(facts)) {
-        lines.push(format!("Recorded unmet goal: {}.", label(&goal)));
+        lines.push(format!("Recorded unmet goal: {}.", label(&goal)?));
     }
     if facts.remaining_failures.is_empty() {
         lines.push("Remaining failures were not captured; this does not establish that every goal was completed.".into());
@@ -620,21 +620,21 @@ pub fn summary(delivery: &Delivery) -> String {
         lines.push("Previously saved scratch was pruned.".into());
     }
     lines.dedup();
-    lines.join(" ")
+    Ok(lines.join(" "))
 }
 
-pub(crate) fn label(text: &str) -> String {
-    let text: String = crate::redaction::text(text)
+pub(crate) fn label(text: &str) -> Result<String> {
+    let text: String = crate::redaction::text(text)?
         .chars()
         .take(512)
         .map(|ch| if ch.is_control() { ' ' } else { ch })
         .collect();
-    serde_json::to_string(&text)
+    Ok(serde_json::to_string(&text)
         .expect("string label")
         .replace('`', "'")
         .replace('<', "[")
         .replace('>', "]")
-        .replace('@', "[at]")
+        .replace('@', "[at]"))
 }
 
 fn proof_required(text: &str) -> bool {
@@ -719,11 +719,17 @@ pub fn publication(delivery: &Delivery, request: &str) -> Result<String> {
     for (field, records) in [
         (
             "checks",
-            checks.into_iter().map(check_record).collect::<Vec<_>>(),
+            checks
+                .into_iter()
+                .map(check_record)
+                .collect::<Result<Vec<_>>>()?,
         ),
         (
             "reviews",
-            reviews.into_iter().map(review_record).collect::<Vec<_>>(),
+            reviews
+                .into_iter()
+                .map(review_record)
+                .collect::<Result<Vec<_>>>()?,
         ),
         (
             "artifacts",
@@ -734,7 +740,7 @@ pub fn publication(delivery: &Delivery, request: &str) -> Result<String> {
                 .flat_map(|e| &e.artifacts)
                 .take(MAX_ITEMS)
                 .map(|link| public_value(&json!(link), None))
-                .collect::<Vec<_>>(),
+                .collect::<Result<Vec<_>>>()?,
         ),
     ] {
         for record in records {
@@ -773,7 +779,7 @@ pub(crate) fn validate_body(body: &str) -> Result<()> {
 
 // Redact values before serializing. Redacting JSON text can consume its quotes,
 // and the generic token filter also removes IDs needed to verify proof.
-fn public_value(value: &Value, field: Option<&str>) -> Value {
+fn public_value(value: &Value, field: Option<&str>) -> Result<Value> {
     if let (Some(field), Some(text)) = (field, value.as_str())
         && matches!(
             field,
@@ -782,14 +788,14 @@ fn public_value(value: &Value, field: Option<&str>) -> Value {
         && matches!(text.len(), 40 | 64)
         && text.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
-        return value.clone();
+        return Ok(value.clone());
     }
     if field.is_some_and(crate::memory::sensitive_key) {
-        return json!("[redacted]");
+        return Ok(json!("[redacted]"));
     }
-    match value {
+    Ok(match value {
         Value::String(text) => json!(
-            crate::redaction::text(text)
+            crate::redaction::text(text)?
                 .chars()
                 .take(512)
                 .collect::<String>()
@@ -799,17 +805,17 @@ fn public_value(value: &Value, field: Option<&str>) -> Value {
                 .iter()
                 .take(MAX_ITEMS)
                 .map(|v| public_value(v, None))
-                .collect(),
+                .collect::<Result<Vec<_>>>()?,
         ),
         Value::Object(values) => Value::Object(
             values
                 .iter()
                 .take(MAX_ITEMS)
-                .map(|(k, v)| (crate::redaction::text(k), public_value(v, Some(k))))
-                .collect(),
+                .map(|(k, v)| Ok((crate::redaction::text(k)?, public_value(v, Some(k))?)))
+                .collect::<Result<serde_json::Map<_, _>>>()?,
         ),
         _ => value.clone(),
-    }
+    })
 }
 
 /// Replace only our generated section. Repeated publication preserves other text.
@@ -1190,7 +1196,9 @@ mod tests {
             "environment".into(),
             json!({"ALLOWED_FORCE_VALUE":"ghp_abcdefgh1234567890abcdefgh1234567890"}),
         );
-        let redacted = public_value(&Value::Object(fields), None).to_string();
+        let redacted = public_value(&Value::Object(fields), None)
+            .unwrap()
+            .to_string();
         assert!(
             !redacted.contains(planted),
             "sensitive-key values escaped redaction"
@@ -1240,6 +1248,13 @@ mod tests {
             });
             if let Err(error) = result {
                 assert_eq!(crate::looks::failure_class(&error), "redaction_infra");
+                assert_eq!(
+                    crate::looks::Cause::of(
+                        crate::executor::Upstream::GitHub,
+                        crate::looks::failure_class(&error)
+                    ),
+                    crate::looks::Cause::Tl3
+                );
                 failed += 1;
             }
         }
@@ -1278,6 +1293,13 @@ mod tests {
             });
             if let Err(error) = result {
                 assert_eq!(crate::looks::failure_class(&error), "redaction_infra");
+                assert_eq!(
+                    crate::looks::Cause::of(
+                        crate::executor::Upstream::GitHub,
+                        crate::looks::failure_class(&error)
+                    ),
+                    crate::looks::Cause::Tl3
+                );
                 failed += 1;
             }
         }
@@ -1311,7 +1333,7 @@ mod tests {
                                 .unwrap()
                                 .value;
                             report["results"][0]["name"] = json!(name);
-                            *report = check_record(report);
+                            *report = check_record(report).unwrap();
                             delivery.evidence = Some(
                                 capture(
                                     &snapshot,
@@ -1438,7 +1460,7 @@ mod tests {
             .clone();
         raw["head_sha"] = json!("reviewed-head");
         raw["results"][0]["tests"] = json!((0..1000).map(|i| json!({"test":format!("test_case_{i}_{}", "x".repeat(512)),"base":"assertion","head":"passed","head_forced":"passed"})).collect::<Vec<_>>());
-        let record = check_record(&raw);
+        let record = check_record(&raw).unwrap();
         assert!(encode_proof(&record).unwrap().len() <= RECORD_BYTES);
         assert_eq!(record["results"][0]["test_count"], 1000);
         assert_eq!(record["forced_passed"], 1000);
@@ -1449,11 +1471,11 @@ mod tests {
         });
         let proof = publication(&delivery, "Publish red/green proof in the PR").unwrap();
         assert!(proof.contains("head_forced") && proof.contains("test_case_0"));
-        assert!(summary(&delivery).contains("you asked to stop"));
+        assert!(summary(&delivery).unwrap().contains("you asked to stop"));
         assert!(validate_body(&"x".repeat(BODY_BYTES + 1)).is_err());
         assert!(validate_body(&with_publication("Refs #2625.", &proof)).is_ok());
         raw["results"][0]["tests"][999]["head_forced"] = Value::Null;
-        delivery.evidence.as_mut().unwrap().checks = vec![check_record(&raw)];
+        delivery.evidence.as_mut().unwrap().checks = vec![check_record(&raw).unwrap()];
         assert!(
             publication(&delivery, "Publish proof in the PR").is_err(),
             "omitted evidence cannot hide incomplete forcing proof"

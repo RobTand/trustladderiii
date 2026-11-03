@@ -726,7 +726,7 @@ fn writer_facts(
             "evidence_status": if delivery.evidence.is_some() {"captured"} else {"not_captured"},
             "merge_status": if outcome == Outcome::Merged || delivery.evidence.as_ref().is_some_and(|e| e.pull_request_status == crate::evidence::PullRequestStatus::Merged) {"merged"} else {"not_recorded"},
             "evidence": delivery.evidence,
-            "recorded_summary": crate::evidence::summary(delivery),
+            "recorded_summary": crate::evidence::summary(delivery)?,
             "pull_request": delivery.pull_request.map(|number| json!({"number":number,
                 "url":format!("https://github.com/{}/{}/pull/{number}",delivery.repository.owner,delivery.repository.name)}))}),
         ),

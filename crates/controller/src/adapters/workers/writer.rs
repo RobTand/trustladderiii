@@ -280,7 +280,7 @@ pub fn checked_draft(
     if input.kind == MessageKind::Summary {
         let mut text = format!(
             "Request {}.\n\n{}\n\n{}",
-            crate::evidence::label(&title),
+            crate::evidence::label(&title)?,
             input.facts["outcome"]
                 .as_str()
                 .unwrap_or("The request ended."),
