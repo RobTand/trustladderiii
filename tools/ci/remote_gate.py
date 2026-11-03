@@ -63,14 +63,18 @@ class BuildBuddy:
 def run_request(args):
     if not args.base or not args.head:
         raise RemoteError('empty base or head: the queue-aware refs were unavailable')
-    command = ['python3', 'tools/ci/bazel_gate.py', args.mode, '--base', args.base,
+    command = ['tools/ci/bazel_gate.py', args.mode, '--base', args.base,
                '--head', args.head, '--branch', args.branch]
     return {
         'repo': args.repo,
         'branch': args.branch,
         'commit_sha': args.head,
         'steps': [{'run': 'python3 tools/ci/child_env.py bash -c ' + shlex.quote(INSTALL_UV)},
-                  {'run': 'export PATH="$HOME/.local/bin:$PATH" && python3 tools/ci/child_env.py ' + shlex.join(command)}],
+                  # The gate's scan supervisor retains the runner key and starts
+                  # the gate logic with child_env(); only its scanner gets auth.
+                  {'run': 'export PATH="$HOME/.local/bin:$PATH" && '
+                          'scanner_python=$(python3 tools/ci/child_env.py uv python find 3.14) && '
+                          '"$scanner_python" ' + shlex.join(command)}],
         'env': {'GIT_REPO_DEFAULT_BRANCH': 'main'},
         'platform_properties': {
             # The runner hosts only the Bazel client; actions go to remote execution.
