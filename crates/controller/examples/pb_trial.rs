@@ -95,6 +95,7 @@ fn fixture(root: &Path) -> Delivery {
 
             reviewed_sha: None,
             reproducing_unavailable: None,
+            selected_failures: Vec::new(),
             plan: vec![Check {
                 name: "value changes".into(),
                 kind: Kind::Demonstrating,

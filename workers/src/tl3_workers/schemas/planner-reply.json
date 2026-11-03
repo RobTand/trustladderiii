@@ -164,7 +164,8 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 128,
-              "pattern": "^(?!test_|__)[A-Za-z_][A-Za-z0-9_]*$"
+              "pattern": "^(?!test_|__)[A-Za-z_][A-Za-z0-9_]*$",
+              "description": "Existing unchanged module-level factory. TL3 injects tmp_path and tmp_path_factory by parameter name; other required parameters, classes, decorators, generators and variadics are unsupported. The model supplies no factory arguments. Existing optional defaults are retained."
             },
             "$call": {
               "type": "string",

@@ -43,7 +43,7 @@ with tempfile.TemporaryDirectory(prefix="tl3-controller-checks-") as directory:
         plan, container, protected, selected, always = decode(request)
         results = run_checks(repo, request["base"], request["head"], plan, container=container,
                              reviewed=request.get("reviewed"), protected=protected, selected_tests=selected,
-                             always_tests=always)
+                             always_tests=always, selected_failures=request.get("selected_failures", []))
     except HarnessInputError as error:
         # The trusted harness rejected TL3's own check input. Repository configuration,
         # admission and container failures stay upstream.

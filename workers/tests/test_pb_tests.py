@@ -2124,7 +2124,8 @@ def test_inherited_repository_method_reaches_rehearsal(rehearsal):
     assert ledger.violations(inputs['base_sha'], plan(forcing)['checks']) == []
 
 
-@pytest.mark.parametrize('binding', ['conditional_repository', 'dynamic_repository', 'dynamic_external'])
+@pytest.mark.parametrize('binding', ['conditional_repository', 'dynamic_repository', 'dynamic_external',
+                                     'class_global_repository'])
 def test_uncertain_owner_uses_runtime_guard_and_preserves_typed_stop(rehearsal, monkeypatch, binding):
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
     from langchain_core.messages import AIMessage
@@ -2137,6 +2138,8 @@ def test_uncertain_owner_uses_runtime_guard_and_preserves_typed_stop(rehearsal, 
         'conditional_repository': 'import time\nif True:\n    time = Clock\n',
         'dynamic_repository': 'time = (lambda: Clock)()\n',
         'dynamic_external': 'time = __import__("time")\n',
+        # An executable class body rebinds the module global; source alone cannot settle it.
+        'class_global_repository': 'import time\nclass Configure:\n    global time\n    time = Clock\n',
     }[binding]
     (root / 'pkg/mod.py').write_text(source)
     (root / 'tests/test_adoption.py').write_text(

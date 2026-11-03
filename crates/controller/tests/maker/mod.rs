@@ -209,6 +209,7 @@ fn observe(
 
                         reviewed_sha: None,
                         reproducing_unavailable: None,
+                        selected_failures: Vec::new(),
                         plan: vec![adapters::prismabuild::Check {
                             name: "hello".into(),
                             kind: adapters::prismabuild::Kind::Demonstrating,

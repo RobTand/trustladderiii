@@ -840,6 +840,7 @@ fn progress_releases_nothing(settings: &tl3_config::Store) {
                 base_sha: tl3_worktrees::CommitId::new("b".repeat(40)).unwrap(),
                 reviewed_sha: None,
                 reproducing_unavailable: None,
+                selected_failures: Vec::new(),
                 plan: vec![],
             },
         },

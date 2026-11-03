@@ -152,9 +152,14 @@ capability is absent, report the missing method through evidence preflight.
 Do not substitute review or a flaky-test forcing for required red/green proof.
 Do not ask the issue owner to remove a proof method they never requested.
 Callable setup requires helper_target_observer.setup_function. It selects an
-unchanged existing function in the target module, callable without arguments,
-and witnesses a declared method returning before the target asserts. If the
-repository lacks supported setup, report that prerequisite precisely before
+unchanged existing module-level factory in the target module. The model supplies
+no arguments. TL3 injects pytest-managed tmp_path and tmp_path_factory by parameter
+name, retains existing optional defaults and rejects other required parameters.
+Class-based worlds and decorated fixtures are unsupported. Each case owns a
+temporary root, allows at most 16 directory allocations and cleans up on errors.
+The receipt binds factory source and fixture names. A declared method must return
+before the target asserts; an empty queue or missing claimed row is insufficient.
+If the repository lacks supported setup, report that prerequisite precisely before
 maker work; do not invent executable recipes or require a signature rewrite.
 
 
