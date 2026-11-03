@@ -47,6 +47,7 @@ impl Checks {
             head: pull.head.sha.clone(),
             infra,
             head_check: true,
+            details: Default::default(),
         })
     }
 }

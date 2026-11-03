@@ -91,6 +91,10 @@ class RustDependencyTests(unittest.TestCase):
             **{name: record for name in ["rust_test", "py_test", "rust_library",
                                         "rust_binary", "cargo_build_script"]},
         }
+        sizing = {}
+        path = Path(__file__).with_name("test_sizing.bzl")
+        exec(compile(path.read_text(), str(path), "exec"), sizing)
+        namespace["test_size"] = sizing["test_size"]
         source = Path(__file__).with_name("rust.bzl").read_text()
         exec(re.sub(r"^load\(.*\)$", "", source, flags=re.MULTILINE), namespace)
         namespace["tl3_crate"](
@@ -150,10 +154,108 @@ class RustDependencyTests(unittest.TestCase):
         for name, count in [("workers", 8), ("publishing", 0)]:
             with self.subTest(name=name):
                 self.assertEqual(self.rules[":test_test_" + name].get("shard_count"), count)
+        worker = self.rules[":test_test_workers"]
+        self.assertEqual(worker["timeout"], "eternal")
+        self.assertEqual(worker["exec_properties"], {
+            "EstimatedComputeUnits": "1", "EstimatedCPU": "3", "EstimatedMemory": "1GB",
+        })
 
     def test_github_notices_do_not_pull_in_the_flow_group_workers(self):
         self.assertNotIn("//tools/bazel:worker_python",
                          self.dependencies("test_test_github-notices"))
+
+
+class TestSizingTests(unittest.TestCase):
+    """Expand the real BUILD macros and inspect the test runner rules they emit."""
+
+    def rules(self, package):
+        root = Path(__file__).resolve().parents[2]
+        directory = root / package
+        rules = {}
+
+        def record(**attributes):
+            rules[attributes["name"]] = attributes
+
+        def glob(patterns, **kwargs):
+            return sorted({str(path.relative_to(directory)) for pattern in patterns
+                           for path in directory.glob(pattern) if path.is_file()})
+
+        namespace = {
+            "package": lambda **kwargs: None,
+            "native": SimpleNamespace(package_name=lambda: package, glob=glob,
+                                      exports_files=lambda *args: None, filegroup=record,
+                                      package_relative_label=lambda label: label),
+            "struct": SimpleNamespace,
+            "all_crate_deps": lambda **kwargs: [],
+            "aliases": lambda **kwargs: {},
+            "select": lambda choices: choices["//conditions:default"],
+            "depset": lambda items: SimpleNamespace(to_list=lambda: list(dict.fromkeys(items))),
+            "requirement": lambda name: name,
+            **{name: record for name in ["rust_test", "py_test", "rust_library",
+                                        "rust_binary", "cargo_build_script", "_py_library"]},
+        }
+        sizing = {}
+        path = root / "tools/bazel/test_sizing.bzl"
+        exec(compile(path.read_text(), str(path), "exec"), sizing)
+        namespace["test_size"] = sizing["test_size"]
+        for name in ["nonhermetic.bzl", "python.bzl", "rust.bzl"]:
+            path = root / "tools/bazel" / name
+            if path.exists():
+                source = re.sub(r"^load\(.*\)$", "", path.read_text(), flags=re.MULTILINE)
+                exec(compile(source, str(path), "exec"), namespace)
+        if package.startswith("crates/"):
+            source = re.sub(r"^load\(.*\)$", "", (directory / "BUILD.bazel").read_text(),
+                            flags=re.MULTILINE)
+            exec(compile(source, str(directory / "BUILD.bazel"), "exec"), namespace)
+        else:
+            names = (["test_report_limits", "test_harness", "test_future_nested_suite"]
+                     if package == "harness/tests" else ["test_planner", "test_classifier", "test_pb_tests"])
+            for name in names:
+                namespace["tl3_py_test"](name=name, srcs=[name + ".py"])
+        self.postgres_packages = namespace["_POSTGRES"]
+        return {name: attrs for name, attrs in rules.items()
+                if attrs.get("main") in ["//tools/bazel:rust_runner.py",
+                                         "//tools/bazel:python_runner.py"]}
+
+    def assert_sized(self, package):
+        rules = self.rules(package)
+        self.assertTrue(rules, package)
+        for name, rule in rules.items():
+            with self.subTest(target=f"//{package}:{name}"):
+                properties = rule.get("exec_properties", {})
+                for key in ["EstimatedComputeUnits", "EstimatedCPU", "EstimatedMemory"]:
+                    self.assertIn(key, properties)
+                    self.assertGreater(float(properties[key].removesuffix("GB")), 0)
+
+    def test_every_controller_runner_including_worker_shards_is_sized(self):
+        self.assert_sized("crates/controller")
+
+    def test_every_postgres_runner_is_sized(self):
+        self.rules("crates/store")
+        for package in self.postgres_packages:
+            self.assert_sized(package)
+
+    def test_nested_python_suites_are_sized(self):
+        self.assert_sized("harness/tests")
+
+    def test_workers_nested_pytest_is_sized(self):
+        rule = self.rules("workers/tests")["test_pb_tests"]
+        for key in ["EstimatedComputeUnits", "EstimatedCPU", "EstimatedMemory"]:
+            self.assertIn(key, rule["exec_properties"])
+            self.assertGreater(float(rule["exec_properties"][key].removesuffix("GB")), 0)
+
+    def test_sizing_loads_without_recorder_globals(self):
+        path = Path(__file__).with_name("test_sizing.bzl")
+        namespace = {}
+        exec(compile(path.read_text(), str(path), "exec"), namespace)
+        helper = namespace["test_size"]
+        self.assertNotIn("native", helper.__code__.co_names)
+        self.assertIn("EstimatedComputeUnits", helper("workers/tests", "test_pb_tests"))
+
+    def test_sizing_preserves_network_and_leaves_other_tests_dynamic(self):
+        rules = self.rules("workers/tests")
+        self.assertEqual(rules["test_planner"]["exec_properties"].get("dockerNetwork"), "bridge")
+        self.assertNotIn("EstimatedComputeUnits", rules["test_classifier"]["exec_properties"])
 
 
 if __name__ == '__main__':

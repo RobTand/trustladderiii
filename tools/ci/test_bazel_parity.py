@@ -238,5 +238,57 @@ class RustRunnerReceiptTests(unittest.TestCase):
             self.assertNotIn('wall_seconds', receipt)
 
 
+class NestedSuiteSizingTests(unittest.TestCase):
+    def test_detects_runners_in_any_package_and_embedded_scripts(self):
+        sources = [
+            'subprocess.run([sys.executable, "-m", "pytest", "tests"])',
+            'subprocess.Popen(["python", "-m", "unittest"])',
+            'RUNNER = Path("src/tl3_harness/runner.py")\nsubprocess.run([sys.executable, str(RUNNER)])',
+            'execution.run_tree(root, image, tests, report, progress)',
+            'run_checks(root, base, head, checks)',
+            'script.write_text(script.read_text().replace("marker", '
+            + repr('import subprocess\nsubprocess.run([sys.executable, str(root / "trusted/tl3_harness/runner.py")])\nprint(json.dumps({"schema":') + '))',
+        ]
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertTrue(bazel_parity.has_nested_suite(source))
+        for source in ['import pytest\npytest.raises(ValueError)',
+                       'subprocess.run(["git", "status"])',
+                       'SCRIPT = "from unittest.mock import patch"\nsubprocess.run(["python", "-c", SCRIPT])',
+                       'description = "subprocess.run([python, pytest])"']:
+            self.assertFalse(bazel_parity.has_nested_suite(source))
+
+    def test_parity_requires_all_positive_properties_outside_harness(self):
+        source = 'subprocess.run(["python", "-m", "pytest"])'
+        properties = {'EstimatedComputeUnits': '1', 'EstimatedCPU': '2', 'EstimatedMemory': '0.5GB'}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            module = root / 'future/tests/test_nested.py'
+            module.parent.mkdir(parents=True)
+            module.write_text(source)
+
+            def query(values):
+                item = json.loads(rule('//future/tests:test_nested', bazel_parity.PYTHON_RUNNER,
+                                       ['future/tests/test_nested.py']))
+                item['rule']['attribute'].append({
+                    'name': 'exec_properties',
+                    'stringDictValue': [{'key': key, 'value': value} for key, value in values.items()]})
+                return [json.dumps(item)]
+
+            for key in properties:
+                for value in [None, '0']:
+                    values = dict(properties)
+                    if value is None:
+                        del values[key]
+                    else:
+                        values[key] = value
+                    with self.subTest(key=key, value=value):
+                        with self.assertRaisesRegex(RuntimeError, 'future/tests:test_nested.*' + key):
+                            bazel_parity.check_python_sizing(query(values), root)
+            bazel_parity.check_python_sizing(query(properties), root)
+            module.write_text('def test_plain(): assert True')
+            bazel_parity.check_python_sizing(query({}), root)
+
+
 if __name__ == '__main__':
     unittest.main()

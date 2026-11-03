@@ -1,0 +1,12 @@
+{
+  "schema": "prismabuild.bazel-gate.v1",
+  "head": "8e8df7e2fedfa413a7c6698ba1749a340d6bcb28",
+  "base": "566bee93ba4b52681864132960cfd63e36bcc9cd",
+  "changed": [
+    "tests/test_action_resource_profile.py"
+  ],
+  "failed": [
+    "//tests:test_a_ready_gpu_action_is_not_starved_by_cpu_shards"
+  ],
+  "verdict": "fail"
+}

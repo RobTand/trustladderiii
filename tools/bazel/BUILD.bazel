@@ -134,5 +134,18 @@ filegroup(
 tl3_py_test(
     name = "test_rust_builds",
     srcs = ["test_rust_builds.py"],
+    data = [
+        ":sources",
+        ":workspace_build_files",
+        "//crates/controller:sources",
+        "//crates/store:sources",
+        "//harness:project_files",
+    ],  # keep
     deps = [":rust_builds"],
+)
+
+py_binary(
+    name = "execution_receipt",
+    srcs = ["execution_receipt.py"],
+    visibility = ["//visibility:public"],
 )
