@@ -156,7 +156,7 @@ class PlannerModel(FakeMessagesListChatModel):
     offered: bool = False
 
     def bind_tools(self, tools, **kwargs):
-        self.offered = bool(tools)
+        self.offered = bool(tools) and kwargs.get("tool_choice") != "none"
         return self
 
     def _generate(self, messages, **kwargs):
