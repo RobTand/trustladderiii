@@ -4,6 +4,38 @@ use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::BTreeSet, sync::LazyLock};
 use unicode_normalization::UnicodeNormalization;
 
+/// The final nonempty source line, only when Markdown renders it as plain
+/// text in a top-level paragraph. Quoted, code and HTML blocks cannot attest.
+pub fn trailing_plain_line(text: &str) -> Option<&str> {
+    let line = text.lines().rev().find(|line| !line.trim().is_empty())?;
+    let start = text.rfind(line)?;
+    let end = start + line.len();
+    let mut parents = Vec::new();
+    let options = Options::ENABLE_TABLES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_FOOTNOTES
+        | Options::ENABLE_GFM;
+    for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
+        match event {
+            Event::Start(tag) => parents.push(tag.to_end()),
+            Event::End(_) => {
+                parents.pop();
+            }
+            Event::Text(content)
+                if parents == [TagEnd::Paragraph]
+                    && range.start <= start
+                    && range.end >= end
+                    && &text[range] == content.as_ref() =>
+            {
+                return Some(line);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OptionDraft {
     pub action: String,

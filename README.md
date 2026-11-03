@@ -8,7 +8,9 @@ Created in [T3 Code](https://t3.codes).
 
 `[operations].delegated_attributions` lists exact standing-approval attribution
 lines, for example `"(Posted by the TL3 build coordinator under Rob's standing approval.)"`.
-The default is `[]`. Only comments authored by the configured Rob account qualify.
+The default is `[]`. Only unedited comments authored by the configured Rob account
+qualify. The attribution must be the final nonempty plain Markdown line, outside
+quotes, code blocks and HTML. Edited comments keep normal classification.
 TL3 records the matching line as the delegate and classifies the remaining text as
 Rob's command. Exact attributed `restart` commands use code directly when restart
 is allowed. Other authors and non-matching lines keep their existing behavior.

@@ -131,6 +131,9 @@ fn delegated_comment(
     let [(index, attribution)] = matches.as_slice() else {
         return None;
     };
+    if tl3_github::message::trailing_plain_line(body) != Some(*attribution) {
+        return None;
+    }
     let command = body
         .lines()
         .enumerate()
@@ -271,12 +274,17 @@ impl Controller {
         let n = &world.nodes[node.0 as usize];
         let mut inputs = json!({"comment": {"author": row.value["comment"]["user"]["login"], "body": row.value["comment"]["body"]},
                 "state": state(n)});
-        let delegation = delegated_comment(
-            row.value["comment"]["user"]["id"].as_u64().unwrap(),
-            self.bootstrap.rob,
-            row.value["comment"]["body"].as_str().unwrap(),
-            &self.delegated_attributions,
-        );
+        let comment: tl3_github::Comment = crate::decode_stored(row.value["comment"].clone())?;
+        let delegation = if comment.updated_at > comment.created_at {
+            None
+        } else {
+            delegated_comment(
+                comment.user.id,
+                self.bootstrap.rob,
+                &comment.body,
+                &self.delegated_attributions,
+            )
+        };
         if let Some((attribution, body)) = &delegation {
             inputs["comment"]["body"] = json!(body);
             inputs["comment"]["delegated_by"] = json!(attribution);

@@ -190,8 +190,13 @@ Restart is how Rob starts a request over after something went wrong (Q49). It re
 
 Decided by Rob, 2026-11-03: restart comments posted by the TL3 build coordinator
 under Rob's standing approval count as Rob's own. Code requires Rob's configured
-numeric GitHub account ID and one exact whole line from
-`operations.delegated_attributions`. The matching line identifies the delegate
+numeric GitHub account ID, an unedited comment (`updated_at <= created_at`),
+and one exact whole line from
+`operations.delegated_attributions`. That line must be the final nonempty plain
+Markdown line, outside quotes (including lazy continuations), fenced or indented
+code, and HTML blocks or comments. Edited comments, including those first seen by
+catch-up, keep their original body and normal classification. The matching line
+identifies the delegate
 in the request's durable provenance. Code removes that attribution before
 classifying the remaining operator command as Rob's own. Exact `restart` uses
 the existing restart state check directly, without a classification model call.

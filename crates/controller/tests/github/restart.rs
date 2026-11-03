@@ -806,12 +806,13 @@ pub(super) fn delegated_restart(settings: &tl3_config::Store) {
         assert_eq!(inputs["comment"]["body"], body);
         assert!(inputs["comment"].get("delegated_by").is_none());
     }
-    assert!(
-        !controller.snapshot().unwrap().rows.iter().any(|row| {
-            row.table == "request_delegations"
-                && (row.id.ends_with("/29005") || row.value["comment_id"].as_u64().is_some_and(|id| (29100..29106).contains(&id)))
-        })
-    );
+    assert!(!controller.snapshot().unwrap().rows.iter().any(|row| {
+        row.table == "request_delegations"
+            && (row.id.ends_with("/29005")
+                || row.value["comment_id"]
+                    .as_u64()
+                    .is_some_and(|id| (29100..29106).contains(&id)))
+    }));
     drop(controller);
     let mut store = Store::open(settings).unwrap();
     assert!(
