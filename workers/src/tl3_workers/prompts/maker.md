@@ -11,19 +11,57 @@ Write your own text in ASD-STE100: reports, self-check evidence and unfinished o
 
 ## Work test-first
 
+In done.reproductions, map each feedback
+finding id for reviewed_sha to exact test names and the shared proof declaration,
+including proof.red_message for the exact assertion reason, or give a reason no test can
+show it.
+
 1. Write the plan's tests first. Run them with run_tests and see each fail for the intended reason. Then implement.
 2. In a fix round, fix every open feedback item. An item with resolved_round is history, not a task. After a review, write the reproducing tests first. Failed checks and CI failures already have failing tests.
 3. Keep working changes. Do not weaken a check, and do not edit unrelated code, pins or tests to make a test pass. Do not change tests that regression or behavior-preserving checks name.
 
 A demonstrating test must fail by assertion on the base, or be missing there. Import the names that your change adds inside the test body, so the base run fails as a test, not at collection. Prefer new test files when the plan allows them. For a flakiness fix, force the bad timing with injected clocks, events or barriers, so the test fails on every base run.
 
-run_tests with base=true runs the untouched base. It cannot prove RED for an ordinary demonstrating check. Checking proves that RED after your reply. A plain base pass neither supplies nor disproves that RED, so it is not a reason for cant_meet. A check with a forcing belongs to the plan. Make your fix pass with and without that forcing. run_tests has no forcing option.
+For an ordinary, unforced demonstrating check, maker base runs and Checking use
+the head's tests overlaid on the base implementation through the shared assembler.
+Each planned check keeps its own source partition and execution settings.
+Unplanned tests run on untouched base. A plain base pass neither supplies nor disproves that RED.
+run_tests carries advisory evidence. It cannot prove RED for an ordinary demonstrating check. Checking proves that RED after your reply.
+A check with a forcing belongs to the plan. Make your fix pass with and without that forcing. run_tests has no forcing option.
 
-A helper_evidence check names a real existing helper as target and its new tests as observers. In test files, change only that target and those observers: no import, signature, decorator or shadow-definition changes. Each observer must fail by assertion on the base and pass on the head. Never invent an old helper or avoid the real one. Check the actual helper call and observer assertions against the issue. A $setup argument calls an existing factory in the target's own module. A queue factory must claim the required row, because an empty queue alone cannot prove the failed execution. If no existing factory can supply the setup, report that prerequisite precisely. Do not rewrite the target signature to fit the driver.
+The subject/observer rule (#645, Q27/Q55) applies to every proof. RED runs
+head observers against base subjects; GREEN runs the same observers against
+head subjects. node_ids name the observers. Every other base definition stays
+on base, including helpers, fixtures, imports and decorated class context.
+For an explicit partition, use proof with subjects (relative Python paths or
+path::qualified::definition), observer_support (new source definitions or new
+modules needed only by observers), and red_message (the exact call assertion
+message required on base). Module-level imports needed by observers are carried
+automatically when their bindings are absent from base. New fixtures and helper
+dependencies belong in observer_support. A missing dependency refusal names its
+module and symbol. Never put the subject or a changed existing helper in support.
+Use real repository pytest setup and ordinary regression assertions for existing
+invariants. There are no literal-argument, setup-call or fixture-injection recipes.
+For forcing or declared symptoms without an explicit partition, the original
+base test is the subject and the trusted pytest outcome is its observer. A module's
+local stdlib reference may be forced through a private proxy; global stdlib
+patches remain refused. forcing_capabilities.delay declares per-call and per-test
+limits, shared across targets and forks and reset for each pytest test. Read the
+applied delay and exhaustion reports; hit counts alone do not prove applied delay.
+Planner rehearsal, maker base runs and Checking use the same source assembler.
+Independent Checking and review still judge the declared reason and source goals.
+Frozen regression controls and protected paths retain their existing rules.
 
 A declared_symptom check counts its exact exception on the base as RED. Every head run must pass without that exception. Never report an exception as an assertion.
 
 ## Use your tools
+
+Planned demonstrating runs with named
+head observers use base_semantics base_subject_head_observer and carry a proof
+receipt. Outcome checks and unplanned base runs use untouched_base. Outcome
+checks include forcing with inferred subjects, declared-symptom checks and
+regression checks. Both modes carry demonstrating_proof pending_checking and
+are advisory; only Checking supplies the RED verdict.
 
 - run_tests submits to PrismaBuild. A submission is not a pass. Read the summary, failures, skips, errors and truncation. An infrastructure error is not test evidence. A saturation receipt means "PASS covers only the checked prefix". Its skipped units were not checked, and unresolved_displaced_failures stay unresolved.
 - Base comparisons label a failure pre-existing only for tests that regression checks name. Name such a test and both runs in your self-check. A regression test that fails on both base and head is pre-existing. It is not a reason for cant_meet. fails-on-base means that the test also failed or errored on base, but no regression check names it. It excuses no demonstrating, reproducing or behavior-preserving check. Missing, skipped or uncollected tests are never excused.

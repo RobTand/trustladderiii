@@ -101,7 +101,7 @@ fn fixture(root: &Path) -> Delivery {
                 kind: Kind::Demonstrating,
                 tests: vec!["test_value.py::test_value".into()],
                 forcing: None,
-                helper_evidence: None,
+                proof: None,
                 declared_symptom: None,
             }],
         }),

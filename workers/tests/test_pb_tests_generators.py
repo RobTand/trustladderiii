@@ -249,7 +249,7 @@ def test_request_132_maker_returns_only_the_generated_final_head(
                "inputs": {"brief": "Request 132: share short Unix socket support and migrate test imports.",
                           "goals": [{"id": "socket", "description": "Use shared test support."}],
                           "plan": {"files": [path for path, _ in edits] + ["tests/BUILD.bazel"],
-                                   "checks": [{"name": "support", "kind": "demonstrating",
+                                   "checks": [{'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, "name": "support", "kind": "demonstrating",
                                                "tests": ["tests/test_short_socket.py::test_short"],
                                                "goal_ids": ["socket"]}]},
                           "forecast": {"fit_tokens": 100000, "context_tokens": 150000,
@@ -473,7 +473,7 @@ def test_request_163_implicit_generator_failure_retains_safe_causal_receipt(
                "inputs": {"brief": "Regenerate BUILD files after model work.",
                           "goals": [{"id": "build", "description": "Update BUILD files."}],
                           "plan": {"files": ["tests/BUILD.bazel"], "checks": [
-                              {"name": "build", "kind": "demonstrating",
+                              {'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, "name": "build", "kind": "demonstrating",
                                "tests": ["tests/test_wait.py::test_wait"], "goal_ids": ["build"]}]},
                           "forecast": {"fit_tokens": 100000, "context_tokens": 150000,
                                        "overhead_tokens": {"work": 30000},

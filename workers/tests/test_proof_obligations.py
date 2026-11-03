@@ -36,7 +36,7 @@ def test_t613_ac1_source_required_method_and_provenance_cannot_be_replaced():
     preflight({'tool_capabilities': [supported], 'ingest': {'evidence_contract': [required]}},
               alternative, planning=True)
     assert alternative['kind'] == 'cant_meet'
-    assert 'Explicit source method helper_target_observer' in alternative['report']
+    assert 'removed proof encoding helper_target_observer' in alternative['report']
     Draft202012Validator(schema('ingest-reply')['$defs']['evidence_requirement']).validate(required)
 
 
@@ -102,14 +102,10 @@ def test_t613_ac4_helper_capability_does_not_establish_target_suitability(tmp_pa
              'files': ['tests/test_evidence.py'], 'edits_tests': [],
              'no_design_questions': True, 'lands_on_its_own': True,
              'checks': [{'kind': 'demonstrating', 'node_ids': ['tests/test_evidence.py::test_observer'],
-                         'goal_ids': [0], 'helper_evidence': {'target': 'tests/test_evidence.py::_eio',
-                                                          'failure_cases': [{'args': [], 'kwargs': {}}]}}]}
+                         'goal_ids': [0], 'proof': {'subjects': ['tests/test_evidence.py::_eio'],
+                                                          'observer_support': [], 'red_message': 'wrong evidence'}}]}
     planner.check_reply(inputs, reply)
-    if decorated or body == "return {'errno': 5}":
-        assert any('helper target' in v and ('undecorated' in v or 'assertion' in v)
-                   for v in reply['violations']), reply
-    else:
-        assert reply['violations'] == []
+    assert reply['violations'] == []
 
 
 def test_t613_ac5_path_depth_capability_is_explicitly_missing_and_names_stay_reserved():
@@ -127,7 +123,7 @@ def test_t613_ac5_path_depth_capability_is_explicitly_missing_and_names_stay_res
 def test_t613_ac6_refusal_and_selection_guidance_preserves_source_obligations(role):
     prompt = ' '.join(files('tl3_workers').joinpath('prompts', role + '.md').read_text().split())
     assert 'provenance' in prompt
-    assert 'permitted environment forcings' in prompt
+    assert 'subject/observer rule' in prompt
     assert 'remaining source obligation' in prompt
     assert 'Do not substitute review or a flaky-test forcing for required red/green proof.' not in prompt
     assert 'If that staging would copy the helper fix onto base and erase RED, select helper_target_observer' not in prompt

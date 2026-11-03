@@ -1,6 +1,7 @@
 import json
 
 from .model import Failure, Outcome
+from .forcing_ownership import valid_delay_budget
 from .node_ids import selects
 
 
@@ -29,6 +30,7 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
     facts = {}
     selected = None
     collection_errors = {}
+    delay_budgets = {}
 
     def added(name):
         if name is None:
@@ -49,9 +51,20 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
         exception_type = record.get('exception_type', '')
         if not isinstance(exception_type, str) or len(exception_type) > 200:
             raise InvalidReport('invalid phase exception type')
-        ignored = ('message', 'exception', 'exception_type') if record.get('event') == 'phase' else ('message', 'exception')
+        reason = record.get('reason', '')
+        if not isinstance(reason, str) or len(reason) > 1000:
+            raise InvalidReport('invalid assertion reason')
+        ignored = ('message', 'exception', 'exception_type', 'reason') if record.get('event') == 'phase' else ('message', 'exception')
         record = {key: value for key, value in record.items() if key not in ignored}
         match record:
+            case {'event': 'delay-budget', 'test': str(test), 'applied_seconds': _, 'exhausted': _} if len(record) == 4:
+                budget = {key: record[key] for key in ('applied_seconds', 'exhausted')}
+                if (selected is None or test not in selected or not valid_delay_budget(budget)
+                        or test in delay_budgets):
+                    raise InvalidReport('invalid delay budget')
+                delay_budgets[test] = budget
+                if hasattr(messages, 'delay_budget'):
+                    messages.delay_budget[test] = budget
             case {"event": "collection", "tests": list(names)} if set(record) in (
                     {"event", "tests"}, {"event", "tests", "saturation"}):
                 if 'saturation' in record:
@@ -90,7 +103,7 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
                     messages[test] = (messages.get(test, "") + "\n" + message).strip()[:1000]
                 if details is not None and outcome == "failed":
                     if test not in details or when in ('setup', 'teardown'):
-                        details[test] = Failure(when, exception, message)
+                        details[test] = Failure(when, exception, message, reason)
             case _:
                 raise InvalidReport("unknown report event")
     def case_outcome(test):

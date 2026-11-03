@@ -1,3 +1,7 @@
+// Single-event fixture receives expose no intermediate progress.
+// #673 measured a complete GitHub flow case at 169.274 s; 350 s > 2x.
+const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(350);
+
 use super::*;
 
 struct BlockCatchUp {
@@ -57,7 +61,7 @@ fn during_catch_up(settings: &tl3_config::Store) {
     let control = source.control();
     let (sender, receiver) = mpsc::channel();
     let source_thread = thread::spawn(move || source.run(sender));
-    started.recv_timeout(Duration::from_secs(10)).unwrap();
+    started.recv_timeout(SIGNAL_WAIT).unwrap();
     let (sent, response) = mpsc::channel();
     let post_thread = thread::spawn(move || {
         let start = Instant::now();
@@ -72,7 +76,7 @@ fn during_catch_up(settings: &tl3_config::Store) {
     let pending = Store::open(settings).unwrap().pending_ingress().unwrap();
     if timely.is_ok() {
         for _ in 0..3 {
-            receiver.recv_timeout(Duration::from_secs(10)).unwrap();
+            receiver.recv_timeout(SIGNAL_WAIT).unwrap();
         }
         ingress::drain(&mut controller).unwrap();
         assert_eq!(controller.world().unwrap().nodes.len(), 1);
@@ -81,7 +85,7 @@ fn during_catch_up(settings: &tl3_config::Store) {
     release.send(()).unwrap();
     post_thread.join().unwrap();
     if timely.is_ok() {
-        receiver.recv_timeout(Duration::from_secs(10)).unwrap();
+        receiver.recv_timeout(SIGNAL_WAIT).unwrap();
     }
     control.stop();
     source_thread.join().unwrap().unwrap();
@@ -227,7 +231,7 @@ fn loop_scenarios(database: &mut support::Database) {
         let running = thread::spawn(move || {
             done.send(source.run(sender)).unwrap();
         });
-        calls.recv_timeout(Duration::from_secs(10)).unwrap();
+        calls.recv_timeout(SIGNAL_WAIT).unwrap();
         if scenario == "stop" {
             control.stop();
             assert!(
@@ -235,10 +239,7 @@ fn loop_scenarios(database: &mut support::Database) {
                 "Stop must join the outstanding fetch"
             );
             release.send(true).unwrap();
-            finished
-                .recv_timeout(Duration::from_secs(10))
-                .unwrap()
-                .unwrap();
+            finished.recv_timeout(SIGNAL_WAIT).unwrap().unwrap();
             running.join().unwrap();
             assert!(calls.try_recv().is_err());
             println!("test startup_loop_stop_joins_inflight_fetch ... ok");
@@ -253,11 +254,11 @@ fn loop_scenarios(database: &mut support::Database) {
                 post(address, "gap-barrier", false, fixture(false), true),
                 202
             );
-            wakes.recv_timeout(Duration::from_secs(10)).unwrap();
+            wakes.recv_timeout(SIGNAL_WAIT).unwrap();
         }
         release.send(scenario != "failure").unwrap();
         if scenario == "failure" {
-            wakes.recv_timeout(Duration::from_secs(10)).unwrap();
+            wakes.recv_timeout(SIGNAL_WAIT).unwrap();
             assert!(
                 calls.recv_timeout(Duration::from_millis(250)).is_err(),
                 "failed passes must wait for an event, without a timer"
@@ -273,9 +274,9 @@ fn loop_scenarios(database: &mut support::Database) {
                 post(address, "retry-event", false, fixture(false), true),
                 202
             );
-            wakes.recv_timeout(Duration::from_secs(10)).unwrap();
+            wakes.recv_timeout(SIGNAL_WAIT).unwrap();
         } else {
-            wakes.recv_timeout(Duration::from_secs(10)).unwrap();
+            wakes.recv_timeout(SIGNAL_WAIT).unwrap();
         }
         if scenario == "reconnect" {
             database.restart();
@@ -284,12 +285,12 @@ fn loop_scenarios(database: &mut support::Database) {
                 post(address, "writer-reconnected", false, fixture(false), true),
                 202
             );
-            wakes.recv_timeout(Duration::from_secs(10)).unwrap();
+            wakes.recv_timeout(SIGNAL_WAIT).unwrap();
             control.gap();
         }
-        calls.recv_timeout(Duration::from_secs(10)).unwrap();
+        calls.recv_timeout(SIGNAL_WAIT).unwrap();
         release.send(true).unwrap();
-        wakes.recv_timeout(Duration::from_secs(10)).unwrap();
+        wakes.recv_timeout(SIGNAL_WAIT).unwrap();
         assert!(
             Store::open(&settings)
                 .unwrap()
@@ -302,10 +303,7 @@ fn loop_scenarios(database: &mut support::Database) {
             "all gaps during a fetch must coalesce into exactly one follow-up pass"
         );
         control.stop();
-        finished
-            .recv_timeout(Duration::from_secs(10))
-            .unwrap()
-            .unwrap();
+        finished.recv_timeout(SIGNAL_WAIT).unwrap().unwrap();
         running.join().unwrap();
         assert_eq!(
             api.state.lock().unwrap().catch_up_passes,

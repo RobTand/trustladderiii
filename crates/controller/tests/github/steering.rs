@@ -1,3 +1,7 @@
+// Single-event fixture receives expose no intermediate progress.
+// #673 measured the steering recovery case at 165.239 s; 350 s > 2x.
+const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(350);
+
 use super::*;
 use sha2::Digest;
 use tl3_kernel::{Command as KernelCommand, Event};
@@ -60,7 +64,7 @@ impl Daemon {
                 }
             }
         });
-        let address = rx.recv_timeout(Duration::from_secs(90)).unwrap();
+        let address = rx.recv_timeout(SIGNAL_WAIT).unwrap();
         assert_eq!(
             post(address, "steering-label", false, fixture(false), true),
             202
@@ -91,17 +95,33 @@ impl Daemon {
             .unwrap_or(Value::Null)
     }
     fn wait(&mut self, mut condition: impl FnMut(&mut Self) -> bool) {
-        let start = Instant::now();
-        while !condition(self) {
-            self.approve_simulated_checks();
-            assert!(self.child.try_wait().unwrap().is_none(), "daemon exited");
-            assert!(
-                start.elapsed() < Duration::from_secs(90),
-                "steering fixture did not finish; node={}",
-                self.node()
-            );
-            thread::sleep(Duration::from_millis(10));
-        }
+        let mut nodes = Vec::new();
+        support::scenario::wait(
+            "steering fixture",
+            Duration::from_secs(90),
+            Duration::from_secs(300),
+            || {
+                if condition(self) {
+                    return Some(());
+                }
+                self.approve_simulated_checks();
+                let next: Vec<_> = self
+                    .store
+                    .load()
+                    .unwrap()
+                    .rows
+                    .into_iter()
+                    .filter(|row| row.table == "nodes")
+                    .map(|row| (row.id, row.value))
+                    .collect();
+                if next != nodes {
+                    support::scenario::progress(format!("steering nodes: {next:?}"));
+                    nodes = next;
+                }
+                assert!(self.child.try_wait().unwrap().is_none(), "daemon exited");
+                None
+            },
+        );
     }
     // These steering scenarios simulate checks; publishing owns real review evidence.
     fn approve_simulated_checks(&mut self) {
@@ -207,7 +227,7 @@ impl Daemon {
                 }
             }
         });
-        self.address = rx.recv_timeout(Duration::from_secs(90)).unwrap();
+        self.address = rx.recv_timeout(SIGNAL_WAIT).unwrap();
         self.child = child;
     }
     fn settled(&mut self) {
