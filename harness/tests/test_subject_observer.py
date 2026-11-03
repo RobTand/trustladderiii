@@ -326,3 +326,47 @@ def test_review662_inferred_proof_cannot_skip_assertion_reason(repository):
         Check('unbound reason', Kind.DEMONSTRATING, (path + '::test_observer',)))
     assert results[0].verdict == Verdict.FAIL, results
     assert 'assertion reason' in results[0].tests[0].message, results
+
+
+@pytest.mark.parametrize('support', [
+    'TOKEN = globals(); TOKEN["helper"] = lambda: ("new", VERSION)',
+    'TOKEN = "context"; globals().__ior__({"helper": lambda: ("new", VERSION)})',
+    'TOKEN = globals()',
+    'TOKEN = locals()',
+    'TOKEN = vars()',
+    'TOKEN = eval("0")',
+    'TOKEN = exec("pass")',
+    'TOKEN = __import__("builtins")',
+    'import builtins as TOKEN',
+    'import sys as TOKEN',
+])
+def test_rereview662_support_refuses_dynamic_namespace_apis(repository, support):
+    path = 'tests/test_subject.py'
+    before = 'VERSION = 0\ndef helper(): return ("old", VERSION)\n'
+    after = (before.replace('= 0', '= 1').replace('"old"', '"new"') + support + '\n'
+             'def test_observer():\n    assert helper() == ("new", 1), "declared result"\n')
+    proof = model.Proof((path + '::helper',), (path + '::TOKEN',), 'declared result')
+    results, _, _ = round_result(repository, {path: before}, {path: after},
+        Check('namespace escape', Kind.DEMONSTRATING, (path + '::test_observer',), proof=proof))
+    assert results[0].verdict == Verdict.FAIL, results
+    assert 'dynamic namespace' in results[0].tests[0].message, results
+    assert path in results[0].tests[0].message, results
+
+
+@pytest.mark.parametrize('deferred', [False, True], ids=['module-support', 'fixture-support'])
+def test_rereview662_runtime_rejects_indirect_subject_rebinding(repository, deferred):
+    path = 'tests/test_subject.py'
+    before = ('VERSION = 0\ndef helper(): return ("old", VERSION)\n'
+              'def install(value):\n    globals()["helper"] = value\n')
+    support = ('import pytest\n@pytest.fixture(autouse=True)\ndef TOKEN():\n'
+               '    install(lambda: ("new", VERSION))\n' if deferred else
+               'TOKEN = install(lambda: ("new", VERSION))\n')
+    after = (before.replace('VERSION = 0', 'VERSION = 1').replace('return ("old"', 'return ("new"')
+             + support + 'def test_observer():\n'
+             '    assert helper() == ("new", 1), "declared result"\n')
+    proof = model.Proof((path + '::helper',), (path + '::TOKEN',), 'declared result')
+    results, _, _ = round_result(repository, {path: before}, {path: after},
+        Check('indirect rebind', Kind.DEMONSTRATING, (path + '::test_observer',), proof=proof))
+    assert results[0].verdict == Verdict.FAIL, results
+    assert 'proof_subject_integrity' in results[0].tests[0].message, results
+    assert path in results[0].tests[0].message and 'helper' in results[0].tests[0].message, results
