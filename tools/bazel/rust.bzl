@@ -44,7 +44,7 @@ _GATE_GROUPS = {"tl3-controller/github": ["flow", "notices"]}
 
 # These custom harnesses select complete scenario groups through scenario_shard.rs.
 _SCENARIO_SHARDS = {
-    "tl3-controller/github-flow": 16,
+    "tl3-controller/github-flow": 32,
     "tl3-controller/github-notices": 16,
     "tl3-controller/mergify": 8,
     "tl3-controller/publishing": 38,
