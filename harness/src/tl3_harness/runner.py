@@ -40,12 +40,35 @@ class ProofSubjectIntegrityError(Exception):
 class ProofIntegrity:
     def __init__(self):
         self.bindings = {}
+        self.forcing = {}
 
     @staticmethod
-    def state(value):
+    def state(value, seen=None):
+        seen = set() if seen is None else seen
+        if id(value) in seen:
+            return ()
+        seen.add(id(value))
+        result, children = (value,), []
         if isinstance(value, types.FunctionType):
-            return (value, value.__code__, value.__defaults__, value.__kwdefaults__)
-        return (value,)
+            result += (value.__code__, value.__defaults__, value.__kwdefaults__)
+            for cell in value.__closure__ or ():
+                try:
+                    children.append(cell.cell_contents)
+                except ValueError:
+                    pass
+        if isinstance(value, (staticmethod, classmethod)):
+            children.append(value.__func__)
+        elif isinstance(value, property):
+            children.extend((value.fget, value.fset, value.fdel))
+        elif not isinstance(value, (type, types.ModuleType)):
+            try:
+                children.extend(object.__getattribute__(value, '__dict__').values())
+            except AttributeError:
+                pass
+        for child in children:
+            if not isinstance(child, type) and (callable(child) or isinstance(child, (staticmethod, classmethod, property))):
+                result += ProofIntegrity.state(child, seen)
+        return result
 
     @staticmethod
     def resolve(module, path, local, namespace):
@@ -53,32 +76,47 @@ class ProofIntegrity:
             owner, parts = local, path[len(namespace):]
         else:
             owner, parts = module, path
+        identity = id(owner)
         for part in parts[:-1]:
             if part not in owner or not isinstance(owner[part], type):
                 return None
-            owner = vars(owner[part])
-        return owner, parts[-1] if parts else None
+            identity, owner = id(owner[part]), vars(owner[part])
+        return owner, parts[-1] if parts else None, identity
 
     def __call__(self, module, local, namespace, protected, filename):
-        self.check()
+        self.check(graft=module)
         namespace = tuple(namespace)
         for path in protected:
             path = tuple(path)
             resolved = self.resolve(module, path, local, namespace)
             if resolved is None:
                 continue
-            owner, name = resolved
+            owner, name, _ = resolved
             key = (id(module), path)
             if name in owner and key not in self.bindings:
                 self.bindings[key] = (module, path, local, namespace, filename, self.state(owner[name]))
 
-    def check(self):
+    def resolved(self, record):
+        module, path, local, namespace, _, _ = record
+        return self.resolve(module, path, module, ()) or self.resolve(module, path, local, namespace)
+
+    def forced(self, owner, name):
+        self.forcing[(id(vars(owner)) if isinstance(owner, types.ModuleType) else id(owner), name)] = None
+        for record in self.bindings.values():
+            if resolved := self.resolved(record):
+                namespace, name, identity = resolved
+                if (identity, name) in self.forcing and name in namespace:
+                    self.forcing[identity, name] = self.state(namespace[name])
+
+    def check(self, *, graft=None):
         for module, path, local, namespace, filename, expected in self.bindings.values():
-            # Class locals become the actual class dictionary after its body returns.
-            resolved = self.resolve(module, path, module, ())
-            if resolved is None:
-                resolved = self.resolve(module, path, local, namespace)
-            owner, name = resolved if resolved is not None else ({}, None)
+            # Execution may change data; graft evaluation may only add names.
+            if module is not graft and not (callable(expected[0]) or isinstance(
+                    expected[0], (types.ModuleType, staticmethod, classmethod, property))):
+                continue
+            resolved = self.resolved((module, path, local, namespace, filename, expected))
+            owner, name, identity = resolved if resolved is not None else ({}, None, None)
+            expected = self.forcing.get((identity, name), expected)
             actual = self.state(owner[name]) if name in owner else ()
             if len(actual) != len(expected) or any(a is not b for a, b in zip(actual, expected)):
                 raise ProofSubjectIntegrityError(
@@ -235,6 +273,7 @@ def forcing_owner(target, patch=None):
                     raise
                 value = LocalReference(value)
                 patch.setattr(owner, name, value)
+                proof_integrity.forced(owner, name)
         owner = value
     if not isinstance(owner, LocalReference):
         ownership.repository_owner(target, owner, root)
@@ -497,6 +536,7 @@ class Reporter:
         accounting = (DelayAccounting(self.accounting_directory,
                                       (patch['target'] for patch in self.patches if 'delay_seconds' in patch))
                       if self.accounting_directory is not None else None)
+        previous = proof_integrity.forcing.copy()
         try:
             with pytest.MonkeyPatch.context() as patch:
                 for forcing in self.patches:
@@ -510,8 +550,10 @@ class Reporter:
                         raise
                     patch.setattr(owner, name, forced_value(owner, name, mode, argument,
                                                             accounting=accounting, target=target))
+                    proof_integrity.forced(owner, name)
                 yield
         finally:
+            proof_integrity.forcing = previous
             if accounting is not None:
                 try:
                     self.target_hits[request.node.nodeid] = accounting.finish()
