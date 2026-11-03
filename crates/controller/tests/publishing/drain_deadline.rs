@@ -16,6 +16,7 @@ impl DrainDeadline {
     }
 
     pub fn progress(&mut self, now: Instant) {
+        self.check(now);
         self.last_progress = now;
     }
 
