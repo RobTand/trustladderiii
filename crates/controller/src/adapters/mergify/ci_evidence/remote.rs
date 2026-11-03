@@ -285,12 +285,11 @@ impl Session<'_> {
         if invocation.id.invocation_id != id {
             return Err(Gap::WrongInvocation);
         }
-        if invocation
+        if !invocation
             .repo_url
             .trim_end_matches('/')
             .trim_end_matches(".git")
-            .to_ascii_lowercase()
-            != format!("https://github.com/{repo}").to_ascii_lowercase()
+            .eq_ignore_ascii_case(&format!("https://github.com/{repo}"))
         {
             return Err(Gap::WrongRepository);
         }
