@@ -56,7 +56,7 @@ test-files = ["tests/**/*.py"]
 Slice one accepts `python -m pytest` and `python3 -m pytest`. The trusted runner
 invokes the installed pytest module. Pytest reads its repository settings as
 usual. `test-files` uses Python's `PurePath.full_match` patterns. These patterns
-identify all test edits to apply to the demonstrating base. They must exclude
+identify the observer definitions to graft onto the demonstrating base. They must exclude
 production files. The harness rejects changes to pytest configuration,
 `pyproject.toml`, tox, nox, and any `conftest.py` file. It never copies
 `conftest.py` into the demonstrating base. The caller must keep its installed
@@ -228,7 +228,7 @@ only the checked prefix".
 
 ## Verdict rules
 
-Demonstrating checks run the head's test edits against the base production
+Demonstrating checks run the head's named observer definitions against the base subject
 code. Every named test must fail there with a call-phase assertion and pass
 on the head. A setup assertion does not count. The state table also permits
 a missing name added by the change. The harness recognizes a call-phase
@@ -243,14 +243,14 @@ a skipped, missing, or uncollected test. A passing head also cannot excuse an
 unavailable base test. Behavior-preserving checks require passes on both trees.
 
 Reproducing checks use `Kind.REPRODUCING` and require the `reviewed` commit
-argument to `run_checks`. They run the fix round's test edits against that
+argument to `run_checks`. They run the fix round's named observers against that
 commit's production code, then require the tests to pass on the fixed head.
 Their failure rules match demonstrating checks. Setup errors, runtime errors,
 skips, missing tests and uncollected tests fail. In a reproducing result, `base`
 records the reviewed tree's outcome. Other check kinds still use the original
 base. After a clean rebase, the controller replays the reviewed state onto the new
 base and retains it under an owned ref. The before tree uses that rebased
-state, including upstream test configuration, with only the round's test edits.
+state, including upstream test configuration, with only the round's named observers and new observer support.
 If that replay conflicts, the controller drops the reproducing checks and
 supplies a reason for the next review to judge. Ordinary checks still run.
 
@@ -298,7 +298,8 @@ runner sets the variables before pytest starts. An autouse fixture applies the
 patches before the test's own fixtures and undoes them after, so the test's own
 monkeypatches win while it runs. A target resolves only when the object that
 owns the attribute is a module whose file is in the checkout, or a class
-defined in one. Pytest, the standard library and the reporter can't be patched.
+defined in one. A repository module's local stdlib reference is replaced with a private
+proxy. Pytest, shared stdlib state and the reporter cannot be patched.
 A target that doesn't resolve is a `ForcingError` in setup, and the check
 reports that the plan's forcing could not be applied.
 
@@ -578,3 +579,39 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
 
 Use `pbwait.py --endings --until cleaned` and inspect the terminal status,
 verified logs and CAS receipt before accepting the result.
+
+## Subject and observer proof
+
+Approved by [Rob, 2026-11-03](https://github.com/RobTand/trustladderiii/issues/645):
+"You may update the proof rule accordingly so that fixes to flaky tests are allowed."
+
+A subject is the code whose behavior changes. It may be production code, a test,
+a helper or a fixture. Observers are the assertions that demonstrate the bug.
+RED runs the head observer against the base subject and fails for the declared
+reason. GREEN runs the same observer against the head subject and passes.
+Unchanged tests remain regression controls. A source partition may explicitly
+name subjects and new observer support; check selectors name observers. Starting
+from base, trusted assembly grafts only named observers and new support, carrying
+needed missing head imports. It never overlays complete existing test files.
+Decorators, class context and repository fixtures use ordinary Python source,
+not model-written invocation recipes. Missing dependencies name the module and
+symbol in a repairable refusal. Subject/support overlap and replacement of an
+existing subject by observer support are refused.
+
+Planner rehearsal, maker base runs and independent Checking use one assembler.
+Receipts bind the source trees, staged tree, subjects, observers and declaration.
+An explicit assertion proof declares the exact call-phase assertion message;
+a different failure cannot supply RED. Forcing and declared-symptom checks
+without a source partition retain the original base test as their subject and
+the trusted pytest outcome as observer. Existing declared-symptom campaigns keep
+their fixed bounds and exact exception/node/phase requirements.
+
+Forcing may replace a subject module's local stdlib reference with a private
+proxy for the duration of the check. It cannot patch shared stdlib state or an
+owner outside the served repository. The planner receives the authoritative
+5-second per-call and 10-second per-test delay limits, shared across targets and
+forks and reset each pytest test. Receipts report applied delay and exhaustion
+separately from invocation counts. Frozen regression controls, protected paths
+and configuration review guards remain. No kernel transition, fail-fast, retry,
+credit or incident rule changes. This replaces the helper target/observer,
+literal argument, setup-function and fixture-injection encodings of #549.

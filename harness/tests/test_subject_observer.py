@@ -230,3 +230,34 @@ def test_projection_cannot_name_an_outside_repository_subject():
     assert proof_type is not None, 'the proof declaration validates source identities at its boundary'
     with pytest.raises(model.HarnessInputError, match='relative'):
         proof_type.parse({'subjects': ['../outside.py::helper'], 'observer_support': [], 'red_message': 'expected'})
+
+
+def test_new_fixture_support_uses_real_pytest_context(repository):
+    proof = model.Proof(('tests/test_queue.py::_execute_mover',),
+                        ('tests/test_queue.py::world',), 'diagnostic lacks failed outcome')
+    support = '\nimport pytest\n@pytest.fixture\ndef world(tmp_path):\n    return Queue(tmp_path)\n'
+    observer = OBSERVER.replace('test_diagnostic(tmp_path)', 'test_diagnostic(world)').replace('q = Queue(tmp_path)', 'q = world')
+    results, _, _ = round_result(repository, {'tests/test_queue.py': BASE},
+        {'tests/test_queue.py': HEAD + support + observer}, Check('fixture observer', Kind.DEMONSTRATING, (NODE,), proof=proof))
+    assert results[0].verdict == Verdict.PASS, results
+    assert results[0].proof['support_sha256']['tests/test_queue.py::world']
+
+
+def test_existing_class_keeps_subject_and_accepts_new_observer_method(repository):
+    before = 'class TestWorld:\n    def value(self): return "old"\n'
+    after = before.replace('"old"', '"new"') + '\n    def test_value(self):\n        assert self.value() == "new", "old world"\n'
+    proof = model.Proof(('tests/test_world.py::TestWorld::value',), (), 'old world')
+    results, _, _ = round_result(repository, {'tests/test_world.py': before}, {'tests/test_world.py': after},
+        Check('class observer', Kind.DEMONSTRATING, ('tests/test_world.py::TestWorld::test_value',), proof=proof))
+    assert results[0].verdict == Verdict.PASS, results
+
+
+def test_explicit_fixture_subject_keeps_base_conftest(repository):
+    before = {'tests/conftest.py': 'import pytest\n@pytest.fixture\ndef value(): return "old"\n',
+              'tests/test_fixture.py': 'def test_value(value): assert value == "old"\n'}
+    after = {name: source.replace('"old"', '"new"') for name, source in before.items()}
+    after['tests/test_fixture.py'] = 'def test_value(value):\n    assert value == "new", "old fixture"\n'
+    proof = model.Proof(('tests/conftest.py::value',), (), 'old fixture')
+    results, _, _ = round_result(repository, before, after,
+        Check('fixture subject', Kind.DEMONSTRATING, ('tests/test_fixture.py::test_value',), proof=proof))
+    assert results[0].verdict == Verdict.PASS, results

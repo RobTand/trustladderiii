@@ -44,7 +44,7 @@ class ActionGitTests(unittest.TestCase):
 Check = lambda *a: a
 Container = lambda image, *, exec_scratch=False: (image, exec_scratch)
 Forcing = None
-HelperEvidence = None
+Proof = None
 Kind = lambda x: x
 class HarnessInputError(ValueError): pass
 def run_checks(repo, *a, **kw):

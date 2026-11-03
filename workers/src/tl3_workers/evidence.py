@@ -1,6 +1,6 @@
 """Compare a request's evidence with the installed tools, without substituting proof."""
 
-from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT, RESERVED_ENVIRONMENT, RESERVED_PREFIXES
+from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT, RESERVED_ENVIRONMENT, RESERVED_PREFIXES, MAX_DELAY_SECONDS, MAX_TOTAL_DELAY_SECONDS
 
 
 class EvidenceContractError(ValueError):
@@ -13,6 +13,8 @@ class EvidenceContractError(ValueError):
 def forcing_capabilities(cpus=1):
     """Code-owned model context, independent of operator-selected executor support."""
     return {
+        "delay": {"per_call_seconds": MAX_DELAY_SECONDS, "per_test_seconds": MAX_TOTAL_DELAY_SECONDS,
+                  "shared_across": ["targets", "forks"], "reset": "each pytest test"},
         "reserved_environment": sorted(RESERVED_ENVIRONMENT),
         "reserved_prefixes": list(RESERVED_PREFIXES),
         "runner_environment": {name: str(cpus) for name in NATIVE_THREAD_ENVIRONMENT},
@@ -36,7 +38,9 @@ def forcing_guidance(cpus=1):
             f"Represent the configured bound with runner_features=[{contract['runner_feature']}] on "
             "prismabuild_pytest and retain its required run artifacts. Check tool_capabilities for support. "
             "forced_reproduction.environment describes only symptom mutations. "
-            "A delay patch can use an empty environment. The reviewer still judges causal relevance "
+            f"Delay is bounded to {contract['delay']['per_call_seconds']} seconds per call and "
+            f"{contract['delay']['per_test_seconds']} seconds per pytest test, shared across targets and forks; "
+            "the budget resets each pytest test. A delay patch can use an empty environment. The reviewer still judges causal relevance "
             "and the harness still requires forced base failure and head passes with and without forcing. "
             "Never claim a future run has already supplied evidence. "
             + contract["path_depth"]["reason"]
@@ -111,23 +115,13 @@ def preflight(inputs, reply, *, planning=False):
         return
     if 'evidence_contract' not in reply:
         raise EvidenceContractError()
-    helper_checks = [check for check in reply.get('checks', []) if 'helper_evidence' in check] if planning else []
-    if helper_checks:
+    if planning and any('proof' in check for check in reply.get('checks', [])):
         reply['evidence_contract'].append({
-            'requirement': 'Observe the real old and new test helper with identical new regression assertions.',
+            'requirement': 'Run the head observer against the base subject and the head subject.',
             'provenance': {'kind': 'method'},
             'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
-            'artifacts': ['cas_receipt', 'terminal_verdict'], 'methods': ['helper_target_observer'],
+            'artifacts': ['cas_receipt', 'terminal_verdict'], 'methods': ['subject_observer'],
             'protected_files': []})
-        if any('$setup' in value for check in helper_checks
-               for case in check['helper_evidence'].get('failure_cases', [])
-               for value in [*case['args'], *case['kwargs'].values()] if isinstance(value, dict)):
-            reply['evidence_contract'].append({
-                'requirement': 'Construct helper arguments with unchanged existing repository setup functions.',
-                'provenance': {'kind': 'method'},
-                'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
-                'artifacts': ['cas_receipt', 'terminal_verdict'],
-                'methods': ['helper_target_observer.setup_function'], 'protected_files': []})
     if planning and any('declared_symptom' in check for check in reply.get('checks', [])):
         reply['evidence_contract'].append({
             'requirement': 'Observe the declared exception at the original node and phase in a fixed campaign.',
@@ -149,11 +143,10 @@ def preflight(inputs, reply, *, planning=False):
                 contract.append(requirement)
     errors = list(branch_errors)
     for requirement in contract:
-        if (planning and reply.get('kind') == 'leaf'
-                and requirement.get('provenance', {}).get('kind') == 'source'
-                and 'helper_target_observer' in requirement['methods'] and not helper_checks):
-            errors.append(f'Source proof obligation: {requirement["requirement"]} '
-                          'Explicit source method helper_target_observer requires a compatible helper check.')
+        for method in requirement['methods']:
+            if method in ('helper_target_observer', 'helper_target_observer.setup_function'):
+                errors.append(f'Unsupported evidence requirement: {requirement["requirement"]} '
+                              f'(removed proof encoding {method}; source obligation retained).')
         candidates = []
         for capability in inputs['tool_capabilities']:
             missing = [f'{key}={requirement[key]}' for key in ('tool', 'executor')

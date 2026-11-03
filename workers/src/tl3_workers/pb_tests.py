@@ -12,11 +12,12 @@ import sys
 import tempfile
 
 from tl3_harness import execution
-from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT
+from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT, Check, Kind, Proof, ProofRefusal, Forcing, ALWAYS_CHECK
+from tl3_harness.proof import assemble_proof
 from tl3_harness.node_ids import selects
 from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
 from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, OUTCOMES, bounded, infrastructure, options
-from tl3_harness.trees import export
+from tl3_harness.trees import export, configuration
 
 
 @dataclass(frozen=True)
@@ -64,26 +65,42 @@ def _priority(priority):
     return priority
 
 
-def _stage(worktree, root, base_sha=None, *, action="test_tool"):
+def _stage(worktree, root, base_sha=None, *, action="test_tool", checks=(), forcing=None, declared_symptom=None, selected=()):
     harness = Path(execution.__file__).resolve().parent
     owner = os.fstat(worktree._root)
     if any(os.path.samestat(parent.stat(), owner) for parent in (harness, *harness.parents)):
         raise ValueError("Install the trusted harness outside the role worktree")
     checkout = root / "checkout"
+    head = root / 'head-source' if base_sha is not None else checkout
+    head.mkdir()
+    with worktree._directory(()) as directory:
+        for name, is_dir in worktree._walk(directory):
+            target = head / name
+            if is_dir:
+                target.mkdir()
+            else:
+                with worktree._file(name) as source, target.open('wb') as destination:
+                    shutil.copyfileobj(source.buffer, destination)
+                    mode = os.fstat(source.fileno()).st_mode
+                    os.fchmod(destination.fileno(), 0o755 if mode & 0o100 else 0o644)
     if base_sha is not None:
-        export(worktree.test_checkout, base_sha, checkout)
-    else:
-        checkout.mkdir()
-        with worktree._directory(()) as directory:
-            for name, is_dir in worktree._walk(directory):
-                target = checkout / name
-                if is_dir:
-                    target.mkdir()
-                else:
-                    with worktree._file(name) as source, target.open("wb") as destination:
-                        shutil.copyfileobj(source.buffer, destination)
-                        mode = os.fstat(source.fileno()).st_mode
-                        os.fchmod(destination.fileno(), 0o755 if mode & 0o100 else 0o644)
+        base = root / 'base-source'
+        export(worktree.test_checkout, base_sha, base)
+        proving = [check for check in checks if check['kind'] in ('demonstrating', 'reproducing')]
+        declarations = [Proof.parse(check['proof']) for check in proving if check.get('proof')]
+        tests = tuple(dict.fromkeys(test for check in proving for test in check['tests']))
+        proof = (Proof(tuple(dict.fromkeys(unit for item in declarations for unit in item.subjects)),
+                       tuple(dict.fromkeys(unit for item in declarations for unit in item.observer_support)),
+                       declarations[0].red_message) if declarations else None)
+        # Planner rehearsal has no edited head observer yet. The trusted pytest
+        # outcome observes the original test subject, through this same path.
+        projection_forcing = forcing or next((Forcing.parse(item['forcing']) for item in proving if item.get('forcing')), None)
+        check = Check('development proof' if proving or forcing or declared_symptom else ALWAYS_CHECK, Kind.DEMONSTRATING if proving or forcing or declared_symptom else Kind.REGRESSION,
+                      tests or selected or ('_tl3_unselected.py::test_outcome',), projection_forcing, proof, declared_symptom)
+        receipt = assemble_proof(base, head if proving else base, checkout, check, configuration(base) if proving else {})
+        (root / 'proof.json').write_text(json.dumps(receipt, sort_keys=True))
+        shutil.rmtree(base)
+        shutil.rmtree(head)
     trusted = root / "trusted"
     trusted.mkdir()
     shutil.copytree(harness, trusted / "tl3_harness",
@@ -245,7 +262,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
     regressions = tuple(test for check in getattr(worktree, "test_checks", ())
                         if check["kind"] == "regression" for test in check["tests"])
 
-    def wait(key, base, base_sha, tree, selected):
+    def wait(key, base, base_sha, tree, selected, proof):
         # pbwait's observation allowance is not an execution deadline.
         # Reattach to the same action whenever that allowance expires.
         while True:
@@ -276,8 +293,10 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                     result = _summary(endings[0], key)
                 if base:
                     result["base_sha"] = base_sha
-                    result["base_semantics"] = "untouched_base"
+                    result["base_semantics"] = "base_subject_head_observer" if proof and proof["mode"] == "head-observer" else "untouched_base"
                     result["demonstrating_proof"] = "pending_checking"
+                    if result["status"] == "completed" and result.get("proof") != proof:
+                        raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "proof_mismatch")
                 if tree is not None:
                     result["tree"] = tree
                 if forcing is not None and result["status"] == "completed" and (
@@ -305,14 +324,19 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                 return infrastructure("The role did not supply a check base and checkout.")
             with tempfile.TemporaryDirectory(prefix="tl3-test-input-") as temporary:
                 root = Path(temporary)
-                tree = _stage(worktree, root, base_sha)
+                checks = [check for check in getattr(worktree, 'test_checks', ())
+                          if any(selects(selector, test) or selects(test, selector)
+                                 for selector in selected for test in check['tests'])]
+                tree = _stage(worktree, root, base_sha, checks=checks, forcing=forcing,
+                              declared_symptom=declared_symptom, selected=selected)
+                proof = json.loads((root / 'proof.json').read_text()) if base else None
                 contract = {"tree": tree, "trusted": _git(root, "write-tree", "--prefix=trusted/").strip(),
                             "image": settings.image, "cpus": settings.cpus, "mem_gb": settings.mem_gb,
                             "quiet_seconds": settings.quiet_seconds, "exec_scratch": settings.exec_scratch,
                             "selectors": selected, "base_sha": base_sha, "repeat": repeat,
                             "parallel": parallel, "priority": priority, "timeout_seconds": timeout_seconds,
                             "forcing": forcing.as_json() if forcing is not None else None,
-                            "declared_symptom": declared_symptom}
+                            "declared_symptom": declared_symptom, "proof": proof}
                 identity = hashlib.sha256(json.dumps(contract, sort_keys=True).encode()).hexdigest()
                 worktree.pb_identity = identity
                 # Stage first. An old checkpoint is usable only for this immutable
@@ -327,7 +351,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                     if not isinstance(key, str) or not re.fullmatch("[0-9a-f]{64}", key):
                         raise ValueError("Invalid checkpoint action key")
                     phase = "retrieval"
-                    return wait(key, base, base_sha, tree, selected)
+                    return wait(key, base, base_sha, tree, selected, proof)
                 # Each xdist worker reserves a core and the image's memory.
                 command = [sys.executable, str(Path(settings.tools_path) / "pbrun.py"),
                            "--cwd", str(root), "--anywhere", "--cpus", str(max(settings.cpus, parallel)),
@@ -365,8 +389,12 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                     raise ValueError("PrismaBuild returned an invalid action key")
                 getattr(worktree, "pb_submitted", lambda key, base, tree: None)(key, base, tree)
                 phase = "retrieval"
-                result = wait(key, base, base_sha, tree, selected)
+                result = wait(key, base, base_sha, tree, selected, proof)
                 return result
+        except ProofRefusal as error:
+            return {'status': 'not_available', 'message': str(error), 'tests': [],
+                    'totals': dict.fromkeys(OUTCOMES, 0), 'note': '',
+                    'proof_refusal': {'module': error.module, 'symbol': error.symbol, 'reason': error.reason}}
         except ExecutionFailure as failure:
             result = infrastructure(failure.message())
             result.update(execution=failure.as_json(), selectors=list(selected))

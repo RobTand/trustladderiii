@@ -377,6 +377,8 @@ for line in run.stdout.splitlines():
     record = json.loads(line)
     if record["event"] == "result":
         summary.add(record["test"], record["outcome"], record["message"])
+if (root / 'proof.json').is_file():
+    summary.result['proof'] = json.loads((root / 'proof.json').read_text())
 (here / "response.json").write_text(json.dumps(summary.result))
 record = here / "submissions.json"
 submissions = json.loads(record.read_text()) if record.exists() else []
@@ -481,7 +483,7 @@ def test_request_158_plain_base_is_advisory_and_checking_owns_overlay(
         assert current["totals"]["passed"] == 1, current
         assert result.tests[0].base == Outcome.ASSERTION
         assert result.tests[0].head == Outcome.PASSED
-        assert observed["demonstrating"] == observed["head"]
+        assert observed["proof-0"] == observed["head"]
     assert baseline["base_semantics"] == "untouched_base"
     assert baseline["demonstrating_proof"] == "pending_checking"
 
@@ -2108,45 +2110,24 @@ def test_planner_explores_before_final_reply_without_format_repair(rehearsal, mo
 
 
 @pytest.mark.parametrize('module,attribute', [('time', 'monotonic'), ('select', 'select')])
-def test_external_alias_owner_refused_before_admission_and_survives_stop(
-        rehearsal, monkeypatch, module, attribute):
-    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-    from langchain_core.messages import AIMessage
-    from tl3_workers import runtime
+def test_module_local_external_alias_reaches_runtime_import_validation(rehearsal, module, attribute):
     ledger, root, inputs, calls = rehearsal
     (root / 'pkg').mkdir()
     (root / 'pkg/__init__.py').write_text('')
     (root / 'pkg/mod.py').write_text(
         f'import {module}\nraise RuntimeError("served imports must not run in preflight")\n')
     git(root, 'add', '.')
-    git(root, 'commit', '-qm', 'stdlib alias')
+    git(root, 'commit', '-qm', 'local alias with import failure')
     inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
     ledger = ForcingRehearsals(ledger.worktree, inputs)
     target = f'pkg.mod.{module}.{attribute}'
-    forcing = {'symptom': 'A global alias is unsupported.', 'patches': [{'target': target, 'returns': 1000}]}
+    forcing = {'symptom': 'The local alias needs runtime validation.', 'patches': [{'target': target, 'returns': 1000}]}
     result = ledger.run([NODE], forcing)
-    assert calls == [], 'resolved external aliases must be refused before any rehearsal action'
+    assert len(calls) == 2, 'static inspection must not execute the served module'
     assert result['status'] == 'refused'
-    assert result['refusal'] == {'phase': 'forcing_validation', 'target': target,
-                                  'resolved_module': module, 'owner_category': 'external_module',
-                                  'reason': 'outside_served_repository'}
-    assert module in result['message'] and target in result['message']
-    assert ledger.run([NODE], deepcopy(forcing)) == result and calls == []
-    model = FakeMessagesListChatModel(responses=[
-        AIMessage(content='', tool_calls=[{'name': 'rehearse_forcing', 'id': 'alias',
-                                          'args': {'tests': [NODE], 'forcing': forcing}}]),
-        AIMessage(content='malformed final after unsupported capability'),
-    ])
-    monkeypatch.setattr(runtime, 'create_model', lambda _: model)
-    request = {'role': 'planner', 'worktree': str(root), 'inputs': inputs,
-               'operation': {'node': 1, 'generation': 0, 'kind': 'planning'},
-               'model': {'name': 'fixture', 'effort': 'high', 'budget_tokens': 32000}}
-    events = []
-    runtime.run(request, events.append)
-    reply = events[-1]['reply']
-    assert reply['kind'] == 'cant_meet' and target in reply['report'] and module in reply['report']
-    assert reply['forcing_rehearsals'][0]['refusal'] == result['refusal']
-    assert calls == []
+    assert result['refusal']['reason'] == 'import_failure'
+    assert result['refusal']['target'] == target
+    assert ledger.run([NODE], deepcopy(forcing)) == result and len(calls) == 2
 
 
 # PR #603 review: execution dedupe and final proof binding have different contracts.
@@ -2230,9 +2211,6 @@ def test_inherited_repository_method_reaches_rehearsal(rehearsal):
 @pytest.mark.parametrize('binding', ['conditional_repository', 'dynamic_repository', 'dynamic_external',
                                      'class_global_repository'])
 def test_uncertain_owner_uses_runtime_guard_and_preserves_typed_stop(rehearsal, monkeypatch, binding):
-    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-    from langchain_core.messages import AIMessage
-    from tl3_workers import runtime
     ledger, root, inputs, calls = rehearsal
     (root / 'pkg').mkdir()
     (root / 'pkg/__init__.py').write_text('')
@@ -2256,31 +2234,7 @@ def test_uncertain_owner_uses_runtime_guard_and_preserves_typed_stop(rehearsal, 
                'patches': [{'target': target, 'returns': 0}]}
     result = ledger.run([NODE], forcing)
     assert len(calls) == 2, 'uncertain static owners must reach the admitted runtime guard'
-    if binding != 'dynamic_external':
-        assert result['status'] == 'validated', result
-        return
-    refusal = {'phase': 'forcing_validation', 'target': target, 'resolved_module': 'time',
-               'owner_category': 'external_module', 'reason': 'outside_served_repository'}
-    assert result['status'] == 'refused' and result['refusal'] == refusal
-    assert result['forced']['tests'][0]['forcing_refusal'] == refusal
-    assert result['forced']['tests'][0]['outcome'] == 'error'
-    assert 'time' in result['message'] and 'outside_served_repository' in result['message']
-    model = FakeMessagesListChatModel(responses=[
-        AIMessage(content='', tool_calls=[{'name': 'rehearse_forcing', 'id': 'dynamic',
-                                          'args': {'tests': [NODE], 'forcing': forcing}}]),
-        AIMessage(content='malformed final after runtime ownership refusal'),
-    ])
-    monkeypatch.setattr(runtime, 'create_model', lambda _: model)
-    request = {'role': 'planner', 'worktree': str(root), 'inputs': inputs,
-               'operation': {'node': 1, 'generation': 0, 'kind': 'planning'},
-               'model': {'name': 'fixture', 'effort': 'high', 'budget_tokens': 32000}}
-    events = []
-    runtime.run(request, events.append)
-    reply = events[-1]['reply']
-    assert reply['kind'] == 'cant_meet' and target in reply['report']
-    assert 'outside_served_repository' in reply['report'] and 'time' in reply['report']
-    assert reply['forcing_rehearsals'][0]['refusal'] == refusal
-    assert len(calls) == 4, 'a new planner ledger runs once; the guard still refuses the global owner'
+    assert result['status'] == 'validated', result
 
 
 def test_declared_symptom_rehearsal_binds_declaration_and_fixed_campaign(rehearsal):

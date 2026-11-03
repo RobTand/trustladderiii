@@ -1699,23 +1699,28 @@ fn repository_always_tests_accepts_twenty_entries_and_names_the_limit_error() {
 }
 
 #[test]
-fn evidence_tools_support_helper_target_observer() {
+fn evidence_tools_support_subject_observer() {
     let config = Config::parse(EXAMPLE).unwrap();
     assert!(
         config.planning.tool_capabilities[0]
             .methods
-            .contains(&"helper_target_observer".into())
+            .contains(&"subject_observer".into())
     );
 }
 
 #[test]
-fn evidence_tools_support_existing_helper_setup_functions() {
+fn evidence_tools_do_not_advertise_retired_helper_encodings() {
     let config = Config::parse(EXAMPLE).unwrap();
-    assert!(
-        config.planning.tool_capabilities[0]
-            .methods
-            .contains(&"helper_target_observer.setup_function".into())
-    );
+    for method in [
+        "helper_target_observer",
+        "helper_target_observer.setup_function",
+    ] {
+        assert!(
+            !config.planning.tool_capabilities[0]
+                .methods
+                .contains(&method.into())
+        );
+    }
 }
 
 #[test]

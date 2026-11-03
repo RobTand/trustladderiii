@@ -161,9 +161,9 @@ those marked for review. Return exactly one of these proposals:
   so the harness refuses an edit to a test they name. If the change edits only
   tests, such as a deflake that patches the flaky test, an ordinary
   demonstrating check can't show it, because the base run applies the leaf's
-  test edits and runs the same test. A change to tests alone needs a forced reproduction (Q55, #393)
-  when it edits a named flaky test. A deterministic helper fix can instead use
-  helper target/observer evidence. If neither mode applies, return can't meet. State no_design_questions and lands_on_its_own
+  named head observers against base subjects through the shared assembler. A
+  changed test needs separate observer assertions, supported forcing, or a declared
+  symptom. State no_design_questions and lands_on_its_own
   only when true. If either is false, return can't meet with the unresolved
   question. In slice one, avoid CI, Mergify and test configuration, including
   conftest.py, pytest settings, tox, nox and test scripts called by CI. Both
@@ -284,8 +284,7 @@ and require the run artifacts; do not label it forced_reproduction.environment
 or place it in forcing.environment. Reserved names and prefixes come from
 forcing_capabilities and cannot be overridden. These capabilities describe what
 a future run can prove, never checks already completed.
-Its methods are head, base_head, red_green, declared_symptom, helper_target_observer,
-helper_target_observer.setup_function, forced_reproduction.environment and
+Its methods are head, base_head, red_green, declared_symptom, subject_observer, forced_reproduction.environment and
 forced_reproduction.patches. Q55 environment and Python patches do not implement
 a pinned CPU artificial contention wrapper. BuildBuddy Remote Bazel evidence
 requires executor buildbuddy_remote_bazel, artifact invocation_url and, when
@@ -315,92 +314,32 @@ omits a source obligation or makes a chosen method part of a goal. Re-ingest
 corrects that reading. Preserve a method explicitly required by the source,
 with its provenance, even if a different method could prove the behavior.
 
-Choose evidence from the issue's proof obligations. Do not require
-helper_target_observer solely because the target is in a test file. Consider an
-ordinary failing test first. If ordinary test-file staging would erase RED,
-consider permitted environment forcings as well as repository Python patches on
-an existing base test before selecting helper_target_observer. A supported Q55
-forcing can itself supply required assertion RED. It must recreate the request's
-actual condition: the real unchanged old test fails by assertion, and the new
-test passes on head both with and without forcing. Run the existing bounded
-rehearse_forcing before committing a forced leaf. Ingest and audit cannot run
-it; leave candidate methods replaceable for planner rehearsal. Preserve the
-existing eight-candidate, two-action-per-candidate caps and refusal feedback.
-Do not accept intermittent, setup-error or non-assertion RED, a passing smoke,
-or an unrelated assertion. Independent Checking and review remain required.
+The subject/observer rule (#645, Q27/Q55) applies to every proof. RED runs
+head observers against base subjects; GREEN runs the same observers against
+head subjects. node_ids name the observers. Every other base definition stays
+on base, including helpers, fixtures, imports and decorated class context.
+For an explicit partition, use proof with subjects (relative Python paths or
+path::qualified::definition), observer_support (new source definitions or new
+modules needed only by observers), and red_message (the exact call assertion
+message required on base). Module-level imports needed by observers are carried
+automatically when their bindings are absent from base. New fixtures and helper
+dependencies belong in observer_support. A missing dependency refusal names its
+module and symbol. Never put the subject or a changed existing helper in support.
+Use real repository pytest setup and ordinary regression assertions for existing
+invariants. There are no literal-argument, setup-call or fixture-injection recipes.
+For forcing or declared symptoms without an explicit partition, the original
+base test is the subject and the trusted pytest outcome is its observer. A module's
+local stdlib reference may be forced through a private proxy; global stdlib
+patches remain refused. forcing_capabilities.delay declares per-call and per-test
+limits, shared across targets and forks and reset for each pytest test. Read the
+applied delay and exhaustion reports; hit counts alone do not prove applied delay.
+Planner rehearsal, maker base runs and Checking use the same source assembler.
+Independent Checking and review still judge the declared reason and source goals.
+Frozen regression controls and protected paths retain their existing rules.
 
-Select helper_target_observer only when no ordinary supported proof route can
-meet the source obligation, or the source explicitly requires that method.
-Mark this selection as a method choice in evidence_contract. Executor capability
-alone does not establish target suitability. Inspect the actual target: it must
-be an existing undecorated synchronous top-level function with an assertion
-failure contract reached by the declared cases. A dictionary-returning helper
-such as _eio is not an assertion-preservation target. A decorated parametrized
-test is outside this helper mode's supported shape. Preserve its real assertion
-through a supported forcing when one exists; do not rename the dictionary
-constructor as the old expectation.
-
-TMPDIR, TEMP, TMP and every PYTEST-prefixed name remain reserved. Never propose
-raw TMPDIR or PYTEST_DEBUG_TEMPROOT mutations as an admissible forcing. No bounded
-sandbox-local temporary-root/path-depth forcing is installed. If no permitted
-environment setting or repository patch can create that condition, report this
-exact missing capability. A precise refusal names the remaining source obligation,
-the unsupported condition or target shape, and any bounded rehearsal feedback.
-Do not invent a root control or claim an unrun candidate passed. Do not ask the
-issue owner to remove a proof method they never requested.
-
-For method `helper_target_observer`, use an unforced demonstrating check with
-`helper_evidence: {"target": "tests/test_helpers.py::_execute", "failure_cases":
-[{"args": [{"$attributes": {"returncode": 1, "stdout": "broken transfer"}}], "kwargs": {}}]}`. Its node_ids
-are the new observer tests. Declare the target and observer files. One such
-check per plan may name multiple observers, in the same file or a separate
-configured test file. The target must be an existing undecorated top-level
-Python function. Preserve its signature, imports and every other existing test
-definition. Add only new undecorated top-level observers. Put any new observer
-imports inside the observer. The harness appends those observers to the real
-base modules without copying the target fix. Every observer must fail by
-assertion on base and pass on head. Declare one to eight known-bad failure_cases
-with args and kwargs, at most 4096 JSON bytes total. Literal JSON values pass
-unchanged; {"$attributes": {...}} creates a SimpleNamespace argument. The trusted
-harness calls the real target and requires AssertionError on both versions.
-These cases preserve failures independently of observer assertions. Choose cases
-that exercise the helper's existing failure contract. Observer names must have
-no existing base binding, including assignment aliases. Helper evidence is not
-a Q55 forcing.
-
-For callable setup preconditions, a top-level argument may instead be
-{"$setup": "_failed_queue", "$call": "execute"}. This requires method
-helper_target_observer.setup_function. The trusted driver calls that existing
-function in the target's own pytest module and passes its return value to the
-target. The model supplies no factory arguments. TL3 injects pytest-managed
-`tmp_path` and `tmp_path_factory` by parameter name, including positional-only
-and keyword-only parameters. Other optional parameters keep their existing
-defaults. $call names one callable, replaceable method on that argument. A trusted forwarder records its real return without changing arguments
-or results. Every declared method must return before the target AssertionError
-can prove preservation. An earlier row/setup assertion or a method that raises
-before returning is an error. The driver restores methods after each case.
-Only one unambiguous, undecorated synchronous
-function already present on base is supported. It must stay unchanged with all
-other setup and dependencies. Required parameters outside the two-fixture
-allowlist, decorated fixtures, imported functions, class-based worlds, generators,
-variadics, dotted names, recipes and model-supplied code are unsupported. The
-trusted driver supplies its own fixtures even when the repository overrides them.
-Each case owns a temporary root, allows at most 16 temporary-directory allocations
-and cleans the root on success or failure. Cleanup errors invalidate preservation.
-Each function and method name is at most 128 characters and
-counts toward the existing eight-case, 4096-byte limit. Only top-level args and
-kwargs values are interpreted; nested JSON remains literal. Inspect the real
-call contract and available base setup before maker work. Report unsupported
-prerequisites precisely if no existing factory can satisfy them. Do not rewrite
-the target signature to fit the driver. Setup executes inside the existing
-admitted, network-disabled test container. Setup exceptions, including
-AssertionError, are errors and never preservation proof or observer RED. A
-target that returns success fails preservation. The case references, unchanged
-setup in the tree hashes and driver hash bind the setup semantics in receipts.
-The setup_functions receipt records each factory source hash and injected fixture
-names. A queue factory must also claim the required row; creating an empty queue
-alone cannot prove the failed execution outcome.
-
+TMPDIR, TEMP, TMP and every PYTEST-prefixed name remain reserved. No bounded
+sandbox-local temporary-root/path-depth forcing is installed. Preserve the
+remaining source obligation and report that missing capability precisely.
 
 A repository with a configured generator also supplies run_generator with executor
 prismabuild_generator. Its runner_features are git_index, scoped_outputs and
@@ -466,7 +405,7 @@ pass, with zero symptom occurrences, under identical forcing and settings. Q55
 also requires ordinary head success. No retry-until-failure or campaign extension.
 The trusted reports retain each run, bound to exact base, head, forcing, and declaration.
 A test-only repair can use this mode without overlaying the repaired helper or fixture
-onto base. It does not require helper_target_observer or change that mode's rules.
+onto base. It uses the same source assembler.
 Use capability method declared_symptom and retain cas_receipt, logs, sha, and
 terminal_verdict. Preserve every original behavior goal and the source of accepted
 clarifications; audit objects to a stale assertion-only or helper-observer contract

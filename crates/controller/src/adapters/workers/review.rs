@@ -147,7 +147,7 @@ pub(super) fn inputs(
     let forced = report["results"].as_array().is_some_and(|results| {
         results.iter().any(|r| {
             r.get("forcing").is_some()
-                || r.get("helper_evidence").is_some()
+                || r.get("proof").is_some()
                 || r.get("declared_symptom").is_some()
         })
     });
@@ -464,12 +464,10 @@ mod hostile_tests {
                     "body": body, "author": "unknown", "comments": []}}),
             )
             .unwrap();
-        let identity = json!({"target":"tests/test_a.py::_execute",
-            "base_target_sha256":"a".repeat(64), "head_target_sha256":"b".repeat(64),
-            "failure_cases":[{"args":[false],"kwargs":{}}], "failure_driver_sha256":"f".repeat(64),
-            "failure_preservation":[{"base":"passed","head":"passed"}],
-            "base_tree_sha256":"c".repeat(64), "head_tree_sha256":"d".repeat(64),
-            "observers":{"tests/test_a.py::test_a":"e".repeat(64)}});
+        let identity = json!({"rule":"subject-observer-v1", "declaration":null, "mode":"head-observer",
+            "subjects":{"tests/test_a.py::_execute":{"base":"a".repeat(64),"head":"b".repeat(64)}},
+            "source_base_tree_sha256":"f".repeat(64), "base_tree_sha256":"c".repeat(64), "head_tree_sha256":"d".repeat(64),
+            "observer_sha256":{"tests/test_a.py::test_a":"e".repeat(64)}, "support_sha256":{}});
         let review = |store: &mut Store, forcing: Option<Value>, helper: bool| {
             let mut snapshot = documents(
                 store,
@@ -495,7 +493,7 @@ mod hostile_tests {
                 check["tests"][0]["head_forced"] = json!("passed");
             }
             if helper {
-                check["helper_evidence"] = identity.clone();
+                check["proof"] = identity.clone();
             }
             report.value = json!({"base_sha": f.base, "results": [check]});
             inputs(&f.delivery(), store, &snapshot, None).unwrap()
@@ -517,7 +515,7 @@ mod hostile_tests {
         let helper = review(&mut store, None, true);
         let serialized: Value =
             serde_json::from_slice(&serde_json::to_vec(&helper).unwrap()).unwrap();
-        assert_eq!(serialized["checks"][0]["helper_evidence"], identity);
+        assert_eq!(serialized["checks"][0]["proof"], identity);
         assert_eq!(serialized["checks"][0]["tests"][0]["base"], "assertion");
         assert_eq!(serialized["checks"][0]["tests"][0]["head"], "passed");
         assert_eq!(serialized["issue"], forced["issue"]);

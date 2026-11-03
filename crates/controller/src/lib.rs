@@ -3017,7 +3017,7 @@ impl Controller {
                                 kind: serde_json::from_value(check["kind"].clone())?,
                                 tests: adapters::workers::protocol::reply_field(check, "node_ids")?,
                                 forcing: check.get("forcing").cloned(),
-                                helper_evidence: check.get("helper_evidence").cloned(),
+                                proof: check.get("proof").cloned(),
                                 declared_symptom: check.get("declared_symptom").cloned(),
                             })
                         })

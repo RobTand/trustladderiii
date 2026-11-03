@@ -85,7 +85,7 @@ receipt.
 Base receipts run the untouched base, including its original tests. Their
 base_semantics is untouched_base; they neither prove nor disprove an ordinary
 demonstrating RED. Use Checking's independent head-tests-on-base result for
-that verdict, and its separate forced or helper-evidence results for those modes.
+that verdict, and its proof receipts and forced outcomes.
 
 Block only on a supplied goal or standing rule. Each blocking finding must
 cite its exact id and kind, explain the problem, and give concrete evidence
@@ -129,55 +129,28 @@ include findings, using an empty list when there are no non-blocking concerns.
 Do not change files, run tests, publish an approval check, or decide controller
 transitions. Return only the JSON object without Markdown fences or prose.
 
-A helper_evidence check names the real existing helper as target and its tests
-as new observers. The harness preserves every base definition and appends only
-those observers. It rejects changes outside the target and observers in test
-files, including changed imports, signatures, decorators and shadow definitions.
-The base observer must fail by assertion and head must pass. Declare at least
-one known-bad invocation in helper_evidence.failure_cases. Each case is data with
-args and kwargs; literal JSON values pass unchanged, while {"$attributes": {...}}
-creates a SimpleNamespace argument. The trusted driver calls the real target and
-requires AssertionError on both base and head, independently of the observer.
-Reject assertion removal or a changed helper that makes any known-bad case pass.
-The receipt records the cases, driver hash and both preservation verdicts. Do not substitute
-an invented old helper or avoid the real helper. Inspect the actual helper call
-and observer assertions against the issue. The receipt records target source
-hashes, identical observer hashes and both staged tree hashes. Frozen existing
-regression and behavior-preserving definitions, and Q55 forcings, retain their
-existing rules.
-
-For callable setup preconditions, a top-level argument may instead be
-{"$setup": "_failed_queue", "$call": "execute"}. This requires method
-helper_target_observer.setup_function. The trusted driver calls that existing
-function in the target's own pytest module and passes its return value to the
-target. The model supplies no factory arguments. TL3 injects pytest-managed
-`tmp_path` and `tmp_path_factory` by parameter name, including positional-only
-and keyword-only parameters. Other optional parameters keep their existing
-defaults. $call names one callable, replaceable method on that argument. A trusted forwarder records its real return without changing arguments
-or results. Every declared method must return before the target AssertionError
-can prove preservation. An earlier row/setup assertion or a method that raises
-before returning is an error. The driver restores methods after each case.
-Only one unambiguous, undecorated synchronous
-function already present on base is supported. It must stay unchanged with all
-other setup and dependencies. Required parameters outside the two-fixture
-allowlist, decorated fixtures, imported functions, class-based worlds, generators,
-variadics, dotted names, recipes and model-supplied code are unsupported. The
-trusted driver supplies its own fixtures even when the repository overrides them.
-Each case owns a temporary root, allows at most 16 temporary-directory allocations
-and cleans the root on success or failure. Cleanup errors invalidate preservation.
-Each function and method name is at most 128 characters and
-counts toward the existing eight-case, 4096-byte limit. Only top-level args and
-kwargs values are interpreted; nested JSON remains literal. Inspect the real
-call contract and available base setup before maker work. Report unsupported
-prerequisites precisely if no existing factory can satisfy them. Do not rewrite
-the target signature to fit the driver. Setup executes inside the existing
-admitted, network-disabled test container. Setup exceptions, including
-AssertionError, are errors and never preservation proof or observer RED. A
-target that returns success fails preservation. The case references, unchanged
-setup in the tree hashes and driver hash bind the setup semantics in receipts.
-The setup_functions receipt records each factory source hash and injected fixture
-names. A queue factory must also claim the required row; creating an empty queue
-alone cannot prove the failed execution outcome.
+The subject/observer rule (#645, Q27/Q55) applies to every proof. RED runs
+head observers against base subjects; GREEN runs the same observers against
+head subjects. node_ids name the observers. Every other base definition stays
+on base, including helpers, fixtures, imports and decorated class context.
+For an explicit partition, use proof with subjects (relative Python paths or
+path::qualified::definition), observer_support (new source definitions or new
+modules needed only by observers), and red_message (the exact call assertion
+message required on base). Module-level imports needed by observers are carried
+automatically when their bindings are absent from base. New fixtures and helper
+dependencies belong in observer_support. A missing dependency refusal names its
+module and symbol. Never put the subject or a changed existing helper in support.
+Use real repository pytest setup and ordinary regression assertions for existing
+invariants. There are no literal-argument, setup-call or fixture-injection recipes.
+For forcing or declared symptoms without an explicit partition, the original
+base test is the subject and the trusted pytest outcome is its observer. A module's
+local stdlib reference may be forced through a private proxy; global stdlib
+patches remain refused. forcing_capabilities.delay declares per-call and per-test
+limits, shared across targets and forks and reset for each pytest test. Read the
+applied delay and exhaustion reports; hit counts alone do not prove applied delay.
+Planner rehearsal, maker base runs and Checking use the same source assembler.
+Independent Checking and review still judge the declared reason and source goals.
+Frozen regression controls and protected paths retain their existing rules.
 
 Stage ownership (#552): preserve every original request obligation. Split mixed
 implementation/scope/PR goals into atomic obligations: stage maker for edits,
@@ -236,7 +209,7 @@ pass, with zero symptom occurrences, under identical forcing and settings. Q55
 also requires ordinary head success. No retry-until-failure or campaign extension.
 The trusted reports retain each run, bound to exact base, head, forcing, and declaration.
 A test-only repair can use this mode without overlaying the repaired helper or fixture
-onto base. It does not require helper_target_observer or change that mode's rules.
+onto base. It uses the same source assembler.
 Use capability method declared_symptom and retain cas_receipt, logs, sha, and
 terminal_verdict. Preserve every original behavior goal and the source of accepted
 clarifications; audit objects to a stale assertion-only or helper-observer contract

@@ -75,9 +75,9 @@ def _checking_handoff(inputs, head, tree):
     """Describe pending ordinary proof, never infer it from development receipts."""
     if not inputs.get("check_base_sha"):
         return None
-    checks = [{"name": check["name"], "tests": check["tests"], "mode": "head_tests_on_base"}
+    checks = [{"name": check["name"], "tests": check["tests"], "mode": "base_subject_head_observer"}
               for check in inputs["plan"]["checks"] if check["kind"] == "demonstrating"
-              and check.get("forcing") is None and check.get("helper_evidence") is None
+              and check.get("forcing") is None
               and check.get("declared_symptom") is None]
     if not checks:
         return None

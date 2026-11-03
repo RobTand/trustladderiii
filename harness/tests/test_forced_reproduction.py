@@ -321,6 +321,7 @@ def test_delays_are_capped_per_test(tmp_path):
     assert sum(slept) == runner.MAX_TOTAL_DELAY_SECONDS == 10
     assert slept[:3] == [4, 4, 2]
     assert accounting.finish() == {'Owner.call': 5}
+    assert accounting.budget == {'applied_seconds': 10, 'exhausted': True}
 
 
 @pytest.mark.parametrize('reference', [

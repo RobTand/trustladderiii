@@ -1,3 +1,4 @@
+from .forcing_ownership import MAX_TOTAL_DELAY_SECONDS as MAX_TOTAL_DELAY_SECONDS
 import builtins
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -69,6 +70,7 @@ class FailureNotes(dict):
     def __init__(self):
         super().__init__()
         self.details: dict[str, Failure] = {}
+        self.delay_budget: dict[str, dict] = {}
         self.phases: dict[str, dict] = {}
 
 
@@ -76,6 +78,7 @@ FORCING_LIMIT = 8
 FORCING_TEXT = 1000
 FORCING_LITERAL_BYTES = 4096
 MAX_DELAY_SECONDS = 5
+
 PATCH_MODES = ("value", "returns", "raises", "delay_seconds")
 NATIVE_THREAD_ENVIRONMENT = {"OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
                              "OPENBLAS_NUM_THREADS": "1"}
@@ -161,66 +164,45 @@ class Forcing:
                             for target, mode, argument in self.patches]}
 
 
+class ProofRefusal(HarnessInputError):
+    """A source partition the existing tool/round repair can correct."""
+
+    def __init__(self, reason, module='', symbol=''):
+        self.reason, self.module, self.symbol = reason, module, symbol
+        super().__init__(f"Proof assembly refused {module}{'::' + symbol if symbol else ''}: {reason}.")
+
+
 @dataclass(frozen=True)
-class HelperEvidence:
-    target: str
-    failure_cases: tuple[str, ...] = ()
+class Proof:
+    subjects: tuple[str, ...]
+    observer_support: tuple[str, ...] = ()
+    red_message: str = ''
 
     def __post_init__(self):
-        if (not isinstance(self.target, str) or len(self.target) > 1000
-                or not re.fullmatch(r"[\w./-]+\.py::[A-Za-z_]\w*", self.target)
-                or self.target.startswith(("/", "-")) or ".." in self.target.split("/")
-                or self.target.split("::")[1].startswith("test_")):
-            raise HarnessInputError("helper evidence needs a relative Python path and top-level helper name")
-
-        if len(self.failure_cases) > 8 or sum(len(case.encode()) for case in self.failure_cases) > 4096:
-            raise HarnessInputError("helper failure preservation allows at most eight cases and 4096 bytes")
-        for encoded in self.failure_cases:
-            try:
-                case = json.loads(encoded)
-            except (ValueError, TypeError) as error:
-                raise HarnessInputError("helper failure cases must be JSON") from error
-            if (not isinstance(case, dict) or set(case) != {"args", "kwargs"}
-                    or not isinstance(case["args"], list) or len(case["args"]) > 16
-                    or not isinstance(case["kwargs"], dict) or len(case["kwargs"]) > 16
-                    or any(not key.isidentifier() for key in case["kwargs"])):
-                raise HarnessInputError("helper failure cases need bounded args and kwargs")
-            for value in [*case["args"], *case["kwargs"].values()]:
-                if isinstance(value, dict) and "$setup" in value:
-                    name = value["$setup"]
-                    call = value.get("$call")
-                    if (set(value) != {"$setup", "$call"} or not isinstance(name, str)
-                            or not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,127}", name)
-                            or name.startswith(("test_", "__")) or not isinstance(call, str)
-                            or not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,127}", call)
-                            or call.startswith("__")):
-                        raise HarnessInputError("$setup needs one local function and a $call method witness, "
-                                                "each at most 128 characters")
-                if isinstance(value, dict) and "$attributes" in value:
-                    if set(value) != {"$attributes"} or not isinstance(value["$attributes"], dict):
-                        raise HarnessInputError("$attributes must name one object of literal attributes")
-
-    @property
-    def setup_functions(self):
-        return tuple(dict.fromkeys(value["$setup"] for encoded in self.failure_cases
-                                   for case in [json.loads(encoded)]
-                                   for value in [*case["args"], *case["kwargs"].values()]
-                                   if isinstance(value, dict) and "$setup" in value))
+        if not self.subjects or len(self.subjects) > 16 or len(self.observer_support) > 16:
+            raise HarnessInputError('A proof names 1 to 16 subject units and at most 16 observer support units.')
+        for unit in (*self.subjects, *self.observer_support):
+            parts = unit.split('::') if isinstance(unit, str) else []
+            if (not parts or len(unit) > 1000 or not parts[0].endswith('.py')
+                    or parts[0].startswith(('/', '-')) or any(p in ('..', '.git', '') for p in parts[0].split('/'))
+                    or any(c in unit for c in ('\\', '\x00', '\n', '\r'))
+                    or any(not name.isidentifier() for name in parts[1:])):
+                raise HarnessInputError('Proof units need a relative Python path and optional qualified definition.')
+        if len(set(self.subjects)) != len(self.subjects) or len(set(self.observer_support)) != len(self.observer_support):
+            raise HarnessInputError('A proof cannot repeat source units.')
+        if not isinstance(self.red_message, str) or not 1 <= len(self.red_message) <= 160:
+            raise HarnessInputError('A proof declares the exact assertion message supplying RED, 1 to 160 characters.')
 
     @classmethod
-    def parse(cls, data):
-        if (not isinstance(data, dict) or set(data) != {"target", "failure_cases"}
-                or not isinstance(data["failure_cases"], list) or not data["failure_cases"]):
-            raise HarnessInputError("helper evidence needs a target and nonempty failure_cases")
-        try:
-            cases = tuple(json.dumps(case, sort_keys=True, separators=(",", ":"), allow_nan=False)
-                          for case in data["failure_cases"])
-        except (ValueError, TypeError) as error:
-            raise HarnessInputError("helper failure cases must be JSON literals") from error
-        return cls(data["target"], cases)
+    def parse(cls, value):
+        if (not isinstance(value, dict) or set(value) != {'subjects', 'observer_support', 'red_message'}
+                or not isinstance(value['subjects'], list) or not isinstance(value['observer_support'], list)):
+            raise HarnessInputError('A proof needs subjects, observer_support and red_message.')
+        return cls(tuple(value['subjects']), tuple(value['observer_support']), value['red_message'])
 
     def as_json(self):
-        return {"target": self.target, "failure_cases": [json.loads(case) for case in self.failure_cases]}
+        return {'subjects': list(self.subjects), 'observer_support': list(self.observer_support),
+                'red_message': self.red_message}
 
 
 @dataclass(frozen=True)
@@ -229,17 +211,17 @@ class Check:
     kind: Kind
     tests: tuple[str, ...]
     forcing: Forcing | None = None
-    helper_evidence: HelperEvidence | None = None
+    proof: Proof | None = None
     declared_symptom: dict | None = None
 
     def __post_init__(self):
         if self.declared_symptom is not None:
             validate_symptom(self.declared_symptom, self.tests)
-            if self.kind != Kind.DEMONSTRATING or self.helper_evidence is not None:
-                raise HarnessInputError('A declared symptom requires a demonstrating check without helper observers.')
-        if self.helper_evidence is not None and (self.kind != Kind.DEMONSTRATING or self.forcing is not None
-                                                or not isinstance(self.helper_evidence, HelperEvidence)):
-            raise HarnessInputError("helper evidence requires an unforced demonstrating check")
+            if self.kind != Kind.DEMONSTRATING:
+                raise HarnessInputError('A declared symptom requires a demonstrating check with the original test subject.')
+        if self.proof is not None and (self.kind not in (Kind.DEMONSTRATING, Kind.REPRODUCING)
+                                       or not isinstance(self.proof, Proof)):
+            raise HarnessInputError('A subject/observer proof requires a demonstrating or reproducing check.')
         if not self.name or not isinstance(self.kind, Kind) or not self.tests:
             raise HarnessInputError("a check needs a name, a kind and named tests")
         if self.forcing is not None and (self.kind != Kind.DEMONSTRATING or not isinstance(self.forcing, Forcing)):
@@ -275,7 +257,7 @@ class Result:
     tests: tuple[TestResult, ...]
     custody: Custody = field(default=Custody.IN_PROCESS, init=False)
     forcing: Forcing | None = None
-    helper_evidence: dict | None = None
+    proof: dict | None = None
     selection: dict | None = None
     declared_symptom: dict | None = None
     symptom_evidence: dict | None = None
@@ -376,6 +358,13 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
                                          pre_existing and after in (Outcome.ASSERTION, Outcome.ERROR))
             case Kind.BEHAVIOR_PRESERVING:
                 passed = before == after == Outcome.PASSED
+        wrong_reason = False
+        if passed and check.proof is not None and check.declared_symptom is None:
+            failure = (base_notes.details if base_notes is not None else {}).get(test)
+            wrong_reason = (failure is None or failure.phase != 'call'
+                            or failure.exception not in (f'AssertionError: {check.proof.red_message}',
+                                                         f'Failed: {check.proof.red_message}'))
+            passed = not wrong_reason
         message = "" if passed else (messages or {}).get(test, "")
         if not passed and check.forcing is not None:
             if refusal := forced_base_refusal(test, before, base_notes):
@@ -395,6 +384,8 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
             message = refusal + (f"\nOn the head: {message}" if message else "")
             if len(message) > MESSAGE_LIMIT:
                 message = message[:MESSAGE_LIMIT - len(TRUNCATED)] + TRUNCATED
+        if wrong_reason:
+            message = f'RED did not fail for the declared assertion reason: {check.proof.red_message}'
         if not passed and not message:
             message = f"Check {check.kind}: base {before}, head {after}."
         phases = {}

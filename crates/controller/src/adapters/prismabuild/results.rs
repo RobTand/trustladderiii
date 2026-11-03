@@ -73,7 +73,7 @@ struct CheckResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     forcing: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    helper_evidence: Option<serde_json::Value>,
+    proof: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     declared_symptom: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -471,7 +471,7 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             kind: Kind::Regression,
             tests: job.always_tests.clone(),
             forcing: None,
-            helper_evidence: None,
+            proof: None,
             declared_symptom: None,
         });
     }
@@ -517,60 +517,78 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
         if matches!(result.verdict, Verdict::Pass) != result.tests.iter().all(|t| t.passed) {
             return None;
         }
-        if let Some(declaration) = &check.helper_evidence {
-            if check.kind != Kind::Demonstrating || check.forcing.is_some() {
+        if let Some(identity) = &result.proof {
+            let hash = |v: &serde_json::Value| {
+                v.as_str().is_some_and(|s| {
+                    s.len() == 64
+                        && s.bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                })
+            };
+            if !matches!(check.kind, Kind::Demonstrating | Kind::Reproducing)
+                || identity["rule"] != "subject-observer-v1"
+                || identity["declaration"] != check.proof.clone().unwrap_or(serde_json::Value::Null)
+                || ![
+                    "source_base_tree_sha256",
+                    "base_tree_sha256",
+                    "head_tree_sha256",
+                ]
+                .iter()
+                .all(|key| hash(&identity[key]))
+                || !matches!(
+                    identity["mode"].as_str(),
+                    Some("head-observer" | "pytest-outcome")
+                )
+                || identity["observer_sha256"]
+                    .as_object()
+                    .is_none_or(|observers| {
+                        observers.len() != check.tests.len()
+                            || check
+                                .tests
+                                .iter()
+                                .any(|test| !observers.get(test).is_some_and(hash))
+                    })
+                || identity["subjects"].as_object().is_none_or(|subjects| {
+                    subjects.values().any(|subject| {
+                        ["base", "head"]
+                            .iter()
+                            .any(|key| !subject[key].is_null() && !hash(&subject[key]))
+                    })
+                })
+                || identity["support_sha256"]
+                    .as_object()
+                    .is_none_or(|support| support.values().any(|value| !hash(value)))
+            {
                 return None;
             }
-            if let Some(identity) = &result.helper_evidence {
-                let hash = |v: &serde_json::Value| {
-                    v.as_str().is_some_and(|s| {
-                        s.len() == 64
-                            && s.bytes()
-                                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            if let Some(declaration) = &check.proof {
+                let subjects = declaration["subjects"].as_array()?;
+                let support = declaration["observer_support"].as_array()?;
+                if subjects.is_empty()
+                    || subjects.len() > 16
+                    || support.len() > 16
+                    || declaration["red_message"]
+                        .as_str()
+                        .is_none_or(str::is_empty)
+                    || identity["subjects"].as_object()?.len() != subjects.len()
+                    || subjects.iter().any(|unit| {
+                        let value = &identity["subjects"][unit.as_str().unwrap_or("")];
+                        value.is_null() || value["base"] == value["head"]
                     })
-                };
-                if identity["target"] != declaration["target"]
-                    || [
-                        "base_target_sha256",
-                        "head_target_sha256",
-                        "base_tree_sha256",
-                        "head_tree_sha256",
-                    ]
-                    .iter()
-                    .any(|k| !hash(&identity[k]))
-                    || !hash(&identity["failure_driver_sha256"])
-                    || identity["failure_cases"] != declaration["failure_cases"]
-                    || declaration["failure_cases"]
-                        .as_array()
-                        .is_none_or(|cases| cases.is_empty() || cases.len() > 8)
-                    || identity["failure_preservation"]
-                        .as_array()
-                        .is_none_or(|items| {
-                            items.len()
-                                != declaration["failure_cases"].as_array().map_or(0, Vec::len)
-                                || (result.tests.iter().any(|t| t.passed)
-                                    && items.iter().any(|item| {
-                                        item["base"] != "passed" || item["head"] != "passed"
-                                    }))
-                        })
-                    || identity["base_target_sha256"] == identity["head_target_sha256"]
-                    || identity["base_tree_sha256"] == identity["head_tree_sha256"]
-                    || identity["observers"].as_object().is_none_or(|o| {
-                        o.len() != check.tests.len()
-                            || check.tests.iter().any(|t| !o.get(t).is_some_and(hash))
-                    })
-                    || result.tests.iter().any(|t| {
-                        t.passed
-                            && (!matches!(t._base, Outcome::Assertion)
-                                || !matches!(t._head, Outcome::Passed))
+                    || identity["support_sha256"].as_object()?.len() != support.len()
+                    || support
+                        .iter()
+                        .any(|unit| !hash(&identity["support_sha256"][unit.as_str().unwrap_or("")]))
+                    || result.tests.iter().any(|test| {
+                        test.passed
+                            && (!matches!(test._base, Outcome::Assertion)
+                                || !matches!(test._head, Outcome::Passed))
                     })
                 {
                     return None;
                 }
-            } else if result.tests.iter().any(|t| t.passed) {
-                return None;
             }
-        } else if result.helper_evidence.is_some() {
+        } else if check.proof.is_some() && result.tests.iter().any(|test| test.passed) {
             return None;
         }
         // A forced check passes only on evidence from its forced head run (#393).
