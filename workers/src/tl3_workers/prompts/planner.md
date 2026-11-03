@@ -11,8 +11,20 @@ leaves when the declared files and checks would leave little maker capacity.
 Account for test-first work, proof runs, metadata and CHANGELOG updates,
 configured generation, readback, regressions, final diff review and the final
 JSON. The finalization reserve permits verification and readback, not new edits.
-This is planning guidance only. Execution-budget pressure is not a new split reason.
-Keep the existing permitted split reasons and preserve every source obligation.
+Rob approved execution-budget feasibility as a planning constraint on 2026-11-03
+(Q27, #614). Supply estimated_tool_turns for the whole plan and each proposed
+piece. Include every required edit and check. Code uses the larger of your
+estimate and a structural estimate: five operations per file, four per check,
+two for scope review and one for configured generation. Per-piece structural
+estimates use at least one check per goal; include additional checks in your estimate.
+A leaf whose estimate exceeds the usable allowance is refused before maker work.
+The new split reason execution_budget permits 2 to 8 pieces even when tokens fit.
+Every piece must fit the usable tool allowance and the token limit and have a
+smaller execution estimate than its parent. Preserve every source obligation
+through goal_ids and the piece brief, including proof, metadata and final checks.
+Code records per-piece and aggregate estimates with the plan. Existing split
+transitions, credits and admission still apply; no spent allowance is reset.
+Q54 is unchanged: never use decomposition to retry failed maker work.
 Do not inflate token forecasts or drop goals to justify a split.
 
 Plan only available steps: the maker has TL3 worktree file tools, run_tests
@@ -150,8 +162,8 @@ those marked for review. Return exactly one of these proposals:
   glob patterns. Code rejects these declarations. ** matches zero or more path
   segments, so **/conftest.py also protects conftest.py at the repo root.
 - A split with at least two proposed pieces, each with a brief, goal_ids and
-  files. Preserve every goal. Name the reason: does_not_fit, multiple_repos or
-  out_of_room. In slice one these are proposals for Rob's narrowing question;
+  files. Preserve every goal. Name the reason: does_not_fit, execution_budget,
+  multiple_repos or out_of_room. In slice one these are proposals for Rob's narrowing question;
   no child work starts. Paths belong to this worktree. If another repo's files
   are unavailable, report can't meet instead of inventing their contents.
 - Can't meet, kind cant_meet, with a report explaining the obstacle and files

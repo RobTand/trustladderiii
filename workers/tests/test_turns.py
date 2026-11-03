@@ -195,7 +195,9 @@ def test_invalid_reply_gets_one_tool_free_repair_turn(role, request, tmp_path, m
     runtime.run(doc, events.append)
     assert events[-1]["event"] == "reply"
     repair, offered = model.calls[-1]
-    assert isinstance(repair[-1], HumanMessage) and message in repair[-1].text
+    # A code-owned budget notice may follow the repair instruction.
+    instruction = [m for m in repair if isinstance(m, HumanMessage)][-1]
+    assert message in instruction.text
     assert not offered, "the repair turn offers no tools"
     if tool:
         assert model.calls[0][1], "earlier turns keep their tools"
@@ -362,7 +364,8 @@ def test_resume_warns_that_an_interrupted_file_tool_may_have_run(maker_request, 
     model, _ = rerun(maker_request, monkeypatch, [reply(test_maker.DONE)])
     resumed = model.calls[0][0]
     assert_tool_pairs(resumed)
-    assert isinstance(resumed[-1], HumanMessage) and "may have run" in resumed[-1].text
+    instruction = [m for m in resumed if isinstance(m, HumanMessage)][-1]
+    assert "may have run" in instruction.text
 
 
 def test_resume_keeps_compaction_and_cache_pricing(maker_request, tmp_path, monkeypatch):

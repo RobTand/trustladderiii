@@ -161,7 +161,7 @@ def test_final_done_cannot_hide_unverified_final_files(maker_request, monkeypatc
     assert any("final check" in item for item in reply["budget_exhaustion"]["unfinished_obligations"])
 
 
-def test_planner_receives_budget_guidance_without_new_split_rule(monkeypatch, tmp_path):
+def test_planner_receives_actual_budget_and_approved_split_guidance(monkeypatch, tmp_path):
     from test_planner import CANT_MEET, planner_model
     from tl3_workers.roles import ROLES
 
@@ -176,3 +176,4 @@ def test_planner_receives_budget_guidance_without_new_split_rule(monkeypatch, tm
     system = "\n".join(m.text for m in model.calls[0][0] if m.type == "system")
     assert "finalization reserve" in system
     assert "new split reason" in system
+    assert "Q54 is unchanged" in system

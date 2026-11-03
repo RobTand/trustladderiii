@@ -337,7 +337,7 @@ def test_each_reply_has_code_forecast(tmp_path, planner_request, proposal, files
         {"event": "progress", "unit": "model_turn"},
         {"event": "reply", "role": "planner", "reply": reply},
     ]
-    assert {key: value for key, value in reply.items() if key != "violations"} == {**proposal, "forecast": {
+    assert {key: value for key, value in reply.items() if key not in {"violations", "execution"}} == {**proposal, "forecast": {
         "tokenizer": "o200k_base", "brief_tokens": 2, "file_tokens": files,
         "overhead_tokens": 60, "tokens": 62 + sum(files.values()),
         "fit_tokens": 100000, "context_tokens": 150000, "fits": True,
@@ -576,7 +576,9 @@ def test_planner_schema_follower_succeeds_without_code_only_fields(
     actual = result.events[-1]['reply']
     assert actual['forecast']['fit_tokens'] == planner_request['inputs']['forecast']['fit_tokens']
     assert {key: value for key, value in actual.items()
-            if key not in {'forecast', 'violations'}} == proposal
+            if key not in {'forecast', 'execution', 'violations'}} == proposal
+    assert actual['execution']['allowed_tool_turns'] == 64
+    assert actual['execution']['usable_tool_turns'] == 56
     assert bool(actual['violations']) == (proposal['kind'] == 'split')
 
 
