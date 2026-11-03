@@ -70,6 +70,9 @@ installation_id = 1
 # selected_tests = 200
 # Optional repo-wide rules, run as regression checks on every leaf and round.
 # always_tests = ["tests/test_rules.py"]
+# Optional CPU-only PB reservation for Checking and maker run_tests. Default: 1 CPU, 2 GiB.
+# Integers only: cpus 1..16, mem_gb 1..64. No GPU field.
+# test_demand = { cpus = 4, mem_gb = 12 }
 # PrismaBuild: branch_template = "prismabuild-{issue}-tl3-{node}"
 
 [models]

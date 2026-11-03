@@ -625,3 +625,45 @@ def test_oom_retains_allowlisted_failure_receipt(submission):
     assert receipt == {"action_key": KEY, "status": "failed", "exit_code": 137,
                        "termination_reason": "memory_limit_oom", "memory_peak_bytes": 2147483648}
     assert "memory_limit_oom" in result["message"]
+
+
+@pytest.mark.parametrize("publication, recorded_key, expected", [
+    (123, KEY, True), (122, KEY, False), (123, "c" * 64, False),
+])
+def test_legacy_ending_retains_only_matching_publication_oom(submission, publication, recorded_key, expected):
+    # pbwait currently returns RC/peak but omits the exact termination reason.
+    root, scripts = submission
+    installed_tools = root.parent / "fleet/repo/tools"
+    installed_tools.mkdir(parents=True)
+    for name in ("pbrun.py", "pbwait.py"):
+        (installed_tools / name).write_text((scripts / name).read_text())
+    (installed_tools / "response.json").write_text(json.dumps(Summary().result))
+    (installed_tools / "override.json").write_text(json.dumps({
+        "status": "failed", "succeeded": False, "exit_code": None,
+        "reason": "action ended failed", "publication": {"published_unix": 123},
+        "diagnostics": {"returncode": 137,
+                        "resource_profile": {"scope": {"memory_peak_bytes": 2147483648}}},
+    }))
+    failed = root.parent / "fleet/pb-queue/failed"
+    failed.mkdir(parents=True)
+    (failed / f"{KEY}.json").write_text(json.dumps({
+        "action_key": recorded_key, "published_unix": publication,
+        "detail": {"termination_reason": "memory_limit_oom", "private": "not copied"},
+    }))
+    with Worktree(root) as tree:
+        result = make_test_tool(tree, TestSettings(IMAGE, installed_tools))()
+    assert result["status"] == "infrastructure_error"
+    receipt = result["receipts"][0]
+    assert receipt["exit_code"] == 137
+    assert receipt["memory_peak_bytes"] == 2147483648
+    assert (receipt.get("termination_reason") == "memory_limit_oom") is expected
+    assert "private" not in json.dumps(result)
+
+
+def test_sigkill_without_oom_reason_is_not_classified_as_oom(submission):
+    result = call(submission, Summary().result, override={
+        "status": "failed", "succeeded": False, "exit_code": 137,
+        "reason": "action ended failed",
+    })
+    assert result["receipts"] == [{"action_key": KEY, "status": "failed", "exit_code": 137}]
+    assert "memory_limit_oom" not in result["message"]

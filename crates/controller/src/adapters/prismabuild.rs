@@ -495,17 +495,31 @@ impl Adapter {
             .collect();
         let mut command = self.settings.python.clone();
         command.extend(["-I".into(), "-B".into(), "action.py".into()]);
+        let demand = self.images.test_demand(&delivery.repository).map_or_else(
+            || self.settings.demand.clone(),
+            |demand| Demand {
+                cpus: demand
+                    .cpus
+                    .try_into()
+                    .expect("validated positive test demand"),
+                mem_gb: demand.mem_gb,
+                gpu: false,
+            },
+        );
+        let threads = demand.cpus.to_string();
         let action = SubmitAction {
             checkout: input,
             command,
-            demand: self.settings.demand.clone(),
+            demand,
             container_image: image.to_owned(),
             progress: vec![ProgressPhase {
                 name: "tests".into(),
                 stall_allowance: self.settings.quiet,
             }],
             progress_cycle: false,
-            env: BTreeMap::new(),
+            env: ["OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"]
+                .map(|name| (name.to_owned(), threads.clone()))
+                .into(),
         };
         let key = self
             .runtime
@@ -567,10 +581,12 @@ impl Adapter {
             return Ok(Reconciliation::Pending);
         }
         Ok(
-            match self
-                .runtime
-                .block_on(results::ending(&self.settings.result_tool, job, false))?
-            {
+            match self.runtime.block_on(results::ending(
+                &self.settings.result_tool,
+                job,
+                false,
+                &record,
+            ))? {
                 Some(completion) => Reconciliation::Found(completion),
                 None if matches!(record, RecordRead::Absent) => Reconciliation::Absent,
                 None => Reconciliation::Pending,
@@ -823,7 +839,12 @@ impl Executor for Adapter {
                     }
                     if self
                         .runtime
-                        .block_on(results::ending(&self.settings.result_tool, &job, true))?
+                        .block_on(results::ending(
+                            &self.settings.result_tool,
+                            &job,
+                            true,
+                            &record,
+                        ))?
                         .is_none()
                     {
                         return Ok(Reconciliation::Pending);

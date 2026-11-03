@@ -374,6 +374,12 @@ impl Supervisor {
             inputs["plan"]["files"] = json!(delivery.paths);
             inputs["context_size"] = json!(self.limits.context_tokens);
             inputs["tests"] = json!({"image": self.images.for_repository(&delivery.repository, &self.tests.container_image), "tools_path": self.tests.tools_dir});
+            let demand = self
+                .images
+                .test_demand(&delivery.repository)
+                .unwrap_or_default();
+            inputs["tests"]["cpus"] = json!(demand.cpus);
+            inputs["tests"]["mem_gb"] = json!(demand.mem_gb);
             if self.images.exec_scratch(&delivery.repository) {
                 inputs["tests"]["exec_scratch"] = json!(true);
             }

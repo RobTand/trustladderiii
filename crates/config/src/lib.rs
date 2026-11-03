@@ -405,6 +405,12 @@ pub struct TestDemand {
     pub mem_gb: u32,
 }
 
+impl Default for TestDemand {
+    fn default() -> Self {
+        Self { cpus: 1, mem_gb: 2 }
+    }
+}
+
 /// The harness's `MAX_SELECTED_TESTS`.
 pub const MAX_SELECTED_TESTS: u32 = 1000;
 pub const MAX_ALWAYS_TESTS: usize = 20;

@@ -53,8 +53,9 @@ def container_command(tree: Path, container: Container, tests: tuple[str, ...]) 
         "--mount", f"type=bind,src={harness},dst=/harness,readonly",
         "--tmpfs", f"/tmp:rw,nosuid,nodev,{'exec' if container.exec_scratch else 'noexec'},size={TMPFS_MIB}m,mode=1777",
         "--env", "HOME=/tmp", "--env", "TMPDIR=/tmp", "--env", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1",
-        "--env", "OMP_NUM_THREADS=1", "--env", "MKL_NUM_THREADS=1",
-        "--env", "OPENBLAS_NUM_THREADS=1", "--entrypoint=python3",
+        *[arg for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")
+          for arg in ("--env", f"{name}={os.environ.get(name, '1')}")],
+        "--entrypoint=python3",
         container.image, "-I", "-B", "/harness/runner.py", "-",
     ]
 

@@ -68,6 +68,31 @@ tools. The harness image uses `sha256:<64 lowercase hex digits>` or
 `repository@sha256:<64 lowercase hex digits>`, matching `harness.Container`.
 PB's `content:sha256:` form is not a harness image reference.
 
+Set `test_demand = { cpus = 4, mem_gb = 12 }` in a `[[github.repos]]`
+entry to reserve that repository's PrismaBuild test resources. Both values
+are required positive integers: `cpus` is at most 16 and `mem_gb` is at most
+64 GiB. Unknown fields, including `gpu`, are rejected. Omitting the key keeps
+1 CPU and 2 GiB. The demand follows the repository's owner, name and
+installation, including case-insensitive owner/name matching.
+
+This applies to independent Checking and the maker's `run_tests`, including
+base and head runs. A maker's parallel run keeps the existing memory rule:
+`mem_gb` per pytest worker, with at least `cpus` total reserved CPUs. Native
+thread limits follow `cpus`; parallel maker runs divide that budget among
+pytest workers. The harness forwards these limits into its test containers.
+PrismaBuild still decides admission and placement. Generator commands are
+currently maker guidance only; TL3 does not submit generator or qualifier
+actions separately.
+
+Failed maker test actions return an allowlisted receipt with the action key,
+status, exit code and recorded scope memory peak when available. An exact
+`memory_limit_oom` reason is retained in the receipt and summary. Older PB
+consumer endings omit that reason, so TL3 reads the matching failed terminal
+record from the installed fleet layout, bounded to 2 MiB and matched by action
+key and publication. Missing or mismatched records leave the reason unknown.
+Independent Checking retains the OOM reason, return code and available scope
+peak in its check evidence. Neither path treats an OOM as a test assertion.
+
 `store` configures `tl3-store` with `host`, `port`, `database`, `user`,
 `connect_timeout_secs` and an optional `password_file`. Omitting the section
 uses local TCP port 5432 and database/user `tl3`. The store accepts only
