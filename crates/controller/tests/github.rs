@@ -767,7 +767,7 @@ fn main() {
         steering::merge_pending(&database.create(&format!("pending_{point}")), point);
     }
     database.stop();
-    let scenario_count = if group == Some("flow") { 83 } else { 201 };
+    let scenario_count = if group == Some("flow") { 84 } else { 202 };
     println!(
         "{scenario_count} GitHub integration scenarios passed; no skips; no live GitHub calls"
     );
