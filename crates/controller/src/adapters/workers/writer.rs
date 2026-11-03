@@ -729,14 +729,31 @@ fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> V
                         serde_json::to_string(reply).unwrap_or_default(),
                     )
                 });
+            // Every check runs on the text with the exact quoted title masked (message.rs
+            // without_title_quotes). A word from the bare title is fixed by quoting it (PB #2757, #2783).
+            let quote_title = |problem: &str, token: &str| {
+                let title = policy.request_title.as_deref()?;
+                title_has_word(title, token).then(|| {
+                    format!(
+                        "The {field} {problem} '{token}' from the issue title. Keep the title unchanged \
+                         and write all of it inside ASCII double quotes: \"{title}\"."
+                    )
+                })
+            };
             let problem = match violation {
                 Violation::WrongReplyShape => {
                     "has the wrong reply shape for the requested message kind"
                 }
                 Violation::Mention(token) => {
+                    if let Some(hint) = quote_title("has the user or team mention", token) {
+                        return hint;
+                    }
                     return format!("Remove the user or team mention '{token}'.");
                 }
                 Violation::ForeignReference(token) => {
+                    if let Some(hint) = quote_title("has the foreign reference", token) {
+                        return hint;
+                    }
                     return format!("Remove the foreign reference '{token}'; refer only to this request's issue or pull request.");
                 }
                 Violation::MissingDecision => {
@@ -746,6 +763,9 @@ fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> V
                     return "The decision must be one plain question ending in a question mark, with no other sentence.".into();
                 }
                 Violation::HtmlEntity(entity) => {
+                    if let Some(hint) = quote_title("has the HTML entity", entity) {
+                        return hint;
+                    }
                     return format!("Replace the HTML entity '{entity}' in '{text}'; write the character itself, not an HTML entity.");
                 }
                 Violation::InternalVocabulary => "uses an internal word",
@@ -772,26 +792,32 @@ fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> V
                 })
                 .unwrap_or(&text)
                 .trim_matches(['.', '!', '?', '"', '\'']);
-            if let (Violation::InternalVocabulary, Some(title)) = (violation, &policy.request_title)
-                && title_has_word(title, offending)
+            if matches!(
+                violation,
+                Violation::InternalVocabulary
+                    | Violation::InternalNameOrId
+                    | Violation::FilePath
+                    | Violation::Log
+            ) && let Some(hint) = quote_title(problem, offending)
             {
-                // PB #2757: only the exact title inside ASCII double quotes is exempt.
-                return format!(
-                    "The {field} {problem} '{offending}' from the issue title. Keep the title unchanged \
-                     and write all of it inside ASCII double quotes: \"{title}\"."
-                );
+                return hint;
             }
             format!("The {field} {problem} '{offending}'.")
         })
         .collect()
 }
 
-fn title_has_word(title: &str, word: &str) -> bool {
-    let word = word.to_lowercase();
-    !word.is_empty()
-        && title
+/// Whether `token` is a word, or a whole whitespace-separated token, of the title.
+fn title_has_word(title: &str, token: &str) -> bool {
+    let token = token.to_lowercase();
+    let punctuation = ['.', ',', ';', ':', '!', '?', '"', '\'', '(', ')', '[', ']'];
+    !token.is_empty()
+        && (title
             .split(|c: char| !c.is_alphanumeric() && c != '-')
-            .any(|part| part.to_lowercase() == word)
+            .any(|part| part.to_lowercase() == token)
+            || title
+                .split_whitespace()
+                .any(|part| part.trim_matches(punctuation).to_lowercase() == token))
 }
 
 fn short_question(text: &str) -> bool {
