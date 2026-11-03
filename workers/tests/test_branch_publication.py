@@ -4,6 +4,7 @@ from copy import deepcopy
 import pytest
 
 from tl3_workers.evidence import preflight
+from tl3_workers.contracts import validate
 
 
 CONTEXT = {
@@ -13,9 +14,9 @@ CONTEXT = {
 
 
 def goal(publication):
-    return {'id': 'branch', 'description': 'Publish on the requested branch.',
-            'verification': 'review', 'stage': 'publishing', 'publication': publication,
-            'source': {'kind': 'issue', 'quote': 'Use exactly prismabuild-2646.'}}
+    return {'description': f'Publish with {next(iter(publication))} {next(iter(publication.values()))}.',
+            'verification': 'review', 'stage': 'publishing',
+            'publication': {**publication, 'non_draft': True, 'body_lines': [], 'proof': False}}
 
 
 @pytest.mark.parametrize(('requirement', 'satisfied'), [
@@ -27,11 +28,21 @@ def goal(publication):
 def test_t604_audit_checks_actual_branch_semantics_and_preserves_provenance(requirement, satisfied):
     goals = [goal(requirement)]
     original = deepcopy(goals)
-    inputs = {'publication_branch': CONTEXT, 'ingest': {'goals': goals}, 'tool_capabilities': []}
+    quote = goals[0]['description']
+    inputs = {'publication_branch': CONTEXT,
+              'issue': {'number': 2646, 'title': 'Publish', 'body': quote,
+                        'author': 'requester', 'comments': []},
+              'repo': {'readme': 'Repo', 'file_list': []},
+              'ingest': {'kind': 'brief', 'brief': f'Issue says: {quote}',
+                         'memory_ids': [], 'goals': goals}, 'tool_capabilities': []}
+    original_inputs = deepcopy(inputs)
+    validate('audit-input', inputs)
     reply = {'verdict': 'agree', 'objections': [], 'evidence_contract': []}
     preflight(inputs, reply)
     assert (reply['verdict'] == 'agree') is satisfied
     assert goals == original
+    assert inputs == original_inputs
+    validate('audit-reply', reply)
     if not satisfied:
         objection = '\n'.join(reply['objections'])
         assert next(iter(requirement.values())) in objection
@@ -44,4 +55,5 @@ def test_t604_ingest_reports_a_repairable_conflict_without_value_error():
     reply = {'kind': 'brief', 'goals': [goal({'branch': 'prismabuild-2646'})], 'evidence_contract': []}
     preflight({'publication_branch': CONTEXT, 'tool_capabilities': []}, reply)
     assert 'prismabuild-2646-tl3-200' in '\n'.join(reply['evidence_errors'])
-    assert reply['goals'][0]['publication'] == {'branch': 'prismabuild-2646'}
+    assert reply['goals'][0]['publication']['branch'] == 'prismabuild-2646'
+    assert 'branch_prefix' not in reply['goals'][0]['publication']

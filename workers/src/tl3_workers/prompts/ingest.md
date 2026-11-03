@@ -175,3 +175,12 @@ idempotent_import; its method is configured_generation. It returns action_key,
 cas_receipt, input_tree, output_tree, artifact_sha256, logs and terminal_verdict.
 Use that capability only when it appears in tool_capabilities. It cannot edit
 protected files or replace the independent test executor.
+
+The controller supplies publication_branch with this repository's configured
+branch template and its expansion for this request, including adopted requests.
+Compare exact publication.branch requirements by equality and branch_prefix by
+prefix. A satisfied requirement has no conflict. Preserve every explicit exact
+name and its issue-source quote, even when incompatible; never turn it into a
+prefix or substitute the generated branch. Code records incompatible requirements
+as request-scope audit objections before planning. Resolve the scope disagreement
+through the existing audit path, never by claiming later publication can fix it.

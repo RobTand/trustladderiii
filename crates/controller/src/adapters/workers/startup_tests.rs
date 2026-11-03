@@ -740,7 +740,7 @@ fn t604_ingest_and_audit_get_authoritative_per_repository_request_branch() {
     commit.rows.push(crate::put(
         "briefs",
         "200".into(),
-        json!({"kind":"brief","brief":"Publish", "goals":[],"memory_ids":[]}),
+        json!({"kind":"brief","brief":"Publish", "goals":[{"description":"Publish","verification":"review"}],"memory_ids":[]}),
     ));
     store.commit(&commit).unwrap();
     let snapshot = store.load().unwrap();
@@ -757,6 +757,11 @@ fn t604_ingest_and_audit_get_authoritative_per_repository_request_branch() {
             head: None,
         };
         delivery.issue = 2646;
+        delivery.proposed = Some(crate::adoption::ProposedPullRequest {
+            number: 99,
+            head: f.head.clone(),
+            head_repository: format!("RobTand/{name}"),
+        });
         delivery.repository.name = name.into();
         for role in ["ingest", "audit"] {
             let request = supervisor

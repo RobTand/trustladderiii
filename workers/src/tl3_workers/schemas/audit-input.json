@@ -35,6 +35,9 @@
         "$ref": "ingest-reply.json#/$defs/tool_capability"
       },
       "maxItems": 64
+    },
+    "publication_branch": {
+      "$ref": "ingest-input.json#/$defs/publication_branch"
     }
   },
   "required": [

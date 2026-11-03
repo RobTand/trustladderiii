@@ -34,7 +34,40 @@ def forcing_guidance(cpus=1):
 DIMENSIONS = ('runner_features', 'artifacts', 'methods', 'protected_files')
 
 
+def branch_objections(inputs, goals):
+    context = inputs.get('publication_branch')
+    if context is None:
+        return []
+    from tl3_workers.tracing import Redactor
+    import json
+    redactor = Redactor(None)
+
+    def label(text):
+        return json.dumps(redactor.text(text, limit=512)).replace('`', "'").replace('<', '[').replace('>', ']').replace('@', '[at]')
+
+    errors = []
+    for goal in goals:
+        requirements = goal.get('publication', {})
+        for field in ('branch', 'branch_prefix'):
+            required = requirements.get(field)
+            if required is None:
+                continue
+            branch = context['branch']
+            satisfied = branch == required if field == 'branch' else branch.startswith(required)
+            if not satisfied:
+                errors.append(
+                    f'Request-scope branch conflict: {field} requires {label(required)}; '
+                    f'configured template {label(context["template"])} generates {label(branch)}. '
+                    'Preserve the explicit requirement and its source. Change the request scope or repository convention before planning.')
+    return errors
+
+
 def preflight(inputs, reply, *, planning=False):
+    goals = inputs.get('ingest', {}).get('goals', []) if 'verdict' in reply else reply.get('goals', [])
+    branch_errors = branch_objections(inputs, goals)
+    if 'verdict' in reply and branch_errors:
+        reply['verdict'] = 'disagree'
+        reply['objections'] = list(dict.fromkeys([*reply['objections'], *branch_errors]))
     # Old in-flight requests have no capability declaration (#372).
     if 'tool_capabilities' not in inputs:
         return
@@ -61,7 +94,7 @@ def preflight(inputs, reply, *, planning=False):
         for requirement in requirements:
             if requirement not in contract:
                 contract.append(requirement)
-    errors = []
+    errors = list(branch_errors)
     for requirement in contract:
         candidates = []
         for capability in inputs['tool_capabilities']:

@@ -700,6 +700,7 @@ impl Adapter {
         let current_head = state.pull_request.head.sha == enqueue(delivery)?.1;
         if !current_head && state.state != QueueState::Merged && !previously_confirmed {
             return Ok(Reconciliation::Found(Completion {
+                diagnostic: None,
                 ack: Ack::Retryable,
                 failure_class: None,
                 observations,

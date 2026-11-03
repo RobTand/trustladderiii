@@ -104,3 +104,9 @@ repeating the rejected wording. Keep the controller's facts and recommendation.
 Do not include the violations or the correction process in the message to Rob.
 
 Return only one JSON object, without Markdown fences or surrounding prose.
+
+For an operations notice, facts.publication_diagnostic and facts.occurrences
+are code-owned evidence. Code appends their exact diagnostic fields after your
+checked draft. Write the plain-language explanation without copying effect keys,
+reason codes, endpoints or heads into the draft. Do not infer a service outage
+from a local validation refusal or describe a first failure as recurring.

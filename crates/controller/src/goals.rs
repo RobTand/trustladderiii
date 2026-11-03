@@ -37,6 +37,31 @@ pub(crate) fn load(snapshot: &Snapshot, node: NodeId) -> Result<Option<Vec<Value
         .transpose()
 }
 
+/// This produces audit objections, never an ingest protocol failure or a weaker goal.
+pub(crate) fn branch_objections(context: &Value, goals: &Value) -> Result<Vec<String>> {
+    let Some(branch) = context["branch"].as_str() else {
+        return Ok(vec![]);
+    };
+    let mut errors = Vec::new();
+    for goal in goals.as_array().into_iter().flatten() {
+        for field in ["branch", "branch_prefix"] {
+            let Some(required) = goal["publication"][field].as_str() else {
+                continue;
+            };
+            let satisfied = if field == "branch" {
+                branch == required
+            } else {
+                branch.starts_with(required)
+            };
+            if !satisfied {
+                errors.push(format!("Request-scope branch conflict: {field} requires {}; configured template {} generates {}. Preserve the explicit requirement and its source. Change the request scope or repository convention before planning.",
+                    crate::evidence::label(required)?, crate::evidence::label(context["template"].as_str().unwrap_or("unknown"))?, crate::evidence::label(branch)?));
+            }
+        }
+    }
+    Ok(errors)
+}
+
 /// Ownership comes from the accepted intake, never from a maker's self-report.
 pub(crate) fn handover(goals: &[Value], checks: &[Value]) -> Result<()> {
     let expected: BTreeSet<_> = goals.iter().map(|goal| goal["id"].as_str()).collect();

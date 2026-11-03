@@ -513,6 +513,7 @@ impl Supervisor {
             }
         }
         if matches!(role, "ingest" | "audit") {
+            inputs["publication_branch"] = self.branches.context(delivery)?;
             inputs["protected_paths"] = json!(
                 self.protected_paths
                     .for_repository(&delivery.repository, &self.planning.protected_paths)?

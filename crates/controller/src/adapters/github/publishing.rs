@@ -1,4 +1,5 @@
 use super::*;
+use crate::publication_failure::{self, Endpoint};
 use tl3_github::{
     CheckConclusion, CheckRun, CheckStatus, NewCheckRun, NewPullRequest, PullRequest,
 };
@@ -101,11 +102,14 @@ impl Adapter {
     ) -> Result<Option<PullRequest>> {
         let branch = self.branches.branch(delivery)?;
         let base = self.branches.base(&delivery.repository)?;
-        let pulls = self.runtime.block_on(client.pull_requests_for_branch(
-            repo,
-            &delivery.repository.owner,
-            branch.as_str(),
-        ))?;
+        let pulls = self
+            .runtime
+            .block_on(client.pull_requests_for_branch(
+                repo,
+                &delivery.repository.owner,
+                branch.as_str(),
+            ))
+            .map_err(|error| publication_failure::http(error, Endpoint::Pulls))?;
         let mut owned = Vec::new();
         for pr in pulls {
             if self.branches.matches(delivery, &pr.head.branch)?
@@ -132,16 +136,19 @@ impl Adapter {
                 kind: EffectKind::PostApproval,
                 ..
             } => {
-                let check = self.runtime.block_on(client.create_check_run(
-                    &repo,
-                    &NewCheckRun {
-                        name: APPROVAL_CHECK.into(),
-                        head_sha: head(delivery)?.as_str().into(),
-                        external_id: external_id(delivery)?,
-                        status: CheckStatus::Completed,
-                        conclusion: Some(CheckConclusion::Success),
-                    },
-                ))?;
+                let check = self
+                    .runtime
+                    .block_on(client.create_check_run(
+                        &repo,
+                        &NewCheckRun {
+                            name: APPROVAL_CHECK.into(),
+                            head_sha: head(delivery)?.as_str().into(),
+                            external_id: external_id(delivery)?,
+                            status: CheckStatus::Completed,
+                            conclusion: Some(CheckConclusion::Success),
+                        },
+                    ))
+                    .map_err(|error| publication_failure::http(error, Endpoint::CheckRuns))?;
                 if !approved(&check, &client, delivery)? {
                     return Err(Error::Invalid(
                         "GitHub approval evidence differs from the approved head",
@@ -154,7 +161,10 @@ impl Adapter {
                 ..
             } => {
                 let branch = self.branches.branch(delivery)?;
-                let issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+                let issue = self
+                    .runtime
+                    .block_on(client.issue(&repo, delivery.issue))
+                    .map_err(|error| publication_failure::http(error, Endpoint::Issue))?;
                 let request = delivery
                     .request_text
                     .as_deref()
@@ -178,11 +188,10 @@ impl Adapter {
                         &body,
                     )?;
                     if pull.body.as_deref().unwrap_or_default() != body {
-                        pull = self.runtime.block_on(client.update_pull_request_body(
-                            &repo,
-                            pull.number,
-                            &body,
-                        ))?;
+                        pull = self
+                            .runtime
+                            .block_on(client.update_pull_request_body(&repo, pull.number, &body))
+                            .map_err(|error| publication_failure::http(error, Endpoint::Pull))?;
                         crate::evidence::validate_publication(
                             delivery,
                             &pull.head.branch,
@@ -193,7 +202,8 @@ impl Adapter {
                     if pull.state == "closed" && pull.merged_at.is_none() {
                         pull = self
                             .runtime
-                            .block_on(client.reopen_pull_request(&repo, pull.number))?;
+                            .block_on(client.reopen_pull_request(&repo, pull.number))
+                            .map_err(|error| publication_failure::http(error, Endpoint::Pull))?;
                     }
                     return Ok(binding(delivery, &pull));
                 }
@@ -231,18 +241,23 @@ impl Adapter {
                 if !crate::pr_body::gaps(&body, rules).is_empty() {
                     return Err(Error::Permanent {
                         class: "pr_policy",
-                        source: "TL3's PR body breaks the repository's body policy".into(),
+                        source: Box::new(publication_failure::LocalRefusal(
+                            publication_failure::Reason::BodyPolicy,
+                        )),
                     });
                 }
-                let pull = self.runtime.block_on(client.open_pull_request(
-                    &repo,
-                    &NewPullRequest {
-                        title: crate::redaction::text(&issue.title)?,
-                        head: branch.as_str().into(),
-                        base: self.branches.base(&delivery.repository)?.into(),
-                        body,
-                    },
-                ))?;
+                let pull = self
+                    .runtime
+                    .block_on(client.open_pull_request(
+                        &repo,
+                        &NewPullRequest {
+                            title: crate::redaction::text(&issue.title)?,
+                            head: branch.as_str().into(),
+                            base: self.branches.base(&delivery.repository)?.into(),
+                            body,
+                        },
+                    ))
+                    .map_err(publication_failure::open_pr)?;
                 crate::evidence::validate_publication(
                     delivery,
                     &pull.head.branch,
@@ -260,7 +275,8 @@ impl Adapter {
                     && pull.merged_at.is_none()
                 {
                     self.runtime
-                        .block_on(client.close_pull_request(&repo, pull.number))?;
+                        .block_on(client.close_pull_request(&repo, pull.number))
+                        .map_err(|error| publication_failure::http(error, Endpoint::Pull))?;
                 }
                 Ok(Completion::confirmed(vec![]))
             }
@@ -278,7 +294,8 @@ impl Adapter {
             } => {
                 let checks = self
                     .runtime
-                    .block_on(client.check_runs(&repo, head(delivery)?.as_str()))?;
+                    .block_on(client.check_runs(&repo, head(delivery)?.as_str()))
+                    .map_err(|error| publication_failure::http(error, Endpoint::HeadChecks))?;
                 if checks
                     .iter()
                     .any(|check| approved(check, &client, delivery).unwrap_or(false))

@@ -76,7 +76,12 @@ fn refused(class: &'static str, status: Option<u16>) -> (Value, Delivery, Vec<Va
         slots: 1,
         pool: 1,
         fail_fast: false,
-        operations: None,
+        operations: Some(tl3_config::OperationsIssue {
+            owner: "owner".into(),
+            name: "operations".into(),
+            installation_id: 3,
+            number: 81,
+        }),
     };
     let mut c =
         Controller::open(Store::open(&settings).unwrap(), registry, bootstrap.clone()).unwrap();
@@ -95,6 +100,31 @@ fn refused(class: &'static str, status: Option<u16>) -> (Value, Delivery, Vec<Va
     for _ in 0..300 {
         if !c.drive_once().unwrap() {
             break;
+        }
+    }
+    if status == Some(404) {
+        let pending = c
+            .store
+            .load()
+            .unwrap()
+            .pending_effects
+            .into_iter()
+            .find(|effect| {
+                let delivery: Delivery = serde_json::from_value(effect.payload.clone()).unwrap();
+                matches!(
+                    delivery.output,
+                    DeliveryOutput::Effect {
+                        kind: tl3_kernel::EffectKind::OpenPr,
+                        ..
+                    }
+                )
+            })
+            .expect("first 404 stays pending");
+        c.look_key(&pending.key).unwrap();
+        for _ in 0..300 {
+            if !c.drive_once().unwrap() {
+                break;
+            }
         }
     }
     let snapshot = c.store.load().unwrap();
@@ -143,6 +173,8 @@ fn refused(class: &'static str, status: Option<u16>) -> (Value, Delivery, Vec<Va
 #[test]
 fn t604_openpr_branch_refusal_names_class_branch_mismatch_and_effect_in_notice_and_journal() {
     let (incident, notice, events) = refused("pr_obligation", None);
+    assert_eq!(notice.issue, 81);
+    assert_eq!(notice.repository.name, "operations");
     let text = notice.note.as_ref().unwrap();
     for required in [
         "pr_obligation",
@@ -190,7 +222,11 @@ fn t604_every_local_publication_class_is_safe_distinct_and_tl3_owned() {
 #[test]
 fn t604_http_refusals_retain_status_without_inventing_an_endpoint() {
     // The fake has no operation context. Actual GitHub calls supply a typed endpoint.
-    for (status, class) in [(403, "permission"), (422, "invalid_request")] {
+    for (status, class) in [
+        (403, "permission"),
+        (404, "not_found"),
+        (422, "invalid_request"),
+    ] {
         let (incident, notice, events) = refused(class, Some(status));
         assert_eq!(incident["cause"], "upstream");
         let diagnostic = events
@@ -215,4 +251,92 @@ fn t604_historical_local_causes_are_not_guessed_to_be_github() {
     for class in ["pr_evidence", "pr_obligation", "pr_policy"] {
         assert_eq!(looks::Cause::of(Upstream::GitHub, class), looks::Cause::Tl3);
     }
+}
+
+#[test]
+fn t604_typed_http_operations_have_only_status_and_templated_endpoint() {
+    let fixture = git_tests::Repo::new();
+    let mut delivery = fixture.delivery();
+    delivery.output = DeliveryOutput::Effect {
+        node: NodeId(0),
+        seq: 8,
+        kind: tl3_kernel::EffectKind::OpenPr,
+        head: None,
+    };
+    for (status, class) in [
+        (403, "permission"),
+        (404, "not_found"),
+        (422, "invalid_request"),
+    ] {
+        let error = publication_failure::open_pr(tl3_github::Error::Http { status });
+        let diagnostic =
+            publication_failure::Diagnostic::capture(&delivery, Some(&error), class).unwrap();
+        let diagnostic = json!(diagnostic);
+        assert_eq!(diagnostic["status"], status);
+        assert_eq!(diagnostic["endpoint"], "POST /repos/{owner}/{repo}/pulls");
+        assert_eq!(diagnostic["origin"], "github_http");
+        assert_eq!(
+            error.is_github_not_found(),
+            status == 404,
+            "preserve the first-404 retry decision"
+        );
+    }
+}
+
+#[test]
+fn t604_unknown_historical_refusals_do_not_invent_cause_or_http_context() {
+    let fixture = git_tests::Repo::new();
+    let diagnostic =
+        publication_failure::Diagnostic::capture(&fixture.delivery(), None, "unknown").unwrap();
+    assert!(matches!(
+        diagnostic.origin,
+        publication_failure::Origin::Unavailable
+    ));
+    assert!(diagnostic.status.is_none());
+    assert!(diagnostic.endpoint.is_none());
+    assert!(diagnostic.render().contains("historical cause unavailable"));
+}
+
+#[test]
+fn t604_known_permanent_context_classes_remain_distinguishable() {
+    let fixture = git_tests::Repo::new();
+    for class in [
+        "invalid_branch",
+        "invalid_commit",
+        "invalid_remote",
+        "invalid_worktree_path",
+        "invalid_token",
+        "invalid_response",
+        "missing_branch",
+        "reserved_branch",
+        "worktree_occupied",
+        "dirty_worktree",
+        "worktree_recovery",
+        "actions_write_required",
+        "actions_run_expired",
+        "actions_refused",
+        "setup",
+    ] {
+        let diagnostic =
+            publication_failure::Diagnostic::capture(&fixture.delivery(), None, class).unwrap();
+        assert_eq!(diagnostic.class, class);
+        assert!(diagnostic.status.is_none());
+        assert!(diagnostic.endpoint.is_none());
+    }
+}
+
+#[test]
+fn t604_authentication_refusal_names_token_endpoint_instead_of_pr_endpoint() {
+    let fixture = git_tests::Repo::new();
+    let error = publication_failure::open_pr(tl3_github::Error::InstallationToken {
+        source: Box::new(tl3_github::Error::Http { status: 403 }),
+    });
+    let diagnostic =
+        publication_failure::Diagnostic::capture(&fixture.delivery(), Some(&error), "permission")
+            .unwrap();
+    assert_eq!(
+        diagnostic.endpoint.as_deref(),
+        Some("POST /app/installations/{installation}/access_tokens")
+    );
+    assert_eq!(diagnostic.status, Some(403));
 }

@@ -446,6 +446,7 @@ fn permanent_incident_clear_at(settings: &tl3_config::Store, request_issue: bool
     impl Executor for Permanent {
         fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
             Ok(Completion {
+                diagnostic: None,
                 failure_class: None,
                 progress: None,
                 ack: tl3_kernel::Ack::Permanent,

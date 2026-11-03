@@ -3,6 +3,23 @@ use crate::{Error, Result};
 use serde_json::{Value, json};
 
 pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result<()> {
+    let goals = if role == "audit" {
+        &inputs["ingest"]["goals"]
+    } else {
+        &reply["goals"]
+    };
+    let branch_errors = crate::goals::branch_objections(&inputs["publication_branch"], goals)?;
+    if role == "audit" && !branch_errors.is_empty() {
+        reply["verdict"] = json!("disagree");
+        let objections = reply["objections"]
+            .as_array_mut()
+            .ok_or(Error::Invalid("audit objections missing"))?;
+        for error in &branch_errors {
+            if !objections.contains(&json!(error)) {
+                objections.push(json!(error));
+            }
+        }
+    }
     let Some(capabilities) = inputs["tool_capabilities"].as_array() else {
         // #372: replies to requests started by the previous release still parse.
         return Ok(());
@@ -68,7 +85,7 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result
             contract.push(requirement);
         }
     }
-    let mut errors = Vec::new();
+    let mut errors = branch_errors;
     if role != "planner" && reply.get("evidence_contract").is_none() {
         return Err(Error::Invalid("worker evidence contract is missing"));
     }
@@ -165,15 +182,18 @@ mod branch_tests {
 
     #[test]
     fn t604_audit_cannot_accept_a_branch_conflict_even_if_worker_agrees() {
-        let goals = json!([{"id":"branch", "description":"Publish here", "verification":"review",
-            "stage":"publishing", "publication":{"branch":"prismabuild-2646"},
-            "source":{"kind":"issue", "quote":"Use exactly prismabuild-2646."}}]);
+        let goals = json!([{"description":"Issue says: Use exactly prismabuild-2646.", "verification":"review",
+            "stage":"publishing", "publication":{"branch":"prismabuild-2646", "non_draft":true,"body_lines":[],"proof":false}}]);
         let inputs = json!({"publication_branch":{"repository":"RobTand/prismabuild",
             "issue":2646, "node":200, "template":"prismabuild-{issue}-tl3-{node}",
             "branch":"prismabuild-2646-tl3-200"}, "tool_capabilities":[], "ingest":{"goals":goals}});
         let mut reply = json!({"verdict":"agree", "objections":[], "evidence_contract":[]});
         preflight("audit", &inputs, &mut reply).unwrap();
         assert_eq!(reply["verdict"], "disagree");
+        assert!(matches!(
+            super::super::protocol::map_reply("audit", &reply).unwrap(),
+            super::super::protocol::MappedReply::Kernel(tl3_kernel::Reply::AuditDisagrees)
+        ));
         let text = reply["objections"].to_string();
         assert!(text.contains("prismabuild-2646-tl3-200"), "{text}");
         assert!(text.contains("prismabuild-{issue}-tl3-{node}"), "{text}");
