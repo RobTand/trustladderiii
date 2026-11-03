@@ -78,24 +78,47 @@ def written_bindings(source, namespace=()):
             is_class = child.get_type() == 'class' and not function
             visit(child, (*scope, child.get_name()) if is_class else scope, not is_class)
     visit(symtable.symtable(textwrap.dedent(source), '<proof>', 'exec'), namespace)
-    def globals_call(node):
-        return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'globals'
-    for node in ast.walk(ast.parse(textwrap.dedent(source))):
-        if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)) and globals_call(node.value):
-            writes.add((node.slice.value,) if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str) else ('*',))
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and globals_call(node.func.value):
-            if node.func.attr in ('update', '__setitem__', '__delitem__', 'setdefault', 'pop', 'popitem', 'clear'):
-                writes.update((keyword.arg,) for keyword in node.keywords if keyword.arg)
-                if any(keyword.arg is None for keyword in node.keywords):
-                    writes.add(('*',))
-                if node.func.attr == 'update' and all(isinstance(arg, ast.Dict) for arg in node.args):
-                    for arg in node.args:
-                        writes.update((key.value,) if isinstance(key, ast.Constant) and isinstance(key.value, str) else ('*',) for key in arg.keys)
-                elif node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-                    writes.add((node.args[0].value,))
-                elif node.args or node.func.attr in ('clear', 'popitem'):
-                    writes.add(('*',))
     return writes
+
+
+def deny_namespace_apis(source, module):
+    """Support is declarative source, never access to an execution namespace."""
+    names = {'globals', 'locals', 'vars', 'eval', 'exec', 'compile', '__import__',
+             'getattr', 'setattr', 'delattr', '__builtins__', '__tl3_proof_integrity__'}
+    attributes = {'__dict__', '__globals__', '__builtins__', '__getattribute__',
+                  '__setattr__', '__delattr__', 'f_globals', 'f_locals', 'gi_frame',
+                  'cr_frame', 'tb_frame', '_getframe', 'currentframe', 'modules'}
+    modules = {'builtins', 'sys', 'inspect', 'importlib', '__main__'}
+    for node in ast.walk(ast.parse(textwrap.dedent(source))):
+        symbol = None
+        if isinstance(node, ast.Name) and node.id in names:
+            symbol = node.id
+        elif isinstance(node, ast.Attribute) and node.attr in attributes:
+            symbol = node.attr
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            imported = [node.module or ''] if isinstance(node, ast.ImportFrom) else [alias.name for alias in node.names]
+            symbol = next((name for name in imported if name.split('.')[0] in modules), None)
+        if symbol:
+            raise ProofRefusal('dynamic namespace API in observer/support can rebind base subjects', module, symbol)
+
+
+def guard_runtime(source, name, protected, grafts=()):
+    """Emit checks, but execute repository code only inside the admitted runner."""
+    if '__tl3_proof_integrity__' in source:
+        raise ProofRefusal('reserved proof integrity binding', name, '__tl3_proof_integrity__')
+    def call(namespace=()):
+        return (f'__tl3_proof_integrity__(globals(), locals(), {namespace!r}, '
+                f'{tuple(sorted(protected))!r}, {name!r})\n')
+    lines = source.splitlines(keepends=True)
+    insertions = {}
+    spans = {source_unit(source, item)[1]: tuple(item.split('::')[1:-1]) for item in grafts}
+    for (start, end), namespace in spans.items():
+        indentation = lines[start][:len(lines[start]) - len(lines[start].lstrip())]
+        for position in (start, end):
+            insertions.setdefault(position, []).append(indentation + call(namespace))
+    for position, checks in sorted(insertions.items(), reverse=True):
+        lines[position:position] = checks
+    return ''.join(lines) + '\n' + call()
 
 
 def conftest_subjects(base, head, plan):
@@ -142,6 +165,7 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
             raise ProofRefusal('overlapping observer selections', observer.split('::')[0])
     paths = {item.split('::')[0] for item in (*observers, *support)}
     identities = {}
+    runtime = {}
     for name in sorted(paths):
         if not is_test(name, config['test-files']) and any(item.split('::')[0] == name for item in observers):
             raise ProofRefusal('observer is outside configured tests', name)
@@ -151,6 +175,10 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         old = old_path.read_text() if old_path.is_file() else ''
         new = new_path.read_text()
         requested = [item for item in (*observers, *support) if item.split('::')[0] == name]
+        for statement in ast.parse(new).body:
+            if (isinstance(statement, (ast.Import, ast.ImportFrom))
+                    and bound_names(ast.unparse(statement)) & {item.split('::')[-1] for item in requested}):
+                deny_namespace_apis(ast.unparse(statement), name)
         if not old_path.exists():
             if any(subject.split('::')[0] == name for subject in subjects):
                 raise ProofRefusal('new observer module would carry a declared subject onto base', name)
@@ -158,13 +186,17 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
             # the observer context, including its imports and pytest fixtures.
             for item in requested:
                 identities[item] = digest(source_unit(new, item)[0])
+            deny_namespace_apis(new, name)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(new)
             continue
         replacements, grafts, required_texts = [], [], []
         protected = written_bindings(old)
         protected.update(tuple(subject.split('::')[1:]) for subject in subjects if subject.split('::')[0] == name)
+        protected.difference_update(tuple(item.split('::')[1:]) for item in observers if item.split('::')[0] == name)
+        runtime_units = set(requested)
         def guard(text, item, namespace=()):
+            deny_namespace_apis(text, name)
             permitted = {tuple(item.split('::')[1:])} if item in observers else set()
             written = written_bindings(text, namespace)
             conflict = (written & protected) - permitted
@@ -194,6 +226,8 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
                         if any(overlaps(parent, subject) for subject in subjects):
                             raise ProofRefusal('new observer class would carry a declared subject onto base', name, parts[1])
                         text, _ = source_unit(new, parent)
+                        runtime_units.discard(item)
+                        runtime_units.add(parent)
                         required_texts.append(text)
                         namespace = ()
                     else:
@@ -244,9 +278,17 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         lines = composed.splitlines(keepends=True)
         lines[insertion:insertion] = [line + '\n' for line in imports]
         target.write_text(''.join(lines))
+        runtime[name] = (protected, runtime_units)
     for subject in subjects:
         if unit(destination, subject) != unit(base, subject):
             raise ProofRefusal('assembled proof changed a base subject binding', subject.split('::')[0])
+    if not outcome_observer or support:
+        for name in {subject.split('::')[0] for subject in subjects} - runtime.keys():
+            if (base / name).is_file():
+                runtime[name] = (written_bindings((base / name).read_text()), ())
+        for name, (protected, grafts) in runtime.items():
+            target = destination / name
+            target.write_text(guard_runtime(target.read_text(), name, protected, grafts))
     inferred = sorted({path.relative_to(tree).as_posix() for tree in (base, head)
                        for path in tree.rglob('*') if path.is_file()
                        and (not (base / path.relative_to(tree)).is_file()

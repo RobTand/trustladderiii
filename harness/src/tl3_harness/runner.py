@@ -33,6 +33,60 @@ limits = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(limits)
 
 
+class ProofSubjectIntegrityError(Exception):
+    """A graft changed the runtime subject; this can never supply assertion RED."""
+
+
+class ProofIntegrity:
+    def __init__(self):
+        self.bindings = {}
+
+    @staticmethod
+    def state(value):
+        if isinstance(value, types.FunctionType):
+            return (value, value.__code__, value.__defaults__, value.__kwdefaults__)
+        return (value,)
+
+    @staticmethod
+    def resolve(module, path, local, namespace):
+        if namespace and path[:len(namespace)] == namespace:
+            owner, parts = local, path[len(namespace):]
+        else:
+            owner, parts = module, path
+        for part in parts[:-1]:
+            if part not in owner or not isinstance(owner[part], type):
+                return None
+            owner = vars(owner[part])
+        return owner, parts[-1] if parts else None
+
+    def __call__(self, module, local, namespace, protected, filename):
+        self.check()
+        for path in protected:
+            resolved = self.resolve(module, path, local, namespace)
+            if resolved is None:
+                continue
+            owner, name = resolved
+            key = (id(module), path)
+            if name in owner and key not in self.bindings:
+                self.bindings[key] = (module, path, local, namespace, filename, self.state(owner[name]))
+
+    def check(self):
+        for module, path, local, namespace, filename, expected in self.bindings.values():
+            # Class locals become the actual class dictionary after its body returns.
+            resolved = self.resolve(module, path, module, ())
+            if resolved is None:
+                resolved = self.resolve(module, path, local, namespace)
+            owner, name = resolved if resolved is not None else ({}, None)
+            actual = self.state(owner[name]) if name in owner else ()
+            if len(actual) != len(expected) or any(a is not b for a, b in zip(actual, expected)):
+                raise ProofSubjectIntegrityError(
+                    f'proof_subject_integrity: {filename}::{"::".join(path)} changed by observer/support')
+
+
+proof_integrity = ProofIntegrity()
+builtins.__tl3_proof_integrity__ = proof_integrity
+
+
 def module_candidates(module):
     root = Path.cwd()
     candidates = []
@@ -435,6 +489,14 @@ class Reporter:
         if not self.started:
             self.started = True
             self.emit(event="start", schema=1)
+
+    @pytest.hookimpl(wrapper=True, tryfirst=True)
+    def pytest_runtest_call(self):
+        proof_integrity.check()
+        try:
+            return (yield)
+        finally:
+            proof_integrity.check()
 
     @pytest.hookimpl(trylast=True)
     def pytest_collection_modifyitems(self, items, config, session):
