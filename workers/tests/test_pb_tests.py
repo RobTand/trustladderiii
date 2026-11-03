@@ -1297,6 +1297,54 @@ def test_reached_assertion_has_bound_verified_receipts(rehearsal):
     assert all('--anywhere' in cmd and '--demand' in cmd and '--cpus' in cmd for cmd in calls)
 
 
+def test_killed_fork_target_validates_exact_rehearsal_receipts(rehearsal):
+    ledger, root, inputs, calls = rehearsal
+    (root / 'tests/test_adoption.py').write_text('''
+import os
+import signal
+import sys
+import time
+from publisher import Publisher
+
+def test_adopt():
+    reader, writer = os.pipe()
+    child = os.fork()
+    if child == 0:
+        os.close(reader)
+        def entering_sleep(frame, event, function):
+            if event == 'c_call' and function is time.sleep:
+                os.write(writer, b'E')
+                sys.setprofile(None)
+        sys.setprofile(entering_sleep)
+        Publisher().try_adopt()
+        os.write(writer, b'D')
+        os._exit(0)
+    os.close(writer)
+    try:
+        observed = os.read(reader, 1)
+        if observed == b'E':
+            os.kill(child, signal.SIGKILL)
+    finally:
+        os.close(reader)
+        os.waitpid(child, 0)
+    assert observed == b'D', 'child did not finish submission'
+''')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'forking base')
+    inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    ledger = ForcingRehearsals(ledger.worktree, inputs)
+    forcing = reachable()
+    result = ledger.run([NODE], forcing)
+    assert result['forced']['tests'][0]['outcome'] == 'failed'
+    assert result['forced']['tests'][0]['target_hits'] == {'publisher.Publisher.try_adopt': 1}
+    assert result['status'] == 'validated', result
+    assert result['base_sha'] == inputs['base_sha'] and result['forcing'] == forcing
+    assert result['selectors'] == [NODE]
+    assert len(result['forced']['receipts'][0]['receipt_sha256']) == 64
+    assert ledger.violations(inputs['base_sha'], plan(forcing)['checks']) == []
+    assert len(calls) == 2
+
+
 @pytest.mark.parametrize('control', ['still_green', 'unrelated', 'setup', 'import', 'missing', 'no_report'])
 def test_unusable_experiments_cannot_supply_red_or_repeat_identically(rehearsal, monkeypatch, control):
     ledger, root, inputs, calls = rehearsal

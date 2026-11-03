@@ -17,7 +17,7 @@ from .report import InvalidReport, decode, parse
 from .supervision import ExecutionFailure, ExecutionOutcome, Supervised
 from . import selection
 from .trees import (UnsupportedEntry, added_names, changed_configuration, changed_existing_tests,
-                    changed_files, changed_protected, commit, configuration, export, is_test, own_base,
+                    changed_files, changed_protected, commit, configuration, export, git, is_test, own_base,
                     test_edits, helper_test_edits, validate_helper_setup)
 
 
@@ -485,6 +485,25 @@ def stale_result(result: Result, stale: set[str]) -> Result:
     return replace(result, tests=tests, verdict=verdict)
 
 
+FORCING_INTERNALS = re.compile(
+    r'tl3[-_]forcing|node-[*?\[]|DelayAccounting|'
+    r'tl3_harness[^\n]*(?:runner|forcing_ownership)|'
+    r'(?:/harness/|harness/src/)[^\n]*(?:runner|forcing)', re.IGNORECASE)
+
+
+def forcing_tamper_diff(repo, base, head):
+    """A source tripwire, not a sandbox against obfuscated interpreter access."""
+    for path in changed_files(repo, base, head):
+        patch = git(repo, 'diff', '--no-ext-diff', '--no-textconv', '--no-renames',
+                    '--unified=0', base, head, '--', path).decode(errors='replace')
+        for line in patch.splitlines():
+            if line.startswith(('+', '-')) and not line.startswith(('+++', '---')):
+                if match := FORCING_INTERNALS.search(line[1:]):
+                    return (f'forcing_tampered: forced head diff references forcing internals in {path}: '
+                            f'{match.group()[:160]}. Remove access to harness forcing internals.')
+    return None
+
+
 def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                container: Container, reviewed: str | None = None, tool: TestTool = PYTEST,
                protected: tuple[str, ...] = (), selected_tests: int | None = None,
@@ -529,6 +548,9 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
     if Path(__file__).resolve().is_relative_to(repo):
         raise HarnessInputError("the installed harness must be outside the served checkout")
     base, head = commit(repo, base), commit(repo, head)
+    if any(check.forcing is not None for check in plan):
+        if tampering := forcing_tamper_diff(repo, base, head):
+            return refused(plan, tampering)
     if reviewed is not None:
         reviewed = commit(repo, reviewed)
     with tempfile.TemporaryDirectory(prefix="tl3-checks-") as directory:

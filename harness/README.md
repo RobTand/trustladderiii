@@ -314,9 +314,50 @@ forcing for review. Unforced results omit `forcing` and `head_forced`.
 
 Threat model: the forcing is model-written data. The host process never
 imports or runs it. It runs only in the test container, where repository code
-already runs. The maker can't change it, because it lives in the plan and is
-applied outside the test. Report custody is unchanged. A forcing can still
-force a failure unrelated to the flake; the reviewer judges that.
+already runs. The plan supplies the forcing, but the runner and repository code
+share an interpreter and UID 65534. Read-only harness files and private journal
+permissions do not isolate their runtime state from that code.
+
+For forced checks, Checking refuses a head diff that references forcing internals,
+including `tl3-forcing`, `node-*` journal globs, and harness forcing modules. It
+reports `forcing_tampered` with the file and matched reference before running
+tests. It scans changed lines, so unchanged base references do not trigger it.
+This tripwire is a cheap deterrent. Same-process code can defeat it and the
+journal checks through obfuscated imports, introspection, or monkeypatching.
+Independent review of the head diff is the defence against such interference.
+Calling the real target early to exhaust its delay budget can also resemble
+legitimate work; review must reject changes that counteract the forcing.
+
+Delayed targets keep counts, remaining budget, expected journal size, and a
+rolling content digest in anonymous memory shared across fork descendants.
+The reporter holds the original journal descriptor open until node teardown,
+pinning its inode even when descendants close their inherited descriptors.
+Each call compares its open descriptor and the path's stat with that original
+identity, checks the size, appends one record, and updates shared state.
+Teardown compares the original descriptor's fstat with the path's stat, so
+replacement cannot hide behind inode reuse. The file never supplies the remaining
+budget. Calls read no journal content, including after the budget is spent.
+Teardown verifies the content once in sequential chunks. Processing is linear
+in the number of calls.
+
+Observed truncation, replacement, unexpected appends, or changed content make
+the node's tamper flag sticky. Even if the test catches an instrumentation
+exception, teardown reports `forcing_tampered: true`, an error outcome, and no
+hit evidence. Node cleanup suppresses filesystem close/unlink errors, including
+directory replacement, so they cannot mask the tamper diagnostic. Session
+cleanup attempts to remove remaining journal entries. Independent Checking also
+treats tampering as an error, never GREEN or assertion RED. Transient file changes
+undone before observation cannot be proven, and code that deliberately mutates
+the shared interpreter state remains
+outside this protection. Report custody is unchanged and is not tamper-proof.
+
+Fork accounting requires the supported Linux/glibc amd64 or arm64 test image.
+A process-shared robust mutex protects only the append and memory update; it is
+released before sleeping or calling repository code. Death during that update
+invalidates proof instead of stranding a lock. Death during the injected sleep
+preserves the entry and its reservation. Spawned interpreters without inherited
+wrappers supply no hits. A forcing can still force a failure unrelated to the
+flake; the reviewer judges that.
 
 ## Execution boundary
 
