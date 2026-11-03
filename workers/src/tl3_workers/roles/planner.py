@@ -54,7 +54,7 @@ class PlanConsistencyError(ValueError):
             return
         if set(reply['files']) != set(draft['files']) and not added:
             errors.append('Correction changes the draft footprint.')
-        mutable = {'checks', 'edits_tests', 'forecast', 'violations', 'decision_context', 'evidence_errors'}
+        mutable = {'checks', 'edits_tests', 'forecast', 'violations', 'decision_context', 'evidence_errors', 'forcing_rehearsals'}
         if ({key: value for key, value in reply.items() if key not in mutable}
                 != {key: value for key, value in draft.items() if key not in mutable}):
             errors.append('Correction changes declarations outside the test consistency error.')
@@ -93,8 +93,8 @@ class PlanConsistencyError(ValueError):
         reply['violations'].extend(dict.fromkeys(errors))
 
 
-def check_reply(inputs, reply):
-    if "forecast" in reply or "violations" in reply or "decision_context" in reply:
+def check_reply(inputs, reply, *, rehearsals=None):
+    if any(field in reply for field in ("forecast", "violations", "decision_context", "forcing_rehearsals")):
         raise ValueError("only code may supply planning evidence")
     preflight(inputs, reply, planning=True)
     check_citations(inputs, reply)
@@ -226,6 +226,8 @@ def check_reply(inputs, reply):
                 violations.append(f"Declared file can't be used: {error}. Leave it out.")
             if child["tokens"] >= forecast["tokens"]:
                 violations.append("Every proposed piece must have a smaller forecast than its parent.")
+    if rehearsals is not None and rehearsals.failure:
+        violations.append(rehearsals.failure['message'])
     if uncovered or missing_forced:
         mismatch = PlanConsistencyError(uncovered, missing_forced, draft=reply)
         # Only these intrinsic inconsistencies enter the existing tool-free repair.
@@ -233,6 +235,14 @@ def check_reply(inputs, reply):
         if not violations and inputs.get('repair_plan_consistency', False):
             raise mismatch
         violations.extend(mismatch.violations)
+    if reply['kind'] == 'leaf':
+        valid = [check for check in reply['checks'] if valid_forcing(check)]
+        if rehearsals is not None:
+            violations.extend(rehearsals.violations(inputs.get('base_sha'), valid))
+        elif valid:
+            violations.append('Q55 check lacks a matching forcing rehearsal receipt for the exact base, selectors and forcing.')
+    if rehearsals is not None and (rehearsals.receipts or rehearsals.failure):
+        reply['forcing_rehearsals'] = deepcopy(rehearsals.receipts + ([rehearsals.failure] if rehearsals.failure else []))
     if "decision_context" in inputs:
         reply["decision_context"] = inputs["decision_context"]
     reply["forecast"] = forecast
@@ -385,8 +395,9 @@ ROLE = Role(
     prompt="planner.md",
     input_schema="planner-input",
     reply_schema="planner-reply",
-    code_only_fields=("forecast", "violations", "decision_context", "evidence_errors"),
+    code_only_fields=("forecast", "violations", "decision_context", "evidence_errors", "forcing_rehearsals"),
     tools={
+        "rehearse_forcing": "Rehearse exact existing base tests with a Q55 forcing through PrismaBuild before returning a forced leaf. No commands, repeats or head execution. A failed rehearsal stops planning; never retry it.",
         "list": "List worktree directories to locate material for the plan.",
         "read": "Read worktree text to identify files and checks for the goals.",
         "glob": "Find worktree paths using relative glob patterns for planning. The path must be a directory.",

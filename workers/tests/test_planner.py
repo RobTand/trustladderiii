@@ -80,7 +80,7 @@ def tool_capable_fake(monkeypatch):
     setup = '''
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 def bind_tools(self, tools, **kwargs):
-    assert {tool.name for tool in tools} == {'list', 'read', 'glob', 'grep'}
+    assert {tool.name for tool in tools} == {'list', 'read', 'glob', 'grep', 'rehearse_forcing'}
     assert all(tool.description for tool in tools)
     return self
 FakeMessagesListChatModel.bind_tools = bind_tools
@@ -612,12 +612,12 @@ def deflake_worktree(planner_request, monkeypatch):
     return reply
 
 
-def test_forced_reproduction_is_a_valid_plan(planner_request, deflake_worktree):
+def test_forced_reproduction_needs_a_matching_rehearsal(planner_request, deflake_worktree):
     from tl3_workers.roles.planner import check_reply
 
     validate("planner-reply", deflake_worktree)
     check_reply(planner_request['inputs'], deflake_worktree)
-    assert deflake_worktree['violations'] == []
+    assert any('matching forcing rehearsal receipt' in v for v in deflake_worktree['violations'])
 
 
 def test_forcing_belongs_only_on_demonstrating_checks(planner_request, deflake_worktree):
@@ -872,8 +872,8 @@ def test_test_only_change_without_a_forcing_needs_a_forced_reproduction(planner_
     assert not any('#393' in item for item in violations), violations
 
 
-def test_test_only_change_with_a_forced_reproduction_is_accepted(planner_request, digests_plan):
-    # Q55: the same deflake with a forcing on its demonstrating check is a valid plan.
+def test_test_only_change_with_a_forcing_still_needs_rehearsal(planner_request, digests_plan):
+    # Q55 forcing still supports test-only changes, but now needs plan-time execution.
     digests_plan['files'] = [DIGESTS]
     digests_plan['edits_tests'] = [FROZEN]
     digests_plan['checks'] = [
@@ -881,7 +881,8 @@ def test_test_only_change_with_a_forced_reproduction_is_accepted(planner_request
         {'kind': 'regression', 'node_ids': [SIBLING], 'goal_ids': [1]},
     ]
     validate('planner-reply', digests_plan)
-    assert planned(planner_request, copy.deepcopy(digests_plan)) == []
+    assert any('matching forcing rehearsal receipt' in v
+               for v in planned(planner_request, copy.deepcopy(digests_plan)))
     # Every demonstrating check needs the forcing, and it must be valid.
     digests_plan['checks'].append({'kind': 'demonstrating', 'node_ids': [SIBLING], 'goal_ids': [0]})
     assert any(TEST_ONLY in item for item in planned(planner_request, copy.deepcopy(digests_plan)))
@@ -1226,7 +1227,8 @@ FakeMessagesListChatModel._generate = inspect_contract
     assert result.exit_code == 0, result.stderr
     plan = next(event['reply'] for event in result.events if event['event'] == 'reply')
     assert plan['kind'] == 'leaf'
-    assert plan['violations'] == []
+    assert all('matching forcing rehearsal receipt' in v for v in plan['violations'])
+    assert plan['violations']
     assert plan['evidence_contract'] == [requirement]
     assert plan['checks'] == request_149_plan['checks']
 
@@ -1480,13 +1482,15 @@ def test_request162_forced_check_gets_the_same_single_correction(planner_request
     else:
         runtime.run(planner_request, events.append)
         result = events[-1]['reply']
-        assert result['kind'] == fixed['kind'] and result['violations'] == []
+        assert result['kind'] == fixed['kind']
         if resolution == 'base_nodes':
+            assert result['violations'] and all('matching forcing rehearsal receipt' in v for v in result['violations'])
             assert result['checks'][0]['node_ids'] == [CREATED]
             assert result['checks'][0]['goal_ids'] == [0, 1]
             assert result['checks'][1] == request162['checks'][1]
             assert result['checks'][0]['forcing'] == request162['checks'][0]['forcing']
         else:
+            assert result['violations'] == []
             assert result['report'] == fixed['report']
     assert len(model.calls) == 2
     history, offered = model.calls[1]
@@ -1620,12 +1624,14 @@ def test_request165_preserves_deterministic_tier_and_rate_goals(planner_request,
         if resolution == 'drop_tier_goal':
             assert 'Every maker and checking goal must have a check.' in result['violations']
         else:
-            assert result['kind'] == fixed['kind'] and result['violations'] == []
+            assert result['kind'] == fixed['kind']
             if resolution == 'base_node':
+                assert result['violations'] and all('matching forcing rehearsal receipt' in v for v in result['violations'])
                 assert result['checks'] == [{**request165['checks'][0], 'node_ids': [FINISHED]}]
                 assert result['edits_tests'] == [FINISHED]
                 assert result['checks'][0]['forcing']['environment'] == {}
             else:
+                assert result['violations'] == []
                 assert result['report'] == fixed['report']
             assert result['evidence_errors'] == []
     assert len(model.calls) == 2
@@ -1715,7 +1721,7 @@ def test_appended_coverage_check_cannot_introduce_forcing(planner_request, reque
     assert not model.calls[1][1]
     result = events[-1]['reply']
     if forcing_change == 'same':
-        assert result['violations'] == []
+        assert result['violations'] and all('matching forcing rehearsal receipt' in v for v in result['violations'])
         assert result['checks'] == fixed['checks']
     else:
         assert 'Correction adds a forcing absent from the draft.' in result['violations']

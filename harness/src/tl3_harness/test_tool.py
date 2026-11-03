@@ -7,6 +7,7 @@ import tempfile
 
 from .execution import Container, Progress, container_command, require_admission
 from .report import decode
+from .model import Forcing
 from .limits import MAX_REPORT_LINE_BYTES
 
 
@@ -46,9 +47,11 @@ class Summary:
         # Every test's outcome, including entries the size bound drops; repeats aggregate these.
         self.outcomes = {}
 
-    def add(self, test, outcome, message="", truncated=False):
+    def add(self, test, outcome, message="", truncated=False, target_hits=None):
         self.result["totals"][outcome] += 1
         item = {"test": test, "outcome": outcome, "message": message[:MESSAGE_CHARS]}
+        if target_hits is not None:
+            item["target_hits"] = target_hits
         self.outcomes[test] = item
         clipped = truncated or len(message) > MESSAGE_CHARS
         self.result["tests"].append(item)
@@ -60,7 +63,7 @@ class Summary:
             self.result["note"] = "Truncated: test entries or failure messages were cut. Totals include all results."
 
 
-def run_current(tree, container, tests, parallel=0, summary=None):
+def run_current(tree, container, tests, parallel=0, summary=None, *, forcing=None):
     require_admission()
     summary = Summary() if summary is None else summary
     missing = {test for test in tests if not (tree / test.split("::", 1)[0]).exists()}
@@ -76,7 +79,8 @@ def run_current(tree, container, tests, parallel=0, summary=None):
     seen = set()
     collection_error = False
     with tempfile.TemporaryFile() as selection:
-        selection.write(json.dumps(tests).encode())
+        selection.write(json.dumps(tests if forcing is None else
+                                   {"tests": tests, "forcing": forcing.as_json()}).encode())
         selection.seek(0)
         with subprocess.Popen(command, stdin=selection, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL) as child:
@@ -92,14 +96,23 @@ def run_current(tree, container, tests, parallel=0, summary=None):
                     elif finished:
                         raise ValueError("records after finish")
                     elif record.get("event") == "result":
-                        if (set(record) != {"event", "test", "outcome", "message", "truncated"}
+                        expected = {"event", "test", "outcome", "message", "truncated"}
+                        hits = record.get("target_hits")
+                        if forcing is not None and forcing.patches:
+                            expected.add("target_hits")
+                            if (not isinstance(hits, dict) or any(type(count) is not int or count < 0
+                                                                 for count in hits.values())
+                                    or set(hits) - {target for target, mode, _ in forcing.patches
+                                                    if mode == "delay_seconds"}):
+                                raise ValueError("invalid target invocation counts")
+                        if (set(record) != expected
                                 or not isinstance(record["test"], str) or record["test"] in seen
                                 or record["outcome"] not in OUTCOMES
                                 or not isinstance(record["message"], str)
                                 or type(record["truncated"]) is not bool):
                             raise ValueError("invalid test result")
                         seen.add(record["test"])
-                        summary.add(record["test"], record["outcome"], record["message"], record["truncated"])
+                        summary.add(record["test"], record["outcome"], record["message"], record["truncated"], hits)
                         progress.commit(record["test"])
                     elif record.get("event") == "collection-error":
                         collection_error = True
@@ -142,12 +155,15 @@ def run_current(tree, container, tests, parallel=0, summary=None):
         return summary.result
 
 
-def run(tree, container, tests, *, repeat=1, parallel=0):
+def run(tree, container, tests, *, repeat=1, parallel=0, forcing=None):
     """Run the tests `repeat` times, each a fresh pytest process, optionally under xdist."""
     repeat, parallel = options(repeat, parallel)
+    if forcing is not None and (repeat != 1 or parallel):
+        raise ValueError("A forcing rehearsal runs once without xdist")
     extra = {"parallel": parallel} if parallel else {}
     if repeat == 1:
-        return {**run_current(tree, container, tests, parallel), **extra}
+        return {**(run_current(tree, container, tests, parallel) if forcing is None else
+                   run_current(tree, container, tests, parallel, forcing=forcing)), **extra}
     runs, worst, notes = [], {}, []
     for number in range(1, repeat + 1):
         outcomes = Summary()
@@ -188,12 +204,16 @@ def main():
     parser.add_argument("--exec-scratch", action="store_true")
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--parallel", type=int, default=0)
+    parser.add_argument("--forcing")
     # A per-call value that only makes the PrismaBuild action key unique, so repeats run fresh.
     parser.add_argument("--fresh")
     args = parser.parse_args()
     try:
+        forcing = Forcing.parse(json.loads(args.forcing)) if args.forcing else None
         result = run(Path("checkout").resolve(), Container(args.image, exec_scratch=args.exec_scratch),
-                     tuple(json.loads(args.selectors)), repeat=args.repeat, parallel=args.parallel)
+                     tuple(json.loads(args.selectors)), repeat=args.repeat, parallel=args.parallel, forcing=forcing)
+        if forcing is not None:
+            result.update(forcing=forcing.as_json(), selectors=json.loads(args.selectors))
     except (OSError, RuntimeError, ValueError):
         result = infrastructure("Test infrastructure failed before a complete report was available.")
     print(PREFIX + json.dumps(result), flush=True)

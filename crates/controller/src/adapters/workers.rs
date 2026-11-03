@@ -431,6 +431,20 @@ impl Supervisor {
                 .worker_document(&node, "findings")?
                 .unwrap_or(json!([]));
             inputs = json!({"always_tests": self.images.additional_tests(&delivery.repository).always, "ingest": ingest, "must_split": matches!(n.phase, tl3_kernel::Phase::Planning { must_split: true }), "findings": findings, "protected_paths": self.protected_paths.for_repository(&delivery.repository, &self.planning.protected_paths)?, "forecast": forecast});
+            if let Some(base) = materials.get("base_checkout") {
+                inputs["base_sha"] = base["commit"].clone();
+            }
+            let demand = self
+                .images
+                .test_demand(&delivery.repository)
+                .unwrap_or_default();
+            inputs["tests"] = json!({
+                "image": self.images.for_repository(&delivery.repository, &self.tests.container_image),
+                "tools_path": self.tests.tools_dir,
+                "cpus": demand.cpus,
+                "mem_gb": demand.mem_gb,
+                "exec_scratch": self.images.exec_scratch(&delivery.repository),
+            });
         } else if role == "audit" {
             inputs["ingest"] = store
                 .worker_document(&node, "briefs")?

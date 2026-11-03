@@ -45,7 +45,14 @@ fn planner_protected_paths_follow_the_request_repository() {
         })
         .unwrap();
     let mut store = Store::open(&config.store).unwrap();
-    store.put_worker_materials("0", &json!({})).unwrap();
+    store
+        .put_worker_materials(
+            "0",
+            &json!({"base_checkout": {
+                "repository": f.root.path(), "commit": f.base
+            }}),
+        )
+        .unwrap();
     let snapshot = documents(
         &mut store,
         &[(
@@ -69,6 +76,16 @@ fn planner_protected_paths_follow_the_request_repository() {
             .unwrap();
         let cpus = if name == "TL3-SANDBOX" { 4 } else { 1 };
         assert_eq!(request["test_cpus"], cpus);
+        assert_eq!(request["inputs"]["base_sha"], f.base);
+        assert_eq!(request["inputs"]["tests"]["cpus"], cpus);
+        assert_eq!(
+            request["inputs"]["tests"]["mem_gb"],
+            if cpus == 4 { 12 } else { 2 }
+        );
+        assert_eq!(
+            request["inputs"]["tests"]["tools_path"],
+            json!(config.prismabuild.tools_dir)
+        );
         let features = request["inputs"]["tool_capabilities"][0]["runner_features"]
             .as_array()
             .unwrap();

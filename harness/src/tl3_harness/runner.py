@@ -125,7 +125,7 @@ def forcing_owner(target):
 MAX_TOTAL_DELAY_SECONDS = 10
 
 
-def forced_value(owner, name, mode, argument, sleep=time.sleep, budget=None):
+def forced_value(owner, name, mode, argument, sleep=time.sleep, budget=None, counter=None):
     if mode == "value":
         return argument
     if mode == "returns":
@@ -145,6 +145,8 @@ def forced_value(owner, name, mode, argument, sleep=time.sleep, budget=None):
     budget = [MAX_TOTAL_DELAY_SECONDS] if budget is None else budget
 
     def delayed(*args, **kwargs):
+        if counter is not None:
+            counter[0] += 1
         wait = min(argument, budget[0])
         budget[0] -= wait
         if wait:
@@ -169,6 +171,7 @@ class Reporter:
         # Under xdist, workers run the tests and this plugin sees only their reports.
         self.parallel = parallel
         self.patches = patches
+        self.target_hits = {}
         self.phases = {}
         self.collection_errors = []
         self.reported = set()
@@ -194,16 +197,18 @@ class Reporter:
             shutil.rmtree(tmp_path, ignore_errors=True)
 
     @pytest.fixture(autouse=True)
-    def _tl3_forcing(self):
+    def _tl3_forcing(self, request):
         # Applied before the test's own fixtures and undone after them, so the test's own
         # monkeypatches take precedence while it runs (#393).
         budget = [MAX_TOTAL_DELAY_SECONDS]
+        hits = self.target_hits.setdefault(request.node.nodeid, {})
         with pytest.MonkeyPatch.context() as patch:
             for forcing in self.patches:
                 target = forcing["target"]
                 (mode, argument), = ((key, value) for key, value in forcing.items() if key != "target")
                 owner, name = forcing_owner(target)
-                patch.setattr(owner, name, forced_value(owner, name, mode, argument, budget=budget))
+                counter = hits.setdefault(target, [0]) if mode == "delay_seconds" else None
+                patch.setattr(owner, name, forced_value(owner, name, mode, argument, budget=budget, counter=counter))
             yield
 
     def emit(self, **record):
@@ -301,7 +306,9 @@ class Reporter:
         else:
             outcome = "skipped" if any(p[1] == "skipped" for p in phases) else "passed"
         message = "\n".join(p[2] for p in failures)
-        self.emit(event="result", test=report.nodeid, outcome=outcome,
+        hits = self.target_hits.pop(report.nodeid, {})
+        extra = {"target_hits": {target: count[0] for target, count in hits.items()}} if self.patches else {}
+        self.emit(event="result", test=report.nodeid, outcome=outcome, **extra,
                   message=message[:1000], truncated=len(message) > 1000 or any(p[3] for p in failures))
 
     def pytest_sessionfinish(self, exitstatus):

@@ -382,6 +382,14 @@
           "uniqueItems": true,
           "maxItems": 1024,
           "description": "Code-owned unsupported evidence requirements."
+        },
+        "forcing_rehearsals": {
+          "type": "array",
+          "maxItems": 9,
+          "items": {
+            "type": "object"
+          },
+          "description": "Code-owned verified planner rehearsal receipts. Independent Checking is still required."
         }
       },
       "required": [
@@ -596,6 +604,14 @@
           "uniqueItems": true,
           "maxItems": 1024,
           "description": "Code-owned unsupported evidence requirements."
+        },
+        "forcing_rehearsals": {
+          "type": "array",
+          "maxItems": 9,
+          "items": {
+            "type": "object"
+          },
+          "description": "Code-owned verified planner rehearsal receipts. Independent Checking is still required."
         }
       },
       "required": [
@@ -786,6 +802,14 @@
           "uniqueItems": true,
           "maxItems": 1024,
           "description": "Code-owned unsupported evidence requirements."
+        },
+        "forcing_rehearsals": {
+          "type": "array",
+          "maxItems": 9,
+          "items": {
+            "type": "object"
+          },
+          "description": "Code-owned verified planner rehearsal receipts. Independent Checking is still required."
         }
       },
       "required": [

@@ -15,6 +15,7 @@ from langchain_core.tools import StructuredTool, ToolException, create_schema_fr
 
 from tl3_workers.diff import make_diff_tool
 from tl3_workers.pb_tests import make_test_tool
+from tl3_workers.forcing_rehearsal import make_rehearsal_tool
 from tl3_workers.pb_generators import make_generator_tool
 from tl3_workers.recall import make_recall_tool
 from tl3_workers.memory import current
@@ -620,6 +621,7 @@ class Worktree:
 TOOL_FACTORIES = {
     "recall": make_recall_tool,
     "run_tests": make_test_tool,
+    "rehearse_forcing": make_rehearsal_tool,
     "run_generator": make_generator_tool,
     "list": lambda worktree: worktree.list_files,
     "read": lambda worktree: worktree.read,
@@ -641,7 +643,7 @@ def build_tools(worktree, descriptions):
             raise ValueError("Each role must describe its tools")
         method = TOOL_FACTORIES[name](worktree)
         summary = current.get()
-        lock = worktree._mutation_lock if name in WRITE_TOOLS | {"run_tests", "run_generator"} else nullcontext()
+        lock = worktree._mutation_lock if name in WRITE_TOOLS | {"run_tests", "run_generator", "rehearse_forcing"} else nullcontext()
 
         def guarded(*args, _method=method, _lock=lock, _name=name, _summary=summary, **kwargs):
             with _lock:

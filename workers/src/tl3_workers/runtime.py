@@ -24,6 +24,7 @@ from tl3_workers.evidence import forcing_capabilities, forcing_guidance
 from tl3_workers.contracts import read_json, read_reply, schema, validate
 from tl3_workers.roles import ROLES
 from tl3_workers.roles.planner import PlanConsistencyError
+from tl3_workers.forcing_rehearsal import ForcingRehearsals
 from tl3_workers.tools import Worktree, build_tools
 from tl3_workers.memory import Summary, current
 from tl3_workers.recall import redacted_memories
@@ -126,6 +127,9 @@ def role_prompt(role):
     prompt = supplied if supplied is not None else files("tl3_workers").joinpath("prompts", role.prompt).read_text()
     if role.name in {"ingest", "audit", "planner"}:
         prompt += "\n\n" + forcing_guidance(run_test_cpus.get())
+    if role.name == 'planner':
+        from tl3_workers.forcing_rehearsal import GUIDANCE
+        prompt += "\n\n" + GUIDANCE
     return prompt
 
 
@@ -222,6 +226,8 @@ def _run(request, emit):
         if worktree is not None:
             worktree.hindsight_key_file = request.get("hindsight_key_file")
             worktree.progress_emit = emit
+        if role.name == 'planner':
+            worktree.forcing_rehearsals = ForcingRehearsals(worktree, request['inputs'], checkout=request['worktree'])
         if role.run is None:
             control = TurnControl()
             agent = build_agent(model, role, worktree, context_size=request["inputs"].get(
@@ -235,8 +241,14 @@ def _run(request, emit):
 
             def checked(text):
                 nonlocal draft_error
+                # A completed failed rehearsal is substantive work evidence. Even malformed
+                # final text cannot route it into tool-free format or consistency correction.
+                ledger = getattr(worktree, 'forcing_rehearsals', None)
+                if ledger is not None and ledger.failure:
+                    return _checked(role, request['inputs'], {
+                        'kind': 'cant_meet', 'files': [], 'evidence_contract': [], 'report': ledger.failure['message']}, worktree=worktree)
                 try:
-                    result = _checked(role, request["inputs"], read_reply(text))
+                    result = _checked(role, request["inputs"], read_reply(text), worktree=worktree)
                 except PlanConsistencyError as error:
                     if draft_error is None:
                         draft_error = error
@@ -255,10 +267,13 @@ def _run(request, emit):
     return reply
 
 
-def _checked(role, inputs, reply):
+def _checked(role, inputs, reply, *, worktree=None):
     validate(role.reply_schema, reply)
     if role.check_reply is not None:
-        role.check_reply(inputs, reply)
+        if role.name == 'planner':
+            role.check_reply(inputs, reply, rehearsals=getattr(worktree, 'forcing_rehearsals', None))
+        else:
+            role.check_reply(inputs, reply)
     return reply
 
 

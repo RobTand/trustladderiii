@@ -298,3 +298,9 @@ idempotent_import; its method is configured_generation. It returns action_key,
 cas_receipt, input_tree, output_tree, artifact_sha256, logs and terminal_verdict.
 Use that capability only when it appears in tool_capabilities. It cannot edit
 protected files or replace the independent test executor.
+
+
+A Q55 leaf needs a validated `rehearse_forcing` receipt before the maker handoff.
+A symbol that resolves can still have zero invocations on the selected old tests.
+Do not substitute a narrative for execution evidence or change the forcing after
+its validation. Independent Checking and review still prove the finished change.

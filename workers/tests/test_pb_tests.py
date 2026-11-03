@@ -10,7 +10,6 @@ import sys
 
 import pytest
 
-from tl3_harness import execution, test_tool
 from tl3_workers.forcing_rehearsal import ForcingRehearsals
 from tl3_workers.roles import planner
 from tl3_harness.test_tool import SUMMARY_BYTES, Summary, infrastructure
@@ -1128,6 +1127,9 @@ from tl3_harness import test_tool
 from tl3_harness import execution
 import json
 execution.require_admission = test_tool.require_admission = lambda: None
+import os
+os.environ['PRISMABUILD_ACTION_PROGRESS_PATH'] = str(Path('progress.json').resolve())
+os.environ['PRISMABUILD_ACTION_PROGRESS_TOKEN'] = 'fixture'
 test_tool.container_command = lambda tree, container, tests: [sys.executable, '-I', '-B',
     str(Path(execution.__file__).with_name('runner.py')), '-', str(tree)]
 sys.argv = ['action.py', *json.loads(sys.argv[1])]
@@ -1224,7 +1226,7 @@ def test_unusable_experiments_cannot_supply_red_or_be_retried(rehearsal, monkeyp
         git(root, 'add', '.')
         git(root, 'commit', '-qm', control)
         inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
-        ledger.worktree.check_base_sha = inputs['base_sha']
+        ledger = ForcingRehearsals(ledger.worktree, inputs)
     result = ledger.run([NODE], forcing)
     assert result['status'] == 'refused'
     count = len(calls)
@@ -1277,3 +1279,74 @@ def test_independent_checking_is_still_required(rehearsal):
     assert result['status'] == 'validated'
     assert result['pending_checking'] is True
     assert 'head' not in result and 'head_forced' not in result
+
+
+@pytest.mark.parametrize('reached', [False, True])
+def test_real_planner_tool_loop_refuses_or_binds_handoff(rehearsal, monkeypatch, reached):
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+    from tl3_workers import runtime
+
+    ledger, root, inputs, calls = rehearsal
+    inputs['repair_plan_consistency'] = True
+    forcing = reachable() if reached else deepcopy(FORCING)
+    draft = plan(forcing)
+    if not reached:
+        # A failed experiment must bypass even format repair and #577 correction.
+        draft['edits_tests'].append('tests/test_adoption.py::test_uncovered')
+    final = json.dumps(draft) if reached else 'malformed final reply after failed work'
+    model = FakeMessagesListChatModel(responses=[
+        AIMessage(content='', tool_calls=[{'name': 'rehearse_forcing', 'id': 'force',
+                                          'args': {'tests': [NODE], 'forcing': forcing}}]),
+        AIMessage(content=final),
+        AIMessage(content=json.dumps(plan(reachable()))),
+    ])
+    monkeypatch.setattr(runtime, 'create_model', lambda _: model)
+    request = {'role': 'planner', 'worktree': str(root), 'inputs': inputs,
+               'operation': {'node': 1, 'generation': 0, 'kind': 'planning'},
+               'model': {'name': 'fixture', 'effort': 'high', 'budget_tokens': 32000}}
+    events = []
+    runtime.run(request, events.append)
+    reply = events[-1]['reply']
+    assert model.i == 2, 'failed work must never enter another model correction turn'
+    assert len(calls) == 2
+    if reached:
+        assert reply['kind'] == 'leaf' and reply['violations'] == []
+        assert reply['checks'] == draft['checks']
+        assert reply['forcing_rehearsals'][0]['forcing'] == forcing
+        assert reply['forcing_rehearsals'][0]['base_sha'] == ledger.base_sha
+    else:
+        assert reply['kind'] == 'cant_meet' and 'zero-hit' in reply['report']
+        assert reply['violations'] and 'zero-hit' in reply['violations'][0]
+        assert reply['forcing_rehearsals'][0]['forced']['tests'][0]['outcome'] == 'passed'
+
+
+def test_every_named_old_path_must_hit_the_delayed_target(rehearsal):
+    ledger, root, inputs, _ = rehearsal
+    (root / 'tests/test_adoption.py').write_text(TEST + '\ndef test_bypass():\n    assert Publisher().decide()\n')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'second path bypasses adoption')
+    inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    ledger = ForcingRehearsals(ledger.worktree, inputs)
+    result = ledger.run([NODE, 'tests/test_adoption.py::test_bypass'], reachable())
+    assert result['status'] == 'refused'
+    assert 'zero-hit' in result['message'] and 'test_bypass' in result['message']
+
+
+@pytest.mark.parametrize('changed', ['forcing', 'selectors'])
+def test_pb_verified_log_for_another_forcing_or_selection_is_not_evidence(rehearsal, monkeypatch, changed):
+    from tl3_workers import pb_tests
+    ledger, _, _, _ = rehearsal
+    original = pb_tests._summary
+
+    def stale(ending, key):
+        result = original(ending, key)
+        if 'forcing' in result:
+            result[changed] = {} if changed == 'forcing' else ['tests/test_other.py::test_other']
+        return result
+
+    monkeypatch.setattr(pb_tests, '_summary', stale)
+    result = ledger.run([NODE], reachable())
+    assert result['status'] == 'refused'
+    assert result['forced']['status'] == 'infrastructure_error'
+    assert ledger.failure

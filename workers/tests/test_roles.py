@@ -82,6 +82,7 @@ def test_registered_role_gets_exactly_its_tools_and_descriptions(tmp_path, monke
     calls = []
     for name in sorted(names):
         args = {
+            "rehearse_forcing": {"tests": ["test_value.py::test_value"], "forcing": {"symptom": "Late", "environment": {"LATE": "1"}}},
             "recall": {"query": "greeting"}, "run_tests": {}, "run_generator": {}, "list": {},
             "read": {"path": "hello.txt"}, "glob": {"pattern": "*.txt"},
             "grep": {"pattern": "hello"}, "diff": {}, "write": {"path": "new.txt", "content": "hello"},

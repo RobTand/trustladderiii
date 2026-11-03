@@ -201,7 +201,7 @@ def _failure_receipt(ending, settings):
     return receipt
 
 
-def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None):
+def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None, forcing=None, timeout_seconds=None):
     """Bind settings from role inputs, directly or via worktree.test_settings."""
     settings = settings if settings is not None else getattr(worktree, "test_settings", None)
     emit = emit if emit is not None else getattr(worktree, "progress_emit", lambda event: None)
@@ -273,6 +273,10 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
                              for arg in ("--env", f"{name}={max(1, settings.cpus // max(1, parallel))}")],
                            "--detach", "--",
                            "python3", "-I", "-B", "action.py", settings.image, json.dumps(selected)]
+                if forcing is not None:
+                    command.extend(["--forcing", json.dumps(forcing.as_json(), sort_keys=True)])
+                if timeout_seconds is not None:
+                    command[2:2] = ["--timeout-s", str(timeout_seconds)]
                 if settings.exec_scratch:
                     command.append("--exec-scratch")
                 # Defaults add nothing, so a default call keeps its action identity.
@@ -292,7 +296,11 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
                     key = None
                     raise ValueError("PrismaBuild returned an invalid action key")
                 getattr(worktree, "pb_submitted", lambda key, base, tree: None)(key, base, tree)
-                return wait(key, base, base_sha, tree)
+                result = wait(key, base, base_sha, tree)
+                if forcing is not None and result["status"] == "completed" and (
+                        result.get("forcing") != forcing.as_json() or result.get("selectors") != list(selected)):
+                    raise ValueError("PrismaBuild returned a different forcing or selection")
+                return result
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
             result = infrastructure("PrismaBuild submission, execution or verified result retrieval failed.")
             if key:
