@@ -567,7 +567,9 @@ def run(model, request, worktree, emit):
     if session and reply["kind"] != "out_of_room":
         save(session, messages_to_dict(history))
     # After the accepted reply and outside the session history and allowance (#648).
-    retro.run(model, control)
+    # An out_of_room ending has no context left for one.
+    if reply["kind"] != "out_of_room":
+        retro.run(model, control, emit)
     return reply
 
 

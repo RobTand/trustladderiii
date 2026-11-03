@@ -605,7 +605,9 @@ def test_proxy_stream_requests_usage_and_serial_tools_and_uses_usage(
         runtime.run(maker_request, events.append)
     assert len(requests) == 2
     assert len(retros) == (0 if kind == "out_of_room" else 1), "a full context ends without a retro"
-    assert [event["unit"] for event in events[:-1]] == ["model_turn", "tool_result", "model_turn"]
+    # The retro (#648) reports its model turn before the reply, except after out_of_room.
+    retro_turn = [] if kind == "out_of_room" else ["model_turn"]
+    assert [event["unit"] for event in events[:-1]] == ["model_turn", "tool_result", "model_turn", *retro_turn]
     assert events[-1]["reply"]["kind"] == kind
     if kind == "done":
         assert events[-1]["reply"] == {**DONE, "head": git(root, "rev-parse", "HEAD")}

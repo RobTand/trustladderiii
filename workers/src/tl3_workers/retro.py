@@ -3,10 +3,17 @@
 The retro tells TL3 how to improve the maker's environment. It never changes
 the run: its usage stays out of the execution allowance and the run's usage
 totals, and any failure is recorded, never raised.
+
+The protocol allows no event after the reply, so the retro runs before it. It
+reports one model turn of progress, then gets a hard deadline well inside the
+agent worker's 120-second silence allowance, so it can never get the run
+stopped before the accepted reply is delivered.
 """
 
 from contextlib import nullcontext
+import contextvars
 import json
+import threading
 
 import httpx
 from jsonschema import Draft202012Validator, ValidationError
@@ -16,7 +23,7 @@ import openai
 from tl3_workers.contracts import read_reply
 
 SPAN = "tl3.maker_retro"
-TIMEOUT_S = 300
+DEADLINE_S = 60
 RESULT_BYTES = 5_120
 ITEM_CHARS = 240
 FIELDS = ("slowed_by", "missing", "checks", "noise")
@@ -78,7 +85,7 @@ def _model(model):
 def _ask(model, control):
     record = {"status": "failed"}
     try:
-        message = _model(model).invoke(_messages(control), timeout=TIMEOUT_S)
+        message = _model(model).invoke(_messages(control), timeout=DEADLINE_S)
         record.update(_usage(message))
         result = read_reply(message.text)
         Draft202012Validator(SCHEMA).validate(result)
@@ -90,17 +97,13 @@ def _ask(model, control):
     return record
 
 
-def run(model, control):
-    """Run the retro once and record it. Never raises."""
+def _traced(model, control, capture):
+    """The retro call, in its own thread's copy of the run's context."""
     from tl3_workers.facts import current as current_facts
-    from tl3_workers.tracing import active, failure
+    from tl3_workers.tracing import failure
 
-    if control.last_exchange is None:
-        return None
-    facts = current_facts.get()
-    capture = active.get()
     # Detached facts count none of the retro's usage in the run's totals.
-    token = current_facts.set(None)
+    current_facts.set(None)
     record = {"status": "failed"}
     try:
         if capture is not None:
@@ -114,8 +117,34 @@ def run(model, control):
                 span.set_outputs(record)
     except Exception:
         failure()
-    finally:
-        current_facts.reset(token)
+    return record
+
+
+def run(model, control, emit=None):
+    """Run the retro once, within DEADLINE_S, and record it. Never raises."""
+    from tl3_workers.facts import current as current_facts
+    from tl3_workers.tracing import active, failure
+
+    if control.last_exchange is None:
+        return None
+    facts = current_facts.get()
+    capture = active.get()
+    record = {"status": "timeout"}
+    try:
+        if emit is not None:
+            emit({"event": "progress", "unit": "model_turn"})
+        context = contextvars.copy_context()
+        result = {}
+        # A daemon thread: past the deadline the reply goes out, and process
+        # exit ends a call that is still waiting on the model.
+        thread = threading.Thread(target=lambda: result.update(record=context.run(_traced, model, control, capture)),
+                                  name="tl3-retro", daemon=True)
+        thread.start()
+        thread.join(DEADLINE_S)
+        record = result.get("record", record)
+    except Exception:
+        record = {"status": "failed"}
+        failure()
     try:
         if facts is not None:
             facts.retro = record
