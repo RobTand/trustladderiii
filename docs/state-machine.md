@@ -504,7 +504,28 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 - **Q54 Fail fast: stop for TL3 review instead of retrying:** Rob, 2026-11-02, in full: "can we stop retries under TL3 so that we can fail faster. we're just burning tokens on retries that end up being our issues to resolve." The coordinator turned that into #440 with MLflow evidence: retries rescued 3 of 15 requests for about 6.9M tokens and burned about 36.6M on requests that failed anyway, every time because of TL3's own defects. `[limits] fail_fast` defaults to false, which keeps the rules above; the live config sets it true. With it on, each step that would retry the work stops the request for TL3 review instead:
   - round 1 fails, or the maker says `cant_meet`, instead of attempts 2 and 3 and the re-plan (Q22);
   - the maker or the fresh reviewer runs out of room, or the maker needs files that don't fit, instead of a split;
-  - the planner says `cant_meet`, instead of a re-run on its next model. The planner worker reports a plan that breaks a rule as `cant_meet` too, so a rule-breaking plan also stops at once.
+  - the planner says `cant_meet`, instead of a re-run on its next model. The planner worker reports a completed plan that breaks a rule as `cant_meet` too, so a rule-breaking completed plan also stops at once.
+
+  **Approved Q27/Q54 exception, Rob, 2026-11-03:**
+  [approval on #573](https://github.com/RobTand/trustladderiii/issues/573#issuecomment-6602791857)
+  enables #577's existing single tool-free planner correction in production
+  with `repair_plan_consistency: true`. Only an edited test missing
+  demonstrating coverage or a forced demonstrating selection absent from the
+  base may enter it, and only when there is no substantive violation. The
+  correction stays in the same worker run and accounting limits, uses only
+  already-read facts, and stays bound to the original draft's files, goals,
+  existing check kinds and forcings. It may only add missing demonstrating
+  coverage, swap forced non-base selections for base nodes, or drop an
+  uncovered unnecessary edit. An appended demonstrating check may have no
+  forcing or reuse a draft forcing unchanged. It may honestly return
+  `cant_meet`. Added files, a wider footprint, unrelated checks or edits,
+  changed forcings and new goals remain PlanCantMeet. A second inconsistent
+  reply ends correction with both named diagnostics. Substantive failures,
+  unsupported requirements, protected-path conflicts, out-of-room conditions
+  and actual work failures keep their existing paths. Q50 infrastructure
+  handling and Q55 base/head proof requirements are unchanged. This exception
+  adds no work generation, model-ladder retry or automatic restart. See the
+  authoritative Planning section in `docs/state-table.md`.
 
   A stop for TL3 review closes as Stopped with reason `tl3_review`. It spends no credit and asks Rob nothing. The summary names the failing step and its evidence, says to comment `restart`, and leaves the issue open (Q49). A postmortem is owed as `needed_fix`, and one line goes to the operations issue for the coordinator, who restarts the request after the TL3 fix ships, or at once on a stronger model when the work itself was the cause. tl3d sets the flag on the stored world at every start, so it applies to requests already open.
 

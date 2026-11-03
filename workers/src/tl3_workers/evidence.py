@@ -3,6 +3,13 @@
 from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT, RESERVED_ENVIRONMENT, RESERVED_PREFIXES
 
 
+class EvidenceContractError(ValueError):
+    """A fixed, safe diagnostic for the existing reply-format repair path."""
+
+    def __init__(self):
+        super().__init__('Return evidence_contract with source requirements and separately marked method choices.')
+
+
 def forcing_capabilities(cpus=1):
     """Code-owned model context, independent of operator-selected executor support."""
     return {
@@ -11,6 +18,9 @@ def forcing_capabilities(cpus=1):
         "runner_environment": {name: str(cpus) for name in NATIVE_THREAD_ENVIRONMENT},
         "runner_feature": f"native_threads_{cpus}",
         "executor": "prismabuild_pytest",
+        "path_depth": {"supported": False, "reason":
+                       "No bounded sandbox-local temporary-root/path-depth forcing is installed. "
+                       "TMPDIR/TEMP/TMP and PYTEST* remain reserved."},
     }
 
 
@@ -28,7 +38,10 @@ def forcing_guidance(cpus=1):
             "forced_reproduction.environment describes only symptom mutations. "
             "A delay patch can use an empty environment. The reviewer still judges causal relevance "
             "and the harness still requires forced base failure and head passes with and without forcing. "
-            "Never claim a future run has already supplied evidence.")
+            "Never claim a future run has already supplied evidence. "
+            + contract["path_depth"]["reason"]
+            + " If permitted environment forcings or repository patches cannot recreate the condition, "
+            "report the remaining source obligation and this missing capability; do not invent a root control.")
 
 
 DIMENSIONS = ('runner_features', 'artifacts', 'methods', 'protected_files')
@@ -97,11 +110,12 @@ def preflight(inputs, reply, *, planning=False):
     if 'tool_capabilities' not in inputs:
         return
     if 'evidence_contract' not in reply:
-        raise ValueError('derive evidence_contract from every mandatory execution requirement')
+        raise EvidenceContractError()
     helper_checks = [check for check in reply.get('checks', []) if 'helper_evidence' in check] if planning else []
     if helper_checks:
         reply['evidence_contract'].append({
             'requirement': 'Observe the real old and new test helper with identical new regression assertions.',
+            'provenance': {'kind': 'method'},
             'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
             'artifacts': ['cas_receipt', 'terminal_verdict'], 'methods': ['helper_target_observer'],
             'protected_files': []})
@@ -110,24 +124,36 @@ def preflight(inputs, reply, *, planning=False):
                for value in [*case['args'], *case['kwargs'].values()] if isinstance(value, dict)):
             reply['evidence_contract'].append({
                 'requirement': 'Construct helper arguments with unchanged existing repository setup functions.',
+                'provenance': {'kind': 'method'},
                 'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
                 'artifacts': ['cas_receipt', 'terminal_verdict'],
                 'methods': ['helper_target_observer.setup_function'], 'protected_files': []})
     if planning and any('declared_symptom' in check for check in reply.get('checks', [])):
         reply['evidence_contract'].append({
             'requirement': 'Observe the declared exception at the original node and phase in a fixed campaign.',
+            'provenance': {'kind': 'method'},
             'tool': 'run_tests', 'executor': 'prismabuild_pytest',
             'runner_features': ['base_head', 'repeat', 'parallel'],
             'artifacts': ['cas_receipt', 'logs', 'sha', 'terminal_verdict'],
             'methods': ['declared_symptom'], 'protected_files': []})
     contract = []
-    for requirements in (inputs.get('ingest', {}).get('evidence_contract', []),
-                         inputs.get('audit_evidence_contract', []), reply['evidence_contract']):
+    # Only source obligations survive stage changes. Unmarked legacy entries remain
+    # mandatory because their origin cannot be recovered safely from a method name.
+    for inherited, requirements in ((True, inputs.get('ingest', {}).get('evidence_contract', [])),
+                                    (True, inputs.get('audit_evidence_contract', [])),
+                                    (False, reply['evidence_contract'])):
         for requirement in requirements:
+            if inherited and requirement.get('provenance', {}).get('kind') == 'method':
+                continue
             if requirement not in contract:
                 contract.append(requirement)
     errors = list(branch_errors)
     for requirement in contract:
+        if (planning and reply.get('kind') == 'leaf'
+                and requirement.get('provenance', {}).get('kind') == 'source'
+                and 'helper_target_observer' in requirement['methods'] and not helper_checks):
+            errors.append(f'Source proof obligation: {requirement["requirement"]} '
+                          'Explicit source method helper_target_observer requires a compatible helper check.')
         candidates = []
         for capability in inputs['tool_capabilities']:
             missing = [f'{key}={requirement[key]}' for key in ('tool', 'executor')

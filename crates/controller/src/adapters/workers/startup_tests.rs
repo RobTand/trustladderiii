@@ -84,6 +84,7 @@ fn planner_protected_paths_follow_the_request_repository() {
             "planner recovery needs a controller-owned rehearsal checkpoint"
         );
         assert_eq!(request["test_cpus"], cpus);
+        assert_eq!(request["inputs"]["repair_plan_consistency"], true);
         assert_eq!(request["inputs"]["base_sha"], f.base);
         assert_eq!(request["inputs"]["tests"]["cpus"], cpus);
         assert_eq!(

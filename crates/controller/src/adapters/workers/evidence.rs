@@ -35,15 +35,21 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result
     {
         contract.push(json!({
             "requirement":"Observe the declared exception at the original node and phase in a fixed campaign.",
+            "provenance":{"kind":"method"},
             "tool":"run_tests", "executor":"prismabuild_pytest", "runner_features":["base_head", "repeat", "parallel"],
             "artifacts":["cas_receipt", "logs", "sha", "terminal_verdict"], "methods":["declared_symptom"], "protected_files":[]}));
     }
-    for source in [
-        &inputs["ingest"]["evidence_contract"],
-        &inputs["audit_evidence_contract"],
-        &reply["evidence_contract"],
+    // Source obligations persist; each role replaces the previous method choices.
+    // Unmarked legacy contracts remain mandatory.
+    for (inherited, source) in [
+        (true, &inputs["ingest"]["evidence_contract"]),
+        (true, &inputs["audit_evidence_contract"]),
+        (false, &reply["evidence_contract"]),
     ] {
         for requirement in source.as_array().into_iter().flatten() {
+            if inherited && requirement["provenance"]["kind"] == "method" {
+                continue;
+            }
             if !contract.contains(requirement) {
                 contract.push(requirement.clone());
             }
@@ -56,6 +62,7 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result
     {
         let requirement = json!({
             "requirement":"Observe the real old and new test helper with identical new regression assertions.",
+            "provenance":{"kind":"method"},
             "tool":"run_tests", "executor":"prismabuild_pytest", "runner_features":["base_head"],
             "artifacts":["cas_receipt", "terminal_verdict"], "methods":["helper_target_observer"], "protected_files":[]});
         if !contract.contains(&requirement) {
@@ -89,6 +96,7 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result
     {
         let requirement = json!({
             "requirement":"Construct helper arguments with unchanged existing repository setup functions.",
+            "provenance":{"kind":"method"},
             "tool":"run_tests", "executor":"prismabuild_pytest", "runner_features":["base_head"],
             "artifacts":["cas_receipt", "terminal_verdict"], "methods":["helper_target_observer.setup_function"], "protected_files":[]});
         if !contract.contains(&requirement) {
@@ -100,6 +108,23 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result
         return Err(Error::Invalid("worker evidence contract is missing"));
     }
     for requirement in &contract {
+        if role == "planner"
+            && reply["kind"] == "leaf"
+            && requirement["provenance"]["kind"] == "source"
+            && requirement["methods"]
+                .as_array()
+                .is_some_and(|methods| methods.contains(&json!("helper_target_observer")))
+            && !reply["checks"].as_array().is_some_and(|checks| {
+                checks
+                    .iter()
+                    .any(|check| check.get("helper_evidence").is_some())
+            })
+        {
+            errors.push(format!(
+                "Source proof obligation: {} Explicit source method helper_target_observer requires a compatible helper check.",
+                requirement["requirement"].as_str().unwrap_or("missing")
+            ));
+        }
         let candidates: Vec<Vec<String>> = capabilities
             .iter()
             .map(|capability| {
@@ -257,5 +282,87 @@ mod branch_tests {
         assert!(text.contains("prismabuild-2646-tl3-200"), "{text}");
         assert!(text.contains("prismabuild-{issue}-tl3-{node}"), "{text}");
         assert_eq!(inputs["ingest"]["goals"], goals);
+    }
+}
+
+#[cfg(test)]
+mod proof_obligation_tests {
+    use super::*;
+
+    #[test]
+    fn declared_symptom_choice_is_replaceable_and_source_proof_persists() {
+        for required_method in ["red_green", "declared_symptom"] {
+            let capability = json!({"tool":"run_tests", "executor":"prismabuild_pytest",
+                "runner_features":["base_head","repeat","parallel"],
+                "artifacts":["cas_receipt","logs","sha","terminal_verdict"],
+                "methods":["red_green","declared_symptom"], "protected_files":[]});
+            let mut source = capability.clone();
+            source["requirement"] = json!("Prove the timeout.");
+            source["methods"] = json!([required_method]);
+            source["provenance"] =
+                json!({"kind":"source", "source":"issue.body", "quote":"Prove the timeout."});
+            let mut inherited = source.clone();
+            inherited["methods"] = json!(["helper_target_observer"]);
+            inherited["provenance"] = json!({"kind":"method"});
+            let inputs = json!({"tool_capabilities":[capability], "ingest":{"evidence_contract":[source,inherited]},
+                "audit_evidence_contract":[inherited]});
+            let mut reply = json!({"kind":"leaf", "evidence_contract":[], "checks":[{"declared_symptom":{
+                "node":"tests/test_original.py::test_original", "exception":"builtins.TimeoutError",
+                "phase":"call", "repeat":2, "parallel":0}}]});
+            preflight("planner", &inputs, &mut reply).unwrap();
+            assert_eq!(reply["kind"], "leaf", "{reply}");
+            let contract = reply["evidence_contract"].as_array().unwrap();
+            assert!(contract.contains(&source));
+            assert!(!contract.contains(&inherited));
+            let chosen: Vec<_> = contract.iter().filter(|entry| **entry != source).collect();
+            assert_eq!(chosen.len(), 1);
+            assert_eq!(chosen[0]["methods"], json!(["declared_symptom"]));
+            assert_eq!(chosen[0]["provenance"], json!({"kind":"method"}));
+            let next_inputs = json!({"tool_capabilities":inputs["tool_capabilities"], "ingest":reply,
+                "audit_evidence_contract":reply["evidence_contract"]});
+            let mut replacement = json!({"kind":"leaf", "evidence_contract":[], "checks":[]});
+            preflight("planner", &next_inputs, &mut replacement).unwrap();
+            assert_eq!(replacement["kind"], "leaf", "{replacement}");
+            assert_eq!(replacement["evidence_contract"], json!([source]));
+        }
+    }
+
+    #[test]
+    fn t613_replaces_method_choices_without_erasing_source_proof() {
+        let capability = json!({"tool":"run_tests", "executor":"prismabuild_pytest",
+            "runner_features":["base_head"], "artifacts":["cas_receipt","terminal_verdict"],
+            "methods":["red_green"], "protected_files":[]});
+        let mut source = capability.clone();
+        source["requirement"] = json!("Show assertion RED and GREEN.");
+        source["provenance"] = json!({"kind":"source", "source":"issue.body", "quote":"Show assertion RED and GREEN."});
+        let mut method = source.clone();
+        method["provenance"] = json!({"kind":"method"});
+        method["methods"] = json!(["helper_target_observer"]);
+        let inputs = json!({"tool_capabilities":[capability], "ingest":{"evidence_contract":[source,method]},
+            "audit_evidence_contract":[method]});
+        let mut reply = json!({"kind":"leaf", "evidence_contract":[]});
+        preflight("planner", &inputs, &mut reply).unwrap();
+        assert_eq!(reply["kind"], "leaf", "{reply}");
+        assert_eq!(reply["evidence_contract"], json!([source]));
+        let mut explicit = inputs.clone();
+        explicit["ingest"]["evidence_contract"][0]["methods"] = json!(["helper_target_observer"]);
+        let mut refused = json!({"kind":"leaf", "evidence_contract":[]});
+        preflight("planner", &explicit, &mut refused).unwrap();
+        assert_eq!(refused["kind"], "cant_meet");
+        assert_eq!(
+            refused["evidence_contract"],
+            json!([explicit["ingest"]["evidence_contract"][0]])
+        );
+        explicit["tool_capabilities"][0]["methods"] =
+            json!(["red_green", "helper_target_observer"]);
+        let mut alternative = json!({"kind":"leaf", "evidence_contract":[], "checks":[]});
+        preflight("planner", &explicit, &mut alternative).unwrap();
+        assert_eq!(alternative["kind"], "cant_meet");
+        assert!(
+            alternative["report"]
+                .as_str()
+                .unwrap()
+                .contains("Explicit source method helper_target_observer")
+        );
     }
 }
