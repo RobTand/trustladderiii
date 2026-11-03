@@ -52,6 +52,7 @@ fn completed(attempt: &Path) -> Result<Option<WorkerRunFacts>> {
     let mut facts = match measured {
         Some(value) => serde_json::from_value::<WorkerRunFacts>(value)?,
         None => WorkerRunFacts {
+            prismabuild: Vec::new(),
             started_ms,
             finished_ms: None,
             outcome: if exit
@@ -150,12 +151,15 @@ mod tests {
             &json!({"started_ms":1_001_000, "finished_ms":9_665_000,
             "outcome":"succeeded", "model":"fixture-model", "release":"release-fixture",
             "input_tokens":1_600_000,"cached_tokens":1_000_000,"output_tokens":170_000,
-            "trace_id":"tr-0f626041aebfeefcdea5b8365b1a3e46","failure":null}),
+            "trace_id":"tr-0f626041aebfeefcdea5b8365b1a3e46","failure":null,
+            "prismabuild":[{"phase":"prismabuild_capability","cause":"machine_record_unsupported",
+                "fallback_used":true,"transport":"stdout","runtime":"pbrun"}]}),
         )
         .unwrap();
         let facts = completed(path).unwrap().unwrap();
         assert_eq!(facts.finished_ms.unwrap() - facts.started_ms, 8_666_000);
         assert_eq!(facts.input_tokens, Some(1_600_000));
+        assert_eq!(facts.prismabuild.len(), 1);
         assert_eq!(
             facts.trace_id.as_deref(),
             Some("tr-0f626041aebfeefcdea5b8365b1a3e46")
