@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from tl3_harness import execution, test_tool
+from tl3_harness import execution, runner, test_tool
 from tl3_harness.model import Forcing
 
 
@@ -25,7 +25,7 @@ import time
 
 import product
 
-def test_killed():
+def kill_during_delay():
     reader, writer = os.pipe()
     child = os.fork()
     if child == 0:
@@ -44,6 +44,9 @@ def test_killed():
         os.close(reader)
         os.kill(child, signal.SIGKILL)
         os.waitpid(child, 0)
+
+def test_killed():
+    kill_during_delay()
     assert False, 'outer assertion after child target entry'
 
 def test_completed():
@@ -67,7 +70,8 @@ def test_spawn():
         "import sys; sys.path.insert(0, '.'); import product; assert product.target(7, extra=2) == 9"])
     assert result.returncode == 0
 
-def test_budget():
+def consume_budget(expected=10):
+    Path('waits').write_text('')
     reader, writer = os.pipe()
     children = []
     for index in range(6):
@@ -94,7 +98,14 @@ def test_budget():
     os.close(writer)
     for child in children:
         assert os.waitpid(child, 0)[1] == 0
-    assert sum(map(float, Path('waits').read_text().splitlines())) == 10
+    assert sum(map(float, Path('waits').read_text().splitlines())) == expected
+
+def test_budget():
+    consume_budget()
+
+def test_killed_budget():
+    kill_during_delay()
+    consume_budget(expected=6)
 '''
 
 
@@ -148,6 +159,39 @@ def test_spawned_interpreter_without_forcing_supplies_no_hit(repo):
     assert result['status'] == 'completed', result
     assert result['totals']['passed'] == 1
     assert result['tests'][0]['target_hits'] == {TARGET: 0, 'product.other': 0}
+
+
+def test_killed_child_reservation_stays_consumed_and_next_node_gets_fresh_budget(repo):
+    result = summary(repo, ['killed_budget', 'budget'])
+    assert result['status'] == 'completed', result
+    assert result['totals']['passed'] == 2, result
+    assert result['tests'][0]['target_hits'] == {TARGET: 4, 'product.other': 3}
+    assert result['tests'][1]['target_hits'] == {TARGET: 3, 'product.other': 3}
+
+
+def test_retired_journal_cannot_feed_the_next_node(tmp_path):
+    old = runner.DelayAccounting(tmp_path, [TARGET])
+    assert old.enter(TARGET, 4) == 4
+    assert old.finish() == {TARGET: 1}
+    current = runner.DelayAccounting(tmp_path, [TARGET])
+    assert current.path != old.path
+    with pytest.raises(FileNotFoundError):
+        old.enter(TARGET, 4)
+    assert current.finish() == {TARGET: 0}
+
+
+@pytest.mark.parametrize('data, reason', [
+    (b'x', 'incomplete'),
+    (runner.DelayAccounting.record.pack(1, 4), 'invalid'),
+    (runner.DelayAccounting.record.pack(0, float('nan')), 'invalid'),
+    (runner.DelayAccounting.record.pack(0, 6), 'invalid'),
+])
+def test_malformed_journal_is_unusable_and_removed(tmp_path, data, reason):
+    accounting = runner.DelayAccounting(tmp_path, [TARGET])
+    Path(accounting.path).write_bytes(data)
+    with pytest.raises(runner.ForcingError, match=reason):
+        accounting.finish()
+    assert not Path(accounting.path).exists()
 
 
 @pytest.mark.parametrize('parallel', [2, 4])

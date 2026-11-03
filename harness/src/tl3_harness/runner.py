@@ -5,8 +5,10 @@ import copy
 import importlib
 import importlib.util
 import json
+import math
 import os
 import shutil
+import struct
 from pathlib import Path
 import sys
 import tempfile
@@ -124,7 +126,62 @@ def forcing_owner(target):
 MAX_TOTAL_DELAY_SECONDS = 10
 
 
-def forced_value(owner, name, mode, argument, sleep=time.sleep, budget=None, counter=None):
+class DelayAccounting:
+    """One test's append-only entry journal, shared by its fork descendants.
+
+    Linux local-filesystem O_APPEND assigns each single write an atomic position.
+    A fresh open per entry gives that caller its own offset, even after fork or
+    inherited-descriptor closure. Earlier requested delays determine the remaining
+    budget; reservations survive death before/during sleep. No process holds a lock.
+    Spawn/exec interpreters do not inherit wrappers and supply no evidence. Calls
+    after fixture teardown cannot reopen the retired journal or affect another test.
+    """
+
+    record = struct.Struct('!Id')
+
+    def __init__(self, directory, targets):
+        self.targets = tuple(targets)
+        descriptor, self.path = tempfile.mkstemp(prefix='node-', dir=directory)
+        os.close(descriptor)
+
+    def read(self, descriptor, end):
+        data = os.pread(descriptor, end, 0)
+        if len(data) != end or end % self.record.size:
+            raise ForcingError('incomplete delay accounting journal')
+        hits = dict.fromkeys(self.targets, 0)
+        remaining = MAX_TOTAL_DELAY_SECONDS
+        for index, requested in self.record.iter_unpack(data):
+            if index >= len(self.targets) or not math.isfinite(requested) or not 0 <= requested <= 5:
+                raise ForcingError('invalid delay accounting entry')
+            hits[self.targets[index]] += 1
+            remaining = max(0, remaining - requested)
+        return hits, remaining
+
+    def enter(self, target, argument):
+        descriptor = os.open(self.path, os.O_RDWR | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            entry = self.record.pack(self.targets.index(target), argument)
+            if os.write(descriptor, entry) != len(entry):
+                raise ForcingError('incomplete delay accounting entry')
+            end = os.lseek(descriptor, 0, os.SEEK_CUR)
+            _, remaining = self.read(descriptor, end - len(entry))
+            return min(argument, remaining)
+        finally:
+            os.close(descriptor)
+
+    def finish(self):
+        try:
+            descriptor = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            try:
+                hits, _ = self.read(descriptor, os.fstat(descriptor).st_size)
+                return hits
+            finally:
+                os.close(descriptor)
+        finally:
+            os.unlink(self.path)
+
+
+def forced_value(owner, name, mode, argument, sleep=time.sleep, *, accounting=None, target=None):
     if mode == "value":
         return argument
     if mode == "returns":
@@ -141,13 +198,11 @@ def forced_value(owner, name, mode, argument, sleep=time.sleep, budget=None, cou
     if not callable(original):
         raise ForcingError(f"delay_seconds needs a callable target, not {type(original).__name__}")
 
-    budget = [MAX_TOTAL_DELAY_SECONDS] if budget is None else budget
+    if accounting is None:
+        raise ForcingError('delay accounting is unavailable')
 
     def delayed(*args, **kwargs):
-        if counter is not None:
-            counter[0] += 1
-        wait = min(argument, budget[0])
-        budget[0] -= wait
+        wait = accounting.enter(target, argument)
         if wait:
             sleep(wait)
         return original(*args, **kwargs)
@@ -176,6 +231,11 @@ class Reporter:
         self.collection_errors = []
         self.reported = set()
         self.started = False
+        # Keep journals outside the checkout and pytest's writable scratch tree.
+        # Explicit /tmp also avoids TMPDIR values supplied by the served repository.
+        self.accounting_owner = os.getpid()
+        self.accounting_directory = (tempfile.mkdtemp(prefix='tl3-forcing-', dir='/tmp')
+                                     if any('delay_seconds' in patch for patch in patches) else None)
 
     @pytest.fixture(autouse=True)
     def _tl3_scratch(self, tmp_path):
@@ -200,21 +260,26 @@ class Reporter:
     def _tl3_forcing(self, request):
         # Applied before the test's own fixtures and undone after them, so the test's own
         # monkeypatches take precedence while it runs (#393).
-        budget = [MAX_TOTAL_DELAY_SECONDS]
-        hits = self.target_hits.setdefault(request.node.nodeid, {})
-        with pytest.MonkeyPatch.context() as patch:
-            for forcing in self.patches:
-                target = forcing["target"]
-                (mode, argument), = ((key, value) for key, value in forcing.items() if key != "target")
-                try:
-                    owner, name = forcing_owner(target)
-                except ForcingError as error:
-                    if error.refusal is not None:
-                        self.forcing_refusals[request.node.nodeid] = error.refusal
-                    raise
-                counter = hits.setdefault(target, [0]) if mode == "delay_seconds" else None
-                patch.setattr(owner, name, forced_value(owner, name, mode, argument, budget=budget, counter=counter))
-            yield
+        accounting = (DelayAccounting(self.accounting_directory,
+                                      (patch['target'] for patch in self.patches if 'delay_seconds' in patch))
+                      if self.accounting_directory is not None else None)
+        try:
+            with pytest.MonkeyPatch.context() as patch:
+                for forcing in self.patches:
+                    target = forcing["target"]
+                    (mode, argument), = ((key, value) for key, value in forcing.items() if key != "target")
+                    try:
+                        owner, name = forcing_owner(target)
+                    except ForcingError as error:
+                        if error.refusal is not None:
+                            self.forcing_refusals[request.node.nodeid] = error.refusal
+                        raise
+                    patch.setattr(owner, name, forced_value(owner, name, mode, argument,
+                                                            accounting=accounting, target=target))
+                yield
+        finally:
+            if accounting is not None:
+                self.target_hits[request.node.nodeid] = accounting.finish()
 
     def emit(self, **record):
         data = (json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n").encode(errors='backslashreplace')
@@ -312,7 +377,7 @@ class Reporter:
             outcome = "skipped" if any(p[1] == "skipped" for p in phases) else "passed"
         message = "\n".join(p[2] for p in failures)
         hits = self.target_hits.pop(report.nodeid, {})
-        extra = {"target_hits": {target: count[0] for target, count in hits.items()}} if self.patches else {}
+        extra = {"target_hits": hits} if self.patches else {}
         refusal = self.forcing_refusals.pop(report.nodeid, None)
         if refusal is not None:
             extra['forcing_refusal'] = refusal
@@ -322,6 +387,8 @@ class Reporter:
     def pytest_sessionfinish(self, exitstatus):
         self.emit_collection_errors()
         self.emit(event="finish", exit_code=int(exitstatus))
+        if self.accounting_directory is not None and os.getpid() == self.accounting_owner:
+            shutil.rmtree(self.accounting_directory)
 
 
 def main():

@@ -303,7 +303,7 @@ def test_forcing_reaches_the_runner_through_stdin(pid_repo, tmp_path, monkeypatc
     assert outcomes == {TEST: Outcome.ASSERTION}
 
 
-def test_delays_are_capped_per_test():
+def test_delays_are_capped_per_test(tmp_path):
     import importlib.util
     spec = importlib.util.spec_from_file_location('tl3_runner_under_test', RUNNER)
     runner = importlib.util.module_from_spec(spec)
@@ -313,8 +313,11 @@ def test_delays_are_capped_per_test():
         @staticmethod
         def call():
             return 'called'
-    slept, budget = [], [runner.MAX_TOTAL_DELAY_SECONDS]
-    delayed = runner.forced_value(Owner, 'call', 'delay_seconds', 4, sleep=slept.append, budget=budget)
+    slept = []
+    accounting = runner.DelayAccounting(tmp_path, ['Owner.call'])
+    delayed = runner.forced_value(Owner, 'call', 'delay_seconds', 4, sleep=slept.append,
+                                  accounting=accounting, target='Owner.call')
     assert [delayed() for _ in range(5)] == ['called'] * 5
     assert sum(slept) == runner.MAX_TOTAL_DELAY_SECONDS == 10
     assert slept[:3] == [4, 4, 2]
+    assert accounting.finish() == {'Owner.call': 5}
