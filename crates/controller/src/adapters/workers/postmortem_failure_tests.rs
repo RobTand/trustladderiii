@@ -122,10 +122,10 @@ fn boundary_case(class: &str, status: Value, expected: &str) {
         let detail = store.postmortem(row.get(0)).unwrap().unwrap();
         assert_eq!(detail.failure.as_deref(), Some(expected));
         assert_eq!(
-            detail.record.attempts, 1,
-            "diagnostics must retain worker-failure retries"
+            detail.record.attempts, 2,
+            "diagnostics must retain the two-retry allowance"
         );
-        assert_eq!(detail.record.status, "owed");
+        assert_eq!(detail.record.status, "failed");
     }
     let snapshot = controller.snapshot().unwrap();
     let incident = snapshot
