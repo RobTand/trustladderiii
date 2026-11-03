@@ -388,9 +388,6 @@ impl Supervisor {
                 .unwrap_or_default();
             inputs["tests"]["cpus"] = json!(demand.cpus);
             inputs["tests"]["mem_gb"] = json!(demand.mem_gb);
-            if self.images.exec_scratch(&delivery.repository) {
-                inputs["tests"]["exec_scratch"] = json!(true);
-            }
             inputs["hindsight"] =
                 json!({"endpoint": self.hindsight.endpoint, "bank": self.hindsight.bank});
             super::worktrees::checkout_path(&self.worktrees, delivery)
@@ -450,7 +447,6 @@ impl Supervisor {
                 "tools_path": self.tests.tools_dir,
                 "cpus": demand.cpus,
                 "mem_gb": demand.mem_gb,
-                "exec_scratch": self.images.exec_scratch(&delivery.repository),
             });
         } else if role == "audit" {
             inputs["ingest"] = store

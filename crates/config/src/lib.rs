@@ -392,8 +392,6 @@ pub struct Repository {
     /// CPU and memory reservation for this repository's PrismaBuild tests and generators.
     #[serde(default)]
     pub test_demand: Option<TestDemand>,
-    #[serde(default)]
-    pub exec_scratch: bool,
     /// Run up to this many existing tests that import the change, and pass on the base,
     /// as one more regression check (#359). Absent means off.
     #[serde(default)]

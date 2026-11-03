@@ -11,6 +11,7 @@ import sys
 import tempfile
 
 from tl3_harness import generator
+from tl3_harness.scratch import environment as scratch_environment
 from tl3_workers.pb_tests import TestSettings, _failure_receipt, _git, _json_command, _stage
 from tl3_workers.session import save
 
@@ -118,7 +119,7 @@ def make_generator_tool(worktree, *, restore_only=False):
                     "protected_paths": list(getattr(worktree, "protected_paths", ())),
                     "files": list(worktree.generator_files), "timeout": selected["timeout_s"],
                     "cpus": selected["cpus"], "mem_gb": selected["mem_gb"]}
-        identity = {**contract, "image": settings.image, "exec_scratch": settings.exec_scratch,
+        identity = {**contract, "image": settings.image, "scratch": scratch_environment(),
                     "implementation": generator.IMPLEMENTATION, "budget": selected}
         state_path = getattr(worktree, "generator_state", None)
         nonlocal transient_state
@@ -174,11 +175,10 @@ def make_generator_tool(worktree, *, restore_only=False):
                             "--demand", f"mem_gb={settings.mem_gb}", "--container-image", settings.image,
                             "--timeout-s", str(selected["outer_timeout_s"]), "--progress-phase",
                             f"tests={selected['outer_timeout_s']}",
+                            *[arg for name, value in scratch_environment().items() for arg in ("--env", f"{name}={value}")],
                             *[arg for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")
                               for arg in ("--env", f"{name}={settings.cpus}")], "--detach", "--",
                             "python3", "-I", "-B", "action.py", settings.image]
-                    if settings.exec_scratch:
-                        args.append("--exec-scratch")
                     code, submitted = _json_command(args)
                     if code or submitted.get("schema") not in (
                             "prismabuild.submission.v1", "prismaquant.prismabuild.pbrun_detach.v1"):

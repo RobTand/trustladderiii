@@ -239,8 +239,8 @@ for any other write, deletion, mode change, symlink, binary or invalid UTF-8 out
 Existing output modes must stay unchanged; new outputs must have mode 0644. Limits
 are 128 changed files, 16 MiB per file and 32 MiB of output in total. There is no
 partial import after refusal. The snapshot is limited to 512 MiB. Writable scratch
-is memory-backed and charged to the admitted scope, so excessive writes cannot
-fill the worker disk. Model file tools reject hand edits of generated
+uses the action's private disk leaf, with 512 MiB declared for PB admission
+accounting rather than an enforced filesystem quota. Model file tools reject hand edits of generated
 outputs and protected files. Generated headers alone never authorize execution.
 
 PrismaBuild's verified stdout artifact carries the output bytes. The maker
@@ -307,12 +307,23 @@ Build and qualify an image with the steps in [the harness guide](../../harness/R
 The image must already exist on every eligible worker. PrismaBuild checks
 availability before claiming an action and never transfers or pulls images.
 
-Each `[[github.repos]]` entry also accepts `exec_scratch = true`. The default
-is false. It allows compiled libraries and executables on the harness's private
-512 MiB tmpfs for both check plans and maker test runs. Per-test cleanup and
-the other container restrictions still apply. Tmpfs is RAM charged to the
-PrismaBuild action's declared memory demand. See the
-[design note](../../docs/design/executable-scratch.md) for containment and risk.
+Pytest scratch is a private disk directory owned and cleaned by PrismaBuild's
+`scratch-lifetime-v1` action lifetime. Rob decided #639 on 2026-11-03:
+
+> Use a plain bind of a private child directory inside the action's PB-owned
+> scratch-lifetime-v1 leaf, mounted at /tmp for pytest. That replaces the tmpfs.
+> Rob accepts that inherited mount flags may allow exec, suid and dev on that scratch.
+
+`exec_scratch` is retired. Remove it from existing repository entries; it no
+longer controls a mount flag. Parsing rejects it with
+"unknown field `exec_scratch`". Before deploying this release, the coordinator must remove
+the three live `exec_scratch = true` entries. This change does not edit live
+configuration. Maker, rehearsal and Checking share this scratch
+path. The container runs as the leaf owner's UID:GID so PB can clean restrictive
+session directories. TL3 declares 512 MiB of disk scratch, not a filesystem
+quota. Ordinary action memory demands are unchanged; there was no separate
+tmpfs surcharge. See the [design note](../../docs/design/executable-scratch.md)
+for the accepted containment changes and cleanup ownership.
 
 ## Request evidence preflight
 

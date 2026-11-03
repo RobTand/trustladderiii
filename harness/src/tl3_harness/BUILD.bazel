@@ -28,6 +28,7 @@ py_library(
         "node_ids.py",
         "report.py",
         "runner.py",
+        "scratch.py",
         "selection.py",
         "supervision.py",
         "symptoms.py",

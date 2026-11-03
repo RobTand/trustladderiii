@@ -50,7 +50,7 @@ def stage(root, *, plan=PLAN, conftest="# shared fixtures\n", config=CONFIG, lin
                     ignore=shutil.ignore_patterns("__pycache__"))
     (staged / "request.json").write_text(json.dumps({
         "effect_key": "effect:89:7", "base": base, "head": head, "reviewed": None,
-        "plan": plan, "image": "sha256:" + "1" * 64, "exec_scratch": False,
+        "plan": plan, "image": "sha256:" + "1" * 64,
         **({} if protected is None else {"protected_paths": protected})}))
 
     # Admission is a PrismaBuild contract; a refusal must return before any container runs.

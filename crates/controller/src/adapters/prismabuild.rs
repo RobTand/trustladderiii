@@ -482,7 +482,6 @@ impl Adapter {
             &self.settings.harness,
             &staged,
             image,
-            self.images.exec_scratch(&delivery.repository),
             &self.protected_paths(&delivery.repository),
             &tests,
         )?;
@@ -515,6 +514,16 @@ impl Adapter {
         demand.cpus = std::num::NonZeroU32::new(demand.cpus.get().max(parallel)).unwrap();
         demand.mem_gb = demand.mem_gb.saturating_mul(parallel);
         let threads = (demand.cpus.get() / parallel).max(1).to_string();
+        let mut env: std::collections::BTreeMap<_, _> =
+            ["OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"]
+                .map(|name| (name.to_owned(), threads.clone()))
+                .into();
+        env.extend([
+            ("TL3_SCRATCH_ROOT", "/home/rob/tmp"),
+            ("TL3_SCRATCH_MAX_BYTES", "536870912"),
+            ("PRISMABUILD_LOCAL_SCRATCH_PAIRS", "TL3_SCRATCH_ROOT:TL3_SCRATCH_MAX_BYTES"),
+            ("PRISMABUILD_EPHEMERAL_SCRATCH_DECLARATIONS", r#"{"entries":[{"lifetime":"ephemeral","name":"pytest","root_env":"TL3_SCRATCH_ROOT"}],"schema":"prismabuild.scratch_lifetime_selection.v1"}"#),
+        ].map(|(name, value)| (name.to_owned(), value.to_owned())));
         let action = SubmitAction {
             checkout: input,
             command,
@@ -525,9 +534,7 @@ impl Adapter {
                 stall_allowance: self.settings.quiet,
             }],
             progress_cycle: false,
-            env: ["OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"]
-                .map(|name| (name.to_owned(), threads.clone()))
-                .into(),
+            env,
         };
         let key = self
             .runtime

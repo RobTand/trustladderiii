@@ -315,7 +315,7 @@ forcing for review. Unforced results omit `forcing` and `head_forced`.
 Threat model: the forcing is model-written data. The host process never
 imports or runs it. It runs only in the test container, where repository code
 already runs. The plan supplies the forcing, but the runner and repository code
-share an interpreter and UID 65534. Read-only harness files and private journal
+share an interpreter and the scratch leaf owner's UID. Read-only harness files and private journal
 permissions do not isolate their runtime state from that code.
 
 For forced checks, Checking refuses a head diff that references forcing internals,
@@ -369,11 +369,11 @@ edits applied. All these runs share one admitted action.
 Each tree runs in a container launched with the `docker` command on PB's PATH.
 The harness refuses to use an unmanaged Docker executable. PB's shim supplies
 the action's CPU affinity, memory scope, ownership and cleanup. The harness
-adds no CPU mask. It declares only two read-only bind mounts, the exported tree
-and the installed harness. The container has no network, fleet mount, host
-socket, inherited host environment, or writable host directory. It runs as
-UID and GID 65534, drops capabilities, disables privilege escalation, and uses
-a private temporary filesystem. Use a trusted image without embedded secrets.
+adds no CPU mask. It binds the exported tree and installed harness read-only,
+and a private child of the action's PB-owned disk scratch at `/tmp`. The
+container has no network, fleet mount, host socket or inherited host environment.
+It runs as the scratch leaf owner's UID:GID, drops capabilities and disables
+privilege escalation. Use a trusted image without embedded secrets.
 
 The plugin emits JSON events through stdout. The runner suppresses pytest and
 test output. The outer process journals each event and parses it outside the
@@ -406,6 +406,9 @@ From a clean commit, submit the verifier with the prepared image:
 python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
     --cwd "$CHECKOUT" --anywhere --cpus 1 --demand mem_gb=2 --priority -10 \
     --container-image "$IMAGE" --progress-phase tests=120 \
+    --env TL3_SCRATCH_ROOT=/home/rob/tmp --env TL3_SCRATCH_MAX_BYTES=536870912 \
+    --env PRISMABUILD_LOCAL_SCRATCH_PAIRS=TL3_SCRATCH_ROOT:TL3_SCRATCH_MAX_BYTES \
+    --env 'PRISMABUILD_EPHEMERAL_SCRATCH_DECLARATIONS={"entries":[{"lifetime":"ephemeral","name":"pytest","root_env":"TL3_SCRATCH_ROOT"}],"schema":"prismabuild.scratch_lifetime_selection.v1"}' \
     --env PYTHONPATH=harness/src --env OMP_NUM_THREADS=1 \
     --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 --detach -- \
     /usr/bin/python3.14 harness/tools/verify.py "$IMAGE"
@@ -488,6 +491,9 @@ Functions explicitly marked `__test__ = False` are excluded.
 python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
     --cwd "$INPUT" --anywhere --cpus 1 --demand mem_gb=4 --priority -9 \
     --container-image "$IMAGE_ID" --progress-phase tests=300 \
+    --env TL3_SCRATCH_ROOT=/home/rob/tmp --env TL3_SCRATCH_MAX_BYTES=536870912 \
+    --env PRISMABUILD_LOCAL_SCRATCH_PAIRS=TL3_SCRATCH_ROOT:TL3_SCRATCH_MAX_BYTES \
+    --env 'PRISMABUILD_EPHEMERAL_SCRATCH_DECLARATIONS={"entries":[{"lifetime":"ephemeral","name":"pytest","root_env":"TL3_SCRATCH_ROOT"}],"schema":"prismabuild.scratch_lifetime_selection.v1"}' \
     --env PYTHONPATH=trusted --env OMP_NUM_THREADS=1 \
     --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 --detach -- \
     /usr/bin/python3.14 inventory.py --per-file served.bundle "$IMAGE_ID" \
@@ -503,9 +509,9 @@ An inventory action exits nonzero if any selected node does not pass. Its
 JSON retains every node's outcome and failure message. Record skips and
 classify failures as image dependencies, host requirements, or test defects.
 Do not grant root, GPUs, the shared mount, or additional container access to
-make a pilot pass. A Git export has no `.git` directory, and `/tmp` is tmpfs;
-tests requiring repository metadata, executable temporary files, or qualified disk scratch need separate
-pilot eligibility decisions.
+make a pilot pass. A Git export has no `.git` directory. Tests requiring
+repository metadata still need a separate pilot eligibility decision. `/tmp`
+is private disk scratch with inherited mount flags.
 
 Repeat the same selection in the candidate image, run the sandbox suite
 through `run_checks`, and run `tools/verify.py` for the harness boundary checks.
@@ -537,44 +543,24 @@ temporary directory and the `TMPDIR`, `TEMP` and `TMP` environment variables poi
 so cooperating subprocesses use the same scratch. Module and session fixtures
 retain their separately owned temporary directories for their scope.
 Cleanup is best effort: a file recreated by a background writer must not turn a
-passing test into a teardown error. Any residue stays within the fixed tmpfs
-and is discarded with the container.
-The container has one disposable 512 MiB `/tmp` tmpfs. This is RAM charged to
-the action's memory slice, alongside Python, subprocesses and other test memory.
-The scratch verifier runs at production demand, 1 CPU and 2 GiB, including
-four consecutive tests that each write 384 MiB. Cleanup bounds cumulative
-plan use. One test must fit within that boundary; paths hardcoded outside its temporary directory and
-wider-scope fixture data still consume the shared bound.
+passing test into a teardown error. Any residue and session data stay under the
+PB-owned action leaf until PB removes the containers and finalizes scratch.
 
-## Executable scratch
+## Disk scratch
 
-`Container(image_digest, exec_scratch=True)` allows executables and native
-libraries on the private `/tmp` tmpfs. The default is noexec. Each test still
-gets its own pytest temporary directory as TMPDIR, TEMP and TMP, with cleanup
-after teardown. The mount retains its 512 MiB bound, nosuid and nodev.
-Tmpfs uses RAM charged to the action's declared memory demand. It shares that
-budget with the tests and their children. Cleanup errors retain the test's
-real outcome; retained files and session temporary data share the same bound.
+Every pytest container gets a fresh private child of the action's registered
+`scratch-lifetime-v1` leaf, bind-mounted at `/tmp`. The leaf lives under
+`/home/rob/tmp`. Maker, rehearsal and Checking all use `container_command`.
+The submissions declare 512 MiB of scratch for admission accounting, rounded
+up by PB to 1 GiB of spool demand. This is not an enforced filesystem quota.
+There is no tmpfs memory surcharge or `exec_scratch` option. Mount flags are
+inherited from the host, and the container uses the leaf owner's UID:GID.
+See the [policy decision and threat model](../docs/design/executable-scratch.md).
 
-The controller selects this option from `[[github.repos]] exec_scratch` for
-checks and maker runs. Base-result caching includes the setting. Git metadata
-and disk scratch remain unavailable. See the
-[design note](../docs/design/executable-scratch.md).
-
-The executable-scratch verifier needs an image containing gcc and C library
-development headers, such as the `prismabuild`, `prismaquant` or `tessera`
-profile. It compiles a shared library and checks both exec and noexec behavior,
-containment, maker summaries and per-test cleanup. Run it separately from the
-general verifier, which also supports images without gcc:
-
-```sh
-python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
-    --cwd "$CHECKOUT" --anywhere --cpus 1 --demand mem_gb=2 --priority -10 \
-    --container-image "$IMAGE" --progress-phase tests=300 \
-    --env PYTHONPATH=harness/src --env OMP_NUM_THREADS=1 \
-    --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 --detach -- \
-    /usr/bin/python3.14 harness/tools/verify_exec_scratch.py "$IMAGE"
-```
-
-Use `pbwait.py --endings --until cleaned` and inspect the terminal status,
-verified logs and CAS receipt before accepting the result.
+`tools/verify_disk_scratch.py IMAGE` runs the untouched disk-backed specimen
+through Checking and maker test paths. Its `setup-failure` and `cancel` modes
+leave mode-0700 session data for PB cleanup. Submit it through PrismaBuild
+with the same four scratch environment variables returned by
+`tl3_harness.scratch.environment()`, the existing image pin, and a `tests`
+progress phase. Read terminal records, logs and CAS receipts after cleanup;
+a submission acknowledgement alone is not a result.

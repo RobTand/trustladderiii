@@ -147,7 +147,6 @@ pub(super) fn stage(
     harness: &Path,
     delivery: &Delivery,
     image: &str,
-    exec_scratch: bool,
     protected_paths: &[String],
     tests: &super::super::images::AdditionalTests,
 ) -> Result<Vec<String>> {
@@ -216,7 +215,7 @@ pub(super) fn stage(
     let mut request = serde_json::json!({
         "effect_key": delivery.key, "base": run.base_sha, "head": head.as_str(),
         "reviewed": run.reviewed_sha,
-        "plan": run.plan, "image": image, "exec_scratch": exec_scratch,
+        "plan": run.plan, "image": image,
         "protected_paths": protected_paths,
     });
     request["selected_failures"] = serde_json::json!(run.selected_failures);
@@ -278,7 +277,6 @@ mod tests {
                     &harness,
                     &delivery,
                     "sha256:fixture",
-                    false,
                     &[],
                     &Default::default(),
                 )

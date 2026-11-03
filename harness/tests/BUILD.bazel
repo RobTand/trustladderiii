@@ -1,13 +1,6 @@
 load("//tools/bazel:python.bzl", "tl3_py_test")
 
-tl3_py_test(
-    name = "test_exec_scratch",
-    srcs = ["test_exec_scratch.py"],
-    deps = [
-        "//harness/src/tl3_harness",
-        "@tl3_pip//pytest",
-    ],
-)
+exports_files(["fixtures/scratch/test_disk.py"])
 
 tl3_py_test(
     name = "test_git_environment",
@@ -201,4 +194,10 @@ tl3_py_test(
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
+)
+
+tl3_py_test(
+    name = "test_disk_scratch",
+    srcs = ["test_disk_scratch.py"],
+    deps = ["//harness/src/tl3_harness"],
 )
