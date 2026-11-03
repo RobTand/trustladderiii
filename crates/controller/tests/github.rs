@@ -2097,9 +2097,8 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
         ending.is_some()
     });
     assert_eq!(ending.unwrap().code(), Some(1));
-    // #486: these workers have no postmortem proxy, so the daemon's runner is
-    // off (postmortems_per_day = 0). The stopped request's postmortem stays
-    // owed, and no claim adds a watch after the stop settles.
+    // These fixtures block their postmortem-only model on quota. The stopped
+    // request stays owed, and no claim adds a watch after the stop settles.
     let postmortems = store.postmortems("0").unwrap();
     assert_eq!(
         postmortems
@@ -2305,9 +2304,7 @@ fn worker_daemon_config(
             credentials.to_str().unwrap(),
         )
         .replace("/run/tl3/model-key", model_key.to_str().unwrap())
-        // #486: these workers have no postmortem proxy; a zero daily limit
-        // keeps tl3d's postmortem runner from claiming.
-        .replace("# postmortems_per_day = 10", "postmortems_per_day = 0")
+        .replace("[models]", "[models]\npostmortem = [{ name = \"postmortem-fixture\", family = \"fixture\", budget_tokens = 1000 }]")
         .replace("owner = \"RobTand\"", "owner = \"owner\"")
         .replace("name = \"tl3-sandbox\"", "name = \"sandbox\"")
         .replace("installation_id = 1", "installation_id = 3")
@@ -2337,5 +2334,33 @@ fn worker_daemon_config(
         "{config}\n[github.operations]\nowner = \"owner\"\nname = \"tl3\"\ninstallation_id = 3\nnumber = 17\n"
     );
     fs::write(&config_path, config).unwrap();
+    // These workers implement delivery only. Quota on a separate postmortem
+    // model leaves delivery models available without a daily-limit switch.
+    let mut controller = Controller::open(
+        Store::open(settings).unwrap(),
+        adapters::simulation(&root.join("fakes")).unwrap(),
+        bootstrap(),
+    )
+    .unwrap();
+    controller
+        .observe(
+            "postmortem-fixture-quota",
+            Observation::Quota {
+                key: "postmortem-fixture-quota".into(),
+                model: Some("postmortem-fixture".into()),
+                reset_ms: 4_000_000_000_000,
+            },
+        )
+        .unwrap();
+    drop(controller);
+    let mut connection = postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .user(&settings.user)
+        .dbname(&settings.database)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap();
+    support::controller_restart::wait_for_owner_release(&mut connection);
     (config_path, marker, runs)
 }

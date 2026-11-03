@@ -240,8 +240,9 @@ Migration 13 adds these tables (#403). None is world state.
   dimension. `grade` is 1 to 5, or null for a recorded fact.
 - `tl3_phase_history`: append-only, every phase a node enters from migration 13
   on, written by the same trigger as `tl3_node_phases`.
-- `tl3_settings`: `postmortem_sample_share`, between 0 and 1. The console's login
-  may change it through `tl3_settings_editor`.
+- `tl3_settings`: legacy `postmortem_sample_share`, between 0 and 1. Since #642,
+  every closed node owes a postmortem and this setting no longer selects work.
+  The console's login may change it through `tl3_settings_editor`.
 
 Each table notifies `tl3_changes`. `grant_reader`'s default privileges give the
 console's login SELECT on them, and migration 13 grants existing reader logins

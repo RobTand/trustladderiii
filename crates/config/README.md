@@ -125,6 +125,14 @@ A gate decrease refuses startup while any request in that repo is open. A pool
 decrease refuses startup while any request is open. Idle decreases are recorded
 in the event journal. Startup also retires ended looks when capacity changes.
 
+Postmortems have a separate lane with a fixed concurrency of 2 (#642), outside
+`limits.agent_pool`. They have no daily allowance. The removed
+`limits.postmortems_per_day` key is rejected as an unknown field, following the
+config parser's convention; delete it from older configs. The existing
+`limits.postmortem_deadline_secs` defaults to 1,200 seconds and must be positive.
+The lane still observes model quota, the failure-streak pause, and recovery
+validation (#632).
+
 `limits.fail_fast` (Q54, #440) is a boolean and defaults to false, which keeps
 today's retry rules. When it is true, a step that would retry the work stops
 the request for TL3 review instead. `Controller::open` writes the configured

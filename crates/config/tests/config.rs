@@ -1770,3 +1770,13 @@ fn repository_generator_deadline_is_optional_and_bounded() {
         assert!(error.to_string().contains("generator_timeout_s"), "{error}");
     }
 }
+
+#[test]
+fn removed_postmortem_daily_limit_is_rejected_clearly() {
+    let text = EXAMPLE.replace("[limits]", "[limits]\npostmortems_per_day = 0");
+    let error = Config::parse(&text)
+        .expect_err("the daily postmortem limit was removed")
+        .to_string();
+    assert!(error.contains("postmortems_per_day"), "{error}");
+    assert!(error.contains("unknown field"), "{error}");
+}
