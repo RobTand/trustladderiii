@@ -2,7 +2,9 @@
 
 import base64
 import copy
+import hashlib
 import json
+from pathlib import Path
 import secrets
 
 from jsonschema import ValidationError
@@ -138,6 +140,12 @@ class FakeTraces:
     def find(self, tags, limit):
         self.asked.append(tags)
         return self.traces[:limit]
+
+    def assessment(self, trace_id, metadata):
+        for index, item in enumerate(self.logged, 1):
+            if item["trace_id"] == trace_id and item["metadata"] == metadata:
+                return f"a-{index}"
+        return None
 
     def log(self, trace_id, name, value, rationale, judge_model, metadata):
         self.logged.append({"trace_id": trace_id, "name": name, "value": value,
@@ -296,7 +304,8 @@ def test_judges_see_only_redacted_capped_material_and_grades_are_logged(tmp_path
         assert entry["metadata"] == {
             "node": "3", "request": "3", "repo": "RobTand/tl3-sandbox", "issue": "42",
             "release": "b" * 40, "rubric_version": "1", "dimension": entry["name"],
-            "judge_model": "claude-sonnet-5-5"}
+            "judge_model": "claude-sonnet-5-5",
+            "postmortem_run": hashlib.sha256(document["worktree"].encode()).hexdigest()}
         assert TOKEN not in entry["rationale"]
 
     # A run restarted under the same run key reuses its reply: no judge runs
@@ -316,12 +325,13 @@ def test_a_restart_after_judging_logs_only_the_missing_assessments(tmp_path, mod
 
     def crash_after_one(*args):
         calls.append(args)
-        if len(calls) == 2:
-            raise OSError("the worker died")
-        return first(*args)
+        result = first(*args)
+        if len(calls) == 1:
+            raise KeyboardInterrupt("the worker died after the external commit")
+        return result
 
     traces.log = crash_after_one
-    with pytest.raises(OSError):
+    with pytest.raises(KeyboardInterrupt):
         run(request(tmp_path))
     judged = len(model.payloads)
     traces.log = first
@@ -339,7 +349,7 @@ def test_a_failed_judge_fails_the_run(tmp_path, monkeypatch):
 
     monkeypatch.setattr(gateway_adapter, "send_chat_request", broken)
     monkeypatch.setattr(postmortem, "SOURCE", lambda settings: FakeTraces([]))
-    with pytest.raises(ValueError, match="judge failed") as error:
+    with pytest.raises(ValueError, match="grade judge failure") as error:
         run(request(tmp_path))
     assert KEY not in str(error.value)
 
@@ -464,6 +474,15 @@ def contract_boundary(tmp_path, monkeypatch):
         return invoke
 
     monkeypatch.setattr(judges, "postmortem_judge", judge)
+    from langchain_core.messages import AIMessage
+    from tl3_workers.runtime import ProxyChatOpenAI
+
+    def repair(self, history):
+        calls.append(history[-1].text)
+        value = values[min(len(calls) - 1, len(values) - 1)]
+        return AIMessage(content=json.dumps(value) if isinstance(value, dict) else value)
+
+    monkeypatch.setattr(ProxyChatOpenAI, "invoke", repair)
     return request(tmp_path), traces, values, calls
 
 
@@ -472,19 +491,24 @@ def contract_boundary(tmp_path, monkeypatch):
     ("{broken JSON", "JSON parse failure"),
     (dict(written(0), recommendations=[dict(RECOMMENDATION, operation="execute")]),
      "recommendation contract failure"),
+    (dict(written(0), recommendations=[dict(RECOMMENDATION, target="bad\x00path")]),
+     "recommendation contract failure"),
+    (dict(written(0), recommendations=[dict(RECOMMENDATION, operation="add")]),
+     "recommendation contract failure"),
+    (written(4), "recommendation contract failure"),
 ])
 def test_invalid_output_never_becomes_successful_work(contract_boundary, bad, diagnostic):
     document, traces, values, calls = contract_boundary
     values.append(bad)
-    with pytest.raises(ValueError) as error:
+    with pytest.raises((ValueError, ValidationError)) as error:
         run(document)
-    message = tracing.failure_tags(error.value)["failure_message"]
-    assert diagnostic in message
-    assert len(calls) == 2, "one bounded correction, shared with ordinary roles"
-    assert not traces.logged
-    from pathlib import Path
     workdir = Path(document["worktree"])
     assert not (workdir / "judged.json").exists()
+    assert not traces.logged
+    message = tracing.failure_tags(error.value)["failure_message"]
+    assert diagnostic in message
+    assert not any(planted in message for planted in PLANTED)
+    assert len(calls) == 2, "one bounded correction, shared with ordinary roles"
     assert not (workdir / "reply.json").exists()
     assert not (workdir / "assessments.json").exists()
 
@@ -512,4 +536,206 @@ def test_feedback_failure_names_stage_without_repair_or_provider_text(contract_b
     assert tags["failure_message"] == "postmortem judge failure"
     assert KEY not in json.dumps(tags)
     assert len(calls) == 1
+    assert not traces.logged
+
+
+@pytest.mark.parametrize("artifact", ["reply.json", "judged.json"])
+@pytest.mark.parametrize("malformed", [False, True])
+def test_invalid_cached_work_is_rejected_before_judging_or_logging(
+        contract_boundary, artifact, malformed):
+    document, traces, values, calls = contract_boundary
+    invalid = reply(0)
+    invalid["postmortem"]["went_wrong"] = ["Failure-shaped fixture."]
+    (Path(document["worktree"]) / artifact).write_text(
+        "{invalid" if malformed else json.dumps(invalid))
+    with pytest.raises(ValueError) as error:
+        run(document)
+    assert "cached " + ("reply" if artifact == "reply.json" else "judged") in (
+        tracing.failure_tags(error.value)["failure_message"])
+    assert not calls
+    assert not traces.logged
+
+
+@pytest.mark.parametrize("artifact", ["judged.json", "assessments.json", "reply.json"])
+def test_restart_after_each_valid_checkpoint_never_repeats_assessments(
+        contract_boundary, monkeypatch, artifact):
+    document, traces, values, calls = contract_boundary
+    values.append(written(0))
+    save = postmortem._save
+    interrupted = []
+
+    def crash(path, value):
+        save(path, value)
+        if path.name == artifact and not interrupted:
+            interrupted.append(True)
+            raise KeyboardInterrupt("checkpoint committed")
+
+    monkeypatch.setattr(postmortem, "_save", crash)
+    with pytest.raises(KeyboardInterrupt):
+        run(document)
+    result, _ = run(document)
+    validate("postmortem-reply", result)
+    assert len(calls) == 1
+    assert len(traces.logged) == 1
+    assert result["assessment_ids"] == ["a-1"]
+
+
+def test_ambiguous_assessment_failure_is_never_submitted_twice(contract_boundary):
+    document, traces, values, calls = contract_boundary
+    values.append(written(0))
+    submitted = []
+
+    def uncertain(*args):
+        submitted.append(args)
+        raise OSError(f"transport {KEY}")
+
+    traces.log = uncertain
+    with pytest.raises(ValueError, match="assessment write failure"):
+        run(document)
+    with pytest.raises(ValueError, match="assessment outcome unknown") as error:
+        run(document)
+    assert len(submitted) == 1
+    assert len(calls) == 1
+    assert KEY not in json.dumps(tracing.failure_tags(error.value))
+    assert not (Path(document["worktree"]) / "reply.json").exists()
+
+
+def test_grade_feedback_error_is_terminal_and_names_the_stage(contract_boundary, monkeypatch):
+    from mlflow.entities.assessment import Feedback
+
+    document, traces, values, calls = contract_boundary
+    monkeypatch.setattr(judges, "grade_judges", lambda *args: {
+        "correctness": lambda **kwargs: Feedback(error=RuntimeError(KEY))})
+    with pytest.raises(ValueError) as error:
+        run(document)
+    assert tracing.failure_tags(error.value)["failure_message"] == "grade judge failure"
+    assert not calls
+    assert not traces.logged
+
+
+def test_judge_receives_authoritative_nested_contract(model, monkeypatch, tmp_path):
+    from tl3_workers.contracts import schema
+
+    monkeypatch.setattr(postmortem, "SOURCE", lambda settings: FakeTraces([]))
+    result, _ = run(request(tmp_path))
+    validate("postmortem-reply", result)
+    instructions = model.text()
+    assert "Authoritative result JSON Schema" in instructions
+    contract = judges.postmortem_contract("custom controller prompt")
+    nested = json.loads(contract.split("Authoritative result JSON Schema:\n")[1])
+    assert nested["$defs"] == schema("postmortem-reply")["$defs"]
+    assert nested["$ref"] == "#/$defs/postmortem"
+
+
+def test_repair_is_one_tool_free_turn_within_the_writer_budget(contract_boundary, monkeypatch):
+    from langchain_core.messages import AIMessage
+    from mlflow.environment_variables import MLFLOW_JUDGE_MAX_ITERATIONS
+    from tl3_workers.runtime import ProxyChatOpenAI
+
+    document, traces, values, calls = contract_boundary
+    values.append(dict(written(0), went_wrong=["wrong shape", KEY]))
+    inspected = []
+
+    def repair(self, history):
+        inspected.append(history)
+        assert MLFLOW_JUDGE_MAX_ITERATIONS.get() == judges.MAX_TURNS
+        assert "Your reply failed validation" in history[-1].text
+        assert "went_wrong" in history[-1].text
+        assert KEY not in json.dumps([item.text for item in history])
+        return AIMessage(content=json.dumps(written(0)))
+
+    original = judges.postmortem_judge
+
+    def judge(prompt, model):
+        assert MLFLOW_JUDGE_MAX_ITERATIONS.get() == judges.MAX_TURNS - 1
+        return original(prompt, model)
+
+    monkeypatch.setattr(judges, "postmortem_judge", judge)
+    monkeypatch.setattr(ProxyChatOpenAI, "invoke", repair)
+    result, _ = run(document)
+    validate("postmortem-reply", result)
+    assert len(inspected) == 1
+    assert len(traces.logged) == 1
+
+
+def test_deadline_covers_the_repair_turn(contract_boundary, monkeypatch):
+    import time
+    from tl3_workers.runtime import ProxyChatOpenAI
+
+    document, traces, values, calls = contract_boundary
+    document["inputs"]["deadline_secs"] = 1
+    values.append(dict(written(0), went_wrong=["wrong shape"]))
+
+    def slow(self, history):
+        time.sleep(5)
+
+    monkeypatch.setattr(ProxyChatOpenAI, "invoke", slow)
+    with pytest.raises(postmortem.PostmortemDeadline):
+        run(document)
+    assert not traces.logged
+    assert not (Path(document["worktree"]) / "judged.json").exists()
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_assessment_posts_disable_implicit_http_retries(monkeypatch, fails):
+    from types import SimpleNamespace
+    from mlflow.environment_variables import MLFLOW_HTTP_REQUEST_MAX_RETRIES
+
+    monkeypatch.setenv("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "7")
+    source = postmortem.MlflowTraces(None)
+
+    def log(trace_id, feedback):
+        assert MLFLOW_HTTP_REQUEST_MAX_RETRIES.get() == 0
+        if fails:
+            raise OSError("response lost")
+        return SimpleNamespace(assessment_id="a-1")
+
+    source.client = SimpleNamespace(log_assessment=log)
+    if fails:
+        with pytest.raises(OSError):
+            source.log("tr-1", "correctness", 4, "fixture", "judge", {})
+    else:
+        assert source.log("tr-1", "correctness", 4, "fixture", "judge", {}) == "a-1"
+    assert MLFLOW_HTTP_REQUEST_MAX_RETRIES.get() == 7
+
+
+def test_representative_repaired_postmortem_reaches_valid_final_envelope_once(
+        tmp_path, model, monkeypatch):
+    from langchain_core.messages import AIMessage
+    from tl3_workers.runtime import ProxyChatOpenAI
+
+    model.postmortem = dict(written(1), went_wrong=["The maker skipped a test."])
+    source = FakeTraces([source_trace("maker", 1_000_000_000, {})])
+    monkeypatch.setattr(postmortem, "SOURCE", lambda settings: source)
+    repairs = []
+
+    def repair(self, history):
+        repairs.append(history)
+        return AIMessage(content=json.dumps(written(1)))
+
+    monkeypatch.setattr(ProxyChatOpenAI, "invoke", repair)
+    document = request(tmp_path)
+    result, _ = run(document)
+    validate("postmortem-reply", result)
+    assert len(repairs) == 1
+    assert len(source.logged) == 2
+    assert result["assessment_ids"] == ["a-1", "a-2"]
+    assert run(document)[0] == result
+    assert len(source.logged) == 2
+    assert (Path(document["worktree"]) / "reply.json").exists()
+
+
+@pytest.mark.parametrize("artifact, content", [
+    ("assessments.json", "{invalid"),
+    ("assessments.json", '["not a receipt mapping"]'),
+    ("assessments.json", '{"correctness": 42}'),
+    ("assessment-pending.json", '{"correctness": {"unexpected": "object"}}'),
+])
+def test_invalid_assessment_cache_fails_before_external_writes(contract_boundary, artifact, content):
+    document, traces, values, calls = contract_boundary
+    (Path(document["worktree"]) / "judged.json").write_text(json.dumps(reply(0)))
+    (Path(document["worktree"]) / artifact).write_text(content)
+    with pytest.raises(ValueError, match="assessment cache failure"):
+        run(document)
+    assert not calls
     assert not traces.logged
