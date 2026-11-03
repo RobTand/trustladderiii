@@ -359,7 +359,6 @@ impl Supervisor {
             inputs["current_review_findings"] = current;
             inputs["plan"]["files"] = json!(delivery.paths);
             inputs["context_size"] = json!(self.limits.context_tokens);
-            inputs["fit_tokens"] = json!(self.limits.fit_tokens);
             inputs["tests"] = json!({"image": self.images.for_repository(&delivery.repository, &self.tests.container_image), "tools_path": self.tests.tools_dir});
             if self.images.exec_scratch(&delivery.repository) {
                 inputs["tests"]["exec_scratch"] = json!(true);
@@ -371,6 +370,9 @@ impl Supervisor {
             self.root(&delivery.key).join("worktree")
         };
         let forecast = json!({"fit_tokens": self.limits.fit_tokens, "context_tokens": self.limits.context_tokens, "overhead_tokens": self.planning.overhead_tokens});
+        if role == "maker" {
+            inputs["forecast"] = forecast.clone();
+        }
         if role == "reviewer" {
             inputs = review::inputs(
                 delivery,
