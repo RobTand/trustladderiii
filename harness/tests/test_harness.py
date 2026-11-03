@@ -396,3 +396,64 @@ def test_helper_round_receipt_and_ordinary_overlay_cannot_bypass(tmp_path, monke
                           container=Container(IMAGE))
     assert ordinary.verdict == Verdict.FAIL
     assert ordinary.tests[0].base == Outcome.PASSED
+
+
+def test_helper_staging_retains_observer_assertion_failure(tmp_path):
+    from tl3_harness.model import HelperEvidence
+    from tl3_harness.trees import helper_test_edits
+    base, head, staged = helper_trees(tmp_path)
+    helper_test_edits(base, head, staged, ['tests/*.py'],
+                      HelperEvidence('tests/test_product.py::_execute'),
+                      ('tests/test_product.py::test_diagnostic',))
+    names, before = run(staged, ['test_diagnostic'])
+    _, after = run(head, ['test_diagnostic'])
+    assert before[names[0]] == Outcome.ASSERTION, before
+    assert after[names[0]] == Outcome.PASSED, after
+
+
+@pytest.mark.parametrize('binding', [
+    'test_diagnostic = _existing_failing_test',
+    'test_diagnostic: object = _existing_failing_test',
+    'test_diagnostic = other_name = _existing_failing_test',
+    'test_diagnostic, other_name = (_existing_failing_test, None)',
+    'from somewhere import existing as test_diagnostic',
+])
+def test_helper_observer_cannot_shadow_base_binding(tmp_path, binding):
+    from tl3_harness.model import HelperEvidence
+    from tl3_harness.trees import helper_test_edits
+    base, head, staged = helper_trees(tmp_path)
+    existing = '\ndef _existing_failing_test():\n    assert False\n\n' + binding + '\n'
+    (base / 'tests/test_product.py').write_text(HELPER_BASE + existing)
+    (head / 'tests/test_product.py').write_text(HELPER_HEAD + existing + HELPER_OBSERVER)
+    with pytest.raises(ValueError, match='observer.*base'):
+        helper_test_edits(base, head, staged, ['tests/*.py'],
+                          HelperEvidence('tests/test_product.py::_execute'),
+                          ('tests/test_product.py::test_diagnostic',))
+
+
+def test_helper_assertion_removal_cannot_pass_without_failure_preservation(tmp_path, monkeypatch):
+    from tl3_harness import execution, HelperEvidence
+    repo = tmp_path / 'repo'
+    (repo / 'tests').mkdir(parents=True)
+    path = repo / 'tests/test_product.py'
+    path.write_text('def _check(x):\n    assert x\n    return x\n')
+    (repo / 'pyproject.toml').write_text(
+        '[tool.tl3.harness]\ncommand=["python", "-m", "pytest"]\ntest-files=["tests/*.py"]\n')
+    git(repo, 'init', '-q')
+    def save():
+        git(repo, 'add', '.')
+        git(repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture')
+        return git(repo, 'rev-parse', 'HEAD').decode().strip()
+    base = save()
+    path.write_text('def _check(x):\n    return x\n\ndef test_observer():\n    _check(False)\n')
+    head = save()
+    monkeypatch.setattr(execution, 'require_admission', lambda: None)
+    monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(repo))
+    monkeypatch.setattr(Progress, 'commit', lambda *_: None)
+    monkeypatch.setattr(execution, 'container_command',
+        lambda tree, container, tests: [sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)])
+    check = Check('assertion removal', Kind.DEMONSTRATING, ('tests/test_product.py::test_observer',),
+                  helper_evidence=HelperEvidence('tests/test_product.py::_check'))
+    result, = run_checks(repo, base, head, (check,), container=Container(IMAGE))
+    assert result.verdict == Verdict.FAIL, result
+    assert 'failure' in result.tests[0].message.lower(), result
