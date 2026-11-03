@@ -678,6 +678,7 @@ def test_request_132_git_index_generation_lands_before_independent_check(generat
         assert result["action_key"] == KEY
         assert result["artifact_sha256"]
         assert result["receipt_sha256"] == "b" * 64
+        assert result["argv"] == ["python3", "generate.py"]
         output = (generator_repo / "tests/BUILD.bazel").read_text()
         assert "tests/socket_support.py:" in output
         assert "tests/test_short_socket.py:tests.socket_support" in output
@@ -701,6 +702,7 @@ def test_request_132_git_index_generation_lands_before_independent_check(generat
     ("Path('tests/BUILD.bazel').write_text('x' * (16 * 1048576 + 1))", "limit"),
     ("raise SystemExit(7)", "7"),
     ("Path('tests/BUILD.bazel').unlink(); Path('tests/BUILD.bazel').symlink_to('/etc/passwd')", "regular"),
+    ("Path('tests/BUILD.bazel').chmod(0o755)", "mode"),
 ])
 def test_generator_failure_and_out_of_scope_output_preserve_source(
         generator_repo, generator_backend, tmp_path, mutation, fragment):
@@ -760,7 +762,7 @@ def test_generator_deadline_is_a_failure_not_a_hang(generator_repo, generator_ba
     assert "deadline" in result["message"]
 
 
-@pytest.mark.parametrize("corruption", ["log", "output", "incomplete", "stale"])
+@pytest.mark.parametrize("corruption", ["log", "output", "argv", "incomplete", "stale"])
 def test_generator_refuses_unverified_or_stale_artifacts(
         generator_repo, generator_backend, tmp_path, monkeypatch, corruption):
     from tl3_workers import pb_generators
@@ -774,10 +776,13 @@ def test_generator_refuses_unverified_or_stale_artifacts(
             path = Path(log["path"])
             if corruption == "log":
                 path.write_bytes(path.read_bytes() + b"corrupt")
-            elif corruption == "output":
+            elif corruption in ("output", "argv"):
                 from tl3_harness.generator import PREFIX
                 artifact = json.loads(path.read_text()[len(PREFIX):])
-                artifact["outputs"][0]["entry"]["sha256"] = "0" * 64
+                if corruption == "output":
+                    artifact["outputs"][0]["entry"]["sha256"] = "0" * 64
+                else:
+                    artifact["argv"] = ["/bin/sh", "-c", "exit 0"]
                 raw = (PREFIX + json.dumps(artifact) + "\n").encode()
                 path.write_bytes(raw)
                 log.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
@@ -894,3 +899,40 @@ def test_generator_image_command_cannot_be_shadowed_by_a_repository_file(tmp_pat
                                           ["python3", "generate.py"], tmp_path / "cid")
     assert "--entrypoint=python3" in command
     assert command[-2:] == [IMAGE, "generate.py"]
+
+
+@pytest.mark.parametrize("before_mode,after_mode", [(0o644, 0o755), (0o755, 0o644), (None, 0o755)])
+def test_generator_rejects_mode_changes_in_action_and_artifact_validation(before_mode, after_mode):
+    import base64
+    from tl3_harness import generator
+    name, raw = "tests/BUILD.bazel", b"generated\n"
+    entry = {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw), "mode": after_mode}
+    before = {name: {**entry, "mode": before_mode}} if before_mode is not None else {}
+    after = {name: entry}
+    contract = {"command": "python3 generate.py", "generated_files": ["**/BUILD.bazel"],
+                "protected_paths": [], "files": [name]}
+    artifact = {"status": "completed", "exit_code": 0, "command": contract["command"],
+                "argv": ["python3", "generate.py"], "input_manifest": generator.digest(before),
+                "output_manifest": generator.digest(after),
+                "outputs": [{"path": name, "entry": entry, "data": base64.b64encode(raw).decode()}]}
+    with pytest.raises(ValueError, match="mode"):
+        generator.changed(before, after, **{key: contract[key] for key in
+                                           ("generated_files", "protected_paths", "files")})
+    with pytest.raises(ValueError, match="mode"):
+        generator.validate_artifact(artifact, before, contract)
+
+
+@pytest.mark.parametrize("entrypoint", ["./generate.py", "tools/generate.py", "/checkout/generate.py",
+                                       "/proc/self/cwd/generate.py"])
+def test_generator_never_resolves_a_maker_written_shebang(tmp_path, entrypoint):
+    from tl3_harness import generator
+    script = tmp_path / ("generate.py" if entrypoint.startswith("/") else entrypoint.removeprefix("./"))
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text("#!/bin/sh -c 'printf changed > tests/BUILD.bazel'\n")
+    script.chmod(0o755)
+    with pytest.raises(ValueError, match="configured.*interpreter"):
+        generator.container_command(tmp_path, generator.Container(IMAGE), [entrypoint], tmp_path / "cid")
+    command = generator.container_command(tmp_path, generator.Container(IMAGE),
+                                          ["python3", str(script.relative_to(tmp_path))], tmp_path / "cid")
+    assert "--entrypoint=python3" in command
+    assert command[-2:] == [IMAGE, str(script.relative_to(tmp_path))]

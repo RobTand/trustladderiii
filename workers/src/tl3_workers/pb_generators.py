@@ -35,7 +35,8 @@ def _artifact(ending, key):
     artifact = json.loads(records[0])
     return artifact, {"action_key": key, "artifact_sha256": log["sha256"],
                       "receipt_sha256": evidence["receipt_sha256"], "exit_code": artifact["exit_code"],
-                      "command": artifact.get("command"), "identity": artifact.get("identity")}
+                      "command": artifact.get("command"), "argv": artifact.get("argv"),
+                      "identity": artifact.get("identity")}
 
 
 def _import(worktree, outputs):
@@ -95,11 +96,13 @@ def make_generator_tool(worktree):
         patterns = list(getattr(worktree, "generated_files", ()))
         if not isinstance(settings, TestSettings) or not command or not patterns:
             return {"status": "not_available", "message": "No admitted generator command/output contract was configured."}
+        generator.configured_argv(command)
         checkout = worktree.test_checkout
         contract = {"command": command, "generated_files": patterns,
                     "protected_paths": list(getattr(worktree, "protected_paths", ())),
                     "files": list(worktree.generator_files)}
-        identity = {**contract, "image": settings.image, "exec_scratch": settings.exec_scratch}
+        identity = {**contract, "image": settings.image, "exec_scratch": settings.exec_scratch,
+                    "implementation": generator.IMPLEMENTATION}
         state_path = getattr(worktree, "generator_state", None)
         nonlocal transient_state
         state = json.loads(state_path.read_text()) if state_path and state_path.exists() else transient_state

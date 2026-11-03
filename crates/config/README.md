@@ -158,10 +158,13 @@ Each `[[github.repos]]` entry accepts optional `generated_files` globs and a
 
 ```toml
 generated_files = ["**/BUILD.bazel", "src/generated/**"]
-generator = "tools/bazel/generate.sh"
+generator = "bash tools/bazel/generate.sh"
 ```
 
-The command is a single line parsed as argv. Shell operators are not interpreted.
+The command is a single line parsed as argv. Use an explicit image interpreter,
+for example `python3 tools/bazel/build_files.py` or `bash tools/bazel/generate.sh`.
+Repository entrypoints such as `./generate.py` are refused. The action never
+resolves a shebang from the worktree. Shell operators are not interpreted.
 The maker's argument-free `run_generator` tool runs only this configured command
 in a PrismaBuild-admitted action using the repository's immutable test image.
 It has no network, host credentials or served-repo Git metadata. A private Git
@@ -171,7 +174,8 @@ The image must contain the generator's interpreter, Git and dependencies.
 
 Every changed path must match `generated_files`, occur in the plan footprint,
 and avoid the effective protected paths. The action rejects the entire output
-for any other write, deletion, symlink, binary or invalid UTF-8 output. Limits
+for any other write, deletion, mode change, symlink, binary or invalid UTF-8 output.
+Existing output modes must stay unchanged; new outputs must have mode 0644. Limits
 are 128 changed files, 16 MiB per file and 32 MiB of output in total. There is no
 partial import after refusal. The snapshot is limited to 512 MiB. Writable scratch
 is memory-backed and charged to the admitted scope, so excessive writes cannot
@@ -184,7 +188,7 @@ before import. The durable import journal lives beside the maker session,
 outside the served worktree. Each replacement is atomic. A retry reuses the
 same action and permits only the original or verified bytes during recovery.
 A source edit invalidates an applied receipt. Worker code ensures generation
-before its final commit, then records the input tree, command, image identity,
+before its final commit, then records the input tree, command, exact argv, image identity,
 action key, exit status, artifact digest and final output tree. Independent
 checks and review still run on that final head.
 

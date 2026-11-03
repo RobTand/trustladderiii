@@ -26,7 +26,7 @@ def main():
         (root / "tests/socket_support.py").write_text("def short_socket(): return 'short'\n")
         (root / "tests/test_new.py").write_text("from tests.socket_support import short_socket\ndef test_short(): assert short_socket() == 'short'\n")
         (root / "tests/BUILD.bazel").write_text("stale\n")
-        (root / "generate.py").write_text('''#!/usr/bin/env python3
+        (root / "generate.py").write_text('''#!/bin/sh -c 'exit 99'
 from pathlib import Path
 import subprocess
 import sys
@@ -45,26 +45,39 @@ if "--escape" in sys.argv:
     Path("tests/test_old.py").write_text("escaped\\n")
 if "--fail" in sys.argv:
     raise SystemExit(7)
+if "--mode" in sys.argv:
+    Path("tests/BUILD.bazel").unlink()
+    Path("tests/BUILD.bazel").write_text(output)
+    Path("tests/BUILD.bazel").chmod(0o755)
 ''')
         (root / "generate.py").chmod(0o755)
-        contract = {"command": "./generate.py", "generated_files": ["**/BUILD.bazel"],
+        contract = {"command": "python3 generate.py", "generated_files": ["**/BUILD.bazel"],
                     "protected_paths": [], "files": ["tests/BUILD.bazel"]}
         before = generator.manifest(root)
         artifact = generator.run(root, image, **contract)
         assert artifact["status"] == "completed", artifact
+        assert artifact["argv"] == ["python3", "generate.py"], artifact
         after = generator.validate_artifact(artifact, before, contract)
         assert generator.manifest(root) == before
         for output in artifact["outputs"]:
             (root / output["path"]).write_bytes(base64.b64decode(output["data"], validate=True))
         assert generator.manifest(root) == after
-        checked = generator.run(root, image, **{**contract, "command": "./generate.py --check"})
+        checked = generator.run(root, image, **{**contract, "command": "python3 generate.py --check"})
         assert checked["status"] == "completed" and checked["outputs"] == [], checked
         repeated = generator.run(root, image, **contract)
         assert repeated["status"] == "completed" and repeated["outputs"] == [], repeated
-        escaped = generator.run(root, image, **{**contract, "command": "./generate.py --escape"})
+        escaped = generator.run(root, image, **{**contract, "command": "python3 generate.py --escape"})
         assert escaped["status"] == "refused" and "undeclared" in escaped["message"], escaped
-        failed = generator.run(root, image, **{**contract, "command": "./generate.py --fail"})
+        failed = generator.run(root, image, **{**contract, "command": "python3 generate.py --fail"})
         assert failed["status"] == "failed" and failed["exit_code"] == 7, failed
+        mode = generator.run(root, image, **{**contract, "command": "python3 generate.py --mode"})
+        assert mode["status"] == "refused" and "mode" in mode["message"], mode
+        try:
+            generator.run(root, image, **{**contract, "command": "./generate.py"})
+        except ValueError as error:
+            assert "configured image interpreter" in str(error)
+        else:
+            raise AssertionError("A repository shebang was accepted as trusted configuration")
         assert generator.manifest(root) == after
         tests = run_tests(root, image, ("tests/test_new.py::test_short", "tests/test_old.py::test_wait"))
         assert tests["status"] == "completed" and tests["totals"]["passed"] == 2, tests
@@ -77,7 +90,8 @@ if "--fail" in sys.argv:
                           "artifact_sha256": generator.digest(artifact), "independent_check": checked["status"],
                           "idempotent": True, "tests_passed": tests["totals"]["passed"],
                           "undeclared_write": escaped["status"],
-                          "failure_exit_code": failed["exit_code"]}))
+                          "failure_exit_code": failed["exit_code"], "mode_change": mode["status"],
+                          "repository_entrypoint": "refused", "argv": artifact["argv"]}))
 
 
 if __name__ == "__main__":

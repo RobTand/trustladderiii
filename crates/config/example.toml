@@ -64,7 +64,7 @@ installation_id = 1
 # protected_paths = ["CHANGELOG.md", "release/**"]
 # Optional admitted generator; outputs still require footprint and protected-path checks.
 # generated_files = ["**/BUILD.bazel"]
-# generator = "tools/bazel/generate.sh"
+# generator = "bash tools/bazel/generate.sh"
 # Optional: also run up to this many existing tests that import the change as a regression check.
 # selected_tests = 200
 # Optional repo-wide rules, run as regression checks on every leaf and round.

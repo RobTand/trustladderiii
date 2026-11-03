@@ -22,6 +22,24 @@ ARTIFACT_BYTES = 48 * 1_048_576
 MAX_OUTPUTS = 128
 INPUT_BYTES = 512 * 1_048_576
 TIMEOUT = 120
+IMPLEMENTATION = "tl3-generator-v2"
+
+
+def _check_interpreter(argv):
+    if not argv or not argv[0]:
+        raise ValueError("Use an explicit configured image interpreter, such as python3 tools/bazel/build_files.py")
+    executable = PurePosixPath(argv[0])
+    if ((not executable.is_absolute() and ("/" in argv[0] or argv[0] in (".", "..")))
+            or (executable.is_absolute() and (str(executable) != argv[0] or ".." in executable.parts
+                                              or any(executable.is_relative_to(root) for root in
+                                                     ("/checkout", "/proc", "/sys", "/dev", "/tmp"))))):
+        raise ValueError("Use an explicit configured image interpreter, such as python3 tools/bazel/build_files.py")
+
+
+def configured_argv(command):
+    argv = shlex.split(command)
+    _check_interpreter(argv)
+    return argv
 
 
 def digest(value):
@@ -81,6 +99,9 @@ def changed(before, after, generated_files, protected_paths, files):
             raise ValueError(f"generator output is outside the footprint: {name}")
         if name not in after:
             raise ValueError(f"generator deleted an output: {name}")
+        expected_mode = before[name]["mode"] if name in before else 0o644
+        if after[name]["mode"] != expected_mode:
+            raise ValueError(f"generator changed an output mode: {name}; new outputs require mode 0644")
     return names
 
 
@@ -98,6 +119,8 @@ def validate_artifact(artifact, before, contract):
         raise ValueError(artifact["message"])
     if artifact["input_manifest"] != digest(before):
         raise ValueError("generator artifact has a stale input tree")
+    if artifact["command"] != contract["command"] or artifact.get("argv") != configured_argv(contract["command"]):
+        raise ValueError("generator artifact argv differs from its configured command")
     after = dict(before)
     outputs = artifact["outputs"]
     if not isinstance(outputs, list) or len(outputs) > MAX_OUTPUTS:
@@ -128,15 +151,9 @@ def validate_artifact(artifact, before, contract):
 
 
 def container_command(tree, container, argv, cidfile):
-    # /dev/shm can be noexec. Invoke a repository script through its declared
-    # shebang interpreter while keeping its bytes and arguments unchanged.
-    executable = tree / argv[0]
-    if ("/" in argv[0] and not Path(argv[0]).is_absolute() and executable.is_file()
-            and executable.stat().st_mode & 0o111):
-        with executable.open("rb") as stream:
-            header = stream.readline(4096)
-        if header.startswith(b"#!"):
-            argv = [*shlex.split(header[2:].decode().strip()), argv[0], *argv[1:]]
+    # Only trusted configuration supplies the image interpreter and arguments.
+    # Never read an entrypoint or shebang from the maker's writable checkout.
+    _check_interpreter(argv)
     command = test_container_command(tree, container, ())
     # Preserve every test containment flag and PB's Docker shim/affinity. Only
     # the private copy is writable; Git's synthetic metadata stays read-only.
@@ -157,7 +174,7 @@ def container_command(tree, container, argv, cidfile):
 
 def run(tree, container, command, generated_files, protected_paths, files, timeout=TIMEOUT):
     require_admission()
-    argv = shlex.split(command)
+    argv = configured_argv(command)
     if not argv or not generated_files or not 0 < timeout <= TIMEOUT:
         raise ValueError("generator requires a command, generated output patterns and a bounded timeout")
     before = manifest(tree)
@@ -165,7 +182,8 @@ def run(tree, container, command, generated_files, protected_paths, files, timeo
         raise ValueError("generator input exceeds the 512-MiB snapshot limit")
     result = {"status": "failed", "exit_code": None, "message": "Generator did not complete.",
               "input_manifest": digest(before), "command": command,
-              "identity": {"implementation": "tl3-generator-v1", "image": container.image}}
+              "argv": argv,
+              "identity": {"implementation": IMPLEMENTATION, "image": container.image}}
     # Writable scratch is memory-backed and charged to the admitted scope,
     # so a generator cannot fill the worker disk before diff validation.
     with tempfile.TemporaryDirectory(prefix="tl3-generator-", dir="/dev/shm") as temporary:
