@@ -1238,8 +1238,12 @@ class WorkerStageError(ValueError):
 
 def failure_tags(error):
     from tl3_workers.roles.planner import PlanConsistencyError
+    from tl3_workers.evidence import EvidenceContractError
     from tl3_workers.forcing_rehearsal import ForcingInfrastructureError
     from tl3_workers.turns import InvalidReply, Unrepairable
+
+    if isinstance(error, EvidenceContractError):
+        return {"failure_class": "EvidenceContractError", "failure_message": str(error)}
 
     if isinstance(error, ForcingInfrastructureError):
         return {"failure_class": "ForcingInfrastructureError", "failure_message": str(error)[:512]}

@@ -18,6 +18,8 @@ def test_t613_ac3_rehearsed_forcing_replaces_audit_helper_and_proves_real_assert
     ledger, root, inputs, calls = rehearsal
     (root / 'publisher.py').write_text(
         'import os\ndef holder():\n    return os.environ.get("HOLDER_PATH", "tiny")\n')
+    (root / 'pyproject.toml').write_text(
+        '[tool.tl3.harness]\ncommand=["python", "-m", "pytest"]\ntest-files=["tests/*.py"]\n')
     old = '''import pytest
 import publisher
 

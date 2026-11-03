@@ -31,6 +31,12 @@ def test_t613_ac1_source_required_method_and_provenance_cannot_be_replaced():
               reply, planning=True)
     assert reply['kind'] == 'cant_meet'
     assert required in reply['evidence_contract']
+    supported = {**deepcopy(CAPABILITY), 'methods': [*CAPABILITY['methods'], 'helper_target_observer']}
+    alternative = {'kind': 'leaf', 'evidence_contract': [obligation('red_green')], 'checks': []}
+    preflight({'tool_capabilities': [supported], 'ingest': {'evidence_contract': [required]}},
+              alternative, planning=True)
+    assert alternative['kind'] == 'cant_meet'
+    assert 'Explicit source method helper_target_observer' in alternative['report']
     Draft202012Validator(schema('ingest-reply')['$defs']['evidence_requirement']).validate(required)
 
 
