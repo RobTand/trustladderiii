@@ -141,9 +141,9 @@ class FakeTraces:
         self.asked.append(tags)
         return self.traces[:limit]
 
-    def assessment(self, trace_id, metadata):
+    def assessment(self, trace_id, key):
         for index, item in enumerate(self.logged, 1):
-            if item["trace_id"] == trace_id and item["metadata"] == metadata:
+            if item["trace_id"] == trace_id and item["metadata"]["idempotency_key"] == key:
                 return f"a-{index}"
         return None
 
@@ -301,7 +301,9 @@ def test_judges_see_only_redacted_capped_material_and_grades_are_logged(tmp_path
     assert [entry["trace_id"] for entry in traces.logged] == [newest, newest]
     assert sorted(reply["assessment_ids"]) == ["a-1", "a-2"]
     for entry in traces.logged:
-        assert entry["metadata"] == {
+        metadata = dict(entry["metadata"])
+        assert metadata.pop("idempotency_key").startswith("a-")
+        assert metadata == {
             "node": "3", "request": "3", "repo": "RobTand/tl3-sandbox", "issue": "42",
             "release": "b" * 40, "rubric_version": "1", "dimension": entry["name"],
             "judge_model": "claude-sonnet-5-5",
@@ -580,24 +582,27 @@ def test_restart_after_each_valid_checkpoint_never_repeats_assessments(
     assert result["assessment_ids"] == ["a-1"]
 
 
-def test_ambiguous_assessment_failure_is_never_submitted_twice(contract_boundary):
+def test_ambiguous_assessment_response_is_reconciled_without_resubmit(contract_boundary):
     document, traces, values, calls = contract_boundary
     values.append(written(0))
     submitted = []
+    log = traces.log
 
     def uncertain(*args):
         submitted.append(args)
+        log(*args)
         raise OSError(f"transport {KEY}")
 
     traces.log = uncertain
     with pytest.raises(ValueError, match="assessment write failure"):
         run(document)
-    with pytest.raises(ValueError, match="assessment outcome unknown") as error:
-        run(document)
+    result, _ = run(document)
     assert len(submitted) == 1
     assert len(calls) == 1
-    assert KEY not in json.dumps(tracing.failure_tags(error.value))
-    assert not (Path(document["worktree"]) / "reply.json").exists()
+    assert len(traces.logged) == 1
+    assert KEY not in json.dumps(result)
+    assert result["assessment_ids"] == ["a-1"]
+    assert json.loads((Path(document["worktree"]) / "assessment-pending.json").read_text()) == {}
 
 
 def test_grade_feedback_error_is_terminal_and_names_the_stage(contract_boundary, monkeypatch):
@@ -685,6 +690,9 @@ def test_assessment_posts_disable_implicit_http_retries(monkeypatch, fails):
     source = postmortem.MlflowTraces(None)
 
     def log(trace_id, feedback):
+        assert feedback.assessment_id == "a-fixture"
+        assert feedback.to_proto().assessment_id == "a-fixture"
+        assert feedback.metadata["idempotency_key"] == "a-fixture"
         assert MLFLOW_HTTP_REQUEST_MAX_RETRIES.get() == 0
         if fails:
             raise OSError("response lost")
@@ -693,9 +701,9 @@ def test_assessment_posts_disable_implicit_http_retries(monkeypatch, fails):
     source.client = SimpleNamespace(log_assessment=log)
     if fails:
         with pytest.raises(OSError):
-            source.log("tr-1", "correctness", 4, "fixture", "judge", {})
+            source.log("tr-1", "correctness", 4, "fixture", "judge", {"idempotency_key": "a-fixture"})
     else:
-        assert source.log("tr-1", "correctness", 4, "fixture", "judge", {}) == "a-1"
+        assert source.log("tr-1", "correctness", 4, "fixture", "judge", {"idempotency_key": "a-fixture"}) == "a-1"
     assert MLFLOW_HTTP_REQUEST_MAX_RETRIES.get() == 7
 
 
@@ -739,3 +747,145 @@ def test_invalid_assessment_cache_fails_before_external_writes(contract_boundary
         run(document)
     assert not calls
     assert not traces.logged
+
+
+def test_restart_after_intent_before_post_resolves_to_one_assessment(contract_boundary, monkeypatch):
+    document, traces, values, calls = contract_boundary
+    values.append(written(0))
+    save = postmortem._save
+    crashed = []
+
+    def crash(path, value):
+        save(path, value)
+        if path.name == "assessment-pending.json" and not crashed:
+            crashed.append(True)
+            raise KeyboardInterrupt("intent committed, POST not started")
+
+    monkeypatch.setattr(postmortem, "_save", crash)
+    with pytest.raises(KeyboardInterrupt):
+        run(document)
+    assert not traces.logged
+    result, _ = run(document)
+    validate("postmortem-reply", result)
+    assert len(traces.logged) == 1
+    assert result["assessment_ids"] == ["a-1"]
+    assert len(calls) == 1
+    assert run(document)[0] == result
+    assert len(traces.logged) == 1
+
+
+def test_assessment_key_is_stable_and_separates_each_identity_field():
+    fields = ["run", "dimension", "model", "release"]
+    key = postmortem.assessment_key(*fields)
+    assert key == postmortem.assessment_key(*fields)
+    assert key.startswith("a-") and len(key) == 34
+    for index in range(len(fields)):
+        changed = fields.copy()
+        changed[index] += "-changed"
+        assert postmortem.assessment_key(*changed) != key
+
+
+def test_pending_lookup_rechecks_after_bounded_wait_before_any_post(contract_boundary, monkeypatch):
+    document, traces, values, calls = contract_boundary
+    values.append(written(0))
+    save = postmortem._save
+    original_target = traces.traces[0].info.trace_id
+    workdir = Path(document["worktree"])
+    interrupted = []
+
+    def crash(path, value):
+        save(path, value)
+        if path.name == "assessment-pending.json" and not interrupted:
+            interrupted.append(True)
+            raise KeyboardInterrupt()
+
+    monkeypatch.setattr(postmortem, "_save", crash)
+    with pytest.raises(KeyboardInterrupt):
+        run(document)
+    traces.traces.insert(0, source_trace("maker", 2_000_000_000, {}))
+    queries, waits = [], []
+
+    def absent(trace_id, key):
+        queries.append((trace_id, key))
+        return None
+
+    monkeypatch.setattr(traces, "assessment", absent)
+    monkeypatch.setattr(postmortem.time, "sleep", waits.append)
+    result, _ = run(document)
+    assert len(queries) == 2 and queries[0] == queries[1]
+    assert queries[0][0] == original_target
+    assert waits == [postmortem.ASSESSMENT_SETTLE_SECS]
+    assert 0 < waits[0] <= 1
+    assert len(traces.logged) == 1
+    assert traces.logged[0]["trace_id"] == original_target
+    assert traces.logged[0]["metadata"]["idempotency_key"] == queries[0][1]
+    assert result["assessment_ids"] == ["a-1"]
+    assert json.loads((workdir / "assessment-pending.json").read_text()) == {}
+
+
+def test_stale_lookup_then_visible_assessment_resolves_without_another_post(
+        contract_boundary, monkeypatch):
+    document, traces, values, calls = contract_boundary
+    values.append(written(0))
+    log, lookup = traces.log, traces.assessment
+    posts, queries, waits = [], [], []
+
+    def lost_response(*args):
+        posts.append(args)
+        log(*args)
+        raise KeyboardInterrupt("POST committed, response lost")
+
+    traces.log = lost_response
+    with pytest.raises(KeyboardInterrupt):
+        run(document)
+
+    def stale_once(trace_id, key):
+        queries.append(key)
+        return None if len(queries) == 1 else lookup(trace_id, key)
+
+    monkeypatch.setattr(traces, "assessment", stale_once)
+    monkeypatch.setattr(postmortem.time, "sleep", waits.append)
+    result, _ = run(document)
+    assert len(posts) == 1 and len(traces.logged) == 1
+    assert len(queries) == 2 and queries[0] == queries[1]
+    assert waits == [postmortem.ASSESSMENT_SETTLE_SECS]
+    assert result["assessment_ids"] == ["a-1"]
+
+
+def test_server_enforced_assessment_id_prevents_duplicate_when_both_lookups_are_stale(
+        contract_boundary, monkeypatch):
+    from types import SimpleNamespace
+
+    document, traces, values, calls = contract_boundary
+    values.append(written(0))
+    source = postmortem.MlflowTraces(None)
+    source.find = traces.find
+    committed, posts, reads = {}, [], []
+
+    def log(trace_id, feedback):
+        wire = feedback.to_proto()
+        key = feedback.metadata["idempotency_key"]
+        assert wire.assessment_id == key
+        posts.append(wire.assessment_id)
+        if wire.assessment_id in committed:
+            raise ValueError("existing assessment primary key")
+        committed[wire.assessment_id] = feedback
+        raise OSError("commit succeeded, response lost")
+
+    def info(trace_id):
+        reads.append(trace_id)
+        return SimpleNamespace(assessments=[] if len(reads) <= 2 else list(committed.values()))
+
+    source.client = SimpleNamespace(log_assessment=log, get_trace_info=info)
+    monkeypatch.setattr(postmortem, "SOURCE", lambda settings: source)
+    monkeypatch.setattr(postmortem.time, "sleep", lambda seconds: None)
+    with pytest.raises(ValueError, match="assessment write failure"):
+        run(document)
+    with pytest.raises(ValueError, match="assessment write failure"):
+        run(document)
+    result, _ = run(document)
+    validate("postmortem-reply", result)
+    assert len(committed) == 1
+    assert len(posts) == 2 and posts[0] == posts[1]
+    assert result["assessment_ids"] == [posts[0]]
+    assert len(calls) == 1

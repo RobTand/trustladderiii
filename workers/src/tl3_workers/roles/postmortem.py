@@ -28,6 +28,7 @@ from tl3_workers.turns import TurnControl, repaired
 # The newest runs are judged, and their tokens counted; the reply says how many.
 MAX_TRACES = 24
 MAX_RECOMMENDATIONS = 3
+ASSESSMENT_SETTLE_SECS = 0.1
 # Trace attributes that hold structure rather than content.
 STRUCTURAL = {"mlflow.spanType", "mlflow.traceRequestId", "mlflow.chat.tokenUsage",
               "mlflow.llm.model", "tl3.role", "tl3.proxy.usage_chunks",
@@ -128,9 +129,9 @@ class MlflowTraces:
                                           order_by=["timestamp_ms DESC"], include_spans=True)
         return [trace for trace in found if trace.info.tags.get("role") != "postmortem"][:limit]
 
-    def assessment(self, trace_id, metadata):
+    def assessment(self, trace_id, key):
         for item in self.client.get_trace_info(trace_id).assessments:
-            if all((item.metadata or {}).get(key) == value for key, value in metadata.items()):
+            if (item.metadata or {}).get("idempotency_key") == key:
                 return item.assessment_id
         return None
 
@@ -141,7 +142,10 @@ class MlflowTraces:
         feedback = Feedback(name=name, value=value, rationale=rationale,
                             source=AssessmentSource(source_type="LLM_JUDGE", source_id=judge_model),
                             metadata=metadata)
-        # A retried POST can create two assessments when the first response is lost.
+        # MLflow preserves caller-supplied IDs and enforces their uniqueness.
+        # Metadata lookup handles lag; the ID also prevents a late duplicate POST.
+        feedback.assessment_id = metadata["idempotency_key"]
+        # Keep one POST per attempt; checkpoint reconciliation owns retries.
         previous = MLFLOW_HTTP_REQUEST_MAX_RETRIES.get_raw()
         MLFLOW_HTTP_REQUEST_MAX_RETRIES.set(0)
         try:
@@ -300,6 +304,12 @@ def _judge(run, stage):
     return feedback
 
 
+def assessment_key(run, dimension, model, release):
+    identity = json.dumps([run, dimension, model, release], separators=(",", ":"))
+    # Match MLflow's a-<32 hex> ID shape and its 50-character database bound.
+    return "a-" + hashlib.sha256(identity.encode()).hexdigest()[:32]
+
+
 def _checked(inputs, reply):
     from tl3_workers.runtime import _checked as checked
 
@@ -432,32 +442,40 @@ def _judged_run(model, request, workdir, emit):
     run_key = hashlib.sha256(str(workdir).encode()).hexdigest()
     for grade in judged["grades"]:
         dimension = grade["dimension"]
+        key = assessment_key(run_key, dimension, grade["judge_model"], inputs["release"])
+        assessment_target = pending.get(dimension, target)
         metadata = {**{key: str(tags[key]) for key in ("node", "request", "repo", "issue")},
                     "release": inputs["release"], "rubric_version": str(inputs["rubric"]["version"]),
                     "dimension": dimension, "judge_model": grade["judge_model"],
-                    "postmortem_run": run_key}
+                    "postmortem_run": run_key, "idempotency_key": key}
         if dimension not in logged and dimension in pending:
-            # A crash may occur after MLflow commits but before the local receipt.
-            # Reconcile that write. Never submit it twice if its outcome is unknown.
+            # The intent may precede the POST, or the POST's response may be lost.
+            # Query twice, allowing a bounded read-after-write delay, before retrying
+            # the same server-enforced ID on the intent's original trace.
             try:
-                recovered = source.assessment(pending[dimension], metadata)
+                recovered = source.assessment(assessment_target, key)
+                if recovered is None:
+                    time.sleep(ASSESSMENT_SETTLE_SECS)
+                    recovered = source.assessment(assessment_target, key)
             except Exception:
                 raise tracing.WorkerStageError("postmortem assessment lookup failure") from None
-            if recovered is None:
-                raise tracing.WorkerStageError("postmortem assessment outcome unknown")
-            logged[dimension] = recovered
-        if target and grade["grade"] is not None and dimension not in logged:
-            pending[dimension] = target
+            if recovered is not None:
+                logged[dimension] = recovered
+        if assessment_target and grade["grade"] is not None and dimension not in logged:
+            pending[dimension] = assessment_target
             _save(workdir / "assessment-pending.json", pending)
             try:
-                logged[dimension] = source.log(target, dimension, grade["grade"], grade["rationale"],
-                                               grade["judge_model"], metadata)
+                logged[dimension] = source.log(
+                    assessment_target, dimension, grade["grade"], grade["rationale"],
+                    grade["judge_model"], metadata)
             except Exception:
                 raise tracing.WorkerStageError("postmortem assessment write failure") from None
         grade["assessment_id"] = logged.get(dimension)
         judged["assessment_ids"] = [logged[key] for key in sorted(logged)]
         _checked(inputs, judged)
         _save(workdir / "assessments.json", logged)
+        pending.pop(dimension, None)
+        _save(workdir / "assessment-pending.json", pending)
     _checked(inputs, judged)
     _save(workdir / "reply.json", judged)
     return judged
