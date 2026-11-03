@@ -433,6 +433,7 @@ tl3_py_test(
         ":planner_fixtures",
         ":worker_process",
         "//workers/src",
+        "@tl3_pip//jsonschema",
         "@tl3_pip//pytest",
     ],
 )
@@ -505,6 +506,18 @@ tl3_py_test(
         ":conftest",
         ":planner_fixtures",
         "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_planner_execution",
+    srcs = ["test_planner_execution.py"],
+    deps = [
+        ":conftest",
+        ":planner_fixtures",
+        "//workers/src",
+        "@tl3_pip//jsonschema",
         "@tl3_pip//pytest",
     ],
 )
