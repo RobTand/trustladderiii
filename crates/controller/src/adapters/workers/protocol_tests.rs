@@ -210,3 +210,21 @@ fn configured_evidence_preflight_does_not_accept_a_downgraded_leaf() {
         ));
     }
 }
+
+#[test]
+fn configured_evidence_preflight_accepts_always_tests() {
+    let contract = json!([{
+        "requirement":"Run the repository's always_tests alongside the planned checks.",
+        "tool":"run_tests", "executor":"prismabuild_pytest", "runner_features":["always_tests"],
+        "artifacts":["logs","terminal_verdict"], "methods":["head"], "protected_files":[]
+    }]);
+    let inputs = json!({
+        "ingest":{"evidence_contract":contract},
+        "tool_capabilities":tl3_config::Planning::default().tool_capabilities
+    });
+    let mut reply = json!({"kind":"leaf", "evidence_contract":[]});
+    super::super::evidence::preflight("planner", &inputs, &mut reply).unwrap();
+    assert_eq!(reply["kind"], "leaf", "{reply}");
+    assert_eq!(reply["evidence_contract"], contract);
+    assert_eq!(reply["evidence_errors"], json!([]));
+}

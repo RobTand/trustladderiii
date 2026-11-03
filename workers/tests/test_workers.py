@@ -421,3 +421,36 @@ def test_request_evidence_contract_survives_intake_and_audit(tmp_path, request_d
         assert missing in '\n'.join(reply['evidence_errors'])
     if role == 'ingest':
         assert reply['goals'] == BRIEF['goals']
+
+
+def test_context_only_buildbuddy_prompt_fixture(request_doc, monkeypatch):
+    body = "The earlier BuildBuddy run showed a missing exclamation mark. Return hello!"
+    request_doc["inputs"]["issue"]["body"] = body
+    request_doc["inputs"]["tool_capabilities"] = []
+    observed = []
+
+    class InspectModel(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _generate(self, messages, **kwargs):
+            observed.append(messages)
+            return super()._generate(messages, **kwargs)
+
+    # Scripted output checks prompt delivery and contract handling, not live extraction.
+    fake = InspectModel(responses=[AIMessage(content=json.dumps(
+        dict(copy.deepcopy(BRIEF), evidence_contract=[])))])
+    monkeypatch.setattr(runtime, "create_model", lambda request: fake)
+    events = []
+    runtime.run(request_doc, events.append)
+    assert json.loads(observed[0][1].text)["issue"]["body"] == body
+    reply = events[-1]["reply"]
+    assert reply["evidence_contract"] == []
+    assert reply["evidence_errors"] == []
+    for role in ("ingest", "audit", "planner"):
+        prompt = files("tl3_workers").joinpath("prompts", role + ".md").read_text()
+        assert "Only evidence the request requires belongs in evidence_contract." in prompt, role
+        assert "history, context, non-goals or examples" in prompt, role
+        assert "the earlier BuildBuddy run showed" in prompt, role
+        assert "always_tests" in prompt, role
+    assert "Only evidence the request requires belongs in evidence_contract." in observed[0][0].text
