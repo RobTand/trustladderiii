@@ -6,7 +6,7 @@ import math
 import os
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage, messages_from_dict, messages_to_dict
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, messages_from_dict, messages_to_dict
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from tl3_workers.turns import RepairUnavailable
@@ -191,7 +191,8 @@ class ExplorationMiddleware(AgentMiddleware):
                            <= min(self.budget.finalization_turns, self.budget.tool_turns))
         notice = None
         if self.role == "maker":
-            notice = SystemMessage(content=BUDGET_PREFIX + json.dumps(self.remaining(), sort_keys=True))
+            # Proxy providers may hoist system messages into the cached prefix.
+            notice = HumanMessage(content=BUDGET_PREFIX + json.dumps(self.remaining(), sort_keys=True))
             messages.append(notice)
             if self.finalizing:
                 request = request.override(tools=[tool for tool in request.tools if tool.name in FINALIZATION_TOOLS])
