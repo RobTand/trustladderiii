@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/decision-context.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "request_version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_comment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "question": {
+            "type": "object"
+          },
+          "answer": {
+            "type": "string",
+            "minLength": 1
+          },
+          "allowed_scope": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "restrictions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "origin_request_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "superseded_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "source_comment",
+          "question",
+          "answer",
+          "allowed_scope",
+          "restrictions",
+          "origin_request_version",
+          "superseded_by"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "request_version",
+    "decisions"
+  ],
+  "additionalProperties": false
+}

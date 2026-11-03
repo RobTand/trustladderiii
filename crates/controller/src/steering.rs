@@ -220,6 +220,12 @@ impl Controller {
         {
             inputs["conversation"] = json!({"comment_id": pending.id, "comment": pending.value["comment"], "question": pending.value["question"]});
         }
+        inputs["decision_context"] =
+            json!(crate::decisions::Context::load(snapshot, node)?.applicable());
+        if let Some(open) = n.question {
+            inputs["question_context"] =
+                answered_question(snapshot, n.question, open.id).unwrap_or_default();
+        }
         let binding: Request = crate::decode_stored(binding.value.clone())?;
         let key = format!("classify:{}", row.id);
         let delivery = Delivery {
@@ -540,6 +546,86 @@ impl Controller {
         };
         if !current_answer {
             return Ok(None);
+        }
+        let changes_request = !matches!(n.phase, Phase::Stopping(_))
+            && matches!(
+                command,
+                Command::ChangeRequest
+                    | Command::Answer {
+                        answer: Answer::ChangeRequest,
+                        ..
+                    }
+            );
+        let accepted_answer =
+            matches!(command, Command::Answer { answer, .. } if !matches!(answer, Answer::Unclear));
+        if changes_request || accepted_answer {
+            let binding = request(snapshot, node)?;
+            let source = (origin.comment != 0 && origin.comment < (1u64 << 53)).then(|| {
+                format!(
+                    "https://github.com/{}/{}/issues/{}#issuecomment-{}",
+                    binding.repo.owner, binding.repo.name, origin.issue, origin.comment
+                )
+            });
+            let mut context = crate::decisions::Context::load(snapshot, node)?;
+            if changes_request {
+                for id in reply["supersedes"].as_array().into_iter().flatten() {
+                    let decision = context
+                        .decisions
+                        .iter_mut()
+                        .find(|decision| {
+                            decision.superseded_by.is_none()
+                                && id.as_str() == Some(decision.id.as_str())
+                        })
+                        .ok_or(Error::Invalid(
+                            "superseded decision is no longer applicable",
+                        ))?;
+                    decision.superseded_by =
+                        Some(source.clone().unwrap_or_else(|| origin.key.into()));
+                }
+            }
+            if let Command::Answer { question, .. } = command
+                && accepted_answer
+            {
+                let scope = reply["decision"]["allowed_scope"]
+                    .as_array()
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_else(|| {
+                        vec![
+                            reply["new_text"]
+                                .as_str()
+                                .or_else(|| reply["guidance"].as_str())
+                                .unwrap_or(origin.text)
+                                .into(),
+                        ]
+                    });
+                let restrictions = reply["decision"]["restrictions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect();
+                context.decisions.push(crate::decisions::Decision {
+                    id: origin.key.into(),
+                    source_comment: source,
+                    question: answered_question(snapshot, n.question, question)
+                        .ok_or(Error::Invalid("accepted answer has no question"))?,
+                    answer: origin.text.into(),
+                    allowed_scope: scope,
+                    restrictions,
+                    origin_request_version: node.0,
+                    superseded_by: None,
+                });
+            }
+            commit
+                .rows
+                .push(put("request_decisions", node.0.to_string(), json!(context)));
         }
         // #422: Rob's answer, with the question and his reason, is a decision later
         // requests recall. An unclear answer decides nothing.

@@ -16,6 +16,7 @@ mod branches;
 pub mod cli;
 pub mod clock;
 pub mod console;
+mod decisions;
 pub mod executor;
 mod goals;
 mod http;
@@ -589,6 +590,7 @@ impl Controller {
                         .map_err(|_| Error::Invalid("invalid request node"))?,
                 );
                 let replacement = steering::replacement_issue(snapshot, original, &pending.value)?;
+                decisions::inherit(snapshot, commit, original, NodeId(world.nodes.len() as u64))?;
                 let mut link = json!({
                     "original": original, "authorized_by": self.bootstrap.rob, "issue": replacement
                 });

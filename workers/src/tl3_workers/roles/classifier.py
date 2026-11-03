@@ -4,6 +4,10 @@ from tl3_workers.roles.base import Role
 
 
 def check_reply(inputs, reply):
+    active = {decision["id"] for decision in inputs.get("decision_context", {}).get("decisions", [])
+              if decision["superseded_by"] is None}
+    if not set(reply.get("supersedes", [])) <= active:
+        raise ValueError("supersedes names a decision that is not applicable")
     state = inputs["state"]
     if reply["kind"] == "restart":
         if state.get("restartable") is not True:

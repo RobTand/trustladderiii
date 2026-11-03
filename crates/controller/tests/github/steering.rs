@@ -929,7 +929,7 @@ pub(super) fn answer_replacement(settings: &tl3_config::Store) {
     assert_eq!(context["decisions"][0]["answer"], "Use a smaller request");
     assert_eq!(
         context["decisions"][0]["source_comment"],
-        "https://github.com/RobTand/tl3-sandbox/issues/12#issuecomment-21001"
+        "https://github.com/owner/sandbox/issues/12#issuecomment-21001"
     );
     assert!(context["decisions"][0]["question"]["id"].is_u64());
     let inherited = &snapshot

@@ -283,3 +283,24 @@ def test_classifier_dispatch_denies_tools(tmp_path, request_doc):
         {"event": "progress", "unit": "model_turn"},
         {"event": "reply", "role": "classifier", "reply": {"kind": "remark"}},
     ]
+
+
+def test_change_request_supersedes_only_applicable_decisions(request_doc):
+    from tl3_workers.roles.classifier import check_reply
+    request_doc["inputs"]["decision_context"] = {
+        "schema_version": 1, "request_version": 121, "decisions": [{
+            "id": "q10", "source_comment": "https://github.com/RobTand/prismaquant/issues/2662#issuecomment-6580255177",
+            "question": {"id": 10}, "answer": "Allow the pin update.",
+            "allowed_scope": ["tests/test_guarded_read_digest_retention_2637.py"],
+            "restrictions": ["CURRENT_SOURCE_BLOBS only"],
+            "origin_request_version": 83, "superseded_by": None,
+        }]}
+    reply = {"kind": "change_request", "new_text": "Leave the pin alone.", "supersedes": ["q10"]}
+    validate("classifier-input", request_doc["inputs"])
+    validate("classifier-reply", reply)
+    check_reply(request_doc["inputs"], reply)
+    with pytest.raises(ValueError, match="not applicable"):
+        check_reply(request_doc["inputs"], {**reply, "supersedes": ["invented"]})
+    request_doc["inputs"]["decision_context"]["decisions"][0]["superseded_by"] = "a later answer"
+    with pytest.raises(ValueError, match="not applicable"):
+        check_reply(request_doc["inputs"], reply)

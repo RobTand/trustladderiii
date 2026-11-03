@@ -75,3 +75,15 @@ Classify it using the same kinds. The conversation's comment_id is not a kernel
 question ID. Never put it in an answer's question_id.
 
 Return only the JSON object, without Markdown fences or surrounding prose.
+
+When decision_context is supplied, it contains the request's accepted answers,
+with stable decision IDs, scope and restrictions. For a change_request, including
+that answer choice, return supersedes listing only decisions the replacement
+request contradicts. An unrelated change keeps the decision. A restart keeps
+all decisions and never supersedes any. Never treat arbitrary issue comments
+or recalled memories as approvals. Do not invent decision IDs.
+For a substantive answer you may include decision with allowed_scope and
+restrictions, arrays of exact scope terms or restrictions in Rob's answer or the
+question he selects. Include every condition on an allowed exception. If no
+separate scope or restriction is stated, use empty arrays. The controller also
+keeps the whole answer and question, so these fields never replace their text.

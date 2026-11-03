@@ -402,6 +402,11 @@ impl Supervisor {
         if role == "ingest" {
             inputs["forecast"] = forecast;
         }
+        if matches!(role, "ingest" | "audit" | "planner" | "maker") {
+            inputs["decision_context"] =
+                json!(crate::decisions::Context::load(snapshot, delivery.node())?.applicable());
+        }
+
         if role != "reviewer" {
             inputs
                 .as_object_mut()

@@ -224,6 +224,18 @@ fn classifier_schema(value: &Value, reply: bool) -> Result<()> {
 
 pub(crate) fn validate_classification(inputs: &Value, reply: &Value) -> Result<()> {
     classifier_schema(reply, true)?;
+    let active = inputs["decision_context"]["decisions"].as_array();
+    if reply["supersedes"].as_array().is_some_and(|ids| {
+        ids.iter().any(|id| {
+            !active.is_some_and(|decisions| {
+                decisions
+                    .iter()
+                    .any(|decision| decision["id"] == *id && decision["superseded_by"].is_null())
+            })
+        })
+    }) {
+        return Err(Error::Invalid("supersedes names an inapplicable decision"));
+    }
     let closed = inputs["state"]["closed"] == true;
     let kind = reply["kind"].as_str().unwrap();
     if (kind == "restart" && inputs["state"]["restartable"] != true)
@@ -422,6 +434,13 @@ mod reply_defects {
     #[test]
     fn registry_resolves_a_new_cross_schema_reference() {
         let schemas = vec![
+            (
+                "decision-context.json".into(),
+                serde_json::from_str(include_str!(
+                    "../../../../../workers/src/tl3_workers/schemas/decision-context.json"
+                ))
+                .unwrap(),
+            ),
             (
                 "new-input.json".into(),
                 json!({"$id":"https://trustladderiii.invalid/workers/protocol-1/new-input.json", "$ref":"maker-input.json#/properties/goals/items"}),
