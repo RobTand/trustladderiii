@@ -175,3 +175,114 @@ def test_setup_function_cannot_change_with_the_target(tmp_path):
         (tree / 'tests/test_product.py').write_text(content)
     with pytest.raises(ValueError, match='undeclared'):
         helper_test_edits(base, head, staged, ['tests/*.py'], evidence(), (OBSERVER,))
+
+
+FIXTURE_OBSERVER = OBSERVER_SOURCE.replace(
+    '_failed_queue, _execute_mover', '_staged_world, _execute_mover').replace(
+    'def test_inner():', 'def test_inner(tmp_path):').replace(
+    'q = _failed_queue()', 'q = _staged_world(tmp_path)')
+
+
+def fixture_repo(helper_repo):
+    repo, _, _ = helper_repo
+    path = repo / 'tests/test_product.py'
+    path.write_text(path.read_text().replace(OBSERVER_SOURCE, FIXTURE_OBSERVER))
+
+
+def capture_fixture_cleanup(monkeypatch):
+    original = execution.PYTEST.run
+    runs = []
+    def observed(tree, container, tests, report, progress, *args, **kwargs):
+        result = original(tree, container, tests, report, progress, *args, **kwargs)
+        if report.name.startswith('helper-failure-'):
+            paths = [Path(json.loads(line)) for line in (tree / 'fixture-roots.jsonl').read_text().splitlines()]
+            assert paths, 'the real fixture factory must have run'
+            assert all(not path.exists() for path in paths), 'fixture roots must be cleaned even on failure'
+            runs.append(report.name)
+        return result
+    monkeypatch.setattr(execution.PYTEST, 'run', observed)
+    return runs
+
+
+@pytest.mark.parametrize('setup,fixtures', [
+    ('_staged_world', ['tmp_path']), ('_two_real_generations', ['tmp_path_factory']),
+    ('_both_fixtures', ['tmp_path', 'tmp_path_factory']),
+])
+def test_fixture_setup_claims_row_preserves_failure_and_cleans_up(helper_repo, monkeypatch, setup, fixtures):
+    fixture_repo(helper_repo)
+    runs = capture_fixture_cleanup(monkeypatch)
+    result = check_repo(helper_repo, evidence(setup))
+    assert result.verdict == Verdict.PASS, result
+    assert len(runs) == 2
+    assert (result.tests[0].base, result.tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
+    receipt = result.helper_evidence
+    assert receipt['failure_preservation'] == [{'base': 'passed', 'head': 'passed'}]
+    identity = receipt['setup_functions'][setup]
+    assert identity['fixtures'] == fixtures
+    assert len(identity['source_sha256']) == 64
+
+
+@pytest.mark.parametrize('setup', ['_queue', '_fixture_setup_asserts', '_fixture_method_raises'])
+def test_fixture_precondition_assertions_are_errors_and_cleanup_runs(helper_repo, monkeypatch, setup):
+    fixture_repo(helper_repo)
+    runs = capture_fixture_cleanup(monkeypatch)
+    result = check_repo(helper_repo, evidence(setup))
+    assert result.verdict == Verdict.FAIL
+    assert len(runs) == 2
+    assert result.helper_evidence['failure_preservation'] == [{'base': 'error', 'head': 'error'}]
+
+
+def test_fixture_factory_path_allocation_is_bounded(helper_repo):
+    fixture_repo(helper_repo)
+    result = check_repo(helper_repo, evidence('_too_many_paths'))
+    assert result.verdict == Verdict.FAIL
+    assert result.helper_evidence['failure_preservation'] == [{'base': 'error', 'head': 'error'}]
+
+
+@pytest.mark.parametrize('definition,diagnostic', [
+    ('class _World: pass', 'class-based worlds are unsupported'),
+    ('def _factory(monkeypatch): pass', 'monkeypatch'),
+    ('def _factory(tmp_path, value): pass', 'value'),
+    ('def _factory(*args): pass', 'variadic'),
+    ('def _factory(**kwargs): pass', 'variadic'),
+    ('async def _factory(tmp_path): pass', 'synchronous'),
+    ('def _factory(tmp_path): yield tmp_path', 'generator'),
+])
+def test_fixture_factory_preflight_diagnoses_unsupported_parameters(definition, diagnostic):
+    from tl3_harness.trees import validate_helper_setup
+    name = '_World' if definition.startswith('class') else '_factory'
+    with pytest.raises(ValueError, match=diagnostic):
+        validate_helper_setup(definition, evidence(name))
+
+
+@pytest.mark.parametrize('separate', [False, True])
+def test_ordinary_overlay_erases_red_for_test_module_helper(helper_repo, separate):
+    fixture_repo(helper_repo)
+    repo, base, save = helper_repo
+    observer = OBSERVER
+    if separate:
+        path = repo / 'tests/test_product.py'
+        path.write_text(path.read_text().replace(FIXTURE_OBSERVER, ''))
+        (repo / 'tests/test_observer.py').write_text(
+            FIXTURE_OBSERVER.replace('def test_diagnostics():',
+                                     'def test_diagnostics():\n    from test_product import Queue, _execute_mover'))
+        observer = 'tests/test_observer.py::test_diagnostics'
+    head = save()
+    check = Check('ordinary diagnostics', Kind.DEMONSTRATING, (observer,))
+    result, = run_checks(repo, base, head, (check,), container=Container(IMAGE))
+    assert result.verdict == Verdict.FAIL
+    assert (result.tests[0].base, result.tests[0].head) == (Outcome.PASSED, Outcome.PASSED)
+
+
+def test_ordinary_overlay_preserves_red_for_production_target(helper_repo):
+    repo, _, save = helper_repo
+    (repo / 'product.py').write_text('def message(): return "old"\n')
+    base = save()
+    (repo / 'product.py').write_text('def message(): return "new"\n')
+    (repo / 'tests/test_production.py').write_text(
+        'def test_message():\n    from product import message\n    assert message() == "new"\n')
+    head = save()
+    check = Check('ordinary production', Kind.DEMONSTRATING, ('tests/test_production.py::test_message',))
+    result, = run_checks(repo, base, head, (check,), container=Container(IMAGE))
+    assert result.verdict == Verdict.PASS, result
+    assert (result.tests[0].base, result.tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)

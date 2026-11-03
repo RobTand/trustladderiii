@@ -1727,12 +1727,17 @@ def test_appended_coverage_check_cannot_introduce_forcing(planner_request, reque
         assert 'Correction adds a forcing absent from the draft.' in result['violations']
 
 
-@pytest.mark.parametrize('setup', ['_failed_queue', '_missing_setup', '_needs_argument'])
+@pytest.mark.parametrize('setup', ['_failed_queue', '_fixture_queue', '_factory_queue', '_World',
+                                         '_missing_setup', '_needs_argument', '_unsupported_fixture'])
 def test_helper_setup_is_preflighted_before_maker(planner_request, digests_plan, setup):
     path = Path(planner_request['worktree']) / DIGESTS
     path.write_text(path.read_text() + '\ndef _execute(q):\n    assert q.execute().returncode == 0\n'
                     '\ndef _failed_queue():\n    return object()\n'
-                    '\ndef _needs_argument(value):\n    return value\n')
+                    '\ndef _needs_argument(value):\n    return value\n'
+                    '\ndef _fixture_queue(tmp_path):\n    return object()\n'
+                    '\ndef _factory_queue(tmp_path_factory):\n    return object()\n'
+                    '\nclass _World: pass\n'
+                    '\ndef _unsupported_fixture(monkeypatch):\n    return object()\n')
     planner_request['inputs']['ingest']['goals'] = [
         {'description': 'Improve helper failure text, preserving failure.', 'verification': 'test'}]
     digests_plan.update(files=[DIGESTS], checks=[{
@@ -1741,7 +1746,7 @@ def test_helper_setup_is_preflighted_before_maker(planner_request, digests_plan,
             {'args': [{'$setup': setup, '$call': 'execute'}], 'kwargs': {}}]}}])
     validate('planner-reply', digests_plan)
     violations = planned(planner_request, copy.deepcopy(digests_plan))
-    if setup == '_failed_queue':
+    if setup in ('_failed_queue', '_fixture_queue', '_factory_queue'):
         assert violations == []
     else:
         assert any('setup' in item for item in violations), violations
