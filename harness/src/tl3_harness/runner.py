@@ -223,19 +223,24 @@ class Reporter:
             self.emit(event="start", schema=1)
 
     @pytest.hookimpl(trylast=True)
-    def pytest_collection_modifyitems(self, items, config):
+    def pytest_collection_modifyitems(self, items, config, session):
         if self.summary:
             return
         selected = [item for item in items if any(selects(test, item.nodeid) for test in self.tests)]
         try:
-            limits.validate_plan_size(item.nodeid for item in selected)
+            saturation = None
             if self.selection is not None:
                 if config.option.keyword or config.option.markexpr or config.option.deselect:
                     raise ValueError("Selected execution groups require complete modules; remove pytest deselection options.")
                 remaining = self.selection["limit"]
+                admitted = []
                 for group in self.selection["groups"]:
-                    names = [item.nodeid for item in selected if item.nodeid.split("::", 1)[0] in group]
+                    members = [item for item in selected if item.nodeid.split("::", 1)[0] in group]
+                    names = [item.nodeid for item in members]
                     if len(names) > remaining:
+                        if self.selection.get("prefix") and (admitted or self.selection.get("allow_empty")):
+                            saturation = {"unit": group, "cases": len(names), "remaining": remaining}
+                            break
                         raise ValueError(f"Selected execution group {group} needs {len(names)} tests; "
                                          f"remaining selected-test budget is {remaining}.")
                     remaining -= len(names)
@@ -243,6 +248,18 @@ class Reporter:
                     if expected is not None and names != [name for name in expected if name.split("::", 1)[0] in group]:
                         raise ValueError(f"Selected collection changed for execution group {group}; "
                                          "base and head must have identical complete membership.")
+                    admitted.extend(members)
+                selected = admitted
+                if saturation:
+                    blocked = self.selection["groups"].index(saturation["unit"])
+                    skipped_files = {member for group in self.selection["groups"][blocked:] for member in group}
+                    discarded = [report for report in self.collection_errors
+                                 if report.nodeid.split("::", 1)[0] in skipped_files]
+                    # Pytest counted these collection failures before admission chose its
+                    # prefix. Unchecked suffix files cannot change that prefix's outcome.
+                    session.testsfailed -= len(discarded)
+                    self.collection_errors[:] = [report for report in self.collection_errors if report not in discarded]
+            limits.validate_plan_size(item.nodeid for item in selected)
         except ValueError as error:
             self.collection_errors.clear()
             items.clear()
@@ -251,7 +268,8 @@ class Reporter:
             pytest.exit(str(error), returncode=4)
         self.emit_collection_errors()
         items[:] = selected
-        self.emit(event="collection", tests=[item.nodeid for item in selected])
+        self.emit(event="collection", tests=[item.nodeid for item in selected],
+                  **({"saturation": saturation} if saturation else {}))
 
     def pytest_exception_interact(self, node, call, report):
         report.tl3_missing = missing_name(call.excinfo.value)

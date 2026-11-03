@@ -10,7 +10,7 @@ import tempfile
 import time
 from typing import Protocol
 
-from .limits import MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, validate_check_plan
+from .limits import MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, MAX_RESULT_BYTES, RESULT_ENVELOPE_BYTES, validate_check_plan
 from .model import (ALWAYS_CHECK, SELECTED_CHECK, Check, FailureNotes, Forcing, HarnessInputError, Kind, Outcome, Result, TestResult, Verdict,
                     NATIVE_THREAD_ENVIRONMENT, judge)
 from .node_ids import validate_always_tests
@@ -37,9 +37,13 @@ class SelectedRun:
     expected: tuple[str, ...] | None = None
     collected: tuple[str, ...] = ()
     refusal: str = ""
+    prefix: bool = False
+    allow_empty: bool = False
+    saturation: dict | None = None
 
     def as_json(self):
-        return {"groups": self.groups, "limit": self.limit, "expected": self.expected}
+        return {"groups": self.groups, "limit": self.limit, "expected": self.expected,
+                "prefix": self.prefix, "allow_empty": self.allow_empty}
 
 
 @dataclass(frozen=True)
@@ -176,6 +180,8 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
                                        for test in record["tests"])
             selected.refusal = next((record["message"] for record in records
                                      if record.get("event") == "plan-error"), "")
+            selected.saturation = next((record["saturation"] for record in records
+                                        if record.get("event") == "collection" and "saturation" in record), None)
         return outcomes
     except InvalidReport:
         return dict.fromkeys(tests, Outcome.NO_REPORT)
@@ -272,7 +278,7 @@ class Pytest:
         return changed_existing_tests(base, head, tests)
 
     def select(self, tree, changed, config):
-        return selection.select(tree, changed, lambda name: is_test(name, config["test-files"]))
+        return selection.select(tree, changed, lambda name: is_test(name, config["test-files"]), modules=True)
 
     def run(self, tree, container, tests, report, progress, additions=frozenset(), *, messages=None, forcing=None,
             selected=None):
@@ -293,7 +299,7 @@ def selected_candidates(repo: Path, tool: TestTool, old: Path, new: Path, config
     stay in their owning unit. An edited unit is excluded whole, never cut into pieces."""
     declared = {name: tuple(group) for group in config.get("selection-groups", []) for name in group}
     named_files = {test for check in plan for test in check.tests if "::" not in test}
-    candidates, seen, cost = [], set(), 0
+    candidates, seen = [], set()
     try:
         for test in tool.select(old, changed_files(repo, own_base(repo, base, head), head), config):
             name = test.split("::", 1)[0]
@@ -303,53 +309,80 @@ def selected_candidates(repo: Path, tool: TestTool, old: Path, new: Path, config
             seen.update(group)
             if set(group) <= named_files or tool.changed_existing_tests(old, new, group):
                 continue
-            # A lower bound keeps expansion lazy. Collection charges every parameter case
-            # before execution, and refuses a group that cannot fit the remaining budget.
-            try:
-                group_cost = sum(max(1, len(selection.node_ids(old, member))) for member in group)
-            except selection.UNREADABLE as error:
-                raise HarnessInputError(f"Cannot discover the complete selected execution group {group}.") from error
-            if cost + group_cost > limit:
-                raise HarnessInputError(f"Selected execution group {group} needs at least {group_cost} tests; "
-                                        f"remaining selected-test budget is {limit - cost}.")
-            proposed = (*candidates, group)
-            try:
-                validate_check_plan(plan + (Check(SELECTED_CHECK, Kind.REGRESSION,
-                                                 tuple(member for unit in proposed for member in unit)),))
-            except ValueError as error:
-                raise HarnessInputError(f"Selected execution group {group} exceeds report limits: {error}") from error
             candidates.append(group)
-            cost += group_cost
-            if cost == limit:
-                break
+        if candidates:
+            validate_check_plan(plan + (Check(SELECTED_CHECK, Kind.REGRESSION,
+                                             tuple(member for group in candidates for member in group)),))
     except (RecursionError, MemoryError):
         return ()
+    except ValueError as error:
+        raise HarnessInputError(f"Selected execution groups exceed report limits: {error}") from error
     return tuple(candidates)
 
 
 def selected_base(tool: TestTool, old: Path, container: Container, candidates: tuple[tuple[str, ...], ...], base: str,
-                  root: Path, progress: Progress, limit: int, config: dict) -> dict[tuple[str, ...], SelectedObservation]:
-    """Cache only complete units. The immutable base and image bind collection inputs;
-    the observed exact collection travels with each unit to head and retries."""
+                  root: Path, progress: Progress, limit: int, config: dict) -> tuple[dict, dict | None]:
+    """Admit a priority prefix at actual collected costs. Cached units consume budget
+    only when their turn arrives; base failures do not refund their collection cost."""
     key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container, id(tool),
-           json.dumps(config, sort_keys=True), "complete-modules-v1", limit,
+           json.dumps(config, sort_keys=True), "complete-prefix-v2", limit,
            tuple((name, os.environ.get(name, default)) for name, default in NATIVE_THREAD_ENVIRONMENT.items()))
-    missing = tuple(group for group in candidates if (*key, group) not in _SELECTED_BASE)
-    cached_cost = sum(len(_SELECTED_BASE[(*key, group)].collection) for group in candidates if group not in missing)
-    if missing:
-        contract = SelectedRun(missing, limit - cached_cost)
-        tests = tuple(member for group in missing for member in group)
-        observed = tool.run(old, container, tests, root / "selected-base.jsonl", progress, selected=contract)
+    before, charged, index, saturation = {}, 0, 0, None
+    while index < len(candidates):
+        group = candidates[index]
+        remaining = limit - charged
+        cached = _SELECTED_BASE.get((*key, group))
+        if remaining == 0 or cached is not None and len(cached.collection) > remaining:
+            saturation = {"unit": list(group), "cases": len(cached.collection) if cached else None,
+                          "remaining": remaining, "reason": "Next complete unit cannot fit; lower-priority units were not checked."}
+            break
+        if cached is not None:
+            before[group] = cached
+            charged += len(cached.collection)
+            index += 1
+            continue
+        # Batch uncached units using static lower bounds only to bound collection work.
+        # The runner admits the actual complete prefix before executing any item.
+        batch, lower_bound = [], 0
+        for candidate in candidates[index:]:
+            if (*key, candidate) in _SELECTED_BASE:
+                break
+            batch.append(candidate)
+            try:
+                lower_bound += sum(max(1, len(selection.node_ids(old, member))) for member in candidate)
+            except selection.UNREADABLE as error:
+                raise HarnessInputError(f"Cannot discover the complete selected execution group {candidate}.") from error
+            if lower_bound >= remaining:
+                break
+        contract = SelectedRun(tuple(batch), remaining, prefix=True, allow_empty=bool(before))
+        tests = tuple(member for unit in batch for member in unit)
+        observed = tool.run(old, container, tests, root / f"selected-base-{index}.jsonl", progress, selected=contract)
         if contract.refusal:
             raise HarnessInputError(contract.refusal)
-        for group in missing:
-            collection = tuple(test for test in contract.collected if test.split("::", 1)[0] in group)
-            outcomes = {member: observed.get(member, Outcome.NO_REPORT) for member in group}
+        for candidate in batch:
+            if contract.saturation and list(candidate) == contract.saturation['unit']:
+                saturation = {**contract.saturation,
+                              "reason": "Next complete unit cannot fit; lower-priority units were not checked."}
+                break
+            collection = tuple(test for test in contract.collected if test.split("::", 1)[0] in candidate)
+            outcomes = {member: observed.get(member, Outcome.NO_REPORT) for member in candidate}
+            observation = SelectedObservation(outcomes, collection)
+            before[candidate] = observation
             if collection and Outcome.NO_REPORT not in outcomes.values():
-                _SELECTED_BASE[(*key, group)] = SelectedObservation(outcomes, collection)
-    return {group: _SELECTED_BASE.get((*key, group),
-                                    SelectedObservation(dict.fromkeys(group, Outcome.NO_REPORT), ()))
-            for group in candidates}
+                _SELECTED_BASE[(*key, candidate)] = observation
+            charged += len(collection)
+            index += 1
+        if saturation:
+            break
+    receipt = None
+    if saturation:
+        receipt = {"policy": "complete-unit prefix by import distance, path, and declaration order",
+                   "limit": limit, "charged_cases": charged,
+                   "base_units": [{"members": group, "cases": len(observation.collection),
+                                   "outcomes": observation.outcomes} for group, observation in before.items()],
+                   "head_units": [], "skipped_units": candidates[index:], "skipped_checked": False,
+                   "saturation": saturation}
+    return before, receipt
 
 
 def selected_head(tool: TestTool, new: Path, container: Container, kept: tuple[tuple[str, ...], ...],
@@ -527,9 +560,9 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         before = before.copy()
         before.update(dict.fromkeys(stale, Outcome.MISSING))
         # Candidates run apart, so one crashing there can't cost the plan its base evidence.
-        selected_before = selected_base(tool, old, container, candidates, base, root, progress, selected_tests, config)
+        selected_before, selection_receipt = selected_base(tool, old, container, candidates, base, root, progress, selected_tests, config)
         # Filter complete units: no head run may lose a fixture companion.
-        kept = tuple(group for group in candidates
+        kept = tuple(group for group in selected_before
                      if all(outcome == Outcome.PASSED for outcome in selected_before[group].outcomes.values()))
         if demonstrating:
             shutil.copytree(old, demo)
@@ -633,6 +666,9 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             results.append(stale_result(result, stale))
         if kept:
             results.append(selected_head(tool, new, container, kept, selected_before, root, progress, selected_tests))
+        if selection_receipt is not None:
+            selection_receipt["head_units"] = kept
+            results[-1] = replace(results[-1], selection=selection_receipt)
         return tuple(results)
 
 
@@ -721,6 +757,8 @@ def result_json(results: tuple[Result, ...]) -> str:
     retained = {id(test) for _, test in [pair for pair in priority if pair[1]['message']][:MAX_DETAILED_FAILURES]}
     for result, report in zip(results, reports):
         # Unforced results keep their earlier shape; a forced one carries its forcing for review (#393).
+        if result.selection is None:
+            del report["selection"]
         if result.helper_evidence is None:
             del report["helper_evidence"]
         if result.forcing is None:
@@ -734,4 +772,7 @@ def result_json(results: tuple[Result, ...]) -> str:
                 test['message'] = test['message'][:MAX_MESSAGE_CHARS].encode(errors='backslashreplace').decode()[:MAX_MESSAGE_CHARS]
             else:
                 test['message'] = ''
-    return json.dumps(reports, sort_keys=True, separators=(',', ':'))
+    encoded = json.dumps(reports, sort_keys=True, separators=(',', ':'))
+    if len(encoded.encode()) > MAX_RESULT_BYTES - RESULT_ENVELOPE_BYTES:
+        raise HarnessInputError('Selection receipt exceeds the existing result byte budget.')
+    return encoded

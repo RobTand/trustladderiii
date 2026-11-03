@@ -170,18 +170,34 @@ members, or overlap. Selecting any member selects the whole group. The head
 cannot change the declaration. Ordinary shared session setup that has no
 cross-module completion requirement needs no declaration.
 
-Selection stays lazy and uses the number of statically discovered functions
-as a lower bound. The trusted runner charges every collected parameter case
-against the original limit before executing any tests. A group that cannot
-fit the remaining limit or report budget is refused with its member paths and
-cost, never split or silently skipped. Pytest deselection options are unsupported
-for automatic complete-module runs. An unreadable candidate source is skipped
-by static import selection; an unreadable declared companion is refused.
+Selection admits a priority-ordered prefix of complete units: import distance
+first, then module path; an owner-declared group occupies the position of its
+first reached member. Discovery records the candidate suffix without expanding
+its test functions. Static function counts only bound collection batches. The
+trusted runner charges actual collected parameter cases before executing any
+item. The first unit must fit the original limit; a single oversized unit is
+refused with its member paths and actual cost. After a nonempty prefix, the
+first unit that cannot fit stops admission. Smaller later units never jump it.
+An exhausted budget stops collection of the suffix as well.
+
+A structured `selection` receipt records the original limit, charged cases,
+base units and outcomes, head units, every skipped candidate unit, and why
+admission stopped. Skipped units were not checked and have no passing result.
+The next unit's cost is null when collection was unnecessary because no budget
+remained. The receipt survives the failure-message allowance and controller
+serialization. If every admitted unit fails base filtering, the last planned
+result carries the receipt instead of adding an empty selected check. Receipt
+bytes remain within the existing result budget.
+
+Pytest deselection options are unsupported for automatic complete-module runs.
+An unreadable candidate source is skipped by static import selection; an
+unreadable declared companion is refused.
 
 Candidates run apart from the plan. The base cache stores complete units and
 exact collection identity, bound to the action owner, base commit, immutable
 container, tool, protected configuration, thread bounds, policy and node limit.
-Partial or unreported units never enter the cache. Only units whose every
+Partial or unreported units never enter the cache. Cached units are charged
+in priority order, and base failures never refund budget to later units. Only units whose every
 member passes on base run on head. Head collection must match that unit's base
 collection exactly, in order, before tests execute. Collection drift is a
 harness input refusal, never a product regression.

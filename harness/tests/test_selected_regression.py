@@ -1,4 +1,6 @@
 """Existing tests that import the change run as one more regression check (#359)."""
+import json
+
 import pytest
 
 from tl3_harness import execution
@@ -147,7 +149,11 @@ def test_selection_expands_lazily_and_stops_at_the_limit(repo, monkeypatch):
     results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER, selected_tests=2)
     assert [test.test for test in results[1].tests] == CORE_UNIT
     assert set(expanded) == {'tests/test_core.py'}, 'stop expanding files once the limit is reached'
-    assert set(judged) <= {OTHER, *CORE_UNIT}, 'only judge edits of tests that can still be selected'
+    assert set(judged) <= {OTHER, *CORE_UNIT, *FARTHER_UNITS}
+    receipt = json.loads(execution.result_json(results))[-1]['selection']
+    assert receipt['head_units'] == [CORE_UNIT]
+    assert receipt['skipped_units'] == [[name] for name in FARTHER_UNITS]
+    assert receipt['skipped_checked'] is False
 
 
 def test_candidates_run_on_the_base_apart_from_the_plan(repo):

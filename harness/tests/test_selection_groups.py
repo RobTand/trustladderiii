@@ -248,8 +248,12 @@ def test_a_cached_group_consumes_budget_before_a_new_group_is_admitted(frozen_re
     selected(repo, base, head(repo))
     (repo / 'extra.py').write_text('VALUE = 2\n')
     commit = save(repo, 'select another group against the same base')
-    with pytest.raises(HarnessInputError, match='execution group.*7.*6'):
-        selected(repo, base, commit)
+    result = selected(repo, base, commit)[-1]
+    assert [test.test for test in result.tests] == [MODULE]
+    receipt = json.loads(execution.result_json((result,)))[0]['selection']
+    assert receipt['charged_cases'] == 394
+    assert receipt['skipped_units'] == [['tests/test_extra.py']]
+    assert receipt['saturation']['cases'] == 7 and receipt['saturation']['remaining'] == 6
 
 
 @pytest.mark.parametrize('groups', [

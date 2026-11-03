@@ -132,7 +132,7 @@ def names_path(literal: str, path: str) -> bool:
             or "/" in literal and path.endswith("/" + literal))
 
 
-def select(tree: Path, changed: list[str], is_test) -> Iterator[str]:
+def select(tree: Path, changed: list[str], is_test, *, modules: bool = False) -> Iterator[str]:
     """Existing test selectors in `tree` whose files reach a changed Python file through
     imports, closest first: by import distance, then path, then source order. Lazy: each
     import level is read, and each test file expanded, only when the caller asks for more."""
@@ -162,7 +162,11 @@ def select(tree: Path, changed: list[str], is_test) -> Iterator[str]:
             if (name in files and is_test(name)
                     and (PurePosixPath(name).name.startswith("test_") or name.endswith("_test.py"))):
                 try:
-                    yield from node_ids(tree, name)
+                    if modules:
+                        ast.parse(source(name))
+                        yield name
+                    else:
+                        yield from node_ids(tree, name)
                 except UNREADABLE:
                     continue
         modules = set().union(*(module_names(name, is_test(name)) for name in frontier))

@@ -255,6 +255,7 @@ class Result:
     custody: Custody = field(default=Custody.IN_PROCESS, init=False)
     forcing: Forcing | None = None
     helper_evidence: dict | None = None
+    selection: dict | None = None
 
 
 MESSAGE_LIMIT = 1000

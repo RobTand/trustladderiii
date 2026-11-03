@@ -74,6 +74,9 @@ struct CheckResult {
     forcing: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     helper_evidence: Option<serde_json::Value>,
+    /// Complete-unit admission and the unchecked suffix, retained for review (#591).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    selection: Option<serde_json::Value>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
