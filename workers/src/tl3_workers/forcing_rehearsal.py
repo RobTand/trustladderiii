@@ -170,7 +170,7 @@ class ForcingRehearsals:
         if self.infrastructure:
             raise ForcingInfrastructureError(self.infrastructure)
 
-    def run(self, tests: list[str], forcing: dict, declared_symptom: dict | None = None) -> dict:
+    def run(self, tests: list[str], forcing: dict, declared_symptom: dict | None = None, *, goal_ids=None) -> dict:
         """Rehearse immutable old tests and cache each distinct candidate's outcome."""
         try:
             parsed = Forcing.parse(forcing)
@@ -305,7 +305,7 @@ class ForcingRehearsals:
 
 
 def make_rehearsal_tool(worktree):
-    def rehearse_forcing(tests: list[str], forcing: dict, declared_symptom: dict | None = None) -> dict:
+    def rehearse_forcing(tests: list[str], forcing: dict, declared_symptom: dict | None = None, goal_ids: list[int] | None = None) -> dict:
         """Rehearse exact old tests on the immutable base with a declarative forcing."""
         ledger = getattr(worktree, 'forcing_rehearsals', None)
         if ledger is None:

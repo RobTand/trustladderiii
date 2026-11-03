@@ -902,5 +902,7 @@ tl3_py_test(
         ":worker_process",
         "//harness/src/tl3_harness",
         "//workers/src",
+        "@tl3_pip//jsonschema",
+        "@tl3_pip//pytest",
     ],
 )

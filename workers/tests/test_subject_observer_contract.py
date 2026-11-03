@@ -1,6 +1,8 @@
 # ruff: noqa: F811
 """Planning controls from the saved #645 corpus, including correct refusals."""
 from copy import deepcopy
+
+import pytest
 import json
 from pathlib import Path
 
@@ -157,3 +159,93 @@ def test_review662_request229_replays_saved_contract_and_untouched_setup_error(r
     assert 'SpoolError' in result['unforced']['tests'][0]['message'], result
     corpus = json.loads((fixture / 'corpus.json').read_text())
     assert next(item for item in corpus if item['request'] == 229)['source_obligations'] == saved
+
+
+@pytest.fixture
+def request233(rehearsal):
+    from tl3_workers.forcing_rehearsal import ForcingRehearsals
+    from worker_process import git
+    ledger, root, inputs, calls = rehearsal
+    path = 'tests/test_checkout_recovery_1465.py'
+    (root / path).write_text('def _git(*args): return args\ndef test_wrong_head(): pass\n')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'request 233 source')
+    inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    obligation = {'kind': 'assertion', 'observer': 'new', 'subjects': [path + '::_git'],
+                  'source': 'issue.body', 'quote': 'RED needs a reliable assertion failure from the new deterministic test on base.'}
+    inputs['ingest']['goals'] = [
+        {'description': 'Add a deterministic same-file _git regression.', 'verification': 'test',
+         'proof_obligation': obligation},
+        {'description': 'Run the independent contention campaign.', 'verification': 'test'}]
+    return ForcingRehearsals(ledger.worktree, inputs), root, inputs, calls, path
+
+
+@pytest.mark.parametrize('method', ['symptom', 'old_assertion', 'wrong_subject', 'supported'])
+def test_request233_source_goal_checks_the_selected_method(request233, monkeypatch, method):
+    from tl3_workers.roles.planner import check_reply, Forecaster
+    ledger, root, inputs, calls, path = request233
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(Forecaster, 'measure', lambda *args: {'fits': True})
+    check = {'kind': 'demonstrating', 'node_ids': [path + '::test_git_disables_maintenance'], 'goal_ids': [0]}
+    if method in ('symptom', 'old_assertion'):
+        check['node_ids'] = [path + '::test_wrong_head']
+    if method == 'symptom':
+        check['declared_symptom'] = {'node': check['node_ids'][0], 'exception': 'builtins.FileNotFoundError',
+                                     'phase': 'call', 'repeat': 10, 'parallel': 4}
+    if method in ('wrong_subject', 'supported'):
+        check['proof'] = {'subjects': [path + ('::unrelated' if method == 'wrong_subject' else '::_git')],
+                          'observer_support': [], 'red_message': 'automatic maintenance remains enabled'}
+    reply = {'kind': 'leaf', 'estimated_exploration_turns': 0, 'files': [path], 'edits_tests': [],
+             'no_design_questions': True, 'lands_on_its_own': True,
+             'checks': [check, {'kind': 'regression', 'node_ids': [path + '::test_wrong_head'], 'goal_ids': [1]}]}
+    check_reply(inputs, reply, rehearsals=ledger)
+    if method == 'supported':
+        assert reply['violations'] == [], reply
+    else:
+        assert any('source assertion proof' in item for item in reply['violations']), reply
+    assert calls == []
+
+
+@pytest.mark.parametrize('goal_ids', [None, [], [True], [99], [0]])
+def test_request233_rejects_unbound_or_incompatible_campaign_before_admission(request233, goal_ids):
+    ledger, _, _, calls, path = request233
+    result = ledger.run([path + '::test_wrong_head'], {'symptom': 'The archive race.', 'environment': {'CASE': 'race'}}, goal_ids=goal_ids)
+    assert calls == [], 'source applicability must be checked before admitting a campaign'
+    assert result['status'] == 'refused'
+    assert ('source assertion proof' if goal_ids == [0] else 'goal_ids') in result['message']
+    assert ledger.actions == ledger.attempts == 0
+
+
+def test_request233_source_assertion_goal_has_a_protocol_representation(request233):
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema
+    _, _, inputs, _, _ = request233
+    goal = inputs['ingest']['goals'][0]
+    variant = next(item for item in schema('ingest-reply')['oneOf']
+                   if item['properties']['kind'].get('const') == 'brief')
+    validator = Draft202012Validator({'$defs': schema('ingest-reply')['$defs'],
+                                      **variant['properties']['goals']['items']})
+    validator.validate(goal)
+
+
+def test_request233_supplemental_campaign_keeps_zero_of_ten_refusal(request233):
+    ledger, _, _, calls, path = request233
+    node = path + '::test_wrong_head'
+    result = ledger.run([node], {'symptom': 'The archive race.', 'environment': {'CASE': 'race'}},
+                        {'node': node, 'exception': 'builtins.FileNotFoundError', 'phase': 'call',
+                         'repeat': 10, 'parallel': 4}, goal_ids=[1])
+    assert result['status'] == 'refused', result
+    assert 'observed 0 of 10 runs; zero is not RED' in result['message']
+    assert len(calls) == 2
+    assert len(result['forced']['symptom_runs']) == 10
+
+
+def test_request233_rehearsal_tool_exposes_goal_binding(request233):
+    from tl3_workers.forcing_rehearsal import make_rehearsal_tool
+    ledger, _, _, calls, path = request233
+    ledger.worktree.forcing_rehearsals = ledger
+    tool = make_rehearsal_tool(ledger.worktree)
+    result = tool([path + '::test_wrong_head'],
+                  {'symptom': 'The archive race.', 'environment': {'CASE': 'race'}}, goal_ids=[0])
+    assert result['status'] == 'refused' and 'source assertion proof' in result['message']
+    assert calls == []

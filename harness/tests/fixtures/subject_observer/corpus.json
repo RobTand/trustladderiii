@@ -160,7 +160,11 @@
         ],
         "tool": "run_tests"
       }
-    ]
+    ],
+    "source_trace": "tr-e9f7e10236bfb4dc9b8b5c246a9eb478",
+    "planner_trace": "tr-df2fefe55dece59301d72ade80667420",
+    "measured_stop": "Correct declared-symptom refusal: 0/10 old-node FileNotFoundError occurrences. No direct overlay failure was observed.",
+    "required_proof": "New deterministic same-file _git observer, failing by its own assertion on base. The intermittent archive race is not RED."
   },
   {
     "request": 234,

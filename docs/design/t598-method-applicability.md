@@ -1,0 +1,11 @@
+# Source proof obligations before method rehearsal
+
+Follow-up to #645/#662, closing #598. Request 233, PB #2710, requires a new deterministic assertion observing the same-file `_git` helper. The old-node FileNotFoundError campaign observed zero of ten occurrences and correctly refused RED. Its measured stop was not an overlay failure.
+
+Two representations were considered. Inferring requirements from words in goal descriptions would keep the schema smaller but make negation and method suggestions ambiguous. Instead, ingest records a source-quoted `proof_obligation` on the goal. It declares `kind: assertion`, `observer: new` or `any`, and subject source units. The source and exact quote travel with that goal. Audit verifies the interpretation against the request. An implementation-selected method cannot add or replace the obligation.
+
+Existing `check.goal_ids` binds a selected method to the goal. One `proof_applicability(goals, checks, defined)` function checks assertion mode, observer identity and the source partition. The shared #645 assembler supplies the supported same-file proof path; no helper invocation recipe or failure-preservation driver returns. Actual assertions and invariant behavior remain independent Checking and review responsibilities.
+
+`rehearse_forcing` accepts `goal_ids`. A request carrying a source proof obligation must bind the proposed campaign to its goals before any action is admitted. A campaign for an assertion/new-observer obligation is refused with a named applicability diagnostic. A separate contention or symptom goal may still be rehearsed; this does not discharge the deterministic assertion goal. Applicability validation consumes no campaign attempts or actions and changes no retry, credit, incident or terminal-refusal rule. A permitted campaign that observes zero of ten symptoms still receives the existing refusal.
+
+The regression suite replays the exact source/trace identities, demonstrates the `_git` command configuration through a same-file observer, rejects substitution before admission and handoff, accepts the supported plan, and preserves supplemental campaigns and zero-hit refusal. No kernel or state-table change is needed.

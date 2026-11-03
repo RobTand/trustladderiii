@@ -512,3 +512,38 @@ def test_final662_support_wildcard_import_cannot_replace_base_helper(repository)
     assert results[0].verdict == Verdict.FAIL, results
     assert 'wildcard import' in results[0].tests[0].message, results
     assert path in results[0].tests[0].message and 'support_fix' in results[0].tests[0].message, results
+
+
+def test_request233_same_file_git_configuration_has_assertion_red(repository):
+    # tr-e9f7e102: assertion RED is required; the intermittent race is not RED.
+    path = 'tests/test_checkout_recovery_1465.py'
+    before = """import os
+import subprocess
+
+def _git(root, *arguments):
+    return subprocess.run(['git', '-C', str(root), *arguments], check=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                          env={**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull,
+                               'GIT_CONFIG_NOSYSTEM': '1'}).stdout.strip()
+"""
+    fixed = before.replace("str(root), *arguments", "str(root), '-c', 'maintenance.auto=false', '-c', 'gc.auto=0', *arguments")
+    observer = """
+def test_git_disables_maintenance(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    calls = []
+    def capture(command, **options):
+        calls.append((command, options))
+        return SimpleNamespace(stdout='ok')
+    monkeypatch.setattr(subprocess, 'run', capture)
+    assert _git(tmp_path, 'status') == 'ok'
+    command, options = calls[0]
+    assert ('-c', 'maintenance.auto=false', '-c', 'gc.auto=0') == tuple(command[3:7]), 'automatic maintenance remains enabled'
+    assert options['env']['GIT_CONFIG_GLOBAL'] == os.devnull
+    assert options['env']['GIT_CONFIG_NOSYSTEM'] == '1'
+"""
+    proof = model.Proof((path + '::_git',), (), 'automatic maintenance remains enabled')
+    results, _, _ = round_result(repository, {path: before}, {path: fixed + observer},
+        Check('deterministic git configuration', Kind.DEMONSTRATING,
+              (path + '::test_git_disables_maintenance',), proof=proof))
+    assert results[0].verdict == Verdict.PASS, results
+
