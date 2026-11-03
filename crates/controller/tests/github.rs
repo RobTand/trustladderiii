@@ -615,13 +615,21 @@ fn main() {
         ]
         .to_vec()
     };
-    // Main solo receipt 2c9a07eb-8e73-45c7-9a11-badd32d3e5dd, rounded seconds.
+    // Main and eight-shard solo receipts, rounded up to keep slow groups apart.
     // Intake regressions share the vocabulary group and emit status lines, not
-    // timing markers. Their cost is recorded in the first catch-up interval.
+    // timing markers. The group weight includes its measured post-marker tail.
     let seconds = [
-        90, 87, 14, 2, 4, 3, 1, 1, 21, 4, 1, 3, 1, 2, 1, 3, 28, 1, 17, 14, 11, 23, 17, 25, 18, 17,
-        17, 36, 13, 1, 4, 4, 4, 2, 1, 4, 4, 5, 4, 4, 3, 1, 6, 7, 9, 10, 23, 16, 9, 8, 7, 6, 7, 6,
-        5, 5, 5, 6,
+        205, 87, 39, 5, 17, 4, 1, 8, 21, 5, 1, 3, 1, 80, 3, 7, 32, 1, 17, 16, 11, 23, 59, 25, 18,
+        17, 17, 36, 52, 1, 7, 72, 13, 2, 1, 8, 6, 11, 59, 4, 3, 1, 29, 7, 9, 14, 37, 16, 9, 64, 7,
+        6, 16, 6, 6, 5, 5, 38,
+    ];
+    // Successful main notice receipt 50fdb6d4 and completed eight-shard receipts.
+    let notice_seconds = [
+        5, 3, 5, 22, 9, 10, 31, 3, 1, 1, 8, 2, 3, 21, 7, 6, 4, 33, 10, 3, 19, 3, 3, 3, 10, 2, 2,
+        18, 7, 2, 5, 57, 7, 11, 42, 4, 4, 4, 46, 6, 4, 21, 3, 3, 4, 2, 12, 8, 2, 14, 2, 2, 5, 5,
+        33, 6, 6, 39, 10, 8, 19, 5, 37, 3, 6, 17, 4, 2, 3, 3, 14, 2, 4, 25, 12, 8, 8, 20, 62, 5,
+        11, 66, 5, 5, 4, 3, 6, 4, 10, 34, 3, 4, 3, 3, 59, 6, 4, 34, 3, 7, 5, 4, 52, 5, 3, 37, 3,
+        14, 13, 13, 102, 18, 12, 65, 10, 10, 10, 13, 8,
     ];
     let groups: Vec<_> = markers
         .iter()
@@ -631,7 +639,7 @@ fn main() {
                 index,
                 *markers,
                 if group == Some("notices") {
-                    *markers
+                    notice_seconds[index]
                 } else {
                     seconds[index]
                 },

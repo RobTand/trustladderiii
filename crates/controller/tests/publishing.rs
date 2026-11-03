@@ -2277,11 +2277,11 @@ fn router_regression() {
 }
 
 fn run_default() {
-    // Main and four-shard solo receipts, rounded up; retain complete fixtures.
-    // Child 36aa5a13 had a healthy 601 s shard with 116 s and 121 s cases.
+    // Main, four- and eight-shard solo receipts, rounded up; retain complete fixtures.
+    // Stage obligations took 264 s on a slow executor and must have its own shard.
     let seconds = [
-        1, 6, 3, 4, 22, 2, 2, 10, 15, 2, 17, 17, 39, 12, 13, 18, 63, 10, 14, 6, 72, 11, 7, 11, 116,
-        14, 10, 12, 69, 16, 17, 15, 84, 5, 7, 9, 121, 1,
+        1, 265, 20, 4, 22, 6, 3, 10, 15, 6, 20, 17, 39, 14, 13, 18, 63, 57, 150, 13, 72, 18, 13,
+        12, 116, 28, 10, 13, 69, 16, 57, 15, 84, 6, 7, 10, 156, 1,
     ];
     let groups: Vec<_> = seconds
         .iter()
