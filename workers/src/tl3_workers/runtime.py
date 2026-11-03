@@ -225,7 +225,7 @@ def _run(request, emit):
                 control=control)
             model_inputs = request["inputs"]
             if role.name in {"ingest", "audit", "planner"}:
-                model_inputs = {**model_inputs, "forcing_capabilities": forcing_capabilities()}
+                model_inputs = {"forcing_capabilities": forcing_capabilities(), **model_inputs}
             history = [HumanMessage(content=json.dumps(model_inputs, ensure_ascii=False))]
             reply = repaired(control, history, lambda: _run_agent(agent, history, emit),
                              lambda text: _checked(role, request["inputs"], read_reply(text)))
