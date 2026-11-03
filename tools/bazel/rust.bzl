@@ -94,7 +94,7 @@ _CONTROLLER_RUNTIME = {
 _CONTROLLER_TEST_SOURCES = {
     "tests/hindsight.rs": ["README.md"],
     "tests/fixture_contracts.rs": ["tests/support/**"],
-    "tests/mergify.rs": ["tests/support/**"],
+    "tests/mergify.rs": ["tests/support/**", "tests/fixtures/mergify/**"],
     "tests/core_defects.rs": ["tests/worktree_fixture/**"],
     "tests/crash_safety.rs": ["tests/crash/**"],
     "tests/github.rs": ["tests/support/**", "tests/fixtures/steering/**", "tests/worker_model.py", "tests/worker_replies.py", "tests/worker_transport.py"],
