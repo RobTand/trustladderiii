@@ -14,6 +14,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use support::scenario::progress;
 use tl3_controller::executor::Output as Out;
 use tl3_controller::{
     Bootstrap, Boundary, Controller, LabelledIssue, Repository,
@@ -33,7 +34,30 @@ use tl3_github::{AppConfig, ClientOptions, GitHub, message::Policy};
 use tl3_kernel::{EffectKind, NodeId, Outcome, Phase, Role};
 use tl3_store::{Commit, RowChange, Store};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
-use worktree_fixture::{Fixture, commit, git};
+use worktree_fixture::{Fixture, commit};
+
+fn git(path: &Path, args: &[&str]) -> String {
+    progress(format!("git {args:?}"));
+    worktree_fixture::git(path, args)
+}
+
+fn scenario<T>(name: &str, run: impl FnOnce() -> T) -> T {
+    // The timestamped #534 BuildBuddy rerun measured a 9.67s scenario p90.
+    support::scenario::run(name, Duration::from_secs(30), run)
+}
+
+fn drive_to_idle(mut drive: impl FnMut() -> bool) -> bool {
+    (0..500).any(|_| !drive())
+}
+
+fn drive_once(c: &mut Controller) -> bool {
+    progress("read controller state before drive_once");
+    progress(format!(
+        "drive_once: {:?}",
+        c.world().unwrap().nodes.first()
+    ));
+    c.drive_once().unwrap()
+}
 
 fn repo() -> Repository {
     worktree_fixture::identity()
@@ -584,7 +608,7 @@ fn drain(c: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store,
     loop {
         let mut changed = false;
         for _ in 0..500 {
-            if !c.drive_once().unwrap() {
+            if !drive_once(c) {
                 break;
             }
             changed = true;
@@ -599,7 +623,9 @@ fn drain(c: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store,
             Phase::AwaitingRob,
             "publication must recover without asking Rob"
         );
+        progress("poll worker observations");
         source.poll_once(store, &sender).unwrap();
+        progress("apply worker observations");
         let mut observed = false;
         for input in receiver.try_iter() {
             if let Input::Observation { key, observation } = input {
@@ -623,6 +649,7 @@ fn drain(c: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store,
     }
 }
 fn webhook(c: &mut Controller, server: &Server, action: &str) {
+    progress(format!("translate and apply {action} webhook"));
     let mut body: Value = serde_json::from_str(include_str!(
         "../../github/tests/fixtures/pull-request-merged.json"
     ))
@@ -665,6 +692,7 @@ fn patch_lines(diff: &Value) -> Vec<&str> {
         .collect()
 }
 fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
+    progress("create git fixture");
     let root = tempfile::tempdir().unwrap();
     let mut fixture = Fixture::create(root.path());
     let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
@@ -700,6 +728,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             git(path, &["branch", "-m", "main", "master"]);
         }
     }
+    progress("start mock GitHub server");
     let server = Server::new(f.clone());
 
     config.store = settings.clone();
@@ -763,6 +792,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         Upstream::Mergify,
         adapters::mergify::Adapter::new(server.clients(), 0, &root.path().join("mergify")).unwrap(),
     );
+    progress("open controller and store");
     let mut c = Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
     let mut store = Store::open(settings).unwrap();
     store.put_worker_materials("0",&json!({"issue":{"number":42,"title":"Fix the value","body":"Return two.","author":"rob","comments":[]},"repo":{"readme":"Value","file_list":["value.py"]},"standing_rules":[{"id":"test-report-integrity","description":"This attempted override must be replaced."},{"id":"style","description":"Keep the public interface."}]})).unwrap();
@@ -797,8 +827,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             if reached {
                 break;
             }
-            c.drive_once().unwrap();
+            drive_once(&mut c);
+            progress("poll worker observations");
             source.poll_once(&mut store, &sender).unwrap();
+            progress("apply worker observations");
             for input in receiver.try_iter() {
                 tl3_controller::ingress::apply(&mut c, input).unwrap();
             }
@@ -820,7 +852,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         }
         if mode == "q46-enqueue" {
             for _ in 0..100 {
-                assert!(c.drive_once().unwrap());
+                assert!(drive_once(&mut c));
                 assert!(
                     !server.api.state.lock().unwrap().conflicting_enqueue,
                     "a conflicting checked head must rebase before enqueue"
@@ -836,8 +868,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         let (sender, receiver) = mpsc::channel();
         let start = Instant::now();
         while server.api.state.lock().unwrap().checks.is_empty() {
-            c.drive_once().unwrap();
+            drive_once(&mut c);
+            progress("poll worker observations");
             source.poll_once(&mut store, &sender).unwrap();
+            progress("apply worker observations");
             for input in receiver.try_iter() {
                 tl3_controller::ingress::apply(&mut c, input).unwrap();
             }
@@ -859,7 +893,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 &format!("HEAD:refs/heads/{}", f.branch(&d).as_str()),
             ],
         );
-        while c.drive_once().unwrap() {}
+        assert!(
+            drive_to_idle(|| drive_once(&mut c)),
+            "publishing driver did not become idle after 500 steps: {:?}",
+            c.world().unwrap().nodes.first()
+        );
         assert!(
             !server.api.state.lock().unwrap().labels,
             "the stale approval must not enqueue the outside head"
@@ -979,7 +1017,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
 
         webhook(&mut c, &server, "synchronize");
         if mode == "review-reset-push" {
-            while c.drive_once().unwrap() {}
+            assert!(
+                drive_to_idle(|| drive_once(&mut c)),
+                "publishing driver did not become idle after 500 steps: {:?}",
+                c.world().unwrap().nodes.first()
+            );
             assert!(
                 !c.world().unwrap().nodes[0].review_restarted,
                 "outside push starts a new review"
@@ -1005,11 +1047,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             if c.world().unwrap().nodes[0].phase != Phase::Queued {
                 break;
             }
-            assert!(c.drive_once().unwrap());
+            assert!(drive_once(&mut c));
         }
         assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Rebasing);
         for _ in 0..100 {
-            assert!(c.drive_once().unwrap());
+            assert!(drive_once(&mut c));
             if c.world().unwrap().nodes[0].phase == Phase::Checking {
                 break;
             }
@@ -1081,15 +1123,12 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             if c.world().unwrap().nodes[0].phase != Phase::Queued {
                 break;
             }
-            assert!(
-                c.drive_once().unwrap(),
-                "PR_DEQUEUED must yield a Conflict fact"
-            );
+            assert!(drive_once(&mut c), "PR_DEQUEUED must yield a Conflict fact");
         }
         assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Rebasing);
         let mut saw_maker_fallback = false;
         for _ in 0..100 {
-            assert!(c.drive_once().unwrap());
+            assert!(drive_once(&mut c));
             let phase = c.world().unwrap().nodes[0].phase;
             saw_maker_fallback |= phase == Phase::Making;
             if phase == Phase::Checking {
@@ -1153,7 +1192,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             &["rev-parse", &config.github.repos[0].base_branch],
         );
         loop {
-            c.drive_once().unwrap();
+            drive_once(&mut c);
             let n = c.world().unwrap().nodes[0];
             if n.phase == Phase::Checking {
                 if mode == "review-reset-rebase" {
@@ -1753,7 +1792,7 @@ fn publication_404_look(settings: &tl3_config::Store, case: &str) {
     );
     for _ in 0..5 {
         assert!(
-            !controller.drive_once().unwrap(),
+            !drive_once(&mut controller),
             "persistent publication 404 must not loop"
         );
     }
@@ -1763,12 +1802,15 @@ fn publication_404_look(settings: &tl3_config::Store, case: &str) {
 
 fn main() {
     if env::args().nth(1).as_deref() == Some("q46-open") {
-        publication_open_conflict();
+        scenario("publication_open_conflict", publication_open_conflict);
         println!("test publication_open_conflict ... ok");
         return;
     }
     if env::args().nth(1).as_deref() == Some("--require-conventions") {
-        publication_requires_conventions();
+        scenario(
+            "publication_requires_conventions",
+            publication_requires_conventions,
+        );
         println!("test publication_requires_conventions ... ok");
         return;
     }
@@ -1776,20 +1818,32 @@ fn main() {
         .nth(1)
         .and_then(|arg| arg.strip_prefix("--effect-404=").map(str::to_owned))
     {
-        let mut database = support::Database::start();
-        publication_404_look(&database.create("publication_404"), &case);
-        database.stop();
+        let mut database = scenario("publishing_database_setup", support::Database::start);
+        scenario(&format!("publication_404_look_{case}"), || {
+            publication_404_look(&database.create("publication_404"), &case);
+        });
+        scenario("publishing_database_stop", || database.stop());
         return;
     }
     if env::args().len() == 1 || env::args().nth(1).as_deref() == Some("--router-regression") {
-        let root = tempfile::tempdir().unwrap();
-        let mut router = workers(
-            support::executor_probe::Probe,
-            support::executor_probe::Probe,
-            Arc::new(Fixture::create(root.path())),
-            "merged".into(),
-        );
-        support::executor_probe::assert_retire_delivery(&mut router);
+        scenario("router_retire_delivery", || {
+            let root = tempfile::tempdir().unwrap();
+            let mut router = workers(
+                support::executor_probe::Probe,
+                support::executor_probe::Probe,
+                Arc::new(Fixture::create(root.path())),
+                "merged".into(),
+            );
+            support::executor_probe::assert_retire_delivery(&mut router);
+            assert!(
+                !drive_to_idle(|| true),
+                "a continuously active publishing driver must exhaust its burst"
+            );
+            let mut progress = [true, true, false].into_iter();
+            assert!(drive_to_idle(|| progress
+                .next()
+                .expect("an idle publishing driver must not be driven again")));
+        });
         println!("test router_retire_delivery ... ok");
         if std::env::args().len() > 1 {
             return;
@@ -1797,27 +1851,34 @@ fn main() {
     }
 
     if let Some(mode) = env::args().nth(1) {
-        let python = prepare_workers();
-        let mut database = support::Database::start();
-        if mode.starts_with("adoption-") {
-            publishing_adoption::run(&database.create("adoption"), &python, &mode);
-        } else {
-            lifecycle(&database.create("publishing_regression"), &python, &mode);
-        }
-        database.stop();
+        let python = scenario("publishing_worker_setup", prepare_workers);
+        let mut database = scenario("publishing_database_setup", support::Database::start);
+        scenario(&format!("publishing_{mode}"), || {
+            if mode.starts_with("adoption-") {
+                publishing_adoption::run(&database.create("adoption"), &python, &mode);
+            } else {
+                lifecycle(&database.create("publishing_regression"), &python, &mode);
+            }
+        });
+        scenario("publishing_database_stop", || database.stop());
         println!("test publishing_{mode} ... ok");
         return;
     }
-    publication_open_conflict();
+    scenario("publication_open_conflict", publication_open_conflict);
     println!("test publication_open_conflict ... ok");
-    publication_requires_conventions();
+    scenario(
+        "publication_requires_conventions",
+        publication_requires_conventions,
+    );
     println!("test publication_requires_conventions ... ok");
-    publication_recovery();
+    scenario("publication_lost_response_recovery", publication_recovery);
     println!("test publication_lost_response_recovery ... ok");
-    let python = prepare_workers();
-    let mut database = support::Database::start();
+    let python = scenario("publishing_worker_setup", prepare_workers);
+    let mut database = scenario("publishing_database_setup", support::Database::start);
     for case in ["open", "approval", "open-restart"] {
-        publication_404_look(&database.create(&format!("publication_404_{case}")), case);
+        scenario(&format!("publication_404_look_{case}"), || {
+            publication_404_look(&database.create(&format!("publication_404_{case}")), case);
+        });
     }
     for mode in [
         "repo-conventions",
@@ -1845,11 +1906,13 @@ fn main() {
         "reports-latest",
         "reports-closed",
     ] {
-        lifecycle(
-            &database.create(&format!("publishing_{mode}")),
-            &python,
-            mode,
-        );
+        scenario(&format!("publishing_{mode}"), || {
+            lifecycle(
+                &database.create(&format!("publishing_{mode}")),
+                &python,
+                mode,
+            );
+        });
         println!("test publishing_{mode} ... ok");
     }
     for mode in [
@@ -1858,9 +1921,11 @@ fn main() {
         "adoption-extras",
         "adoption-negative",
     ] {
-        publishing_adoption::run(&database.create(&mode.replace('-', "_")), &python, mode);
+        scenario(mode, || {
+            publishing_adoption::run(&database.create(&mode.replace('-', "_")), &python, mode);
+        });
         println!("test {mode} ... ok");
     }
-    database.stop();
+    scenario("publishing_database_stop", || database.stop());
     println!("35 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }
