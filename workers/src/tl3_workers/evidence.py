@@ -34,6 +34,31 @@ def forcing_guidance(cpus=1):
 DIMENSIONS = ('runner_features', 'artifacts', 'methods', 'protected_files')
 
 
+def branch_satisfies(required, branch, context, *, prefix=False):
+    if '<' not in required:
+        return branch.startswith(required) if prefix else branch == required
+    import re
+    optional_word = required.endswith('[-<word>]')
+    rest = required[:-len('[-<word>]')] if optional_word else required
+    pattern = ''
+    while '<' in rest:
+        literal, tail = rest.split('<', 1)
+        pattern += re.escape(literal)
+        slot, end, rest = tail.partition('>')
+        if not end:
+            return False
+        if slot in ('issue', 'node') and context.get(slot) is not None:
+            pattern += re.escape(str(context[slot]))
+        elif slot == 'word':
+            pattern += '[A-Za-z0-9][A-Za-z0-9_-]*'
+        else:
+            return False
+    pattern += re.escape(rest)
+    if optional_word:
+        pattern += '(?:-[A-Za-z0-9][A-Za-z0-9_-]*)?'
+    return (re.match(pattern, branch) if prefix else re.fullmatch(pattern, branch)) is not None
+
+
 def branch_objections(inputs, goals):
     context = inputs.get('publication_branch')
     if context is None:
@@ -53,7 +78,7 @@ def branch_objections(inputs, goals):
             if required is None:
                 continue
             branch = context['branch']
-            satisfied = branch == required if field == 'branch' else branch.startswith(required)
+            satisfied = branch_satisfies(required, branch, context, prefix=field == 'branch_prefix')
             if not satisfied:
                 errors.append(
                     f'Request-scope branch conflict: {field} requires {label(required)}; '

@@ -37,6 +37,53 @@ pub(crate) fn load(snapshot: &Snapshot, node: NodeId) -> Result<Option<Vec<Value
         .transpose()
 }
 
+/// Recognized notation describes a branch constraint, never a literal branch name.
+pub(crate) fn branch_satisfies(
+    required: &str,
+    branch: &str,
+    issue: Option<u64>,
+    node: Option<u64>,
+    prefix: bool,
+) -> bool {
+    if !required.contains('<') {
+        return if prefix {
+            branch.starts_with(required)
+        } else {
+            branch == required
+        };
+    }
+    let optional_word = required.strip_suffix("[-<word>]");
+    let mut rest = optional_word.unwrap_or(required);
+    let mut pattern = String::from("^");
+    while let Some((literal, tail)) = rest.split_once('<') {
+        pattern.push_str(&regex::escape(literal));
+        let Some((slot, remaining)) = tail.split_once('>') else {
+            return false;
+        };
+        match slot {
+            "issue" => match issue {
+                Some(issue) => pattern.push_str(&issue.to_string()),
+                None => return false,
+            },
+            "node" => match node {
+                Some(node) => pattern.push_str(&node.to_string()),
+                None => return false,
+            },
+            "word" => pattern.push_str("[A-Za-z0-9][A-Za-z0-9_-]*"),
+            _ => return false,
+        }
+        rest = remaining;
+    }
+    pattern.push_str(&regex::escape(rest));
+    if optional_word.is_some() {
+        pattern.push_str("(?:-[A-Za-z0-9][A-Za-z0-9_-]*)?");
+    }
+    if !prefix {
+        pattern.push('$');
+    }
+    regex::Regex::new(&pattern).is_ok_and(|pattern| pattern.is_match(branch))
+}
+
 /// This produces audit objections, never an ingest protocol failure or a weaker goal.
 pub(crate) fn branch_objections(context: &Value, goals: &Value) -> Result<Vec<String>> {
     let Some(branch) = context["branch"].as_str() else {
@@ -48,11 +95,13 @@ pub(crate) fn branch_objections(context: &Value, goals: &Value) -> Result<Vec<St
             let Some(required) = goal["publication"][field].as_str() else {
                 continue;
             };
-            let satisfied = if field == "branch" {
-                branch == required
-            } else {
-                branch.starts_with(required)
-            };
+            let satisfied = branch_satisfies(
+                required,
+                branch,
+                context["issue"].as_u64(),
+                context["node"].as_u64(),
+                field == "branch_prefix",
+            );
             if !satisfied {
                 errors.push(format!("Request-scope branch conflict: {field} requires {}; configured template {} generates {}. Preserve the explicit requirement and its source. Change the request scope or repository convention before planning.",
                     crate::evidence::label(required)?, crate::evidence::label(context["template"].as_str().unwrap_or("unknown"))?, crate::evidence::label(branch)?));

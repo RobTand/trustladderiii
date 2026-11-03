@@ -184,3 +184,11 @@ name and its issue-source quote, even when incompatible; never turn it into a
 prefix or substitute the generated branch. Code records incompatible requirements
 as request-scope audit objections before planning. Resolve the scope disagreement
 through the existing audit path, never by claiming later publication can fix it.
+
+A convention such as `prismabuild-<issue>-tl3-<node>` is a pattern, not an exact
+literal name. Keep its source wording. Code matches `<issue>` and `<node>` to the
+request identity, and `[-<word>]` to an optional hyphen plus a nonempty slug of
+letters, digits, underscores or hyphens. Compare that pattern with the configured
+branch. Mentions of the base branch or keeping a PR's branch name unchanged do
+not require a particular publication branch; omit branch and branch_prefix for
+those goals.

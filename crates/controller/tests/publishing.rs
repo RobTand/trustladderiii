@@ -2179,6 +2179,7 @@ fn main() {
             publication_refusal_retention(&database.create("retention"), case == "reconciliation")
         });
         scenario("publishing_database_stop", || database.stop());
+        println!("test publication_retention_{case} ... ok");
         println!("1 publishing scenarios passed; no skips");
         return;
     }
@@ -2279,6 +2280,7 @@ fn main() {
         scenario(name, || {
             publication_refusal_retention(&database.create(name), reconciliation)
         });
+        println!("test {name} ... ok");
     }
     for case in ["open", "approval", "open-restart"] {
         scenario(&format!("publication_404_look_{case}"), || {

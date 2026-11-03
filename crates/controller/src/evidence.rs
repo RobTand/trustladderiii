@@ -747,12 +747,23 @@ pub(crate) fn validate_publication(
 ) -> Result<()> {
     for goal in publication_goals(delivery) {
         let requirements = &goal["publication"];
-        let branch_ok = requirements["branch"]
-            .as_str()
-            .is_none_or(|required| branch == required)
-            && requirements["branch_prefix"]
-                .as_str()
-                .is_none_or(|prefix| branch.starts_with(prefix));
+        let branch_ok = requirements["branch"].as_str().is_none_or(|required| {
+            crate::goals::branch_satisfies(
+                required,
+                branch,
+                Some(delivery.issue),
+                Some(delivery.node().0),
+                false,
+            )
+        }) && requirements["branch_prefix"].as_str().is_none_or(|prefix| {
+            crate::goals::branch_satisfies(
+                prefix,
+                branch,
+                Some(delivery.issue),
+                Some(delivery.node().0),
+                true,
+            )
+        });
         let lines_ok = requirements["body_lines"]
             .as_array()
             .into_iter()

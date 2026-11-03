@@ -440,7 +440,8 @@ impl Executor for Adapter {
                     class: "pr_evidence",
                     ..
                 }) => Ok(Reconciliation::Found(Completion::permanent("pr_evidence"))),
-                Err(error) if error.is_github_not_found() => Err(error),
+                // The controller records the refusal while leaving reconciliation pending.
+                Err(error @ Error::Permanent { .. }) => Err(error),
                 result => Ok(result.unwrap_or(Reconciliation::Pending)),
             };
         }

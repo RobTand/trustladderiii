@@ -1051,6 +1051,7 @@ impl Controller {
                         }
                         Err(error) => {
                             // A transport error is not an upstream acknowledgement.
+                            self.record_publication_refusal(&delivery, &error)?;
                             eprintln!("adapter execute failed for {}: {error}", effect.key);
                             if let Error::Quota { retry_after } = &error {
                                 self.defer_quota(&effect.key, *retry_after)?;
