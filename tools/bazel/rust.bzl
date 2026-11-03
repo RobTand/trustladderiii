@@ -103,6 +103,7 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/prismabuild.rs": ["tests/support/**", "tests/fixtures/bell/**", "tests/fixtures/pb.py", "tests/prismabuild_fixture/**"],
     "tests/publishing.rs": ["tests/support/**", "tests/fixtures/pb.py", "tests/prismabuild_fixture/**", "tests/worktree_fixture/**"],
     "tests/reproducing_rebase.rs": ["tests/worktree_fixture/**"],
+    "tests/scenario_watchdog.rs": ["tests/support/scenario.rs"],
     "tests/scope.rs": ["tests/support/**", "tests/worktree_fixture/**"],
     "tests/simulation.rs": ["tests/worktree_fixture/**"],
     "tests/workers.rs": [
