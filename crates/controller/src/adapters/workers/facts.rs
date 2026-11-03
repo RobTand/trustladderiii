@@ -201,6 +201,25 @@ mod tests {
     }
 
     #[test]
+    fn a_bootstrap_failure_records_the_local_worker_boundary() {
+        let root = tempfile::tempdir().unwrap();
+        request(root.path());
+        write(
+            &root.path().join("worker-started.json"),
+            &json!({"started_ms": 1000}),
+        )
+        .unwrap();
+        write(
+            &root.path().join("exit.json"),
+            &json!({"code": 1, "finished_ms": 2000}),
+        )
+        .unwrap();
+        let facts = completed(root.path()).unwrap().unwrap();
+        assert_eq!(facts.outcome, "failed");
+        assert_eq!(facts.failure.unwrap().origin, "worker");
+    }
+
+    #[test]
     fn old_attempts_do_not_acquire_effect_times_as_worker_measurements() {
         let root = tempfile::tempdir().unwrap();
         request(root.path());
