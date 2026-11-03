@@ -268,7 +268,8 @@ def test_assertion_obligation_can_use_an_existing_observer_but_not_an_exception(
         assert 'source assertion proof' in result['message']
     else:
         assert len(calls) == 2, 'an assertion obligation that permits an old observer can be rehearsed'
-        assert 'expected assertion' in result['message'], 'a passing campaign still supplies no RED'
+        assert 'forced base must fail by assertion' in result['message']
+        assert 'ended passed; expected failed' in result['message'], 'a passing campaign still supplies no RED'
 
 
 def test_request233_rehearsal_tool_exposes_goal_binding(request233):
