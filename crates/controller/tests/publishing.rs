@@ -2277,7 +2277,17 @@ fn router_regression() {
 }
 
 fn run_default() {
-    let groups: Vec<_> = (0..38).map(|index| (index, 1, 1)).collect();
+    // Main and four-shard solo receipts, rounded up; retain complete fixtures.
+    // Child 36aa5a13 had a healthy 601 s shard with 116 s and 121 s cases.
+    let seconds = [
+        1, 6, 3, 4, 22, 2, 2, 10, 15, 2, 17, 17, 39, 12, 13, 18, 63, 10, 14, 6, 72, 11, 7, 11, 116,
+        14, 10, 12, 69, 16, 17, 15, 84, 5, 7, 9, 121, 1,
+    ];
+    let groups: Vec<_> = seconds
+        .iter()
+        .enumerate()
+        .map(|(index, seconds)| (index, 1, *seconds))
+        .collect();
     let mut shard = support::scenario_shard::Shard::from_groups(&groups);
     let mut index = 0;
     macro_rules! case {

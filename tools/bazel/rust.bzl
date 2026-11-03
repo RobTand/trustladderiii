@@ -47,7 +47,7 @@ _SCENARIO_SHARDS = {
     "tl3-controller/github-flow": 8,
     "tl3-controller/github-notices": 8,
     "tl3-controller/mergify": 8,
-    "tl3-controller/publishing": 4,
+    "tl3-controller/publishing": 8,
     "tl3-controller/simulation": 4,
     "tl3-controller/workers": 8,
 }
