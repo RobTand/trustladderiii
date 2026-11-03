@@ -29,6 +29,66 @@ LEAF = {
     "no_design_questions": True,
     "lands_on_its_own": True,
 }
+
+
+def test_token_fitting_leaf_is_refused_when_execution_demand_exceeds_usable_budget(planner_request, monkeypatch):
+    from tl3_workers.roles import planner
+
+    monkeypatch.chdir(planner_request["worktree"])
+    proposal = copy.deepcopy(LEAF)
+    proposal["files"].extend(f"source_{i}.py" for i in range(4))
+    existing = Path("tests/test_existing.py")
+    existing.write_text(existing.read_text() + "\n".join(f"def test_extra_{i}(): assert True" for i in range(4)))
+    proposal["checks"].extend({"kind": "regression", "node_ids": [f"tests/test_existing.py::test_extra_{i}"],
+                               "goal_ids": [0, 1]} for i in range(4))
+    planner.check_reply(planner_request["inputs"], proposal)
+    assert proposal["forecast"]["fits"] is True, "the token forecast must stay truthful"
+    assert any("execution budget" in item.lower() for item in proposal["violations"]), proposal
+    execution = proposal["execution"]
+    assert execution["estimated_tool_turns"] > execution["usable_tool_turns"] == 56
+    assert execution["allowed_tool_turns"] == 64 and execution["finalization_turns"] == 8
+
+
+def execution_split():
+    return {"kind": "split", "reason": "execution_budget", "estimated_tool_turns": 65,
+            "pieces": [
+                {"brief": "Implement and verify the greeting, including metadata.", "goal_ids": [0],
+                 "files": ["greeting.py"], "estimated_tool_turns": 25},
+                {"brief": "Preserve the API and run final regressions.", "goal_ids": [1],
+                 "files": ["greeting.py", "new/api.py"], "estimated_tool_turns": 25}]}
+
+
+def test_execution_split_uses_existing_path_and_retains_aggregate_estimates(planner_request, monkeypatch):
+    from tl3_workers.roles import planner
+
+    monkeypatch.chdir(planner_request["worktree"])
+    # Shared source footprints need not shrink in tokens when check work is split.
+    planner_request["inputs"]["ingest"]["brief"] = "Preserve the greeting API and all required metadata and checks. " * 100
+    proposal = execution_split()
+    planner.check_reply(planner_request["inputs"], proposal)
+    assert proposal["forecast"]["fits"] is True
+    assert proposal["violations"] == [], proposal
+    assert proposal.get("execution", {}).get("aggregate_tool_turns") == 50, proposal
+    assert proposal["execution"]["aggregate_allowed_tool_turns"] == 128
+    assert len(proposal["execution"]["pieces"]) == 2
+    validate("planner-reply", proposal)
+
+
+@pytest.mark.parametrize("damage", ["oversized_child", "too_many", "fitting_parent"])
+def test_execution_split_is_bounded_before_work(planner_request, monkeypatch, damage):
+    from tl3_workers.roles import planner
+
+    monkeypatch.chdir(planner_request["worktree"])
+    planner_request["inputs"]["ingest"]["brief"] *= 100
+    proposal = execution_split()
+    if damage == "oversized_child":
+        proposal["pieces"][0]["estimated_tool_turns"] = 57
+    elif damage == "too_many":
+        proposal["pieces"] *= 5
+    else:
+        proposal["estimated_tool_turns"] = 20
+    planner.check_reply(planner_request["inputs"], proposal)
+    assert any("execution" in item.lower() for item in proposal["violations"]), proposal
 SPLIT = {
     "kind": "split", "reason": "does_not_fit",
     "pieces": [
