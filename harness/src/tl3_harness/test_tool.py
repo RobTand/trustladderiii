@@ -38,19 +38,29 @@ def infrastructure(message, origin=None):
     return result
 
 
-def bounded(result):
-    # Leave room for worker receipts without losing ownership or execution details.
-    while len(json.dumps(result).encode()) > SUMMARY_BYTES - 2048:
-        if result.get("selectors"):
-            result["selectors"].pop()
-            result["selectors_omitted"] = result.get("selectors_omitted", 0) + 1
-        elif result["tests"]:
-            result["tests"].pop()
-        elif any(run.get("failed") for run in result.get("runs", ())):
-            next(run for run in reversed(result["runs"]) if run.get("failed"))["failed"].pop()
+def bounded(result, *, limit=SUMMARY_BYTES - 2048):
+    # Bound the complete envelope after metadata is attached. Keep identity and
+    # retained entries exact; dropping a node makes the proof visibly incomplete.
+    while len(json.dumps(result).encode()) > limit:
+        if result['status'] != 'completed' and result.get('selectors'):
+            result['selectors'].pop()
+            result['selectors_omitted'] = result.get('selectors_omitted', 0) + 1
+        elif result['tests']:
+            passing = next((i for i in reversed(range(len(result['tests'])))
+                            if result['tests'][i]['outcome'] == 'passed'), -1)
+            result['tests'].pop(passing)
+        elif any(run.get('failed') for run in result.get('runs', ())):
+            next(run for run in reversed(result['runs']) if run.get('failed'))['failed'].pop()
         else:
-            break
-        result["note"] = "Truncated: selectors, test entries or run failure IDs were cut. Totals include all results."
+            failure = ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, 'summary', 'identity_exceeds_summary_limit')
+            diagnostic = infrastructure(failure.message(), origin=result.get('origin'))
+            diagnostic.update(totals=result['totals'], execution=result.get('execution', failure.as_json()),
+                              note='Truncated: summary identity exceeds the envelope limit. No proof is available.')
+            for field in ('action_key', 'receipts'):
+                if field in result:
+                    diagnostic[field] = result[field]
+            return diagnostic
+        result['note'] = 'Truncated: selectors, test entries or run failure IDs were cut. Totals include all results.'
     return result
 
 
@@ -62,11 +72,13 @@ class Summary:
         # Every test's outcome, including entries the size bound drops; repeats aggregate these.
         self.outcomes = {}
 
-    def add(self, test, outcome, message="", truncated=False, target_hits=None):
+    def add(self, test, outcome, message="", truncated=False, target_hits=None, forcing_refusal=None):
         self.result["totals"][outcome] += 1
         item = {"test": test, "outcome": outcome, "message": message[:MESSAGE_CHARS]}
         if target_hits is not None:
             item["target_hits"] = target_hits
+        if forcing_refusal is not None:
+            item["forcing_refusal"] = forcing_refusal
         self.outcomes[test] = item
         clipped = truncated or len(message) > MESSAGE_CHARS
         self.result["tests"].append(item)
@@ -117,6 +129,15 @@ def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=No
                                     or set(hits) - {target for target, mode, _ in forcing.patches
                                                     if mode == "delay_seconds"}):
                                 raise ValueError("invalid target invocation counts")
+                        refusal = record.get('forcing_refusal')
+                        if refusal is not None:
+                            expected.add('forcing_refusal')
+                            if (not isinstance(refusal, dict)
+                                    or set(refusal) != {'phase', 'target', 'resolved_module', 'owner_category', 'reason'}
+                                    or refusal['phase'] != 'forcing_validation'
+                                    or forcing is None or refusal['target'] not in {p[0] for p in forcing.patches}
+                                    or any(not isinstance(value, str) or len(value) > 4096 for value in refusal.values())):
+                                raise ValueError('invalid forcing refusal')
                         if (set(record) != expected
                                 or not isinstance(record["test"], str) or record["test"] in seen
                                 or record["outcome"] not in OUTCOMES
@@ -124,7 +145,7 @@ def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=No
                                 or type(record["truncated"]) is not bool):
                             raise ValueError("invalid test result")
                         seen.add(record["test"])
-                        summary.add(record["test"], record["outcome"], record["message"], record["truncated"], hits)
+                        summary.add(record["test"], record["outcome"], record["message"], record["truncated"], hits, refusal)
                         progress.commit(record["test"])
                     elif record.get("event") == "collection-error":
                         collection_error = True
@@ -242,7 +263,8 @@ def main():
             result.update(forcing=forcing.as_json(), selectors=json.loads(args.selectors))
     except (OSError, RuntimeError, ValueError):
         result = infrastructure("Test infrastructure failed before a complete report was available.")
-    print(PREFIX + json.dumps(bounded(result)), flush=True)
+    result = bounded(result)
+    print(PREFIX + json.dumps(result), flush=True)
 
 
 if __name__ == "__main__":

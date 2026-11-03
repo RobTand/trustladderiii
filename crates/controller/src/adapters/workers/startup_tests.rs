@@ -77,6 +77,12 @@ fn planner_protected_paths_follow_the_request_repository() {
             .request(&delivery, "planner", &mut store, &snapshot)
             .unwrap();
         let cpus = if name == "TL3-SANDBOX" { 4 } else { 1 };
+        assert!(
+            request["session_file"]
+                .as_str()
+                .is_some_and(|path| path.ends_with("planner-rehearsals.json")),
+            "planner recovery needs a controller-owned rehearsal checkpoint"
+        );
         assert_eq!(request["test_cpus"], cpus);
         assert_eq!(request["inputs"]["base_sha"], f.base);
         assert_eq!(request["inputs"]["tests"]["cpus"], cpus);

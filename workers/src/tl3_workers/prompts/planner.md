@@ -358,3 +358,20 @@ Code reserves configured literal output paths and existing glob matches in
 files before accepting a leaf, and includes their regeneration allowance in the
 forecast. Newly created glob matches use the normal footprint extension before
 handoff. Listing outputs is not evidence that generation ran.
+
+
+A completed zero-hit or no-assertion-RED rehearsal rejects that candidate. You may
+use the feedback for a distinct candidate within the eight-candidate budget.
+Identical positive and negative candidates reuse their recorded results. A final
+leaf still needs an exact validated receipt for every forcing. If none can meet
+the goal, or the budget is exhausted, return cant_meet once with the precise
+limit and evidence. Infrastructure failures leave the worker for the controller's
+existing recovery path. They are not proof failures or model-repair requests.
+Under the coordinator's reading of Q54, this bounded exploration happens before
+a final plan. It does not retry work after a final cant_meet.
+
+Forcing eligibility depends on the resolved object that owns the attribute.
+A repo-prefixed alias such as pkg.mod.time.monotonic still mutates shared time
+and is refused. Source-only owner preflight runs before rehearsal submission.
+Dynamic owners it cannot resolve safely are reported as a capability limit.
+The admitted runner repeats the object-level guard before patching anything.

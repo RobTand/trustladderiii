@@ -1297,8 +1297,8 @@ def test_reached_assertion_has_bound_verified_receipts(rehearsal):
     assert all('--anywhere' in cmd and '--demand' in cmd and '--cpus' in cmd for cmd in calls)
 
 
-@pytest.mark.parametrize('control', ['still_green', 'unrelated', 'setup', 'import', 'missing', 'no_report', 'cancelled'])
-def test_unusable_experiments_cannot_supply_red_or_be_retried(rehearsal, monkeypatch, control):
+@pytest.mark.parametrize('control', ['still_green', 'unrelated', 'setup', 'import', 'missing', 'no_report'])
+def test_unusable_experiments_cannot_supply_red_or_repeat_identically(rehearsal, monkeypatch, control):
     ledger, root, inputs, calls = rehearsal
     forcing = reachable()
     if control == 'still_green':
@@ -1313,19 +1313,17 @@ def test_unusable_experiments_cannot_supply_red_or_be_retried(rehearsal, monkeyp
         (root / 'tests/test_adoption.py').write_text(TEST.replace('def test_adopt', 'def test_other'))
     elif control == 'no_report':
         (root / 'tests/test_adoption.py').write_text('import os\nos._exit(0)\n')
-    elif control == 'cancelled':
-        from tl3_workers import pb_tests
-        monkeypatch.setattr(pb_tests, '_json_command', lambda _: (1, {'schema': 'prismabuild.submission.v1'}))
     if control in {'unrelated', 'setup', 'import', 'missing', 'no_report'}:
         git(root, 'add', '.')
         git(root, 'commit', '-qm', control)
         inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
         ledger = ForcingRehearsals(ledger.worktree, inputs)
     result = ledger.run([NODE], forcing)
-    assert result['status'] == 'refused'
+    expected = 'infrastructure_error' if control == 'no_report' else 'refused'
+    assert result['status'] == expected
     count = len(calls)
-    again = ledger.run([NODE], deepcopy(FORCING))
-    assert again['status'] == 'refused' and len(calls) == count
+    again = ledger.run([NODE], deepcopy(forcing))
+    assert again['status'] == expected and len(calls) == count
     assert ledger.violations(inputs['base_sha'], plan(forcing)['checks'])
 
 
@@ -1419,8 +1417,6 @@ def test_real_planner_tool_loop_refuses_or_binds_handoff(rehearsal, monkeypatch,
 @pytest.mark.parametrize('stage', ['unforced', 'forced'])
 @pytest.mark.parametrize('status,message', [
     ('not_available', 'Repository test settings are unavailable.'),
-    ('infrastructure_error', 'PrismaBuild submission failed: no eligible workers.'),
-    ('infrastructure_error', 'PrismaBuild execution failed: worker disconnected.'),
 ])
 def test_rehearsal_failure_diagnostic_reaches_cant_meet(rehearsal, monkeypatch, stage, status, message):
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -1483,9 +1479,9 @@ def test_pb_verified_log_for_another_forcing_or_selection_is_not_evidence(rehear
 
     monkeypatch.setattr(pb_tests, '_summary', stale)
     result = ledger.run([NODE], reachable())
-    assert result['status'] == 'refused'
+    assert result['status'] == 'infrastructure_error'
     assert result['forced']['status'] == 'infrastructure_error'
-    assert ledger.failure
+    assert ledger.failure is None
 
 
 @pytest.mark.parametrize("timeout", [120, 300, 600])
@@ -1825,3 +1821,368 @@ def test_request_2709_legacy_plan_extends_before_final_head(
     tree = subprocess.check_output(["git", "rev-parse", result["head"] + "^{tree}"], cwd=generator_repo).decode().strip()
     assert result["generation_evidence"]["output_tree"] == tree
     subprocess.run(["python3", "generate.py", "--check"], cwd=generator_repo, check=True)
+
+
+# #600: completed negative evidence is feedback within one bounded planning run.
+@pytest.mark.parametrize('negative', ['zero_hit', 'no_red', 'setup_error'])
+def test_distinct_candidate_after_negative_preserves_valid_receipts(rehearsal, monkeypatch, negative):
+    ledger, _, inputs, calls = rehearsal
+    first = reachable()
+    assert ledger.run([NODE], first)['status'] == 'validated'
+    bad = deepcopy(FORCING) if negative == 'zero_hit' else reachable()
+    if negative == 'no_red':
+        bad['patches'][0]['delay_seconds'] = 0.001
+    elif negative == 'setup_error':
+        bad['patches'] = [{'target': 'publisher.Publisher.try_adopt', 'raises': 'RuntimeError'}]
+    rejected = ledger.run([NODE], bad)
+    assert rejected['status'] == 'refused'
+    assert ledger.failure is None, 'a completed negative candidate must not latch planning'
+    assert ledger.violations(inputs['base_sha'], plan(bad)['checks'])
+    third = reachable()
+    third['environment'] = {'CANDIDATE': 'distinct'}
+    assert ledger.run([NODE], third)['status'] == 'validated'
+    assert ledger.violations(inputs['base_sha'], plan(first)['checks'] + plan(third)['checks']) == []
+    count = len(calls)
+    assert ledger.run([NODE], deepcopy(bad)) == rejected
+    assert ledger.run([NODE], deepcopy(first))['status'] == 'validated'
+    assert len(calls) == count == 6
+
+
+def test_negative_cache_and_exhaustion_preserve_eight_candidate_cap(rehearsal):
+    ledger, _, inputs, calls = rehearsal
+    for i in range(8):
+        bad = deepcopy(FORCING)
+        bad['environment'] = {'CANDIDATE': str(i)}
+        rejected = ledger.run([NODE], bad)
+        assert rejected['status'] == 'refused'
+        assert ledger.run([NODE], deepcopy(bad)) == rejected
+        assert len(calls) == 2 * (i + 1), 'distinct negatives must consume their own bounded actions'
+    exhausted = ledger.run([NODE], reachable())
+    assert exhausted['status'] == 'exhausted'
+    assert '8 rehearsals' in exhausted['message'] and '16' in exhausted['message']
+    assert ledger.run([NODE], reachable()) == exhausted
+    assert len(calls) == 16
+    assert ledger.violations(inputs['base_sha'], plan(reachable())['checks']) == [exhausted['message']]
+    assert all(cmd[cmd.index('--timeout-s') + 1] == '120' for cmd in calls)
+
+
+@pytest.mark.parametrize('stage', ['unforced', 'forced'])
+@pytest.mark.parametrize('boundary', ['submission', 'execution', 'retrieval', 'adapter'])
+def test_rehearsal_infrastructure_exits_worker_without_reply_repair(
+        rehearsal, monkeypatch, tmp_path, stage, boundary):
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+    from tl3_workers import pb_tests, runtime
+    _, root, inputs, calls = rehearsal
+    original = pb_tests._json_command
+    current_phase = None
+
+    def command(args):
+        nonlocal current_phase
+        if args[1].endswith('pbrun.py'):
+            current_phase = 'forced' if '--forcing' in args else 'unforced'
+            if current_phase == stage and boundary == 'submission':
+                raise OSError('submission fixture')
+        if current_phase == stage and args[1].endswith('pbwait.py'):
+            if boundary == 'retrieval':
+                raise OSError('retrieval fixture')
+            code, value = original(args)
+            ending = value['endings'][0]
+            if boundary == 'execution':
+                ending.update(status='failed', succeeded=False, exit_code=137, reason='worker_lost')
+            elif boundary == 'adapter':
+                ending['result']['verified'] = False
+            return code, value
+        return original(args)
+
+    monkeypatch.setattr(pb_tests, '_json_command', command)
+    model = FakeMessagesListChatModel(responses=[
+        AIMessage(content='', tool_calls=[{'name': 'rehearse_forcing', 'id': 'force',
+                                          'args': {'tests': [NODE], 'forcing': reachable()}}]),
+        AIMessage(content='malformed final must never be read'),
+    ])
+    monkeypatch.setattr(runtime, 'create_model', lambda _: model)
+    facts, memory = tmp_path / 'facts.json', tmp_path / 'memory.json'
+    session = tmp_path / 'planner-rehearsals.json'
+    request = {'role': 'planner', 'worktree': str(root), 'inputs': inputs,
+               'operation': {'node': 1, 'generation': 0, 'kind': 'planning'},
+               'model': {'name': 'fixture', 'effort': 'high', 'budget_tokens': 32000},
+               'trace': {'completion': str(facts)}, 'memory': {'summary_file': str(memory)},
+               'session_file': str(session)}
+    events = []
+    with pytest.raises(Exception) as caught:
+        runtime.run(request, events.append)
+    error = caught.value
+    assert type(error).__name__ == 'ForcingInfrastructureError'
+    assert error.result['status'] == 'infrastructure_error'
+    result = error.result[stage]
+    assert result['execution']['phase'] == ('admission' if boundary == 'submission' else
+                                           'unknown' if boundary == 'execution' else
+                                           'summary' if boundary == 'adapter' else 'retrieval')
+    if boundary != 'submission':
+        assert result['action_key'] == KEY
+    assert model.i == 1 and not any(e['event'] == 'reply' for e in events)
+    assert len(calls) <= (2 if stage == 'forced' else 1)
+    assert json.loads(facts.read_text())['failure']['class'] == 'ForcingInfrastructureError'
+    reason = json.loads(memory.read_text())['reason']
+    assert reason['failure_class'] == 'ForcingInfrastructureError'
+    assert stage in reason['failure_message'] and result['execution']['phase'] in reason['failure_message']
+    if boundary != 'submission':
+        assert KEY in reason['failure_message']
+    if boundary == 'retrieval':
+        admitted = len(calls)
+        monkeypatch.setattr(pb_tests, '_json_command', original)
+        model.i = 0
+        model.responses[1] = AIMessage(content=json.dumps(plan(reachable())))
+        request['operation']['generation'] += 1
+        runtime.run(request, events.append)
+        assert events[-1]['reply']['kind'] == 'leaf'
+        assert events[-1]['reply']['violations'] == []
+        assert len(calls) == admitted + (1 if stage == 'unforced' else 0), 'recovery must reattach admitted actions'
+
+
+def test_final_plan_accepts_only_matching_validated_candidates(rehearsal):
+    ledger, _, inputs, _ = rehearsal
+    assert ledger.run([NODE], deepcopy(FORCING))['status'] == 'refused'
+    reply = plan()
+    planner.check_reply(inputs, reply, rehearsals=ledger)
+    assert any('matching forcing rehearsal receipt' in v for v in reply['violations'])
+    good = reachable()
+    assert ledger.run([NODE], good)['status'] == 'validated'
+    reply = plan(good)
+    planner.check_reply(inputs, reply, rehearsals=ledger)
+    assert reply['violations'] == []
+    assert {r['status'] for r in reply['forcing_rehearsals']} == {'refused', 'validated'}
+    changed = plan(good)
+    changed['checks'][0]['forcing']['environment'] = {'DIFFERENT': '1'}
+    planner.check_reply(inputs, changed, rehearsals=ledger)
+    assert any('matching forcing rehearsal receipt' in v for v in changed['violations'])
+
+
+def test_request199_complete_summary_envelope_keeps_exact_retained_evidence(submission):
+    response = Summary().result
+    response.update(forcing=reachable(), selectors=[NODE])
+    for i in range(24):
+        response['totals']['error'] += 1
+        if i < 12:
+            response['tests'].append({'test': NODE + str(i), 'outcome': 'error',
+                                      'message': 'resolved owner select is outside repository ' + 'x' * 950})
+    response['note'] = 'Truncated: totals include all 24 setup errors.'
+    response['tests'][0]['message'] += 'x' * (16058 - len(json.dumps(response).encode()))
+    assert len(json.dumps(response).encode()) == 16058
+    retained = deepcopy(response['tests'])
+    result = call(submission, response)
+    assert result['status'] == 'completed', result
+    assert len(json.dumps(result).encode()) <= SUMMARY_BYTES
+    assert result['totals'] == response['totals']
+    assert result['forcing'] == response['forcing'] and result['selectors'] == [NODE]
+    assert result['receipts'][0]['receipt_sha256'] == 'b' * 64
+    assert result['tests'] and len(result['tests']) < len(retained)
+    assert all(any(all(item[key] == value for key, value in original.items())
+                   for original in retained) for item in result['tests'])
+    assert 'Truncated' in result['note']
+    from tl3_workers.forcing_rehearsal import unusable
+    assert unusable(result, [NODE], 'failed') == 'incomplete node results'
+
+
+def test_planner_explores_before_final_reply_without_format_repair(rehearsal, monkeypatch):
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+    from tl3_workers import runtime
+    _, root, inputs, calls = rehearsal
+    good = reachable()
+    model = FakeMessagesListChatModel(responses=[
+        AIMessage(content='', tool_calls=[{'name': 'rehearse_forcing', 'id': 'negative',
+                                          'args': {'tests': [NODE], 'forcing': deepcopy(FORCING)}}]),
+        AIMessage(content='', tool_calls=[{'name': 'rehearse_forcing', 'id': 'distinct',
+                                          'args': {'tests': [NODE], 'forcing': good}}]),
+        AIMessage(content=json.dumps(plan(good))),
+    ])
+    monkeypatch.setattr(runtime, 'create_model', lambda _: model)
+    request = {'role': 'planner', 'worktree': str(root), 'inputs': inputs,
+               'operation': {'node': 1, 'generation': 0, 'kind': 'planning'},
+               'model': {'name': 'fixture', 'effort': 'high', 'budget_tokens': 32000}}
+    events = []
+    runtime.run(request, events.append)
+    reply = events[-1]['reply']
+    assert reply['kind'] == 'leaf' and reply['violations'] == []
+    assert len(calls) == 4
+    from tl3_workers.forcing_rehearsal import GUIDANCE
+    assert 'distinct' in GUIDANCE.lower() and 'infrastructure' in GUIDANCE.lower()
+    assert 'failed rehearsal stops planning' not in planner.ROLE.tools['rehearse_forcing']
+
+
+@pytest.mark.parametrize('module,attribute', [('time', 'monotonic'), ('select', 'select')])
+def test_external_alias_owner_refused_before_admission_and_survives_stop(
+        rehearsal, monkeypatch, module, attribute):
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+    from tl3_workers import runtime
+    ledger, root, inputs, calls = rehearsal
+    (root / 'pkg').mkdir()
+    (root / 'pkg/__init__.py').write_text('')
+    (root / 'pkg/mod.py').write_text(
+        f'import {module}\nraise RuntimeError("served imports must not run in preflight")\n')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'stdlib alias')
+    inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    ledger = ForcingRehearsals(ledger.worktree, inputs)
+    target = f'pkg.mod.{module}.{attribute}'
+    forcing = {'symptom': 'A global alias is unsupported.', 'patches': [{'target': target, 'returns': 1000}]}
+    result = ledger.run([NODE], forcing)
+    assert calls == [], 'resolved external aliases must be refused before any rehearsal action'
+    assert result['status'] == 'refused'
+    assert result['refusal'] == {'phase': 'forcing_validation', 'target': target,
+                                  'resolved_module': module, 'owner_category': 'external_module',
+                                  'reason': 'outside_served_repository'}
+    assert module in result['message'] and target in result['message']
+    assert ledger.run([NODE], deepcopy(forcing)) == result and calls == []
+    model = FakeMessagesListChatModel(responses=[
+        AIMessage(content='', tool_calls=[{'name': 'rehearse_forcing', 'id': 'alias',
+                                          'args': {'tests': [NODE], 'forcing': forcing}}]),
+        AIMessage(content='malformed final after unsupported capability'),
+    ])
+    monkeypatch.setattr(runtime, 'create_model', lambda _: model)
+    request = {'role': 'planner', 'worktree': str(root), 'inputs': inputs,
+               'operation': {'node': 1, 'generation': 0, 'kind': 'planning'},
+               'model': {'name': 'fixture', 'effort': 'high', 'budget_tokens': 32000}}
+    events = []
+    runtime.run(request, events.append)
+    reply = events[-1]['reply']
+    assert reply['kind'] == 'cant_meet' and target in reply['report'] and module in reply['report']
+    assert reply['forcing_rehearsals'][0]['refusal'] == result['refusal']
+    assert calls == []
+
+
+# PR #603 review: execution dedupe and final proof binding have different contracts.
+@pytest.mark.parametrize('replacement', [True, 1.0])
+def test_receipt_binding_and_execution_cache_preserve_json_value_types(rehearsal, replacement):
+    ledger, root, inputs, calls = rehearsal
+    (root / 'tests/test_adoption.py').write_text(
+        'from publisher import Publisher\ndef test_adopt():\n    assert Publisher().try_adopt() is True\n')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'type-sensitive assertion')
+    inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    ledger = ForcingRehearsals(ledger.worktree, inputs)
+    forcing = {'symptom': 'The return type matters.',
+               'patches': [{'target': 'publisher.Publisher.try_adopt', 'returns': 1}]}
+    assert ledger.run([NODE], forcing)['status'] == 'validated'
+    changed = deepcopy(forcing)
+    changed['patches'][0]['returns'] = replacement
+    assert ledger.violations(inputs['base_sha'], plan(changed)['checks']), '1 must not bind true or 1.0'
+    assert ledger.violations(inputs['base_sha'], plan(forcing)['checks']) == []
+    ledger.run([NODE], changed)
+    assert len(calls) == 4, 'JSON-distinct values must run as distinct experiments'
+
+
+@pytest.mark.parametrize('validated', [False, True])
+@pytest.mark.parametrize('cosmetic', ['symptom', 'selectors', 'patches', 'all'])
+def test_execution_cache_ignores_prose_and_irrelevant_order(rehearsal, tmp_path, validated, cosmetic):
+    ledger, root, inputs, calls = rehearsal
+    (root / 'tests/test_adoption.py').write_text(TEST + TEST[TEST.index('def test_adopt'):].replace(
+        'def test_adopt', 'def test_other'))
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'two selectors')
+    inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    checkpoint = tmp_path / 'rehearsals.json'
+    ledger = ForcingRehearsals(ledger.worktree, inputs, checkpoint=checkpoint)
+    forcing = reachable()
+    if not validated:
+        forcing['patches'][0]['delay_seconds'] = 0.001
+    forcing['patches'].append({'target': 'publisher.Publisher.decide', 'returns': 1})
+    selectors = [NODE, NODE.replace('::test_adopt', '::test_other')]
+    first = ledger.run(selectors, forcing)
+    assert first['status'] == ('validated' if validated else 'refused')
+    changed = deepcopy(forcing)
+    reordered = list(selectors)
+    if cosmetic in {'symptom', 'all'}:
+        changed['symptom'] = 'The same experiment, described differently.'
+    if cosmetic in {'selectors', 'all'}:
+        reordered.reverse()
+    if cosmetic in {'patches', 'all'}:
+        changed['patches'].reverse()
+    for current in (ledger, ForcingRehearsals(ledger.worktree, inputs, checkpoint=checkpoint)):
+        assert current.run(reordered, changed) == first, 'cosmetic changes must return the original evidence'
+        assert current.attempts == 1 and current.actions == 2
+        assert len(calls) == 2
+        final = plan(changed)['checks']
+        final[0]['node_ids'] = reordered
+        assert current.violations(inputs['base_sha'], final), 'cache reuse must not mint a changed final receipt'
+        exact = plan(forcing)['checks']
+        exact[0]['node_ids'] = selectors
+        assert bool(current.violations(inputs['base_sha'], exact)) is not validated
+
+
+def test_inherited_repository_method_reaches_rehearsal(rehearsal):
+    ledger, root, inputs, calls = rehearsal
+    (root / 'publisher.py').write_text(
+        'class Base:\n    def try_adopt(self):\n        return True\n'
+        'class Publisher(Base):\n    pass\n')
+    (root / 'tests/test_adoption.py').write_text(
+        'from publisher import Publisher\ndef test_adopt():\n    assert Publisher().try_adopt()\n')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'inherited repository method')
+    inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    ledger = ForcingRehearsals(ledger.worktree, inputs)
+    forcing = {'symptom': 'Inherited repository methods remain eligible.',
+               'patches': [{'target': 'publisher.Publisher.try_adopt', 'returns': False}]}
+    result = ledger.run([NODE], forcing)
+    assert result['status'] == 'validated', result
+    assert len(calls) == 2
+    assert ledger.violations(inputs['base_sha'], plan(forcing)['checks']) == []
+
+
+@pytest.mark.parametrize('binding', ['conditional_repository', 'dynamic_repository', 'dynamic_external',
+                                     'class_global_repository'])
+def test_uncertain_owner_uses_runtime_guard_and_preserves_typed_stop(rehearsal, monkeypatch, binding):
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+    from tl3_workers import runtime
+    ledger, root, inputs, calls = rehearsal
+    (root / 'pkg').mkdir()
+    (root / 'pkg/__init__.py').write_text('')
+    source = ('class Clock:\n    @staticmethod\n    def monotonic():\n        return 1\n')
+    source += {
+        'conditional_repository': 'import time\nif True:\n    time = Clock\n',
+        'dynamic_repository': 'time = (lambda: Clock)()\n',
+        'dynamic_external': 'time = __import__("time")\n',
+        # An executable class body rebinds the module global; source alone cannot settle it.
+        'class_global_repository': 'import time\nclass Configure:\n    global time\n    time = Clock\n',
+    }[binding]
+    (root / 'pkg/mod.py').write_text(source)
+    (root / 'tests/test_adoption.py').write_text(
+        'from pkg.mod import time\ndef test_adopt():\n    assert time.monotonic() > 0\n')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'uncertain owner')
+    inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    ledger = ForcingRehearsals(ledger.worktree, inputs)
+    target = 'pkg.mod.time.monotonic'
+    forcing = {'symptom': 'The runtime guard decides uncertain ownership.',
+               'patches': [{'target': target, 'returns': 0}]}
+    result = ledger.run([NODE], forcing)
+    assert len(calls) == 2, 'uncertain static owners must reach the admitted runtime guard'
+    if binding != 'dynamic_external':
+        assert result['status'] == 'validated', result
+        return
+    refusal = {'phase': 'forcing_validation', 'target': target, 'resolved_module': 'time',
+               'owner_category': 'external_module', 'reason': 'outside_served_repository'}
+    assert result['status'] == 'refused' and result['refusal'] == refusal
+    assert result['forced']['tests'][0]['forcing_refusal'] == refusal
+    assert result['forced']['tests'][0]['outcome'] == 'error'
+    assert 'time' in result['message'] and 'outside_served_repository' in result['message']
+    model = FakeMessagesListChatModel(responses=[
+        AIMessage(content='', tool_calls=[{'name': 'rehearse_forcing', 'id': 'dynamic',
+                                          'args': {'tests': [NODE], 'forcing': forcing}}]),
+        AIMessage(content='malformed final after runtime ownership refusal'),
+    ])
+    monkeypatch.setattr(runtime, 'create_model', lambda _: model)
+    request = {'role': 'planner', 'worktree': str(root), 'inputs': inputs,
+               'operation': {'node': 1, 'generation': 0, 'kind': 'planning'},
+               'model': {'name': 'fixture', 'effort': 'high', 'budget_tokens': 32000}}
+    events = []
+    runtime.run(request, events.append)
+    reply = events[-1]['reply']
+    assert reply['kind'] == 'cant_meet' and target in reply['report']
+    assert 'outside_served_repository' in reply['report'] and 'time' in reply['report']
+    assert reply['forcing_rehearsals'][0]['refusal'] == refusal
+    assert len(calls) == 4, 'a new planner ledger runs once; the guard still refuses the global owner'
