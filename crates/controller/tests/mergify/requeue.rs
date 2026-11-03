@@ -15,7 +15,7 @@ fn open(
     controller
 }
 
-fn restricted_reply() -> String {
+pub(super) fn restricted_reply() -> String {
     let comment: Value = serde_json::from_str(include_str!(
         "../../../mergify/tests/fixtures/replies/command-restricted.json"
     ))

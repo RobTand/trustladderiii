@@ -395,6 +395,9 @@ impl Adapter {
             store: None,
         })
     }
+    pub fn with_clock(self, _clock: impl crate::clock::Clock + 'static) -> Self {
+        self
+    }
     pub fn with_repositories(mut self, repos: &[tl3_config::Repository]) -> Result<Self> {
         self.policies = repos
             .iter()
