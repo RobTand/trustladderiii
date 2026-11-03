@@ -20,6 +20,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 from langchain_core.outputs import ChatGenerationChunk
 from langchain_openai import ChatOpenAI
 
+from tl3_workers.evidence import forcing_capabilities, forcing_guidance
 from tl3_workers.contracts import read_json, read_reply, schema, validate
 from tl3_workers.roles import ROLES
 from tl3_workers.tools import Worktree, build_tools
@@ -120,9 +121,10 @@ run_prompt = ContextVar("run_prompt", default=None)
 
 def role_prompt(role):
     supplied = run_prompt.get()
-    if supplied is not None:
-        return supplied
-    return files("tl3_workers").joinpath("prompts", role.prompt).read_text()
+    prompt = supplied if supplied is not None else files("tl3_workers").joinpath("prompts", role.prompt).read_text()
+    if role.name in {"ingest", "audit", "planner"}:
+        prompt += "\n\n" + forcing_guidance()
+    return prompt
 
 
 def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None, context_size=150_000,
@@ -221,7 +223,10 @@ def _run(request, emit):
             agent = build_agent(model, role, worktree, context_size=request["inputs"].get(
                 "context_size", request["inputs"].get("forecast", {}).get("context_tokens", 150_000)),
                 control=control)
-            history = [HumanMessage(content=json.dumps(request["inputs"], ensure_ascii=False))]
+            model_inputs = request["inputs"]
+            if role.name in {"ingest", "audit", "planner"}:
+                model_inputs = {**model_inputs, "forcing_capabilities": forcing_capabilities()}
+            history = [HumanMessage(content=json.dumps(model_inputs, ensure_ascii=False))]
             reply = repaired(control, history, lambda: _run_agent(agent, history, emit),
                              lambda text: _checked(role, request["inputs"], read_reply(text)))
         else:

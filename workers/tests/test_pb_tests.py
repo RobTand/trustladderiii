@@ -90,6 +90,8 @@ def test_fake_submission_returns_outcomes_and_uses_only_test_action(submission, 
     assert result == expected
     args = json.loads((submission[1] / "submitted.json").read_text())
     assert "--detach" in args and "--anywhere" in args
+    environment = [args[index + 1] for index, arg in enumerate(args) if arg == "--env"]
+    assert environment == ["OMP_NUM_THREADS=1", "MKL_NUM_THREADS=1", "OPENBLAS_NUM_THREADS=1"]
     assert "--timeout-s" not in args
     assert args[args.index("--container-image") + 1] == IMAGE
     assert args[args.index("--progress-phase") + 1] == "tests=120"
