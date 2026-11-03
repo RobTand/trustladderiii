@@ -375,12 +375,12 @@ def base_file_selection(path, read_sources):
                 if node.name.startswith('test_') and 'pytest.fixture' in decorators:
                     return 'dynamic test fixture discovery'
                 if isinstance(node, ast.ClassDef):
-                    if prefix != path or node.bases or node.keywords or node.decorator_list:
+                    if (prefix != path or not node.name.startswith('Test')
+                            or node.bases or node.keywords or node.decorator_list):
                         return 'dynamic class discovery'
-                    if node.name.startswith('Test'):
-                        problem = scan(node.body, prefix + '::' + node.name)
-                        if problem:
-                            return problem
+                    problem = scan(node.body, prefix + '::' + node.name)
+                    if problem:
+                        return problem
                 elif node.name.startswith('test_'):
                     selector = prefix + '::' + node.name
                     Check('planned', Kind.REGRESSION, (selector,))
