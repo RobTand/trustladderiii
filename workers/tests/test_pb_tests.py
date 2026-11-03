@@ -2082,7 +2082,7 @@ def test_execution_cache_ignores_prose_and_irrelevant_order(rehearsal, tmp_path,
     if not validated:
         forcing['patches'][0]['delay_seconds'] = 0.001
     forcing['patches'].append({'target': 'publisher.Publisher.decide', 'returns': 1})
-    selectors = [NODE, NODE.replace('test_adopt', 'test_other')]
+    selectors = [NODE, NODE.replace('::test_adopt', '::test_other')]
     first = ledger.run(selectors, forcing)
     assert first['status'] == ('validated' if validated else 'refused')
     changed = deepcopy(forcing)
