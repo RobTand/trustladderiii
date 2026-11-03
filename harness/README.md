@@ -322,24 +322,33 @@ For forced checks, Checking refuses a head diff that references forcing internal
 including `tl3-forcing`, `node-*` journal globs, and harness forcing modules. It
 reports `forcing_tampered` with the file and matched reference before running
 tests. It scans changed lines, so unchanged base references do not trigger it.
-This is a conservative source tripwire, not protection against obfuscated
-imports, introspection, or deliberate monkeypatching. Calling the real target
-early to exhaust its delay budget can also resemble legitimate work. Independent
-review must reject changes that counteract the forcing.
+This tripwire is a cheap deterrent. Same-process code can defeat it and the
+journal checks through obfuscated imports, introspection, or monkeypatching.
+Independent review of the head diff is the defence against such interference.
+Calling the real target early to exhaust its delay budget can also resemble
+legitimate work; review must reject changes that counteract the forcing.
 
 Delayed targets keep counts, remaining budget, expected journal size, and a
 rolling content digest in anonymous memory shared across fork descendants.
-Each call checks the journal's inode and size, appends one record, and updates
-that state. The file never supplies the remaining budget. Calls read no journal
-content, including after the budget is spent. Teardown verifies the content once
-in sequential chunks. Processing is linear in the number of calls.
+The reporter holds the original journal descriptor open until node teardown,
+pinning its inode even when descendants close their inherited descriptors.
+Each call compares its open descriptor and the path's stat with that original
+identity, checks the size, appends one record, and updates shared state.
+Teardown compares the original descriptor's fstat with the path's stat, so
+replacement cannot hide behind inode reuse. The file never supplies the remaining
+budget. Calls read no journal content, including after the budget is spent.
+Teardown verifies the content once in sequential chunks. Processing is linear
+in the number of calls.
 
 Observed truncation, replacement, unexpected appends, or changed content make
 the node's tamper flag sticky. Even if the test catches an instrumentation
 exception, teardown reports `forcing_tampered: true`, an error outcome, and no
-hit evidence. Independent Checking also treats this as an error, never GREEN
-or assertion RED. Transient file changes undone before observation cannot be
-proven, and code that deliberately mutates the shared interpreter state remains
+hit evidence. Node cleanup suppresses filesystem close/unlink errors, including
+directory replacement, so they cannot mask the tamper diagnostic. Session
+cleanup attempts to remove remaining journal entries. Independent Checking also
+treats tampering as an error, never GREEN or assertion RED. Transient file changes
+undone before observation cannot be proven, and code that deliberately mutates
+the shared interpreter state remains
 outside this protection. Report custody is unchanged and is not tamper-proof.
 
 Fork accounting requires the supported Linux/glibc amd64 or arm64 test image.

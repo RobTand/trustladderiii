@@ -202,12 +202,11 @@ class DelayAccounting:
         self.lock = ProcessLock(self.memory)
         self.state.pack_into(self.memory, 128, 0, MAX_TOTAL_DELAY_SECONDS, 0,
                              *([0] * len(self.targets)), bytes(32))
-        descriptor, self.path = tempfile.mkstemp(prefix='node-', dir=directory)
-        try:
-            info = os.fstat(descriptor)
-            self.identity = info.st_dev, info.st_ino
-        finally:
-            os.close(descriptor)
+        # The reporter keeps this inode alive even if a descendant closes all
+        # inherited descriptors. Otherwise unlink/recreate can reuse its number.
+        self.descriptor, self.path = tempfile.mkstemp(prefix='node-', dir=directory)
+        info = os.fstat(self.descriptor)
+        self.identity = info.st_dev, info.st_ino
 
     def tampered(self, reason):
         self.memory[128 + 16] = 1
@@ -225,7 +224,9 @@ class DelayAccounting:
 
     def validate(self, descriptor, expected):
         info = os.fstat(descriptor)
-        if (info.st_dev, info.st_ino) != self.identity:
+        path_info = os.stat(self.path, follow_symlinks=False)
+        if ((info.st_dev, info.st_ino) != self.identity
+                or (path_info.st_dev, path_info.st_ino) != self.identity):
             self.tampered('journal was replaced')
         if info.st_size != expected:
             reason = 'incomplete' if info.st_size % self.record.size else 'invalid'
@@ -258,31 +259,32 @@ class DelayAccounting:
             with self.lock as abandoned:
                 size, remaining, counts, expected_digest = self.load(abandoned)
                 try:
-                    descriptor = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-                    try:
-                        self.validate(descriptor, size)
-                        offset, digest = 0, bytes(32)
-                        while offset < size:
-                            length = min(self.record.size * 4096, size - offset)
-                            data = os.pread(descriptor, length, offset)
-                            if len(data) != length:
-                                self.tampered('incomplete journal read')
-                            for start in range(0, length, self.record.size):
-                                digest = hashlib.sha256(digest + data[start:start + self.record.size]).digest()
-                            offset += length
-                        self.validate(descriptor, size)
-                        if digest != expected_digest:
-                            self.tampered('journal content differs from runner-written entries')
-                        self.state.pack_into(self.memory, 128, size, remaining, 2, *counts, digest)
-                        return dict(zip(self.targets, counts))
-                    finally:
-                        os.close(descriptor)
+                    self.validate(self.descriptor, size)
+                    offset, digest = 0, bytes(32)
+                    while offset < size:
+                        length = min(self.record.size * 4096, size - offset)
+                        data = os.pread(self.descriptor, length, offset)
+                        if len(data) != length:
+                            self.tampered('incomplete journal read')
+                        for start in range(0, length, self.record.size):
+                            digest = hashlib.sha256(digest + data[start:start + self.record.size]).digest()
+                        offset += length
+                    self.validate(self.descriptor, size)
+                    if digest != expected_digest:
+                        self.tampered('journal content differs from runner-written entries')
+                    self.state.pack_into(self.memory, 128, size, remaining, 2, *counts, digest)
+                    return dict(zip(self.targets, counts))
                 except OSError as error:
                     self.tampered(f'journal I/O failed: {type(error).__name__}')
         finally:
+            # Cleanup must not replace a tamper error before the reporter sees it.
+            try:
+                os.close(self.descriptor)
+            except OSError:
+                pass
             try:
                 os.unlink(self.path)
-            except FileNotFoundError:
+            except OSError:
                 pass
 
 
