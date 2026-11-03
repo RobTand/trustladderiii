@@ -308,8 +308,6 @@ pub struct Controller {
     /// The revision tl3d started at: failed postmortem runs before it never
     /// pause the runner (#486).
     postmortem_since: i64,
-    /// The runner paused after failed runs and said so once in the journal.
-    postmortem_paused: bool,
     /// Starting credit reserve by priority, P0 first (#416). Empty keeps the kernel's.
     priority_reserve: BTreeMap<u8, u8>,
     request_protection: Vec<(Repository, Vec<String>)>,
@@ -381,7 +379,6 @@ impl Controller {
             allowances: tl3_config::Allowances::default(),
             postmortems: None,
             postmortem_since: 0,
-            postmortem_paused: false,
             priority_reserve: BTreeMap::new(),
             request_protection: Vec::new(),
             delegated_attributions: Vec::new(),
@@ -1699,6 +1696,23 @@ impl Controller {
         event: Event,
         commit: &mut Commit,
     ) -> Result<()> {
+        // A dequeue receipt can precede queue admission, where the kernel
+        // intentionally ignores it. Only an accepted Resume releases that hold.
+        if let Event::Command {
+            node,
+            id,
+            command: tl3_kernel::Command::Resume,
+        } = event
+            && let Some(current) = world.nodes.get(node.0 as usize)
+            && id > current.last_cmd
+            && !current.phase.is_closed()
+        {
+            commit.rows.push(put(
+                "queue_resumes",
+                node.0.to_string(),
+                json!({"command": id}),
+            ));
+        }
         let closing_cause = match event {
             Event::Command {
                 node,
@@ -2117,6 +2131,10 @@ impl Controller {
                         diagnostic.render()
                     ));
                 }
+                if let Some(detail) = looks::queue_command_detail(&delivery, &class) {
+                    summary.push(' ');
+                    summary.push_str(&detail);
+                }
                 if class == "queue_unfinished"
                     && let Some(detail) = looks::queue_incident_detail(snapshot, node)?
                 {
@@ -2438,6 +2456,9 @@ impl Controller {
                 })),
             ));
         } else {
+            if incident.open && incident.signature.class == postmortems::PAUSED {
+                self.reset_postmortem_pause(snapshot, commit);
+            }
             incident.open = false;
             if !self.retry_notice(snapshot, &incident, commit)? {
                 self.resume_incident_look(snapshot, &incident, commit)?;

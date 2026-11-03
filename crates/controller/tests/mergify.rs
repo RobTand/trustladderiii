@@ -19,6 +19,8 @@ mod missing_checks;
 #[path = "mergify/requeue.rs"]
 mod requeue;
 mod support;
+#[path = "mergify/waiting_requeue.rs"]
+mod waiting_requeue;
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -2656,6 +2658,21 @@ fn legacy_intent_ignores_completed_at() {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--review-requeue") {
+        waiting_requeue::review();
+        let mut database = support::Database::start();
+        for mode in ["no-acceptance", "reply-restricted", "refusal", "permission"] {
+            requeue::scenario(&database.create(&format!("review_{mode}")), mode);
+        }
+        database.stop();
+        println!("7 Mergify scenarios passed; no skips; no live upstream calls");
+        return;
+    }
+    if std::env::args().nth(1).as_deref() == Some("--waiting-requeue") {
+        waiting_requeue::run();
+        println!("6 Mergify scenarios passed; no skips; no live upstream calls");
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("--ci-evidence") {
         let mut database = support::Database::start();
         for mode in ci_evidence::MODES {
@@ -2702,6 +2719,7 @@ fn main() {
         let mut database = support::Database::start();
         requeue::scenario(&database.create("requeue"), &mode);
         database.stop();
+        println!("1 Mergify scenarios passed; no skips; no live upstream calls");
         return;
     }
     if let Some(mode) = std::env::args()
@@ -3208,5 +3226,9 @@ fn main() {
         ));
     }
     database.stop();
+    waiting_requeue::run();
+    scenario_count += 6;
+    waiting_requeue::review();
+    scenario_count += 3;
     println!("{scenario_count} Mergify scenarios passed; no skips; no live upstream calls");
 }

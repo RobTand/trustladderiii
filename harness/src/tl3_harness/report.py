@@ -26,6 +26,7 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
         return dict.fromkeys(tests, Outcome.UNCOLLECTED)
     details = getattr(messages, "details", None)
     phases = {}
+    facts = {}
     selected = None
     collection_errors = {}
 
@@ -45,7 +46,11 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
         exception = record.get("exception", "")
         if not isinstance(exception, str) or len(exception) > 300:
             raise InvalidReport("invalid failure exception")
-        record = {key: value for key, value in record.items() if key not in ("message", "exception")}
+        exception_type = record.get('exception_type', '')
+        if not isinstance(exception_type, str) or len(exception_type) > 200:
+            raise InvalidReport('invalid phase exception type')
+        ignored = ('message', 'exception', 'exception_type') if record.get('event') == 'phase' else ('message', 'exception')
+        record = {key: value for key, value in record.items() if key not in ignored}
         match record:
             case {"event": "collection", "tests": list(names)} if set(record) in (
                     {"event", "tests"}, {"event", "tests", "saturation"}):
@@ -79,10 +84,13 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
                         or when == "teardown" and previous not in (["setup"], ["setup", "call"])):
                     raise InvalidReport("test phases are out of order")
                 phases[test, when] = (outcome, assertion, missing_added)
+                facts.setdefault(test, {'test': test})[when] = {
+                    'outcome': outcome, 'exception': exception_type, 'assertion': assertion}
                 if messages is not None and outcome == "failed" and message:
                     messages[test] = (messages.get(test, "") + "\n" + message).strip()[:1000]
                 if details is not None and outcome == "failed":
-                    details.setdefault(test, Failure(when, exception, message))
+                    if test not in details or when in ('setup', 'teardown'):
+                        details[test] = Failure(when, exception, message)
             case _:
                 raise InvalidReport("unknown report event")
     def case_outcome(test):
@@ -123,6 +131,8 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
                 messages[test] = messages[failing]
             if details is not None and failing in details:
                 details[test] = details[failing]
+            if hasattr(messages, 'phases') and matches:
+                messages.phases[test] = facts[failing or matches[0]]
     if exit_code != 0 and all(value == Outcome.PASSED for value in outcomes.values()):
         raise InvalidReport("pytest failed outside the named tests")
     if exit_code == 0 and any(value in (Outcome.ASSERTION, Outcome.ADDED_NAME, Outcome.ERROR) for value in outcomes.values()):

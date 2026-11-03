@@ -456,6 +456,10 @@ class Reporter:
             self.emit(event="collection", tests=[])
             pytest.exit(str(error), returncode=4)
         self.emit_collection_errors()
+        retained = set(selected)
+        dropped = [item for item in items if item not in retained]
+        if dropped:
+            config.hook.pytest_deselected(items=dropped)
         items[:] = selected
         self.emit(event="collection", tests=[item.nodeid for item in selected],
                   **({"saturation": saturation} if saturation else {}))
@@ -519,6 +523,8 @@ class Reporter:
         self.emit(event="phase", test=item.nodeid, when=report.when,
                   outcome=outcome, assertion=bool(assertion and outcome == "failed"), missing=missing,
                   exception=describe(call.excinfo.value) if report.failed and call.excinfo else "",
+                  exception_type=(type(call.excinfo.value).__module__ + '.' + type(call.excinfo.value).__qualname__)[:200]
+                  if report.failed and call.excinfo else "",
                   message=message[:1000])
         return report
 

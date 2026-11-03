@@ -108,7 +108,85 @@ struct TestResult {
     message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     head_forced: Option<Outcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    phases: Option<PhaseEvidence>,
 }
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PhaseEvidence {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    base: Option<PhaseRun>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    head: Option<PhaseRun>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    head_forced: Option<PhaseRun>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PhaseRun {
+    // A selector expanding to several cases retains its first failing case, or first passing case.
+    test: String,
+    setup: PhaseFact,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    call: Option<PhaseFact>,
+    teardown: PhaseFact,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PhaseFact {
+    outcome: PhaseOutcome,
+    exception: String,
+    assertion: bool,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum PhaseOutcome {
+    Passed,
+    Failed,
+    Skipped,
+}
+
+impl PhaseEvidence {
+    fn valid(&self, requested: &str) -> bool {
+        let runs = [
+            self.base.as_ref(),
+            self.head.as_ref(),
+            self.head_forced.as_ref(),
+        ];
+        runs.iter().any(Option::is_some)
+            && runs.into_iter().flatten().all(|run| {
+                let selected = run.test == requested
+                    || (!requested.contains("::")
+                        && run.test.starts_with(&format!("{requested}::")))
+                    || (!requested.contains('[')
+                        && run.test.starts_with(&format!("{requested}["))
+                        && run.test.ends_with(']'));
+                selected
+                    && run.test.len() <= 4 * 1024 * 1024
+                    && (!matches!(run.setup.outcome, PhaseOutcome::Passed) || run.call.is_some())
+                    && [
+                        ("setup", Some(&run.setup)),
+                        ("call", run.call.as_ref()),
+                        ("teardown", Some(&run.teardown)),
+                    ]
+                    .into_iter()
+                    .all(|(phase, fact)| {
+                        fact.is_none_or(|fact| {
+                            fact.exception.chars().count() <= 200
+                                && (matches!(fact.outcome, PhaseOutcome::Failed)
+                                    || fact.exception.is_empty())
+                                && (!fact.assertion
+                                    || phase == "call"
+                                        && matches!(fact.outcome, PhaseOutcome::Failed))
+                        })
+                    })
+            })
+    }
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 enum Outcome {
@@ -371,6 +449,18 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
                 .reviewed_sha
                 .as_ref()
                 .map(tl3_worktrees::CommitId::as_str)
+    {
+        return None;
+    }
+    if report
+        .results
+        .iter()
+        .flat_map(|result| &result.tests)
+        .any(|test| {
+            test.phases
+                .as_ref()
+                .is_some_and(|phases| !phases.valid(&test.test))
+        })
     {
         return None;
     }
