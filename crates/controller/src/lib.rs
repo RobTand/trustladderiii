@@ -2599,39 +2599,45 @@ impl Controller {
                         details,
                         plan.as_ref(),
                     );
-                    let repeated = snapshot
-                        .rows
-                        .iter()
-                        .filter(|row| row.table == "queue_facts")
-                        .any(|row| {
-                            row.value["repository"] == json!(&fact.repository)
-                                && row.value["number"] == fact.number
-                                && row.value["evidence"]["CiFailed"]["head"] == *head
-                                && row.value["evidence"]["CiFailed"]["infra"] == true
-                                && row.value["evidence"]["CiFailed"]["details"]["failed_tests"]
-                                    .as_array()
-                                    .is_some_and(|previous| {
-                                        previous.iter().any(|previous| {
-                                            details
-                                                .failed_tests
-                                                .iter()
-                                                .any(|test| previous["test"] == test.test)
+                    let repeated = details.complete
+                        && snapshot
+                            .rows
+                            .iter()
+                            .filter(|row| row.table == "queue_facts")
+                            .any(|row| {
+                                row.value["repository"] == json!(&fact.repository)
+                                    && row.value["number"] == fact.number
+                                    && row.value["evidence"]["CiFailed"]["head"] == *head
+                                    && row.value["evidence"]["CiFailed"]["infra"] == true
+                                    && row.value["evidence"]["CiFailed"]["details"]["decision"]
+                                        == "outside_change"
+                                    && row.value["evidence"]["CiFailed"]["details"]["failed_tests"]
+                                        .as_array()
+                                        .is_some_and(|previous| {
+                                            previous.iter().any(|previous| {
+                                                details
+                                                    .failed_tests
+                                                    .iter()
+                                                    .any(|test| previous["test"] == test.test)
+                                            })
                                         })
-                                    })
-                        });
-                    if outside || repeated {
+                            });
+                    if !details.complete {
+                        *infra = true;
+                    } else if outside || repeated {
                         *infra = outside && !repeated;
                     }
-                    details.decision = Some(
-                        if repeated {
-                            "repeated_test"
-                        } else if outside {
-                            "outside_change"
-                        } else {
-                            "upstream_classification"
-                        }
-                        .into(),
-                    );
+                    details.decision = Some(if !details.complete {
+                        findings::CiDecision::Indeterminate
+                    } else if repeated {
+                        findings::CiDecision::RepeatedTest
+                    } else if outside {
+                        findings::CiDecision::OutsideChange
+                    } else {
+                        findings::CiDecision::UpstreamClassification
+                    });
+                    ci_details = details.clone();
+                    failed_tests = ci_details.failed_tests.clone();
                 }
                 let value = json!(&fact);
                 if let Evidence::CiFailed { head, .. }
@@ -3122,6 +3128,7 @@ impl Controller {
                                 outside_paths: Vec::new(),
                                 outside_paths_total: 0,
                                 ci_checks: Vec::new(),
+                                ci_target_results: Vec::new(),
                             })?);
                         }
                         commit
@@ -3515,6 +3522,7 @@ impl Controller {
                 outside_paths,
                 outside_paths_total,
                 ci_checks,
+                ci_target_results: ci_details.target_results,
             };
             findings
                 .as_array_mut()

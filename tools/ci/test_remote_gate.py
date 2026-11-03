@@ -603,5 +603,18 @@ class PostMergeTests(unittest.TestCase):
                          'arm64-only')
 
 
+class Review606BindingTests(unittest.TestCase):
+    def test_review606_run_request_carries_only_public_ci_binding(self):
+        class Args:
+            mode, base, head, branch = 'pr', 'a' * 40, HEAD, 'feature'
+            repo, cpu, memory, timeout = 'https://github.com/RobTand/trustladderiii', 4, '8GB', 10
+        with patch.dict(os.environ, {'GITHUB_RUN_ID': '6', 'GITHUB_RUN_ATTEMPT': '2', 'GITHUB_JOB': 'bazel'}):
+            request = remote_gate.run_request(Args)
+        self.assertEqual(request['env'].get('TL3_CI_RUN_ID'), '6', 'remote invocation needs the exact GitHub run')
+        self.assertEqual(request['env'].get('TL3_CI_RUN_ATTEMPT'), '2')
+        self.assertEqual(request['env'].get('TL3_CI_CHECK_NAME'), 'Bazel')
+        self.assertNotIn('BUILDBUDDY_API_KEY', request['env'])
+
+
 if __name__ == '__main__':
     unittest.main()

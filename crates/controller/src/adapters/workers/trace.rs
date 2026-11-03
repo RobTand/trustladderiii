@@ -74,6 +74,7 @@ pub(super) fn start(directory: &Path, flusher: &Flusher) -> Result<Option<Child>
     };
     Ok(Some(
         command
+            .env_remove("BUILDBUDDY_API_KEY")
             .args(["-I", "-m", "tl3_workers.tracing", "flush"])
             .arg(&log)
             .stdin(file)

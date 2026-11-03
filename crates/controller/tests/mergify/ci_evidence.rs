@@ -1,6 +1,7 @@
 use super::*;
 
 pub(super) const MODES: &[&str] = &[
+    "indeterminate",
     "outside",
     "repeat",
     "changed",
@@ -98,7 +99,11 @@ fn failure(api: &Server, mode: &str, repeat: bool) {
     draft["user"]["login"] = json!("mergify[bot]");
     draft["head"]["ref"] = json!("mergify/merge-queue/main/pr-2660");
     draft["head"]["sha"] = gate["head"].clone();
-    let mut log = include_str!("../fixtures/mergify/pb2625/gate.log").to_owned();
+    let mut log = if mode == "indeterminate" {
+        include_str!("../fixtures/mergify/pb2625/gate.log").to_owned()
+    } else {
+        "FAILED tests/test_a_ready_gpu_action_is_not_starved_by_cpu_shards.py::test_queue - assertion mismatch\n".into()
+    };
     let mut files = json!([{"filename":gate["changed"][0]}]);
     match mode {
         "changed" => {
@@ -152,7 +157,7 @@ fn failure(api: &Server, mode: &str, repeat: bool) {
     let summary = if mode == "hostile" {
         "password=planted-password"
     } else {
-        "Bazel tests failed"
+        "Bazel tests failed: //tests:test_a_ready_gpu_action_is_not_starved_by_cpu_shards"
     };
     state.ci_fixture = Some(Fixture {
         pull: draft,
@@ -231,6 +236,69 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     let before = controller.world().unwrap().nodes[0];
     failure(&api, mode, false);
     observe(&mut controller, &api, &config);
+    if matches!(
+        mode,
+        "indeterminate"
+            | "unparsed"
+            | "hostile"
+            | "unknown"
+            | "mixed"
+            | "tl3"
+            | "aggregate"
+            | "overflow"
+            | "logs-unavailable"
+            | "truncated"
+            | "range-truncated"
+            | "ansi-mixed"
+            | "controls"
+            | "compile"
+            | "lint"
+    ) {
+        let after = controller.world().unwrap().nodes[0];
+        assert_ne!(
+            after.phase,
+            Phase::Making,
+            "incomplete target evidence must not start maker repair"
+        );
+        assert_eq!(after.round, before.round);
+        assert_eq!(after.credit.spent, before.credit.spent);
+        let facts = queue_facts(&mut controller);
+        assert_eq!(
+            facts.last().unwrap()["evidence"]["CiFailed"]["details"]["decision"],
+            "indeterminate"
+        );
+        assert!(
+            Store::open(settings)
+                .unwrap()
+                .worker_document("0", "maker_findings")
+                .unwrap()
+                .is_none(),
+            "no unsupported maker findings"
+        );
+        let details = &facts.last().unwrap()["evidence"]["CiFailed"]["details"];
+        assert!(!details["gaps"].as_array().unwrap().is_empty());
+        let text = details.to_string();
+        for secret in ["planted-password", "planted-bearer", "ghp_planted123456789"] {
+            assert!(!text.contains(secret), "must redact {secret}");
+        }
+        // Another incomplete result takes the existing incident path, never a work round.
+        drain(&mut controller);
+        assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+        assert_eq!(api.state.lock().unwrap().requeues, 1);
+        failure(&api, mode, true);
+        observe(&mut controller, &api, &config);
+        let after = controller.world().unwrap().nodes[0];
+        assert!(after.waiting_incident);
+        assert_eq!(after.round, before.round);
+        assert_eq!(after.credit.spent, before.credit.spent);
+        assert_eq!(
+            api.state.lock().unwrap().requeues,
+            1,
+            "no unbounded requeue loop"
+        );
+        println!("test ci_evidence_{mode} ... ok");
+        return;
+    }
     if matches!(
         mode,
         "outside" | "repeat" | "multiple-drafts" | "redelivery"

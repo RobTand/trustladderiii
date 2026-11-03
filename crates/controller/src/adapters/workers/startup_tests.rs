@@ -779,3 +779,21 @@ fn t604_ingest_and_audit_get_authoritative_per_repository_request_branch() {
         }
     }
 }
+
+#[test]
+fn review606_worker_credentials_exclude_controller_buildbuddy_access() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("model-fixture");
+    fs::write(&source, b"synthetic model material").unwrap();
+    let attempt = root.path().join("attempt");
+    fs::create_dir(&attempt).unwrap();
+    let mut request = json!({"key_file":source});
+    let mut command = Command::new("python3");
+    command.env("BUILDBUDDY_API_KEY", "synthetic-controller-only");
+    command.args(["-c", "import os; assert 'BUILDBUDDY_API_KEY' not in os.environ, 'controller BuildBuddy key crossed worker boundary'"]);
+    isolate_credentials(&attempt, &mut request, &mut command).unwrap();
+    assert!(
+        command.status().unwrap().success(),
+        "controller BuildBuddy access must stay out of workers"
+    );
+}

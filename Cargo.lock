@@ -2906,6 +2906,7 @@ dependencies = [
  "loom",
  "postgres",
  "postgresql_embedded",
+ "quick-xml",
  "rand 0.8.8",
  "regex",
  "reqwest 0.12.28",

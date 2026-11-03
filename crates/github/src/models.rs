@@ -107,6 +107,8 @@ pub struct CheckRun {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JobLogTail {
+    /// Bounded prefix retained for durable remote invocation identifiers.
+    pub prefix: String,
     pub text: String,
     pub truncated: bool,
 }
@@ -114,6 +116,17 @@ pub struct JobLogTail {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CheckSuiteId {
     pub id: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct WorkflowJob {
+    pub id: u64,
+    pub run_id: u64,
+    pub run_attempt: u64,
+    pub name: String,
+    pub head_sha: String,
+    pub status: String,
+    pub conclusion: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

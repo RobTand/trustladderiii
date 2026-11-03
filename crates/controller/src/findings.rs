@@ -25,7 +25,97 @@ pub struct QueueCiEvidence {
     #[serde(default)]
     pub complete: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub decision: Option<String>,
+    pub decision: Option<CiDecision>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub target_results: Vec<CiTargetResult>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retrievals: Vec<CiRetrieval>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gaps: Vec<CiEvidenceGap>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CiDecision {
+    Indeterminate,
+    RepeatedTest,
+    OutsideChange,
+    UpstreamClassification,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CiGapReason {
+    AccessUnavailable,
+    RedactionUnavailable,
+    WrongCiRun,
+    MissingInvocation,
+    WrongInvocation,
+    WrongRepository,
+    StaleSha,
+    IncompleteInvocation,
+    MissingTarget,
+    WrongTarget,
+    MissingArtifacts,
+    Unavailable,
+    MalformedResponse,
+    MalformedXml,
+    Oversized,
+    RetrievalLimit,
+    MissingDiagnostic,
+    IncompleteJobLog,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CiEvidenceGap {
+    pub check: u64,
+    pub reason: CiGapReason,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CiRetrieval {
+    pub check: u64,
+    pub method: String,
+    pub attempt: usize,
+    pub error: Option<CiGapReason>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CiNodeStatus {
+    Failed,
+    Errored,
+    Passed,
+    Skipped,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CiTestNode {
+    pub test: String,
+    pub status: CiNodeStatus,
+    pub message: String,
+}
+
+/// Public identifiers and sanitized content only. Transport objects never persist.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CiTargetResult {
+    pub repository: String,
+    pub check: u64,
+    #[serde(default)]
+    pub ci_run: u64,
+    #[serde(default)]
+    pub ci_run_attempt: u64,
+    #[serde(default)]
+    pub check_name: String,
+    pub sha: String,
+    pub parent_invocation: String,
+    pub invocation: String,
+    pub target: String,
+    pub shard: u64,
+    pub run: u64,
+    pub attempt: u64,
+    pub nodes: Vec<CiTestNode>,
+    pub excerpt: String,
 }
 
 #[derive(Serialize)]
@@ -51,6 +141,8 @@ pub(crate) struct Finding {
     pub outside_paths_total: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ci_checks: Vec<CiFailure>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ci_target_results: Vec<CiTargetResult>,
 }
 
 pub(crate) fn ci_report(checks: &[CiFailure], tests: &[FailedTest]) -> String {

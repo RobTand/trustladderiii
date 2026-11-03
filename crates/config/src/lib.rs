@@ -48,6 +48,8 @@ pub struct Config {
     pub planning: Planning,
     pub prismabuild: PrismaBuild,
     pub hindsight: Hindsight,
+    #[serde(default)]
+    pub buildbuddy: BuildBuddy,
     pub status: Status,
     #[serde(default)]
     pub console: Option<Console>,
@@ -582,6 +584,46 @@ impl Hindsight {
     }
 }
 
+/// Controller-only diagnostic access, with no environment or personal-key fallback.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuildBuddy {
+    pub api_key_file: Option<PathBuf>,
+}
+
+impl BuildBuddy {
+    pub fn diagnostic_key(&self) -> Result<Option<String>, Error> {
+        let Some(path) = &self.api_key_file else {
+            return Ok(None);
+        };
+        validate_secret_file("buildbuddy.api_key_file", path)?;
+        let metadata = fs::metadata(path).map_err(|source| Error::File {
+            field: "buildbuddy.api_key_file".into(),
+            path: path.clone(),
+            source,
+        })?;
+        if metadata.len() > 4096 {
+            return Err(invalid(
+                "buildbuddy.api_key_file",
+                "API key file exceeds its size limit",
+            ));
+        }
+        let key = fs::read_to_string(path).map_err(|source| Error::File {
+            field: "buildbuddy.api_key_file".into(),
+            path: path.clone(),
+            source,
+        })?;
+        let key = key.trim();
+        if key.is_empty() || !key.bytes().all(|byte| byte.is_ascii_graphic()) {
+            return Err(invalid(
+                "buildbuddy.api_key_file",
+                "must contain one nonempty API key",
+            ));
+        }
+        Ok(Some(key.to_owned()))
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Status {
@@ -1010,6 +1052,9 @@ impl Config {
         endpoint("hindsight.endpoint", &self.hindsight.endpoint)?;
         if let Some(path) = &self.hindsight.api_key_file {
             absolute("hindsight.api_key_file", path)?;
+        }
+        if let Some(path) = &self.buildbuddy.api_key_file {
+            absolute("buildbuddy.api_key_file", path)?;
         }
         if self.hindsight.bank.trim().is_empty() {
             return Err(invalid("hindsight.bank", "must not be empty"));
