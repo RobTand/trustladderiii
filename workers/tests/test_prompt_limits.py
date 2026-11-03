@@ -120,3 +120,12 @@ def test_no_prompt_carries_unresolved_merge_conflict_markers(name):
     # Audit and ingest shipped both sides of a #612/#607 merge conflict, markers and all.
     raw = files("tl3_workers").joinpath("prompts", name).read_text()
     assert not CONFLICT_MARKER.search(raw), f"{name} contains unresolved merge-conflict markers"
+
+
+def test_execution_prompt_terms_follow_progress_allowance_and_backstop():
+    budget = ROLES['maker'].exploration_budget
+    prompt = prompt_text('planner.md')
+    assert budget.tool_turns == 512
+    assert 'backstop' in prompt and 'no-progress window' in prompt
+    assert 'exceeds the backstop' in prompt
+    assert 'exceeds the usable allowance' not in prompt

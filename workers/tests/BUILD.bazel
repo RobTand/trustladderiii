@@ -904,3 +904,16 @@ tl3_py_test(
         "//workers/src",
     ],
 )
+
+tl3_py_test(
+    name = "test_progress_budget",
+    srcs = ["test_progress_budget.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        ":test_maker_budget",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)

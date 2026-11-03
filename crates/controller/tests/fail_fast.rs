@@ -448,8 +448,9 @@ fn stop_with(source: Source, operations: bool) -> Stopped {
                     (Source::Budget, Role::Make) => ("maker", json!({"kind": "cant_meet",
                         "report": "Final verification remains unfinished.",
                         "budget_exhaustion": {
-                            "kind": "execution_budget_exhausted", "dimension": "tool_turns",
-                            "tool_turns": {"used": 64, "allowed": 64},
+                            "kind": "execution_budget_exhausted", "dimension": "no_progress",
+                            "no_progress_window": 16, "no_progress_turns": 16, "last_progress_kind": "edit",
+                            "tool_turns": {"used": 83, "allowed": 512},
                             "input_tokens": {"used": 123456, "allowed": 6000000},
                             "operation": {"node": 0, "generation": 0, "kind": "make"},
                             "preserved_work": {"head": "a".repeat(40), "tree": "b".repeat(40)},
@@ -648,15 +649,16 @@ fn maker_budget_exhaustion_reaches_the_stop_report_and_operations_notice() {
     assert_eq!(stopped.node.review_stop, Some(ReviewStop::MakerCantMeet));
     let diagnostic = &stopped.record["findings"]["budget_exhaustion"];
     assert_eq!(diagnostic["kind"], "execution_budget_exhausted");
-    assert_eq!(diagnostic["tool_turns"]["used"], 64);
+    assert_eq!(diagnostic["tool_turns"]["used"], 83);
     assert_eq!(diagnostic["preserved_work"]["tree"], "b".repeat(40));
     assert!(stopped.record["text"].as_str().unwrap().contains("budget"));
     let notes = operations_notes(&stopped.posted);
     assert_eq!(notes.len(), 1);
     let text = notes[0].note.as_deref().unwrap();
     assert!(text.contains("execution_budget_exhausted"), "{text}");
+    assert!(text.contains("no-progress turns 16/16") && text.contains("last progress edit"), "{text}");
     assert!(
-        text.contains("64/64") && text.contains("123456/6000000"),
+        text.contains("83/512") && text.contains("123456/6000000"),
         "{text}"
     );
     assert!(
