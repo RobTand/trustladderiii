@@ -103,9 +103,9 @@ those marked for review. Return exactly one of these proposals:
   so the harness refuses an edit to a test they name. If the change edits only
   tests, such as a deflake that patches the flaky test, an ordinary
   demonstrating check can't show it, because the base run applies the leaf's
-  test edits and runs the same test. A change to tests alone needs helper target/observer evidence or a forced
-  reproduction (Q55, #393) on its demonstrating check. If neither mode applies,
-  return can't meet. State no_design_questions and lands_on_its_own
+  test edits and runs the same test. A change to tests alone needs a forced reproduction (Q55, #393)
+  when it edits a named flaky test. A deterministic helper fix can instead use
+  helper target/observer evidence. If neither mode applies, return can't meet. State no_design_questions and lands_on_its_own
   only when true. If either is false, return can't meet with the unresolved
   question. In slice one, avoid CI, Mergify and test configuration, including
   conftest.py, pytest settings, tox, nox and test scripts called by CI. Both
