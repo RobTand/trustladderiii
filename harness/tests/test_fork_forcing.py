@@ -213,7 +213,7 @@ def test_independent_checking_keeps_killed_child_assertion_classification(repo):
     assert outcomes == {'test_product.py::test_killed': Outcome.ASSERTION}
 
 
-@pytest.mark.parametrize('tamper', ['truncate', 'append', 'rewrite', 'replace'])
+@pytest.mark.parametrize('tamper', ['truncate', 'append', 'rewrite', 'replace', 'directory'])
 def test_journal_tampering_is_a_sticky_error_without_hit_evidence(repo, tamper):
     (repo / 'test_product.py').write_text('''
 from pathlib import Path
@@ -232,9 +232,12 @@ def test_tamper():
             stream.write(struct.pack('!Id', 1, 4))
     elif mode == 'rewrite':
         journal.write_bytes(b'x' * len(original))
-    else:
+    elif mode == 'replace':
         journal.unlink()
         journal.write_bytes(original)
+    else:
+        journal.unlink()
+        journal.mkdir()
     try:
         product.target(7, extra=2)
     except Exception:
@@ -251,6 +254,38 @@ def test_tamper():
     assert item.get('forcing_tampered') is True, item
     assert item['message'].startswith('forcing_tampered:'), item
     assert item['target_hits'] == {}, item
+
+
+def test_replaced_journal_inode_stays_pinned_until_tamper_reporting(tmp_path, monkeypatch):
+    created = []
+    original = runner.tempfile.mkstemp
+
+    def remember_descriptor(*args, **kwargs):
+        result = original(*args, **kwargs)
+        created.append(result[0])
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(runner.tempfile, 'mkstemp', remember_descriptor)
+        accounting = runner.DelayAccounting(tmp_path, [TARGET])
+    descriptor, = created
+    try:
+        pinned = os.fstat(descriptor)
+    except OSError as error:
+        pytest.fail(f'original journal descriptor was closed, permitting inode reuse: {error}')
+    accounting.enter(TARGET, 4)
+    journal = Path(accounting.path)
+    contents = journal.read_bytes()
+    journal.unlink()
+    assert os.fstat(descriptor).st_nlink == 0
+    journal.write_bytes(contents)
+    replacement = journal.stat()
+    assert (replacement.st_dev, replacement.st_ino) != (pinned.st_dev, pinned.st_ino)
+    with pytest.raises(runner.ForcingError, match='forcing_tampered:.*replaced'):
+        accounting.finish()
+    assert not journal.exists()
+    with pytest.raises(OSError):
+        os.fstat(descriptor)
 
 
 def test_truncating_a_fork_childs_entries_cannot_hide_them_from_parent(tmp_path):
