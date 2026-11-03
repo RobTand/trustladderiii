@@ -578,9 +578,13 @@ def runner_entrypoint(main):
         del sys.argv[1]
         return main()
     directory = Path(os.environ['BUILDBUDDY_ARTIFACTS_DIRECTORY'])
+    environment = child_env()
+    for key in ('TL3_CI_RUN_ID', 'TL3_CI_RUN_ATTEMPT', 'TL3_CI_CHECK_NAME'):
+        if key in os.environ:
+            environment[key] = os.environ[key]
     try:
         status = subprocess.run([sys.executable, sys.argv[0], '--runner-child', *sys.argv[1:]],
-                                env=child_env()).returncode
+                                env=environment).returncode
     finally:
         scan_status = scan_artifacts(directory)
     return scan_status or status

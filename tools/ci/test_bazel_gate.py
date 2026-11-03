@@ -517,7 +517,18 @@ class Review606BindingTests(unittest.TestCase):
     def test_review606_bazel_receives_the_exact_ci_binding_metadata(self):
         arguments = ['bazel_gate.py', 'pr', '--base', 'a' * 40, '--head', 'b' * 40]
         binding = {'TL3_CI_RUN_ID': '6', 'TL3_CI_RUN_ATTEMPT': '2', 'TL3_CI_CHECK_NAME': 'Bazel'}
-        with patch.dict(os.environ, binding), patch.object(bazel_gate.sys, 'argv', arguments), \
+        with patch.dict(os.environ, {**binding, 'BUILDBUDDY_ARTIFACTS_DIRECTORY': '/synthetic',
+                                    'BUILDBUDDY_API_KEY': 'synthetic-controller-only'}), \
+                patch.object(bazel_gate.sys, 'argv', arguments), \
+                patch.object(bazel_gate, 'scan_artifacts', return_value=0), \
+                patch.object(bazel_gate.subprocess, 'run') as run:
+            run.return_value.returncode = 0
+            self.assertEqual(bazel_gate.runner_entrypoint(lambda: 0), 0)
+        environment = run.call_args.kwargs['env']
+        self.assertNotIn('BUILDBUDDY_API_KEY', environment)
+        for key, value in binding.items():
+            self.assertEqual(environment.get(key), value, 'supervisor must retain public CI binding')
+        with patch.dict(os.environ, environment, clear=True), patch.object(bazel_gate.sys, 'argv', arguments), \
                 patch.object(bazel_gate, 'Workspace'), patch.object(bazel_gate, 'write_result'), \
                 patch.object(bazel_gate, 'gate_pr', return_value={'verdicts': {'rust': 'pass'}}) as gate:
             self.assertEqual(bazel_gate.main(), 0)
