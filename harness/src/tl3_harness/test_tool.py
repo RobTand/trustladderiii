@@ -38,6 +38,22 @@ def infrastructure(message, origin=None):
     return result
 
 
+def bounded(result):
+    # Leave room for worker receipts without losing ownership or execution details.
+    while len(json.dumps(result).encode()) > SUMMARY_BYTES - 2048:
+        if result.get("selectors"):
+            result["selectors"].pop()
+            result["selectors_omitted"] = result.get("selectors_omitted", 0) + 1
+        elif result["tests"]:
+            result["tests"].pop()
+        elif any(run.get("failed") for run in result.get("runs", ())):
+            next(run for run in reversed(result["runs"]) if run.get("failed"))["failed"].pop()
+        else:
+            break
+        result["note"] = "Truncated: selectors, test entries or run failure IDs were cut. Totals include all results."
+    return result
+
+
 class Summary:
     def __init__(self):
         self.result = {"status": "completed", "tests": [],
@@ -149,7 +165,7 @@ def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=No
 
 def run_current(tree, container, tests, parallel=0, summary=None, *, forcing=None):
     try:
-        return _run_current(tree, container, tests, parallel, summary, forcing=forcing)
+        return bounded(_run_current(tree, container, tests, parallel, summary, forcing=forcing))
     except ExecutionFailure as failure:
         if failure.outcome == ExecutionOutcome.TEST_TIMEOUT:
             # Discard partial passes: a run that cannot finish has no GREEN verdict.
@@ -162,17 +178,7 @@ def run_current(tree, container, tests, parallel=0, summary=None, *, forcing=Non
             result = infrastructure(failure.message(), origin=(
                 "test_run" if failure.outcome == ExecutionOutcome.UNKNOWN_INCOMPLETE else None))
         result.update(execution=failure.as_json(), selectors=list(tests))
-        # Keep diagnostics and counts even for a selection with very long node IDs.
-        while len(json.dumps(result).encode()) > SUMMARY_BYTES - 2048:
-            if result["selectors"]:
-                result["selectors"].pop()
-                result["selectors_omitted"] = result.get("selectors_omitted", 0) + 1
-            elif result["tests"]:
-                result["tests"].pop()
-                result["note"] = "Truncated: timeout test entries were cut. Totals include all results."
-            else:
-                break
-        return result
+        return bounded(result)
 
 
 def run(tree, container, tests, *, repeat=1, parallel=0, forcing=None):
@@ -191,7 +197,7 @@ def run(tree, container, tests, *, repeat=1, parallel=0, forcing=None):
         if result["status"] != "completed" or result.get("execution", {}).get("outcome") == "test_timeout":
             # No verdict from this run, so none for the repeat.
             result["message"] = f"Run {number} of {repeat}: {result['message']}"
-            return {**result, "repeat": repeat, **extra, "runs": runs}
+            return bounded({**result, "repeat": repeat, **extra, "runs": runs})
         failed = [item["test"] for item in outcomes.outcomes.values() if item["outcome"] in ("failed", "error")]
         runs.append({"run": number, "status": "completed", "totals": result["totals"],
                      "failed": failed[:RUN_FAILURES]})
@@ -236,7 +242,7 @@ def main():
             result.update(forcing=forcing.as_json(), selectors=json.loads(args.selectors))
     except (OSError, RuntimeError, ValueError):
         result = infrastructure("Test infrastructure failed before a complete report was available.")
-    print(PREFIX + json.dumps(result), flush=True)
+    print(PREFIX + json.dumps(bounded(result)), flush=True)
 
 
 if __name__ == "__main__":
