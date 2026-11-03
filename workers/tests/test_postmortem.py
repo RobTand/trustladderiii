@@ -443,3 +443,73 @@ def test_drop_reasons_follow_the_notes_within_their_cap(tmp_path, model, monkeyp
     assert notes.startswith("The judge's note. ")
     assert notes.endswith(f"Dropped recommendation 1, {MAKER_PROMPT}: before appears 0 times.")
     validate("postmortem-reply", reply)
+
+
+@pytest.fixture
+def contract_boundary(tmp_path, monkeypatch):
+    """Failure-shaped judge outputs, without reading production trace content."""
+    from mlflow.entities.assessment import Feedback
+
+    traces = FakeTraces([source_trace("maker", 1_000_000_000, {})])
+    monkeypatch.setattr(postmortem, "SOURCE", lambda settings: traces)
+    monkeypatch.setattr(judges, "grade_judges", lambda *args: {
+        "correctness": lambda **kwargs: Feedback(value=4, rationale="fixture")})
+    values, calls = [], []
+
+    def judge(prompt, model):
+        def invoke(**kwargs):
+            calls.append(prompt)
+            value = values[min(len(calls) - 1, len(values) - 1)]
+            return value if isinstance(value, Feedback) else Feedback(value=value)
+        return invoke
+
+    monkeypatch.setattr(judges, "postmortem_judge", judge)
+    return request(tmp_path), traces, values, calls
+
+
+@pytest.mark.parametrize("bad, diagnostic", [
+    (dict(written(0), went_wrong=["The maker skipped a test."]), "schema validation failed: type"),
+    ("{broken JSON", "JSON parse failure"),
+    (dict(written(0), recommendations=[dict(RECOMMENDATION, operation="execute")]),
+     "recommendation contract failure"),
+])
+def test_invalid_output_never_becomes_successful_work(contract_boundary, bad, diagnostic):
+    document, traces, values, calls = contract_boundary
+    values.append(bad)
+    with pytest.raises(ValueError) as error:
+        run(document)
+    message = tracing.failure_tags(error.value)["failure_message"]
+    assert diagnostic in message
+    assert len(calls) == 2, "one bounded correction, shared with ordinary roles"
+    assert not traces.logged
+    from pathlib import Path
+    workdir = Path(document["worktree"])
+    assert not (workdir / "judged.json").exists()
+    assert not (workdir / "reply.json").exists()
+    assert not (workdir / "assessments.json").exists()
+
+
+def test_wrong_type_is_repaired_before_checkpoint_and_assessment(contract_boundary):
+    document, traces, values, calls = contract_boundary
+    values.extend([dict(written(0), went_wrong=["The maker skipped a test."]), written(0)])
+    result, _ = run(document)
+    validate("postmortem-reply", result)
+    assert result["postmortem"]["went_wrong"] == "The maker skipped a test."
+    assert len(calls) == 2
+    assert len(traces.logged) == 1
+    assert run(document)[0] == result
+    assert len(traces.logged) == 1
+
+
+def test_feedback_failure_names_stage_without_repair_or_provider_text(contract_boundary):
+    from mlflow.entities.assessment import Feedback
+
+    document, traces, values, calls = contract_boundary
+    values.append(Feedback(value=None, error=RuntimeError(f"provider {KEY}")))
+    with pytest.raises(ValueError) as error:
+        run(document)
+    tags = tracing.failure_tags(error.value)
+    assert tags["failure_message"] == "postmortem judge failure"
+    assert KEY not in json.dumps(tags)
+    assert len(calls) == 1
+    assert not traces.logged
