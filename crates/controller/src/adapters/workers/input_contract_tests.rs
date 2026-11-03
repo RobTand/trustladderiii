@@ -5,11 +5,7 @@ use tl3_kernel::{Command as KernelCommand, Fact, NodeId, Notice, Phase, Priority
 fn materials(
     f: &Repo,
     config: &tl3_config::Config,
-) -> (
-    tokio::runtime::Runtime,
-    wiremock::MockServer,
-    crate::production::Materials,
-) {
+) -> (wiremock::MockServer, crate::production::Materials) {
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
         matchers::{method, path},
@@ -84,7 +80,6 @@ fn materials(
         ],
     );
     (
-        runtime,
         server,
         crate::production::Materials::fixture_client(config, client),
     )
@@ -251,7 +246,7 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
     config.store = db.create("all_input_contracts");
     config.workers.runs = f.root.path().join("runs");
     config.worktrees_root = f.root.path().join("worktrees");
-    let (_runtime, _upstream, provider) = materials(&f, &config);
+    let (_upstream, provider) = materials(&f, &config);
     let registry = crate::adapters::simulation(&f.root.path().join("fakes")).unwrap();
     let mut controller = crate::Controller::open(
         Store::open(&config.store).unwrap(),
