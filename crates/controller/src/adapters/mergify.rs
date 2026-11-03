@@ -854,7 +854,8 @@ impl Adapter {
         }
         if let Some(requeue) = baseline.as_ref().and_then(|attempt| attempt.requeue) {
             return Ok(
-                if matches!(requeue, Requeue::Sending)
+                if self.has_recovery(delivery)?
+                    || matches!(requeue, Requeue::Sending)
                     || self.dequeue_pending(delivery, &state, &issue)?
                 {
                     Reconciliation::Pending
