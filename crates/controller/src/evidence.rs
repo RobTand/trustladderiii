@@ -609,4 +609,36 @@ mod tests {
         };
         assert_eq!(unmet_goals(Some(&facts)), vec!["Publish proof"]);
     }
+    #[test]
+    fn published_proof_is_valid_json_and_preserves_verifiable_hashes() {
+        let (snapshot, mut delivery) = fixture();
+        let head = "a".repeat(40);
+        let action = "b".repeat(64);
+        delivery.evidence = Some(
+            capture(
+                &snapshot,
+                &Commit::new("publish", json!({}), &snapshot),
+                &delivery,
+            )
+            .unwrap(),
+        );
+        delivery.head_sha = Some(head.clone());
+        let check = &mut delivery.evidence.as_mut().unwrap().checks[0];
+        check["head_sha"] = json!(head);
+        check["action_key"] = json!(action);
+        check["diagnostic"] = json!("password=secret-fixture-value");
+        let body = publication(&delivery, "Publish red/green evidence in the PR body").unwrap();
+        let data = body
+            .split_once("```json\n")
+            .unwrap()
+            .1
+            .split_once("\n```")
+            .unwrap()
+            .0;
+        let proof: Value =
+            serde_json::from_str(data).expect("proof must remain valid JSON after redaction");
+        assert_eq!(proof["head_sha"], head);
+        assert_eq!(proof["checks"][0]["action_key"], action);
+        assert!(!body.contains("secret-fixture-value"));
+    }
 }
