@@ -60,7 +60,7 @@ fn fixture_repo(root: &Path, outside: bool) -> (PathBuf, String, String) {
     fs::write(repo.join("value.py"), "def value(): return 1\n").unwrap();
     fs::write(
         repo.join("test_value.py"),
-        "from value import value\ndef test_value(): assert value() == 2\n",
+        "from value import value\ndef test_value(): assert value() == 2, 'old value'\n",
     )
     .unwrap();
     git(&repo, &["add", "."]);
@@ -131,7 +131,9 @@ fn run(root: &Path, outside: bool) -> Delivery {
                 kind: Kind::Demonstrating,
                 tests: vec!["test_value.py::test_value".into()],
                 forcing: None,
-                proof: None,
+                proof: Some(
+                    serde_json::json!({"subjects":[], "observer_support":[], "red_message":"old value"}),
+                ),
                 declared_symptom: None,
             }],
         }),

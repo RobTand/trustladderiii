@@ -87,16 +87,15 @@ def _stage(worktree, root, base_sha=None, *, action="test_tool", checks=(), forc
         base = root / 'base-source'
         export(worktree.test_checkout, base_sha, base)
         proving = [check for check in checks if check['kind'] in ('demonstrating', 'reproducing')]
-        declarations = [Proof.parse(check['proof']) for check in proving if check.get('proof')]
-        tests = tuple(dict.fromkeys(test for check in proving for test in check['tests']))
-        proof = (Proof(tuple(dict.fromkeys(unit for item in declarations for unit in item.subjects)),
-                       tuple(dict.fromkeys(unit for item in declarations for unit in item.observer_support)),
-                       declarations[0].red_message) if declarations else None)
-        # Planner rehearsal has no edited head observer yet. The trusted pytest
-        # outcome observes the original test subject, through this same path.
-        projection_forcing = forcing or next((Forcing.parse(item['forcing']) for item in proving if item.get('forcing')), None)
-        projection_symptom = declared_symptom or next((item['declared_symptom'] for item in proving if item.get('declared_symptom')), None)
-        check = Check('development proof' if proving or forcing or declared_symptom else ALWAYS_CHECK, Kind.DEMONSTRATING if proving or forcing or declared_symptom else Kind.REGRESSION,
+        if len(proving) > 1:
+            raise ProofRefusal('stage one check at a time; each check has its own source partition')
+        item = proving[0] if proving else {}
+        proof = Proof.parse(item['proof']) if item.get('proof') else None
+        tests = tuple(item.get('tests', ()))
+        projection_forcing = forcing or (Forcing.parse(item['forcing']) if item.get('forcing') else None)
+        projection_symptom = declared_symptom or item.get('declared_symptom')
+        check = Check(item.get('name', 'development proof') if proving or forcing or declared_symptom else ALWAYS_CHECK,
+                      Kind(item.get('kind', 'demonstrating')) if proving or forcing or declared_symptom else Kind.REGRESSION,
                       tests or selected or ('_tl3_unselected.py::test_outcome',), projection_forcing, proof, projection_symptom)
         receipt = assemble_proof(base, head if proving else base, checkout, check, configuration(base) if proving else {})
         (root / 'proof.json').write_text(json.dumps(receipt, sort_keys=True))
@@ -256,7 +255,7 @@ def _failure_receipt(ending, settings):
     return receipt
 
 
-def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None, forcing=None, timeout_seconds=None, declared_symptom=None):
+def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None, forcing=None, timeout_seconds=None, declared_symptom=None, _checks=None):
     """Bind settings from role inputs, directly or via worktree.test_settings."""
     settings = settings if settings is not None else getattr(worktree, "test_settings", None)
     emit = emit if emit is not None else getattr(worktree, "progress_emit", lambda event: None)
@@ -325,7 +324,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                 return infrastructure("The role did not supply a check base and checkout.")
             with tempfile.TemporaryDirectory(prefix="tl3-test-input-") as temporary:
                 root = Path(temporary)
-                checks = [check for check in getattr(worktree, 'test_checks', ())
+                checks = [check for check in (getattr(worktree, 'test_checks', ()) if _checks is None else _checks)
                           if any(selects(selector, test) or selects(test, selector)
                                  for selector in selected for test in check['tests'])]
                 tree = _stage(worktree, root, base_sha, checks=checks, forcing=forcing,
@@ -413,6 +412,37 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
     def run_tests(tests: list[str] | None = None, base: bool = False, repeat: int = 1,
                   parallel: int = 0, priority: int | None = None) -> dict:
         """Run pytest; compare failures with untouched base, never demonstrating proof."""
+        if base and _checks is None:
+            selected = _selectors([] if tests is None else tests)
+            checks = [check for check in getattr(worktree, 'test_checks', ())
+                      if not selected or any(selects(selector, test) or selects(test, selector)
+                             for selector in selected for test in check['tests'])]
+            if checks:
+                groups = []
+                for check in checks:
+                    nodes = [test for test in check['tests'] if not selected or any(selects(selector, test) or selects(test, selector) for selector in selected)]
+                    symptom = check.get('declared_symptom')
+                    tool = make_test_tool(worktree, settings, emit=emit, timeout_seconds=timeout_seconds,
+                                          forcing=Forcing.parse(check['forcing']) if check.get('forcing') else None,
+                                          declared_symptom=symptom, _checks=({**check, 'tests': nodes},))
+                    observed = tool(nodes, base=True, repeat=symptom['repeat'] if symptom else repeat,
+                                    parallel=symptom['parallel'] if symptom else parallel, priority=priority)
+                    groups.append({'check': check.get('name', 'planned check'), **observed})
+                # Broad selectors also ask for tests outside the plan. Run those on
+                # untouched base, separately from the declared proof campaigns.
+                remainder = [selector for selector in selected
+                             if not any(selects(test, selector) for check in checks for test in check['tests'])]
+                if remainder or not selected:
+                    groups.append({'check': 'unplanned base tests', **make_test_tool(worktree, settings, emit=emit,
+                        timeout_seconds=timeout_seconds, _checks=())(remainder, base=True, repeat=repeat, parallel=parallel, priority=priority)})
+                if len(groups) == 1:
+                    return {key: value for key, value in groups[0].items() if key != 'check'}
+                status = next((item['status'] for item in groups if item['status'] != 'completed'), 'completed')
+                return bounded({'status': status, 'groups': groups,
+                                'tests': [test for item in groups for test in item['tests']],
+                                'receipts': [receipt for item in groups for receipt in item.get('receipts', [])],
+                                'totals': {outcome: sum(item['totals'][outcome] for item in groups) for outcome in OUTCOMES},
+                                'note': 'Each group runs with its own declared source partition and execution settings.'}, limit=SUMMARY_BYTES)
         result = run(tests, base, repeat, parallel, priority)
         if (base or result["status"] != "completed"
                 or result.get("execution", {}).get("outcome") == ExecutionOutcome.TEST_TIMEOUT):
@@ -421,7 +451,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
         if not failed:
             return result
         # One plain base run says whether a failure is new; it keeps the request's priority.
-        baseline = run([item["test"] for item in failed], True, priority=priority)
+        baseline = run_tests([item["test"] for item in failed], True, priority=priority)
         result["base"] = {key: value for key, value in baseline.items() if key != "tests"}
         outcomes = {item["test"]: item for item in baseline["tests"]}
         for item in failed:

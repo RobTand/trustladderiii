@@ -9,7 +9,7 @@ import sys
 import pytest
 
 from tl3_harness.execution import Container, Progress, container_command, run_checks
-from tl3_harness.model import Check, Custody, Kind, Outcome, Verdict, judge
+from tl3_harness.model import Check, Proof, FailureNotes, Custody, Kind, Outcome, Verdict, judge
 from tl3_harness.report import InvalidReport, decode, parse
 from tl3_harness.proof import assemble_proof
 from tl3_harness.trees import added_names, export, git, changed_configuration
@@ -33,7 +33,7 @@ def trees(tmp_path):
     return base, head, demo
 
 
-def run(tree, names, additions=frozenset()):
+def run(tree, names, additions=frozenset(), *, notes=None):
     tests = tuple("tests/test_product.py::" + name for name in names)
     env = {"PATH": os.environ["PATH"], "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
     child = subprocess.run([sys.executable, "-I", "-B", str(RUNNER), json.dumps(tests), str(tree)],
@@ -41,7 +41,7 @@ def run(tree, names, additions=frozenset()):
     records = [decode(line) for line in child.stdout.splitlines()]
     missing = {test for test in tests if not (tree / test.split("::")[0]).exists()}
     try:
-        return tests, parse(records, tests, missing, child.returncode, additions)
+        return tests, parse(records, tests, missing, child.returncode, additions, messages=notes)
     except InvalidReport:
         return tests, dict.fromkeys(tests, Outcome.NO_REPORT)
 
@@ -65,9 +65,10 @@ def run(tree, names, additions=frozenset()):
 def test_real_pytest_verdicts(trees, kind, name, expected):
     base, head, demo = trees
     additions = added_names(base, head, ["tests/*.py"])
-    tests, before = run(demo if kind == Kind.DEMONSTRATING else base, [name], additions)
+    notes = FailureNotes()
+    tests, before = run(demo if kind == Kind.DEMONSTRATING else base, [name], additions, notes=notes)
     _, after = run(head, [name])
-    result = judge(Check(name, kind, tests), before, after)
+    result = judge(Check(name, kind, tests, proof=Proof((), (), "old product value") if kind in (Kind.DEMONSTRATING, Kind.REPRODUCING) else None), before, after, base_notes=notes)
     assert result.verdict == expected, asdict(result)
     assert result.custody == Custody.IN_PROCESS
     assert result.tests[0].pre_existing == (name == "test_pre_existing")
@@ -252,9 +253,10 @@ def test_reproducing_verdicts(trees, name, expected):
     kind = next((kind for kind in Kind if kind.value == "reproducing"), None)
     assert kind is not None, "the harness must judge reproducing checks"
     reviewed, fixed, reproducing = trees
-    tests, before = run(reproducing, [name], added_names(reviewed, fixed, ["tests/*.py"]))
+    notes = FailureNotes()
+    tests, before = run(reproducing, [name], added_names(reviewed, fixed, ["tests/*.py"]), notes=notes)
     _, after = run(fixed, [name])
-    result = judge(Check(name, kind, tests), before, after)
+    result = judge(Check(name, kind, tests, proof=Proof((), (), "old product value") if kind in (Kind.DEMONSTRATING, Kind.REPRODUCING) else None), before, after, base_notes=notes)
     assert result.verdict == expected, asdict(result)
     assert not result.tests[0].pre_existing
 

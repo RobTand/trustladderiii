@@ -64,6 +64,40 @@ def overlaps(left, right):
     return left == right or left.startswith(right + '::') or right.startswith(left + '::')
 
 
+def written_bindings(source, namespace=()):
+    """Static writes in module/class namespaces, including explicit global writes."""
+    writes = set()
+    def visit(table, scope, function=False):
+        for symbol in table.get_symbols():
+            if symbol.is_assigned() or symbol.is_imported():
+                if symbol.is_declared_global():
+                    writes.add((symbol.get_name(),))
+                elif not function:
+                    writes.add((*scope, symbol.get_name()))
+        for child in table.get_children():
+            is_class = child.get_type() == 'class' and not function
+            visit(child, (*scope, child.get_name()) if is_class else scope, not is_class)
+    visit(symtable.symtable(textwrap.dedent(source), '<proof>', 'exec'), namespace)
+    def globals_call(node):
+        return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'globals'
+    for node in ast.walk(ast.parse(textwrap.dedent(source))):
+        if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)) and globals_call(node.value):
+            writes.add((node.slice.value,) if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str) else ('*',))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and globals_call(node.func.value):
+            if node.func.attr in ('update', '__setitem__', '__delitem__', 'setdefault', 'pop', 'popitem', 'clear'):
+                writes.update((keyword.arg,) for keyword in node.keywords if keyword.arg)
+                if any(keyword.arg is None for keyword in node.keywords):
+                    writes.add(('*',))
+                if node.func.attr == 'update' and all(isinstance(arg, ast.Dict) for arg in node.args):
+                    for arg in node.args:
+                        writes.update((key.value,) if isinstance(key, ast.Constant) and isinstance(key.value, str) else ('*',) for key in arg.keys)
+                elif node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                    writes.add((node.args[0].value,))
+                elif node.args or node.func.attr in ('clear', 'popitem'):
+                    writes.add(('*',))
+    return writes
+
+
 def conftest_subjects(base, head, plan):
     """Only explicitly partitioned fixture source escapes the configuration guard."""
     allowed = set()
@@ -93,7 +127,7 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
     subjects = declaration.subjects if declaration else ()
     support = declaration.observer_support if declaration else ()
     outcome_observer = (check.kind not in (Kind.DEMONSTRATING, Kind.REPRODUCING)
-                        or check.declared_symptom is not None or check.forcing is not None and declaration is None)
+                        or check.declared_symptom is not None or check.forcing is not None and not subjects)
     observers = () if outcome_observer else tuple(dict.fromkeys(test.split('[', 1)[0] for test in check.tests))
     for subject in subjects:
         if any(overlaps(subject, item) for item in (*support, *observers)):
@@ -128,6 +162,15 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
             target.write_text(new)
             continue
         replacements, grafts, required_texts = [], [], []
+        protected = written_bindings(old)
+        protected.update(tuple(subject.split('::')[1:]) for subject in subjects if subject.split('::')[0] == name)
+        def guard(text, item, namespace=()):
+            permitted = {tuple(item.split('::')[1:])} if item in observers else set()
+            written = written_bindings(text, namespace)
+            conflict = (written & protected) - permitted
+            if conflict or ('*',) in written:
+                symbol = '::'.join(sorted(conflict)[0]) if conflict else 'globals'
+                raise ProofRefusal('observer/support graft would rebind a base or subject binding', name, symbol)
         for item in requested:
             text, _ = source_unit(new, item)
             required_texts.append(text)
@@ -141,6 +184,7 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
             except ProofRefusal:
                 span = None
                 parts = item.split('::')
+                namespace = tuple(parts[1:-1])
                 if len(parts) > 2:
                     # A new class carries the method's class and fixture context.
                     parent = '::'.join(parts[:2])
@@ -151,15 +195,19 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
                             raise ProofRefusal('new observer class would carry a declared subject onto base', name, parts[1])
                         text, _ = source_unit(new, parent)
                         required_texts.append(text)
+                        namespace = ()
                     else:
                         _, parent_span = source_unit(old, parent)
+                        guard(text, item, namespace)
                         replacements.append((parent_span[1], parent_span[1], '\n' + text))
                         continue
                 elif parts[-1] in bound_names(old) or '*' in bound_names(old):
                     raise ProofRefusal('observer shadows an existing non-definition binding', name, parts[-1])
             if span:
+                guard(text, item, tuple(item.split('::')[1:-1]))
                 replacements.append((*span, text))
             elif text not in grafts:
+                guard(text, item, namespace)
                 grafts.append(text)
         lines = old.splitlines(keepends=True)
         for start, end, text in sorted(replacements, reverse=True):
@@ -196,6 +244,9 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         lines = composed.splitlines(keepends=True)
         lines[insertion:insertion] = [line + '\n' for line in imports]
         target.write_text(''.join(lines))
+    for subject in subjects:
+        if unit(destination, subject) != unit(base, subject):
+            raise ProofRefusal('assembled proof changed a base subject binding', subject.split('::')[0])
     inferred = sorted({path.relative_to(tree).as_posix() for tree in (base, head)
                        for path in tree.rglob('*') if path.is_file()
                        and (not (base / path.relative_to(tree)).is_file()

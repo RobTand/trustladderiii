@@ -18,7 +18,7 @@ LEAF = {
     "kind": "leaf", "estimated_exploration_turns": 0,
     "files": ["greeting.py", "tests/test_greeting.py"],
     "checks": [
-        {"kind": "demonstrating", "node_ids": ["tests/test_greeting.py::test_hello"],
+        {'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, "kind": "demonstrating", "node_ids": ["tests/test_greeting.py::test_hello"],
          "goal_ids": [0]},
         {"kind": "behavior-preserving", "node_ids": ["tests/test_existing.py::test_api"],
          "goal_ids": [1]},
@@ -173,7 +173,7 @@ def deflake_worktree(planner_request, monkeypatch):
     monkeypatch.setattr(Forecaster, 'measure', lambda *a: {'fits': True})
     reply = copy.deepcopy(LEAF)
     reply['files'] = ['tests/test_sampler.py']
-    reply['checks'] = [{'kind': 'demonstrating', 'goal_ids': [0, 1], 'forcing': copy.deepcopy(PID_FORCING),
+    reply['checks'] = [{'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'goal_ids': [0, 1], 'forcing': copy.deepcopy(PID_FORCING),
                         'node_ids': ['tests/test_sampler.py::test_departed_process_is_not_live']}]
     return reply
 
@@ -220,7 +220,7 @@ def digests_plan(planner_request, monkeypatch):
     return {
         'kind': 'leaf', 'estimated_exploration_turns': 0, 'files': ['digests.py', DIGESTS],
         'checks': [
-            {'kind': 'demonstrating', 'node_ids': [f'{DIGESTS}::test_lazy_imports_run'], 'goal_ids': [0]},
+            {'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [f'{DIGESTS}::test_lazy_imports_run'], 'goal_ids': [0]},
             {'kind': 'regression', 'node_ids': [SIBLING], 'goal_ids': [1]},
             {'kind': 'regression', 'node_ids': [FROZEN], 'goal_ids': [0]},
         ],
@@ -257,7 +257,7 @@ def request_149_plan(planner_request):
     ]
     return {
         'kind': 'leaf', 'estimated_exploration_turns': 0, 'files': ['tests/test_measurement_census_reader_fence_1498.py'],
-        'checks': [{'kind': 'demonstrating', 'goal_ids': [0, 1],
+        'checks': [{'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'goal_ids': [0, 1],
                     'node_ids': ['tests/test_measurement_census_reader_fence_1498.py::test_a_busy_fence_refuses_before_any_transition_or_host_lock'],
                     'forcing': {
                         'symptom': 'A slow locked_census adds four seconds while a busy reader fence is polled; the old elapsed < 5.0 assertion measures scheduler stalls.',
@@ -303,7 +303,7 @@ def request156(planner_request, monkeypatch):
     return {
         'kind': 'leaf', 'estimated_exploration_turns': 0, 'files': ['greeting.py', PBWAIT_TESTS],
         'edits_tests': [LATE, CONTROL],
-        'checks': [{'kind': 'demonstrating', 'node_ids': [LATE], 'goal_ids': [0, 1]}],
+        'checks': [{'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [LATE], 'goal_ids': [0, 1]}],
         'no_design_questions': True, 'lands_on_its_own': True, 'evidence_contract': [],
     }
 
@@ -337,7 +337,7 @@ def request162(planner_request, monkeypatch):
     monkeypatch.chdir(root)
     return {
         'kind': 'leaf', 'estimated_exploration_turns': 0, 'files': [RELAY_TESTS], 'edits_tests': [CREATED],
-        'checks': [{'kind': 'demonstrating', 'node_ids': [CREATED, *INVENTED], 'goal_ids': [0, 1],
+        'checks': [{'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [CREATED, *INVENTED], 'goal_ids': [0, 1],
                     'forcing': {'symptom': 'Delay daemon replies during created-container cleanup.',
                                 'environment': {},
                                 'patches': [{'target': 'shim.DAEMON_DELAY', 'value': 1}]}},
@@ -389,7 +389,7 @@ def request165(planner_request, monkeypatch):
     monkeypatch.chdir(root)
     return {
         'kind': 'leaf', 'estimated_exploration_turns': 0, 'files': [EXPORT_TESTS], 'edits_tests': [FINISHED], 'evidence_contract': [],
-        'checks': [{'kind': 'demonstrating', 'node_ids': [FINISHED, *PROPOSED_EXPORTS],
+        'checks': [{'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [FINISHED, *PROPOSED_EXPORTS],
                     'goal_ids': [0, 1, 2, 3, 4, 5, 7, 8, 9],
                     'forcing': {'symptom': 'Deschedule the export writer before its block is counted; '
                                            'the old rate floor and positive-hold assertions fail.',

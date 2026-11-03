@@ -115,7 +115,7 @@ def preflight(inputs, reply, *, planning=False):
         return
     if 'evidence_contract' not in reply:
         raise EvidenceContractError()
-    if planning and any('proof' in check for check in reply.get('checks', [])):
+    if planning and any(check.get('proof', {}).get('subjects') for check in reply.get('checks', [])):
         reply['evidence_contract'].append({
             'requirement': 'Run the head observer against the base subject and the head subject.',
             'provenance': {'kind': 'method'},

@@ -318,6 +318,8 @@ The subject/observer rule (#645, Q27/Q55) applies to every proof. RED runs
 head observers against base subjects; GREEN runs the same observers against
 head subjects. node_ids name the observers. Every other base definition stays
 on base, including helpers, fixtures, imports and decorated class context.
+Every assertion RED requires proof.red_message before execution, including inferred partitions.
+Use proof with subjects: [] and observer_support: [] to infer the partition.
 For an explicit partition, use proof with subjects (relative Python paths or
 path::qualified::definition), observer_support (new source definitions or new
 modules needed only by observers), and red_message (the exact call assertion

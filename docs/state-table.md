@@ -956,13 +956,15 @@ from base, trusted assembly grafts only named observers and new support, carryin
 needed missing head imports. It never overlays complete existing test files.
 Decorators, class context and repository fixtures use ordinary Python source,
 not model-written invocation recipes. Missing dependencies name the module and
-symbol in a repairable refusal. Subject/support overlap and replacement of an
-existing subject by observer support are refused.
+symbol in a repairable refusal. Subject/support overlap is refused. Observer support may add names only;
+a graft cannot write an existing base binding or a declared subject.
 
 Planner rehearsal, maker base runs and independent Checking use one assembler.
 Receipts bind the source trees, staged tree, subjects, observers and declaration.
-An explicit assertion proof declares the exact call-phase assertion message;
-a different failure cannot supply RED. Forcing and declared-symptom checks
+Every assertion proof declares the exact call-phase assertion message in
+proof.red_message, including inferred partitions with subjects: []. A missing
+declaration or different failure cannot supply RED. Each check keeps its own
+source partition and execution settings when maker runs multiple checks. Forcing and declared-symptom checks
 without a source partition retain the original base test as their subject and
 the trusted pytest outcome as observer. Existing declared-symptom campaigns keep
 their fixed bounds and exact exception/node/phase requirements.

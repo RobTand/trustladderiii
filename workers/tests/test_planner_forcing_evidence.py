@@ -75,7 +75,7 @@ def test_oversized_check_plan_is_a_planner_violation(planner_request, monkeypatc
     from tl3_workers.roles.planner import check_reply
     monkeypatch.chdir(planner_request['worktree'])
     reply = copy.deepcopy(LEAF)
-    reply['checks'] = [{'kind': 'demonstrating', 'goal_ids': [0, 1],
+    reply['checks'] = [{'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'goal_ids': [0, 1],
                         'node_ids': ['tests/test_greeting.py::test_' + 'x' * (4 * 1024 * 1024)]}]
     check_reply(planner_request['inputs'], reply)
     assert any('4194304' in violation and 'reduce' in violation for violation in reply['violations'])

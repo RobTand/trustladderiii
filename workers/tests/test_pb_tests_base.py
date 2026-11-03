@@ -142,7 +142,7 @@ def test_request_2709_legacy_plan_extends_before_final_head(
         "operation": {"node": 1, "generation": 0, "kind": "make"},
         "inputs": {"brief": "Update only the test's import; never hand-edit generated files.",
             "goals": [{"id": "import", "description": "Update the test import."}],
-            "plan": {"files": ["tests/test_wait.py"], "checks": [{"name": "import", "kind": "demonstrating",
+            "plan": {"files": ["tests/test_wait.py"], "checks": [{'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, "name": "import", "kind": "demonstrating",
                 "tests": ["tests/test_wait.py::test_wait"], "goal_ids": ["import"]}]},
             "forecast": {"fit_tokens": 100000, "context_tokens": 150000, "overhead_tokens": {"work": 1},
                 "generated_files": ["**/BUILD.bazel"], "generator": "python3 generate.py", "generator_available": True},

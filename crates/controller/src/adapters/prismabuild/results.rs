@@ -564,13 +564,13 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             if let Some(declaration) = &check.proof {
                 let subjects = declaration["subjects"].as_array()?;
                 let support = declaration["observer_support"].as_array()?;
-                if subjects.is_empty()
-                    || subjects.len() > 16
+                if subjects.len() > 16
                     || support.len() > 16
                     || declaration["red_message"]
                         .as_str()
                         .is_none_or(str::is_empty)
-                    || identity["subjects"].as_object()?.len() != subjects.len()
+                    || (!subjects.is_empty()
+                        && identity["subjects"].as_object()?.len() != subjects.len())
                     || subjects.iter().any(|unit| {
                         let value = &identity["subjects"][unit.as_str().unwrap_or("")];
                         value.is_null() || value["base"] == value["head"]
@@ -581,7 +581,8 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
                         .any(|unit| !hash(&identity["support_sha256"][unit.as_str().unwrap_or("")]))
                     || result.tests.iter().any(|test| {
                         test.passed
-                            && (!matches!(test._base, Outcome::Assertion)
+                            && ((check.declared_symptom.is_none()
+                                && !matches!(test._base, Outcome::Assertion | Outcome::AddedName))
                                 || !matches!(test._head, Outcome::Passed))
                     })
                 {
@@ -589,6 +590,16 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
                 }
             }
         } else if check.proof.is_some() && result.tests.iter().any(|test| test.passed) {
+            return None;
+        }
+        if check.proof.is_none()
+            && matches!(check.kind, Kind::Demonstrating | Kind::Reproducing)
+            && check.declared_symptom.is_none()
+            && result
+                .tests
+                .iter()
+                .any(|test| test.passed && matches!(test._base, Outcome::Assertion))
+        {
             return None;
         }
         // A forced check passes only on evidence from its forced head run (#393).

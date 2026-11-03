@@ -7,7 +7,7 @@ import sys
 import pytest
 
 from tl3_harness import execution
-from tl3_harness.model import Check, Forcing, HarnessInputError, Kind, Outcome, Verdict
+from tl3_harness.model import Check, Forcing, HarnessInputError, Kind, Outcome, Verdict, Proof
 from tl3_harness.report import decode, parse
 from tl3_harness.trees import git
 
@@ -46,7 +46,7 @@ import sampler
 
 
 def test_departed_process_is_not_live():
-    assert sampler.live_after([4242], [], "/fake/cgroup") == 0
+    assert sampler.live_after([4242], [], "/fake/cgroup") == 0, "departed process remains live"
 '''
 FIXED_TEST = '''\
 import os
@@ -57,7 +57,7 @@ import sampler
 def test_departed_process_is_not_live(monkeypatch):
     # The departure is the test's premise; it must not depend on PID 4242 being free.
     monkeypatch.setattr(sampler, "process_in_scope", lambda pid, cgroup: False)
-    assert sampler.live_after([os.getpid()], [], "/fake/cgroup") == 0
+    assert sampler.live_after([os.getpid()], [], "/fake/cgroup") == 0, "departed process remains live"
 '''
 PID_REUSE = {
     'symptom': 'A real, unrelated process holds PID 4242, so the sampler cannot decide whether it left.',
@@ -99,7 +99,7 @@ def pid_repo(tmp_path, monkeypatch):
 
 
 def forced(forcing=PID_REUSE, tests=(TEST,)):
-    return Check('deflake', Kind.DEMONSTRATING, tests, forcing=Forcing.parse(forcing))
+    return Check('deflake', Kind.DEMONSTRATING, tests, forcing=Forcing.parse(forcing), proof=Proof((), (), 'departed process remains live'))
 
 
 def head_with(repo, test_source):

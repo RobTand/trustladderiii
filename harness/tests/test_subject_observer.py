@@ -108,7 +108,7 @@ def test_claimed_queue_diagnostics_keep_the_old_subject(repository, case_id):
     head = source.replace(BASE, HEAD) + observer
     controls = (Check('unchanged failure invariant', Kind.REGRESSION, ('tests/test_queue.py::test_control',)),)
     results, _, _ = round_result(repository, {'tests/test_queue.py': source},
-                                {'tests/test_queue.py': head}, Check('diagnostic', Kind.DEMONSTRATING, (NODE,)),
+                                {'tests/test_queue.py': head}, Check('diagnostic', Kind.DEMONSTRATING, (NODE,), proof=model.Proof((), (), 'diagnostic lacks failed outcome')),
                                 controls=controls)
     assert [result.verdict for result in results] == [Verdict.PASS, Verdict.PASS], results
     assert (results[0].tests[0].base, results[0].tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
@@ -119,11 +119,11 @@ def test_claimed_queue_diagnostics_keep_the_old_subject(repository, case_id):
 
 def test_request216_decorated_cross_module_subject_and_existing_observer(repository):
     before = {'tests/test_world.py': 'from contextlib import contextmanager\n@contextmanager\ndef reader_process():\n    yield {"phase": "old"}\n',
-              'tests/test_recovery.py': 'from test_world import reader_process\ndef test_recovery():\n    with reader_process() as item:\n        assert item["phase"] == "old"\n'}
+              'tests/test_recovery.py': 'from test_world import reader_process\ndef test_recovery():\n    with reader_process() as item:\n        assert item["phase"] == "old", "wrong context phase"\n'}
     after = {'tests/test_world.py': before['tests/test_world.py'].replace('"old"', '"new"'),
              'tests/test_recovery.py': before['tests/test_recovery.py'].replace('"old"', '"new"')}
     results, _, _ = round_result(repository, before, after,
-                                Check('context manager', Kind.DEMONSTRATING, ('tests/test_recovery.py::test_recovery',)))
+                                Check('context manager', Kind.DEMONSTRATING, ('tests/test_recovery.py::test_recovery',), proof=model.Proof((), (), 'wrong context phase')))
     assert results[0].verdict == Verdict.PASS, results
 
 
@@ -145,14 +145,14 @@ def test_missing_output(tmp_path):
     assert result == 'missing', 'missing output must be handled'
 '''}
     results, _, _ = round_result(repository, before, after,
-                                Check('deterministic helper', Kind.DEMONSTRATING, ('tests/test_git.py::test_missing_output',)))
+                                Check('deterministic helper', Kind.DEMONSTRATING, ('tests/test_git.py::test_missing_output',), proof=model.Proof((), (), 'missing output must be handled')))
     assert results[0].verdict == Verdict.PASS, results
 
 
 def test_needed_observer_imports_are_derived_without_carrying_the_fix(repository):
     results, _, _ = round_result(repository, {'tests/test_queue.py': BASE},
         {'tests/test_queue.py': 'import pytest\n' + HEAD + OBSERVER.replace('    import pytest\n', '')},
-        Check('automatic imports', Kind.DEMONSTRATING, (NODE,)))
+        Check('automatic imports', Kind.DEMONSTRATING, (NODE,), proof=model.Proof((), (), 'diagnostic lacks failed outcome')))
     assert results[0].verdict == Verdict.PASS, results
 
 
@@ -194,7 +194,7 @@ def test_missing_observer_symbol_names_the_module_and_symbol(repository):
 def test_request234_forcing_shadows_only_the_repositorys_local_clock(repository):
     node = 'tests/test_clock.py::test_hold'
     before = {'pool.py': 'import time\ndef held(): return time.monotonic()\n',
-              'tests/test_clock.py': 'import pool\ndef test_hold():\n    assert pool.held() > 100\n'}
+              'tests/test_clock.py': 'import pool\ndef test_hold():\n    assert pool.held() > 100, "hold clock did not advance"\n'}
     after = {'tests/test_clock.py': '''import pool
 import time
 
@@ -208,7 +208,7 @@ def test_hold(monkeypatch):
     forcing = Forcing.parse({'symptom': 'module-local hold clock is frozen',
                              'patches': [{'target': 'pool.time.monotonic', 'returns': 100}]})
     results, _, _ = round_result(repository, before, after,
-                                Check('local clock', Kind.DEMONSTRATING, (node,), forcing))
+                                Check('local clock', Kind.DEMONSTRATING, (node,), forcing, proof=model.Proof((), (), 'hold clock did not advance')))
     assert results[0].verdict == Verdict.PASS, results
 
 
@@ -298,6 +298,11 @@ def test_new_observer_class_carries_its_needed_decorator_import(repository):
     '(TOKEN, helper) = ("context", lambda: ("new", VERSION))',
     'TOKEN = "context"; globals()["helper"] = lambda: ("new", VERSION)',
     'TOKEN = "context"; globals().update(helper=lambda: ("new", VERSION))',
+    'TOKEN = "context"; helper += ("new", VERSION)',
+    'TOKEN = "context"; import builtins as helper',
+    'TOKEN = "context"; globals().update(**{"helper": lambda: ("new", VERSION)})',
+    'def TOKEN():\n    global helper\n    def helper(): return ("new", VERSION)',
+    'class TOKEN:\n    global helper\n    class helper: pass',
 ])
 def test_review662_support_cannot_rebind_base_subject(repository, support):
     path = 'tests/test_subject.py'

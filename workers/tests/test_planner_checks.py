@@ -81,7 +81,7 @@ def test_planner_checks_base_test_definitions(planner_request, monkeypatch, kind
     check_reply(planner_request['inputs'], reply)
     assert reply['violations'] == []
     reply = copy.deepcopy(LEAF)
-    reply['checks'] = [{'kind': 'demonstrating', 'node_ids': [missing], 'goal_ids': [0, 1]}]
+    reply['checks'] = [{'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [missing], 'goal_ids': [0, 1]}]
     check_reply(planner_request['inputs'], reply)
     assert reply['violations'] == []
 

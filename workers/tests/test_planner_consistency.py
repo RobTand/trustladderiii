@@ -37,7 +37,7 @@ def test_request156_gets_one_tool_free_consistency_correction(planner_request, r
     if correction == 'check':
         fixed['checks'][0]['node_ids'].append(CONTROL)
     elif correction == 'new_check':
-        fixed['checks'].append({'kind': 'demonstrating', 'node_ids': [CONTROL], 'goal_ids': [1]})
+        fixed['checks'].append({'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [CONTROL], 'goal_ids': [1]})
     elif correction == 'unchanged':
         fixed['edits_tests'].remove(CONTROL)
     else:
@@ -339,7 +339,7 @@ def test_correction_cannot_expand_draft(planner_request, request156, monkeypatch
     if expansion == 'file':
         fixed['files'].append('tests/test_existing.py')
     elif expansion == 'check':
-        fixed['checks'].append({'kind': 'demonstrating', 'node_ids': [f'{PBWAIT_TESTS}::test_unrelated'],
+        fixed['checks'].append({'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [f'{PBWAIT_TESTS}::test_unrelated'],
                                 'goal_ids': [0]})
     elif expansion == 'forcing':
         fixed['checks'][0]['forcing'] = {'symptom': 'A new condition.', 'environment': {},
@@ -377,7 +377,7 @@ def test_appended_coverage_check_cannot_introduce_forcing(planner_request, reque
         forcing['patches'][0]['value'] = 2
     elif forcing_change == 'environment':
         forcing['environment'] = {'SHIM_DELAY': '1'}
-    fixed['checks'].append({'kind': 'demonstrating', 'node_ids': [CONTROL], 'goal_ids': [1],
+    fixed['checks'].append({'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [CONTROL], 'goal_ids': [1],
                             'forcing': forcing})
     model = planner_model(monkeypatch, request156, fixed, LEAF)
     events = []

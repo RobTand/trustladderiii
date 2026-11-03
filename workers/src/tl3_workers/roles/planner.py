@@ -132,6 +132,8 @@ def check_reply(inputs, reply, *, rehearsals=None):
         if not reply["lands_on_its_own"]:
             violations.append("A leaf must land on its own.")
         for check in reply["checks"]:
+            if check['kind'] in ('demonstrating', 'reproducing') and 'declared_symptom' not in check and 'proof' not in check:
+                violations.append('Assertion RED requires proof.red_message; use subjects: [] for an inferred partition.')
             if 'proof' in check:
                 try:
                     proof = Proof.parse(check['proof'])
@@ -165,7 +167,7 @@ def check_reply(inputs, reply, *, rehearsals=None):
                     violations.append("Checks must name exact pytest node IDs.")
                     continue
                 # A forced check runs the old test on the base, so it must exist there too.
-                if check["kind"] in {"regression", "behavior-preserving"} or ("forcing" in check and "proof" not in check) or "declared_symptom" in check:
+                if check["kind"] in {"regression", "behavior-preserving"} or ("forcing" in check and not check.get("proof", {}).get("subjects")) or "declared_symptom" in check:
                     path = node_id.split("::")[0]
                     oversized, exists = base_definition(node_id)
                     if oversized:

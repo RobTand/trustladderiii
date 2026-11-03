@@ -119,7 +119,7 @@ def maker_request(tmp_path):
             "plan": {
                 "files": ["greeting.py", "test_greeting.py"],
                 "checks": [
-                    {"name": "hello", "kind": "demonstrating",
+                    {'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, "name": "hello", "kind": "demonstrating",
                      "tests": ["test_greeting.py::test_hello"], "goal_ids": ["greeting"]},
                     {"name": "signature", "kind": "behavior-preserving",
                      "tests": ["test_greeting.py::test_signature"], "goal_ids": ["interface"]},
@@ -1642,7 +1642,7 @@ def request_123_handover(maker_request):
          "verification": "review", "stage": "publishing",
          "publication": {"non_draft": True, "body_lines": ["Change type: test"], "proof": True}},
     ]
-    request["inputs"]["plan"]["checks"] = [{
+    request["inputs"]["plan"]["checks"] = [{'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'},
         "name": "deep-path", "kind": "demonstrating", "tests": ["test_greeting.py::test_hello"],
         "goal_ids": ["repair", "scope", "forced-proof"],
         "forcing": {"symptom": "The old test depends on residency.", "environment": {},

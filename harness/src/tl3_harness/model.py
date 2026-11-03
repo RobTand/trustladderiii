@@ -179,8 +179,8 @@ class Proof:
     red_message: str = ''
 
     def __post_init__(self):
-        if not self.subjects or len(self.subjects) > 16 or len(self.observer_support) > 16:
-            raise HarnessInputError('A proof names 1 to 16 subject units and at most 16 observer support units.')
+        if len(self.subjects) > 16 or len(self.observer_support) > 16:
+            raise HarnessInputError('A proof names at most 16 subject units and at most 16 observer support units.')
         for unit in (*self.subjects, *self.observer_support):
             parts = unit.split('::') if isinstance(unit, str) else []
             if (not parts or len(unit) > 1000 or not parts[0].endswith('.py')
@@ -359,7 +359,10 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
             case Kind.BEHAVIOR_PRESERVING:
                 passed = before == after == Outcome.PASSED
         wrong_reason = False
-        if passed and check.proof is not None and check.declared_symptom is None:
+        missing_reason = passed and before == Outcome.ASSERTION and check.kind in (Kind.DEMONSTRATING, Kind.REPRODUCING) and check.proof is None
+        if missing_reason:
+            passed = False
+        if passed and before == Outcome.ASSERTION and check.proof is not None and check.declared_symptom is None:
             failure = (base_notes.details if base_notes is not None else {}).get(test)
             wrong_reason = (failure is None or failure.phase != 'call'
                             or failure.exception not in (f'AssertionError: {check.proof.red_message}',
@@ -384,6 +387,8 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
             message = refusal + (f"\nOn the head: {message}" if message else "")
             if len(message) > MESSAGE_LIMIT:
                 message = message[:MESSAGE_LIMIT - len(TRUNCATED)] + TRUNCATED
+        if missing_reason:
+            message = 'Assertion RED needs a declared assertion reason in proof.red_message.'
         if wrong_reason:
             message = f'RED did not fail for the declared assertion reason: {check.proof.red_message}'
         if not passed and not message:

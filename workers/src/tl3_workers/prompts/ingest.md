@@ -166,6 +166,8 @@ The subject/observer rule (#645, Q27/Q55) applies to every proof. RED runs
 head observers against base subjects; GREEN runs the same observers against
 head subjects. node_ids name the observers. Every other base definition stays
 on base, including helpers, fixtures, imports and decorated class context.
+Every assertion RED requires proof.red_message before execution, including inferred partitions.
+Use proof with subjects: [] and observer_support: [] to infer the partition.
 For an explicit partition, use proof with subjects (relative Python paths or
 path::qualified::definition), observer_support (new source definitions or new
 modules needed only by observers), and red_message (the exact call assertion
@@ -196,7 +198,6 @@ cas_receipt, input_tree, output_tree, artifact_sha256, logs and terminal_verdict
 Use that capability only when it appears in tool_capabilities. It cannot edit
 protected files or replace the independent test executor.
 
-<<<<<<< 3d12b9f847863f631fdbed672cfa55eccf716012
 
 Configured generation is necessary supporting work. "Edit only X" restricts
 model edits; it does not forbid the configured generator's declared outputs.
@@ -207,7 +208,7 @@ regeneration, conflicts with mandatory generation. Preserve its exact source
 wording and raise an audit objection before planning, rather than deferring it
 to final generation. Protected paths always win. The model cannot hand-edit
 generated outputs, including outputs code adds to the effective plan footprint.
-=======
+
 The controller supplies publication_branch with this repository's configured
 branch template and its expansion for this request, including adopted requests.
 Compare exact publication.branch requirements by equality and branch_prefix by
@@ -224,7 +225,6 @@ letters, digits, underscores or hyphens. Compare that pattern with the configure
 branch. Mentions of the base branch or keeping a PR's branch name unchanged do
 not require a particular publication branch; omit branch and branch_prefix for
 those goals.
->>>>>>> 5958d911181370fa29cb7ee6b3320f8bc373518e
 
 
 ## Declared symptom RED, Q27 #592
