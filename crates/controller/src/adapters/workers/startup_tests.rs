@@ -779,3 +779,135 @@ fn t604_ingest_and_audit_get_authoritative_per_repository_request_branch() {
         }
     }
 }
+
+#[test]
+fn t653_input_schema_defect_reaches_the_incident_without_retrying() {
+    use crate::executor::{Registry, Upstream};
+    use crate::git_tests::{Repo, support::Database};
+    struct BrokenInputs;
+    impl Executor for BrokenInputs {
+        fn execute(&mut self, _: &Delivery) -> Result<Completion> {
+            protocol::validate_inputs(
+                "classifier",
+                &json!({"comment":{"author":"owner", "body":"private-input-value"},
+                "state":{"phase":123, "closed":false}}),
+            )?;
+            unreachable!()
+        }
+        fn reconcile(&mut self, _: &Delivery) -> Result<Reconciliation> {
+            Ok(Reconciliation::Absent)
+        }
+    }
+    let f = Repo::new();
+    let mut db = Database::start();
+    let mut config =
+        tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+    config.store = db.create("schema_incident");
+    let mut registry: Registry = crate::adapters::simulation(&f.root.path().join("fakes")).unwrap();
+    registry.register(Upstream::Workers, BrokenInputs);
+    let mut controller = crate::Controller::open(
+        Store::open(&config.store).unwrap(),
+        registry,
+        crate::Bootstrap::from_config(&config).unwrap(),
+    )
+    .unwrap();
+    controller
+        .intake(crate::LabelledIssue {
+            delivery: "schema-incident".into(),
+            owner: "RobTand".into(),
+            repo: "tl3-sandbox".into(),
+            installation: 1,
+            number: 42,
+            title: "Contract failure".into(),
+            actor: config.github.rob.id,
+            label: "tl3".into(),
+            labels: vec![],
+        })
+        .unwrap();
+    for _ in 0..15 {
+        if !controller.drive_once().unwrap() {
+            break;
+        }
+    }
+    let mut store = Store::open(&config.store).unwrap();
+    let snapshot = store.load().unwrap();
+    let incidents: Vec<_> = snapshot
+        .rows
+        .iter()
+        .filter(|row| row.table == "incidents")
+        .collect();
+    assert_eq!(
+        incidents.len(),
+        1,
+        "a local schema defect must be attributed without an infrastructure retry"
+    );
+    let incident = &incidents[0].value;
+    assert_eq!(incident["cause"], "tl3");
+    assert_eq!(incident["signature"]["class"], "worker_input_schema");
+    let summary = incident["summary"].as_str().unwrap();
+    assert!(summary.contains("role=classifier"), "{summary}");
+    assert!(summary.contains("pointer=/state/phase"), "{summary}");
+    assert!(summary.contains("rule=type"), "{summary}");
+    assert!(
+        !serde_json::to_string(incident)
+            .unwrap()
+            .contains("private-input-value")
+    );
+    assert_eq!(
+        store
+            .effects()
+            .unwrap()
+            .iter()
+            .filter(
+                |effect| effect.kind == "workers" && effect.state == tl3_store::EffectState::Failed
+            )
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn t653_rejected_inputs_send_only_the_safe_diagnostic_to_tracing() {
+    use crate::git_tests::{Repo, support::Database};
+    let f = Repo::new();
+    let mut db = Database::start();
+    let mut config =
+        tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+    config.store = db.create("schema_trace");
+    config.workers.runs = f.root.path().join("runs");
+    let capture = f.root.path().join("trace-input.json");
+    let python = f.root.path().join("python");
+    fs::write(
+        &python,
+        format!("#!/bin/sh\ncat > '{}'\n", capture.display()),
+    )
+    .unwrap();
+    fs::set_permissions(&python, fs::Permissions::from_mode(0o755)).unwrap();
+    config.workers.python = python;
+    config.workers.launcher.clear();
+    let supervisor = Supervisor::new(&config, &f.root.path().join("records")).unwrap();
+    let mut store = Store::open(&config.store).unwrap();
+    store.put_worker_materials("0", &json!({"ingest":{"issue":{"number":42, "title":123,
+        "body":"private-input-value", "author":"owner", "comments":[]}, "repo":{"readme":"", "file_list":[]}}})).unwrap();
+    let snapshot = store.load().unwrap();
+    let error = supervisor
+        .request(&f.delivery(), "ingest", &mut store, &snapshot)
+        .unwrap_err();
+    assert!(error.to_string().contains("role=ingest"));
+    assert!(
+        capture.exists(),
+        "a schema failure before spawn still needs an MLflow trace"
+    );
+    let bytes = fs::read(capture).unwrap();
+    let request: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(request["role"], "ingest");
+    assert_eq!(request["inputs"]["pointer"], "/issue/title");
+    assert_eq!(request["inputs"]["rule"], "type");
+    assert_eq!(request["trace"]["issue"], 42);
+    assert!(
+        !String::from_utf8(bytes)
+            .unwrap()
+            .contains("private-input-value")
+    );
+    assert!(request.get("key_file").is_none());
+}

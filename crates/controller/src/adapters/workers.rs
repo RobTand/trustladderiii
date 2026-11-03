@@ -7,6 +7,8 @@ pub use writer::{FakeWriter, Writer};
 mod evidence;
 mod facts;
 mod fake;
+#[cfg(test)]
+mod input_contract_tests;
 mod json;
 pub(crate) mod ladder;
 mod process;

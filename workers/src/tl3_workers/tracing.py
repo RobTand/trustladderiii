@@ -1717,3 +1717,8 @@ def main(args):
 
 if __name__ == '__main__':
     raise SystemExit(main(sys.argv[1:]))
+
+
+def input_failure(request):
+    """Export a controller-rejected input's safe diagnostic before a worker starts."""
+    return None

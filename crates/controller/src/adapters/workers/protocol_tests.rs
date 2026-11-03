@@ -240,3 +240,56 @@ fn request_123_pending_is_a_handover_not_a_false_success() {
         MappedReply::Made(_)
     ));
 }
+
+#[test]
+fn t653_schema_roles_have_controller_contracts() {
+    let actual: std::collections::BTreeSet<_> = PACKAGED_SCHEMAS
+        .iter()
+        .filter_map(|(name, _)| name.strip_suffix("-input.json"))
+        .collect();
+    assert_eq!(
+        actual,
+        [
+            "ingest",
+            "audit",
+            "planner",
+            "maker",
+            "reviewer",
+            "classifier",
+            "writer",
+            "postmortem"
+        ]
+        .into_iter()
+        .collect(),
+        "each new input schema needs a production-builder contract case"
+    );
+}
+
+#[test]
+fn t653_input_failure_names_role_pointer_and_rule_without_values() {
+    for (inputs, pointer, rule) in [
+        (
+            json!({"comment":{"author": "owner", "body": "sensitive-value"}, "state":{"phase":23, "closed":false}}),
+            "/state/phase",
+            "type",
+        ),
+        (
+            json!({"comment":{"author": "owner", "body": "sensitive-value"}, "state":{"phase":"Making", "closed":false, "new_field":"sensitive-value"}}),
+            "/state/new_field",
+            "additionalProperties",
+        ),
+        (
+            json!({"comment":{"author": "owner", "body": "sensitive-value"}, "state":{"closed":false}}),
+            "/state/phase",
+            "required",
+        ),
+    ] {
+        let error = validate_inputs("classifier", &inputs).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("role=classifier"), "{message}");
+        assert!(message.contains(&format!("pointer={pointer}")), "{message}");
+        assert!(message.contains(&format!("rule={rule}")), "{message}");
+        assert!(!message.contains("sensitive-value"));
+        assert_eq!(crate::looks::failure_class(&error), "worker_input_schema");
+    }
+}
