@@ -131,7 +131,8 @@ def container_command(tree, container, argv, cidfile):
     # /dev/shm can be noexec. Invoke a repository script through its declared
     # shebang interpreter while keeping its bytes and arguments unchanged.
     executable = tree / argv[0]
-    if not Path(argv[0]).is_absolute() and executable.is_file():
+    if ("/" in argv[0] and not Path(argv[0]).is_absolute() and executable.is_file()
+            and executable.stat().st_mode & 0o111):
         with executable.open("rb") as stream:
             header = stream.readline(4096)
         if header.startswith(b"#!"):

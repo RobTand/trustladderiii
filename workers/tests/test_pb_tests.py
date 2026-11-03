@@ -879,3 +879,13 @@ def test_generator_tool_has_no_model_selected_command_or_arguments(generator_rep
     with tree:
         tool = build_tools(tree, {"run_generator": "Run the configured admitted generator."})[0]
         assert tool.args == {}
+
+
+def test_generator_image_command_cannot_be_shadowed_by_a_repository_file(tmp_path):
+    from tl3_harness import generator
+    (tmp_path / "python3").write_text("#!/usr/bin/env bash\nexit 7\n")
+    (tmp_path / "python3").chmod(0o755)
+    command = generator.container_command(tmp_path, generator.Container(IMAGE),
+                                          ["python3", "generate.py"], tmp_path / "cid")
+    assert "--entrypoint=python3" in command
+    assert command[-2:] == [IMAGE, "generate.py"]
