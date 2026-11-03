@@ -194,6 +194,8 @@ def test_only_tl3_prompt_and_read_tools_reach_model(request_doc, role, monkeypat
     system = messages[0].text
     expected = files("tl3_workers").joinpath("prompts", role + ".md").read_text()
     proposal = copy.deepcopy(schema(role + "-reply"))
+    for variant in proposal['oneOf']:
+        variant['properties'].pop('evidence_errors', None)
     if role == "ingest":
         del proposal["oneOf"][0]["properties"]["forecast"]
         del proposal["$defs"]["forecast"]
