@@ -68,7 +68,8 @@
         },
         "generated_files": {"type": "array", "items": {"type": "string", "minLength": 1}},
         "generator": {"type": "string", "minLength": 1},
-        "generator_available": {"type": "boolean"}
+        "generator_available": {"type": "boolean"},
+        "generator_timeout_s": {"type": "integer", "minimum": 1, "maximum": 600}
       },
       "required": [
         "fit_tokens",

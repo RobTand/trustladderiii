@@ -68,6 +68,8 @@ installation_id = 1
 # Optional admitted generator; outputs still require footprint and protected-path checks.
 # generated_files = ["**/BUILD.bazel"]
 # generator = "bash tools/bazel/generate.sh"
+# Optional startup plus command deadline, 1–600 seconds; unset keeps 120.
+# generator_timeout_s = 300
 # Optional: also run up to this many existing tests that import the change as a regression check.
 # selected_tests = 200
 # Optional repo-wide rules, run as regression checks on every leaf and round.

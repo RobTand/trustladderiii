@@ -399,6 +399,7 @@ impl Supervisor {
                 && repo.installation_id == delivery.repository.installation
         }) {
             forecast["generated_files"] = json!(repository.generated_files);
+            forecast["generator_timeout_s"] = json!(repository.generator_timeout_s.unwrap_or(120));
             if let Some(generator) = &repository.generator {
                 forecast["generator"] = json!(generator);
             }

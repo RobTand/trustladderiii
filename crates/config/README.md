@@ -194,7 +194,34 @@ The maker's argument-free `run_generator` tool runs only this configured command
 in a PrismaBuild-admitted action using the repository's immutable test image.
 It has no network, host credentials or served-repo Git metadata. A private Git
 index includes all snapshot files, including new source files, for `git ls-files`.
-The generator has 120 seconds; the enclosing action has a 180-second deadline.
+Generators reuse `test_demand`, including its 1 CPU / 2 GiB default and native
+thread bounds. A separate resource profile would duplicate the same admission
+contract. Both explicit `run_generator` and final-head generation use it.
+
+`generator_timeout_s` bounds container startup plus the command. It defaults to
+120 seconds and accepts whole seconds from 1 through 600. For example:
+
+```toml
+test_demand = { cpus = 2, mem_gb = 4 }
+generator_timeout_s = 300
+```
+
+The enclosing PB execution and progress budgets are the configured deadline
+plus 60 seconds, so the default stays 180 seconds. Preparation has 25 seconds,
+validation 20, cleanup 10, and artifact serialization has 5 seconds of headroom.
+The trusted action bounds preparation and validation with process timers.
+Its timing receipt reports those phases, container execution, cleanup, and total
+admitted-action time. Container startup and command time share one measurement;
+queue/admission wait is outside it. Cleanup failure cannot replace the original
+inner timeout. If PB terminates the action without an artifact, its outer verdict
+is retained and the inner verdict is explicitly unavailable.
+
+The implementation version and selected resource/deadline budget enter both the
+sealed action input and checkpoint identity. A budget change submits fresh work.
+The same failed input/budget returns its journaled failure without retrying.
+Failure reports preserve the action key, verified receipt identity when present,
+selected budget, phase timings and distinct inner/outer verdicts. Raw container
+logs remain in the artifact and are excluded from model-facing failure reports.
 The image must contain the generator's interpreter, Git and dependencies.
 
 Every changed path must match `generated_files`, occur in the plan footprint,

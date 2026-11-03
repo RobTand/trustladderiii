@@ -1132,7 +1132,13 @@ def test_request_163_implicit_generator_failure_retains_safe_causal_receipt(
     from langchain_core.messages import AIMessage
     from tl3_workers import runtime
     from tl3_workers.contracts import validate
-    (generator_repo / "generate.py").write_text("raise SystemExit(124)\n")
+    from tl3_harness import generator
+    original = generator.subprocess.run
+    def launch(args, **kwargs):
+        if args == ["python3", "generate.py"]:
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+        return original(args, **kwargs)
+    monkeypatch.setattr(generator.subprocess, "run", launch)
     turn = AIMessage(content=json.dumps({"kind": "done", "self_check": [
         {"goal_id": "build", "status": "met", "evidence": "Model work finished."}]}))
     monkeypatch.setattr(runtime, "create_model", lambda request: FakeMessagesListChatModel(responses=[turn]))
@@ -1146,7 +1152,8 @@ def test_request_163_implicit_generator_failure_retains_safe_causal_receipt(
                           "forecast": {"fit_tokens": 100000, "context_tokens": 150000,
                                        "overhead_tokens": {"work": 30000},
                                        "generated_files": ["**/BUILD.bazel"],
-                                       "generator": "python3 generate.py", "generator_available": True},
+                                       "generator": "python3 generate.py", "generator_available": True,
+                                       "generator_timeout_s": 300},
                           "attempt": 1, "round": 0, "context_size": 150000,
                           "tests": {"image": IMAGE, "tools_path": str(tmp_path / "tools"),
                                     "cpus": 4, "mem_gb": 12}}}
@@ -1158,8 +1165,12 @@ def test_request_163_implicit_generator_failure_retains_safe_causal_receipt(
     assert "b" * 64 in reply["report"], "implicit failure must keep the verified receipt"
     assert '"exit_code": 124' in reply["report"]
     assert '"exit_code": 0' in reply["report"], "outer success must remain distinct from inner failure"
-    assert '"timeout_s": 120' in reply["report"]
+    assert '"timeout_s": 300' in reply["report"]
     assert "container" in reply["report"]
+    [args] = generator_backend[0]
+    assert args[args.index("--cpus") + 1] == "4"
+    assert args[args.index("--demand") + 1] == "mem_gb=12"
+    assert args[args.index("--timeout-s") + 1] == "360"
     assert len(generator_backend[0]) == 1, "fail_fast must not retry work"
     validate("maker-reply", reply)
 
@@ -1177,12 +1188,54 @@ def test_generator_rejects_invalid_repository_deadline_before_submission(
 
 def test_failed_inner_generator_receipt_is_journaled_without_work_retry(
         generator_repo, generator_backend, tmp_path):
-    (generator_repo / "generate.py").write_text("raise SystemExit(124)\n")
+    (generator_repo / "generate.py").write_text("print('PRIVATE_DIAGNOSTIC')\nraise SystemExit(124)\n")
     tree, generate = configured_generator(generator_repo, tmp_path)
     with tree:
         result = generate()
         assert result["status"] == "failed", result
+        assert "PRIVATE_DIAGNOSTIC" not in json.dumps(result)
         assert tree.generator_checkpoint.get("receipt") == result
         assert tree.generation_receipt == result
         assert generate() == result
     assert len(generator_backend[0]) == 1
+
+
+@pytest.mark.parametrize("phase", ["preparation", "validation", "cleanup"])
+def test_generator_stage_timeout_is_attributed_without_losing_inner_verdict(
+        generator_repo, generator_backend, tmp_path, monkeypatch, phase):
+    import shutil
+    from tl3_harness import generator
+    staged = tmp_path / "staged"
+    shutil.copytree(generator_repo, staged, ignore=shutil.ignore_patterns(".git"))
+    original = generator.manifest
+    calls = 0
+    def manifest(root):
+        nonlocal calls
+        calls += 1
+        if (phase == "preparation" and calls == 1) or (phase == "validation" and calls == 2):
+            raise generator.StageTimeout(phase)
+        return original(root)
+    monkeypatch.setattr(generator, "manifest", manifest)
+    if phase == "cleanup":
+        original_cleanup = generator.tempfile.TemporaryDirectory.cleanup
+        def cleanup(self):
+            original_cleanup(self)
+            raise generator.StageTimeout("cleanup")
+        monkeypatch.setattr(generator.tempfile.TemporaryDirectory, "cleanup", cleanup)
+    result = generator.run(staged, generator.Container(IMAGE), "python3 generate.py",
+                           ["**/BUILD.bazel"], [], ["tests/BUILD.bazel"])
+    assert result["status"] == "failed", result
+    assert result["phase"] == phase
+    assert result["timings"][phase]["outcome"] == "timeout"
+    assert result["timings"]["total_seconds"] >= result["timings"][phase]["seconds"]
+    assert result["exit_code"] == (0 if phase == "cleanup" else 124)
+
+
+def test_generator_still_requires_pb_admission_before_any_work(tmp_path, monkeypatch):
+    from tl3_harness import generator
+    for name in ("PRISMABUILD_CONTAINER_OWNER", "PRISMABUILD_CONTAINER_MARKER",
+                 "PRISMABUILD_ACTION_PROGRESS_PATH", "PRISMABUILD_ACTION_PROGRESS_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(RuntimeError, match="admitted PrismaBuild"):
+        generator.run(tmp_path, generator.Container(IMAGE), "python3 generate.py",
+                      ["**/BUILD.bazel"], [], ["tests/BUILD.bazel"])
