@@ -1557,3 +1557,25 @@ fn repository_always_tests_accepts_twenty_entries_and_names_the_limit_error() {
         "{error}"
     );
 }
+
+#[test]
+fn delegated_attributions_accept_exact_standing_approval_line() {
+    let line = "(Posted by the TL3 build coordinator under Rob's standing approval.)";
+    let source = format!(
+        "{EXAMPLE}\n[operations]\nowner = 'RobTand'\nrepo = 'trustladderiii'\nissue = 81\ndelegated_attributions = [{line:?}]\n"
+    );
+    assert!(
+        Config::parse(&source).is_ok(),
+        "exact delegated attribution must be configurable"
+    );
+}
+
+#[test]
+fn delegated_attributions_reject_empty_duplicate_and_multiline_entries() {
+    for entries in ["['']", "['   ']", "['one', 'one']", "['''two\nlines''']"] {
+        let source = format!(
+            "{EXAMPLE}\n[operations]\nowner = 'RobTand'\nrepo = 'trustladderiii'\nissue = 81\ndelegated_attributions = {entries}\n"
+        );
+        assert!(Config::parse(&source).is_err(), "{entries}");
+    }
+}
