@@ -96,7 +96,9 @@ def test_fake_submission_returns_outcomes_and_uses_only_test_action(submission, 
     args = json.loads((submission[1] / "submitted.json").read_text())
     assert "--detach" in args and "--anywhere" in args
     environment = [args[index + 1] for index, arg in enumerate(args) if arg == "--env"]
-    assert environment == ["OMP_NUM_THREADS=1", "MKL_NUM_THREADS=1", "OPENBLAS_NUM_THREADS=1"]
+    from tl3_harness.scratch import environment as scratch_environment
+    expected_env = {**scratch_environment(), 'OMP_NUM_THREADS': '1', 'MKL_NUM_THREADS': '1', 'OPENBLAS_NUM_THREADS': '1'}
+    assert dict(item.split('=', 1) for item in environment) == expected_env
     assert "--timeout-s" not in args
     assert args[args.index("--container-image") + 1] == IMAGE
     assert args[args.index("--progress-phase") + 1] == "tests=120"
@@ -283,20 +285,6 @@ def test_staging_git_uses_closed_protocol_policy(submission, monkeypatch, tmp_pa
     with Worktree(submission[0]) as tree:
         pb_tests._stage(tree, staged)
     assert policies and all(policy == b"never" for policy in policies), policies
-
-
-@pytest.mark.parametrize('enabled', [False, True])
-def test_scratch_setting_reaches_the_trusted_action(submission, enabled):
-    from dataclasses import fields
-    assert 'exec_scratch' in {field.name for field in fields(TestSettings)}, 'maker settings must carry the opt-in'
-    root, scripts = submission
-    (scripts / 'response.json').write_text(json.dumps(Summary().result))
-    with Worktree(root) as tree:
-        result = make_test_tool(tree, TestSettings(IMAGE, scripts, exec_scratch=enabled))()
-    assert result['status'] == 'completed'
-    args = json.loads((scripts / 'submitted.json').read_text())
-    action = args[args.index('--') + 1:]
-    assert ('--exec-scratch' in action) is enabled
 
 
 @pytest.mark.parametrize("mode", [0o755, 0o664, 0o600, 0o700, 0o777, 0o750, 0o4750, 0o610])
@@ -1116,7 +1104,8 @@ def test_generator_tool_has_no_model_selected_command_or_arguments(generator_rep
         assert tool.args == {}
 
 
-def test_generator_image_command_cannot_be_shadowed_by_a_repository_file(tmp_path):
+def test_generator_image_command_cannot_be_shadowed_by_a_repository_file(tmp_path, monkeypatch):
+    monkeypatch.setattr("tl3_harness.execution.scratch_directory", lambda: tmp_path)
     from tl3_harness import generator
     (tmp_path / "python3").write_text("#!/usr/bin/env bash\nexit 7\n")
     (tmp_path / "python3").chmod(0o755)
@@ -1149,7 +1138,8 @@ def test_generator_rejects_mode_changes_in_action_and_artifact_validation(before
 
 @pytest.mark.parametrize("entrypoint", ["./generate.py", "tools/generate.py", "/checkout/generate.py",
                                        "/proc/self/cwd/generate.py"])
-def test_generator_never_resolves_a_maker_written_shebang(tmp_path, entrypoint):
+def test_generator_never_resolves_a_maker_written_shebang(tmp_path, entrypoint, monkeypatch):
+    monkeypatch.setattr("tl3_harness.execution.scratch_directory", lambda: tmp_path)
     from tl3_harness import generator
     script = tmp_path / ("generate.py" if entrypoint.startswith("/") else entrypoint.removeprefix("./"))
     script.parent.mkdir(parents=True, exist_ok=True)

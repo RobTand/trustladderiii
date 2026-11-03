@@ -13,6 +13,7 @@ import tempfile
 
 from tl3_harness import execution
 from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT
+from tl3_harness.scratch import environment as scratch_environment
 from tl3_harness.node_ids import selects
 from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
 from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, OUTCOMES, bounded, infrastructure, options
@@ -26,11 +27,8 @@ class TestSettings:
     cpus: int = 1
     mem_gb: int = 2
     quiet_seconds: int = 120
-    exec_scratch: bool = False
 
     def __post_init__(self):
-        if type(self.exec_scratch) is not bool:
-            raise ValueError("exec_scratch must be a boolean")
         if not re.fullmatch(r"(?:[\w./:-]+@)?sha256:[0-9a-f]{64}", self.image):
             raise ValueError("Use an immutable container image digest")
         if not Path(self.tools_path).is_absolute():
@@ -308,7 +306,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                 tree = _stage(worktree, root, base_sha)
                 contract = {"tree": tree, "trusted": _git(root, "write-tree", "--prefix=trusted/").strip(),
                             "image": settings.image, "cpus": settings.cpus, "mem_gb": settings.mem_gb,
-                            "quiet_seconds": settings.quiet_seconds, "exec_scratch": settings.exec_scratch,
+                            "quiet_seconds": settings.quiet_seconds, "scratch": scratch_environment(),
                             "selectors": selected, "base_sha": base_sha, "repeat": repeat,
                             "parallel": parallel, "priority": priority, "timeout_seconds": timeout_seconds,
                             "forcing": forcing.as_json() if forcing is not None else None,
@@ -335,6 +333,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                            *(("--priority", str(priority)) if priority is not None else ()),
                            "--container-image", settings.image,
                            "--progress-phase", f"tests={settings.quiet_seconds}",
+                           *[arg for name, value in scratch_environment().items() for arg in ("--env", f"{name}={value}")],
                            *[arg for name in NATIVE_THREAD_ENVIRONMENT
                              for arg in ("--env", f"{name}={max(1, settings.cpus // max(1, parallel))}")],
                            "--detach", "--",
@@ -343,8 +342,6 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                     command.extend(["--forcing", json.dumps(forcing.as_json(), sort_keys=True)])
                 if timeout_seconds is not None:
                     command[2:2] = ["--timeout-s", str(timeout_seconds)]
-                if settings.exec_scratch:
-                    command.append("--exec-scratch")
                 # Defaults add nothing, so a default call keeps its action identity.
                 if declared_symptom is not None:
                     command.extend(["--declared-symptom", json.dumps(declared_symptom, sort_keys=True)])

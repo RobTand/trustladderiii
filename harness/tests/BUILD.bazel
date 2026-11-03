@@ -1,15 +1,6 @@
 load("//tools/bazel:python.bzl", "tl3_py_test")
 
 tl3_py_test(
-    name = "test_exec_scratch",
-    srcs = ["test_exec_scratch.py"],
-    deps = [
-        "//harness/src/tl3_harness",
-        "@tl3_pip//pytest",
-    ],
-)
-
-tl3_py_test(
     name = "test_git_environment",
     srcs = ["test_git_environment.py"],
     deps = ["//harness/src/tl3_harness"],

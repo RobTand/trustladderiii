@@ -25,17 +25,6 @@ py_binary(
 )
 
 py_binary(
-    name = "verify_exec_scratch",
-    srcs = ["verify_exec_scratch.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":verify_reproducing",
-        ":verify_scratch",
-        "//harness/src/tl3_harness",
-    ],
-)
-
-py_binary(
     name = "verify_reproducing",
     srcs = ["verify_reproducing.py"],
     visibility = ["//visibility:public"],
