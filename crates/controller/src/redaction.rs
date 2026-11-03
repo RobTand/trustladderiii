@@ -56,7 +56,7 @@ fn start_rule(name: &str, text: &str) -> Result<bool> {
         .map_err(|e| e.to_string())?
         .is_some_and(|m| m.start() == 0))
 }
-fn matches<'a>(regex: &Regex, text: &'a str) -> Result<Vec<Captures<'a>>> {
+fn matches<'a>(regex: &Arc<Regex>, text: &'a str) -> Result<Vec<Captures<'a>>> {
     regex
         .captures_iter(text)
         .map(|m| m.map_err(|e| e.to_string()))
@@ -350,10 +350,7 @@ fn checked(check: &str, cap: &Captures<'_>, text: &str) -> Result<Option<Span>> 
                 .rfind('\n')
                 .map_or(low, |i| low + i + 1);
             if full_rule("WORD", value)?
-                && rx(r"[A-Za-z]{2,}[ \t]")?
-                    .find_iter(&text[line..whole.start()])
-                    .count()
-                    >= 2
+                && matches(&rx(r"[A-Za-z]{2,}[ \t]")?, &text[line..whole.start()])?.len() >= 2
             {
                 return Ok(None);
             }
@@ -639,7 +636,7 @@ pub(crate) fn text(value: &str) -> crate::Result<String> {
         if value.len() > LIMIT {
             return Err("redaction input exceeds one MiB".into());
         }
-        let value = value.replace('\0', "");
+        let value = value;
         let mut out = String::new();
         let mut cursor = 0;
         for (start, end) in spans(&value)? {
@@ -662,6 +659,28 @@ fn worker_python() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../workers/.venv/bin/python")
 }
 #[cfg(test)]
+fn python_command() -> std::process::Command {
+    let mut command = std::process::Command::new(worker_python());
+    command.env_clear();
+    for key in [
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "TEST_TMPDIR",
+        "TEST_SRCDIR",
+        "TEST_WORKSPACE",
+        "RUNFILES_DIR",
+        "RUNFILES_MANIFEST_FILE",
+        "JAVA_RUNFILES",
+        "PYTHON_RUNFILES",
+    ] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    command
+}
+#[cfg(test)]
 mod parity_tests {
     #[test]
     fn oversized_input_fails_closed() {
@@ -673,7 +692,7 @@ mod parity_tests {
 
     #[test]
     fn generated_policy_matches_the_authoritative_source() {
-        let status = std::process::Command::new(super::worker_python())
+        let status = super::python_command()
             .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/redaction_policy.py"))
             .arg("--check")
             .status()
@@ -690,7 +709,7 @@ mod parity_tests {
         matrix.extend(
             serde_json::from_str::<Vec<String>>(include_str!("redaction/corpus.json")).unwrap(),
         );
-        let mut child = std::process::Command::new(super::worker_python())
+        let mut child = super::python_command()
             .args(["-I", "-c", "import json,sys; from tl3_workers.tracing import Redactor; r=Redactor(None); print(json.dumps([r.text(s,limit=len(s)) for s in json.load(sys.stdin)]))"])
             .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped())
             .spawn().unwrap();
@@ -705,7 +724,7 @@ mod parity_tests {
         let expected: Vec<String> = serde_json::from_slice(&output.stdout).unwrap();
         let actual = matrix
             .iter()
-            .map(|text| super::text(text).unwrap())
+            .map(|text| super::text(text).unwrap_or_else(|error| panic!("{text:?}: {error:?}")))
             .collect::<Vec<_>>();
         for ((input, actual), expected) in matrix.iter().zip(actual).zip(expected) {
             assert_eq!(actual, expected, "Python redaction parity for {input:?}");
