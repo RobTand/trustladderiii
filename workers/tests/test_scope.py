@@ -154,3 +154,18 @@ def test_only_a_current_decision_can_supply_scope_authorization():
         'origin_request_version': 1, 'superseded_by': 'd2'}]}
     with pytest.raises(ValueError, match='goal-1.*source'):
         ingest.check_memory_ids(data, reply)
+
+
+@pytest.mark.parametrize('text,kind', [
+    # request188 goal-8: an evidence clause and a reporting clause, not an edit ban.
+    ('Run new or changed tests in `tests/test_reader.py` through run_tests. '
+     'Report only allowlisted fields: status, exit code and receipt hashes.', None),
+    ('Changed tests must pass; only status and exit code are reported.', None),
+    (BAN, 'only'),
+    ('Edit only `tests/test_a.py` and `tests/test_b.py`.', 'only'),
+    ('Only `tests/test_the_claim_pass_times_its_transition_holds.py` may be edited.', 'only'),
+    (EXCLUSION, 'exclude'),
+])
+def test_only_restrictions_stay_within_one_clause(text, kind):
+    from tl3_workers.scope import restriction_kind
+    assert restriction_kind(text) == kind
