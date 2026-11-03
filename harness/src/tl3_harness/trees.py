@@ -169,7 +169,8 @@ def changed_existing_tests(base: Path, head: Path, tests: tuple[str, ...]) -> se
         path = test.split("::", 1)[0]
         def read(tree):
             try:
-                return test_function_source((tree / path).read_text(), test)
+                source = (tree / path).read_text()
+                return test_function_source(source, test) if "::" in test else source
             except (OSError, UnicodeError):
                 return None
         before = read(base)
