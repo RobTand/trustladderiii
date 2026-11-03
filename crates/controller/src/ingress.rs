@@ -166,16 +166,69 @@ pub struct PriorityRead {
     pub issue: tl3_github::Issue,
 }
 
+/// An issue's labels in one order, and a digest of what it says: GitHub's
+/// updated_at has second precision, so it alone doesn't name a snapshot (Q39).
+fn canonical_issue(issue: &tl3_github::Issue) -> (Vec<String>, String) {
+    let mut labels: Vec<_> = issue
+        .labels
+        .iter()
+        .map(|label| label.name.clone())
+        .collect();
+    labels.sort();
+    labels.dedup();
+    let digest = format!(
+        "{:x}",
+        Sha256::digest(json!([&issue.title, &labels]).to_string())
+    );
+    (labels, digest)
+}
+
 /// GitHub reads for pending priority reconciliations in one catch-up pass (Q39).
 pub(crate) const PRIORITY_READS_PER_PASS: usize = 8;
 
 /// Reread pending issues, at most PRIORITY_READS_PER_PASS and one per issue.
 /// A failed read is left out, so its issue stays pending for the next pass.
 pub(crate) fn reconcile_reads(
-    _pending: &[crate::PendingRead],
-    _read: impl FnMut(&Repository, u64) -> Result<tl3_github::Issue>,
+    pending: &[crate::PendingRead],
+    mut read: impl FnMut(&Repository, u64) -> Result<tl3_github::Issue>,
 ) -> Vec<GitHubDelivery> {
-    Vec::new()
+    let mut asked = std::collections::BTreeSet::new();
+    let mut reads: Vec<(Repository, Vec<PriorityRead>)> = Vec::new();
+    for pending in pending {
+        if asked.len() == PRIORITY_READS_PER_PASS {
+            break;
+        }
+        let repository = &pending.repository;
+        let issue = (
+            repository.owner.to_ascii_lowercase(),
+            repository.name.to_ascii_lowercase(),
+            repository.installation,
+            pending.number,
+        );
+        if !asked.insert(issue) {
+            continue;
+        }
+        match read(repository, pending.number) {
+            Ok(issue) => {
+                let read = PriorityRead {
+                    reads: pending.reads,
+                    issue,
+                };
+                match reads.iter_mut().find(|(r, _)| r == repository) {
+                    Some((_, list)) => list.push(read),
+                    None => reads.push((repository.clone(), vec![read])),
+                }
+            }
+            Err(error) => eprintln!(
+                "issue {}/{}#{} not reread; it stays pending: {error}",
+                repository.owner, repository.name, pending.number
+            ),
+        }
+    }
+    reads
+        .into_iter()
+        .map(|(repository, reads)| GitHubDelivery::PriorityReads { repository, reads })
+        .collect()
 }
 
 /// Translators run on the controller thread. Keys must survive duplicate evidence and replay.
@@ -228,14 +281,10 @@ pub(crate) fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<
             // reordered edits converge on its current priority (Q39).
             for issue in &changes.issues {
                 if issue.pull_request.is_none() {
-                    // GitHub's updated_at has second precision, so two snapshots
-                    // can share it; the digest of what they say tells them apart.
-                    let mut labels: Vec<_> = issue.labels.iter().map(|label| &label.name).collect();
-                    labels.sort();
-                    let digest = Sha256::digest(json!([&issue.title, labels]).to_string());
+                    let (labels, digest) = canonical_issue(issue);
                     result.push(Input::IssueChanged(IssueChange {
                         delivery: format!(
-                            "catch-up-issue:{}/{}:{}:{}:{:x}",
+                            "catch-up-issue:{}/{}:{}:{}:{}",
                             repository.owner,
                             repository.name,
                             issue.number,
@@ -247,11 +296,7 @@ pub(crate) fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<
                         installation: repository.installation,
                         number: issue.number,
                         title: issue.title.clone(),
-                        labels: issue
-                            .labels
-                            .iter()
-                            .map(|label| label.name.clone())
-                            .collect(),
+                        labels,
                         updated_at: issue.updated_at,
                         reread: false,
                     }));
@@ -267,7 +312,28 @@ pub(crate) fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<
             }
             result
         }
-        GitHubDelivery::PriorityReads { .. } => Vec::new(),
+        GitHubDelivery::PriorityReads { repository, reads } => reads
+            .into_iter()
+            .filter(|read| read.issue.pull_request.is_none())
+            .map(|read| {
+                let (labels, digest) = canonical_issue(&read.issue);
+                Input::IssueChanged(IssueChange {
+                    // The pending row's read count keeps each pass's read distinct.
+                    delivery: format!(
+                        "priority-read:{}/{}:{}:{}:{digest}",
+                        repository.owner, repository.name, read.issue.number, read.reads
+                    ),
+                    owner: repository.owner.clone(),
+                    repo: repository.name.clone(),
+                    installation: repository.installation,
+                    number: read.issue.number,
+                    title: read.issue.title,
+                    labels,
+                    updated_at: read.issue.updated_at,
+                    reread: true,
+                })
+            })
+            .collect(),
     }
 }
 
@@ -565,11 +631,7 @@ fn issue_change(
         installation: context.installation_id,
         number: issue.number,
         title: issue.title.clone(),
-        labels: issue
-            .labels
-            .iter()
-            .map(|label| label.name.clone())
-            .collect(),
+        labels: canonical_issue(issue).0,
         updated_at: issue.updated_at,
         reread: false,
     }
@@ -716,6 +778,26 @@ impl CatchUp {
             }
         }
 
+        // Same-second priority disagreements wait for a reread here (Q39).
+        let pending = if snapshot.rows.is_empty() {
+            Vec::new()
+        } else {
+            crate::pending_reads(&snapshot)?
+        };
+        for delivery in reconcile_reads(&pending, |repository, number| {
+            let client = self
+                .clients
+                .get(&repository.installation)
+                .ok_or(Error::Invalid("missing GitHub installation client"))?;
+            let name = format!("{}/{}", repository.owner, repository.name);
+            runtime
+                .block_on(client.issue(&name, number))
+                .map_err(|error| Error::Adapter(Box::new(error)))
+        }) {
+            let payload = serde_json::to_vec(&delivery)?;
+            let key = format!("priority-reads:{:x}", Sha256::digest(&payload));
+            deliveries.push((key, payload));
+        }
         Ok(CatchUpBatch { deliveries, cursor })
     }
 }

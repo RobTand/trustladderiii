@@ -201,6 +201,7 @@ pub fn daemon() -> Result<()> {
         adapters::simulation(&simulation)?
     };
     let mut adoption = None;
+    let mut catch_up = None;
     if let Some(listen) = listen {
         if !listen.ip().is_loopback() {
             return Err(Error::Invalid("webhook listen address must be loopback"));
@@ -272,9 +273,13 @@ pub fn daemon() -> Result<()> {
             Some(crate::ingress::CatchUp::new(catch_up_clients)?),
         )?;
         eprintln!("GitHub webhooks listening on {}", webhooks.address());
+        catch_up = Some(webhooks.control());
         sources.register(webhooks);
     }
     let mut controller = Controller::open(Store::open(&config.store)?, adapters, bootstrap)?;
+    if let Some(catch_up) = catch_up {
+        controller.set_catch_up(catch_up);
+    }
     if let Some(adoption) = adoption {
         controller.register_github_translator("adoption", adoption);
     }
@@ -328,6 +333,7 @@ fn production(config: tl3_config::Config) -> Result<()> {
     eprintln!(
         "production adapters registered: GitHub, worktrees, PrismaBuild, Mergify, workers; looks and incidents enabled"
     );
+    controller.set_catch_up(registration.webhooks.control());
     let mut sources = crate::ingress::Sources::default();
     sources.register(registration.webhooks);
     sources.register(registration.workers);
