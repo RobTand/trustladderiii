@@ -222,6 +222,7 @@ fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<Input> {
                             .iter()
                             .map(|label| label.name.clone())
                             .collect(),
+                        updated_at: issue.updated_at,
                     }));
                 }
             }
@@ -537,6 +538,7 @@ fn issue_change(
             .iter()
             .map(|label| label.name.clone())
             .collect(),
+        updated_at: issue.updated_at,
     }
 }
 

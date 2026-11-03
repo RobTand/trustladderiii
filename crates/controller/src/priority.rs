@@ -91,14 +91,16 @@ mod tests {
         )
         .unwrap();
         let repo = config.github.repos[0].clone();
-        let change = |delivery: &str, number: u64, title: &str, labels: &[&str]| IssueChange {
+        // An edit of issue `number` as GitHub saw it `at` seconds in.
+        let change = |delivery: &str, number: u64, at: i64, title: &str| IssueChange {
             delivery: delivery.into(),
             owner: repo.owner.clone(),
             repo: repo.name.clone(),
             installation: repo.installation_id,
             number,
             title: title.into(),
-            labels: labels.iter().map(|label| label.to_string()).collect(),
+            labels: vec!["tl3".into()],
+            updated_at: chrono::DateTime::from_timestamp(1_800_000_000 + at, 0).unwrap(),
         };
         controller
             .intake(LabelledIssue {
@@ -123,25 +125,61 @@ mod tests {
             Priority::P1,
             "a label wins at intake"
         );
-        controller
-            .issue_changed(&change("edited", 42, "[P0] Fix the greeting", &["tl3"]))
-            .unwrap();
+        let edit = |controller: &mut crate::Controller, change: &IssueChange| {
+            controller.issue_changed(change).unwrap()
+        };
+        let a = change("a", 42, 10, "[P1] Fix the greeting");
+        edit(&mut controller, &a);
+        edit(
+            &mut controller,
+            &change("b", 42, 20, "[P0] Fix the greeting"),
+        );
         assert_eq!(
             priority(&mut controller),
             Priority::P0,
             "an edit refreshes it"
         );
+        edit(&mut controller, &a);
+        assert_eq!(
+            priority(&mut controller),
+            Priority::P0,
+            "a replay of an older edit that changed nothing doesn't restore its priority"
+        );
+        edit(
+            &mut controller,
+            &change("d", 42, 40, "[P2] Fix the greeting"),
+        );
+        edit(
+            &mut controller,
+            &change("c", 42, 30, "[P3] Fix the greeting"),
+        );
+        assert_eq!(
+            priority(&mut controller),
+            Priority::P2,
+            "an older edit delivered late doesn't win"
+        );
+        let e = change("e", 42, 50, "[P2] Fix the greeting");
+        edit(&mut controller, &e);
+        edit(
+            &mut controller,
+            &change("f", 42, 45, "[P1] Fix the greeting"),
+        );
+        assert_eq!(
+            priority(&mut controller),
+            Priority::P2,
+            "a newer edit that kept the priority still makes older ones stale"
+        );
         let revision = controller.snapshot().unwrap().revision;
-        for (delivery, number) in [("redelivered", 42), ("other-issue", 43)] {
-            controller
-                .issue_changed(&change(delivery, number, "[P0] Fix the greeting", &["tl3"]))
-                .unwrap();
-        }
+        edit(&mut controller, &e);
+        edit(
+            &mut controller,
+            &change("other-issue", 43, 60, "[P0] Fix the greeting"),
+        );
         assert_eq!(
             controller.snapshot().unwrap().revision,
             revision,
-            "an unchanged priority or an untracked issue records nothing"
+            "a redelivery or an untracked issue records nothing"
         );
-        assert_eq!(priority(&mut controller), Priority::P0);
+        assert_eq!(priority(&mut controller), Priority::P2);
     }
 }

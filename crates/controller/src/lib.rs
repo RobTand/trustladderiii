@@ -225,6 +225,8 @@ pub struct IssueChange {
     pub number: u64,
     pub title: String,
     pub labels: Vec<String>,
+    /// When GitHub last changed the issue, which orders its edits.
+    pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Request {

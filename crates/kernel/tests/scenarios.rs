@@ -1317,29 +1317,54 @@ fn pool_ties_go_to_the_older_ticket() {
     }
 }
 
+/// End node i's current agent run: an early-ending ingest, then its audit.
+fn finish(w: World, i: usize) -> World {
+    if w.nodes[i].phase == Phase::Ingesting {
+        return end_ingest(w, i);
+    }
+    let generation = w.nodes[i].generation;
+    let (next, _) = step(
+        w,
+        Event::Reply {
+            node: NodeId(i as u64),
+            generation,
+            reply: Reply::AuditAgrees,
+        },
+    );
+    assert!(next.valid() && next.is_settled());
+    confirm_all(next)
+}
+
 #[test]
-fn an_aging_p3_is_granted_within_its_bound_under_constant_p0_load() {
+fn a_waiting_p3_yields_to_every_better_priority_however_long_it_waits() {
     let mut w = admit(pool_world(), Priority::P0);
     w = admit(w, Priority::P3);
     let p3 = 1;
-    let mut ahead = 0u64;
-    for _ in 0..1000 {
-        // A newer P0 arrives before every grant, so pure priority would starve the P3.
+    for round in 0..50 {
+        // A newer P0 arrives before every grant: strict priority keeps the P3 waiting.
         w = admit(w, Priority::P0);
         let [holder] = running(&w)[..] else {
             panic!("one pool holder")
         };
-        w = end_ingest(w, holder);
+        w = finish(w, holder);
+        assert_ne!(running(&w), [p3], "round {round}: a better priority waits");
+    }
+    // Once no better priority waits, the P3 is next.
+    for _ in 0..200 {
         if running(&w) == [p3] {
             break;
         }
-        ahead += 1;
+        let [holder] = running(&w)[..] else {
+            panic!("one pool holder")
+        };
+        w = finish(w, holder);
     }
-    assert_eq!(running(&w), [p3], "the P3 is never starved");
-    assert!(ahead >= 1, "fresh P0 work overtakes the P3 first");
+    assert_eq!(running(&w), [p3]);
     assert!(
-        ahead <= Priority::P3.rank() as u64 * POOL_AGING_TICKETS,
-        "{ahead} grants passed the P3; the bound is rank x POOL_AGING_TICKETS"
+        w.nodes
+            .iter()
+            .all(|n| n.priority == Priority::P3 || tl3_kernel::pool_key(n).is_none()),
+        "the P3 runs only when no better priority waits"
     );
 }
 

@@ -1429,16 +1429,16 @@ fn check_priority() {
 }
 
 /// The state table's place in the pool line, written independently of the
-/// kernel: a ticket plus 8 tickets per level below P0, then the ticket.
+/// kernel: the priority's level, then the ticket.
 fn spec_key(priority: Priority, ticket: u64) -> (u64, u64) {
-    let levels = match priority {
+    let level = match priority {
         Priority::P0 => 0,
         Priority::P1 => 1,
         Priority::P2 => 2,
         Priority::P3 => 3,
         Priority::Unranked => 4,
     };
-    (ticket + 8 * levels, ticket)
+    (level, ticket)
 }
 
 /// Three leaves waiting for the agent pool at their first run, in arbitrary
@@ -1473,7 +1473,7 @@ fn check_pool_grant_order() {
     if after.nodes[0].pool {
         assert!(
             first,
-            "a grant goes to the lowest score, then the older ticket"
+            "a grant goes to the best priority, then the older ticket"
         );
         assert!(after.nodes[0].ticket.is_none());
     } else if before.pool_capacity == 1 {
@@ -1487,52 +1487,39 @@ fn check_pool_grant_order() {
         "a better priority passes an older ticket"
     );
     kani::cover!(
-        after.nodes[0].pool
-            && before.nodes[1..]
-                .iter()
-                .any(|m| m.ticket.is_some() && m.priority < n.priority),
-        "seniority holds against a better priority"
-    );
-    kani::cover!(
         !after.nodes[0].pool && before.pool_capacity == 1,
         "a better waiter keeps its place"
     );
     assert_eq!(&after.nodes[1..], &before.nodes[1..]);
 }
 
-fn check_pool_aging_bound() {
-    let (mine, theirs): (u64, u64) = (kani::any(), kani::any());
-    let (p, q): (Priority, Priority) = (kani::any(), kani::any());
-    kani::assume(mine < LIMIT && theirs < LIMIT && mine != theirs);
-    let key = |priority: Priority, ticket| (pool_score(priority, ticket), ticket);
-    let window = |better: Priority, worse: Priority| {
-        u64::from(worse.rank() - better.rank()) * POOL_AGING_TICKETS
-    };
-    // Priority first: a better priority passes a ticket less than its
-    // window older.
-    if mine < theirs && q < p && theirs - mine < window(q, p) {
-        assert!(key(q, theirs) < key(p, mine));
-    }
-    // Bounded: no ticket issued rank x POOL_AGING_TICKETS or more after a
-    // waiter's passes it, whatever its priority. Only older tickets, which are
-    // finite and never reissued, and the fewer younger tickets inside the
-    // window can, so it waits for at most K + rank x N - 1 grants to others.
-    if theirs >= mine + u64::from(p.rank()) * POOL_AGING_TICKETS {
-        assert!(key(p, mine) < key(q, theirs));
-    }
-    // Ties go to the older ticket.
-    if p == q {
-        assert_eq!(key(p, mine) < key(q, theirs), mine < theirs);
-    }
+fn check_pool_order_is_strict_priority() {
+    let mut a = Node::new(RepoId(0));
+    let mut b = Node::new(RepoId(0));
+    a.phase = Phase::Ingesting;
+    b.phase = Phase::Ingesting;
+    a.ticket = Some(kani::any());
+    b.ticket = Some(kani::any());
+    a.priority = kani::any();
+    b.priority = kani::any();
+    kani::assume(a.ticket != b.ticket);
+    let (ka, kb) = (pool_key(&a).unwrap(), pool_key(&b).unwrap());
+    // Priority first, whatever the tickets; the older ticket breaks a tie.
+    let expected = a.priority < b.priority || (a.priority == b.priority && a.ticket < b.ticket);
+    assert_eq!(
+        ka < kb,
+        expected,
+        "the pool line is strict priority, then ticket"
+    );
     kani::cover!(
-        mine < theirs && key(q, theirs) < key(p, mine),
+        a.priority < b.priority && a.ticket > b.ticket,
         "a better priority passes an older ticket"
     );
-    kani::cover!(
-        mine < theirs && q < p && key(p, mine) < key(q, theirs),
-        "seniority holds against a better priority"
-    );
+    kani::cover!(a.priority == b.priority, "a tie goes by ticket");
 }
 
 proof!(pool_grant_is_priority_ordered, check_pool_grant_order());
-proof!(pool_aging_bound, check_pool_aging_bound());
+proof!(
+    pool_order_is_strict_priority,
+    check_pool_order_is_strict_priority()
+);
