@@ -1,7 +1,7 @@
 use crate::{Error, Result};
 
 #[derive(Debug, thiserror::Error)]
-#[error("worker source {boundary} failed (errno {errno:?})", errno = .raw_os_error())]
+#[error("worker source {boundary} failed (errno {errno:?})", errno = self.raw_os_error())]
 pub struct SourceError {
     pub boundary: &'static str,
     #[source]
