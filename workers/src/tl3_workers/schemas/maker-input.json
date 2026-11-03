@@ -89,7 +89,7 @@
       "properties": {"endpoint": {"type": "string", "pattern": "^https?://"}, "bank": {"$ref": "#/$defs/text"}},
       "required": ["endpoint", "bank"], "additionalProperties": false
     },
-    "fit_tokens": {"type": "integer", "minimum": 1},
+    "forecast": {"$ref": "planner-input.json#/properties/forecast"},
     "context_size": {"type": "integer", "minimum": 1}
   },
   "required": ["brief", "goals", "plan", "attempt", "round", "tests", "context_size"],

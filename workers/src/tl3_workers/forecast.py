@@ -163,6 +163,24 @@ def measure_files(worktree, paths, encoding=None):
     return file_tokens, problems, large
 
 
+def forecast_fit(brief, file_tokens, config, encoding=None, problems=()):
+    """Use the same context budget for planning and requesting more files.
+
+    Configured overhead reserves tools, making history and fix-round feedback.
+    Without cached tokenizer data, UTF-8 bytes conservatively bound brief tokens.
+    Unusable files each cost the entire fit limit, so they cannot prove a fit.
+    """
+    brief_tokens = len(encoding.encode_ordinary(brief) if encoding is not None else brief.encode())
+    overhead_tokens = sum(config["overhead_tokens"].values())
+    tokens = brief_tokens + sum(file_tokens.values()) + overhead_tokens + config["fit_tokens"] * len(problems)
+    return {
+        "tokenizer": "o200k_base", "brief_tokens": brief_tokens,
+        "file_tokens": file_tokens, "overhead_tokens": overhead_tokens,
+        "tokens": tokens, "fit_tokens": config["fit_tokens"],
+        "context_tokens": config["context_tokens"], "fits": tokens < config["fit_tokens"],
+    }
+
+
 class Forecaster:
     def __init__(self, config):
         if config["fit_tokens"] >= config["context_tokens"]:
@@ -179,16 +197,7 @@ class Forecaster:
         return file_tokens
 
     def forecast(self, brief, file_tokens):
-        config = self.config
-        brief_tokens = len(self.encoding.encode_ordinary(brief))
-        overhead_tokens = sum(config["overhead_tokens"].values())
-        tokens = brief_tokens + sum(file_tokens.values()) + overhead_tokens
-        return {
-            "tokenizer": "o200k_base", "brief_tokens": brief_tokens,
-            "file_tokens": file_tokens, "overhead_tokens": overhead_tokens,
-            "tokens": tokens, "fit_tokens": config["fit_tokens"],
-            "context_tokens": config["context_tokens"], "fits": tokens < config["fit_tokens"],
-        }
+        return forecast_fit(brief, file_tokens, self.config, self.encoding)
 
     def measure(self, brief, paths):
         return self.forecast(brief, self.files(paths))
