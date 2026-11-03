@@ -193,6 +193,10 @@ def test_only_tl3_prompt_and_read_tools_reach_model(request_doc, role, monkeypat
     assert [message.type for message in messages] == ["system", "human"]
     system = messages[0].text
     expected = files("tl3_workers").joinpath("prompts", role + ".md").read_text()
+    if role == "ingest":
+        from tl3_workers.tools import Worktree
+        with Worktree(request_doc["worktree"]) as tree:
+            expected += "\n\n" + tree.generation_instruction()
     proposal = copy.deepcopy(schema(role + "-reply"))
     if role == "ingest":
         del proposal["oneOf"][0]["properties"]["forecast"]

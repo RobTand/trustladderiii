@@ -372,22 +372,17 @@ impl Supervisor {
             self.root(&delivery.key).join("worktree")
         };
         let mut forecast = json!({"fit_tokens": self.limits.fit_tokens, "context_tokens": self.limits.context_tokens, "overhead_tokens": self.planning.overhead_tokens});
-        let repository = self
-            .repositories
-            .iter()
-            .find(|repo| {
-                repo.owner.eq_ignore_ascii_case(&delivery.repository.owner)
-                    && repo.name.eq_ignore_ascii_case(&delivery.repository.name)
-                    && repo.installation_id == delivery.repository.installation
-            })
-            .ok_or(Error::Invalid(
-                "repository generation settings are not configured",
-            ))?;
-        if !repository.generated_files.is_empty() {
-            forecast["generated_files"] = json!(repository.generated_files);
-        }
-        if let Some(generator) = &repository.generator {
-            forecast["generator"] = json!(generator);
+        if let Some(repository) = self.repositories.iter().find(|repo| {
+            repo.owner.eq_ignore_ascii_case(&delivery.repository.owner)
+                && repo.name.eq_ignore_ascii_case(&delivery.repository.name)
+                && repo.installation_id == delivery.repository.installation
+        }) {
+            if !repository.generated_files.is_empty() {
+                forecast["generated_files"] = json!(repository.generated_files);
+            }
+            if let Some(generator) = &repository.generator {
+                forecast["generator"] = json!(generator);
+            }
         }
         if role == "maker" {
             inputs["forecast"] = forecast.clone();
