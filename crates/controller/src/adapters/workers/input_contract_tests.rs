@@ -16,6 +16,7 @@ fn worlds() -> Vec<(World, Vec<tl3_kernel::Out>)> {
         );
         let mut changed = false;
         let mut paused_audit_reply = false;
+        let mut paused_maker_reply = false;
         for _ in 0..120 {
             assert!(world.valid());
             cases.push((world.clone(), outputs));
@@ -30,6 +31,16 @@ fn worlds() -> Vec<(World, Vec<tl3_kernel::Out>)> {
                     reply: Reply::AuditAgrees,
                 };
                 paused_audit_reply = false;
+            }
+            if paused_maker_reply {
+                event = Event::Reply {
+                    node: NodeId(0),
+                    generation: n.generation,
+                    reply: Reply::MakerDone {
+                        head: n.head.unwrap_or(tl3_kernel::HeadId(0)),
+                    },
+                };
+                paused_maker_reply = false;
             }
             if !changed {
                 let reply = match (scenario, &event) {
@@ -104,6 +115,7 @@ fn worlds() -> Vec<(World, Vec<tl3_kernel::Out>)> {
                     };
                     changed = true;
                 } else if scenario == 0 && n.phase == Phase::Making && n.effect.is_none() {
+                    paused_maker_reply = true;
                     event = Event::Command {
                         node: NodeId(0),
                         id: n.last_cmd + 1,
@@ -208,6 +220,8 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
     let mut coverage = std::collections::BTreeSet::new();
     let mut phases = std::collections::BTreeSet::new();
     let mut variants = std::collections::BTreeSet::new();
+    let mut request_cases = std::collections::BTreeSet::new();
+    let mut auxiliary_phases = std::collections::BTreeSet::new();
     for (index, (world, outputs)) in worlds().into_iter().enumerate() {
         let n = world.nodes[0];
         phases.insert(n.phase.name());
@@ -234,6 +248,12 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
                     head,
                 } => {
                     let role = protocol::role(kernel_role).unwrap();
+                    if !request_cases.insert(format!(
+                        "{role}:{:?}:{}:{}:{}",
+                        n.phase, n.round, n.replanned, n.review_restarted
+                    )) {
+                        continue;
+                    }
                     delivery.output = Out::Effect {
                         node,
                         seq,
@@ -255,6 +275,11 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
                         | Notice::Note(_)),
                     node,
                 } => {
+                    if !request_cases
+                        .insert(format!("writer:{notice:?}:{:?}:{:?}", n.phase, n.question))
+                    {
+                        continue;
+                    }
                     delivery.output = Out::Notice { node, notice };
                     let input = crate::adapters::github::writer_input(
                         &delivery,
@@ -272,6 +297,9 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
         }
         // Classifier and requested postmortems are controller-side jobs, so their
         // contracts apply in every reachable phase, including paused and closed.
+        if !auxiliary_phases.insert(format!("{:?}:{}", n.phase, n.paused)) {
+            continue;
+        }
         let comment = json!({"id":index+100,"body":"Continue","issue_url":"https://api.github.com/repos/RobTand/tl3-sandbox/issues/42","user":{"id":config.github.rob.id,"login":"owner"},"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"});
         snapshot.rows.push(tl3_store::WorldRow {
             table: "unclassified_comments".into(),
