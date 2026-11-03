@@ -220,7 +220,7 @@ with review goals, omit requirements, or substitute a different executor's proof
 
 The installed executor is prismabuild_pytest. It supports base_head, repeat,
 parallel and always_tests, with action_key, cas_receipt, sha, logs and terminal_verdict artifacts.
-Its methods are head, base_head, red_green, forced_reproduction.environment and
+Its methods are head, base_head, red_green, helper_target_observer, forced_reproduction.environment and
 forced_reproduction.patches. Q55 environment and Python patches do not implement
 a pinned CPU artificial contention wrapper. BuildBuddy Remote Bazel evidence
 requires executor buildbuddy_remote_bazel, artifact invocation_url and, when

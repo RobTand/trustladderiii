@@ -792,6 +792,7 @@ fn stage_owned_handover_keeps_fail_fast_and_independent_checking() {
                             kind: adapters::prismabuild::Kind::Demonstrating,
                             tests: vec!["test_deep.py::test_deep_path".into()],
                             forcing: Some(forcing()),
+                            helper_evidence: None,
                         }],
                     };
                     return Ok(Completion::confirmed(vec![
