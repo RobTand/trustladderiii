@@ -751,6 +751,10 @@ proof!(apply_run_failed, check_apply(reply(Reply::RunFailed)));
 proof!(apply_ack_confirmed, check_apply(ack(Ack::Confirmed)));
 proof!(apply_ack_retryable, check_apply(ack(Ack::Retryable)));
 proof!(apply_ack_permanent, check_apply(ack(Ack::Permanent)));
+proof!(
+    apply_ack_body_policy_refused,
+    check_apply(ack(Ack::BodyPolicyRefused))
+);
 proof!(apply_pr_closed, check_apply(fact(Fact::PrClosedByPerson)));
 proof!(
     apply_pr_dequeued,
