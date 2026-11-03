@@ -66,7 +66,10 @@ def exporters(monkeypatch):
 
     def launch(*args, **kwargs):
         child = popen(*args, **kwargs)
-        children.append(child)
+        command = child.args
+        if (isinstance(command, (list, tuple)) and len(command) > 2
+                and command[2] == 'ship' and Path(command[1]).name == 'tracing.py'):
+            children.append(child)
         return child
 
     monkeypatch.setattr(subprocess, 'Popen', launch)
@@ -75,6 +78,12 @@ def exporters(monkeypatch):
         if child.poll() is None:
             child.kill()
         child.wait(timeout=15)
+
+
+def test_exporter_fixture_ignores_unrelated_children(exporters):
+    child = subprocess.Popen(['git', '--version'], stdout=subprocess.DEVNULL)
+    assert child.wait(timeout=15) == 0
+    assert not exporters, 'only trace shippers belong to the exporter wait set'
 
 
 def run_fake(request_doc, monkeypatch, exporters, uri, *, secret='sk-fixture296secretvalue0123456789', wait=True,
@@ -106,13 +115,19 @@ def decode(packets):
     return list(request.resource_spans[0].scope_spans[0].spans)
 
 
-def test_run_produces_tagged_trace(request_doc, monkeypatch, exporters, receiver):
+def test_run_produces_tagged_trace(request_doc, monkeypatch, exporters, receiver, tmp_path):
     uri, packets = receiver
-    run_fake(request_doc, monkeypatch, exporters, uri)
+    completion = tmp_path / 'facts.json'
+    run_fake(request_doc, monkeypatch, exporters, uri, trace={
+        'repo': 'RobTand/tl3-sandbox', 'issue': 101, 'request': '7', 'attempt': 2, 'round': 1,
+        'completion': str(completion)})
     spans = decode(packets)
     assert packets[-1][0] == '/v1/traces'
     assert packets[-1][1]['x-mlflow-experiment-id'] == '12'
     root = next(span for span in spans if not span.parent_span_id)
+    facts = json.loads(completion.read_text())
+    assert facts['trace_id'] == 'tr-' + root.trace_id.hex()
+    assert (facts['input_tokens'], facts['output_tokens']) == (11, 7)
     attrs = {attr.key: attr.value.string_value for attr in root.attributes}
     expected = {'repo': 'RobTand/tl3-sandbox', 'issue': '101', 'request': '7', 'node': '1',
                 'role': 'ingest', 'model': 'fixture-model', 'effort': 'high', 'attempt': '2',

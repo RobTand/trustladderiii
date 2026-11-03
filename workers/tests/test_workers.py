@@ -388,3 +388,134 @@ def test_supplied_memories_are_redacted_before_the_model(request_doc, monkeypatc
     assert "Deploy with export GITHUB_TOKEN=" in sent
     assert json.loads(sent)["memories"][0]["id"] == "m-1"
     assert events[-1]["reply"]["memory_ids"] == ["m-1"]
+
+
+def test_completion_records_actual_worker_time_and_model_usage(tmp_path, request_doc, monkeypatch):
+    from tl3_workers import facts
+    import time
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+
+    completion = tmp_path / "facts.json"
+    request_doc["trace"] = {"completion": str(completion), "release": "release-fixture"}
+    clock = iter([1_000_000_000_000, 9_666_000_000_000])
+    monkeypatch.setattr(time, "time_ns", lambda: next(clock))
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="ok", usage_metadata={
+        "input_tokens": 1_600_000, "output_tokens": 170_000, "total_tokens": 1_770_000,
+        "input_token_details": {"cache_read": 1_000_000},
+    })])
+    with facts.observe(request_doc):
+        model.invoke("fixture")
+    row = json.loads(completion.read_text())
+    assert (row["started_ms"], row["finished_ms"]) == (1_000_000, 9_666_000)
+    assert row["finished_ms"] - row["started_ms"] == 8_666_000
+    assert row["outcome"] == "succeeded"
+    assert row["model"] == "fixture-model"
+    assert row["release"] == "release-fixture"
+    assert (row["input_tokens"], row["cached_tokens"], row["output_tokens"]) == (
+        1_600_000, 1_000_000, 170_000)
+    assert row["trace_id"] is None
+    assert row["failure"] is None
+
+
+def test_failed_worker_keeps_usage_and_redacted_proxy_correlation(tmp_path, request_doc):
+    from tl3_workers import facts
+    import httpx
+    from openai import InternalServerError
+
+    completion = tmp_path / "facts.json"
+    request_doc["trace"] = {"completion": str(completion)}
+    response = httpx.Response(502, headers={"x-request-id": "req-fixture-120"},
+                              request=httpx.Request("POST", "http://model.invalid/v1"))
+    failure = InternalServerError("Bearer fixture-secret-value response body", response=response,
+                                  body={"secret": "fixture-secret-value"})
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="ok", usage_metadata={
+        "input_tokens": 1_600_000, "output_tokens": 170_000, "total_tokens": 1_770_000})])
+    with pytest.raises(InternalServerError), facts.observe(request_doc):
+        model.invoke("fixture")
+        raise failure
+    row = json.loads(completion.read_text())
+    assert row["outcome"] == "failed"
+    assert row["input_tokens"] + row["output_tokens"] == 1_770_000
+    assert row["cached_tokens"] is None
+    assert row["failure"] == {"origin": "proxy", "class": "InternalServerError",
+                              "status": 502, "request_id": "req-fixture-120"}
+    assert "fixture-secret-value" not in completion.read_text()
+    assert "response body" not in completion.read_text()
+
+
+@pytest.mark.parametrize("error", [RuntimeError("secret local text"),
+                                  ValueError("secret invalid reply")])
+def test_missing_usage_stays_unknown_and_local_failure_has_no_body(tmp_path, request_doc, error):
+    from tl3_workers import facts
+
+    completion = tmp_path / "facts.json"
+    request_doc["trace"] = {"completion": str(completion)}
+    with pytest.raises(type(error)), facts.observe(request_doc):
+        raise error
+    row = json.loads(completion.read_text())
+    assert row["failure"]["origin"] == "worker"
+    assert row["failure"]["class"] == type(error).__name__
+    assert all(row[key] is None for key in ("input_tokens", "cached_tokens", "output_tokens"))
+    assert "secret" not in completion.read_text()
+
+
+def test_real_process_writes_completion_without_changing_protocol(tmp_path, request_doc):
+    completion = tmp_path / "facts.json"
+    request_doc["trace"] = {"completion": str(completion)}
+    result = start_worker(tmp_path, request_doc, [{"content": json.dumps(BRIEF), "usage_metadata": {
+        "input_tokens": 11, "output_tokens": 7, "total_tokens": 18}}])
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1] == {"event": "reply", "role": "ingest", "reply": BRIEF}
+    row = json.loads(completion.read_text())
+    assert row["outcome"] == "succeeded"
+    assert row["input_tokens"] == 11 and row["output_tokens"] == 7
+    assert row["finished_ms"] >= row["started_ms"]
+
+
+def test_callback_checkpoints_usage_before_a_worker_can_be_killed(tmp_path, request_doc):
+    from tl3_workers import facts
+    completion = tmp_path / "facts.json"
+    request_doc["trace"] = {"completion": str(completion)}
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="ok", usage_metadata={
+        "input_tokens": 11, "output_tokens": 7, "total_tokens": 18})])
+    with facts.observe(request_doc):
+        model.invoke("one")
+        model.invoke("two")
+        checkpoint = json.loads(completion.read_text())
+        assert checkpoint["outcome"] == "running"
+        assert checkpoint["finished_ms"] is None
+        assert (checkpoint["input_tokens"], checkpoint["output_tokens"]) == (22, 14)
+
+
+@pytest.mark.parametrize("request_id", ["Bearer secret", "x" * 129, "fixture-key-value"])
+def test_failure_correlation_rejects_secrets_and_unbounded_headers(tmp_path, request_doc, request_id):
+    from tl3_workers import facts
+    from tl3_workers.tracing import record_model_key
+    import httpx
+    from openai import InternalServerError
+    record_model_key("fixture-key-value")
+    completion = tmp_path / "facts.json"
+    request_doc["trace"] = {"completion": str(completion)}
+    response = httpx.Response(502, headers={"x-request-id": request_id},
+                              request=httpx.Request("POST", "http://model.invalid/v1"))
+    with pytest.raises(InternalServerError), facts.observe(request_doc):
+        raise InternalServerError("never stored", response=response, body=None)
+    assert json.loads(completion.read_text())["failure"]["request_id"] is None
+
+
+@pytest.mark.parametrize('missing_last_usage', [False, True])
+def test_completion_distinguishes_complete_usage_from_partial_totals(tmp_path, request_doc, missing_last_usage):
+    from tl3_workers import facts
+    completion = tmp_path / 'facts.json'
+    request_doc['trace'] = {'completion': str(completion)}
+    usage = {'input_tokens': 11, 'output_tokens': 7, 'total_tokens': 18}
+    model = FakeMessagesListChatModel(responses=[
+        AIMessage(content='one', usage_metadata=usage),
+        AIMessage(content='two', usage_metadata=None if missing_last_usage else usage),
+    ])
+    with facts.observe(request_doc):
+        model.invoke('one')
+        model.invoke('two')
+    row = json.loads(completion.read_text())
+    assert row.get('usage_complete') is (not missing_last_usage)
+    assert row['input_tokens'] == (11 if missing_last_usage else 22)
