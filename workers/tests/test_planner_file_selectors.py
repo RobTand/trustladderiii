@@ -33,7 +33,6 @@ def file_plan(planner_request, monkeypatch):
     root = Path(planner_request['worktree'])
     monkeypatch.chdir(root)
     (root / FILE).write_text(SOURCE)
-    (root / 'pyproject.toml').write_text('[tool.tl3.harness]\ntest-files = ["tests/**/*.py"]\n')
     planner_request['inputs']['repair_plan_consistency'] = True
     tool = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
             'runner_features': ['base_head', 'native_threads_1'],
@@ -51,12 +50,9 @@ def file_plan(planner_request, monkeypatch):
     return draft
 
 
-def model_for(monkeypatch, draft, fixed, *, read=False):
+def model_for(monkeypatch, draft, fixed):
     from tl3_workers import runtime
     responses = []
-    if read:
-        responses.append(AIMessage(content='', tool_calls=[
-            {'name': 'read', 'args': {'path': FILE, 'limit': 200}, 'id': 'base-definitions'}]))
     responses.extend(AIMessage(content=json.dumps(reply)) for reply in (draft, fixed, LEAF))
     model = PlannerModel(responses=responses, calls=[])
     monkeypatch.setattr(runtime, 'create_model', lambda _: model)
@@ -147,8 +143,6 @@ def test_file_syntax_does_not_repair_substantive_refusals(planner_request, file_
     runtime.run(planner_request, events.append)
     assert len(model.calls) == 1
     assert events[-1]['reply']['violations']
-
-
 
 
 @pytest.mark.parametrize('selector', [FILE, 'tests/', FILE + '::'])

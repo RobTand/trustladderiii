@@ -1,9 +1,6 @@
 """Report plan measurements and rule violations to the controller."""
 
 from copy import deepcopy
-import configparser
-import ast
-import tomllib
 from pathlib import PurePosixPath
 import re
 
@@ -15,8 +12,7 @@ from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES, MAX_EXECUTION_PIECE
 from tl3_harness import Check, Forcing, HarnessInputError, Kind, Proof
 from tl3_harness.proof import overlaps
 from tl3_harness.limits import validate_check_plan
-from tl3_harness.node_ids import validate_always_tests
-from tl3_harness.trees import is_test, test_function_source
+from tl3_harness.trees import test_function_source
 from tl3_workers.tools import Worktree
 from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.recall import check_citations
@@ -42,26 +38,43 @@ def execution_budget_details(execution):
 class PlanConsistencyError(ValueError):
     """A draft's checks disagree with its declarations or exact base selections."""
 
-    def __init__(self, uncovered, missing_forced=(), *, draft=None, file_selections=None):
+    def __init__(self, uncovered, missing_forced=(), *, draft=None, selectors=None, missing_proof=None):
         self.draft = deepcopy(draft)
         self.uncovered = set(uncovered)
         self.missing_forced = set(missing_forced)
-        self.file_selections = file_selections or {}
-        self.node_ids = (*uncovered, *missing_forced, *self.file_selections)
+        self.selectors = selectors or {}
+        self.missing_proof = missing_proof or {}
+        self.local = bool(self.selectors or self.missing_proof)
+        self.node_ids = (*uncovered, *missing_forced,
+                         *(node for nodes in self.selectors.values() for node in nodes),
+                         *(f"check-{index + 1} proof: {', '.join(sorted(fields))}"
+                           for index, fields in self.missing_proof.items()))
         self.violations = [
             f"`{node_id}` is in edits_tests but no demonstrating check names it. "
             "Name it in a demonstrating check that fails on the base by an assertion."
             for node_id in uncovered]
         self.violations.extend(f"Existing check must name a test defined at the base: {node_id}"
                                for node_id in missing_forced)
-        self.violations.extend(f"Checks must name exact pytest node IDs: {path}. "
-                               f"Replace the file with every already-read base definition: {', '.join(nodes)}"
-                               for path, nodes in self.file_selections.items())
+        self.violations.extend(
+            f"Checks must name exact pytest node IDs. Replace `{node}` with the exact test definitions this check needs."
+            for nodes in self.selectors.values() for node in nodes)
+        self.violations.extend(
+            f"check-{index + 1} is missing required proof declarations: {', '.join(sorted(fields))}. "
+            "State the expected assertion message supported by this check. Missing subjects or observer_support "
+            "may only be filled with [] for an inferred partition. Preserve all existing proof values."
+            for index, fields in self.missing_proof.items())
+        if self.local:
+            super().__init__("\n".join(self.violations) +
+                             "\nUse already-read facts. Only replace the named check's selectors or fill its "
+                             "missing proof fields. Preserve every other declaration, existing proof value, "
+                             "check, goal, forcing, evidence obligation, file and estimate. "
+                             "Do not invent base failures; return cant_meet if needed.")
+            return
         super().__init__("\n".join(self.violations) +
                          "\nReconcile the declaration and checks using already-read facts. "
                          "Keep the draft's files, goals, check kinds and forcings. Only add missing "
                          "demonstrating coverage, replace forced non-base selections with base tests, "
-                         "replace regression file selections with their complete base definitions, "
+                         "replace non-exact selectors with the exact base tests the check needs, "
                          "or drop an uncovered unnecessary edit. Do not expand the draft. "
                          "Drop an edit only if it is unnecessary for the goals. "
                          "A forced check must name existing base tests and preserve every required goal, "
@@ -87,6 +100,10 @@ class PlanConsistencyError(ValueError):
         if ({key: value for key, value in reply.items() if key not in mutable}
                 != {key: value for key, value in draft.items() if key not in mutable}):
             errors.append('Correction changes declarations outside the test consistency error.')
+        if self.local:
+            errors.extend(self.constrain_local(reply))
+            reply['violations'].extend(dict.fromkeys(errors))
+            return
         before, after = set(draft.get('edits_tests', [])), set(reply.get('edits_tests', []))
         if after - before or (before - after) - self.uncovered:
             errors.append('Correction may only drop uncovered edit declarations.')
@@ -114,13 +131,6 @@ class PlanConsistencyError(ValueError):
                     != {key: value for key, value in original.items() if key != 'node_ids'}):
                 errors.append('Correction changes a draft check kind, goals or forcing.')
             old_nodes, new_nodes = set(original['node_ids']), set(check['node_ids'])
-            expanded = old_nodes & self.file_selections.keys()
-            if expanded:
-                expected = old_nodes - expanded
-                expected.update(node for path in expanded for node in self.file_selections[path])
-                if new_nodes != expected:
-                    errors.append('Correction must preserve the complete file selection without extra tests.')
-                continue
             replacing = original['kind'] == 'demonstrating' and 'forcing' in original
             removable = self.missing_forced if replacing else set()
             if (old_nodes - new_nodes) - removable:
@@ -131,8 +141,75 @@ class PlanConsistencyError(ValueError):
                     errors.append('Correction adds test selections outside the draft consistency error.')
         reply['violations'].extend(dict.fromkeys(errors))
 
+    def constrain_local(self, reply):
+        """Only the rejected selectors and absent proof fields can change."""
+        errors = []
+        draft = self.draft
+        if reply.get('edits_tests') != draft.get('edits_tests'):
+            errors.append('Correction changes edit declarations.')
+        if len(reply['checks']) != len(draft['checks']):
+            errors.append('Correction changes the number of draft checks.')
+        for index, (before, after) in enumerate(zip(draft['checks'], reply['checks'])):
+            mutable = ({'node_ids'} if index in self.selectors else set())
+            if index in self.missing_proof:
+                mutable.add('proof')
+                old, new = before.get('proof', {}), after.get('proof', {})
+                if (any(new.get(key) != value for key, value in old.items())
+                        or any(new.get(key) != [] for key in self.missing_proof[index]
+                               if key != 'red_message')):
+                    errors.append('Correction changes the declared proof partition or an existing proof value.')
+            if ({key: value for key, value in before.items() if key not in mutable}
+                    != {key: value for key, value in after.items() if key not in mutable}):
+                errors.append('Correction changes declarations outside the missing fields or selectors.')
+            if index in self.selectors:
+                for node in after['node_ids']:
+                    try:
+                        Check('planned', Kind(after['kind']), (node,))
+                    except HarnessInputError:
+                        errors.append(f'Corrected check must name an exact pytest node ID: {node}')
+                        continue
+                    oversized, exists = base_definition(node)
+                    if oversized or not exists:
+                        errors.append(f'Corrected check must name a test defined at the base: {node}')
+        return errors
 
-def check_reply(inputs, reply, *, rehearsals=None, read_sources=None):
+
+def proof_omissions(reply):
+    """The proof schema's required keys are the only declaration omissions admitted here."""
+    if not isinstance(reply, dict) or reply.get('kind') != 'leaf' or not isinstance(reply.get('checks'), list):
+        return {}
+    required = set(PROOF_DECLARATION)
+    missing = {}
+    for index, check in enumerate(reply['checks']):
+        if (not isinstance(check, dict) or check.get('kind') not in {'demonstrating', 'reproducing'}
+                or 'declared_symptom' in check or not isinstance(check.get('proof', {}), dict)):
+            continue
+        absent = required - check.get('proof', {}).keys()
+        if absent:
+            missing[index] = absent
+    return missing
+
+
+# A validation-only placeholder never enters an accepted plan or a proof run.
+PROOF_DECLARATION = Proof((), (), 'undeclared assertion message').as_json()
+
+
+def proof_for_validation(check):
+    return {**PROOF_DECLARATION, **check.get('proof', {})}
+
+
+def planner_schema_reply(reply):
+    """Validate every schema rule while required proof keys get semantic refusal/repair below."""
+    missing = proof_omissions(reply)
+    if not missing:
+        return reply
+    result = deepcopy(reply)
+    for index in missing:
+        result['checks'][index]['proof'] = proof_for_validation(result['checks'][index])
+    return result
+
+
+def check_reply(inputs, reply, *, rehearsals=None):
     if rehearsals is not None:
         rehearsals.raise_infrastructure()
     Draft202012Validator(EXPLORATION_DECLARATION).validate(reply)
@@ -145,8 +222,9 @@ def check_reply(inputs, reply, *, rehearsals=None, read_sources=None):
                   if reply.pop("execution", None) is not None else [])
     uncovered = []
     missing_forced = []
-    file_selections = {}
-    invalid_selectors = False
+    selectors = {}
+    selector_errors = set()
+    missing_proof = proof_omissions(reply)
     paths = set()
     if reply["kind"] == "leaf":
         if inputs["must_split"]:
@@ -157,12 +235,10 @@ def check_reply(inputs, reply, *, rehearsals=None, read_sources=None):
             violations.append("A leaf must resolve every design question.")
         if not reply["lands_on_its_own"]:
             violations.append("A leaf must land on its own.")
-        for check in reply["checks"]:
-            if check['kind'] in ('demonstrating', 'reproducing') and 'declared_symptom' not in check and 'proof' not in check:
-                violations.append('Assertion RED requires proof.red_message; use subjects: [] for an inferred partition.')
-            if 'proof' in check:
+        for index, check in enumerate(reply["checks"]):
+            if 'proof' in check or index in missing_proof:
                 try:
-                    proof = Proof.parse(check['proof'])
+                    proof = Proof.parse(proof_for_validation(check) if index in missing_proof else check['proof'])
                     for unit in (*proof.subjects, *proof.observer_support):
                         if unit.split('::')[0] not in reply['files']:
                             violations.append(f'Proof source must be in declared files: {unit}')
@@ -186,16 +262,9 @@ def check_reply(inputs, reply, *, rehearsals=None, read_sources=None):
             for node_id in check["node_ids"]:
                 try:
                     Check("planned", Kind(check["kind"]), (node_id,))
-                except ValueError:
-                    invalid_selectors = True
-                    if check['kind'] == 'regression' and '::' not in node_id:
-                        nodes, problem = base_file_selection(node_id, read_sources or {})
-                        if problem:
-                            violations.append(f"Checks must name exact pytest node IDs: {node_id}. {problem}")
-                        else:
-                            file_selections[node_id] = nodes
-                    else:
-                        violations.append("Checks must name exact pytest node IDs.")
+                except HarnessInputError as error:
+                    selector_errors.add(str(error))
+                    selectors.setdefault(index, []).append(node_id)
                     continue
                 # A forced check runs the old test on the base, so it must exist there too.
                 if check["kind"] in {"regression", "behavior-preserving"} or ("forcing" in check and not check.get("proof", {}).get("subjects")) or "declared_symptom" in check:
@@ -214,17 +283,23 @@ def check_reply(inputs, reply, *, rehearsals=None, read_sources=None):
             covered.update(cited)
         edit_errors, uncovered = edit_violations(inputs["ingest"]["goals"], reply)
         violations.extend(edit_errors)
-        if not invalid_selectors or file_selections:
+        planned_checks = []
+        for i, check in enumerate(reply['checks']):
+            if not check['node_ids']:
+                continue
             try:
-                validate_check_plan(tuple(Check(f'check-{i + 1}', Kind(check['kind']),
-                                                tuple(node for item in check['node_ids']
-                                                      for node in file_selections.get(item, (item,))),
-                                                (forcings.get(i) if check['kind'] == 'demonstrating' else None),
-                                                Proof.parse(check['proof']) if 'proof' in check else None,
-                                                check.get('declared_symptom'))
-                                          for i, check in enumerate(reply['checks']) if check['node_ids']))
+                planned_checks.append(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']),
+                                            forcings.get(i) if check['kind'] == 'demonstrating' else None,
+                                            Proof.parse(proof_for_validation(check))
+                                            if 'proof' in check or i in missing_proof else None,
+                                            check.get('declared_symptom')))
             except ValueError as error:
-                violations.append(str(error))
+                if str(error) not in selector_errors:
+                    violations.append(str(error))
+        try:
+            validate_check_plan(tuple(planned_checks))
+        except ValueError as error:
+            violations.append(str(error))
         required = {i for i, goal in enumerate(inputs["ingest"]["goals"])
                     if goal.get("stage", "maker") != "publishing"}
         if not required <= covered:
@@ -316,17 +391,17 @@ def check_reply(inputs, reply, *, rehearsals=None, read_sources=None):
         rejected = next((item for item in reversed(rehearsals.candidates) if item['status'] == 'refused'), None)
         if rejected is not None:
             violations.append(rejected['message'])
-    if uncovered or missing_forced or file_selections:
-        mismatch = PlanConsistencyError(uncovered, missing_forced, draft=reply, file_selections=file_selections)
+    if uncovered or missing_forced or selectors or missing_proof:
+        mismatch = PlanConsistencyError(uncovered, missing_forced, draft=reply,
+                                        selectors=selectors, missing_proof=missing_proof)
         # Only these intrinsic inconsistencies enter the existing tool-free repair.
         # Substantive plan failures still reach the controller under Q54.
         proof_errors = (rehearsals.violations(inputs.get('base_sha'),
                         [check for check in reply['checks'] if valid_forcing(check)])
-                        if file_selections and rehearsals is not None else [])
-        # File expansion must also fit the existing repair prompt; never send a partial list.
-        message_fits = not file_selections or len(str(mismatch).encode()) <= REPAIR_MESSAGE_BYTES
+                        if mismatch.local and rehearsals is not None else [])
+        message_fits = not mismatch.local or len(str(mismatch).encode()) <= REPAIR_MESSAGE_BYTES
         if not message_fits:
-            violations.append('Whole-file selection exceeds the existing correction message limit.')
+            violations.append('Planner declarations exceed the existing correction message limit.')
         if not violations and not proof_errors and inputs.get('repair_plan_consistency', False):
             raise mismatch
         violations.extend(mismatch.violations)
@@ -343,226 +418,6 @@ def check_reply(inputs, reply, *, rehearsals=None, read_sources=None):
     reply["forecast"] = forecast
     reply["execution"] = execution
     reply["violations"] = list(dict.fromkeys(violations))
-
-
-def test_files():
-    """Configured base test patterns, read without importing served code."""
-    try:
-        with Worktree('.') as tree, tree._file('pyproject.toml') as stream:
-            patterns = tomllib.loads(stream.read(HARD_CAP_BYTES))['tool']['tl3']['harness']['test-files']
-    except (OSError, ValueError, UnicodeError, KeyError, TypeError):
-        return None
-    return patterns if isinstance(patterns, list) and all(isinstance(item, str) for item in patterns) else None
-
-
-def discovery_text(tree, path):
-    """Read optional base metadata without following links or echoing its contents."""
-    try:
-        with tree._file(path) as stream:
-            source = stream.read(HARD_CAP_BYTES + 1)
-    except FileNotFoundError:
-        return None, None
-    except ValueError as error:
-        return (None, None) if str(error) == 'File not found' else (None, 'unavailable discovery metadata')
-    except (OSError, UnicodeError):
-        return None, 'unavailable discovery metadata'
-    if len(source.encode()) > HARD_CAP_BYTES:
-        return None, 'discovery metadata exceeds the byte limit'
-    return source, None
-
-
-COLLECTION_DEFAULTS = {
-    'python_files': ('test_*.py', '*_test.py'),
-    'python_functions': ('test',),
-    'python_classes': ('Test',),
-}
-
-
-def collection_settings(name, source):
-    """Accept only certain default collection, independently of config precedence."""
-    try:
-        if name == 'pyproject.toml':
-            settings = tomllib.loads(source).get('tool', {}).get('pytest', {}).get('ini_options', {})
-        else:
-            config = configparser.ConfigParser(interpolation=None)
-            config.read_string(source)
-            if config.defaults() or name == 'setup.cfg' and config.has_section('pytest'):
-                return 'uncertain collection settings'
-            section = 'tool:pytest' if name == 'setup.cfg' else 'pytest'
-            settings = dict(config[section]) if config.has_section(section) else {}
-        if not isinstance(settings, dict):
-            return 'uncertain collection settings'
-        for key, default in COLLECTION_DEFAULTS.items():
-            value = settings.get(key, default)
-            if isinstance(value, str):
-                value = value.split()
-            if not isinstance(value, (list, tuple)) or tuple(value) != default:
-                return 'non-default collection settings'
-        # Explicit plugin loading can replace collection even with default prefixes.
-        options = settings.get('addopts', '')
-        if not isinstance(options, (str, list, tuple)):
-            return 'uncertain collection settings'
-        words = options.split() if isinstance(options, str) else options
-        if (not all(isinstance(word, str) for word in words)
-                or any(word.startswith(('-p', '--override-ini', '-o')) for word in words)
-                or settings.get('required_plugins')):
-            return 'dynamic plugin collection settings'
-    except (ValueError, TypeError, AttributeError, configparser.Error):
-        return 'unavailable collection settings'
-    return None
-
-
-def collection_context(path):
-    """Inspect all ancestor config/conftest files; uncertain precedence refuses too."""
-    parents = list(reversed(PurePosixPath(path).parents))
-    if len(parents) > 64:
-        return 'discovery ancestor limit'
-    used = 0
-    with Worktree('.') as tree:
-        for parent in parents:
-            for name in ('pytest.ini', '.pytest.ini', 'pyproject.toml', 'setup.cfg', 'tox.ini',
-                         'pytest.toml', '.pytest.toml', 'conftest.py'):
-                source, problem = discovery_text(tree, str(parent / name))
-                if problem:
-                    return 'unavailable collection settings' if name != 'conftest.py' else problem
-                if source is None:
-                    continue
-                used += len(source.encode())
-                if used > HARD_CAP_BYTES:
-                    return 'discovery metadata exceeds the byte limit'
-                if name == 'conftest.py':
-                    _, problem = static_test_definitions(source, str(parent / name), collect=False)
-                elif name.endswith('.toml') and name != 'pyproject.toml':
-                    problem = 'unsupported collection settings'
-                else:
-                    problem = collection_settings(name, source)
-                if problem:
-                    return problem
-    return None
-
-
-def literal_or_name(node):
-    if isinstance(node, ast.Name):
-        return True
-    try:
-        ast.literal_eval(node)
-        return True
-    except (ValueError, TypeError):
-        return False
-
-
-def static_test_definitions(source, path, *, collect=True):
-    """Allow static statements and inert definition expressions, never execute Python."""
-    nodes = []
-    selection_bytes = 0
-
-    def scan(body, prefix, collecting):
-        nonlocal selection_bytes
-        seen = set()
-        for node in body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                names = [node.name]
-                if node.name.startswith('pytest_') or node.name in {'__getattr__', '__init__', '__new__'}:
-                    return 'dynamic collection hooks'
-                if getattr(node, 'type_params', ()):
-                    return 'dynamic definition expressions'
-                for decorator in node.decorator_list:
-                    mark = decorator.func if isinstance(decorator, ast.Call) else decorator
-                    if not (isinstance(mark, ast.Attribute) and isinstance(mark.value, ast.Attribute)
-                            and mark.value.attr == 'mark' and isinstance(mark.value.value, ast.Name)
-                            and mark.value.value.id == 'pytest'):
-                        return 'dynamic decorators'
-                    if isinstance(decorator, ast.Call) and (
-                            not all(literal_or_name(arg) for arg in decorator.args)
-                            or not all(item.arg is not None and literal_or_name(item.value)
-                                       for item in decorator.keywords)):
-                        return 'dynamic decorator arguments'
-                if isinstance(node, ast.ClassDef):
-                    if prefix != path or node.bases or node.keywords:
-                        return 'dynamic class discovery'
-                    problem = scan(node.body, prefix + '::' + node.name,
-                                   collecting and node.name.startswith('Test'))
-                    if problem:
-                        return problem
-                else:
-                    annotations = [arg.annotation for arg in (*node.args.posonlyargs, *node.args.args,
-                                   *node.args.kwonlyargs) if arg.annotation is not None]
-                    annotations.extend(arg.annotation for arg in (node.args.vararg, node.args.kwarg)
-                                       if arg is not None and arg.annotation is not None)
-                    values = [*node.args.defaults, *(value for value in node.args.kw_defaults if value is not None),
-                              *annotations, *([node.returns] if node.returns is not None else [])]
-                    if not all(literal_or_name(value) for value in values):
-                        return 'dynamic definition expressions'
-                    # Pytest's default is a prefix, not the narrower test_ convention.
-                    if collecting and node.name.startswith('test'):
-                        selector = prefix + '::' + node.name
-                        selection_bytes += len(selector.encode()) + 2
-                        if selection_bytes > REPAIR_MESSAGE_BYTES // 2:
-                            return 'base discovery exceeds the bounded correction message limit'
-                        Check('planned', Kind.REGRESSION, (selector,))
-                        nodes.append(selector)
-            elif isinstance(node, (ast.Import, ast.ImportFrom)):
-                names = [alias.asname or alias.name.split('.')[0] for alias in node.names]
-                if (any(name == '*' or name.startswith(('test', 'Test', 'pytest_')) for name in names)
-                        or any(alias.name.startswith('pytest_') for alias in node.names)):
-                    return 'dynamic imported tests or collection hooks'
-                if 'pytest' in names and not (isinstance(node, ast.Import)
-                        and any(alias.name == 'pytest' and alias.asname in (None, 'pytest') for alias in node.names)):
-                    return 'dynamic pytest binding'
-            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                if not all(isinstance(target, ast.Name) for target in targets):
-                    return 'dynamic bindings'
-                names = [target.id for target in targets]
-                if any(name.startswith(('test', 'Test', 'pytest')) or name == '__test__' for name in names):
-                    return 'dynamic test bindings'
-                if (not literal_or_name(node.value)
-                        or isinstance(node, ast.AnnAssign) and not literal_or_name(node.annotation)
-                        or '__all__' in names and isinstance(node.value, ast.Name)):
-                    return 'dynamic module initialization'
-            elif isinstance(node, ast.Pass) or (isinstance(node, ast.Expr)
-                    and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)):
-                names = []
-            else:
-                return 'dynamic module discovery'
-            if seen.intersection(names) or len(set(names)) != len(names):
-                return 'ambiguous definitions'
-            seen.update(names)
-        return None
-
-    try:
-        problem = scan(ast.parse(source).body, path, collect)
-    except (SyntaxError, ValueError, RecursionError, MemoryError):
-        problem = 'unavailable definitions'
-    return tuple(nodes), problem
-
-
-def base_file_selection(path, read_sources):
-    """Enumerate only unambiguous static definitions already visible in the same run."""
-    try:
-        validate_always_tests([path])
-        patterns = test_files()
-        if patterns is None or not is_test(path, patterns):
-            return (), 'unavailable configured test definitions'
-        with Worktree('.') as tree:
-            source, problem = discovery_text(tree, path)
-        if problem:
-            return (), problem
-        if source is None:
-            return (), 'unavailable base definitions'
-        nodes, problem = static_test_definitions(source, path)
-        if problem:
-            return (), problem
-        problem = collection_context(path)
-        if problem:
-            return (), problem
-    except (OSError, ValueError, UnicodeError, RecursionError, MemoryError):
-        return (), 'unavailable base definitions'
-    if not nodes:
-        return (), 'unavailable base definitions'
-    if read_sources.get(path) != source:
-        return (), 'unavailable complete already-read base definitions'
-    return nodes, None
 
 
 def base_definition(node_id):
