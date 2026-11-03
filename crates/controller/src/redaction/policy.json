@@ -1,5 +1,5 @@
 {
-  "source_sha256": "0687c0b1b89ead0f529dae885c2483b0cd1df508b0827475ec95e57911554c37",
+  "source_sha256": "1566121a01b8a7e6b32d7555d0f522bb6c6043a9436434c9d1ace707563ca230",
   "regex": {
     "LABEL_WORDS": "[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\\d+",
     "REFERENCE": "[${<]|%[({A-Za-z_]|\\*{3}|\\.{3}",
