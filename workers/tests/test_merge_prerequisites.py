@@ -19,3 +19,14 @@ def test_ingest_accepts_quoted_merge_prerequisites(quote, numbers):
             for number in numbers
         ],
     })
+
+
+def test_prerequisite_quotes_are_checked_and_repairable():
+    from tl3_workers.prerequisites import MergePrerequisiteError, check_prerequisites
+
+    inputs = {"issue": {"title": "Request", "body": "Merge prerequisite: #12", "comments": []}}
+    good = {"kind": "issue", "number": 12, "source_quote": "Merge prerequisite: #12"}
+    check_prerequisites(inputs, {"merge_prerequisites": [good]})
+    for prerequisites in [[{**good, "number": 1}], [good, good], [{**good, "source_quote": "#12 must merge first"}]]:
+        with pytest.raises(MergePrerequisiteError, match="verbatim quote"):
+            check_prerequisites(inputs, {"merge_prerequisites": prerequisites})

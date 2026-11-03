@@ -305,3 +305,120 @@ fn restart_base_does_not_assume_an_unmerged_dependency_is_present() {
             .contains("Depends on dependency B")
     );
 }
+
+#[test]
+fn prerequisite_release_refreshes_main_once_for_the_planning_generation() {
+    use tl3_kernel::{
+        Ack, DependencyStatus, DependencyTarget, Event, Fact, PrerequisiteKind, Priority, Reply,
+        World,
+    };
+    fn send(world: &mut World, event: Event) {
+        *world = tl3_kernel::step(world.clone(), event).0;
+        assert!(world.valid());
+    }
+    fn confirm(world: &mut World) {
+        for _ in 0..32 {
+            let Some(effect) = world.nodes[0].effect else {
+                return;
+            };
+            send(
+                world,
+                Event::Ack {
+                    node: NodeId(0),
+                    seq: effect.seq,
+                    ack: Ack::Confirmed,
+                },
+            );
+        }
+        panic!("effects did not settle");
+    }
+    let mut db = Database::start();
+    let mut f = Restart::new(&mut db, "prerequisite_base", "trunk", 0, true);
+    assert_eq!(f.parent["base_checkout"]["commit"], f.repo.base);
+    assert_ne!(f.selected, f.repo.base);
+    let mut world = World::new(&[1], 1);
+    send(
+        &mut world,
+        Event::NewRequest {
+            repo: tl3_kernel::RepoId(0),
+            priority: Priority::Unranked,
+        },
+    );
+    confirm(&mut world);
+    let target = DependencyTarget {
+        kind: PrerequisiteKind::Issue,
+        number: 2761,
+        request: None,
+    };
+    send(
+        &mut world,
+        Event::Fact {
+            node: NodeId(0),
+            fact: Fact::Dependency {
+                target,
+                status: DependencyStatus::Pending,
+            },
+        },
+    );
+    for reply in [Reply::IngestDone { size: 1 }, Reply::AuditAgrees] {
+        let generation = world.nodes[0].generation;
+        send(
+            &mut world,
+            Event::Reply {
+                node: NodeId(0),
+                generation,
+                reply,
+            },
+        );
+        confirm(&mut world);
+    }
+    assert_eq!(world.nodes[0].phase, tl3_kernel::Phase::Unplanned);
+    send(
+        &mut world,
+        Event::Fact {
+            node: NodeId(0),
+            fact: Fact::Dependency {
+                target,
+                status: DependencyStatus::Delivered,
+            },
+        },
+    );
+    let snapshot = f.store.load().unwrap();
+    let mut commit = tl3_store::Commit::new("planning-after-merge", json!(null), &snapshot);
+    commit.rows.extend(
+        crate::snapshot::encode(&world)
+            .unwrap()
+            .into_iter()
+            .map(|((table, id), value)| tl3_store::RowChange::Put { table, id, value }),
+    );
+    commit.rows.push(crate::put("briefs", "0".into(), json!({"kind":"brief", "brief":"Use dependency", "goals":[{"description":"Use dependency", "verification":"test"}], "memory_ids":[]})));
+    f.store.commit(&commit).unwrap();
+    f.delivery.generation = world.nodes[0].generation;
+    f.delivery.output = Out::Effect {
+        node: NodeId(0),
+        seq: 1,
+        kind: EffectKind::StartRun(tl3_kernel::Role::Plan),
+        head: None,
+    };
+    let request = f.request("planner");
+    assert_eq!(request["inputs"]["base_sha"], f.selected);
+    assert_eq!(
+        git(
+            Path::new(request["worktree"].as_str().unwrap()),
+            &["rev-parse", "HEAD"]
+        ),
+        f.selected
+    );
+    assert!(
+        Path::new(request["worktree"].as_str().unwrap())
+            .join("src/prismabuild/operator_view.py")
+            .exists()
+    );
+    fs::write(f.repo.path.join("README.md"), "later upstream C\n").unwrap();
+    git(&f.repo.path, &["commit", "-qam", "advance main"]);
+    assert_eq!(
+        f.request("planner")["inputs"]["base_sha"],
+        f.selected,
+        "replay must keep the generation's base"
+    );
+}

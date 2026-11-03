@@ -1,6 +1,7 @@
 """Turn supplied issue material into a brief or an early end."""
 
 from tl3_workers.roles.base import Role
+from tl3_workers.prerequisites import check_prerequisites
 from tl3_workers.evidence import preflight
 from tl3_workers.contracts import schema
 from tl3_workers.exploration import ExplorationBudget
@@ -19,6 +20,7 @@ def check_memory_ids(inputs, reply):
         raise ValueError("only code may supply a forecast")
     preflight(inputs, reply)
     if reply["kind"] == "brief":
+        check_prerequisites(inputs, reply)
         check_citations(inputs, reply)
         check_ingest_generation_scope(inputs, reply)
 

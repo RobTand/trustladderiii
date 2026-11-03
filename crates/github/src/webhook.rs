@@ -176,8 +176,10 @@ pub fn parse(delivery_id: &str, event_name: &str, body: &[u8]) -> Result<Deliver
     let action = value.get("action").and_then(|v| v.as_str()).unwrap_or("");
     let relevant = matches!(
         (event_name, action),
-        ("issues", "labeled" | "unlabeled" | "edited")
-            | ("issue_comment", "created")
+        (
+            "issues",
+            "labeled" | "unlabeled" | "edited" | "closed" | "reopened" | "opened"
+        ) | ("issue_comment", "created")
             | ("pull_request" | "merge_group", _)
             | (
                 "check_run",

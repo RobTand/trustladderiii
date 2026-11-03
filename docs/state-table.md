@@ -147,7 +147,7 @@ Workers report liveness, as a heartbeat, and progress, such as new tool results,
 ## Node facts
 
 - **Children:** each child's status.
-- **Dependencies:** each one names a node and is pending, delivered or abandoned.
+- **Dependencies:** pending, delivered or abandoned. In slice one, ingest declares same-repo merge prerequisites on the request root, naming another request root or an external issue/PR fact. Completed issues, merged PRs and requests closed as done deliver; issues closed as not planned abandon. A stopped request with an open issue stays pending. Root merge prerequisites moved from slice two into slice one by Rob's 2026-11-03 decision [#693](https://github.com/RobTand/trustladderiii/issues/693). Planner reuse links and dependencies between leaves remain slice two.
 - **Measures:** each with its lineage and status: unmet, provisionally met, or confirmed met.
 - **Escalations:** the frozen batch, and the queue behind it.
 - **PR:** every PR number the node has used, the base commit, the current head, and every head that passed checks and review, with its tree.
@@ -365,8 +365,20 @@ If Rob keeps ingest's reading, the request continues to Unplanned when the dispu
 Settle admits the node to planning when all three hold:
 
 - it isn't paused;
-- nothing it depends on is pending;
+- every declared prerequisite is delivered, with no rejected cycle;
 - its repo's gate has room, meaning fewer than W leaves are waiting for a slot.
+
+In slice one, ingest and audit run before this wait. While prerequisites block
+admission, the root holds no slot, file lock, agent-pool grant or spendable credit.
+Starting credit is withheld until admission. Status says "waiting for #N to merge".
+Delivery and abandonment arrive through Fact in every phase, including Closed.
+Terminal prerequisite facts stay terminal. No prerequisite may be added after
+first planning admission. A declaration that would close a wait-graph cycle is
+rejected, retained as a blocking declaration, and announced once. An abandoned
+prerequisite also posts one note and blocks until Rob changes or stops the request.
+Every request ending is announced to its waiters. A restart of an open prerequisite
+issue rebinds its pending waiters to the new root. On release, planning pins the
+current configured default branch before its worker starts.
 
 A node that spans several repos is admitted at once, because its plan must split it by repo. Admission moves the node to Planning and requests a plan run.
 
@@ -900,7 +912,7 @@ It leaves out ranking, bottleneck scoring, Hindsight writes and the orphan sweep
 - one real repo, which Rob picks when slice two starts (Q13);
 - splits, after a dry run that decomposes a handful of real requests, changing no code, to calibrate the fit limit and the forecast (Q34);
 - the parent phases and Escalated;
-- dependencies;
+- planner reuse links and dependencies between leaves;
 - pauses owned by deciders;
 - the slice-two gate, the multi-account agent pool, ranking and bottleneck scoring;
 - recursive escalation;

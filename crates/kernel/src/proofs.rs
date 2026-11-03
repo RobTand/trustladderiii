@@ -66,6 +66,7 @@ fn any_world(phase: Option<Phase>) -> World {
         next_ticket: kani::any(),
         next_question: kani::any(),
         file_sets: Vec::new(),
+        dependencies: Vec::new(),
         fail_fast: kani::any(),
     };
     kani::assume(world.pool_capacity <= 2);
@@ -105,6 +106,7 @@ fn require_consistent(w: &World) {
         Err(Broken::Merge) => panic!("broken: merge"),
         Err(Broken::Closed) => panic!("broken: closed"),
         Err(Broken::Gate) => panic!("broken: gate"),
+        Err(Broken::Dependencies) => panic!("broken: dependencies"),
         Err(Broken::ReviewStop) => panic!("broken: review stop"),
     }
 }
@@ -583,6 +585,229 @@ fn reply(reply: Reply) -> Event {
     }
 }
 
+// Root prerequisites are the only slice-two feature admitted by #693. These
+// fixtures add dependency worlds; the existing fixtures retain their original
+// slice-one domains and assertions.
+fn waiting_dependency_world() -> World {
+    let mut world = World::new(&[1], 1);
+    let mut node = Node::new(RepoId(0));
+    node.phase = Phase::Unplanned;
+    node.credit.ready = true;
+    node.credit.start = 4;
+    node.credit.withheld = true;
+    node.waiting_prerequisite = Some(2761);
+    world.nodes.push(node);
+    world.dependencies.push(Dependency {
+        node: NodeId(0),
+        target: DependencyTarget {
+            kind: PrerequisiteKind::Issue,
+            number: 2761,
+            request: None,
+        },
+        status: DependencyStatus::Pending,
+        rejected: false,
+    });
+    world
+}
+
+fn check_dependency_delivery() {
+    let mut world = waiting_dependency_world();
+    let before = world.measure();
+    let target = world.dependencies[0].target;
+    let mut out = Outbox::new();
+    apply(
+        &mut world,
+        fact(Fact::Dependency {
+            target,
+            status: DependencyStatus::Delivered,
+        }),
+        &mut out,
+    );
+    assert!(world.measure() < before);
+    assert!(advance(&mut world, 0, &mut out));
+    assert_eq!(world.nodes[0].phase, Phase::Planning { must_split: false });
+    assert_eq!(world.nodes[0].credit.balance(), 4);
+    require_consistent(&world);
+    kani::cover!(world.nodes[0].planning_started, "delivery admits planning");
+}
+
+fn check_dependency_abandoned() {
+    let mut world = waiting_dependency_world();
+    let target = world.dependencies[0].target;
+    let mut out = Outbox::new();
+    apply(
+        &mut world,
+        fact(Fact::Dependency {
+            target,
+            status: DependencyStatus::Abandoned,
+        }),
+        &mut out,
+    );
+    assert!(matches!(
+        out.get(0),
+        Some(Out::Notice {
+            notice: Notice::Note(NoteKind::DependencyAbandoned { .. }),
+            ..
+        })
+    ));
+    out = Outbox::new();
+    apply(
+        &mut world,
+        fact(Fact::Dependency {
+            target,
+            status: kani::any(),
+        }),
+        &mut out,
+    );
+    assert!(out.is_empty());
+    assert!(!advance(&mut world, 0, &mut out));
+    assert_eq!(world.nodes[0].phase, Phase::Unplanned);
+    assert_eq!(world.dependencies[0].status, DependencyStatus::Abandoned);
+    require_consistent(&world);
+    kani::cover!(
+        world.nodes[0].waiting_prerequisite.is_some(),
+        "abandonment keeps the root blocked"
+    );
+}
+
+fn check_dependency_waiting() {
+    let mut world = waiting_dependency_world();
+    let mut out = Outbox::new();
+    let blocked = !advance(&mut world, 0, &mut out);
+    assert!(blocked);
+    let node = &world.nodes[0];
+    assert!(!node.holds && !node.pool && node.ticket.is_none() && node.run.is_none());
+    assert!(node.footprint.is_empty());
+    assert_eq!(node.credit.balance(), 0);
+    assert!(out.is_empty());
+    require_consistent(&world);
+    kani::cover!(blocked, "an open prerequisite blocks planning");
+}
+
+fn check_dependency_cycles() {
+    let mut world = World::new(&[3], 3);
+    for _ in 0..3 {
+        world.nodes.push(Node::new(RepoId(0)));
+    }
+    for index in 0..2 {
+        let from: u8 = kani::any();
+        let to: u8 = kani::any();
+        kani::assume(from < 3 && to < 3);
+        world.dependencies.push(Dependency {
+            node: NodeId(u64::from(from)),
+            target: DependencyTarget {
+                kind: PrerequisiteKind::Issue,
+                number: index + 1,
+                request: Some(NodeId(u64::from(to))),
+            },
+            status: DependencyStatus::Pending,
+            rejected: false,
+        });
+    }
+    kani::assume(world.consistent());
+    let from: u8 = kani::any();
+    let to: u8 = kani::any();
+    kani::assume(from < 3 && to < 3);
+    let mut out = Outbox::new();
+    apply(
+        &mut world,
+        Event::Fact {
+            node: NodeId(u64::from(from)),
+            fact: Fact::Dependency {
+                target: DependencyTarget {
+                    kind: PrerequisiteKind::Issue,
+                    number: 3,
+                    request: Some(NodeId(u64::from(to))),
+                },
+                status: DependencyStatus::Pending,
+            },
+        },
+        &mut out,
+    );
+    assert!(world.dependency_graph_acyclic());
+    require_consistent(&world);
+    kani::cover!(
+        world.dependencies.last().unwrap().rejected,
+        "a cyclic declaration is rejected"
+    );
+    kani::cover!(
+        !world.dependencies.last().unwrap().rejected,
+        "an acyclic declaration is accepted"
+    );
+}
+
+fn check_dependency_fact() {
+    let mut world = any_world(None);
+    let target = DependencyTarget {
+        kind: PrerequisiteKind::Issue,
+        number: 2761,
+        request: None,
+    };
+    let previous_status: DependencyStatus = kani::any();
+    world.dependencies.push(Dependency {
+        node: NodeId(0),
+        target,
+        status: previous_status,
+        rejected: false,
+    });
+    kani::assume(world.consistent());
+    let phase = world.nodes[0].phase;
+    let status: DependencyStatus = kani::any();
+    let mut out = Outbox::new();
+    apply(
+        &mut world,
+        fact(Fact::Dependency { target, status }),
+        &mut out,
+    );
+    let expected = if previous_status == DependencyStatus::Pending {
+        status
+    } else {
+        previous_status
+    };
+    assert_eq!(world.dependencies[0].status, expected);
+    assert_eq!(world.nodes[0].phase, phase);
+    require_consistent(&world);
+    kani::cover!(
+        phase.is_closed() && status == DependencyStatus::Delivered,
+        "late facts update closed roots"
+    );
+    kani::cover!(
+        phase == Phase::Ingesting && status == DependencyStatus::Abandoned,
+        "facts update ingesting roots"
+    );
+    kani::cover!(
+        phase == Phase::Making,
+        "facts are accepted during maker work"
+    );
+    kani::cover!(
+        phase == Phase::Queued,
+        "facts are accepted in the merge queue"
+    );
+    let count = world.dependencies.len();
+    let started = world.nodes[0].planning_started;
+    apply(
+        &mut world,
+        fact(Fact::Dependency {
+            target: DependencyTarget {
+                number: 2762,
+                ..target
+            },
+            status: kani::any(),
+        }),
+        &mut Outbox::new(),
+    );
+    if started || !matches!(phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned) {
+        assert_eq!(
+            world.dependencies.len(),
+            count,
+            "a started request never gains a prerequisite"
+        );
+    }
+    require_consistent(&world);
+    apply(&mut world, fact(Fact::DependencyReset), &mut Outbox::new());
+    require_consistent(&world);
+}
+
 fn ack(ack: Ack) -> Event {
     Event::Ack {
         node: NodeId(0),
@@ -618,13 +843,34 @@ fn answer(answer: Answer) -> Event {
 
 macro_rules! proof {
     ($name:ident, $body:expr) => {
+        proof!($name, 6, $body);
+    };
+    ($name:ident, $bound:literal, $body:expr) => {
         #[kani::proof]
-        #[kani::unwind(6)]
+        #[kani::unwind($bound)]
         fn $name() {
             $body;
         }
     };
 }
+
+proof!(apply_dependency, 3, check_dependency_fact());
+proof!(dependency_no_cycle, 4, check_dependency_cycles());
+proof!(
+    dependency_waiting_holds_nothing,
+    2,
+    check_dependency_waiting()
+);
+proof!(
+    dependency_delivered_releases,
+    2,
+    check_dependency_delivery()
+);
+proof!(
+    dependency_abandoned_never_releases,
+    2,
+    check_dependency_abandoned()
+);
 
 // Applying each event variant.
 proof!(

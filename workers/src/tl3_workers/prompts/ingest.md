@@ -74,3 +74,14 @@ Frozen regression controls and protected paths retain their existing rules.
 
 - brief: a concise brief that keeps the problem, the relevant constraints, the architecture and the source evidence. List every goal that the request asks for, or every goal the answer keeps for a narrowed request. Do not claim that a test ran. Add no scope and invent no facts. Check the brief and goals against the original issue before you reply. Include memory_ids: the supplied memories that you used, or an empty list. When forecast settings are supplied, declare files: the repository files that the request must read or change, planned new files included.
 - early_end: outcome duplicate, already_done or not_actionable, with a reason that cites the supplied evidence. Uncertainty alone is not a reason. Audit checks your proposal.
+
+## Merge prerequisites (#693)
+
+Read the original issue for explicit merge prerequisites, including "Merge
+prerequisite: #N" and "Merge prerequisites: #A, #B". Return them in
+`merge_prerequisites`, with `kind` (`issue` or `pull_request`), the positive
+same-repository `number`, and a verbatim `source_quote`. Ordinary references,
+background issues, and dependencies you inferred are not prerequisites.
+When missing code will be supplied by a declared prerequisite, preserve the
+request's brief and goals. Do not return not_actionable solely because that
+code has not merged. TL3 will wait after audit before starting planning.

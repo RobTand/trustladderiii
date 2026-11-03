@@ -6,6 +6,10 @@
 use std::collections::BTreeSet;
 
 const ADDITIONAL_PROOFS: &[&str] = &[
+    "dependency_no_cycle",
+    "dependency_waiting_holds_nothing",
+    "dependency_delivered_releases",
+    "dependency_abandoned_never_releases",
     "apply_publishing_ci_tests",
     "apply_publishing_ci_infrastructure",
     "apply_publishing_ci_earlier_step",

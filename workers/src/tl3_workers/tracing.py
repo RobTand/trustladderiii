@@ -1286,6 +1286,7 @@ def input_failure(request):
 def failure_tags(error):
     if type(error) is InputSchemaFailure:
         return {"failure_class": "worker_input_schema", "failure_message": error.message}
+    from tl3_workers.prerequisites import MergePrerequisiteError
     from tl3_workers.generated_scope import GeneratedOutputProhibition
     from tl3_workers.roles.planner import PlanConsistencyError
     from tl3_workers.evidence import EvidenceContractError
@@ -1293,6 +1294,9 @@ def failure_tags(error):
     from tl3_workers.tools import WorktreeUnavailable
     from tl3_workers.turns import InvalidReply, Unrepairable
 
+    if type(error) is MergePrerequisiteError:
+        return {"failure_class": "MergePrerequisiteError",
+                "failure_message": MergePrerequisiteError.message}
     if type(error) is GeneratedOutputProhibition:
         return {"failure_class": "GeneratedOutputProhibition",
                 "failure_message": GeneratedOutputProhibition.message}

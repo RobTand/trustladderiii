@@ -30,6 +30,16 @@ pub fn set_fake_issue(root: &Path, issue: &tl3_github::Issue) {
 }
 
 impl Executor for Fake {
+    fn prerequisite(
+        &mut self,
+        repository: &crate::Repository,
+        _kind: tl3_kernel::PrerequisiteKind,
+        number: u64,
+    ) -> Result<tl3_kernel::DependencyStatus> {
+        Ok(crate::merge_dependencies::issue_status(
+            &self.issue(repository, number)?,
+        ))
+    }
     fn issue(&mut self, _repository: &crate::Repository, number: u64) -> Result<tl3_github::Issue> {
         let bytes = std::fs::read(fake_issue_path(&self.1, number))?;
         Ok(serde_json::from_slice(&bytes)?)
@@ -306,6 +316,34 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
+    fn prerequisite(
+        &mut self,
+        repository: &crate::Repository,
+        kind: tl3_kernel::PrerequisiteKind,
+        number: u64,
+    ) -> Result<tl3_kernel::DependencyStatus> {
+        use tl3_kernel::{DependencyStatus, PrerequisiteKind};
+        match kind {
+            PrerequisiteKind::Issue => Ok(crate::merge_dependencies::issue_status(
+                &self.issue(repository, number)?,
+            )),
+            PrerequisiteKind::PullRequest => {
+                let client = self
+                    .clients
+                    .get(&repository.installation)
+                    .ok_or(Error::Invalid("missing GitHub installation client"))?;
+                let pr = self.runtime.block_on(
+                    client
+                        .pull_request(&format!("{}/{}", repository.owner, repository.name), number),
+                )?;
+                Ok(if pr.merged_at.is_some() {
+                    DependencyStatus::Delivered
+                } else {
+                    DependencyStatus::Pending
+                })
+            }
+        }
+    }
     fn issue(&mut self, repository: &crate::Repository, number: u64) -> Result<tl3_github::Issue> {
         let client = self
             .clients
@@ -812,7 +850,7 @@ fn writer_facts(
                 Notice::Note(NoteKind::PrClosed) => "The proposed change was closed. Work on this request is stopping.",
                 Notice::Note(NoteKind::PrDequeued) => "The proposed change was taken out of the merge queue. Work on this request is stopping.",
                 Notice::Note(NoteKind::OutsidePush) => "Someone changed the proposed code. It needs fresh checks and review.",
-                Notice::Note(NoteKind::DependencyAbandoned { .. } | NoteKind::DependencyCycle { .. }) => todo!("merge prerequisite note"),
+                Notice::Note(NoteKind::DependencyAbandoned { .. } | NoteKind::DependencyCycle { .. }) => delivery.note.as_deref().unwrap_or("A merge prerequisite prevents work from starting. Please change or stop the request."),
                 Notice::Note(NoteKind::LateMerge) => "The change was merged after work stopped. I have recorded what was delivered.",
                 Notice::Ask { .. } | Notice::Summary(_) | Notice::FileReplacement | Notice::Incident { .. } => unreachable!(),
             }}),

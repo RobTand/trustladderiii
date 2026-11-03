@@ -1202,6 +1202,7 @@ pub(crate) fn replacement_issue(
         title: old.title,
         body: Some(text),
         state: "open".into(),
+        state_reason: None,
         updated_at: since
             .parse()
             .map_err(|_| Error::Invalid("invalid replacement timestamp"))?,
