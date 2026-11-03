@@ -3150,6 +3150,11 @@ fn repository_image_is_sealed_and_staged_with_global_fallback() {
             .iter()
             .find(|args| args.iter().any(|arg| arg == "--seal-only"))
             .unwrap();
+        assert!(
+            seal.windows(2).any(|pair| pair[0] == "--env"
+                && pair[1].starts_with("PRISMABUILD_EPHEMERAL_SCRATCH_DECLARATIONS=")),
+            "Checking must seal the registered disk scratch lifetime"
+        );
         let index = seal
             .iter()
             .position(|arg| arg == "--container-image")

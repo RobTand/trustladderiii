@@ -67,3 +67,10 @@ py_binary(
     visibility = ["//visibility:public"],
     deps = ["//harness/src/tl3_harness"],
 )
+
+py_binary(
+    name = "verify_disk_scratch",
+    srcs = ["verify_disk_scratch.py"],
+    visibility = ["//visibility:public"],
+    deps = ["//harness/src/tl3_harness"],
+)
