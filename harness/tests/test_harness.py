@@ -529,3 +529,28 @@ def test_container_preserves_admitted_native_thread_bounds(tmp_path, monkeypatch
     command = container_command(tmp_path, Container(IMAGE), ())
     for name in names:
         assert f"{name}={cpus or '1'}" in command
+
+
+def test_added_names_include_new_module_constants(tmp_path):
+    # PQ #2662: a new module-level constant imported in a test body is a name the change adds.
+    base, head = tmp_path / "base", tmp_path / "head"
+    for tree in (base, head):
+        (tree / "pkg").mkdir(parents=True)
+    (base / "pkg/digests.py").write_text("OLD = 1\n")
+    (head / "pkg/digests.py").write_text(
+        "OLD = 1\n"
+        "NEW_PROFILE = dict(a=1)\n"
+        "TYPED: int = 2\n"
+        "BARE: int\n"
+        "LEFT = RIGHT = 3\n"
+        "FIRST, (SECOND, *REST) = 1, (2, 3)\n"
+        "obj = object()\n"
+        "obj.attribute = 4\n"
+        "table = {}\n"
+        "table['key'] = 5\n"
+        "if True:\n"
+        "    CONDITIONAL = 6\n")
+    names = {name for path, name in added_names(base, head, ["tests/*.py"]) if path == "pkg/digests.py"}
+    assert {"NEW_PROFILE", "TYPED", "LEFT", "RIGHT", "FIRST", "SECOND", "REST", "obj", "table"} <= names
+    # Attribute and subscript stores bind no module name; nested statements are not module-level bindings.
+    assert not names & {"attribute", "key", "CONDITIONAL", "OLD", "BARE"}
