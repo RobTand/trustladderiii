@@ -1,5 +1,7 @@
 pub(crate) mod ci_evidence;
 mod head_checks;
+mod waiting_requeue;
+pub(crate) use waiting_requeue::PROGRESS_PREFIX as REQUEUE_PROGRESS_PREFIX;
 
 use super::record::Records;
 use crate::executor::Output as Out;
@@ -376,6 +378,7 @@ pub struct Adapter {
     branches: Option<crate::branches::Branches>,
     /// The world, so a heal touches only a node in Publishing or Queued.
     store: Option<tl3_config::Store>,
+    clock: Box<dyn crate::clock::Clock>,
 }
 /// A served repository's PR-body lines and the workflows a heal reruns (#447).
 struct BodyPolicy {
@@ -393,9 +396,11 @@ impl Adapter {
             policies: Vec::new(),
             branches: None,
             store: None,
+            clock: Box::new(crate::clock::SystemClock),
         })
     }
-    pub fn with_clock(self, _clock: impl crate::clock::Clock + 'static) -> Self {
+    pub fn with_clock(mut self, clock: impl crate::clock::Clock + 'static) -> Self {
+        self.clock = Box::new(clock);
         self
     }
     pub fn with_repositories(mut self, repos: &[tl3_config::Repository]) -> Result<Self> {
@@ -775,6 +780,13 @@ impl Adapter {
         let issue = self
             .runtime
             .block_on(github.issue(&full_name(&delivery.repository), number))?;
+        // A repaired head's eligible waiting check is not dequeue completion.
+        // Its bounded recovery is reconciled by repository/PR/head below.
+        if state.state == QueueState::Waiting
+            && (self.has_recovery(delivery)? || self.repaired_head(delivery)?)
+        {
+            return Ok(Reconciliation::Pending);
+        }
         // Without a durable intent this key has never reached the label write.
         if baseline.is_none() {
             return Ok(if self.dequeue_pending(delivery, &state, &issue)? {
@@ -993,7 +1005,9 @@ impl Executor for Adapter {
             Reconciliation::Found(completion) => Look::Found(completion),
             Reconciliation::Absent => Look::Absent,
             Reconciliation::Pending => Look::Alive {
-                progress: "mergify:awaiting-acknowledgement".into(),
+                progress: self
+                    .requeue_progress(delivery)?
+                    .unwrap_or_else(|| "mergify:awaiting-acknowledgement".into()),
             },
         })
     }
@@ -1001,7 +1015,10 @@ impl Executor for Adapter {
 impl Adapter {
     fn read_enqueue(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         // Reads retain the original effect's epoch, including after a controller upgrade.
-        let result = self.completion(delivery)?;
+        let mut result = self.completion(delivery)?;
+        if matches!(result, Reconciliation::Pending) {
+            result = self.recover_waiting(delivery)?;
+        }
         if let Reconciliation::Found(completion) = &result
             && completion.ack == Ack::Confirmed
             && !matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_))

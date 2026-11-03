@@ -125,6 +125,22 @@ fn setup(prior: bool) -> (support::Database, Fixture, Controller) {
     let clock = head_checks::Clock(std::rc::Rc::new(std::cell::Cell::new(
         std::time::SystemTime::now(),
     )));
+    // Both controller and adapter use this clock before the repaired enqueue.
+    drop(controller);
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::Mergify,
+        api.adapter(&root.path().join("mergify"), 0)
+            .with_store(settings.clone())
+            .with_clock(clock.clone()),
+    );
+    let mut controller = Controller::open_with_clock(
+        Store::open(&settings).unwrap(),
+        registry,
+        bootstrap(),
+        clock.clone(),
+    )
+    .unwrap();
     let mut delivery = None;
     if prior {
         for _ in 0..300 {
@@ -149,6 +165,13 @@ fn setup(prior: bool) -> (support::Database, Fixture, Controller) {
                             state.dequeued = false;
                             state.lag = true;
                             state.queue_rule["completed_at"] = Value::Null;
+                            state.required = true;
+                            state.head_checks = vec![
+                                json!({"id":900,"name":"Sandbox tests","head_sha":d.head_sha,
+                                    "status":"completed","conclusion":"failure","app":{"id":15368,"slug":"github-actions"}}),
+                                json!({"id":901,"name":"Sandbox tests","head_sha":d.head_sha,
+                                    "status":"completed","conclusion":"success","app":{"id":15368,"slug":"github-actions"}})
+                            ];
                             set_payload(&mut state, waiting_payload());
                             delivery = Some(d);
                         }
@@ -332,6 +355,49 @@ fn no_prior_dequeue_never_recovers_and_later_approved_head_has_its_own_budget() 
         f.look(&mut c);
     }
     assert_eq!(f.commands(), 1);
+    let next = "cccccccccccccccccccccccccccccccccccccccc";
+    {
+        let mut state = f.api.state.lock().unwrap();
+        state.pull["head"]["sha"] = json!(next);
+        for check in &mut state.head_checks {
+            check["head_sha"] = json!(next);
+        }
+    }
+    c.observe(
+        "later-approved-head",
+        tl3_controller::executor::Observation::Queue(
+            tl3_controller::adapters::mergify::QueueFact {
+                repository: f.delivery.repository.clone(),
+                number: 100,
+                evidence: tl3_controller::adapters::mergify::Evidence::PushByOther {
+                    head: next.into(),
+                },
+            },
+        ),
+    )
+    .unwrap();
+    drain(&mut c);
+    let snapshot = c.snapshot().unwrap();
+    let later: Delivery = serde_json::from_value(
+        snapshot
+            .pending_effects
+            .iter()
+            .find(|effect| effect.payload["output"]["Effect"]["kind"] == "Enqueue")
+            .expect("the later head is checked and reviewed before another enqueue")
+            .payload
+            .clone(),
+    )
+    .unwrap();
+    assert_eq!(later.head_sha.as_deref(), Some(next));
+    c.look_key(&later.key).unwrap();
+    f.advance(301);
+    c.look_key(&later.key).unwrap();
+    drain(&mut c);
+    assert_eq!(
+        f.commands(),
+        2,
+        "a later approved head has one independent command budget"
+    );
 }
 
 fn refused_or_unacknowledged_requeue_uses_bounded_existing_recovery() {

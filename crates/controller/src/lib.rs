@@ -2117,6 +2117,10 @@ impl Controller {
                         diagnostic.render()
                     ));
                 }
+                if let Some(detail) = looks::queue_command_detail(&delivery, &class) {
+                    summary.push(' ');
+                    summary.push_str(&detail);
+                }
                 if class == "queue_unfinished"
                     && let Some(detail) = looks::queue_incident_detail(snapshot, node)?
                 {
