@@ -526,7 +526,7 @@ impl Materials {
         git.set_base_branch(self.branches.base(&delivery.repository)?)?;
         let base = git.fetch_base(&tl3_worktrees::Remote::local(source)?, None)?;
         let repo = repository_materials(&path, base.as_str())?;
-        let issue = json!({"number":delivery.issue,"title":"Upstream title","body":"Upstream body","author":"unknown","comments":[]});
+        let issue = json!({"number":delivery.issue,"title":"Upstream title","body":"Upstream body","author":"unknown","comments":[{"author":"TL3","body":"Saved unfinished work: refs/tl3/scratch/issue-42-node-0"}]});
         let inputs = json!({"issue":issue,"repo":repo});
         Ok(
             json!({"issue":issue,"repo":repo,"ingest":inputs,"audit":inputs,"base_checkout":{"repository":path,"commit":base.as_str()}}),

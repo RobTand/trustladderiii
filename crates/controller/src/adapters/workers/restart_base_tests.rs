@@ -168,6 +168,9 @@ fn restart_base_contains_merged_dependency_for_ingest_and_audit() {
                 .unwrap()
                 .contains("Depends on dependency B")
         );
+        let files = request["inputs"]["repo"]["file_list"].as_array().unwrap();
+        assert!(files.contains(&json!("src/prismabuild/operator_view.py")));
+        assert!(files.contains(&json!("docs/public_evidence.md")));
         let checkout = Path::new(request["worktree"].as_str().unwrap());
         assert!(
             fs::read_to_string(checkout.join("src/prismabuild/operator_view.py"))
@@ -209,7 +212,17 @@ fn restart_base_is_persisted_before_work_and_reused_after_reattach() {
     // Reattach still works when upstream reads cannot succeed.
     fs::rename(&f.repo.path, f.repo.path.with_extension("unavailable")).unwrap();
     assert_eq!(f.materials(), first);
+    let checkout = Restart::supervisor_for(&f.config, &f.repo)
+        .root(&f.delivery.key)
+        .join("worktree");
+    fs::create_dir_all(&checkout).unwrap();
+    fs::write(
+        checkout.join("partial-initialization"),
+        "old checkout fragment",
+    )
+    .unwrap();
     let request = f.request("ingest");
+    assert!(!checkout.join("partial-initialization").exists());
     assert_eq!(
         git(
             Path::new(request["worktree"].as_str().unwrap()),
@@ -226,6 +239,12 @@ fn restart_base_preserves_approved_decisions_pins_and_scratch_as_reference() {
     let request = f.request("ingest");
     let decision = &request["inputs"]["decision_context"]["decisions"][0];
     assert_eq!(decision["id"], "pq2662-q10");
+    assert!(
+        request["inputs"]["issue"]["comments"]
+            .to_string()
+            .contains("refs/tl3/scratch/issue-42-node-0"),
+        "saved scratch is offered as prior work"
+    );
     assert_eq!(
         decision["restrictions"],
         json!([
