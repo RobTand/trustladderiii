@@ -32,6 +32,9 @@ build:remote --extra_execution_platforms=//tools/bazel:linux_amd64
 build:remote --platforms=//tools/bazel:linux_amd64
 build:remote --remote_timeout=600
 build:remote --remote_local_fallback=false
+# The pinned image has BFD but no LLD. Override gold for Rust and build tools.
+build:remote --linkopt=-fuse-ld=bfd
+build:remote --host_linkopt=-fuse-ld=bfd
 # Calibrated per-test budget tolerance; see docs/hosted-budget-tolerance.md.
 test:remote --test_env=TL3_RUNNER_CLASS=buildbuddy-amd64
 
@@ -47,6 +50,9 @@ build:remote-arm64 --platforms=//tools/bazel:linux_arm64
 build:remote-arm64 --host_platform=//tools/bazel:linux_arm64
 build:remote-arm64 --remote_timeout=600
 build:remote-arm64 --remote_local_fallback=false
+# The pinned image has BFD but no LLD. Override gold for Rust and build tools.
+build:remote-arm64 --linkopt=-fuse-ld=bfd
+build:remote-arm64 --host_linkopt=-fuse-ld=bfd
 test:remote-arm64 --test_env=TL3_RUNNER_CLASS=buildbuddy-arm64
 # No complete arm64 calibration yet: record per-test seconds, enforce results.
 test:remote-arm64 --test_env=TL3_BUDGETS=record

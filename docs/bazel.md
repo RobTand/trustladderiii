@@ -74,6 +74,15 @@ the fix: `tools/bazel/generate.sh`.
 - `--config=ci`: gRPC and compact execution logs, CI build metadata, and the
   per-test receipts parity reads. CI adds `COMMIT_SHA` and `BRANCH_NAME`.
 
+Both remote configurations use GNU BFD for target binaries and build tools.
+The pinned executor image has `ld.bfd` and `ld.gold`, but no `ld.lld`.
+Bazel's C++ toolchain otherwise selects gold and passes it to Rust, which
+warns about gold's known bugs. `--linkopt` overrides gold for targets;
+`--host_linkopt` also covers build scripts and compiler tools.
+Cargo builds, including PrismaBuild clippy and `deploy/dl380g10/build-release.sh`,
+use Rust's native linker defaults. The fleet's system `ld` resolves to BFD,
+so Cargo needs no gold override.
+
 Keep the API key in the environment for the Run API client. Never put the key
 in command arguments or committed files.
 
