@@ -1953,3 +1953,45 @@ def test_planner_explores_before_final_reply_without_format_repair(rehearsal, mo
     from tl3_workers.forcing_rehearsal import GUIDANCE
     assert 'distinct' in GUIDANCE.lower() and 'infrastructure' in GUIDANCE.lower()
     assert 'failed rehearsal stops planning' not in planner.ROLE.tools['rehearse_forcing']
+
+
+@pytest.mark.parametrize('module,attribute', [('time', 'monotonic'), ('select', 'select')])
+def test_external_alias_owner_refused_before_admission_and_survives_stop(
+        rehearsal, monkeypatch, module, attribute):
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+    from tl3_workers import runtime
+    ledger, root, inputs, calls = rehearsal
+    (root / 'pkg').mkdir()
+    (root / 'pkg/__init__.py').write_text('')
+    (root / 'pkg/mod.py').write_text(
+        f'import {module}\nraise RuntimeError("served imports must not run in preflight")\n')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'stdlib alias')
+    inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    ledger = ForcingRehearsals(ledger.worktree, inputs)
+    target = f'pkg.mod.{module}.{attribute}'
+    forcing = {'symptom': 'A global alias is unsupported.', 'patches': [{'target': target, 'returns': 1000}]}
+    result = ledger.run([NODE], forcing)
+    assert calls == [], 'resolved external aliases must be refused before any rehearsal action'
+    assert result['status'] == 'refused'
+    assert result['refusal'] == {'phase': 'forcing_validation', 'target': target,
+                                  'resolved_module': module, 'owner_category': 'external_module',
+                                  'reason': 'outside_served_repository'}
+    assert module in result['message'] and target in result['message']
+    assert ledger.run([NODE], deepcopy(forcing)) == result and calls == []
+    model = FakeMessagesListChatModel(responses=[
+        AIMessage(content='', tool_calls=[{'name': 'rehearse_forcing', 'id': 'alias',
+                                          'args': {'tests': [NODE], 'forcing': forcing}}]),
+        AIMessage(content='malformed final after unsupported capability'),
+    ])
+    monkeypatch.setattr(runtime, 'create_model', lambda _: model)
+    request = {'role': 'planner', 'worktree': str(root), 'inputs': inputs,
+               'operation': {'node': 1, 'generation': 0, 'kind': 'planning'},
+               'model': {'name': 'fixture', 'effort': 'high', 'budget_tokens': 32000}}
+    events = []
+    runtime.run(request, events.append)
+    reply = events[-1]['reply']
+    assert reply['kind'] == 'cant_meet' and target in reply['report'] and module in reply['report']
+    assert reply['forcing_rehearsals'][0]['refusal'] == result['refusal']
+    assert calls == []
