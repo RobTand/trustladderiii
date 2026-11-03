@@ -618,3 +618,41 @@ fn recovery_waits_for_the_single_validation_before_filling_lane() {
         "successful validation resumes the whole backlog"
     );
 }
+
+#[test]
+fn clean_closes_ignore_the_old_sample_share() {
+    let mut f = Fixture::new();
+    raw(&f.settings)
+        .execute(
+            "UPDATE tl3_settings SET value = '0' WHERE key = 'postmortem_sample_share'",
+            &[],
+        )
+        .unwrap();
+    f.controller
+        .intake(LabelledIssue {
+            delivery: "clean-close".into(),
+            owner: "RobTand".into(),
+            repo: "tl3-sandbox".into(),
+            installation: 1,
+            number: 46,
+            title: "A clean merge".into(),
+            actor: 24923402,
+            label: "tl3".into(),
+            labels: vec![],
+        })
+        .unwrap();
+    drain(&mut f.controller);
+    let records = Store::open(&f.settings).unwrap().postmortems("4").unwrap();
+    assert_eq!(
+        records.len(),
+        1,
+        "every closed request owes a postmortem, including clean merges at zero sample share"
+    );
+    f.judge.borrow_mut().finished = true;
+    f.controller.run_postmortems(pace());
+    drain(&mut f.controller);
+    assert_eq!(
+        Store::open(&f.settings).unwrap().postmortems("4").unwrap()[0].status,
+        "done"
+    );
+}
