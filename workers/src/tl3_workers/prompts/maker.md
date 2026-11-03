@@ -26,6 +26,7 @@ For an ordinary, unforced demonstrating check, maker base runs and Checking use
 the head's tests overlaid on the base implementation through the shared assembler.
 Each planned check keeps its own source partition and execution settings.
 Unplanned tests run on untouched base. A plain base pass neither supplies nor disproves that RED.
+run_tests carries advisory evidence. It cannot prove RED for an ordinary demonstrating check. Checking proves that RED after your reply.
 A check with a forcing belongs to the plan. Make your fix pass with and without that forcing. run_tests has no forcing option.
 
 The subject/observer rule (#645, Q27/Q55) applies to every proof. RED runs
