@@ -124,11 +124,16 @@ fn request_title_quotes_and_vocabulary_work_in_notes_and_summaries() {
                 input.kind = kind;
                 input.facts.as_object_mut().unwrap().remove("change_quote");
                 input.facts["issue_title"] = json!(title);
-                assert_eq!(
+                let rendered =
                     checked_draft(&mut Draft(text.clone()), "note", input, &Policy::default())
-                        .unwrap(),
-                    text
-                );
+                        .unwrap();
+                if kind == MessageKind::Summary {
+                    assert!(rendered.contains(title));
+                    assert!(rendered.contains("not captured"));
+                    assert!(!rendered.contains("work can continue"));
+                } else {
+                    assert_eq!(rendered, text);
+                }
             }
         }
     }
@@ -150,11 +155,14 @@ fn scope_removals_are_appended_to_checked_summary() {
     let removed = "Changes not part of this request were removed: `extra.txt`, `pyproject.toml`.";
     let result = checked_draft(&mut Draft("Your change was merged.".into()), "scope",
         WriteRequest { kind: MessageKind::Summary, facts: json!({"issue_title":"Add a blue button", "request":"Add a blue button", "outcome":"Your change was merged.", "unmet_goals":[], "removed_changes":removed}), violations:vec![] , request: None,}, &Policy::default()).unwrap();
-    assert_eq!(result, format!("Your change was merged.\n\n{removed}"));
+    assert!(result.contains("Add a blue button"));
+    assert!(result.contains("Your change was merged."));
+    assert!(result.ends_with(&format!("\n\n{removed}")));
+    assert_eq!(result.matches(removed).count(), 1);
 }
 
 #[test]
-fn scope_removals_preserve_request_vocabulary_and_known_path_checks() {
+fn scope_removals_preserve_recorded_paths_and_ignore_model_path_claims() {
     let title = "Convert snake_case names to camelCase";
     let removed = "Changes not part of this request were removed: `workers/src`, `src/main.rs`.";
     let text = format!("Update on \"{title}\": snake_case names were converted to camelCase.");
@@ -169,17 +177,19 @@ fn scope_removals_preserve_request_vocabulary_and_known_path_checks() {
         known_paths: ["workers/src".into()].into(),
         ..Policy::default()
     };
+    let recorded =
+        checked_draft(&mut Draft(text.clone()), "scope", request.clone(), &policy).unwrap();
+    assert!(recorded.contains(title));
+    assert!(recorded.contains("Your change was merged."));
+    assert!(recorded.ends_with(&format!("\n\n{removed}")));
     assert_eq!(
-        checked_draft(&mut Draft(text.clone()), "scope", request.clone(), &policy).unwrap(),
-        format!("{text}\n\n{removed}")
-    );
-    assert!(matches!(
         checked_draft(
             &mut Draft(format!("{text} The change in workers/src was merged.")),
             "scope",
             request,
             &policy
-        ),
-        Err(Error::MessageRejected)
-    ));
+        )
+        .unwrap(),
+        recorded
+    );
 }
