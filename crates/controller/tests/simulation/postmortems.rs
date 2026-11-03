@@ -1,4 +1,4 @@
-//! #403 slice B: the postmortem runner, outside the kernel, on spare pool capacity.
+//! #403 slice B: the postmortem runner, outside the kernel, in its own two-slot lane.
 use super::*;
 use std::{cell::RefCell, rc::Rc};
 use tl3_controller::{PostmortemPace, Result, executor::Look};
@@ -123,9 +123,8 @@ impl Executor for Workers {
     }
 }
 
-fn pace(per_day: u32) -> PostmortemPace {
+fn pace() -> PostmortemPace {
     PostmortemPace {
-        per_day,
         models: vec!["claude-opus-5-5".into(), "claude-sonnet-5-5".into()],
     }
 }
@@ -161,7 +160,7 @@ fn open_runner(
 }
 
 fn start(settings: &tl3_config::Store, root: &Path, judge: &Rc<RefCell<Judge>>) -> Controller {
-    start_at(settings, root, judge, pace(10))
+    start_at(settings, root, judge, pace())
 }
 
 fn start_at(
@@ -224,7 +223,7 @@ fn jobs(controller: &mut Controller) -> usize {
 }
 
 /// A crash after the claim and a crash while the judge runs: each postmortem
-/// is launched once and stored once. Only one runs at a time, and delivery
+/// is launched once and stored once. At most two run at a time, and delivery
 /// work never waits for it.
 pub(super) fn exactly_once_across_crashes(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
@@ -264,13 +263,13 @@ pub(super) fn exactly_once_across_crashes(settings: &tl3_config::Store) {
     assert_eq!(judge.borrow().launched.get(&run_key), Some(&1));
 
     // New delivery work runs and merges while the judge is still running, and
-    // its own postmortem waits: one at a time.
+    // its own postmortem uses the other lane slot.
     controller.intake(issue(43)).unwrap();
     drain(&mut controller);
     let world = controller.world().unwrap();
     assert_eq!(world.nodes[1].phase, Phase::Closed(Outcome::Merged));
-    assert_eq!(status(settings, "1"), [("owed".to_string(), None)]);
-    assert_eq!(jobs(&mut controller), 1);
+    assert_eq!(status(settings, "1")[0].0, "running");
+    assert_eq!(jobs(&mut controller), 2);
 
     restart(controller, settings);
     judge.borrow_mut().finished = true;
@@ -344,7 +343,11 @@ pub(super) fn running_rows_recover_at_startup(settings: &tl3_config::Store) {
     share(settings, "0");
     controller.intake(issue(42)).unwrap();
     drain(&mut controller);
-    assert!(status(settings, "0").is_empty(), "a clean merge at share 0");
+    assert_eq!(
+        status(settings, "0")[0].0,
+        "done",
+        "even a clean merge at share 0 is judged"
+    );
     restart(controller, settings);
     raw(settings)
         .execute(
@@ -354,10 +357,20 @@ pub(super) fn running_rows_recover_at_startup(settings: &tl3_config::Store) {
         )
         .unwrap();
     let mut controller = start(settings, root.path(), &judge);
-    assert_eq!(status(settings, "0"), [("owed".to_string(), None)]);
+    let recovered = status(settings, "0");
+    assert_eq!(
+        recovered.len(),
+        2,
+        "the completed close and the orphan claim"
+    );
+    assert_eq!(recovered[1], ("owed".to_string(), None));
     drain(&mut controller);
-    assert_eq!(status(settings, "0")[0].0, "done");
-    assert_eq!(judge.borrow().launched.len(), 1);
+    assert!(
+        status(settings, "0")
+            .iter()
+            .all(|(state, _)| state == "done")
+    );
+    assert_eq!(judge.borrow().launched.len(), 2);
 }
 
 /// A launch refused for good, or a reply with four recommendations, fails the
@@ -521,30 +534,24 @@ pub(super) fn quota_on_a_postmortem_model_stops_claims(settings: &tl3_config::St
     assert_eq!(judge.borrow().launched.len(), 1);
 }
 
-/// #486: at most `per_day` claims in a UTC day, across restarts.
-pub(super) fn claims_per_day(settings: &tl3_config::Store) {
+/// #642: the lane drains owed work across restarts without a daily ceiling.
+pub(super) fn claims_without_daily_limit(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let judge = Rc::new(RefCell::new(Judge {
         finished: true,
         ..Judge::default()
     }));
-    let mut controller = start_at(settings, root.path(), &judge, pace(1));
+    let mut controller = start(settings, root.path(), &judge);
     share(settings, "1");
     controller.intake(issue(42)).unwrap();
     drain(&mut controller);
+    restart(controller, settings);
+    let mut controller = start(settings, root.path(), &judge);
     controller.intake(issue(43)).unwrap();
     drain(&mut controller);
     assert_eq!(status(settings, "0")[0].0, "done");
-    assert_eq!(status(settings, "1"), [("owed".to_string(), None)]);
-    restart(controller, settings);
-    let mut controller = start_at(settings, root.path(), &judge, pace(1));
-    drain(&mut controller);
-    assert_eq!(
-        status(settings, "1"),
-        [("owed".to_string(), None)],
-        "the day's count is stored"
-    );
-    assert_eq!(judge.borrow().launched.len(), 1);
+    assert_eq!(status(settings, "1")[0].0, "done");
+    assert_eq!(judge.borrow().launched.len(), 2);
 }
 
 /// #486: a run the controller stops for making no progress fails with the
@@ -556,7 +563,7 @@ pub(super) fn stalls_fail_with_no_progress(settings: &tl3_config::Store) {
         ..Judge::default()
     }));
     let clock = TestClock(Rc::new(std::cell::Cell::new(1000)));
-    let mut controller = open_runner(settings, root.path(), &judge, pace(10), clock.clone());
+    let mut controller = open_runner(settings, root.path(), &judge, pace(), clock.clone());
     let mut allowances = tl3_config::Allowances::default();
     allowances.agent_worker.silence_secs = 1;
     allowances.agent_worker.no_progress_secs = 3;

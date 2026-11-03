@@ -27,7 +27,7 @@ def decode(request):
         always = request.get("always_tests", [])
         if not isinstance(always, list):
             raise ValueError("always_tests must list pytest files or node IDs")
-        return (plan, Container(request["image"], exec_scratch=request.get("exec_scratch", False)),
+        return (plan, Container(request["image"]),
                 tuple(protected), selected, tuple(always))
     except (KeyError, TypeError, ValueError) as error:
         raise HarnessInputError(f"invalid check request: {type(error).__name__}") from error

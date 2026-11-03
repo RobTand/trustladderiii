@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import pytest
+from pb_fixtures import supported_fake_runtime as supported_fake_runtime
 from tl3_workers.pb_tests import TestSettings, make_test_tool
 from tl3_workers.tools import Worktree
 

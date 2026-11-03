@@ -1,4 +1,8 @@
+# gazelle:resolve py python.runfiles @rules_python//python/runfiles
+# gazelle:resolve py python.runfiles.runfiles @rules_python//python/runfiles
+
 load("@rules_python//python:defs.bzl", "py_binary")
+load("//tools/bazel:python.bzl", "tl3_py_test")
 
 py_binary(
     name = "inventory",
@@ -16,17 +20,6 @@ py_binary(
 py_binary(
     name = "verify",
     srcs = ["verify.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":verify_reproducing",
-        ":verify_scratch",
-        "//harness/src/tl3_harness",
-    ],
-)
-
-py_binary(
-    name = "verify_exec_scratch",
-    srcs = ["verify_exec_scratch.py"],
     visibility = ["//visibility:public"],
     deps = [
         ":verify_reproducing",
@@ -66,4 +59,15 @@ py_binary(
     srcs = ["verify_generator.py"],
     visibility = ["//visibility:public"],
     deps = ["//harness/src/tl3_harness"],
+)
+
+py_binary(
+    name = "verify_disk_scratch",
+    srcs = ["verify_disk_scratch.py"],
+    data = ["//harness/tests:fixtures/scratch/test_disk.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@rules_python//python/runfiles",
+    ],
 )

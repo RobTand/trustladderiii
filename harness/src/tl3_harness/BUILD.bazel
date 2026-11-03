@@ -29,6 +29,7 @@ py_library(
         "proof.py",
         "report.py",
         "runner.py",
+        "scratch.py",
         "selection.py",
         "supervision.py",
         "symptoms.py",

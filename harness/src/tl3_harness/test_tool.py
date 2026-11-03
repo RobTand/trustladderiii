@@ -303,7 +303,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("image")
     parser.add_argument("selectors")
-    parser.add_argument("--exec-scratch", action="store_true")
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--parallel", type=int, default=0)
     parser.add_argument("--forcing")
@@ -317,11 +316,11 @@ def main():
             declaration = json.loads(args.declared_symptom)
             if (args.repeat, args.parallel) != (declaration['repeat'], declaration['parallel']):
                 raise ValueError('symptom campaign settings changed')
-            result = run_symptom(Path('checkout').resolve(), Container(args.image, exec_scratch=args.exec_scratch),
+            result = run_symptom(Path('checkout').resolve(), Container(args.image),
                                  tuple(json.loads(args.selectors)), declaration, forcing=forcing)
             result['declared_symptom'] = declaration
         else:
-            result = run(Path("checkout").resolve(), Container(args.image, exec_scratch=args.exec_scratch),
+            result = run(Path("checkout").resolve(), Container(args.image),
                          tuple(json.loads(args.selectors)), repeat=args.repeat, parallel=args.parallel, forcing=forcing)
         if forcing is not None:
             result.update(forcing=forcing.as_json(), selectors=json.loads(args.selectors))

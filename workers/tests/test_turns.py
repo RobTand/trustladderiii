@@ -13,6 +13,7 @@ from tl3_workers import runtime
 from tl3_workers.turns import InvalidReply
 from message_invariants import assert_tool_pairs
 import message_invariants as test_maker
+from pb_fixtures import machine_cli, supported_fake_runtime as supported_fake_runtime
 import test_prompt_cache
 import test_reviewer
 import test_workers
@@ -45,7 +46,7 @@ class Scripted(FakeMessagesListChatModel):
     offered: bool = False
 
     def bind_tools(self, tools, **kwargs):
-        self.offered = bool(tools)
+        self.offered = bool(tools) and kwargs.get("tool_choice") != "none"
         return self
 
     def _generate(self, messages, **kwargs):
@@ -202,7 +203,7 @@ def test_invalid_reply_gets_one_tool_free_repair_turn(role, request, tmp_path, m
     # A code-owned budget notice may follow the repair instruction.
     instruction = instructions(repair)[-1]
     assert message in instruction.text
-    assert not offered, "the repair turn offers no tools"
+    assert not offered, "the repair turn disables tool calls"
     if tool:
         assert model.calls[0][1], "earlier turns keep their tools"
     assert len(tool_results(repair)) == (1 if tool else 0), "earlier tool calls are not repeated"
@@ -420,6 +421,9 @@ def pb_scripts(tmp_path):
         "          'result': {'verified': True, 'receipt_sha256': 'b' * 64, 'stdout': {\n"
         "              'path': str(here / 'action.log'), 'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}}}\n"
         "print(json.dumps({'schema': 'prismabuild.endings.v1', 'complete': True, 'endings': [ending]}))\n")
+    for name in ("pbrun.py", "pbwait.py"):
+        script = scripts / name
+        script.write_text(machine_cli(script.read_text()))
     return scripts
 
 

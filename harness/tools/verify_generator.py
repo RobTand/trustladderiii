@@ -30,7 +30,7 @@ def main():
 from pathlib import Path
 import subprocess
 import sys
-# This must succeed as uid 65534, with only the synthetic read-only index.
+# This must succeed as the scratch leaf owner, with only the synthetic read-only index.
 paths = subprocess.check_output(["git", "ls-files"]).decode().splitlines()
 assert "tests/socket_support.py" in paths and "tests/test_new.py" in paths
 assert not Path(".git/hooks").exists()

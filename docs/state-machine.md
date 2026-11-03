@@ -229,7 +229,7 @@ Agreed (Q32); the model trials arrive in slice three. The judge's postmortem was
 
 **Cleanup runs first and right away.** A merge moves the leaf to Stopping. Teardown stops anything still running, removes the worktree and deletes the branch, checking before each step so that a rerun does nothing. Only then does the leaf close and its parent hear about it. The code is already on main and the transcripts are in MLflow, so the postmortem doesn't need the worktree.
 
-**The postmortem runs in the background.** It never holds up delivery. Code grades are recorded when the node closes (#403). The judge's postmortem runs on the workers' `postmortem` role (#403). It is recorded as owed work, so a crash can't lose it, and it runs at low priority on spare quota.
+**The postmortem runs in the background.** It never holds up delivery. Code grades are recorded when the node closes (#403). The judge's postmortem runs on the workers' `postmortem` role (#403). It is recorded as owed work, so a crash can't lose it, and it runs in its own two-slot lane, subject to the quota of the models it uses (Q39 amended, #642).
 
 **Port TL1's postmortem rather than redesigning it.** Start from TL1's rubric (`src/trustladder/rubric.toml`, version 1) and its judge prompt (`prompts/judge.md`):
 
@@ -248,7 +248,7 @@ TL3 adds dimensions for its own steps:
 - whether the raised-effort attempt rescued the leaf;
 - whether an escalation report led to the right decision.
 
-**Scope.** Every node gets one postmortem when it ends: a leaf when it merges or is abandoned, and a parent after integration. Each postmortem sees only that node's own materials, the same insulation that escalation uses. Code grades every run. The judge grades every node that needed a fix round, a later attempt or an escalation, plus a random share of the clean ones, and that share is logged.
+**Scope.** Every node gets one postmortem when it ends: a leaf when it merges or is abandoned, and a parent after integration. Each postmortem sees only that node's own materials, the same insulation that escalation uses. Code grades every run. Rob amended this on 2026-11-03 (#642): "postmortems should not eat the same budget as everything else. Everything gets a postmortem regardless of budget." The judge now grades every closed node, including every clean merge; the former sample share no longer selects work.
 
 **Ranking models and effort levels.** Grades alone can't rank them. TL1 graded everything and still couldn't compare models, because every role ran at a single effort level and nothing varied. TL3 sends a logged, random share of runs to a candidate model or effort level, starting at 1 in 10 and never on work that other work is waiting on. Later attempts, with a bigger budget or another model, don't count as comparisons by themselves, because they only happen after a failure. Results reach Rob as proposals, and he picks models and effort levels.
 
@@ -562,7 +562,7 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 - **Q36 Rank:** the number of other pieces waiting on a piece, directly or through a chain of waits, with ties going to the older piece.
 - **Q37 Manual priority:** none in slices one and two. A label such as `tl3-urgent` could come later. Approved by Rob, 2026-11-02 (#416, #417): issue priorities `P0`–`P3` order agent-pool grants (Q39) and can raise starting credit.
 - **Q38 Shared files:** the age rule goes. Whichever piece unblocks more gets the file, with ties going to the older piece.
-- **Q39 Agent pool:** the same ordering. Postmortems run only on spare capacity. Approved by Rob, 2026-11-02 (#417), pulled forward from slice two: grants are strictly priority-first, P0 to P3 then unranked, with ties going to the older ticket. Starvation is accepted, as in Q30.
+- **Q39 Agent pool:** the same ordering. Approved by Rob, 2026-11-02 (#417), pulled forward from slice two: grants are strictly priority-first, P0 to P3 then unranked, with ties going to the older ticket. Starvation is accepted for delivery grants, as in Q30. Rob amended Q39 on 2026-11-03 (#642): "postmortems should not eat the same budget as everything else. Everything gets a postmortem regardless of budget." Postmortems have their own lane with at most two running concurrently, oldest owed first. They neither wait for nor consume agent-pool grants, have no daily allowance, and are never ordered behind delivery. Model quota for entry 0 and entry 1 if present, the failure-streak pause, single-run recovery validation (#632), and the deadline still apply.
 
 **Proofs**
 
@@ -588,7 +588,7 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 
 **Slice three and later**
 
-- **Q32 Postmortems and model trials:** they reuse TL1's rubric and judge. The judge grades everything that needed a fix, a retry or an escalation, plus a random share of clean work. 1 run in 10 tries a candidate model, never on work that other work is waiting on. A change reaches Rob as a proposal once 3 postmortems point to it.
+- **Q32 Postmortems and model trials:** they reuse TL1's rubric and judge. Rob amended the scope on 2026-11-03 (#642): the judge grades every closed node, including all clean merges, without sampling. 1 run in 10 tries a candidate model, never on work that other work is waiting on. A change reaches Rob as a proposal once 3 postmortems point to it.
 - **Q33 Earned autonomy:** a kind of change applies without Rob only after he grants that kind, following a clean record. Rolling back never needs approval.
 - **Q34 Decomposition dry run:** before splits go live, a dry run decomposes real requests without changing code, to calibrate the fit limit and the forecast.
 

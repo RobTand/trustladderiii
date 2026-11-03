@@ -896,7 +896,7 @@ impl Store {
         Ok(self
             .client
             .query_opt(
-                &format!("SELECT {POSTMORTEM_RECORD} FROM tl3_postmortems WHERE status = 'owed' ORDER BY attempts, owed_at, id LIMIT 1"),
+                &format!("SELECT {POSTMORTEM_RECORD} FROM tl3_postmortems WHERE status = 'owed' ORDER BY owed_at, id LIMIT 1"),
                 &[],
             )?
             .as_ref()

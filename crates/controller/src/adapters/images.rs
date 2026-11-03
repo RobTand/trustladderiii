@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 #[derive(Clone)]
 struct Settings {
     image: Option<String>,
-    exec_scratch: bool,
     tests: AdditionalTests,
     test_demand: Option<tl3_config::TestDemand>,
 }
@@ -33,7 +32,6 @@ impl Images {
                         ),
                         Settings {
                             image: repo.container_image.clone(),
-                            exec_scratch: repo.exec_scratch,
                             test_demand: repo.test_demand,
                             tests: AdditionalTests {
                                 selected: repo.selected_tests,
@@ -52,11 +50,6 @@ impl Images {
             repo.name.to_ascii_lowercase(),
             repo.installation,
         ))
-    }
-
-    pub(super) fn exec_scratch(&self, repo: &Repository) -> bool {
-        self.settings(repo)
-            .is_some_and(|settings| settings.exec_scratch)
     }
 
     pub(super) fn additional_tests(&self, repo: &Repository) -> AdditionalTests {

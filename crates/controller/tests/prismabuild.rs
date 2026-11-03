@@ -3127,7 +3127,7 @@ fn repository_image_is_sealed_and_staged_with_global_fallback() {
         };
         let config: tl3_config::Repository = serde_json::from_value(serde_json::json!({
             "owner":"RobTand", "name":"tl3-sandbox", "installation_id":1,
-            "container_image":format!("sha256:{}", "b".repeat(64)), "exec_scratch":true
+            "container_image":format!("sha256:{}", "b".repeat(64))
         }))
         .unwrap();
         let mut adapter = fixture(root.path(), "pending").with_repositories(&[config]);
@@ -3139,11 +3139,6 @@ fn repository_image_is_sealed_and_staged_with_global_fallback() {
         .unwrap();
         let image = format!("sha256:{}", expected.repeat(64));
         assert_eq!(request["image"], image, "staged harness image");
-        assert_eq!(
-            request["exec_scratch"],
-            expected == "b",
-            "scratch opt-in follows repository identity"
-        );
         let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
             .unwrap()
             .lines()
@@ -3153,6 +3148,11 @@ fn repository_image_is_sealed_and_staged_with_global_fallback() {
             .iter()
             .find(|args| args.iter().any(|arg| arg == "--seal-only"))
             .unwrap();
+        assert!(
+            seal.windows(2).any(|pair| pair[0] == "--env"
+                && pair[1].starts_with("PRISMABUILD_EPHEMERAL_SCRATCH_DECLARATIONS=")),
+            "Checking must seal the registered disk scratch lifetime"
+        );
         let index = seal
             .iter()
             .position(|arg| arg == "--container-image")

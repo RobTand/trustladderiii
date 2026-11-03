@@ -131,13 +131,15 @@ def test_regression_cannot_excuse_an_unavailable_base_test(base):
     assert judge(check, {check.tests[0]: base}, {check.tests[0]: Outcome.PASSED}).verdict == Verdict.FAIL
 
 
-def test_container_has_only_explicit_read_only_mounts_and_no_host_environment(tmp_path):
+def test_container_has_only_explicit_mounts_and_no_host_environment(tmp_path, monkeypatch):
+    monkeypatch.setattr("tl3_harness.execution.scratch_directory", lambda: tmp_path / "scratch")
+    (tmp_path / "scratch").mkdir()
     command = container_command(tmp_path, Container(IMAGE), ("tests/test_x.py::test_x",))
     assert command[:2] == ["docker", "run"]
     for flag in ("--network=none", "--read-only", "--cap-drop=ALL", "--pull=never"):
         assert flag in command
     mounts = [command[index + 1] for index, value in enumerate(command) if value == "--mount"]
-    assert len(mounts) == 2 and all(mount.endswith(",readonly") for mount in mounts)
+    assert len(mounts) == 3 and sum(mount.endswith(",readonly") for mount in mounts) == 2
     assert not any("/mnt/shared" in mount or "docker.sock" in mount for mount in mounts)
     assert "--cpuset-cpus" not in command
 
@@ -271,3 +273,42 @@ def test_reproducing_requires_available_tests_and_a_passing_fix(before, after):
     assert kind is not None, "reproducing checks must reject unavailable or broken tests"
     test = "tests/test_product.py::test_demonstrates"
     assert judge(Check("fix", kind, (test,)), {test: before}, {test: after}).verdict == Verdict.FAIL
+
+
+@pytest.mark.parametrize("cpus", [None, "4"])
+def test_container_preserves_admitted_native_thread_bounds(tmp_path, monkeypatch, cpus):
+    names = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+        if cpus is not None:
+            monkeypatch.setenv(name, cpus)
+    monkeypatch.setattr("tl3_harness.execution.scratch_directory", lambda: tmp_path)
+    command = container_command(tmp_path, Container(IMAGE), ())
+    for name in names:
+        assert f"{name}={cpus or '1'}" in command
+
+
+def test_added_names_include_new_module_constants(tmp_path):
+    # PQ #2662: a new module-level constant imported in a test body is a name the change adds.
+    base, head = tmp_path / "base", tmp_path / "head"
+    for tree in (base, head):
+        (tree / "pkg").mkdir(parents=True)
+    (base / "pkg/digests.py").write_text("OLD = 1\n")
+    (head / "pkg/digests.py").write_text(
+        "OLD = 1\n"
+        "NEW_PROFILE = dict(a=1)\n"
+        "TYPED: int = 2\n"
+        "BARE: int\n"
+        "LEFT = RIGHT = 3\n"
+        "FIRST, (SECOND, *REST) = 1, (2, 3)\n"
+        "obj = object()\n"
+        "obj.attribute = 4\n"
+        "table = {}\n"
+        "table['key'] = 5\n"
+        "if True:\n"
+        "    CONDITIONAL = 6\n")
+    names = {name for path, name in added_names(base, head, ["tests/*.py"]) if path == "pkg/digests.py"}
+    assert {"NEW_PROFILE", "TYPED", "LEFT", "RIGHT", "FIRST", "SECOND", "REST", "obj", "table"} <= names
+    # Attribute and subscript stores bind no module name; nested statements are not module-level bindings.
+    assert not names & {"attribute", "key", "CONDITIONAL", "OLD", "BARE"}
+

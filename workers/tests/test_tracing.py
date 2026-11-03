@@ -1229,3 +1229,24 @@ def test_trace_exposes_selected_request_base_and_link_origin(request_doc, monkey
     attrs = {attr.key: attr.value.string_value for attr in root.attributes}
     assert attrs.get('mlflow.traceTag.base_sha') == 'b' * 40
     assert attrs.get('mlflow.traceTag.request_origin') == '6'
+
+
+def test_t653_controller_input_failure_exports_attribution_without_inputs(request_doc, exporters, receiver):
+    from tl3_workers import tracing
+    uri, packets = receiver
+    request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
+    request_doc['role'] = 'reviewer'
+    request_doc['inputs'] = {'role': 'reviewer', 'pointer': '/checks/0/tests/0/phases',
+                             'rule': 'additionalProperties'}
+    request_doc.pop('key_file', None)
+    tracing.input_failure(request_doc)
+    for child in exporters:
+        assert child.wait(timeout=15) == 0
+    root = next(span for span in decode(packets) if not span.parent_span_id)
+    attrs = {attr.key: attr.value.string_value for attr in root.attributes}
+    assert attrs['mlflow.traceTag.outcome'] == 'failed'
+    assert attrs['mlflow.traceTag.failure_class'] == 'worker_input_schema'
+    assert attrs['mlflow.traceTag.failure_message'] == (
+        'worker inputs break role schema: role=reviewer pointer=/checks/0/tests/0/phases rule=additionalProperties')
+    assert root.status.code == 2
+    assert not root.events and not root.status.message

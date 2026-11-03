@@ -12,7 +12,8 @@ import pytest
 from tl3_workers import runtime
 from message_invariants import assert_tool_pairs
 import message_invariants as test_maker
-import test_workers
+import worker_process as test_workers
+from worker_process import response_frames
 
 
 maker_request = test_maker.maker_request
@@ -174,24 +175,6 @@ def test_cached_intake_keeps_four_exploration_rounds(tmp_path, monkeypatch):
     assert budgets[0].spent == 95_000
 
 
-def response_frames(content, *, duplicate_usage=False, trailing_usage=None, tool_calls=None):
-    chunk = {"id": "fixture-completion", "object": "chat.completion.chunk", "created": 0,
-             "model": "fixture-model"}
-    usage = {"prompt_tokens": 1000, "completion_tokens": 5, "total_tokens": 1005,
-             "prompt_tokens_details": {"cached_tokens": 800, "cache_write_tokens": 100}}
-    delta = {"role": "assistant", "content": content}
-    if tool_calls is not None:
-        delta["tool_calls"] = tool_calls
-    frames = [{**chunk, "choices": [{"index": 0, "delta": delta,
-                                    "finish_reason": None}]},
-              {**chunk, "choices": [{"index": 0, "delta": {},
-                                    "finish_reason": "tool_calls" if tool_calls else "stop"}], "usage": usage}]
-    if duplicate_usage or trailing_usage is not None:
-        frames.append({**chunk, "choices": [], "usage": trailing_usage or usage})
-    stream = "".join("data: " + json.dumps(frame) + "\n\n" for frame in frames) + "data: [DONE]\n\n"
-    return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=stream)
-
-
 def test_maker_budget_notices_preserve_the_proxy_system_prefix(maker_request, tmp_path, monkeypatch):
     Path(maker_request["key_file"]).write_text("fixture-only-key")
     maker_request["inputs"]["context_size"] = 150_000
@@ -202,7 +185,7 @@ def test_maker_budget_notices_preserve_the_proxy_system_prefix(maker_request, tm
     def respond(request):
         body = json.loads(request.content)
         sent.append(body["messages"])
-        offered.append(bool(body.get('tools')))
+        offered.append(bool(body.get('tools')) and body.get('tool_choice') != 'none')
         if len(sent) <= 2:
             return response_frames("", tool_calls=[{
                 "index": 0, "id": f"read-{len(sent)}", "type": "function",

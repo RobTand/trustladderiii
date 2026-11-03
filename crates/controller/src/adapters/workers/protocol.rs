@@ -173,10 +173,9 @@ pub(crate) fn validate_reply(role: &str, reply: &Value) -> Result<()> {
 }
 
 pub(super) fn validate_inputs(role: &str, inputs: &Value) -> Result<()> {
-    if validator(role, "input")?.is_valid(inputs) {
-        Ok(())
-    } else {
-        Err(Error::Invalid("worker inputs break role schema"))
+    match validator(role, "input")?.validate(inputs) {
+        Ok(()) => Ok(()),
+        Err(error) => Err(crate::worker_inputs::Failure::capture(role, &error).into()),
     }
 }
 

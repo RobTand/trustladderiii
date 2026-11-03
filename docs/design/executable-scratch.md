@@ -1,41 +1,66 @@
-# Executable scratch for served repositories
+# Disk scratch for served repositories
 
-Ticket #236 originally proposed Git metadata, executable scratch and disk
-scratch. This change implements executable scratch only. Git metadata and
-scratch backed by a host filesystem remain outside the harness boundary.
+Rob decided #639 on 2026-11-03:
 
-A repository may set `exec_scratch = true` in its `[[github.repos]]` entry.
-Omission means false. The controller selects this option by repository owner,
-name and installation, for both check plans and maker test runs. The model
-cannot change it through test selectors. Base-result cache identity includes
-the option so a restricted result cannot stand in for an executable run.
+> Use a plain bind of a private child directory inside the action's PB-owned
+> scratch-lifetime-v1 leaf, mounted at /tmp for pytest. That replaces the tmpfs.
+> Rob accepts that inherited mount flags may allow exec, suid and dev on that scratch.
 
-The opt-in changes the private `/tmp` tmpfs mount from noexec to exec. The
-runner still points TMPDIR, TEMP, TMP and Python's tempfile module at each
-test's pytest temporary directory. It removes that directory after teardown,
-including failed tests, without changing the test's outcome on cleanup errors.
-Session-scoped temporary factories can retain data until the container exits.
-The shared 512 MiB mount bounds all scratch, including retained session data
-and files whose cleanup failed. Container removal discards the mount.
+The harness creates a fresh private child of the registered ephemeral leaf for
+each container invocation. Only that child is bind-mounted at `/tmp`. Maker
+test runs, rehearsal and Checking use the same `container_command` path. The
+controller and worker submissions seal the scratch selection and accounting.
 
-Executable scratch allows copied executables, generated scripts and native
-libraries to run or load there. A compiled program receives the same access
-as Python test code. It can consume the action's CPU, memory and scratch and
-can interfere with other tests in that container. The mount has nosuid and
-nodev; it grants neither a privilege transition nor access to host devices.
-The tmpfs consumes RAM charged to the admitted action's memory slice. Its
-512 MiB ceiling does not reserve additional memory beyond the action demand;
-tests must fit their remaining memory within that demand too.
+The root is `/home/rob/tmp`. The declared scratch demand is 512 MiB, rounded
+up to 1 GiB of spool capacity by PrismaBuild. This is admission accounting,
+not a filesystem quota. The old 512 MiB tmpfs limit no longer applies. There
+was no separate tmpfs memory surcharge in TL3's submissions to remove; the
+ordinary action memory demands remain unchanged. Disk files no longer occupy
+a dedicated tmpfs, though filesystem caches can still consume action memory.
 
-The checkout and trusted harness remain read-only exports. The container still
-runs as UID/GID 65534, with no network, all capabilities dropped,
-no-new-privileges, private IPC, a PID bound and PB-assigned CPU affinity. There
-is no writable host mount, Docker socket, fleet shared mount or GPU access.
-The trusted outer process journals results and holds PB admission credentials
-outside the test container. Reporting remains in-process, as before; this
-option does not change that accepted custody limit.
+PrismaBuild registers the leaf before starting the action. The harness checks
+its registered device/inode identity, private permissions and owner before
+creating a child. Cleanup uses the existing sequence:
+`pool.cleanup_action_containers`, then `scratch_lifetime.finalize`. It does
+not depend on a Python finally block. Success, setup failure, cancellation
+and watchdog termination all retain the same PB cleanup owner.
 
-An image pin selects dependencies; it does not opt a repository into execution
-on scratch. Turning the option off restores noexec for subsequent actions.
-Existing admitted actions keep their sealed setting. No live config is changed
-by this implementation.
+Under Rob's #639 policy call, the lead also decided:
+
+> Run the pytest container as the PB worker's own UID:GID, read from the
+> scratch leaf's owner, instead of 65534.
+
+This lets PB remove test-created mode-0700 directories without privileged
+cleanup or UID mapping. The harness reads both IDs from the registered leaf;
+it does not assume UID 1000. A qualification with UID 65534 demonstrated why
+the old identity could prevent the leaf owner from recursively cleaning it.
+
+The threat model remains that served Python test code can already execute
+arbitrary instructions in the container. Executable scratch allows copied
+binaries, generated scripts and native libraries to run there too. They get
+the same access as test code and can interfere with other tests in that
+container. The previous `/tmp` noexec flag was never a Python-code execution
+boundary. Checkout and harness mounts use `type=bind,...,readonly`, with no
+explicit noexec flag, and the image itself contains executable Python.
+
+The new `/tmp` bind has no explicit noexec, nosuid or nodev options. It inherits
+the host filesystem's mount flags. This is Rob's accepted containment-policy
+change, not a promise that the old tmpfs flags survive. `exec_scratch` is
+retired from configuration and action inputs because it no longer controls
+anything. The parser reports "unknown field `exec_scratch`". Before this
+release deploys, the coordinator must remove the three live
+`exec_scratch = true` entries. The implementation does not edit live config.
+
+The checkout and trusted harness remain read-only exports. The container keeps
+`--cap-drop=ALL`, `--security-opt=no-new-privileges`, `--read-only`,
+`--network=none`, `--ipc=private`, `--pids-limit=128` and PB-assigned CPU
+affinity. The only new host path visible is the private scratch child. No
+Docker socket, fleet shared mount or GPU access is added. The trusted outer
+process holds admission credentials and journals results outside the test
+container. Reporting remains in-process with repository code, as before;
+read-only harness files do not isolate that interpreter's runtime state.
+
+Per-test temporary directories are removed after teardown on a best-effort
+basis without changing test outcomes on cleanup errors. Session fixtures and
+any residue remain under the action leaf until PB finalizes it. No daemon
+volume, new PB capability, container init or harness image is required.

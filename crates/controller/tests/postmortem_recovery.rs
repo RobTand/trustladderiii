@@ -174,9 +174,8 @@ fn drain(controller: &mut Controller) {
     panic!("controller failed to settle");
 }
 
-fn pace(per_day: u32) -> PostmortemPace {
+fn pace() -> PostmortemPace {
     PostmortemPace {
-        per_day,
         models: vec!["claude-opus-5-5".into()],
     }
 }
@@ -259,9 +258,12 @@ impl Fixture {
     fn pause(&mut self) -> String {
         self.judge.borrow_mut().finished = true;
         self.judge.borrow_mut().failing = Some("worker_failed");
-        self.controller.run_postmortems(pace(3));
+        self.controller.run_postmortems(pace());
         drain(&mut self.controller);
-        assert_eq!(self.claims(), 3);
+        assert!(
+            (3..=4).contains(&self.claims()),
+            "at most one other run was in flight at the third failure"
+        );
         self.pause_id().expect("three failures pause claims")
     }
 
@@ -332,31 +334,42 @@ impl Fixture {
 fn clearing_pause_resets_the_streak_without_restart() {
     let mut f = Fixture::new();
     let id = f.pause();
+    let before = f.claims();
     f.judge.borrow_mut().finished = false;
-    f.controller.run_postmortems(pace(10));
+    f.controller.run_postmortems(pace());
     f.clear(&id);
     drain(&mut f.controller);
     assert_eq!(
         f.claims(),
-        4,
+        before + 1,
         "clearing the pause must reset the failure boundary"
     );
     assert!(f.pause_id().is_none());
 }
 
 #[test]
-fn recovery_permits_exactly_one_validation_with_no_allowance() {
+fn recovery_permits_exactly_one_validation() {
     let mut f = Fixture::new();
     let id = f.pause();
+    let before = f.claims();
     f.judge.borrow_mut().failing = None;
-    f.controller.run_postmortems(pace(0));
+    f.judge.borrow_mut().finished = false;
+    f.controller.run_postmortems(pace());
     f.clear(&id);
     drain(&mut f.controller);
     assert_eq!(
         f.claims(),
-        4,
-        "one validation is allowed even with zero daily allowance"
+        before + 1,
+        "one validation runs before the rest of the backlog"
     );
+    drain(&mut f.controller);
+    assert_eq!(
+        f.claims(),
+        before + 1,
+        "the validation permit is consumed once"
+    );
+    f.judge.borrow_mut().finished = true;
+    drain(&mut f.controller);
     let done: i64 = raw(&f.settings)
         .query_one(
             "SELECT count(*) FROM tl3_postmortem_claims WHERE outcome = 'done'",
@@ -364,20 +377,19 @@ fn recovery_permits_exactly_one_validation_with_no_allowance() {
         )
         .unwrap()
         .get(0);
-    assert_eq!(done, 1, "the validation outcome is recorded");
-    drain(&mut f.controller);
-    assert_eq!(f.claims(), 4, "the validation permit is consumed once");
+    assert_eq!(done, 4, "validation success resumes all owed work");
 }
 
 #[test]
 fn validation_failure_repauses_after_one_run() {
     let mut f = Fixture::new();
     let id = f.pause();
+    let before = f.claims();
     f.clear(&id);
     drain(&mut f.controller);
     assert_eq!(
         f.claims(),
-        4,
+        before + 1,
         "a failed validation must not start more retries"
     );
     assert_ne!(
@@ -389,16 +401,17 @@ fn validation_failure_repauses_after_one_run() {
 }
 
 #[test]
-fn recovery_resets_allowance_without_deleting_claim_history() {
+fn recovery_preserves_claim_history() {
     let mut f = Fixture::new();
     let id = f.pause();
+    let before = f.claims();
     f.judge.borrow_mut().failing = None;
     f.clear(&id);
     drain(&mut f.controller);
     assert_eq!(
         f.claims(),
-        6,
-        "the unchanged daily limit of three counts claims after recovery"
+        before + 4,
+        "successful recovery drains every owed postmortem"
     );
     let failed: i64 = raw(&f.settings)
         .query_one(
@@ -407,7 +420,11 @@ fn recovery_resets_allowance_without_deleting_claim_history() {
         )
         .unwrap()
         .get(0);
-    assert_eq!(failed, 3, "recovery retains the old attempts for audit");
+    assert_eq!(
+        failed,
+        i64::from(before),
+        "recovery retains the old attempts for audit"
+    );
 }
 
 #[test]
@@ -418,33 +435,21 @@ fn typed_reason_for_paused_streak() {
 }
 
 #[test]
-fn typed_reason_for_daily_allowance() {
+fn typed_reason_for_model_quota() {
     let mut f = Fixture::new();
-    f.controller.run_postmortems(pace(0));
+    f.controller
+        .observe(
+            "quota",
+            Observation::Quota {
+                key: "quota".into(),
+                reset_ms: 4_000_000_000_000,
+                model: Some("claude-opus-5-5".into()),
+            },
+        )
+        .unwrap();
+    f.controller.run_postmortems(pace());
     drain(&mut f.controller);
-    assert_eq!(f.reason(), Some(status::PostmortemBlock::DailyAllowance));
-}
-
-#[test]
-fn typed_reason_for_q39_waiting_delivery() {
-    let mut f = Fixture::new();
-    f.capacity(true);
-    f.controller.run_postmortems(pace(10));
-    drain(&mut f.controller);
-    assert_eq!(
-        f.reason(),
-        Some(status::PostmortemBlock::Q39WaitingDelivery)
-    );
-    assert_eq!(f.claims(), 0, "Q39 still yields to a waiting delivery");
-}
-
-#[test]
-fn typed_reason_for_no_spare_capacity() {
-    let mut f = Fixture::new();
-    f.capacity(false);
-    f.controller.run_postmortems(pace(10));
-    drain(&mut f.controller);
-    assert_eq!(f.reason(), Some(status::PostmortemBlock::NoSpareCapacity));
+    assert_eq!(f.reason(), Some(status::PostmortemBlock::ModelQuota));
     assert_eq!(f.claims(), 0);
 }
 
@@ -453,13 +458,201 @@ fn new_release_recovers_the_pause_for_a_validation_run() {
     let mut f = Fixture::new();
     f.controller.start_release("before-fix").unwrap();
     f.pause();
+    let before = f.claims();
     f.judge.borrow_mut().finished = false;
     f.controller.start_release("after-fix").unwrap();
     drain(&mut f.controller);
     assert_eq!(
         f.claims(),
-        4,
+        before + 1,
         "a new release must recover the postmortem pause"
     );
     assert!(f.pause_id().is_none());
+}
+
+#[test]
+fn lane_starts_while_delivery_waits_for_pool() {
+    let mut f = Fixture::new();
+    f.capacity(true);
+    assert!(
+        f.controller
+            .world()
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|n| n.ticket.is_some() && !n.pool)
+    );
+    f.controller.run_postmortems(pace());
+    drain(&mut f.controller);
+    assert_eq!(
+        f.claims(),
+        2,
+        "delivery waiters do not block the postmortem lane"
+    );
+}
+
+#[test]
+fn lane_starts_with_delivery_pool_full() {
+    let mut f = Fixture::new();
+    f.capacity(false);
+    assert_eq!(
+        f.controller
+            .world()
+            .unwrap()
+            .nodes
+            .iter()
+            .filter(|n| n.pool)
+            .count(),
+        1
+    );
+    f.controller.run_postmortems(pace());
+    drain(&mut f.controller);
+    assert_eq!(
+        f.claims(),
+        2,
+        "a full delivery pool does not block postmortems"
+    );
+}
+
+#[test]
+fn lane_drains_past_the_old_daily_count() {
+    let mut f = Fixture::new();
+    f.judge.borrow_mut().finished = true;
+    f.controller.run_postmortems(pace());
+    drain(&mut f.controller);
+    assert_eq!(
+        f.claims(),
+        4,
+        "every owed postmortem runs, without a daily ceiling"
+    );
+}
+
+#[test]
+fn lane_has_two_slots_and_claims_oldest_first() {
+    let mut f = Fixture::new();
+    raw(&f.settings).execute(
+        "UPDATE tl3_postmortems SET owed_at = '2026-01-01'::timestamptz + (45 - issue) * interval '1 minute', attempts = CASE WHEN issue = 45 THEN 1 ELSE 0 END", &[]).unwrap();
+    f.controller.run_postmortems(pace());
+    drain(&mut f.controller);
+    let running: Vec<i64> = raw(&f.settings)
+        .query(
+            "SELECT issue FROM tl3_postmortems WHERE status = 'running' ORDER BY owed_at",
+            &[],
+        )
+        .unwrap()
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(
+        running,
+        [45, 44],
+        "two oldest claims run while the third waits"
+    );
+    drain(&mut f.controller);
+    assert_eq!(f.claims(), 2, "driving again cannot exceed the lane limit");
+    f.judge.borrow_mut().finished = true;
+    drain(&mut f.controller);
+    assert_eq!(
+        f.claims(),
+        4,
+        "completions free the slots for the remaining work"
+    );
+}
+
+#[test]
+fn delivery_grants_are_unchanged_by_running_postmortems() {
+    let mut f = Fixture::new();
+    f.controller.run_postmortems(pace());
+    drain(&mut f.controller);
+    assert!(f.claims() > 0);
+    f.capacity(true);
+    let world = f.controller.world().unwrap();
+    assert_eq!(world.nodes.iter().filter(|n| n.pool).count(), 1);
+    assert!(
+        world
+            .nodes
+            .iter()
+            .any(|n| n.pool && n.phase == tl3_kernel::Phase::Making)
+    );
+    assert!(world.nodes.iter().any(|n| n.ticket.is_some() && !n.pool));
+    assert_eq!(world.pool_capacity, 1);
+}
+
+#[test]
+fn lane_status_reports_running_owed_and_block() {
+    let mut f = Fixture::new();
+    f.controller.run_postmortems(pace());
+    drain(&mut f.controller);
+    let view = status::load(&mut Reader::open(&f.settings).unwrap()).unwrap();
+    for rendered in [status::render_text(&view), status::render_html(&view)] {
+        assert!(
+            rendered.contains("Postmortems: 2 running, 2 owed"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Postmortems blocked: lane_full"),
+            "{rendered}"
+        );
+    }
+}
+
+#[test]
+fn recovery_waits_for_the_single_validation_before_filling_lane() {
+    let mut f = Fixture::new();
+    let id = f.pause();
+    let before = f.claims();
+    f.judge.borrow_mut().finished = false;
+    f.clear(&id);
+    drain(&mut f.controller);
+    assert_eq!(
+        f.claims(),
+        before + 1,
+        "recovery starts just one validation"
+    );
+    f.judge.borrow_mut().failing = None;
+    f.judge.borrow_mut().finished = true;
+    drain(&mut f.controller);
+    assert_eq!(
+        f.claims(),
+        before + 4,
+        "successful validation resumes the whole backlog"
+    );
+}
+
+#[test]
+fn clean_closes_ignore_the_old_sample_share() {
+    let mut f = Fixture::new();
+    raw(&f.settings)
+        .execute(
+            "UPDATE tl3_settings SET value = '0' WHERE key = 'postmortem_sample_share'",
+            &[],
+        )
+        .unwrap();
+    f.controller
+        .intake(LabelledIssue {
+            delivery: "clean-close".into(),
+            owner: "RobTand".into(),
+            repo: "tl3-sandbox".into(),
+            installation: 1,
+            number: 46,
+            title: "A clean merge".into(),
+            actor: 24923402,
+            label: "tl3".into(),
+            labels: vec![],
+        })
+        .unwrap();
+    drain(&mut f.controller);
+    let records = Store::open(&f.settings).unwrap().postmortems("4").unwrap();
+    assert_eq!(
+        records.len(),
+        1,
+        "every closed request owes a postmortem, including clean merges at zero sample share"
+    );
+    f.judge.borrow_mut().finished = true;
+    f.controller.run_postmortems(pace());
+    drain(&mut f.controller);
+    assert_eq!(
+        Store::open(&f.settings).unwrap().postmortems("4").unwrap()[0].status,
+        "done"
+    );
 }

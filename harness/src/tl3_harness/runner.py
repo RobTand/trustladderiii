@@ -526,7 +526,7 @@ class Reporter:
                 else:
                     os.environ[name] = value
             # A writer can race removal. Preserve the test's outcome; the
-            # container's fixed tmpfs still bounds and discards any residue.
+            # PB's registered scratch cleanup still removes any residue.
             shutil.rmtree(tmp_path, ignore_errors=True)
 
     @pytest.fixture(autouse=True)

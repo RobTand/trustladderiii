@@ -334,9 +334,6 @@
         "quiet_seconds": {
           "type": "integer",
           "minimum": 1
-        },
-        "exec_scratch": {
-          "type": "boolean"
         }
       },
       "required": [

@@ -1,6 +1,6 @@
 //! Owed postmortems and code grades (#403, Q32). Both are recorded in the
-//! commit that makes them owed, outside the kernel. The runner then judges one
-//! postmortem at a time on spare agent-pool capacity (Q39).
+//! commit that makes them owed, outside the kernel. The runner uses a
+//! separate lane with at most two concurrent postmortems (Q39, #642).
 
 use crate::executor::{CommentKind, Completion, Delivery, Observation, Output};
 use crate::status::PostmortemBlock;
@@ -21,21 +21,8 @@ pub(crate) const JOBS: &str = "postmortem_jobs";
 /// Q32: a postmortem recommends at most three changes.
 pub(crate) const MAX_RECOMMENDATIONS: usize = 3;
 
-/// Q39: a postmortem starts only on spare agent-pool capacity, so it is the
-/// pool's lowest priority. Nothing may wait for a pool grant: a node with a
-/// ticket and no grant waits, whether for the pool or for a slot. And the
-/// nodes holding the pool, plus the postmortems already `running`, must be
-/// fewer than the pool's capacity. The kernel never sees a postmortem, so one
-/// that runs while new work starts uses one model session beyond the pool.
-/// #417's priority-first pool can order this test with its own.
-pub(crate) fn spare_pool_capacity(world: &World, running: usize) -> bool {
-    let waiting = world
-        .nodes
-        .iter()
-        .any(|node| node.ticket.is_some() && !node.pool);
-    let holders = world.nodes.iter().filter(|node| node.pool).count();
-    !waiting && holders + running < usize::from(world.pool_capacity)
-}
+/// Q39, Rob 2026-11-03 (#642): postmortems have their own lane.
+const CONCURRENCY: usize = 2;
 
 /// `rec-` and 16 hex digits of sha256 over the normalised target, operation,
 /// before and after: the same change counts the same in every postmortem.
@@ -424,24 +411,22 @@ pub(crate) fn stalled(mut completion: Completion) -> Completion {
     completion
 }
 
-/// How fast the spare-capacity runner may spend model quota (#486).
+/// The models whose quota the postmortem lane needs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PostmortemPace {
-    /// Claims per UTC day, so a backlog drains over days, not in one burst.
-    pub per_day: u32,
-    /// The postmortem ladder's models. While any of them has reported quota,
-    /// nothing is claimed: spare pool slots aren't spare quota.
+    /// Entry 0 writes the postmortem; entry 1, if present, grades it.
+    /// While either has reported quota, nothing is claimed.
     pub models: Vec<String>,
 }
 
 impl PostmortemPace {
     pub fn from_config(config: &tl3_config::Config) -> Self {
         Self {
-            per_day: config.limits.postmortems_per_day,
             models: config
                 .models
                 .postmortem
                 .iter()
+                .take(2)
                 .map(|model| model.name.clone())
                 .collect(),
         }
@@ -502,13 +487,12 @@ impl crate::Controller {
         self.postmortems = Some(pace);
     }
 
-    /// Claim the oldest owed postmortem when the pool has spare capacity, in
+    /// Claim the oldest owed postmortem when the lane has a free slot, in
     /// the commit that creates its worker delivery.
     pub(crate) fn start_postmortem(&mut self, snapshot: &Snapshot) -> Result<bool> {
         let Some(pace) = &self.postmortems else {
             return Ok(false);
         };
-        let per_day = pace.per_day;
         let quota = snapshot
             .rows
             .iter()
@@ -542,24 +526,18 @@ impl crate::Controller {
         let validation = recovery
             .as_ref()
             .is_some_and(|state| matches!(state.validation, Validation::Pending));
-        let allowance_since = recovery.as_ref().map_or(0, |state| state.since);
-        if !validation && self.store.postmortem_claims_today_since(allowance_since)? >= per_day {
-            return self.postmortem_blocked(snapshot, Some(PostmortemBlock::DailyAllowance));
-        }
-        // Recovery never bypasses model quota or Q39.
         if quota {
             return self.postmortem_blocked(snapshot, Some(PostmortemBlock::ModelQuota));
         }
         let world = crate::snapshot::decode(snapshot)?;
-        if world
-            .nodes
-            .iter()
-            .any(|node| node.ticket.is_some() && !node.pool)
+        if recovery
+            .as_ref()
+            .is_some_and(|state| matches!(state.validation, Validation::Running { .. }))
         {
-            return self.postmortem_blocked(snapshot, Some(PostmortemBlock::Q39WaitingDelivery));
+            return self.postmortem_blocked(snapshot, Some(PostmortemBlock::Validating));
         }
-        if running > 0 || !spare_pool_capacity(&world, running) {
-            return self.postmortem_blocked(snapshot, Some(PostmortemBlock::NoSpareCapacity));
+        if running >= CONCURRENCY {
+            return self.postmortem_blocked(snapshot, Some(PostmortemBlock::LaneFull));
         }
         let node = NodeId(
             owed.node
@@ -908,16 +886,13 @@ impl Reason {
     }
 }
 
-/// Q32's selection at close: everything that needed a fix, a retry or Rob, and
-/// everything that closed without merging, plus a sampled share of clean merges.
-/// Returns the reason and, for a sampled node, the share in force.
+/// Every close owes a postmortem (#642). Keep the stored reasons and record
+/// a share of 1 for clean merges, so existing readers need no schema change.
 pub(crate) fn close_reason(
     node: &Node,
     outcome: Outcome,
     history: &History,
-    share: f64,
-    sample_key: &str,
-) -> Option<(Reason, Option<f64>)> {
+) -> (Reason, Option<f64>) {
     let reason = if !history.questions.is_empty()
         || history.incidents.iter().any(|(_, needs_rob)| *needs_rob)
     {
@@ -935,20 +910,10 @@ pub(crate) fn close_reason(
         Reason::Retry
     } else if outcome != Outcome::Merged {
         Reason::ClosedWithoutMerge
-    } else if sampled(sample_key, share) {
-        return Some((Reason::Sampled, Some(share)));
     } else {
-        return None;
+        return (Reason::Sampled, Some(1.0));
     };
-    Some((reason, None))
-}
-
-/// The same node is always sampled the same way at the same share.
-fn sampled(key: &str, share: f64) -> bool {
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(key.as_bytes());
-    let bucket = u16::from_be_bytes([digest[0], digest[1]]) % 10_000;
-    f64::from(bucket) < share * 10_000.0
+    (reason, None)
 }
 
 /// 5 for none, then one grade lower for each more, down to 1.
@@ -1115,7 +1080,7 @@ fn phase_name(phase: &Value) -> String {
 }
 
 impl crate::Controller {
-    /// Q32 at close: code grades for every node, and a postmortem for the selected ones.
+    /// Code grades and an owed postmortem for every closed node (#642).
     pub(crate) fn record_postmortems(
         &mut self,
         snapshot: &Snapshot,
@@ -1147,18 +1112,10 @@ impl crate::Controller {
                     fact,
                 });
             }
-            let share = self.store.postmortem_sample_share()?;
-            let request = crate::request(snapshot, id)?;
-            let sample_key = format!(
-                "{}/{}#{}:{}",
-                request.repo.owner, request.repo.name, request.issue, id.0
-            );
-            if let Some((reason, share)) = close_reason(node, outcome, &history, share, &sample_key)
-            {
-                commit
-                    .postmortems
-                    .push(owed(snapshot, id, "close".into(), reason, share)?);
-            }
+            let (reason, share) = close_reason(node, outcome, &history);
+            commit
+                .postmortems
+                .push(owed(snapshot, id, "close".into(), reason, share)?);
         }
         Ok(())
     }
@@ -1251,7 +1208,7 @@ mod tests {
     }
 
     fn reason(node: &Node, outcome: Outcome, history: &History) -> Option<Reason> {
-        close_reason(node, outcome, history, 0.0, "node:0").map(|(reason, _)| reason)
+        Some(close_reason(node, outcome, history).0)
     }
 
     #[test]
@@ -1278,9 +1235,12 @@ mod tests {
     }
 
     #[test]
-    fn selection_follows_q32() {
+    fn close_reasons_preserve_history() {
         let quiet = History::default();
-        assert_eq!(reason(&clean(), Outcome::Merged, &quiet), None);
+        assert_eq!(
+            reason(&clean(), Outcome::Merged, &quiet),
+            Some(Reason::Sampled)
+        );
         let mut fixed = clean();
         fixed.round = 1;
         assert_eq!(
@@ -1362,37 +1322,11 @@ mod tests {
     }
 
     #[test]
-    fn clean_merges_are_sampled_at_the_stored_share() {
-        let quiet = History::default();
+    fn every_clean_merge_owes_a_postmortem() {
         assert_eq!(
-            close_reason(&clean(), Outcome::Merged, &quiet, 1.0, "node:3"),
-            Some((Reason::Sampled, Some(1.0)))
+            close_reason(&clean(), Outcome::Merged, &History::default()),
+            (Reason::Sampled, Some(1.0))
         );
-        assert_eq!(
-            close_reason(&clean(), Outcome::Merged, &quiet, 0.0, "node:3"),
-            None
-        );
-        let sampled = (0..1000)
-            .filter(|n| {
-                close_reason(
-                    &clean(),
-                    Outcome::Merged,
-                    &quiet,
-                    0.25,
-                    &format!("node:{n}"),
-                )
-                .is_some()
-            })
-            .count();
-        assert!((180..=320).contains(&sampled), "{sampled} of 1000 at 0.25");
-        for n in 0..50 {
-            let key = format!("node:{n}");
-            assert_eq!(
-                close_reason(&clean(), Outcome::Merged, &quiet, 0.25, &key),
-                close_reason(&clean(), Outcome::Merged, &quiet, 0.25, &key),
-                "the same node is always sampled the same way"
-            );
-        }
     }
 
     fn graded(
@@ -1450,44 +1384,6 @@ mod tests {
         assert!(
             stopped.contains(&("queue", None)),
             "an unmerged node has no queue grade"
-        );
-    }
-
-    fn world() -> World {
-        let mut world = World::new(&[2], 2);
-        for _ in 0..3 {
-            world.nodes.push(Node::new(RepoId(0)));
-        }
-        world
-    }
-
-    #[test]
-    fn a_postmortem_starts_only_on_spare_pool_capacity() {
-        let free = world();
-        assert!(spare_pool_capacity(&free, 0), "an idle pool has room");
-        let mut one = world();
-        one.nodes[0].pool = true;
-        assert!(spare_pool_capacity(&one, 0), "one of two grants is free");
-        assert!(
-            !spare_pool_capacity(&one, 1),
-            "a running postmortem counts against the pool"
-        );
-        let mut full = world();
-        full.nodes[0].pool = true;
-        full.nodes[1].pool = true;
-        assert!(!spare_pool_capacity(&full, 0), "every grant is held");
-        let mut waiting = world();
-        waiting.nodes[2].ticket = Some(7);
-        assert!(
-            !spare_pool_capacity(&waiting, 0),
-            "a node waiting for a grant goes first"
-        );
-        let mut holding = world();
-        holding.nodes[0].pool = true;
-        holding.nodes[0].ticket = Some(3);
-        assert!(
-            spare_pool_capacity(&holding, 0),
-            "a holder with a ticket waits for nothing"
         );
     }
 

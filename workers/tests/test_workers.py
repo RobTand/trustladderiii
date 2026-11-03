@@ -11,38 +11,15 @@ import pytest
 from tl3_workers import runtime
 from tl3_workers.contracts import schema, validate
 from tl3_workers.roles import ROLES
-from worker_process import run_real_entrypoint, start_worker
+from worker_process import AGREE, BRIEF, run_real_entrypoint, start_worker
+import worker_process as worker_fixtures
 
 
-BRIEF = {
-    "kind": "brief", "brief": "Fix the greeting without changing its interface.",
-    "goals": [
-        {"description": "Return the requested greeting.", "verification": "test"},
-        {"description": "Keep the public interface clear.", "verification": "review"},
-    ],
-    "memory_ids": [],
-}
+request_doc = worker_fixtures.request_doc
+
+
 EARLY = {"kind": "early_end", "outcome": "duplicate", "reason": "Issue 2 requests the same fix."}
-AGREE = {"verdict": "agree", "objections": []}
 DISAGREE = {"verdict": "disagree", "objections": ["The issue also asks for punctuation."]}
-
-
-@pytest.fixture
-def request_doc(tmp_path):
-    return {
-        "protocol": 1,
-        "operation": {"node": 1, "generation": 0, "kind": "ingest"},
-        "role": "ingest",
-        "model": {"base_url": "http://model.invalid/v1", "name": "fixture-model",
-                  "effort": "high", "budget_tokens": 32000},
-        "key_file": str(tmp_path / "never-read-this-key"),
-        "inputs": {
-            "issue": {"number": 1, "title": "Fix greeting", "body": "Return hello.",
-                      "author": "requester", "comments": []},
-            "repo": {"readme": "A greeting library.", "file_list": ["greeting.py"]},
-        },
-        "worktree": str(tmp_path),
-    }
 
 
 @pytest.mark.parametrize("role,reply", [
@@ -528,7 +505,6 @@ def test_completion_distinguishes_complete_usage_from_partial_totals(tmp_path, r
     row = json.loads(completion.read_text())
     assert row.get('usage_complete') is (not missing_last_usage)
     assert row['input_tokens'] == (11 if missing_last_usage else 22)
-
 
 
 @pytest.mark.parametrize('role', ['ingest', 'audit'])
