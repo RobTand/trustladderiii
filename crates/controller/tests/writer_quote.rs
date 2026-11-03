@@ -122,6 +122,9 @@ fn request_title_quotes_and_vocabulary_work_in_notes_and_summaries() {
             ] {
                 let mut input = input("");
                 input.kind = kind;
+                if kind == MessageKind::Summary {
+                    input.facts["unmet_goals"] = json!([]);
+                }
                 input.facts.as_object_mut().unwrap().remove("change_quote");
                 input.facts["issue_title"] = json!(title);
                 let rendered =
@@ -200,6 +203,7 @@ fn removed_paths_are_redacted_in_the_actual_summary() {
     let removed = format!("Changes not part of this request were removed: `src/{token}.rs`.");
     let mut request = input("");
     request.kind = MessageKind::Summary;
+    request.facts["unmet_goals"] = json!([]);
     request.facts["removed_changes"] = json!(removed);
     let text = checked_draft(
         &mut Draft(String::new()),
@@ -219,6 +223,7 @@ fn removed_paths_are_redacted_in_the_actual_summary() {
 fn removed_path_redaction_failure_prevents_a_summary() {
     let mut request = input("");
     request.kind = MessageKind::Summary;
+    request.facts["unmet_goals"] = json!([]);
     request.facts["removed_changes"] = json!("x".repeat(1024 * 1024 + 1));
     assert!(
         matches!(
