@@ -216,6 +216,7 @@ fn observe(
                             tests: vec!["test_greeting.py::test_hello".into()],
                             forcing: None,
                             helper_evidence: None,
+                            declared_symptom: None,
                         }],
                     },
                 },

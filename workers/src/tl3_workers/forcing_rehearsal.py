@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import re
 
-from tl3_harness import Check, Forcing, Kind
+from tl3_harness import Check, Forcing, Kind, HarnessInputError
 from tl3_harness.node_ids import selects
 from tl3_harness.forcing_ownership import ForcingError, preflight_owner
 from tl3_workers.pb_tests import TestSettings, make_test_tool, _git
@@ -17,7 +17,8 @@ REHEARSAL_SECONDS = 120
 GUIDANCE = (
     'Before a Q55 leaf, call rehearse_forcing with the exact base selectors and forcing. '
     'Each delayed target needs a positive invocation count on each named old test, '
-    'and the forced base must fail by assertion after an unforced base pass. '
+    'and the forced base must fail by assertion after an unforced base pass. A declared_symptom '
+    'uses its exact exception, node, call/setup phase and fixed repeat/parallel campaign instead. '
     f'At most {MAX_REHEARSALS} distinct candidates run, each with at most two PB-admitted actions '
     f'and a {REHEARSAL_SECONDS}-second execution limit per action. '
     'A completed zero-hit or no-assertion-RED candidate is unusable evidence. Use its feedback '
@@ -33,7 +34,10 @@ GUIDANCE = (
 )
 
 
-def identity(base_sha, selectors, forcing):
+def identity(base_sha, selectors, forcing, declared_symptom=None):
+    if declared_symptom is not None:
+        return {"base_sha": base_sha, "selectors": list(selectors), "forcing": forcing.as_json(),
+                "declared_symptom": deepcopy(declared_symptom)}
     return {'base_sha': base_sha, 'selectors': list(selectors), 'forcing': forcing.as_json()}
 
 
@@ -42,7 +46,8 @@ def canonical(value):
 
 
 def bound_identity(candidate):
-    return canonical({key: candidate[key] for key in ('base_sha', 'selectors', 'forcing')})
+    return canonical({**{key: candidate[key] for key in ('base_sha', 'selectors', 'forcing')},
+                      'declared_symptom': candidate.get('declared_symptom')})
 
 
 def execution_identity(candidate):
@@ -53,7 +58,7 @@ def execution_identity(candidate):
     independent = all(left.rsplit('.', 1)[-1] != right.rsplit('.', 1)[-1]
                       and not left.startswith(right + '.') and not right.startswith(left + '.')
                       for index, left in enumerate(targets) for right in targets[index + 1:])
-    return canonical({'base_sha': candidate['base_sha'], 'selectors': sorted(set(candidate['selectors'])),
+    return canonical({'declared_symptom': candidate.get('declared_symptom'), 'base_sha': candidate['base_sha'], 'selectors': sorted(set(candidate['selectors'])),
                       'forcing': {'environment': forcing['environment'],
                                   'patches': sorted(patches, key=canonical) if independent else patches}})
 
@@ -165,13 +170,17 @@ class ForcingRehearsals:
         if self.infrastructure:
             raise ForcingInfrastructureError(self.infrastructure)
 
-    def run(self, tests: list[str], forcing: dict) -> dict:
+    def run(self, tests: list[str], forcing: dict, declared_symptom: dict | None = None) -> dict:
         """Rehearse immutable old tests and cache each distinct candidate's outcome."""
-        parsed = Forcing.parse(forcing)
-        if not isinstance(tests, list) or not tests or len(tests) > 256:
-            raise ValueError('A rehearsal needs 1 to 256 exact base test selectors')
-        selected = Check('rehearsal', Kind.DEMONSTRATING, tuple(tests)).tests
-        wanted = identity(self.base_sha, selected, parsed)
+        try:
+            parsed = Forcing.parse(forcing)
+            if not isinstance(tests, list) or not tests or len(tests) > 256:
+                raise HarnessInputError('A rehearsal needs 1 to 256 exact base test selectors')
+            selected = Check('rehearsal', Kind.DEMONSTRATING, tuple(tests),
+                             declared_symptom=declared_symptom).tests
+        except HarnessInputError as error:
+            return {'status': 'refused', 'message': str(error)}
+        wanted = identity(self.base_sha, selected, parsed, declared_symptom)
         if self.infrastructure or self.failure:
             return deepcopy(self.infrastructure or self.failure)
         execution = execution_identity(wanted)
@@ -228,8 +237,11 @@ class ForcingRehearsals:
                 inflight = self.active['inflight']
                 self.worktree.pb_reattach = {True: inflight} if inflight else {}
                 tool = make_test_tool(self.worktree, timeout_seconds=REHEARSAL_SECONDS,
-                                      **({'forcing': parsed} if stage == 'forced' else {}))
-                observed = tool(list(selected), base=True)
+                                      **({'forcing': parsed} if stage == 'forced' else {}),
+                                      **({'declared_symptom': declared_symptom} if declared_symptom else {}))
+                observed = tool(list(selected), base=True, **(
+                    {'repeat': declared_symptom['repeat'], 'parallel': declared_symptom['parallel']}
+                    if declared_symptom else {}))
                 if observed['status'] == 'infrastructure_error':
                     self.infrastructure = {**deepcopy(result), stage: observed, 'stage': stage,
                                            'status': 'infrastructure_error', 'message': observed['message']}
@@ -242,7 +254,10 @@ class ForcingRehearsals:
             observed = result[stage]
             if stage == 'forced' and observed['status'] == 'completed':
                 delayed = {target for target, mode, _ in parsed.patches if mode == 'delay_seconds'}
-                for item in observed['tests']:
+                items = observed['tests']
+                if declared_symptom is not None:
+                    items = [dict(test=declared_symptom['node'], **run) for run in observed.get('symptom_runs', [])]
+                for item in items:
                     if item.get('forcing_refusal'):
                         result['refusal'] = deepcopy(item['forcing_refusal'])
                         refusal = result['refusal']
@@ -254,10 +269,20 @@ class ForcingRehearsals:
                             return refuse(f"missing invocation count for {target} on {item['test']}")
                         if count == 0:
                             return refuse(f"zero-hit delayed target {target} on {item['test']}")
-            problem = unusable(observed, selected, expected)
+            if declared_symptom is not None:
+                runs = observed.get('symptom_runs', [])
+                allowed = ('passed',) if stage == 'unforced' else ('passed', 'symptom')
+                valid = (observed.get('status') == 'completed' and observed.get('receipts')
+                         and len(runs) == declared_symptom['repeat']
+                         and all(run['outcome'] in allowed for run in runs)
+                         and (stage == 'unforced' or any(run['outcome'] == 'symptom' for run in runs)))
+                count = sum(run['outcome'] == 'symptom' for run in runs)
+                problem = None if valid else f'declared symptom observed {count} of {declared_symptom["repeat"]} runs; zero is not RED; unrelated failures never count'
+            else:
+                problem = unusable(observed, selected, expected)
             if problem:
                 prefix = 'unforced base: ' if stage == 'unforced' else 'forced base must fail by assertion: '
-                return refuse(prefix + problem, terminal=observed['status'] != 'completed')
+                return refuse(prefix + problem, terminal=declared_symptom is not None or observed['status'] != 'completed')
         result['status'] = 'validated'
         self.receipts.append(deepcopy(result))
         self.candidates.append(deepcopy(result))
@@ -272,7 +297,7 @@ class ForcingRehearsals:
         for check in checks:
             if 'forcing' not in check:
                 continue
-            wanted = identity(base_sha, check['node_ids'], Forcing.parse(check['forcing']))
+            wanted = identity(base_sha, check['node_ids'], Forcing.parse(check['forcing']), check.get('declared_symptom'))
             if not any(bound_identity(receipt) == bound_identity(wanted) for receipt in self.receipts):
                 errors.append('Q55 check lacks a matching forcing rehearsal receipt for the exact base, '
                               'selectors and forcing: ' + ', '.join(check['node_ids']))
@@ -280,12 +305,12 @@ class ForcingRehearsals:
 
 
 def make_rehearsal_tool(worktree):
-    def rehearse_forcing(tests: list[str], forcing: dict) -> dict:
+    def rehearse_forcing(tests: list[str], forcing: dict, declared_symptom: dict | None = None) -> dict:
         """Rehearse exact old tests on the immutable base with a declarative forcing."""
         ledger = getattr(worktree, 'forcing_rehearsals', None)
         if ledger is None:
             return {'status': 'refused', 'message': 'Forcing rehearsal is unavailable for this role.'}
-        result = ledger.run(tests, forcing)
+        result = ledger.run(tests, forcing, declared_symptom=declared_symptom)
         ledger.raise_infrastructure()
         return result
     return rehearse_forcing

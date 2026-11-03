@@ -18,6 +18,20 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
     let mut store = Store::open(settings).unwrap();
     materials(&mut store);
     let mut inputs = store.worker_materials("0").unwrap().unwrap();
+    if mode == "normal" {
+        fs::write(root.path().join("entered.consistency-fixture"), "").unwrap();
+        inputs["repo"]["file_list"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("tests/test_greeting.py"));
+        inputs["repo"]["materials"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "path": "tests/test_greeting.py",
+                "content": "def test_hello(): assert True\ndef test_control(): assert True\n"
+            }));
+    }
     inputs["repo"]["file_list"]
         .as_array_mut()
         .unwrap()
@@ -113,6 +127,17 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
         }
         assert_eq!(requests[0]["inputs"]["memories"], json!([]));
         assert!(requests[0]["inputs"]["memory_note"].is_string());
+        let turns: Vec<Value> = fs::read_to_string(root.path().join("entered.consistency-turns"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(
+            turns,
+            vec![json!({"tools": true}), json!({"tools": false})],
+            "a consistency-only draft gets exactly one tool-free correction in the production planner run"
+        );
+        assert_eq!(plan["edits_tests"], json!([]));
         assert!(n.phase.is_closed());
         assert_eq!(requests.len(), 1);
         assert_eq!(plan["kind"], "leaf");

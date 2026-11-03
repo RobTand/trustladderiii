@@ -13,6 +13,20 @@ class HarnessInputError(ValueError):
     """TL3's own check input is malformed: TL3's error, never the repo's or PrismaBuild's (Q51)."""
 
 
+def validate_symptom(value, tests):
+    if (not isinstance(value, dict) or set(value) != {'node', 'exception', 'phase', 'repeat', 'parallel'}
+            or tuple(tests) != (value.get('node'),)
+            or value.get('phase') not in ('call', 'setup')
+            or not isinstance(value.get('exception'), str)
+            or not re.fullmatch(r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+', value['exception'])
+            or value['exception'].rsplit('.', 1)[-1] in (
+                'Exception', 'BaseException', 'AssertionError', 'ForcingError', 'ForcingTampered')
+            or type(value.get('repeat')) is not int or not 1 <= value['repeat'] <= 10
+            or type(value.get('parallel')) is not int or value['parallel'] not in (0, 2, 3, 4)):
+        raise HarnessInputError('A declared symptom needs one exact node, a qualified exception class, '
+                                'call/setup phase, repeat 1 to 10 and parallel 0 or 2 to 4.')
+
+
 class Kind(StrEnum):
     DEMONSTRATING = "demonstrating"
     REGRESSION = "regression"
@@ -215,8 +229,13 @@ class Check:
     tests: tuple[str, ...]
     forcing: Forcing | None = None
     helper_evidence: HelperEvidence | None = None
+    declared_symptom: dict | None = None
 
     def __post_init__(self):
+        if self.declared_symptom is not None:
+            validate_symptom(self.declared_symptom, self.tests)
+            if self.kind != Kind.DEMONSTRATING or self.helper_evidence is not None:
+                raise HarnessInputError('A declared symptom requires a demonstrating check without helper observers.')
         if self.helper_evidence is not None and (self.kind != Kind.DEMONSTRATING or self.forcing is not None
                                                 or not isinstance(self.helper_evidence, HelperEvidence)):
             raise HarnessInputError("helper evidence requires an unforced demonstrating check")
@@ -256,6 +275,8 @@ class Result:
     forcing: Forcing | None = None
     helper_evidence: dict | None = None
     selection: dict | None = None
+    declared_symptom: dict | None = None
+    symptom_evidence: dict | None = None
 
 
 MESSAGE_LIMIT = 1000
@@ -361,4 +382,4 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
         tests.append(TestResult(test, before, after, pre_existing, passed, message[:MESSAGE_LIMIT], during))
     verdict = (Verdict.INFRASTRUCTURE_FAILURE if infrastructure else
                Verdict.PASS if all(test.passed for test in tests) else Verdict.FAIL)
-    return Result(check.name, check.kind, verdict, tuple(tests), forcing=check.forcing)
+    return Result(check.name, check.kind, verdict, tuple(tests), forcing=check.forcing, declared_symptom=check.declared_symptom)

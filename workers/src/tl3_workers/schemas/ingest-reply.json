@@ -446,6 +446,47 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 4096
+        },
+        "provenance": {
+          "description": "Source obligations are immutable across roles; method choices may be replaced. Omitted provenance is a legacy mandatory requirement.",
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "source"
+                },
+                "source": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                }
+              },
+              "required": [
+                "kind",
+                "source",
+                "quote"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "method"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          ]
         }
       },
       "required": [

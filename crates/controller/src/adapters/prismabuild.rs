@@ -494,7 +494,7 @@ impl Adapter {
             .collect();
         let mut command = self.settings.python.clone();
         command.extend(["-I".into(), "-B".into(), "action.py".into()]);
-        let demand = self.images.test_demand(&delivery.repository).map_or_else(
+        let mut demand = self.images.test_demand(&delivery.repository).map_or_else(
             || self.settings.demand.clone(),
             |demand| Demand {
                 cpus: demand
@@ -505,7 +505,16 @@ impl Adapter {
                 gpu: false,
             },
         );
-        let threads = demand.cpus.to_string();
+        let parallel = run
+            .plan
+            .iter()
+            .filter_map(|check| check.declared_symptom.as_ref()?.get("parallel")?.as_u64())
+            .max()
+            .unwrap_or(0)
+            .clamp(1, 4) as u32;
+        demand.cpus = std::num::NonZeroU32::new(demand.cpus.get().max(parallel)).unwrap();
+        demand.mem_gb = demand.mem_gb.saturating_mul(parallel);
+        let threads = (demand.cpus.get() / parallel).max(1).to_string();
         let action = SubmitAction {
             checkout: input,
             command,

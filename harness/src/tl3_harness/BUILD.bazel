@@ -30,6 +30,7 @@ py_library(
         "runner.py",
         "selection.py",
         "supervision.py",
+        "symptoms.py",
         "test_tool.py",
         "trees.py",
     ],

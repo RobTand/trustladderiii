@@ -246,6 +246,46 @@
           }
         }
       ]
+    },
+    "declared_symptom": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string",
+          "minLength": 1
+        },
+        "exception": {
+          "type": "string",
+          "pattern": "^[A-Za-z_]\\w*(\\.[A-Za-z_]\\w*)+$"
+        },
+        "phase": {
+          "enum": [
+            "call",
+            "setup"
+          ]
+        },
+        "repeat": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "parallel": {
+          "enum": [
+            0,
+            2,
+            3,
+            4
+          ]
+        }
+      },
+      "required": [
+        "node",
+        "exception",
+        "phase",
+        "repeat",
+        "parallel"
+      ],
+      "additionalProperties": false
     }
   },
   "oneOf": [
@@ -303,6 +343,9 @@
               },
               "helper_evidence": {
                 "$ref": "#/$defs/helper_evidence"
+              },
+              "declared_symptom": {
+                "$ref": "#/$defs/declared_symptom"
               }
             },
             "required": [

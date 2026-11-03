@@ -74,6 +74,10 @@ struct CheckResult {
     forcing: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     helper_evidence: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    declared_symptom: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    symptom_evidence: Option<serde_json::Value>,
     /// Complete-unit admission and the unchecked suffix, retained for review (#591).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     selection: Option<serde_json::Value>,
@@ -378,6 +382,7 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             tests: job.always_tests.clone(),
             forcing: None,
             helper_evidence: None,
+            declared_symptom: None,
         });
     }
     // Only a job staged with selection may carry one trailing selected check (#359).
@@ -404,6 +409,16 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             return None;
         }
         let Custody::InProcess = result.custody;
+        if result.declared_symptom != check.declared_symptom {
+            return None;
+        }
+        if let Some(declaration) = &check.declared_symptom {
+            if !symptom_identity(result, declaration, check, job) {
+                return None;
+            }
+        } else if result.symptom_evidence.is_some() {
+            return None;
+        }
         for (result, test) in result.tests.iter().zip(&check.tests) {
             if &result.test != test {
                 return None;
@@ -480,6 +495,68 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
         }
     }
     Some(report)
+}
+
+fn symptom_identity(
+    result: &CheckResult,
+    declaration: &serde_json::Value,
+    check: &super::Check,
+    job: &Job,
+) -> bool {
+    let Some(evidence) = &result.symptom_evidence else {
+        // Refusal before execution carries no positive proof.
+        return !matches!(result.verdict, Verdict::Pass);
+    };
+    if evidence["base"] != job.run.base_sha.as_str()
+        || evidence["head"].as_str() != job.delivery.head_sha.as_deref()
+        || evidence["declaration"] != *declaration
+        || evidence["forcing"] != check.forcing.clone().unwrap_or(serde_json::Value::Null)
+        || check.kind != Kind::Demonstrating
+        || check.tests.len() != 1
+        || declaration["node"].as_str() != Some(check.tests[0].as_str())
+    {
+        return false;
+    }
+    let Some(repeat @ 1..=10) = declaration["repeat"].as_u64() else {
+        return false;
+    };
+    let Some(runs) = evidence["runs"].as_array() else {
+        return false;
+    };
+    let mut red = 0;
+    let mut green = true;
+    let sides = if check.forcing.is_some() {
+        &["base", "head", "ordinary-head"][..]
+    } else {
+        &["base", "head"][..]
+    };
+    for side in sides {
+        let selected: Vec<_> = runs.iter().filter(|run| run["side"] == *side).collect();
+        if selected.len() != repeat as usize {
+            return !matches!(result.verdict, Verdict::Pass);
+        }
+        for (index, run) in selected.iter().enumerate() {
+            let Some(records) = run["records"].as_array() else {
+                return false;
+            };
+            let Ok(encoded) = serde_json::to_vec(records) else {
+                return false;
+            };
+            if run["run"].as_u64() != Some(index as u64 + 1)
+                || run["sha256"] != format!("{:x}", Sha256::digest(encoded))
+                || records.is_empty()
+            {
+                return false;
+            }
+            match run["outcome"].as_str() {
+                Some("symptom") if *side == "base" => red += 1,
+                Some("passed") => (),
+                _ => green = false,
+            }
+        }
+    }
+    runs.len() == repeat as usize * sides.len()
+        && (!matches!(result.verdict, Verdict::Pass) || (red > 0 && green))
 }
 
 /// Tests that failed a selected check in this round or an earlier one: once a maker edits

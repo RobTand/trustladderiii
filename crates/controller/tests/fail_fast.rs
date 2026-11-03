@@ -852,6 +852,7 @@ fn stage_owned_handover_keeps_fail_fast_and_independent_checking() {
                             tests: vec!["test_deep.py::test_deep_path".into()],
                             forcing: Some(forcing()),
                             helper_evidence: None,
+                            declared_symptom: None,
                         }],
                     };
                     return Ok(Completion::confirmed(vec![

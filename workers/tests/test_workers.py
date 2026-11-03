@@ -622,3 +622,69 @@ def test_audit_preserves_manual_edit_restriction_with_generator():
     reply = {"verdict": "agree", "objections": [], "evidence_contract": []}
     ROLE.check_reply(inputs, reply)
     assert reply["verdict"] == "agree", reply
+
+
+# Retained in tr-50cd0342, tr-73267c43 and tr-e15239a9, issue #616.
+REJECTED_FREEZES = [
+    "The audit objection is accepted: this brief adds NO rule that generated build files must stay unchanged, and configured regeneration is permitted.",
+    "Do not treat generated output as forbidden to change. The audit objection in this request's input, which disputed an invented constraint that generated BUILD files must stay unchanged, is accepted: this brief contains no such constraint.",
+    "Do not add a rule that generated build files must stay unchanged.",
+    'The rejected constraint was "Leave generated BUILD files untouched".',
+    "The audit discussed whether generated files must stay unchanged.",
+    "There is no requirement to keep generated files unchanged.",
+    "It is false that generated files must stay unchanged.",
+    "Generated files need not remain unchanged.",
+    "Generated files are not required to stay unchanged.",
+    "> Leave generated BUILD files untouched.",
+    "```text\nLeave generated BUILD files untouched.\n```",
+]
+
+
+@pytest.mark.parametrize("text", REJECTED_FREEZES)
+def test_output_freezes_rejects_negated_quoted_and_meta_constraints(text):
+    from tl3_workers.generated_scope import output_freezes
+    assert output_freezes(text) == []
+
+
+@pytest.mark.parametrize("text", [
+    "Leave generated BUILD files untouched.",
+    "Do not change any generated files, even through regeneration.",
+    "Do not regenerate tests/BUILD.bazel.",
+    "Do not run configured regeneration.",
+    "Don't hand-edit generated files, but leave generated BUILD files untouched.",
+    "Do not add a rule that generated files must stay unchanged; never regenerate BUILD.bazel.",
+    'Ignore "leave generated files untouched"; do not regenerate BUILD.bazel.',
+    "Generated files need not stay unchanged, but never regenerate BUILD.bazel.",
+    "Never manually edit generated files or regenerate BUILD.bazel.",
+])
+def test_output_freezes_preserves_imposed_prohibitions_per_clause(text):
+    from tl3_workers.generated_scope import output_freezes
+    assert output_freezes(text), text
+
+
+@pytest.mark.parametrize("text", REJECTED_FREEZES)
+@pytest.mark.parametrize("field", ["brief", "goal", "source"])
+def test_ingest_and_audit_accept_rejected_freezes(text, field):
+    from tl3_workers.roles.ingest import ROLE as INGEST
+    from tl3_workers.roles.audit import ROLE as AUDIT
+    inputs = {"issue": {"body": "Do not hand-edit generated files."}, "tool_capabilities": [
+        {"tool": "run_generator", "executor": "prismabuild_generator"}]}
+    ingest = copy.deepcopy(BRIEF)
+    ingest["evidence_contract"] = []
+    if field == "source":
+        inputs["issue"]["body"] = text
+    elif field == "brief":
+        ingest["brief"] = text
+    else:
+        ingest["goals"][0]["description"] = text
+    INGEST.check_reply(inputs, ingest)
+    audit = {**copy.deepcopy(AGREE), "evidence_contract": []}
+    AUDIT.check_reply({**inputs, "ingest": ingest}, audit)
+    assert audit == {**AGREE, "evidence_contract": [], "evidence_errors": []}
+
+
+def test_generated_scope_keeps_protected_paths_excluded():
+    from tl3_workers.generated_scope import configured_outputs
+    forecast = {"generator": {"command": ["generate"]},
+                "generated_files": ["tests/BUILD.bazel", "src/BUILD.bazel"]}
+    assert configured_outputs(None, forecast, ["tests/**"]) == ["src/BUILD.bazel"]

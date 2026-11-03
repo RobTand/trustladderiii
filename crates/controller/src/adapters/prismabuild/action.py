@@ -15,7 +15,8 @@ def decode(request):
     try:
         plan = tuple(Check(check["name"], Kind(check["kind"]), tuple(check["tests"]),
                            None if check.get("forcing") is None else Forcing.parse(check["forcing"]),
-                           None if check.get("helper_evidence") is None else HelperEvidence.parse(check["helper_evidence"]))
+                           None if check.get("helper_evidence") is None else HelperEvidence.parse(check["helper_evidence"]),
+                           check.get("declared_symptom"))
                      for check in request["plan"])
         protected = request.get("protected_paths", [])
         if not isinstance(protected, list) or not all(isinstance(path, str) and path for path in protected):
