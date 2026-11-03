@@ -12,13 +12,14 @@ import sys
 
 import tiktoken
 
-from tl3_workers.tools import LARGE_FILE_BYTES, Worktree, _parts, environment_class
+from tl3_workers.tools import LARGE_FILE_BYTES, Worktree, _parts, environment_class, generated_edit_instruction
 from tl3_workers.turns import Unrepairable
 
 
 # A declared file larger than LARGE_FILE_BYTES is read by range and edited by
 # unique string replacement, so it costs a bounded allowance, not its full size (#321).
 RANGED_FILE_TOKENS = 16_384
+GENERATED_FILE_TOKENS = 1024
 # Larger declared files can't be used at all.
 HARD_CAP_BYTES = 16 * 1_048_576
 # Notes in the brief name at most this many files each.
@@ -138,6 +139,8 @@ def _file_tokens(worktree, path, encoding):
         if isinstance(error, DeclaredFileError) or _environment(error):
             raise
         raise DeclaredFileError(path, "not a regular file inside the worktree") from None
+    if worktree.is_generated(path):
+        return GENERATED_FILE_TOKENS, read if read > LARGE_FILE_BYTES else None
     if read > LARGE_FILE_BYTES:
         return RANGED_FILE_TOKENS, read
     if encoding is None:
@@ -187,13 +190,17 @@ class Forecaster:
             raise ValueError("fit limit must be smaller than context size")
         self.config = config
         self.encoding = _encoding()
-        self.problems, self.large = [], {}
+        self.problems, self.large, self.generated = [], {}, []
 
     def files(self, paths):
         """Measure declared files. Unusable files cost nothing and are kept in
         `problems`; large files are kept in `large` with their sizes."""
-        with Worktree(".") as worktree:
+        with Worktree(".", generated_files=self.config.get("generated_files", ()),
+                      generator=self.config.get("generator")) as worktree:
             file_tokens, self.problems, self.large = measure_files(worktree, paths, self.encoding)
+            self.generated = [path for path, cost in file_tokens.items()
+                              if cost and worktree.is_generated(path)]
+            self.large = {path: size for path, size in self.large.items() if path not in self.generated}
         return file_tokens
 
     def forecast(self, brief, file_tokens):
@@ -211,6 +218,10 @@ class Forecaster:
             return "; ".join(items[:NOTE_PATHS]) + more
 
         notes = []
+        if self.generated:
+            notes.append("Generated outputs: " + listed(sorted(self.generated)) + ". "
+                         + generated_edit_instruction(self.config.get("generator"))
+                         + "Read only relevant regions.")
         if self.large:
             notes.append(
                 "These declared files are too large to read whole. Read them by range with "

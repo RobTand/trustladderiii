@@ -16,6 +16,8 @@ mod branches;
 pub mod cli;
 pub mod clock;
 pub mod console;
+pub mod evidence;
+
 mod decisions;
 pub mod executor;
 mod goals;
@@ -1750,7 +1752,20 @@ impl Controller {
                 question_context,
                 steering: None,
                 request_text: request.source,
+                evidence: None,
             };
+            if matches!(
+                output,
+                Out::Effect {
+                    kind: tl3_kernel::EffectKind::OpenPr | tl3_kernel::EffectKind::Enqueue,
+                    ..
+                } | Out::Notice {
+                    notice: tl3_kernel::Notice::Summary(_),
+                    ..
+                }
+            ) {
+                delivery.evidence = Some(evidence::capture(snapshot, commit, node)?);
+            }
             if matches!(
                 output,
                 Out::Notice {
@@ -2536,7 +2551,7 @@ impl Controller {
                 pass,
                 results,
                 base_sha,
-                ..
+                action_key,
             } => {
                 let request = request(snapshot, node)?;
                 let repo = self
@@ -2569,7 +2584,7 @@ impl Controller {
                         earlier.iter().map(|row| &row.value),
                         &results,
                     );
-                    let mut report = json!({"base_sha": base_sha, "results": results});
+                    let mut report = json!({"head_sha":sha, "base_sha": base_sha, "results": results, "action_key":action_key, "report":report, "pass":pass});
                     if !selected.is_empty() {
                         report["selected_failures"] = json!(selected);
                     }
@@ -2725,6 +2740,11 @@ impl Controller {
                                 }));
                             }
                         };
+                    commit.rows.push(put(
+                        "review_evidence",
+                        format!("{}:{generation:020}", node.0),
+                        json!({"head_sha":commit_sha(snapshot, n.head),"verdict":reply["verdict"]}),
+                    ));
                     if reply["verdict"] == "approve" {
                         mapped =
                             adapters::workers::protocol::MappedReply::Kernel(Reply::Approved {
@@ -2872,7 +2892,10 @@ impl Controller {
                         let current = findings::current_review(&feedback, n.round, previous);
                         let reviewed = current.head;
                         let fixes = adapters::workers::reproducing::check(&reply, current);
-                        if expected != checked || checks.len() != goals.len() {
+                        if expected != checked
+                            || checks.len() != goals.len()
+                            || crate::goals::handover(goals, &checks).is_err()
+                        {
                             Reply::RunFailed
                         } else if let Ok(fixes) = fixes {
                             if !fixes.evidence["findings"].as_array().unwrap().is_empty() {

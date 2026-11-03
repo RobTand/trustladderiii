@@ -949,6 +949,17 @@ def test_test_only_regression_plan_is_accepted(planner_request, digests_plan):
     assert planned(planner_request, digests_plan) == []
 
 
+def test_publication_obligations_have_guards_instead_of_pretend_tests(tmp_path, planner_request):
+    planner_request['inputs']['ingest']['goals'].append({
+        'description': 'Publish a non-draft PR with recorded independent proof.',
+        'verification': 'review', 'stage': 'publishing',
+        'publication': {'non_draft': True, 'body_lines': ['Change type: test'], 'proof': True},
+    })
+    result = run_reply(tmp_path, planner_request, LEAF)
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1]['reply']['violations'] == []
+
+
 def test_restart_plans_approved_retention_exception(tmp_path, planner_request):
     context = {"schema_version": 1, "request_version": 121, "decisions": [{
         "id": "pq2662-q10", "source_comment": "https://github.com/RobTand/prismaquant/issues/2662#issuecomment-6580255177",

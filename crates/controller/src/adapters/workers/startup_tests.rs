@@ -84,6 +84,8 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
         tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
     config.store = db.create("bounded_feedback");
     config.workers.runs = f.root.path().join("runs");
+    config.github.repos[0].generated_files = vec!["**/BUILD.bazel".into()];
+    config.github.repos[0].generator = Some("tools/bazel/generate.sh".into());
     let supervisor = Supervisor::new(&config, &f.root.path().join("records")).unwrap();
     let mut store = Store::open(&config.store).unwrap();
     store
@@ -138,7 +140,9 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
         inputs["forecast"],
         json!({"fit_tokens": config.limits.fit_tokens,
             "context_tokens": config.limits.context_tokens,
-            "overhead_tokens": config.planning.overhead_tokens})
+            "overhead_tokens": config.planning.overhead_tokens,
+            "generated_files": ["**/BUILD.bazel"],
+            "generator": "tools/bazel/generate.sh"})
     );
     let sent = serde_json::to_string(inputs).unwrap().len();
     let limit = config.limits.context_tokens as usize;

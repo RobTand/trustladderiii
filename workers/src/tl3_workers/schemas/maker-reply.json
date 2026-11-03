@@ -5,153 +5,455 @@
     {
       "type": "object",
       "properties": {
-        "kind": {"const": "done"},
-        "head": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$", "description": "Added by worker code. The model must omit this field."},
-        "reproductions": {"type": "array", "items": {"$ref": "#/$defs/reproduction"}},
-        "test_evidence": {"type": "array", "minItems": 1, "maxItems": 10, "items": {"$ref": "#/$defs/test_run"}, "description": "Added by worker code. The model must omit this field."},
+        "kind": {
+          "const": "done"
+        },
+        "head": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "description": "Added by worker code. The model must omit this field."
+        },
+        "reproductions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reproduction"
+          }
+        },
+        "test_evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/test_run"
+          },
+          "description": "Added by worker code. The model must omit this field."
+        },
         "self_check": {
-          "type": "array", "minItems": 1,
+          "type": "array",
+          "minItems": 1,
           "items": {
             "oneOf": [
               {
                 "type": "object",
-                "properties": {"goal_id": {"$ref": "#/$defs/text"}, "status": {"const": "met"}, "evidence": {"$ref": "#/$defs/text"}},
-                "required": ["goal_id", "status", "evidence"], "additionalProperties": false
+                "properties": {
+                  "goal_id": {
+                    "$ref": "#/$defs/text"
+                  },
+                  "status": {
+                    "const": "met"
+                  },
+                  "evidence": {
+                    "$ref": "#/$defs/text"
+                  }
+                },
+                "required": [
+                  "goal_id",
+                  "status",
+                  "evidence"
+                ],
+                "additionalProperties": false
               },
               {
                 "type": "object",
-                "properties": {"goal_id": {"$ref": "#/$defs/text"}, "status": {"const": "not_met"}, "why": {"$ref": "#/$defs/text"}},
-                "required": ["goal_id", "status", "why"], "additionalProperties": false
+                "properties": {
+                  "goal_id": {
+                    "$ref": "#/$defs/text"
+                  },
+                  "status": {
+                    "const": "not_met"
+                  },
+                  "why": {
+                    "$ref": "#/$defs/text"
+                  }
+                },
+                "required": [
+                  "goal_id",
+                  "status",
+                  "why"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "goal_id": {
+                    "$ref": "#/$defs/text"
+                  },
+                  "status": {
+                    "const": "pending"
+                  },
+                  "why": {
+                    "$ref": "#/$defs/text"
+                  }
+                },
+                "required": [
+                  "goal_id",
+                  "status",
+                  "why"
+                ],
+                "additionalProperties": false
               }
             ]
           }
         }
       },
-      "required": ["kind", "self_check", "head"], "additionalProperties": false
+      "required": [
+        "kind",
+        "self_check",
+        "head"
+      ],
+      "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "kind": {"const": "needs_files"},
-        "fits": {"type": "boolean", "description": "Added by worker code. The model must omit this field."},
+        "kind": {
+          "const": "needs_files"
+        },
+        "fits": {
+          "type": "boolean",
+          "description": "Added by worker code. The model must omit this field."
+        },
         "files": {
-          "type": "array", "minItems": 1, "uniqueItems": true,
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
           "items": {
             "type": "object",
-            "properties": {"path": {"$ref": "#/$defs/text"}, "why": {"$ref": "#/$defs/text"}},
-            "required": ["path", "why"], "additionalProperties": false
+            "properties": {
+              "path": {
+                "$ref": "#/$defs/text"
+              },
+              "why": {
+                "$ref": "#/$defs/text"
+              }
+            },
+            "required": [
+              "path",
+              "why"
+            ],
+            "additionalProperties": false
           }
         }
       },
-      "required": ["kind", "files"], "additionalProperties": false
+      "required": [
+        "kind",
+        "files"
+      ],
+      "additionalProperties": false
     },
     {
       "type": "object",
-      "description": "Only when no change within the declared files and your own tools can meet a goal, or the plan is defective. Not for unfinished steps your own tools can do.",
-      "properties": {"kind": {"const": "cant_meet"}, "report": {"$ref": "#/$defs/text"}},
-      "required": ["kind", "report"], "additionalProperties": false
+      "description": "Only when a maker-owned goal cannot be met within the declared files and tools, the plan is defective, or evidence preflight names a truly unsupported requirement. Ordinary controller-owned checks and PR publication are pending downstream work. Not for unfinished steps your own tools can do.",
+      "properties": {
+        "kind": {
+          "const": "cant_meet"
+        },
+        "report": {
+          "$ref": "#/$defs/text"
+        }
+      },
+      "required": [
+        "kind",
+        "report"
+      ],
+      "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "kind": {"const": "blocked"},
+        "kind": {
+          "const": "blocked"
+        },
         "evidence": {
           "description": "An action_key whose run_tests summary had status infrastructure_error, or a tool_error id, recorded in this run.",
           "oneOf": [
             {
               "type": "object",
               "properties": {
-                "action_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-                "class": {"const": "test_infrastructure", "description": "Added by worker code. The model must omit this field."}
+                "action_key": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "class": {
+                  "const": "test_infrastructure",
+                  "description": "Added by worker code. The model must omit this field."
+                }
               },
-              "required": ["action_key", "class"], "additionalProperties": false
+              "required": [
+                "action_key",
+                "class"
+              ],
+              "additionalProperties": false
             },
             {
               "type": "object",
               "properties": {
-                "tool_error": {"type": "string", "pattern": "^tool-error-[1-9][0-9]*$"},
-                "tool": {"enum": ["list", "read", "glob", "grep", "write", "edit", "run_tests", "recall"], "description": "Added by worker code. The model must omit this field."},
-                "class": {"enum": ["test_submission", "EACCES", "EPERM", "EROFS", "ENOSPC", "EDQUOT", "EIO", "EMFILE", "ENFILE", "ENOMEM"], "description": "Added by worker code. The model must omit this field."}
+                "tool_error": {
+                  "type": "string",
+                  "pattern": "^tool-error-[1-9][0-9]*$"
+                },
+                "tool": {
+                  "enum": [
+                    "list",
+                    "read",
+                    "glob",
+                    "grep",
+                    "write",
+                    "edit",
+                    "run_tests",
+                    "recall"
+                  ],
+                  "description": "Added by worker code. The model must omit this field."
+                },
+                "class": {
+                  "enum": [
+                    "test_submission",
+                    "EACCES",
+                    "EPERM",
+                    "EROFS",
+                    "ENOSPC",
+                    "EDQUOT",
+                    "EIO",
+                    "EMFILE",
+                    "ENFILE",
+                    "ENOMEM"
+                  ],
+                  "description": "Added by worker code. The model must omit this field."
+                }
               },
-              "required": ["tool_error", "tool", "class"], "additionalProperties": false
+              "required": [
+                "tool_error",
+                "tool",
+                "class"
+              ],
+              "additionalProperties": false
             }
           ]
         },
-        "report": {"$ref": "#/$defs/text"}
+        "report": {
+          "$ref": "#/$defs/text"
+        }
       },
-      "required": ["kind", "evidence", "report"], "additionalProperties": false
+      "required": [
+        "kind",
+        "evidence",
+        "report"
+      ],
+      "additionalProperties": false
     },
     {
-      "type": "object", "properties": {"kind": {"const": "out_of_room"}},
-      "required": ["kind"], "additionalProperties": false
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "out_of_room"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
     }
   ],
   "$defs": {
-    "text": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
     "test_run": {
       "type": "object",
       "description": "A completed run_tests call with its PrismaBuild receipts (#408).",
       "properties": {
-        "tests": {"type": "array", "maxItems": 256, "items": {"type": "string", "maxLength": 2048}},
-        "tests_omitted": {"type": "integer", "minimum": 1, "maximum": 256},
-        "base": {"type": "boolean"},
-        "tree": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$", "description": "The git tree of the checkout this run tested."},
-        "fresh": {"type": "boolean", "description": "False when PrismaBuild replayed a stored result."},
-        "repeat": {"type": "integer", "minimum": 1, "maximum": 10},
-        "parallel": {"enum": [0, 2, 3, 4]},
-        "status": {"const": "completed"},
-        "totals": {"$ref": "#/$defs/totals"},
+        "tests": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        },
+        "tests_omitted": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "base": {
+          "type": "boolean"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "description": "The git tree of the checkout this run tested."
+        },
+        "fresh": {
+          "type": "boolean",
+          "description": "False when PrismaBuild replayed a stored result."
+        },
+        "repeat": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "parallel": {
+          "enum": [
+            0,
+            2,
+            3,
+            4
+          ]
+        },
+        "status": {
+          "const": "completed"
+        },
+        "totals": {
+          "$ref": "#/$defs/totals"
+        },
         "receipts": {
-          "type": "array", "minItems": 1, "maxItems": 1,
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
           "items": {
             "type": "object",
             "properties": {
-              "action_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-              "status": {"enum": ["executed", "cache_hit"]},
-              "exit_code": {"type": "integer"},
-              "receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-              "log_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+              "action_key": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "status": {
+                "enum": [
+                  "executed",
+                  "cache_hit"
+                ]
+              },
+              "exit_code": {
+                "type": "integer"
+              },
+              "receipt_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "log_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
             },
-            "required": ["action_key", "status", "exit_code", "receipt_sha256", "log_sha256"], "additionalProperties": false
+            "required": [
+              "action_key",
+              "status",
+              "exit_code",
+              "receipt_sha256",
+              "log_sha256"
+            ],
+            "additionalProperties": false
           }
         },
         "runs": {
-          "type": "array", "maxItems": 10,
+          "type": "array",
+          "maxItems": 10,
           "items": {
             "type": "object",
             "properties": {
-              "run": {"type": "integer", "minimum": 1, "maximum": 10},
-              "status": {"const": "completed"},
-              "totals": {"$ref": "#/$defs/totals"}
+              "run": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10
+              },
+              "status": {
+                "const": "completed"
+              },
+              "totals": {
+                "$ref": "#/$defs/totals"
+              }
             },
-            "required": ["run", "status", "totals"], "additionalProperties": false
+            "required": [
+              "run",
+              "status",
+              "totals"
+            ],
+            "additionalProperties": false
           }
         }
       },
-      "required": ["tests", "base", "repeat", "parallel", "status", "tree", "fresh", "totals", "receipts"], "additionalProperties": false
+      "required": [
+        "tests",
+        "base",
+        "repeat",
+        "parallel",
+        "status",
+        "tree",
+        "fresh",
+        "totals",
+        "receipts"
+      ],
+      "additionalProperties": false
     },
     "totals": {
       "type": "object",
       "properties": {
-        "passed": {"type": "integer", "minimum": 0}, "failed": {"type": "integer", "minimum": 0},
-        "error": {"type": "integer", "minimum": 0}, "skipped": {"type": "integer", "minimum": 0}
+        "passed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "error": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
-      "required": ["passed", "failed", "error", "skipped"], "additionalProperties": false
+      "required": [
+        "passed",
+        "failed",
+        "error",
+        "skipped"
+      ],
+      "additionalProperties": false
     },
     "reproduction": {
       "oneOf": [
         {
           "type": "object",
           "properties": {
-            "finding_id": {"$ref": "#/$defs/text"},
-            "tests": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}}
+            "finding_id": {
+              "$ref": "#/$defs/text"
+            },
+            "tests": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/text"
+              }
+            }
           },
-          "required": ["finding_id", "tests"], "additionalProperties": false
+          "required": [
+            "finding_id",
+            "tests"
+          ],
+          "additionalProperties": false
         },
         {
           "type": "object",
-          "properties": {"finding_id": {"$ref": "#/$defs/text"}, "reason": {"$ref": "#/$defs/text"}},
-          "required": ["finding_id", "reason"], "additionalProperties": false
+          "properties": {
+            "finding_id": {
+              "$ref": "#/$defs/text"
+            },
+            "reason": {
+              "$ref": "#/$defs/text"
+            }
+          },
+          "required": [
+            "finding_id",
+            "reason"
+          ],
+          "additionalProperties": false
         }
       ]
     }

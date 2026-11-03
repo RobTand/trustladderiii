@@ -228,3 +228,15 @@ fn configured_evidence_preflight_accepts_always_tests() {
     assert_eq!(reply["evidence_contract"], contract);
     assert_eq!(reply["evidence_errors"], json!([]));
 }
+
+#[test]
+fn request_123_pending_is_a_handover_not_a_false_success() {
+    let reply = json!({"kind":"done", "head":"a".repeat(40), "self_check":[
+        {"goal_id":"repair", "status":"met", "evidence":"Normal head passed."},
+        {"goal_id":"publication", "status":"pending", "why":"Publishing owns PR creation."}
+    ]});
+    assert!(matches!(
+        map_reply("maker", &reply).unwrap(),
+        MappedReply::Made(_)
+    ));
+}

@@ -1841,7 +1841,119 @@ fn publication_404_look(settings: &tl3_config::Store, case: &str) {
     println!("test publication_404_look_{case} ... ok");
 }
 
+fn stage_obligations_block_publication() {
+    for case in [
+        "wrong-branch",
+        "missing-proof",
+        "draft",
+        "duplicate-line",
+        "stale-proof",
+        "missing-review",
+        "base-passes",
+        "forced-head-fails",
+        "pass",
+        "pre-existing",
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let f = Arc::new(Fixture::create(root.path()));
+        let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+        f.adapter().execute(&prepare).unwrap();
+        let mut push = f.delivery(EffectKind::Push, 2);
+        push.head_sha = Some(f.head(&prepare));
+        f.adapter().execute(&push).unwrap();
+        let server = Server::new(f.clone());
+        let mut open = push.clone();
+        open.key = format!("stage-{case}");
+        open.output = Out::Effect {
+            node: NodeId(0),
+            seq: 3,
+            kind: EffectKind::OpenPr,
+            head: None,
+        };
+        let mut adapter = server.adapter(&root.path().join("github"), 1);
+        if matches!(case, "draft" | "duplicate-line") {
+            adapter.execute(&open).unwrap();
+            let mut state = server.api.state.lock().unwrap();
+            let pull = state.pull.as_mut().unwrap();
+            if case == "draft" {
+                pull["draft"] = json!(true);
+            } else {
+                pull["body"] = json!("Change type: test\nChange type: test\n");
+            }
+            open.key.push_str("-revisit");
+        }
+        let mut value = serde_json::to_value(&open).unwrap();
+        value["evidence"] = json!({"checks":[],"reviews":[],"audit":null,"queue":[],"scratch":[],
+            "remaining_failures":[],"artifacts":[],"goals":[{"id":"publication", "stage":"publishing",
+                "description":"Stable branch, non-draft PR and before/after proof.",
+                "publication":{"branch_prefix":if case == "wrong-branch" { "unavailable/" } else { "" },
+                    "non_draft":true,"body_lines":["Change type: test"],"proof":!matches!(case, "wrong-branch" | "draft" | "duplicate-line")}}]});
+        if !matches!(
+            case,
+            "missing-proof" | "wrong-branch" | "draft" | "duplicate-line"
+        ) {
+            let mut result = json!({"name":"forced-deep-path", "kind":"demonstrating", "verdict":"pass",
+                "forcing":{"patches":[{"target":"example.RESIDENCY", "value":"private-forcing-value"}]},
+                "tests":[{"test":"test_deep.py::test_deep_path", "base":"assertion", "head":"passed",
+                    "head_forced":"passed", "passed":true}]});
+            if case == "base-passes" {
+                result["tests"][0]["base"] = json!("passed");
+            } else if case == "forced-head-fails" {
+                result["tests"][0]["head_forced"] = json!("assertion");
+            } else if case == "pre-existing" {
+                result["kind"] = json!("regression");
+                result.as_object_mut().unwrap().remove("forcing");
+                result["tests"][0]["head"] = json!("assertion");
+                result["tests"][0]["pre_existing"] = json!(true);
+            }
+            value["evidence"]["checks"] = json!([{"head_sha":if case == "stale-proof" {Some("a".repeat(40))} else {open.head_sha.clone()},
+                "base_sha":"a".repeat(40), "action_key":"c".repeat(64), "report":true, "pass":true, "results":[result]}]);
+            if case != "missing-review" {
+                value["evidence"]["reviews"] =
+                    json!([{"head_sha":open.head_sha, "verdict":"approve"}]);
+            }
+        }
+        let open: Delivery = serde_json::from_value(value).unwrap();
+        let result = adapter.execute(&open);
+        if matches!(case, "pass" | "pre-existing") {
+            result.unwrap();
+            let state = server.api.state.lock().unwrap();
+            let body = state.pull.as_ref().unwrap()["body"].as_str().unwrap();
+            assert!(body.contains("<!-- tl3:recorded-evidence:start -->"));
+            assert!(body.contains(open.head_sha.as_ref().unwrap()));
+            assert!(!body.contains("private-forcing-value"));
+            assert_eq!(
+                body.lines()
+                    .filter(|line| *line == "Change type: test")
+                    .count(),
+                1
+            );
+            continue;
+        }
+        assert!(
+            matches!(result, Err(tl3_controller::Error::Permanent { .. })),
+            "{case} must fail at Publishing, got {result:?}"
+        );
+        if !matches!(case, "draft" | "duplicate-line") {
+            assert_eq!(
+                server.api.state.lock().unwrap().opens,
+                0,
+                "validate before writing a PR"
+            );
+        }
+    }
+}
+
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--stage-obligations") {
+        scenario(
+            "stage_obligations_block_publication",
+            stage_obligations_block_publication,
+        );
+        println!("test stage_obligations_block_publication ... ok");
+        println!("1 publishing scenarios passed; no skips");
+        return;
+    }
     if env::args().nth(1).as_deref() == Some("q46-open") {
         scenario("publication_open_conflict", publication_open_conflict);
         println!("test publication_open_conflict ... ok");
@@ -1905,6 +2017,11 @@ fn main() {
         println!("test publishing_{mode} ... ok");
         return;
     }
+    scenario(
+        "stage_obligations_block_publication",
+        stage_obligations_block_publication,
+    );
+    println!("test stage_obligations_block_publication ... ok");
     scenario("publication_open_conflict", publication_open_conflict);
     println!("test publication_open_conflict ... ok");
     scenario(
@@ -1968,5 +2085,5 @@ fn main() {
         println!("test {mode} ... ok");
     }
     scenario("publishing_database_stop", || database.stop());
-    println!("35 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
+    println!("36 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }
