@@ -6,6 +6,8 @@ from pathlib import PurePosixPath
 import re
 import tomllib
 
+from jsonschema import Draft202012Validator
+
 from tl3_workers.roles.base import Role
 from tl3_workers.evidence import preflight
 from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES, MAX_EXECUTION_PIECES, execution_forecast
@@ -15,6 +17,15 @@ from tl3_harness.trees import is_test, test_function_source, bound_names, valida
 from tl3_workers.tools import Worktree
 from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.recall import check_citations
+
+
+# Fresh proposals require estimates; the transport still accepts workers that
+# started before a deploy (#372). Use the same requirement in the model prompt.
+EXPLORATION_DECLARATION = {
+    "if": {"properties": {"kind": {"enum": ["leaf", "split"]}}, "required": ["kind"]},
+    "then": {"required": ["estimated_exploration_turns"],
+             "properties": {"pieces": {"items": {"required": ["estimated_exploration_turns"]}}}},
+}
 
 
 class PlanConsistencyError(ValueError):
@@ -101,6 +112,7 @@ class PlanConsistencyError(ValueError):
 def check_reply(inputs, reply, *, rehearsals=None):
     if rehearsals is not None:
         rehearsals.raise_infrastructure()
+    Draft202012Validator(EXPLORATION_DECLARATION).validate(reply)
     if any(field in reply for field in ("forecast", "violations", "decision_context", "forcing_rehearsals")):
         raise ValueError("only code may supply planning evidence")
     preflight(inputs, reply, planning=True)

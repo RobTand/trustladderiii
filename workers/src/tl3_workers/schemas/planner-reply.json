@@ -288,17 +288,6 @@
       "additionalProperties": false
     }
   },
-  "if": {
-    "properties": {"kind": {"enum": ["leaf", "split"]}},
-    "required": ["kind"]
-  },
-  "then": {
-    "description": "Validate exploration declarations before oneOf so format repair names the missing field and path.",
-    "required": ["estimated_exploration_turns"],
-    "properties": {
-      "pieces": {"items": {"required": ["estimated_exploration_turns"]}}
-    }
-  },
   "oneOf": [
     {
       "type": "object",
