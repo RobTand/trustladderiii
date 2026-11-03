@@ -670,19 +670,26 @@ impl crate::Controller {
             "Postmortems paused after failed runs: {}",
             failures.join(", ")
         );
-        self.input_failed(
-            snapshot,
-            "postmortems",
-            None,
-            &title,
-            None,
-            crate::executor::Upstream::Workers,
-            Error::Permanent {
-                class: PAUSED,
-                source: "postmortem failure streak or recovery validation failed".into(),
-            },
-            commit,
-        )?;
+        let already_open = snapshot.rows.iter().any(|row| {
+            row.table == "incidents"
+                && row.value["open"] == true
+                && row.value["signature"]["class"] == PAUSED
+        });
+        if !already_open {
+            self.input_failed(
+                snapshot,
+                "postmortems",
+                None,
+                &title,
+                None,
+                crate::executor::Upstream::Workers,
+                Error::Permanent {
+                    class: PAUSED,
+                    source: "postmortem failure streak or recovery validation failed".into(),
+                },
+                commit,
+            )?;
+        }
         record_block(snapshot, Some(PostmortemBlock::PausedStreak), commit);
         Ok(())
     }
