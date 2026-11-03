@@ -212,7 +212,7 @@ fn removed_paths_are_redacted_in_the_actual_summary() {
         !text.contains(token),
         "removed filename leaked in closing summary"
     );
-    assert!(text.contains("src/[REDACTED].rs"));
+    assert!(text.contains("removed: `[REDACTED]`."), "{text}");
 }
 
 #[test]
