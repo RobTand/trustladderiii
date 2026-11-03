@@ -108,6 +108,10 @@ def tool_results(messages):
     return [m for m in messages if isinstance(m, ToolMessage)]
 
 
+def instructions(messages):
+    return [m for m in messages if isinstance(m, HumanMessage) and not m.text.startswith("TL3 execution budget: ")]
+
+
 @pytest.mark.parametrize("role", ROLES)
 def test_dropped_turn_retries_once_with_the_same_history(role, request, tmp_path, monkeypatch):
     doc = prepare(role, request, tmp_path)
@@ -181,7 +185,7 @@ def test_maker_rerun_after_worker_failure_resumes_the_saved_session(maker_reques
     assert events[-1]["reply"]["kind"] == "done" and "head" in events[-1]["reply"]
     resumed = second.calls[0][0]
     assert payload(resumed) == payload(first.calls[-1][0]), "resume from the last complete tool result"
-    assert sum(isinstance(m, HumanMessage) for m in resumed) == 1, "the visit's inputs are not repeated"
+    assert len(instructions(resumed)) == 1, "the visit's inputs are not repeated"
     assert budgets[-1].turns == budgets[0].turns + 1, "a resume does not reset the run's budgets"
     assert budgets[-1].spent >= budgets[0].spent
 
@@ -195,7 +199,9 @@ def test_invalid_reply_gets_one_tool_free_repair_turn(role, request, tmp_path, m
     runtime.run(doc, events.append)
     assert events[-1]["event"] == "reply"
     repair, offered = model.calls[-1]
-    assert isinstance(repair[-1], HumanMessage) and message in repair[-1].text
+    # A code-owned budget notice may follow the repair instruction.
+    instruction = instructions(repair)[-1]
+    assert message in instruction.text
     assert not offered, "the repair turn offers no tools"
     if tool:
         assert model.calls[0][1], "earlier turns keep their tools"
@@ -389,7 +395,7 @@ def test_unusable_visit_checkpoint_starts_the_visit_afresh(maker_request, tmp_pa
     model, events = rerun(maker_request, monkeypatch, [ROLES["maker"][1], reply(test_maker.DONE)])
     assert events[-1]["reply"]["kind"] == "done"
     first = model.calls[0][0]
-    assert not tool_results(first) and sum(isinstance(m, HumanMessage) for m in first) == 1
+    assert not tool_results(first) and len(instructions(first)) == 1
     assert "tl3_workers: maker: visit checkpoint unusable; starting the visit afresh" in capsys.readouterr().err
 
 
@@ -463,7 +469,8 @@ def test_resume_warns_that_an_interrupted_file_tool_may_have_run(maker_request, 
     model, _ = rerun(maker_request, monkeypatch, [reply(test_maker.DONE)])
     resumed = model.calls[0][0]
     assert_tool_pairs(resumed)
-    assert isinstance(resumed[-1], HumanMessage) and "may have run" in resumed[-1].text
+    instruction = instructions(resumed)[-1]
+    assert "may have run" in instruction.text
 
 
 def test_resume_keeps_compaction_and_cache_pricing(maker_request, tmp_path, monkeypatch):
@@ -507,14 +514,15 @@ def test_resume_keeps_an_exhausted_budget(maker_request, tmp_path, monkeypatch):
     def killed(*args):
         raise Killed()
 
-    commit = maker._commit
-    monkeypatch.setattr(maker, "_commit", killed)
+    budget_reply = maker._budget_reply
+    monkeypatch.setattr(maker, "_budget_reply", killed)
     interrupted(maker_request, monkeypatch, [reply(test_maker.DONE)])
     assert json.loads(visit.read_text())["budget_exhausted"] is True
-    # The rerun's done without a change ends as cant_meet, not with another turn.
-    monkeypatch.setattr(maker, "_commit", commit)
+    # A tools-free done with unverified obligations is now a typed budget stop.
+    monkeypatch.setattr(maker, "_budget_reply", budget_reply)
     model, events = rerun(maker_request, monkeypatch, [reply(test_maker.DONE), reply(test_maker.DONE)])
-    assert events[-1]["reply"] == {"kind": "cant_meet", "report": "no code change was made"}
+    assert events[-1]["reply"]["kind"] == "cant_meet"
+    assert events[-1]["reply"]["budget_exhaustion"]["tool_turns"] == {"used": 0, "allowed": 0}
     assert len(model.calls) == 1
 
 

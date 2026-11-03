@@ -160,8 +160,13 @@ impl Controller {
             let mut record = json!({"step": step_name(step), "text": step_text(step),
                 "attempt": n.attempt, "round": n.round});
             if let Some(found) = found {
+                if found["budget_exhaustion"]["kind"] == "execution_budget_exhausted" {
+                    record["text"] =
+                        json!("the maker exhausted its execution budget with unfinished work");
+                }
                 record["findings"] = found;
             }
+            let budget = record["findings"].get("budget_exhaustion").cloned();
             commit.rows.push(put(TABLE, id.clone(), record));
             // Without an operations issue there's nowhere for the coordinator's
             // note; the issue summary already says the request stopped.
@@ -170,7 +175,7 @@ impl Controller {
             };
             let request = crate::request(snapshot, node)?;
             let mut line = format!(
-                "Stopped for TL3 review (tl3_review): {}/{}#{} at step {}, attempt {}, round {}. Restart it once the fix ships.",
+                "Stopped for TL3 review (tl3_review): {}/{}#{} at step {}, attempt {}, round {}.",
                 request.repo.owner,
                 request.repo.name,
                 request.issue,
@@ -178,6 +183,38 @@ impl Controller {
                 n.attempt,
                 n.round
             );
+            if let Some(budget) = budget {
+                let obligations = budget["unfinished_obligations"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .take(8)
+                    .filter_map(Value::as_str)
+                    .map(|item| {
+                        item.chars()
+                            .take(200)
+                            .map(|c| if c.is_control() { ' ' } else { c })
+                            .collect::<String>()
+                            .replace('@', "[at]")
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                let detail = format!(
+                    " execution_budget_exhausted ({}): tool turns {}/{}, input tokens {}/{}. Preserved tree {}. Unfinished: {}. Review the preserved work and budget before any authorized continuation.",
+                    budget["dimension"].as_str().unwrap_or("unknown"),
+                    budget["tool_turns"]["used"],
+                    budget["tool_turns"]["allowed"],
+                    budget["input_tokens"]["used"],
+                    budget["input_tokens"]["allowed"],
+                    budget["preserved_work"]["tree"]
+                        .as_str()
+                        .unwrap_or("unknown"),
+                    obligations
+                );
+                line.push_str(&detail);
+            } else {
+                line.push_str(" Restart it once the fix ships.");
+            }
             if let Some(diagnostic) = diagnostic {
                 line.push(' ');
                 line.push_str(&diagnostic.render());

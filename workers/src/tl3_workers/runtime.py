@@ -24,7 +24,7 @@ from jsonschema import ValidationError
 from tl3_workers.evidence import forcing_capabilities, forcing_guidance
 from tl3_workers.contracts import read_json, read_reply, schema, validate
 from tl3_workers.roles import ROLES
-from tl3_workers.roles.planner import PlanConsistencyError
+from tl3_workers.roles.planner import EXPLORATION_DECLARATION, PlanConsistencyError
 from tl3_workers.forcing_rehearsal import ForcingRehearsals
 from tl3_workers.tools import Worktree, build_tools
 from tl3_workers.memory import Summary, current
@@ -160,6 +160,8 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None,
         prompt += "\n\n" + worktree.generation_instruction()
     prompt += "\n\n" + ONLY_JSON + " It must match this schema:\n"
     proposal = deepcopy(schema(role.reply_schema)) if reply_schema is None else reply_schema
+    if role.name == 'planner':
+        proposal = {**EXPLORATION_DECLARATION, **proposal}
     for variant in proposal.get("oneOf", [proposal]):
         for name in role.code_only_fields:
             variant["properties"].pop(name, None)
@@ -238,6 +240,11 @@ def _run(request, emit):
             model_inputs = request["inputs"]
             if role.name in {"ingest", "audit", "planner"}:
                 model_inputs = {"forcing_capabilities": forcing_capabilities(run_test_cpus.get()), **model_inputs}
+            if role.name == "planner":
+                maker_budget = ROLES["maker"].exploration_budget
+                model_inputs = {**model_inputs, "maker_budget": {
+                    "tool_turns": maker_budget.tool_turns, "input_tokens": maker_budget.input_tokens,
+                    "finalization_turns": maker_budget.finalization_turns}}
             ledger = getattr(worktree, 'forcing_rehearsals', None)
             if ledger is not None and (ledger.candidates or ledger.active):
                 model_inputs = {**model_inputs, 'forcing_rehearsal_state': {
