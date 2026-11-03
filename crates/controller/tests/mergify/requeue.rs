@@ -167,7 +167,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         mode,
         "refusal" | "refusal-bound" | "rate-limit" | "permission"
     ) {
-        refused(&mut controller, &api, &clock, &key, mode);
+        refused(&mut controller, &api, &clock, mode);
         println!("test requeue_{mode} ... ok");
         return;
     }
@@ -362,13 +362,7 @@ fn label_event(id: u64, label: &str, time: &str) -> Value {
         "label":{"name":label},"created_at":time})
 }
 
-fn refused(
-    controller: &mut Controller,
-    api: &Server,
-    clock: &head_checks::Clock,
-    key: &str,
-    mode: &str,
-) {
+fn refused(controller: &mut Controller, api: &Server, clock: &head_checks::Clock, mode: &str) {
     assert_eq!(api.state.lock().unwrap().command_attempts, 1);
     assert_eq!(
         api.state.lock().unwrap().requeues,

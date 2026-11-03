@@ -646,6 +646,8 @@ fn recorded_human_removal_before_first_dispatch_requires_explicit_resume() {
     drain(&mut c);
     c.look_now().unwrap();
     drain(&mut c);
+    drop(c);
+    let mut c = f.open();
     f.advance(301);
     c.look_now().unwrap();
     drain(&mut c);
@@ -671,6 +673,28 @@ fn legacy_command_survives_retirement_and_replacement_effect() {
         )
         .unwrap();
     assert_eq!(f.commands(), 1);
+    let mut store = Store::open(&f.settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let old = store.effect(&f.delivery.key).unwrap().unwrap();
+    let mut retired = tl3_store::Commit::new(
+        "legacy-effect-retired",
+        json!({"retired": old.key}),
+        &snapshot,
+    );
+    retired.transitions.push(tl3_store::EffectTransition {
+        key: old.key,
+        from: old.state,
+        to: tl3_store::EffectState::Confirmed,
+    });
+    store.commit(&retired).unwrap();
+    assert!(
+        !store
+            .load()
+            .unwrap()
+            .pending_effects
+            .iter()
+            .any(|effect| effect.key == f.delivery.key)
+    );
     f.adapter().retire_delivery(&f.delivery).unwrap();
     let mut replacement = f.delivery.clone();
     replacement.key.push_str("-replacement");
