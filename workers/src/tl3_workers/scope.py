@@ -9,7 +9,10 @@ from tl3_workers.tools import _parts
 # Recognize common edit prohibitions for missing-source diagnostics. The audit
 # still judges arbitrary natural language and whether every obligation survived.
 _EDIT = r'\b(?:edit(?:ed|ing|s)?|chang(?:e[ds]?|ing)|modif(?:y|ied|ying)|touch(?:ed|ing)?)\b'
-_ONLY = re.compile(rf'\bonly\b[^\n]{{0,160}}{_EDIT}|{_EDIT}[^\n]{{0,160}}\bonly\b', re.I)
+# One clause only: a sentence end ('. ', ';' or a line break) separates a reporting or
+# evidence 'only' from an edit verb in the next sentence. Dots inside paths still match.
+_CLAUSE = r'(?:[^\n.;]|\.(?=\S))'
+_ONLY = re.compile(rf'\bonly\b{_CLAUSE}{{0,160}}{_EDIT}|{_EDIT}{_CLAUSE}{{0,160}}\bonly\b', re.I)
 _FILE = re.compile(r'\b(?:files?|paths?|footprint)\b|(?:[\w.*-]+/)+[\w.*-]+|\b[\w*-]+\.[\w*]+', re.I)
 _EXCLUDE = re.compile(rf'\b(?:do not|must not|never|cannot)\s+{_EDIT}', re.I)
 
