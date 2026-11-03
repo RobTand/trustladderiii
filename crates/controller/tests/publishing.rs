@@ -578,6 +578,10 @@ fn prepare_workers() -> PathBuf {
     );
     root.join(".venv/bin/python")
 }
+fn drive_to_idle(_drive: impl FnMut() -> bool) -> bool {
+    todo!("bound publishing driver bursts")
+}
+
 fn drain(c: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store, expected: Phase) {
     let (sender, receiver) = mpsc::channel();
     let start = Instant::now();
@@ -1790,6 +1794,14 @@ fn main() {
             "merged".into(),
         );
         support::executor_probe::assert_retire_delivery(&mut router);
+        assert!(
+            !drive_to_idle(|| true),
+            "a continuously active publishing driver must exhaust its burst"
+        );
+        let mut progress = [true, true, false].into_iter();
+        assert!(drive_to_idle(|| progress
+            .next()
+            .expect("an idle publishing driver must not be driven again")));
         println!("test router_retire_delivery ... ok");
         if std::env::args().len() > 1 {
             return;
