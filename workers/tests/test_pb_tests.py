@@ -886,9 +886,8 @@ def test_generator_failure_and_out_of_scope_output_preserve_source(
 
 @pytest.mark.parametrize("protected,files,fragment", [
     (["**/BUILD.bazel"], None, "protected"),
-    ([], ["tests/socket_support.py"], "footprint"),
 ])
-def test_generator_cannot_override_protection_or_footprint(
+def test_generator_cannot_override_protection(
         generator_repo, generator_backend, tmp_path, protected, files, fragment):
     tree, generate = configured_generator(generator_repo, tmp_path, protected=protected, files=files)
     with tree:

@@ -175,3 +175,14 @@ idempotent_import; its method is configured_generation. It returns action_key,
 cas_receipt, input_tree, output_tree, artifact_sha256, logs and terminal_verdict.
 Use that capability only when it appears in tool_capabilities. It cannot edit
 protected files or replace the independent test executor.
+
+
+Configured generation is necessary supporting work. "Edit only X" restricts
+model edits; it does not forbid the configured generator's declared outputs.
+"Do not hand-edit generated files" likewise allows trusted regeneration.
+Never strengthen either restriction into "generated files must stay untouched."
+A true source requirement forbidding all generated changes, including configured
+regeneration, conflicts with mandatory generation. Preserve its exact source
+wording and raise an audit objection before planning, rather than deferring it
+to final generation. Protected paths always win. The model cannot hand-edit
+generated outputs, including outputs code adds to the effective plan footprint.
