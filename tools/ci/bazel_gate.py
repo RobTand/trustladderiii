@@ -8,11 +8,13 @@ artifacts directory, and the GitHub job reads it back. Any detection failure
 is a gate failure, never an empty pass.
 """
 import argparse
+import base64
 from fnmatch import fnmatch
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import signal
@@ -21,6 +23,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from urllib.parse import quote, quote_plus
 import zipfile
 
 import bazel_generated
@@ -483,6 +486,54 @@ def write_result(result, directory, root=ROOT):
             log.replace(directory / log.name)
 
 
+def exclude_unscanned(directory, diagnostics, secret):
+    """Match complete redacted reports, never interpret scanner text as a path."""
+    forms = set()
+    if secret:
+        forms.add(secret)
+        for encoded in (base64.b64encode(secret.encode()), base64.urlsafe_b64encode(secret.encode())):
+            forms.update((encoded.decode(), encoded.rstrip(b'=').decode()))
+        for encoded in (quote(secret), quote(secret, safe=''), quote_plus(secret)):
+            forms.update((encoded, re.sub(r'%[0-9A-F]{2}', lambda match: match[0].lower(), encoded)))
+    redactions = sorted(forms, key=len, reverse=True)
+
+    def redact(message):
+        while any(value in message for value in redactions):
+            for value in redactions:
+                message = message.replace(value, '')
+        return message
+
+    reasons = ('zstd: not scanned (compression.zstd unavailable)',
+               'compressed nesting limit, not scanned',
+               'gzip member unreadable, not scanned',
+               'zstd member unreadable, not scanned',
+               'unreadable path, not scanned')
+    reports = {}
+    for parent, _, filenames in os.walk(directory):
+        for filename in filenames:
+            path = Path(parent, filename)
+            for reason in reasons:
+                report = redact(f'{path}: {reason}')
+                if report in reports and reports[report] != (path, reason):
+                    raise GateError('ambiguous scanner path')
+                reports[report] = (path, reason)
+    dropped = {}
+    for report in diagnostics.splitlines():
+        # Mixed secret hits, directory errors and unknown output stay fatal.
+        if report not in reports:
+            raise GateError('scanner did not report only skipped files')
+        path, reason = reports[report]
+        dropped.setdefault(path, set()).add(reason)
+    if not dropped:
+        raise GateError('scanner gave no skipped-file reports')
+    for path, reasons in dropped.items():
+        size = path.stat().st_size
+        path.unlink()
+        relative = redact(str(path.relative_to(directory)))
+        print(redact(f'artifact scan: dropped {relative!r} ({size} bytes): '
+                     + '; '.join(sorted(reasons))), flush=True)
+
+
 def scan_artifacts(directory):
     """Only the scanner child receives the runner credential, never other tools."""
     if os.environ.get('BBRUN_FINAL_SCAN') == '1':
@@ -491,14 +542,29 @@ def scan_artifacts(directory):
     env = child_env()
     if 'BUILDBUDDY_API_KEY' in os.environ:
         env['BUILDBUDDY_API_KEY'] = os.environ['BUILDBUDDY_API_KEY']
+
+    def scan():
+        result = subprocess.run(
+            [sys.executable, '-I', '-S', str(ROOT / 'tools/ci/before_upload.py'),
+             '--require', 'BUILDBUDDY_API_KEY', str(directory)], env=env,
+            capture_output=True, text=True)
+        return result.returncode, result.stdout + result.stderr
+
     status = 75
     try:
-        status = subprocess.run(
-            [sys.executable, '-I', '-S', str(ROOT / 'tools/ci/before_upload.py'),
-             '--require', 'BUILDBUDDY_API_KEY', str(directory)], env=env).returncode
+        first, diagnostics = scan()
+        if first == 75:
+            try:
+                exclude_unscanned(directory, diagnostics, env.get('BUILDBUDDY_API_KEY', ''))
+            except (GateError, OSError):
+                return status
+            # Excluding known files never authorizes upload without a clean rescan.
+            first, diagnostics = scan()
+        status = first or (75 if diagnostics else 0)
         return status
     finally:
         if status and directory.exists():
+            print('artifact scan: FAIL; artifacts deleted', flush=True)
             for path in directory.iterdir():
                 if path.is_dir() and not path.is_symlink():
                     shutil.rmtree(path)
