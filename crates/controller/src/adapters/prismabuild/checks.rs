@@ -97,6 +97,10 @@ pub(crate) fn validate_plan_size(plan: &[Check]) -> Result<()> {
                 case["head_forced"] = "uncollected".into();
             }
             result_bytes += ascii_json_bytes(&case)? + 1;
+            // Match the harness reservation: three bounded phase facts and the concrete node per side.
+            let sides = if check.forcing.is_some() { 3 } else { 2 };
+            result_bytes +=
+                sides * (3 * (200 * 12 + 100) + 100 + ascii_json_bytes(&serde_json::json!(test))?);
         }
         if result_bytes > super::results::MAX_RESULT_BYTES {
             return Err(Error::Invalid(

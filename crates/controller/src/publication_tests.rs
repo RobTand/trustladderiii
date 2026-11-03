@@ -40,6 +40,9 @@ impl Executor for Refusing {
             DeliveryOutput::Notice {
                 notice: tl3_kernel::Notice::Incident { .. },
                 ..
+            } | DeliveryOutput::Comment {
+                kind: executor::CommentKind::OperationsNote,
+                ..
             }
         ) {
             self.notices.lock().unwrap().push(delivery.clone());
@@ -131,8 +134,15 @@ fn refused(class: &'static str, status: Option<u16>) -> (Value, Delivery, Vec<Va
     let incident = snapshot
         .rows
         .iter()
-        .find(|r| r.table == "incidents")
-        .expect("permanent refusal needs an incident")
+        .find(|r| {
+            r.table
+                == if class == "pr_policy" {
+                    "review_stops"
+                } else {
+                    "incidents"
+                }
+        })
+        .expect("permanent refusal needs a retained stop or incident")
         .value
         .clone();
     let notice = notices
@@ -162,7 +172,12 @@ fn refused(class: &'static str, status: Option<u16>) -> (Value, Delivery, Vec<Va
             .unwrap()
             .rows
             .iter()
-            .find(|r| r.table == "incidents")
+            .find(|r| r.table
+                == if class == "pr_policy" {
+                    "review_stops"
+                } else {
+                    "incidents"
+                })
             .unwrap()
             .value,
         incident
@@ -205,7 +220,12 @@ fn t604_openpr_branch_refusal_names_class_branch_mismatch_and_effect_in_notice_a
 fn t604_every_local_publication_class_is_safe_distinct_and_tl3_owned() {
     for class in ["pr_evidence", "pr_policy"] {
         let (incident, notice, events) = refused(class, None);
-        assert_eq!(incident["cause"], "tl3", "{incident}");
+        if class == "pr_policy" {
+            assert_eq!(incident["step"], "publication_body");
+            assert!(notice.note.as_ref().unwrap().contains("tl3_review"));
+        } else {
+            assert_eq!(incident["cause"], "tl3", "{incident}");
+        }
         assert!(notice.note.as_ref().unwrap().contains(class));
         let diagnostic = events
             .iter()

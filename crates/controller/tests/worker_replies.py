@@ -96,7 +96,8 @@ def scripted_reply(request, mode, marker):
         while not marker.with_suffix(".release").exists():
             time.sleep(0.01)
     if request["role"] == "planner":
-        reply = {"kind": "leaf", "files": ["greeting.py", "tests/test_greeting.py"],
+        reply = {"kind": "leaf", "estimated_exploration_turns": 0,
+                 "files": ["greeting.py", "tests/test_greeting.py"],
                  "checks": [{"kind": "demonstrating", "node_ids": ["tests/test_greeting.py::test_hello"], "goal_ids": [0]}],
                  "no_design_questions": True, "lands_on_its_own": True}
         if mode == "plan-bad-schema":
@@ -104,9 +105,9 @@ def scripted_reply(request, mode, marker):
         elif mode == "plan-invalid":
             reply["files"] = ["conftest.py"]
         elif mode in {"plan-split", "plan-bad-split"}:
-            reply = {"kind": "split", "reason": "does_not_fit", "pieces": [
-                {"brief": "Fix greeting.", "goal_ids": [0], "files": ["greeting.py"]},
-                {"brief": "Test greeting.", "goal_ids": [0], "files": ["tests/test_greeting.py"]}]}
+            reply = {"kind": "split", "reason": "does_not_fit", "estimated_exploration_turns": 0, "pieces": [
+                {"brief": "Fix greeting.", "goal_ids": [0], "files": ["greeting.py"], "estimated_exploration_turns": 0},
+                {"brief": "Test greeting.", "goal_ids": [0], "files": ["tests/test_greeting.py"], "estimated_exploration_turns": 0}]}
             if mode == "plan-bad-split": reply["pieces"] = reply["pieces"][:1]
         elif mode == "plan-memories":
             reply["memory_ids"] = lesson

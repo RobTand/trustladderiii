@@ -95,7 +95,7 @@ def test_each_reply_has_code_forecast(tmp_path, planner_request, proposal, files
         {"event": "progress", "unit": "model_turn"},
         {"event": "reply", "role": "planner", "reply": reply},
     ]
-    assert {key: value for key, value in reply.items() if key != "violations"} == {**proposal, "forecast": {
+    assert {key: value for key, value in reply.items() if key not in {"violations", "execution"}} == {**proposal, "forecast": {
         "tokenizer": "o200k_base", "brief_tokens": 2, "file_tokens": files,
         "overhead_tokens": 60, "tokens": 62 + sum(files.values()),
         "fit_tokens": 100000, "context_tokens": 150000, "fits": True,

@@ -98,7 +98,8 @@ def test_t613_ac4_helper_capability_does_not_establish_target_suitability(tmp_pa
     inputs = {'must_split': False, 'protected_paths': [], 'ingest': {'brief': 'Correct evidence.',
               'goals': [{'description': 'Fix evidence.', 'verification': 'test'}]},
               'forecast': {'fit_tokens': 100000, 'context_tokens': 150000, 'overhead_tokens': {}}}
-    reply = {'kind': 'leaf', 'files': ['tests/test_evidence.py'], 'edits_tests': [],
+    reply = {'kind': 'leaf', 'estimated_exploration_turns': 0,
+             'files': ['tests/test_evidence.py'], 'edits_tests': [],
              'no_design_questions': True, 'lands_on_its_own': True,
              'checks': [{'kind': 'demonstrating', 'node_ids': ['tests/test_evidence.py::test_observer'],
                          'goal_ids': [0], 'helper_evidence': {'target': 'tests/test_evidence.py::_eio',

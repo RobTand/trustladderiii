@@ -390,3 +390,30 @@ def test_appended_coverage_check_cannot_introduce_forcing(planner_request, reque
         assert result['checks'] == fixed['checks']
     else:
         assert 'Correction adds a forcing absent from the draft.' in result['violations']
+
+
+@pytest.mark.parametrize('fix_consistency', [True, False])
+def test_missing_exploration_and_consistency_share_one_format_repair(
+        planner_request, request156, monkeypatch, fix_consistency):
+    from tl3_workers import runtime
+    from tl3_workers.turns import InvalidReply
+
+    missing = copy.deepcopy(request156)
+    del missing['estimated_exploration_turns']
+    corrected = copy.deepcopy(request156)
+    if fix_consistency:
+        corrected['checks'][0]['node_ids'].append(CONTROL)
+    model = planner_model(monkeypatch, missing, corrected, LEAF)
+    events = []
+    if fix_consistency:
+        runtime.run(planner_request, events.append)
+        assert events[-1]['reply']['kind'] == 'leaf'
+        assert events[-1]['reply']['violations'] == []
+    else:
+        with pytest.raises(InvalidReply) as error:
+            runtime.run(planner_request, events.append)
+        assert CONTROL in str(error.value.errors[1])
+        assert not any(event['event'] == 'reply' for event in events)
+    assert [offered for _, offered in model.calls] == [True, False]
+    assert 'required' in model.calls[1][0][-1].text
+    assert 'estimated_exploration_turns' in model.calls[1][0][-1].text

@@ -37,10 +37,10 @@ Agreed:
 Agreed for the fit limit (Q4); the rest is proposed:
 
 - Split into the largest piece that fits, not the smallest.
-- Every split has at least 2 children, and there is no upper limit.
-- Code measures each child's forecast. Every child must be smaller than its parent, except when the split is by repo.
+- Every split has at least 2 children. Execution-budget split proposals have at most 8 pieces under Rob's 2026-11-03 Q27 approval below; other splits keep their existing bounds.
+- Code measures each child's forecast. Every child must be smaller than its parent, except when the split is by repo. An execution-budget split instead lowers each child's execution estimate and requires both tool-turn and token fit.
 - A node is a leaf when four things hold:
-  - **It fits:** forecast peak context is under about 100k of the 150k. The 100k is a starting value, tuned later from MLflow data. Slice one can't split yet, so it asks Rob to narrow a request that doesn't fit (Q4).
+  - **It fits:** forecast peak context is under about 100k of the 150k, and required tool work fits the maker's allowance minus finalization capacity. The context limit is a starting value, tuned later from MLflow data. Slice one still uses its existing narrowing path (Q4).
   - **It is checkable:** each measure has a check.
   - **It is decided:** no design questions remain.
   - **It lands alone:** it is one reviewable change that keeps main passing on its own, in one repo.
@@ -527,6 +527,18 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
   adds no work generation, model-ladder retry or automatic restart. See the
   authoritative Planning section in `docs/state-table.md`.
 
+  The recorded stop steps are `checks_failed`, `changes_requested`,
+  `ci_failed`, `maker_cant_meet`, `maker_needs_files`, `maker_out_of_room`,
+  `reviewer_out_of_room`, `plan_cant_meet`, and `publication_body`.
+
+  **TL3-created publication body refusal**
+  ([#629](https://github.com/RobTand/trustladderiii/issues/629)) uses the same
+  review stop even when `fail_fast` is off. Only `OpenPr` can stop at
+  `publication_body` after `BodyPolicyRefused`. It spends no credit, retains the
+  bounded publication diagnostic, and never asks Rob to repair TL3's generated
+  body. For every other effect kind, `BodyPolicyRefused` is an ordinary permanent
+  effect failure with the existing incident and owner-question handling.
+
   A stop for TL3 review closes as Stopped with reason `tl3_review`. It spends no credit and asks Rob nothing. The summary names the failing step and its evidence, says to comment `restart`, and leaves the issue open (Q49). A postmortem is owed as `needed_fix`, and one line goes to the operations issue for the coordinator, who restarts the request after the TL3 fix ships, or at once on a stronger model when the work itself was the cause. tl3d sets the flag on the stored world at every start, so it applies to requests already open.
 
   **The coordinator's reading, not Rob's words, flagged to him in #482.** These steps aren't retries after a failure, so `fail_fast` leaves them as they are:
@@ -797,3 +809,38 @@ signature and dependencies. It rejects ambiguous targets and undeclared test
 edits. The existing evidence capability preflight advertises and checks method
 `helper_target_observer`. Regression and behavior-preserving definitions remain
 frozen; Q55 forcings keep their existing semantics. No kernel transition changes.
+
+## Q27: execution-budget feasibility (#614)
+
+Approved by Rob, 2026-11-03: [decision](https://github.com/RobTand/trustladderiii/issues/614#issuecomment-6602791347).
+
+> Execution-budget feasibility is a planning constraint: a plan that fits the token limit but would exceed the maker's tool/turn budget may be split before maker work, with bounded decomposition, every obligation preserved across the leaves, and aggregate accounting retained. Q54 (fail_fast) is unchanged.
+
+The planner receives the maker's current hard caps and finalization reserve.
+Code refuses a leaf whose estimated tool demand exceeds the usable allowance.
+The estimate includes proof, metadata, configured generation, final readback,
+regressions and scope review. Token and execution forecasts remain separate.
+The planner must explicitly estimate exploration as well as structural work.
+Code adds orientation reads, searches, globs and recall to the structural floor;
+a missing exploration declaration cannot establish execution fit. A declared
+total can increase the resulting estimate, never lower it.
+
+The new `execution_budget` split reason uses the existing PlanSplit reply and
+its existing transition. A proposal contains 2 to 8 pieces, preserves every
+source goal and records each piece's estimate and the aggregate demand and
+allowance. Each piece must fit both budgets and reduce execution demand.
+Slice one's existing narrowing path remains; this change creates no automatic
+maker continuation. Existing credit, admission and effect identities continue
+to bound and account for work. There is no kernel type or transition change.
+
+The maker's last 8 tool turns belong to verification and readback within its
+existing 64-turn cap. Edits and generation are refused during that reserve.
+Each turn reports the remaining budget in appended user content. By halfway
+through the cap, a maker without a completed edit to a declared non-test file
+is warned to stop broad exploration and implement with focused reads. Test-only
+edits do not satisfy that implementation milestone.
+The final JSON keeps its existing input-token reserve. Exhaustion records the
+limiting dimension, spent and allowed counts, exact preserved tree and
+unfinished obligations. It retains the existing fail_fast stop path and
+reaches the stop summary and operations notice as a typed budget diagnostic.
+No exhausted visit receives a fresh allowance or a blind automatic restart.

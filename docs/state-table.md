@@ -194,21 +194,27 @@ Rob's answers never fail for lack of credit. An answer that needs credit adds wh
 
 A node's forecast is computed by code: the token count of its slice of the brief and of its declared files, plus an overhead calibrated from MLflow. The starting constants are set in config.
 
+**Execution feasibility (Q27, Rob, 2026-11-03, [#614 approval](https://github.com/RobTand/trustladderiii/issues/614#issuecomment-6602791347)).** Code also estimates the maker's tool-turn demand. The estimate requires an explicit exploration allowance in addition to the structural floor for implementation, test-first proof, metadata, configured generation, readback and final verification. Structure alone cannot establish execution fit. It must fit the maker's existing allowance minus its finalization reserve. Token fit alone does not establish execution feasibility. These are separate measurements; execution pressure must not inflate the token forecast.
+
 **A node is a leaf** when all of these hold:
 
 - the forecast fits, under about 100k of the 150k. That is a starting value, tuned later from MLflow data (Q4);
+- the execution estimate fits the maker's usable tool-turn allowance after reserving finalization capacity (Q27, Rob, 2026-11-03);
 - it is in one repo;
 - every measure has a check;
 - its footprint avoids protected paths, which in slice one include CI, Mergify and, until its second review arrives, test configuration;
 - the planner states that no design questions remain and that the change lands on its own (Agent).
 
-**A split is allowed** for one of three reasons, and the plan must name which:
+**A split is allowed** for one of four reasons, and the plan must name which:
 
 - the forecast doesn't fit;
+- the execution estimate exceeds the maker's usable allowance before maker work starts, even if the token forecast fits (`execution_budget`, Q27, Rob, 2026-11-03);
 - the work spans several repos, in which case it must split by repo, one child per repo;
 - a leaf ran out of room.
 
 Every split has at least 2 children. Every child's forecast must be smaller than its parent's, except in a repo split.
+
+For an execution-budget split, every child's execution estimate must instead be smaller than its parent's and fit its usable allowance; its token forecast must also fit. Such a proposal contains at most 8 pieces. Every source obligation must remain covered by the pieces' goal references. Code records per-piece estimates and their aggregate demand and allowance with the plan. The existing split path, credit ledger, admissions and durable operation identities still apply. Splitting never restores spent maker allowance or retries failed work. Q54 is unchanged.
 
 **A plan breaks a rule** when it does any of these:
 
@@ -292,6 +298,13 @@ Code computes a signature for each failure from the upstream's error class, and 
 - If the operation fails again on the new release, the failure rules above raise an incident, which stays open until the next release or Rob's `clear incident`.
 - A restart on the same release clears nothing. Upstream incidents keep the rules above.
 
+Postmortem pause recovery (#632) uses this incident-clear path outside the
+kernel. Clearing or recovering its pause resets the failure boundary and the
+counted daily allowance, retaining the claim ledger and the configured limit.
+One validation claim runs with the existing deadline, still subject to model
+quota and Q39 spare capacity. Its failure immediately re-pauses with an incident;
+its success resumes ordinary pacing. No pool slot is reserved.
+
 **Delivery failures** follow the same rule, counted per effect. Every second retryable failure raises an incident, and only Rob can clear the effect's second incident.
 
 **Work failures** are failed checks, review findings and CI test failures. They follow the rules for rounds and attempts under "A failed round".
@@ -299,6 +312,18 @@ Code computes a signature for each failure from the upstream's error class, and 
 **Fail fast,** from Rob's decision on 2026-11-02 (Q54; which steps count as retries is the coordinator's reading, flagged to Rob in #482): `[limits] fail_fast` is false by default, which keeps every rule as written. When it is true, each row below marked "`fail_fast`" stops the request for TL3 review instead of retrying the work. Infrastructure failures, Q50 blockers and Q53 quota fallback are not work retries and are unchanged. tl3d sets the flag on the stored world each time it opens, and the kernel reads it at the moment of the retry, so it applies to requests already open.
 
 **Stop for TL3 review:** go to Stopping(Stopped) and record the failing step on the node. Spend nothing and ask Rob nothing. The closing summary names the step and its evidence and, as for any stop, says to comment `restart` and leaves the issue open (Q49). A postmortem is owed as `needed_fix`, and one line goes to the operations issue for the coordinator.
+
+The recorded steps are `checks_failed`, `changes_requested`, `ci_failed`,
+`maker_cant_meet`, `maker_needs_files`, `maker_out_of_room`,
+`reviewer_out_of_room`, `plan_cant_meet`, and `publication_body`.
+
+**Publication body refusal** ([#629](https://github.com/RobTand/trustladderiii/issues/629)):
+only an `OpenPr` effect receiving `BodyPolicyRefused` stops for TL3 review at
+`publication_body`. This routes a TL3-created local body refusal to the existing
+review stop, regardless of `fail_fast`. It spends no credit, retains the bounded
+publication diagnostic, and never asks Rob. For any other effect kind,
+`BodyPolicyRefused` is an ordinary permanent effect failure and follows the
+existing incident and owner-question rules.
 
 ## Node phases, slice one
 
@@ -350,6 +375,8 @@ A node that spans several repos is admitted at once, because its plan must split
 
 The controller supplies the planner with these inputs, alongside the brief,
 goals and forecast settings:
+
+- `maker_budget`: worker code supplies the maker's actual hard tool-turn and input-token allowances and the finalization reserve within them. The planner declares exploration separately and estimates all required work against the usable allowance, including proof, metadata and final verification. A final leaf that exceeds it is refused. An initial execution-budget split uses the existing Plan: split path and preserves every obligation. It is not a retry after maker failure.
 
 - `must_split`: true after a maker ran out of room or a fresh reviewer ran out of room, otherwise false. A leaf
   reply is rejected when it is true.

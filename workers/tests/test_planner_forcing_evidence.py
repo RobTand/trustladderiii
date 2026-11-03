@@ -187,7 +187,7 @@ def test_helper_preflight_requires_installed_target_observer_capability():
     from tl3_workers.evidence import preflight
     capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
                   'artifacts': ['cas_receipt', 'terminal_verdict'], 'methods': [], 'protected_files': []}
-    reply = {'kind': 'leaf', 'files': ['tests/test_helpers.py'], 'evidence_contract': [],
+    reply = {'kind': 'leaf', 'estimated_exploration_turns': 0, 'files': ['tests/test_helpers.py'], 'evidence_contract': [],
              'checks': [{'helper_evidence': {'target': 'tests/test_helpers.py::_execute'}}]}
     original = copy.deepcopy(reply)
     preflight({'tool_capabilities': [capability]}, reply, planning=True)
@@ -307,7 +307,7 @@ def test_helper_setup_requires_its_installed_capability():
     capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
                   'artifacts': ['cas_receipt', 'terminal_verdict'],
                   'methods': ['helper_target_observer'], 'protected_files': []}
-    reply = {'kind': 'leaf', 'files': ['tests/test_helpers.py'], 'evidence_contract': [],
+    reply = {'kind': 'leaf', 'estimated_exploration_turns': 0, 'files': ['tests/test_helpers.py'], 'evidence_contract': [],
              'checks': [{'helper_evidence': {'target': 'tests/test_helpers.py::_execute', 'failure_cases': [
                  {'args': [{'$setup': '_failed_queue', '$call': 'execute'}], 'kwargs': {}}]}}]}
     original = copy.deepcopy(reply)

@@ -6,13 +6,16 @@ import json
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator, ValidationError
 
+from tl3_workers.contracts import validate
 from planner_fixtures import (
     CANT_MEET,
     LEAF,
     SPLIT,
     assert_rule_report,
     cache_tokenizer,  # noqa: F401
+    planner_model,
     planner_request,  # noqa: F401
     run_reply,
     tool_capable_fake,  # noqa: F401
@@ -47,7 +50,9 @@ def test_planner_schema_follower_succeeds_without_code_only_fields(
     actual = result.events[-1]['reply']
     assert actual['forecast']['fit_tokens'] == planner_request['inputs']['forecast']['fit_tokens']
     assert {key: value for key, value in actual.items()
-            if key not in {'forecast', 'violations'}} == proposal
+            if key not in {'forecast', 'execution', 'violations'}} == proposal
+    assert actual['execution']['allowed_tool_turns'] == 64
+    assert actual['execution']['usable_tool_turns'] == 56
     assert bool(actual['violations']) == (proposal['kind'] == 'split')
 
 
@@ -116,3 +121,42 @@ def test_prompt_states_forced_reproduction_for_deflakes():
     assert "passes on the change both with and without the forcing" in prompt
     assert "Repeating a test until it fails does not count" in prompt
     assert "A change to tests alone needs a forced reproduction (Q55, #393)" in prompt
+
+
+def test_missing_exploration_estimate_gets_one_tool_free_format_repair(planner_request, monkeypatch):
+    from tl3_workers import runtime
+
+    monkeypatch.chdir(planner_request['worktree'])
+    missing = copy.deepcopy(LEAF)
+    del missing['estimated_exploration_turns']
+    model = planner_model(monkeypatch, missing, LEAF)
+    events = []
+    runtime.run(planner_request, events.append)
+    reply = events[-1]['reply']
+
+    assert [offered for _, offered in model.calls] == [True, False]
+    correction = model.calls[1][0][-1].text
+    assert 'estimated_exploration_turns' in correction
+    assert 'required' in correction
+    prompt = model.calls[0][0][0].text.split('It must match this schema:\n', 1)[1]
+    sent_schema, _ = json.JSONDecoder().raw_decode(prompt)
+    with pytest.raises(ValidationError, match='estimated_exploration_turns'):
+        Draft202012Validator(sent_schema).validate(missing)
+    assert reply['kind'] == 'leaf' and reply['violations'] == []
+    assert reply['execution']['exploration_declared'] is True
+    assert len([event for event in events if event['event'] == 'reply']) == 1
+
+
+@pytest.mark.parametrize('where', ['leaf', 'split', 'piece'])
+def test_exploration_estimate_is_required_at_the_worker_format_boundary(where):
+    from tl3_workers import runtime
+    from tl3_workers.roles import planner
+
+    proposal = copy.deepcopy(LEAF if where == 'leaf' else SPLIT)
+    target = proposal['pieces'][0] if where == 'piece' else proposal
+    del target['estimated_exploration_turns']
+    # A worker from the previous release may still finish after a deployment (#372).
+    validate('planner-reply', proposal)
+    with pytest.raises(ValidationError, match='estimated_exploration_turns') as error:
+        runtime._checked(planner.ROLE, {}, proposal)
+    assert error.value.validator == 'required'

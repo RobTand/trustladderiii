@@ -720,20 +720,25 @@ fn publication_goals(delivery: &Delivery) -> impl Iterator<Item = &Value> {
         .filter(|goal| goal["stage"] == "publishing")
 }
 
+pub(crate) fn required_publication_lines(delivery: &Delivery) -> Vec<&str> {
+    publication_goals(delivery)
+        .flat_map(|goal| {
+            goal["publication"]["body_lines"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+        })
+        .collect()
+}
+
 pub(crate) fn publication_lines(delivery: &Delivery, body: &str) -> String {
     let mut body = body.to_owned();
-    for goal in publication_goals(delivery) {
-        for line in goal["publication"]["body_lines"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-        {
-            if !body.lines().any(|existing| existing == line) {
-                body.push('\n');
-                body.push_str(line);
-                body.push('\n');
-            }
+    for line in required_publication_lines(delivery) {
+        if !body.lines().any(|existing| existing == line) {
+            body.push('\n');
+            body.push_str(line);
+            body.push('\n');
         }
     }
     body

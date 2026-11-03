@@ -24,6 +24,7 @@ GENERATED_FILE_TOKENS = 1024
 HARD_CAP_BYTES = 16 * 1_048_576
 # Notes in the brief name at most this many files each.
 NOTE_PATHS = 10
+MAX_EXECUTION_PIECES = 8
 TOKENIZER_URL = "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken"
 TOKENIZER_SHA256 = "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d"
 
@@ -182,6 +183,30 @@ def forecast_fit(brief, file_tokens, config, encoding=None, problems=()):
         "tokens": tokens, "fit_tokens": config["fit_tokens"],
         "context_tokens": config["context_tokens"], "fits": tokens < config["fit_tokens"],
     }
+
+
+def execution_forecast(files, checks, *, declared=0, exploration=None, generator=False):
+    """Conservative planning estimate, separate from token fit and actual usage.
+
+    A file allows five edits, two implementation reads, a search and readback.
+    PB #2717 used 35 edits, 20 reads and seven searches across seven files
+    before exhausting its 64 turns; five total operations/file missed that shape.
+    Checks need red, head and final runs plus evidence inspection. The model may
+    account for more work, but cannot undercut this structural estimate.
+    """
+    from tl3_workers.roles.maker import ROLE
+
+    budget = ROLE.exploration_budget
+    reserve = min(budget.finalization_turns, budget.tool_turns)
+    components = {"exploration_operations": exploration or 0,
+                  "file_operations": 9 * len(set(files)), "check_operations": 4 * checks,
+                  "scope_operations": 2, "generation_operations": int(generator)}
+    estimated = max(sum(components.values()), declared)
+    usable = max(0, budget.tool_turns - reserve)
+    return {"allowed_tool_turns": budget.tool_turns, "finalization_turns": reserve,
+            "usable_tool_turns": usable, "estimated_tool_turns": estimated,
+            "components": components, "exploration_declared": exploration is not None,
+            "fits": exploration is not None and estimated <= usable}
 
 
 class Forecaster:

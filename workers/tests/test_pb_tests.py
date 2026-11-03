@@ -860,6 +860,52 @@ def test_request_132_git_index_generation_lands_before_independent_check(generat
         assert "--anywhere" in args and "--detach" in args
 
 
+@pytest.mark.parametrize('damage', ['none', 'contract', 'source', 'receipt_tree'])
+def test_exhausted_maker_recovers_completed_generator_receipt_without_resubmission(
+        generator_repo, generator_backend, tmp_path, damage):
+    from langchain_core.messages import AIMessage, ToolMessage
+    from tl3_workers.exploration import ExplorationMiddleware
+    from tl3_workers.roles import maker
+
+    original, generate = configured_generator(generator_repo, tmp_path)
+    with original:
+        receipt = generate()
+        assert receipt['status'] == 'completed', receipt
+    state_path = original.generator_state
+    saved = json.loads(state_path.read_text())
+    if damage == 'contract':
+        saved['contract']['image'] = 'sha256:' + '9' * 64
+    elif damage == 'source':
+        (generator_repo / 'tests/socket_support.py').write_text('def short_socket(): return "changed"\n')
+    elif damage == 'receipt_tree':
+        saved['receipt']['output_tree'] = '0' * 40
+    state_path.write_text(json.dumps(saved))
+
+    restored, _ = configured_generator(generator_repo, tmp_path)
+    assert not getattr(restored, 'generation_receipt', None)
+    # Completed final-tree readback and scope review survive in the visit history.
+    calls = [{'name': 'diff', 'args': {}, 'id': 'scope', 'type': 'tool_call'},
+             *[{'name': 'read', 'args': {'path': path}, 'id': str(i), 'type': 'tool_call'}
+               for i, path in enumerate(restored.generator_files)]]
+    history = [AIMessage(content='', tool_calls=calls),
+               *[ToolMessage(content='Verified final tree', tool_call_id=call['id']) for call in calls]]
+    allowance = ExplorationMiddleware(maker.ROLE.exploration_budget, 'maker')
+    allowance.turns = allowance.budget.tool_turns
+    allowance.exhaustion = 'tool_turns'
+    request = {'worktree': str(generator_repo), 'operation': {'node': 1, 'generation': 0, 'kind': 'make'},
+               'inputs': {'goals': [], 'plan': {'checks': []}}}
+    with restored:
+        reply = maker._budget_reply(request, allowance, history, restored, {'kind': 'done', 'self_check': []})
+    assert len(generator_backend[0]) == 1, 'recovery must never submit generation from the finalization reserve'
+    if damage == 'none':
+        assert reply['kind'] == 'done', reply
+        assert reply['budget_exhaustion']['unfinished_obligations'] == []
+        assert restored.generation_receipt == receipt
+    else:
+        assert reply['kind'] == 'cant_meet', reply
+        assert 'Final configured generation' in reply['budget_exhaustion']['unfinished_obligations']
+
+
 @pytest.mark.parametrize("mutation,fragment", [
     ("Path('tests/test_wait.py').write_text('escaped')", "undeclared"),
     ("Path('tests/BUILD.bazel').unlink()", "deleted"),
@@ -1251,7 +1297,8 @@ test_tool.main()
 
 
 def plan(forcing=FORCING):
-    return {'kind': 'leaf', 'files': ['tests/test_adoption.py'], 'edits_tests': [NODE],
+    return {'kind': 'leaf', 'estimated_exploration_turns': 0,
+            'files': ['tests/test_adoption.py'], 'edits_tests': [NODE],
             'checks': [{'kind': 'demonstrating', 'node_ids': [NODE], 'goal_ids': [0],
                         'forcing': deepcopy(forcing)}], 'no_design_questions': True, 'lands_on_its_own': True}
 
