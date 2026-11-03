@@ -344,3 +344,72 @@ def test_independent_checking_hang_fails_and_never_supplies_assertion_red(fixtur
     assert result.verdict == Verdict.FAIL, result
     assert outcomes[tests[0]] not in (Outcome.ASSERTION, Outcome.PASSED, Outcome.NO_REPORT)
     assert 'timeout' in result.tests[0].message.lower()
+
+
+@pytest.mark.parametrize('access', ['plugin_manager', 'gc'])
+def test_forged_test_start_during_collection_cannot_prove_owned_timeout(fixture, monkeypatch, access):
+    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_ALLOWANCES', '{"tests": 3}')
+    if access == 'plugin_manager':
+        (fixture / 'conftest.py').write_text('''import signal, time
+signal.alarm(8)
+def pytest_configure(config):
+    reporter = next(plugin for plugin in config.pluginmanager.get_plugins()
+                    if type(plugin).__name__ == 'Reporter')
+    reporter.emit(event='test-start', test='test_value.py::test_pass')
+    while True:
+        time.sleep(1)
+''')
+    else:
+        (fixture / 'test_value.py').write_text('''import gc, signal, time
+signal.alarm(8)
+reporter = next(obj for obj in gc.get_objects() if type(obj).__name__ == 'Reporter')
+reporter.emit(event='test-start', test='test_value.py::test_pass')
+while True:
+    time.sleep(1)
+def test_pass():
+    assert True
+''')
+    result = test_tool.run_current(fixture, CONTAINER, ('test_value.py::test_pass',))
+    assert result['status'] == 'infrastructure_error', result
+    assert result['execution']['outcome'] == 'unknown_incomplete', result
+    assert result['execution']['test_started'] is False
+    assert sum(result['totals'].values()) == 0
+
+
+@pytest.mark.parametrize('report_pipe', ['open', 'closed'])
+def test_clean_runner_exit_followed_by_container_wait_stall_is_infrastructure(
+        fixture, monkeypatch, tmp_path, report_pipe):
+    import time
+    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_ALLOWANCES', '{"tests": 3}')
+    (fixture / 'test_value.py').write_text('def test_pass():\n    assert True\n')
+    runner = Path(execution.__file__).with_name('runner.py')
+    # This wrapper is outside the pytest process. Its wait() observes the actual
+    # runner exit before it simulates a hung container attach/wait operation.
+    wrapper = tmp_path / 'container_wait.py'
+    exited = tmp_path / 'runner-exited.json'
+    wrapper.write_text('''import json, os, signal, subprocess, sys, time
+from pathlib import Path
+signal.alarm(8)
+command = [sys.executable, '-I', '-B', sys.argv[1], sys.argv[2], sys.argv[3], *sys.argv[6:]]
+with subprocess.Popen(command, stdout=subprocess.PIPE) as runner:
+    while chunk := os.read(runner.stdout.fileno(), 65536):
+        os.write(1, chunk)
+    code = runner.wait()
+Path(sys.argv[4]).write_text(json.dumps({'runner_exit_code': code}))
+if sys.argv[5] == 'closed':
+    os.close(1)
+while True:
+    time.sleep(1)
+''')
+    monkeypatch.setattr(test_tool, 'container_command', lambda tree, container, tests: [
+        sys.executable, '-I', '-B', str(wrapper), str(runner), json.dumps(tests), str(tree),
+        str(exited), report_pipe,
+    ])
+    started = time.monotonic()
+    result = test_tool.run_current(fixture, CONTAINER, ('test_value.py::test_pass',))
+    assert json.loads(exited.read_text()) == {'runner_exit_code': 0}, 'the real runner must have exited'
+    assert result['status'] == 'infrastructure_error', result
+    assert result['execution']['outcome'] in ('transport_failure', 'unknown_incomplete'), result
+    assert result['execution']['test_started'] is False
+    assert sum(result['totals'].values()) == 0
+    assert time.monotonic() - started < 7, 'transport cleanup must remain bounded'
