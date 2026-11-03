@@ -616,7 +616,7 @@ Path("tests/BUILD.bazel").write_text(output)
                   "commit", "--quiet", "-m", "Base")):
         subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
     (root / "tests/socket_support.py").write_text("def short_socket(): return 'short'\n")
-    (root / "tests/test_short_socket.py").write_text("from tests.socket_support import short_socket\n")
+    (root / "tests/test_short_socket.py").write_text("from tests.socket_support import short_socket\ndef test_short(): assert short_socket() == 'short'\n")
     (root / "tests/test_wait.py").write_text("from tests.socket_support import short_socket\n")
     return root
 
@@ -824,7 +824,7 @@ def test_request_132_maker_returns_only_the_generated_final_head(
     (generator_repo / "tests/test_wait.py").write_text("from socket import socket\n")
     edits = [
         ("tests/socket_support.py", "def short_socket(): return 'short'\n"),
-        ("tests/test_short_socket.py", "from tests.socket_support import short_socket\n"),
+        ("tests/test_short_socket.py", "from tests.socket_support import short_socket\ndef test_short(): assert short_socket() == 'short'\n"),
         ("tests/test_wait.py", "from tests.socket_support import short_socket\n"),
     ]
     turns = [AIMessage(content="", tool_calls=[{"name": "write", "id": str(i),

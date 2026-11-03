@@ -11,6 +11,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tl3_harness import generator  # noqa: E402
+from tl3_harness.test_tool import run as run_tests  # noqa: E402
 from tl3_harness.trees import git  # noqa: E402
 
 
@@ -19,9 +20,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix="tl3-generator-qualification-") as directory:
         root = Path(directory)
         (root / "tests").mkdir()
-        (root / "tests/test_old.py").write_text("from socket_support import short_socket\n")
+        (root / "tests/__init__.py").write_text("")
+        (root / "tests/test_old.py").write_text("from tests.socket_support import short_socket\ndef test_wait(): assert short_socket() == 'short'\n")
         (root / "tests/socket_support.py").write_text("def short_socket(): return 'short'\n")
-        (root / "tests/test_new.py").write_text("from socket_support import short_socket\n")
+        (root / "tests/test_new.py").write_text("from tests.socket_support import short_socket\ndef test_short(): assert short_socket() == 'short'\n")
         (root / "tests/BUILD.bazel").write_text("stale\n")
         (root / "generate.py").write_text('''#!/usr/bin/env python3
 from pathlib import Path
@@ -63,6 +65,8 @@ if "--fail" in sys.argv:
         failed = generator.run(root, image, **{**contract, "command": "./generate.py --fail"})
         assert failed["status"] == "failed" and failed["exit_code"] == 7, failed
         assert generator.manifest(root) == after
+        tests = run_tests(root, image, ("tests/test_new.py::test_short", "tests/test_old.py::test_wait"))
+        assert tests["status"] == "completed" and tests["totals"]["passed"] == 2, tests
         # An independent Git tree records exactly the imported bytes.
         git(root, "init", "--quiet", "--template=")
         git(root, "add", "--force", "--all")
@@ -70,7 +74,8 @@ if "--fail" in sys.argv:
         print(json.dumps({"status": "completed", "image": image.image, "output_tree": tree,
                           "input_manifest": generator.digest(before), "output_manifest": generator.digest(after),
                           "artifact_sha256": generator.digest(artifact), "independent_check": checked["status"],
-                          "idempotent": True, "undeclared_write": escaped["status"],
+                          "idempotent": True, "tests_passed": tests["totals"]["passed"],
+                          "undeclared_write": escaped["status"],
                           "failure_exit_code": failed["exit_code"]}))
 
 
