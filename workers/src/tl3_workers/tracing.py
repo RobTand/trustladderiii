@@ -18,24 +18,6 @@ import tomllib
 active = ContextVar('tl3_trace_capture', default=None)
 
 
-class WorkerStageError(ValueError):
-    """A fixed stage name, with optional schema diagnostics and no provider text."""
-
-    STAGES = frozenset({"grade judge failure", "postmortem judge failure",
-                        "postmortem repair failure", "postmortem JSON parse failure",
-                        "postmortem recommendation contract failure",
-                        "postmortem cached reply failure", "postmortem cached judged failure",
-                        "postmortem assessment cache failure",
-                        "postmortem assessment lookup failure",
-                        "postmortem assessment write failure",
-                        "postmortem assessment outcome unknown"})
-
-    def __init__(self, stage, error=None):
-        self.stage = stage if stage in self.STAGES else "worker run failed"
-        self.validation = error
-        super().__init__(self.stage)
-
-
 PAYLOAD_BYTES = 65536
 TRACE_BYTES = 1024 * 1024
 STRING_CHARS = 8192
@@ -1234,6 +1216,24 @@ def safe_span(span, redactor=None, role="unknown", model="unknown", payload_limi
                  else {'truncated': True, 'note': 'trace content budget exhausted'})
         _set_otel_proto_anyvalue(entry.proto.attributes.add(key=content.key).value, value)
     return entry.proto
+
+
+class WorkerStageError(ValueError):
+    """A fixed stage name, with optional schema diagnostics and no provider text."""
+
+    STAGES = frozenset({"grade judge failure", "postmortem judge failure",
+                        "postmortem repair failure", "postmortem JSON parse failure",
+                        "postmortem recommendation contract failure",
+                        "postmortem cached reply failure", "postmortem cached judged failure",
+                        "postmortem assessment cache failure",
+                        "postmortem assessment lookup failure",
+                        "postmortem assessment write failure",
+                        "postmortem assessment outcome unknown"})
+
+    def __init__(self, stage, error=None):
+        self.stage = stage if stage in self.STAGES else "worker run failed"
+        self.validation = error
+        super().__init__(self.stage)
 
 
 def failure_tags(error):
