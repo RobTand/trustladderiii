@@ -308,8 +308,6 @@ pub struct Controller {
     /// The revision tl3d started at: failed postmortem runs before it never
     /// pause the runner (#486).
     postmortem_since: i64,
-    /// The runner paused after failed runs and said so once in the journal.
-    postmortem_paused: bool,
     /// Starting credit reserve by priority, P0 first (#416). Empty keeps the kernel's.
     priority_reserve: BTreeMap<u8, u8>,
     request_protection: Vec<(Repository, Vec<String>)>,
@@ -381,7 +379,6 @@ impl Controller {
             allowances: tl3_config::Allowances::default(),
             postmortems: None,
             postmortem_since: 0,
-            postmortem_paused: false,
             priority_reserve: BTreeMap::new(),
             request_protection: Vec::new(),
             delegated_attributions: Vec::new(),
@@ -2459,6 +2456,9 @@ impl Controller {
                 })),
             ));
         } else {
+            if incident.open && incident.signature.class == postmortems::PAUSED {
+                self.reset_postmortem_pause(snapshot, commit);
+            }
             incident.open = false;
             if !self.retry_notice(snapshot, &incident, commit)? {
                 self.resume_incident_look(snapshot, &incident, commit)?;
