@@ -74,3 +74,7 @@ If Mergify posts no check or comment on the first PR, open
 choose `RobTand`, choose **Only select repositories**, select `trustladderiii`,
 and click **Install** or **Save** for an existing installation. The coordinator
 must land `.mergify.yml` on `main` before the queue can use this configuration.
+
+Helper diagnostics evidence uses planning capability method `helper_target_observer`.
+It stages only new observer tests over the real base helper and records the old
+and new source and tree identities for review. See docs/state-table.md, Q27 #549.

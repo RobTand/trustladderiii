@@ -1108,6 +1108,39 @@ def test_evidence_contract_rechecks_current_capabilities(planner_request, monkey
     assert reply['evidence_errors'] == []
 
 
+@pytest.mark.parametrize("separate", [False, True])
+def test_helper_target_observer_plan_is_supported(planner_request, digests_plan, separate):
+    path = Path(planner_request['worktree']) / DIGESTS
+    path.write_text(path.read_text() + '\ndef _execute(result):\n    assert result.returncode == 0\n    return result\n')
+    planner_request['inputs']['ingest']['goals'] = [
+        {'description': 'Improve failed helper diagnostics while the inner pytest still fails.', 'verification': 'test'}]
+    observer = 'tests/test_observer.py' if separate else DIGESTS
+    digests_plan.update(files=list(dict.fromkeys([DIGESTS, observer])), checks=[{
+        'kind': 'demonstrating', 'node_ids': [f'{observer}::test_new_diagnostic'], 'goal_ids': [0],
+        'helper_evidence': {'target': f'{DIGESTS}::_execute', 'failure_cases': [
+            {'args': [{'$attributes': {'returncode': 1, 'stdout': 'broken transfer'}}], 'kwargs': {}}]}}])
+    validate('planner-reply', digests_plan)
+    assert planned(planner_request, copy.deepcopy(digests_plan)) == []
+    digests_plan['checks'][0]['helper_evidence']['target'] = f'{DIGESTS}::missing'
+    digests_plan['files'].append('README.md')
+    assert any('helper evidence' in item for item in planned(planner_request, copy.deepcopy(digests_plan)))
+
+
+def test_helper_preflight_requires_installed_target_observer_capability():
+    from tl3_workers.evidence import preflight
+    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
+                  'artifacts': ['cas_receipt', 'terminal_verdict'], 'methods': [], 'protected_files': []}
+    reply = {'kind': 'leaf', 'files': ['tests/test_helpers.py'], 'evidence_contract': [],
+             'checks': [{'helper_evidence': {'target': 'tests/test_helpers.py::_execute'}}]}
+    original = copy.deepcopy(reply)
+    preflight({'tool_capabilities': [capability]}, reply, planning=True)
+    assert reply['kind'] == 'cant_meet'
+    assert 'methods=helper_target_observer' in reply['report']
+    capability['methods'] = ['helper_target_observer']
+    preflight({'tool_capabilities': [capability]}, original, planning=True)
+    assert original['kind'] == 'leaf' and original['evidence_errors'] == []
+
+
 @pytest.fixture
 def request_149_plan(planner_request):
     root = Path(planner_request['worktree'])

@@ -27,6 +27,8 @@ pub struct Check {
     /// passed through untouched: the trusted harness bounds it and applies it in the container.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forcing: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub helper_evidence: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -64,6 +66,16 @@ pub(crate) fn validate_plan_size(plan: &[Check]) -> Result<()> {
         if let Some(forcing) = &check.forcing {
             // A forced check's result echoes its forcing, and each test gains head_forced (#393).
             header["forcing"] = forcing.clone();
+        }
+        if let Some(evidence) = &check.helper_evidence {
+            let observers: std::collections::BTreeMap<_, _> =
+                check.tests.iter().map(|t| (t, "0".repeat(64))).collect();
+            header["helper_evidence"] = serde_json::json!({"target": evidence["target"],
+                "base_target_sha256":"0".repeat(64), "head_target_sha256":"0".repeat(64),
+                "base_tree_sha256":"0".repeat(64), "head_tree_sha256":"0".repeat(64), "observers":observers,
+                "failure_cases":evidence["failure_cases"], "failure_driver_sha256":"0".repeat(64),
+                "failure_preservation":evidence["failure_cases"].as_array().ok_or(Error::Invalid("helper evidence requires failure cases"))?.iter().map(|_| serde_json::json!({
+                    "base":"infrastructure-failure", "head":"infrastructure-failure"})).collect::<Vec<_>>()});
         }
         result_bytes += ascii_json_bytes(&header)? + 1;
         for test in &check.tests {

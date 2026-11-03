@@ -734,3 +734,25 @@ missing test IDs, unavailable plans or incomplete evidence do not justify an out
 requeue. The controller journals the decision and test IDs with the queue fact,
 so restart and redelivery retain the retry bound. The kernel and state table
 are unchanged.
+
+## Q27: helper target and observer evidence (#549)
+
+"Approved" (Rob, 2026-11-03). For deterministic fixes to helpers inside test
+files, a demonstrating check may identify an existing helper target and new
+observer tests. Trusted staging keeps the real old helper on base and adds only
+the new observers; head uses the new helper with those same assertions. Every
+observer must fail by assertion on base and pass on head. The plan also declares
+bounded known-bad arguments as failure-preservation evidence. A trusted driver
+invokes the real helper through pytest's module importer, preserving the observer's
+module name and package context, independently of the observers. It requires
+AssertionError on both versions. The receipt retains these cases, the driver
+hash and both verdicts. Removing a helper assertion cannot pass by making a
+previously failing call succeed. Observer names already bound on base, including
+assignment aliases, are rejected. The harness also probes untouched base
+collection to reject dynamically collected names. Trusted receipts retain
+both helper source hashes, observer hashes and staged tree hashes for review.
+The bounded Python mode accepts an undecorated top-level helper with unchanged
+signature and dependencies. It rejects ambiguous targets and undeclared test
+edits. The existing evidence capability preflight advertises and checks method
+`helper_target_observer`. Regression and behavior-preserving definitions remain
+frozen; Q55 forcings keep their existing semantics. No kernel transition changes.

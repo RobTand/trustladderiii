@@ -40,6 +40,12 @@ def preflight(inputs, reply, *, planning=False):
         return
     if 'evidence_contract' not in reply:
         raise ValueError('derive evidence_contract from every mandatory execution requirement')
+    if planning and any('helper_evidence' in check for check in reply.get('checks', [])):
+        reply['evidence_contract'].append({
+            'requirement': 'Observe the real old and new test helper with identical new regression assertions.',
+            'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
+            'artifacts': ['cas_receipt', 'terminal_verdict'], 'methods': ['helper_target_observer'],
+            'protected_files': []})
     contract = []
     for requirements in (inputs.get('ingest', {}).get('evidence_contract', []),
                          inputs.get('audit_evidence_contract', []), reply['evidence_contract']):

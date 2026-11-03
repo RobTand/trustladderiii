@@ -129,9 +129,9 @@ those marked for review. Return exactly one of these proposals:
   so the harness refuses an edit to a test they name. If the change edits only
   tests, such as a deflake that patches the flaky test, an ordinary
   demonstrating check can't show it, because the base run applies the leaf's
-  test edits and runs the same test. A change to tests alone needs a forced
-  reproduction (Q55, #393) on its demonstrating check; if no forcing can be
-  written, return can't meet. State no_design_questions and lands_on_its_own
+  test edits and runs the same test. A change to tests alone needs a forced reproduction (Q55, #393)
+  when it edits a named flaky test. A deterministic helper fix can instead use
+  helper target/observer evidence. If neither mode applies, return can't meet. State no_design_questions and lands_on_its_own
   only when true. If either is false, return can't meet with the unresolved
   question. In slice one, avoid CI, Mergify and test configuration, including
   conftest.py, pytest settings, tox, nox and test scripts called by CI. Both
@@ -252,7 +252,7 @@ and require the run artifacts; do not label it forced_reproduction.environment
 or place it in forcing.environment. Reserved names and prefixes come from
 forcing_capabilities and cannot be overridden. These capabilities describe what
 a future run can prove, never checks already completed.
-Its methods are head, base_head, red_green, forced_reproduction.environment and
+Its methods are head, base_head, red_green, helper_target_observer, forced_reproduction.environment and
 forced_reproduction.patches. Q55 environment and Python patches do not implement
 a pinned CPU artificial contention wrapper. BuildBuddy Remote Bazel evidence
 requires executor buildbuddy_remote_bazel, artifact invocation_url and, when
@@ -264,6 +264,33 @@ Code records evidence_errors. Do not supply that field yourself.
 Preserve ingest.evidence_contract and audit_evidence_contract. Add requirements
 found during planning. Code retains their union and converts any unsupported
 proposal into cant_meet with the exact missing capability before a maker runs.
+
+For a fix to a helper inside configured test files, require method
+`helper_target_observer` in evidence_contract. The target is the real existing
+helper and the observers are new tests of its behavior, including diagnostic
+text from a deliberately failing inner test. If that capability is absent,
+report the missing method through the evidence preflight, without substituting
+review or a flaky-test forcing.
+
+For method `helper_target_observer`, use an unforced demonstrating check with
+`helper_evidence: {"target": "tests/test_helpers.py::_execute", "failure_cases":
+[{"args": [{"$attributes": {"returncode": 1, "stdout": "broken transfer"}}], "kwargs": {}}]}`. Its node_ids
+are the new observer tests. Declare the target and observer files. One such
+check per plan may name multiple observers, in the same file or a separate
+configured test file. The target must be an existing undecorated top-level
+Python function. Preserve its signature, imports and every other existing test
+definition. Add only new undecorated top-level observers. Put any new observer
+imports inside the observer. The harness appends those observers to the real
+base modules without copying the target fix. Every observer must fail by
+assertion on base and pass on head. Declare one to eight known-bad failure_cases
+with args and kwargs, at most 4096 JSON bytes total. Literal JSON values pass
+unchanged; {"$attributes": {...}} creates a SimpleNamespace argument. The trusted
+harness calls the real target and requires AssertionError on both versions.
+These cases preserve failures independently of observer assertions. Choose cases
+that exercise the helper's existing failure contract. Observer names must have
+no existing base binding, including assignment aliases. Helper evidence is not
+a Q55 forcing.
+
 
 A repository with a configured generator also supplies run_generator with executor
 prismabuild_generator. Its runner_features are git_index, scoped_outputs and

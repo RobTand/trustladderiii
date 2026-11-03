@@ -110,6 +110,45 @@
         "patches"
       ],
       "additionalProperties": false
+    },
+    "helper_evidence": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "failure_cases": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "properties": {
+              "args": {
+                "type": "array",
+                "maxItems": 16,
+                "items": {}
+              },
+              "kwargs": {
+                "type": "object",
+                "maxProperties": 16
+              }
+            },
+            "required": [
+              "args",
+              "kwargs"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "target",
+        "failure_cases"
+      ],
+      "additionalProperties": false
     }
   },
   "oneOf": [
@@ -161,6 +200,9 @@
               },
               "forcing": {
                 "$ref": "#/$defs/forcing"
+              },
+              "helper_evidence": {
+                "$ref": "#/$defs/helper_evidence"
               }
             },
             "required": [
