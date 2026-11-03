@@ -111,26 +111,41 @@ fn setup_at(prior: bool, intended: bool) -> (support::Database, Fixture, Control
         .unwrap()
         .to_owned();
     if prior {
-        {
+        let draft = {
             let mut state = api.state.lock().unwrap();
             state.checks = fixture("failed", "checks");
             // This setup needs a diagnosed failure that warrants a maker fix.
             // A queue summary alone is indeterminate under #606.
-            let summary = state.queue_check()["output"]["summary"]
-                .as_str()
-                .unwrap()
-                .replace("draft #", "draft ");
-            state.queue_check_mut()["output"]["summary"] = json!(summary);
-            let head = state.pull["head"]["sha"].clone();
-            state.checks.as_array_mut().unwrap().push(json!({
-                "id":900,"name":"Sandbox tests","head_sha":head,
-                "status":"completed","conclusion":"failure",
-                "output":{"summary":"FAILED tests/test_patch.py::test_assertion - assertion mismatch"}
-            }));
             state.pull["mergeable"] = json!(true);
             state.pull["mergeable_state"] = json!("clean");
             state.dequeued = true;
-        }
+            let mut draft = state.pull.clone();
+            draft["number"] = json!(63031);
+            draft["user"]["login"] = json!("mergify[bot]");
+            draft["head"]["ref"] = json!("mergify/merge-queue/main/pr-100");
+            draft["head"]["sha"] = json!("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+            draft
+        };
+        api._runtime.block_on(async {
+            Mock::given(wiremock::matchers::method("GET"))
+                .and(wiremock::matchers::path("/repos/owner/sandbox/pulls/63031"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(draft.clone()))
+                .with_priority(1)
+                .mount(&api.server)
+                .await;
+            Mock::given(wiremock::matchers::method("GET"))
+                .and(wiremock::matchers::path(format!(
+                    "/repos/owner/sandbox/commits/{}/check-runs", draft["head"]["sha"].as_str().unwrap()
+                )))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({"check_runs":[{
+                    "id":900,"name":"Sandbox tests","head_sha":draft["head"]["sha"],
+                    "status":"completed","conclusion":"failure",
+                    "output":{"summary":"FAILED tests/test_patch.py::test_assertion - assertion mismatch"}
+                }]})))
+                .with_priority(1)
+                .mount(&api.server)
+                .await;
+        });
         // Read a real Mergify failure through the translator, then run the fix round.
         let mut body = webhook_fixture();
         body["action"] = json!("completed");
@@ -150,7 +165,8 @@ fn setup_at(prior: bool, intended: bool) -> (support::Database, Fixture, Control
         let facts = queue_facts(&mut controller);
         assert_eq!(
             facts.last().unwrap()["evidence"]["CiFailed"]["details"]["complete"],
-            true
+            true,
+            "{facts:?}"
         );
         assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Making);
         assert!(
