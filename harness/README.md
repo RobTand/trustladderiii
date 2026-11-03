@@ -406,6 +406,9 @@ From a clean commit, submit the verifier with the prepared image:
 python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
     --cwd "$CHECKOUT" --anywhere --cpus 1 --demand mem_gb=2 --priority -10 \
     --container-image "$IMAGE" --progress-phase tests=120 \
+    --env TL3_SCRATCH_ROOT=/home/rob/tmp --env TL3_SCRATCH_MAX_BYTES=536870912 \
+    --env PRISMABUILD_LOCAL_SCRATCH_PAIRS=TL3_SCRATCH_ROOT:TL3_SCRATCH_MAX_BYTES \
+    --env 'PRISMABUILD_EPHEMERAL_SCRATCH_DECLARATIONS={"entries":[{"lifetime":"ephemeral","name":"pytest","root_env":"TL3_SCRATCH_ROOT"}],"schema":"prismabuild.scratch_lifetime_selection.v1"}' \
     --env PYTHONPATH=harness/src --env OMP_NUM_THREADS=1 \
     --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 --detach -- \
     /usr/bin/python3.14 harness/tools/verify.py "$IMAGE"
@@ -488,6 +491,9 @@ Functions explicitly marked `__test__ = False` are excluded.
 python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
     --cwd "$INPUT" --anywhere --cpus 1 --demand mem_gb=4 --priority -9 \
     --container-image "$IMAGE_ID" --progress-phase tests=300 \
+    --env TL3_SCRATCH_ROOT=/home/rob/tmp --env TL3_SCRATCH_MAX_BYTES=536870912 \
+    --env PRISMABUILD_LOCAL_SCRATCH_PAIRS=TL3_SCRATCH_ROOT:TL3_SCRATCH_MAX_BYTES \
+    --env 'PRISMABUILD_EPHEMERAL_SCRATCH_DECLARATIONS={"entries":[{"lifetime":"ephemeral","name":"pytest","root_env":"TL3_SCRATCH_ROOT"}],"schema":"prismabuild.scratch_lifetime_selection.v1"}' \
     --env PYTHONPATH=trusted --env OMP_NUM_THREADS=1 \
     --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 --detach -- \
     /usr/bin/python3.14 inventory.py --per-file served.bundle "$IMAGE_ID" \
