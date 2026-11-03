@@ -86,15 +86,17 @@ def test_seven_file_public_output_adoption_requires_a_split_before_maker_work(pl
 
 
 def test_execution_fit_requires_declared_exploration_and_refuses_the_three_file_search_shape(planner_request, monkeypatch):
+    from tl3_workers.forecast import execution_forecast
     from tl3_workers.roles import planner
 
     monkeypatch.chdir(planner_request["worktree"])
     proposal = copy.deepcopy(LEAF)
     proposal["files"].append("implementation.py")
     proposal.pop("estimated_exploration_turns", None)
-    planner.check_reply(planner_request["inputs"], proposal)
-    assert any("exploration" in item.lower() for item in proposal["violations"]), proposal
-    assert proposal["execution"]["fits"] is False, "structure alone cannot establish execution fit"
+    with pytest.raises(ValidationError, match='estimated_exploration_turns'):
+        validate('planner-reply', proposal)
+    assert execution_forecast(proposal['files'], len(proposal['checks']))['fits'] is False, \
+        'structure alone cannot establish execution fit'
     proposal = copy.deepcopy(LEAF)
     proposal["files"].append("implementation.py")
     # PB #2718 spent 21 searches, 21 reads and one glob before implementation.
@@ -168,6 +170,35 @@ def planner_model(monkeypatch, *replies):
     model = PlannerModel(responses=[AIMessage(content=json.dumps(reply)) for reply in replies], calls=[])
     monkeypatch.setattr(runtime, 'create_model', lambda _: model)
     return model
+
+
+def test_missing_exploration_estimate_gets_one_tool_free_format_repair(planner_request, monkeypatch):
+    from tl3_workers import runtime
+
+    missing = copy.deepcopy(LEAF)
+    del missing['estimated_exploration_turns']
+    model = planner_model(monkeypatch, missing, LEAF)
+    events = []
+    runtime.run(planner_request, events.append)
+    reply = events[-1]['reply']
+
+    assert [offered for _, offered in model.calls] == [True, False]
+    correction = model.calls[1][0][-1].text
+    assert 'estimated_exploration_turns' in correction
+    assert 'required' in correction
+    assert reply['kind'] == 'leaf' and reply['violations'] == []
+    assert reply['execution']['exploration_declared'] is True
+    assert len([event for event in events if event['event'] == 'reply']) == 1
+
+
+@pytest.mark.parametrize('where', ['leaf', 'split', 'piece'])
+def test_exploration_estimate_is_schema_required(where):
+    proposal = copy.deepcopy(LEAF if where == 'leaf' else SPLIT)
+    target = proposal['pieces'][0] if where == 'piece' else proposal
+    del target['estimated_exploration_turns']
+    with pytest.raises(ValidationError, match='estimated_exploration_turns') as error:
+        validate('planner-reply', proposal)
+    assert error.value.validator == 'required'
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -1389,6 +1420,33 @@ def request156(planner_request, monkeypatch):
         'checks': [{'kind': 'demonstrating', 'node_ids': [LATE], 'goal_ids': [0, 1]}],
         'no_design_questions': True, 'lands_on_its_own': True, 'evidence_contract': [],
     }
+
+
+@pytest.mark.parametrize('fix_consistency', [True, False])
+def test_missing_exploration_and_consistency_share_one_format_repair(
+        planner_request, request156, monkeypatch, fix_consistency):
+    from tl3_workers import runtime
+    from tl3_workers.turns import InvalidReply
+
+    missing = copy.deepcopy(request156)
+    del missing['estimated_exploration_turns']
+    corrected = copy.deepcopy(request156)
+    if fix_consistency:
+        corrected['checks'][0]['node_ids'].append(CONTROL)
+    model = planner_model(monkeypatch, missing, corrected, LEAF)
+    events = []
+    if fix_consistency:
+        runtime.run(planner_request, events.append)
+        assert events[-1]['reply']['kind'] == 'leaf'
+        assert events[-1]['reply']['violations'] == []
+    else:
+        with pytest.raises(InvalidReply) as error:
+            runtime.run(planner_request, events.append)
+        assert CONTROL in str(error.value.errors[1])
+        assert not any(event['event'] == 'reply' for event in events)
+    assert [offered for _, offered in model.calls] == [True, False]
+    assert 'required' in model.calls[1][0][-1].text
+    assert 'estimated_exploration_turns' in model.calls[1][0][-1].text
 
 
 @pytest.mark.parametrize('correction', ['check', 'new_check', 'unchanged', 'cant_meet'])

@@ -197,21 +197,39 @@ def test_maker_budget_notices_preserve_the_proxy_system_prefix(maker_request, tm
     maker_request["inputs"]["context_size"] = 150_000
     maker_request["session_file"] = str(tmp_path / "session.json")
     sent = []
+    offered = []
 
     def respond(request):
-        sent.append(json.loads(request.content)["messages"])
+        body = json.loads(request.content)
+        sent.append(body["messages"])
+        offered.append(bool(body.get('tools')))
         if len(sent) <= 2:
             return response_frames("", tool_calls=[{
                 "index": 0, "id": f"read-{len(sent)}", "type": "function",
                 "function": {"name": "read", "arguments": json.dumps({"path": "greeting.py"})}}])
+        if len(sent) == 3:
+            return response_frames('Malformed final reply requiring one format repair.')
         return response_frames(json.dumps({"kind": "cant_meet", "report": "More proof is needed."}))
 
     proxy = runtime.ProxyChatOpenAI
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
         monkeypatch.setattr(runtime, "ProxyChatOpenAI", lambda **kwargs: proxy(http_client=client, **kwargs))
         runtime.run(maker_request, lambda _: None)
+        assert len(sent) == 4
+        for path in (Path(maker_request['session_file']), Path(maker_request['session_file']).with_suffix('.visit')):
+            saved = json.loads(path.read_text())
+            history = saved['messages'] if isinstance(saved, dict) else saved
+            notices = [m['data']['content'] for m in history
+                       if m['data']['content'].startswith('TL3 execution budget: ')]
+            assert notices == [messages[-1]['content'] for messages in sent], \
+                'the repair notice must survive in both session and visit history'
+        maker_request.update(resume_session=True, last_accepted_generation=0)
+        maker_request['operation']['generation'] = 1
+        maker_request['inputs']['round'] = 1
+        runtime.run(maker_request, lambda _: None)
 
-    assert len(sent) == 3
+    assert len(sent) == 5
+    assert offered == [True, True, True, False, True]
     system = sent[0][0]["content"].encode("utf-8")
     for index, messages in enumerate(sent):
         assert messages[0]["role"] == "system"
@@ -219,13 +237,14 @@ def test_maker_budget_notices_preserve_the_proxy_system_prefix(maker_request, tm
         assert not any(m["role"] == "system" for m in messages[1:]), "the proxy must never hoist changing notices"
         notice = messages[-1]
         assert notice["role"] == "user" and notice["content"].startswith("TL3 execution budget: ")
-        assert json.loads(notice["content"].removeprefix("TL3 execution budget: "))["tool_turns"]["remaining"] == 64 - index
-        if index:
+        assert json.loads(notice["content"].removeprefix("TL3 execution budget: "))["tool_turns"]["remaining"] == [64, 63, 62, 61, 64][index]
+        if index in (1, 2):
             assert messages[-2]["role"] == "tool", "the user notice follows the completed tool result"
+        if index:
             assert messages[:len(sent[index - 1])] == sent[index - 1], "previous wire content stays append-only"
     saved = json.loads(Path(maker_request["session_file"]).read_text())
     notices = [m for m in saved if m["data"]["content"].startswith("TL3 execution budget: ")]
-    assert [m["type"] for m in notices] == ["human"] * 3
+    assert [m["type"] for m in notices] == ["human"] * 5
     assert [m["data"]["content"] for m in notices] == [messages[-1]["content"] for messages in sent]
 
 
