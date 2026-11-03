@@ -1770,3 +1770,13 @@ fn repository_generator_deadline_is_optional_and_bounded() {
         assert!(error.to_string().contains("generator_timeout_s"), "{error}");
     }
 }
+
+#[test]
+fn review606_buildbuddy_access_requires_an_explicit_controller_secret_setting() {
+    let text =
+        format!("{EXAMPLE}\n[buildbuddy]\napi_key_file = '/run/credentials/tl3d/buildbuddy-key'\n");
+    assert!(
+        Config::parse(&text).is_ok(),
+        "controller BuildBuddy access needs a configured secret path"
+    );
+}

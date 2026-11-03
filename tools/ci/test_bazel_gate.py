@@ -2,9 +2,11 @@
 # rust_runner is loaded by path from the //tools/bazel:sources data, not as a py dependency.
 # gazelle:ignore rust_runner
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import bazel_gate
 
@@ -509,6 +511,19 @@ class GateTests(unittest.TestCase):
         result = {'mode': 'pr', 'error': None, 'inputs': ['bazel run //:gazelle -- -mode=diff'],
                   'verdicts': {'rust': 'pass', 'python': 'pass'}}
         self.assertFalse(bazel_gate.passed(result))
+
+
+class Review606BindingTests(unittest.TestCase):
+    def test_review606_bazel_receives_the_exact_ci_binding_metadata(self):
+        arguments = ['bazel_gate.py', 'pr', '--base', 'a' * 40, '--head', 'b' * 40]
+        binding = {'TL3_CI_RUN_ID': '6', 'TL3_CI_RUN_ATTEMPT': '2', 'TL3_CI_CHECK_NAME': 'Bazel'}
+        with patch.dict(os.environ, binding), patch.object(bazel_gate.sys, 'argv', arguments), \
+                patch.object(bazel_gate, 'Workspace'), patch.object(bazel_gate, 'write_result'), \
+                patch.object(bazel_gate, 'gate_pr', return_value={'verdicts': {'rust': 'pass'}}) as gate:
+            self.assertEqual(bazel_gate.main(), 0)
+        metadata = gate.call_args.args[3]
+        for key, value in binding.items():
+            self.assertEqual(metadata.get(key), value, 'Bazel results must retain the trusted CI binding')
 
 
 if __name__ == '__main__':

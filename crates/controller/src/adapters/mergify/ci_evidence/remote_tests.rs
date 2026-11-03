@@ -12,6 +12,7 @@ const KEY: &str = "synthetic-internal-material";
 
 async fn evidence(mode: &str) -> (QueueCiEvidence, Vec<Request>) {
     let server = MockServer::start().await;
+    let requested_mode = mode.to_owned();
     let two_environments = mode == "two-environments";
     let mode = mode.to_owned();
     Mock::given(wiremock::matchers::any())
@@ -34,6 +35,11 @@ async fn evidence(mode: &str) -> (QueueCiEvidence, Vec<Request>) {
                         "cleanup\n".repeat(10000)
                     ));
                 }
+                "/repos/owner/project/actions/jobs/7" => json!({"id":7,"run_id":6,"run_attempt":1,"name":"Bazel","head_sha":if mode == "job-head-mismatch" {"old-head"} else {HEAD},"status":"completed","conclusion":"failure"}),
+                "/repos/owner/project/actions/jobs/8" | "/repos/owner/project/actions/jobs/9" => json!({"id":if request.url.path().ends_with('8') {8} else {9},"run_id":if mode == "aggregate-other-run" {66} else {6},"run_attempt":1,"name":if request.url.path().ends_with('8') {"Python"} else {"Rust"},"head_sha":HEAD,"status":"completed","conclusion":"failure"}),
+                "/repos/owner/project/actions/jobs/8/logs" | "/repos/owner/project/actions/jobs/9/logs" => {
+                    return ResponseTemplate::new(200).set_body_string(if mode == "aggregate-lint" {"Independent lint failure"} else {"The Bazel gate failed python: see the Bazel job"});
+                }
                 "/api/v1/GetInvocation" => {
                     let id = body["selector"]["invocation_id"].as_str().unwrap();
                     let returned_id = if mode == "wrong-invocation" { "wrong" } else { id };
@@ -42,6 +48,7 @@ async fn evidence(mode: &str) -> (QueueCiEvidence, Vec<Request>) {
                     json!({"invocation":[{
                         "id":{"invocationId":returned_id}, "repoUrl":repo,
                         "commitSha":sha, "invocationStatus":"COMPLETE_INVOCATION_STATUS",
+                        "buildMetadata":[{"key":"TL3_CI_RUN_ID","value":if mode == "other-run" {"66"} else {"6"}}, {"key":"TL3_CI_RUN_ATTEMPT","value":"1"}, {"key":"TL3_CI_CHECK_NAME","value":if mode == "other-check" {"Python"} else {"Bazel"}}],
                         "command":if id == PARENT {"remote run"} else {"test"},
                         "childInvocations":if id == PARENT {json!([{"invocationId":CHILD}])} else {json!([])}
                     }]})
@@ -80,7 +87,7 @@ async fn evidence(mode: &str) -> (QueueCiEvidence, Vec<Request>) {
                     if mode == "oversized" { return ResponseTemplate::new(200).set_body_string("x".repeat(2 * 1024 * 1024)); }
                     return ResponseTemplate::new(200).set_body_string(format!(
                         "FileNotFoundError: remote basetemp vanished\n{KEY}\nx-buildbuddy-api-key: {KEY}\nhttps://blob.example/test.log?X-Amz-Signature=private-download\n{}",
-                        "cleanup\n".repeat(200)
+                        if mode == "shared-redaction" { "npm_abcdefghijklmnopqrstuvwxyz0123456789\nHTTPS://blob.example/test.log?X-Amz-Signature=private-upper-download".into() } else { "cleanup\n".repeat(200) }
                     ));
                 }
                 _ => return ResponseTemplate::new(404),
@@ -108,12 +115,20 @@ async fn evidence(mode: &str) -> (QueueCiEvidence, Vec<Request>) {
     } else {
         ""
     };
-    let checks: Vec<CheckRun> = serde_json::from_value(json!([{
+    let mut checks: Vec<CheckRun> = serde_json::from_value(json!([{
         "id":7,"name":"Bazel","head_sha":HEAD,"status":"completed","conclusion":"failure",
         "app":{"id":15368,"slug":"github-actions"},
         "details_url":"https://github.com/owner/project/actions/runs/6/job/7",
         "output":{"summary":format!("FAILED: {TARGET}\n{KEY}\n{reproduction}\nhttps://blob.example/log?X-Amz-Signature=private-download")}
     }])).unwrap();
+    if matches!(
+        requested_mode.as_str(),
+        "aggregates" | "aggregate-other-run" | "aggregate-lint"
+    ) {
+        for (id, name) in [(8, "Python"), (9, "Rust")] {
+            checks.push(serde_json::from_value(json!({"id":id,"name":name,"head_sha":HEAD,"status":"completed","conclusion":"failure","app":{"id":15368,"slug":"github-actions"},"details_url":format!("https://github.com/owner/project/actions/runs/6/job/{id}"),"output":{"summary":"The Bazel gate failed python: see the Bazel job"}})).unwrap());
+        }
+    }
     let client = remote::Client {
         api: format!("{}/api/v1/", server.uri()),
         key: KEY.into(),
@@ -289,5 +304,59 @@ async fn diagnostic_reads_are_bounded_recorded_and_never_submit_or_change_ci() {
     assert!(
         value.to_string().len() <= 32000,
         "model-facing evidence stays bounded"
+    );
+}
+
+#[tokio::test]
+async fn review606_shared_redactor_covers_vendor_keys_and_mixed_case_urls() {
+    let (details, _) = evidence("shared-redaction").await;
+    let exported = json!(details).to_string();
+    assert!(
+        !exported.contains("npm_abcdefghijklmnopqrstuvwxyz0123456789"),
+        "shared Redactor must remove npm credentials"
+    );
+    assert!(
+        !exported.contains("private-upper-download"),
+        "URL filtering must ignore scheme case"
+    );
+}
+
+#[tokio::test]
+async fn review606_same_sha_other_run_or_check_is_indeterminate() {
+    for mode in ["other-run", "other-check", "job-head-mismatch"] {
+        let (details, _) = evidence(mode).await;
+        assert!(
+            !details.complete,
+            "{mode}: repository and SHA alone cannot bind a CI run"
+        );
+        assert!(!details.gaps.is_empty(), "retain the binding gap");
+    }
+}
+
+#[tokio::test]
+async fn review606_aggregate_verdicts_share_only_their_own_bazel_evidence() {
+    let (details, _) = evidence("aggregates").await;
+    assert!(
+        details.complete,
+        "dependent Python/Rust verdicts must not mask complete Bazel diagnostics"
+    );
+    assert_eq!(details.checks.len(), 3, "preserve original failed checks");
+    for mode in ["aggregate-other-run", "aggregate-lint"] {
+        let (details, _) = evidence(mode).await;
+        assert!(
+            !details.complete,
+            "independent or unbound aggregate failures remain unresolved: {mode}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn review606_private_url_filter_is_case_insensitive() {
+    let (details, _) = evidence("shared-redaction").await;
+    assert!(
+        !json!(details)
+            .to_string()
+            .contains("private-upper-download"),
+        "private URL schemes are case insensitive"
     );
 }

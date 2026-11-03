@@ -1382,3 +1382,26 @@ async fn publication_token_quota_keeps_its_existing_recovery_class() {
         matches!(github.installation_token().await,Err(Error::RateLimited {retry_after}) if retry_after==Duration::from_secs(60))
     );
 }
+
+#[tokio::test]
+async fn review606_oversized_job_log_preserves_invocation_prefix() {
+    let server = MockServer::start().await;
+    let gh = client(&server).await;
+    let prefix = "Remote Bazel run: https://app.buildbuddy.io/invocation/fixture-parent\n";
+    let log = format!("{prefix}{}", "irrelevant output\n".repeat(600000));
+    Mock::given(method("GET"))
+        .and(path("/repos/o/r/actions/jobs/1/logs"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(log))
+        .mount(&server)
+        .await;
+    let result = gh.job_log_tail("o/r", 1).await;
+    assert!(
+        result.is_ok(),
+        "the log byte cap must retain the invocation prefix"
+    );
+    let result = result.unwrap();
+    assert!(result.prefix.starts_with(prefix));
+    assert!(result.truncated);
+    assert!(result.prefix.len() <= 64 * 1024);
+    assert!(result.text.len() <= 64 * 1024);
+}
