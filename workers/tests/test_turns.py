@@ -12,7 +12,7 @@ import pytest
 from tl3_workers import runtime
 from tl3_workers.turns import InvalidReply
 from message_invariants import assert_tool_pairs
-from test_pb_tests import machine_cli
+from test_pb_tests import machine_cli, supported_fake_runtime as supported_fake_runtime
 import test_maker
 import test_prompt_cache
 import test_reviewer

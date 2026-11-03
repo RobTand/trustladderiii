@@ -1,5 +1,6 @@
 """Private PrismaBuild channels, exercised with contract-compatible CLI fakes."""
 import json
+import subprocess
 import sys
 
 import pytest
@@ -221,6 +222,21 @@ def test_capability_is_cached_per_runtime_path(private_backend, supported):
             pass
     assert (scripts / 'pbrun-probes').exists(), 'the runtime capability was never queried'
     assert (scripts / 'pbrun-probes').read_text().splitlines() == ['probe']
+
+
+@pytest.mark.parametrize('script', ['pbrun.py', 'pbwait.py'])
+def test_receipt_fake_cli_capability_branch(submission, script):
+    _, scripts = submission
+    result = subprocess.run([sys.executable, str(scripts / script), '--machine-record-capability'],
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.endswith('\n') and result.stdout.count('\n') == 1
+    capability = json.loads(result.stdout)
+    assert capability == {
+        'schema': 'prismabuild.machine_record_capability.v1', 'machine_record_fd': 1}
+    assert type(capability['machine_record_fd']) is int
+    assert not (scripts / 'submitted.json').exists()
+    assert not (scripts / 'waited.json').exists()
 
 
 def test_reader_raises_typed_channel_error(private_backend):

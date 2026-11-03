@@ -21,6 +21,13 @@ IMAGE = "sha256:" + "1" * 64
 KEY = "a" * 64
 
 
+@pytest.fixture(autouse=True)
+def supported_fake_runtime(monkeypatch):
+    """Avoid per-fixture probes. Real probes run in test_pb_machine_records."""
+    from tl3_workers import pb_tests
+    monkeypatch.setattr(pb_tests, "_machine_record_supported", lambda runtime: True)
+
+
 def machine_cli(source):
     """Adapt receipt-producing fakes to PB's private descriptor protocol."""
     return '''import builtins
