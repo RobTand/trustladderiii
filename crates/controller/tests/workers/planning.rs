@@ -68,9 +68,24 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
         });
         store.commit(&commit).unwrap();
     }
+    eprintln!("planning fixture: {mode}");
     wait(|| {
         drive(&mut controller, &mut source, &mut store);
         let n = &controller.world().unwrap().nodes[0];
+        if mode != "plan-bad-schema" {
+            assert_eq!(
+                n.run_incidents,
+                0,
+                "planning mode {mode}: {:?}",
+                store
+                    .load()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .filter(|r| r.table == "incidents")
+                    .collect::<Vec<_>>()
+            );
+        }
         n.phase.is_closed()
             || n.question.is_some()
             || (mode == "plan-bad-schema" && n.run_incidents > 0)

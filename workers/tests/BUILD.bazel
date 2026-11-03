@@ -63,11 +63,7 @@ tl3_py_test(
         ":message_invariants",
         ":worker_process",
         "//workers/src",
-        "@tl3_pip//httpx",
-        "@tl3_pip//jsonschema",
-        "@tl3_pip//langchain_core",
         "@tl3_pip//pytest",
-        "@tl3_pip//tiktoken",
     ],
 )
 
@@ -220,8 +216,11 @@ py_library(
     srcs = ["message_invariants.py"],
     visibility = ["//visibility:public"],
     deps = [
+        ":worker_process",
         "//workers/src",
         "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+        "@tl3_pip//tiktoken",
     ],
 )
 
@@ -244,7 +243,6 @@ tl3_py_test(
     deps = [
         ":conftest",
         ":message_invariants",
-        ":test_maker",
         ":test_workers",
         "//workers/src",
         "@tl3_pip//httpx",
@@ -260,7 +258,7 @@ tl3_py_test(
     srcs = ["test_blocked.py"],
     deps = [
         ":conftest",
-        ":test_maker",
+        ":message_invariants",
         "//workers/src",
         "@tl3_pip//jsonschema",
         "@tl3_pip//langchain_core",
@@ -285,7 +283,7 @@ tl3_py_test(
     srcs = ["test_replies.py"],
     deps = [
         ":conftest",
-        ":test_maker",
+        ":message_invariants",
         ":test_workers",
         "//workers/src",
         "@tl3_pip//langchain_core",
@@ -298,8 +296,8 @@ tl3_py_test(
     srcs = ["test_large_files.py"],
     deps = [
         ":conftest",
+        ":message_invariants",
         ":planner_fixtures",
-        ":test_maker",
         ":test_workers",
         ":worker_process",
         "//workers/src",
@@ -314,7 +312,6 @@ tl3_py_test(
     deps = [
         ":conftest",
         ":message_invariants",
-        ":test_maker",
         ":test_prompt_cache",
         ":test_reviewer",
         ":test_workers",
@@ -365,7 +362,7 @@ tl3_py_test(
     srcs = ["test_diff_tool.py"],
     deps = [
         ":conftest",
-        ":test_maker",
+        ":message_invariants",
         ":test_reviewer",
         "//workers/src",
         "@tl3_pip//langchain_core",
@@ -636,6 +633,148 @@ tl3_py_test(
 )
 
 tl3_py_test(
+    name = "test_maker_context",
+    srcs = ["test_maker_context.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_maker_evidence",
+    srcs = ["test_maker_evidence.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//jsonschema",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_maker_forecast",
+    srcs = ["test_maker_forecast.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_maker_merges",
+    srcs = ["test_maker_merges.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_maker_reasoning",
+    srcs = ["test_maker_reasoning.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_maker_recovery",
+    srcs = ["test_maker_recovery.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        ":worker_process",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_maker_review",
+    srcs = ["test_maker_review.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//jsonschema",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_maker_sessions",
+    srcs = ["test_maker_sessions.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//jsonschema",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_maker_tools",
+    srcs = ["test_maker_tools.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        "//workers/src",
+        "@tl3_pip//httpx",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_maker_turn_budget",
+    srcs = ["test_maker_turn_budget.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_maker_validation",
+    srcs = ["test_maker_validation.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//jsonschema",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
     name = "test_abort_rule",
     srcs = ["test_abort_rule.py"],
     deps = [
@@ -653,6 +792,7 @@ tl3_py_test(
         ":conftest",
         "//workers/src",
         "@tl3_pip//httpx",
+        "@tl3_pip//jsonschema",
         "@tl3_pip//langchain_core",
         "@tl3_pip//mlflow_skinny",
         "@tl3_pip//openai",

@@ -12,6 +12,8 @@ pub(crate) mod ladder;
 mod process;
 pub(crate) mod protocol;
 pub(crate) mod reproducing;
+#[cfg(test)]
+mod restart_base_tests;
 pub(crate) mod review;
 mod source;
 #[cfg(test)]
@@ -477,9 +479,10 @@ impl Supervisor {
                 .ok_or(Error::Invalid("worker materials must be an object"))?
                 .remove("standing_rules");
         }
-        // A narrowed request keeps the pristine issue for a later narrowing; no role reads it.
+        // The pristine issue and material provenance belong to the controller.
         if let Some(inputs) = inputs.as_object_mut() {
             inputs.remove("original_issue");
+            inputs.remove("request_origin");
         }
         // #422: recall upfront. Ingest reads the issue, the planner its brief and
         // goals, and the reviewer the repo's conventions. An outage degrades to none.
@@ -577,6 +580,12 @@ impl Supervisor {
                 "attempt": delivery.attempt, "round": delivery.round,
             },
         });
+        if let Some(base) = materials["base_checkout"].get("commit") {
+            request["trace"]["base_sha"] = base.clone();
+        }
+        if let Some(origin) = materials.get("request_origin") {
+            request["trace"]["request_origin"] = origin.clone();
+        }
         if role == "maker" {
             let session_file = self
                 .settings
@@ -684,14 +693,22 @@ impl Supervisor {
         let mut ancestor = delivery.node();
         let mut linked_issue: Option<tl3_github::Issue> = None;
         let mut narrowing: Option<Value> = None;
+        let mut origin = None;
         loop {
-            if let Some(mut materials) = store.worker_materials(&ancestor.0.to_string())? {
+            let loaded = if ancestor != delivery.node()
+                && let Some(provider) = &self.materials_provider
+            {
+                // A link preserves request context, never the ancestor's source or receipts.
+                Some(provider.load(delivery)?)
+            } else {
+                store.worker_materials(&ancestor.0.to_string())?
+            };
+            if let Some(mut materials) = loaded {
                 if ancestor != delivery.node()
                     && let Some(materials) = materials.as_object_mut()
                 {
-                    // A check run belongs to its own request's worktree. A restarted or
-                    // replacement request checks against the base its worktree sits on.
                     materials.remove("check_run");
+                    materials.insert("request_origin".into(), json!(origin));
                 }
                 if let Some(issue) = linked_issue {
                     let answer = issue.body.unwrap_or_default();
@@ -717,11 +734,15 @@ impl Supervisor {
                     } else {
                         None
                     };
+                    let comments = if self.materials_provider.is_some() {
+                        materials["issue"]["comments"].clone()
+                    } else {
+                        json!([])
+                    };
                     materials["issue"] = json!({"number": issue.number, "title": issue.title,
-                        "body": body.clone().unwrap_or(answer), "author": "TL3", "comments": []});
-                    if body.is_some() {
-                        store.put_worker_materials(&delivery.node().0.to_string(), &materials)?;
-                    }
+                        "body": body.unwrap_or(answer), "author": "TL3", "comments": comments});
+                    // Save source, orientation and linked issue together before any role starts.
+                    store.put_worker_materials(&delivery.node().0.to_string(), &materials)?;
                 }
                 return Ok(materials);
             }
@@ -752,6 +773,7 @@ impl Supervisor {
                     "request links must point to an earlier request",
                 ));
             }
+            origin.get_or_insert_with(|| original.0.to_string());
             ancestor = original;
         }
     }

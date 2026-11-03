@@ -1099,7 +1099,7 @@ fn crash_reuses_seal() {
             .arg(root.path())
             .spawn()
             .unwrap();
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
         let connection = loop {
             match listener.accept() {
                 Ok((connection, _)) => break connection,

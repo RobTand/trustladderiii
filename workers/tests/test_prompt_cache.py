@@ -11,7 +11,7 @@ import pytest
 
 from tl3_workers import runtime
 from message_invariants import assert_tool_pairs, is_retro
-import test_maker
+import message_invariants as test_maker
 import test_workers
 
 

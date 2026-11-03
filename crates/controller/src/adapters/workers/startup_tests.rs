@@ -488,8 +488,10 @@ fn maker_checks_against_the_worktree_base(database: &str, stored_on: &str, resta
     config.worktrees_root = f.root.path().join("worktrees");
     let supervisor = Supervisor::new(&config, &f.root.path().join("records"))
         .unwrap()
-        .with_materials(crate::production::Materials::fixture(
+        .with_materials(crate::production::Materials::repository_fixture(
             config.worktrees_root.clone(),
+            f.path.clone(),
+            &config.github.repos,
         ));
     let mut value = serde_json::to_value(f.delivery()).unwrap();
     value["output"]["Effect"]["node"] = json!(1);
