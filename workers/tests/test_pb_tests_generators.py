@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import pytest
+from pb_fixtures import supported_fake_runtime as supported_fake_runtime
 from tl3_workers.pb_tests import TestSettings
 from tl3_workers.tools import build_tools
 

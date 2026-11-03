@@ -12,6 +12,7 @@ import tempfile
 
 from tl3_harness import generator
 from tl3_harness.scratch import environment as scratch_environment
+from tl3_harness.supervision import ExecutionFailure
 from tl3_workers.pb_tests import TestSettings, _failure_receipt, _git, _json_command, _stage
 from tl3_workers.session import save
 
@@ -100,6 +101,11 @@ def make_generator_tool(worktree, *, restore_only=False):
         diagnostics.clear()
         try:
             return generate()
+        except ExecutionFailure as failure:
+            result = {"status": "failed", "message": failure.message(),
+                      **diagnostics, "execution": failure.as_json()}
+            worktree.generation_receipt = result
+            return result
         except (OSError, RuntimeError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
             result = {"status": "failed", "message": str(error)[:1000], **diagnostics}
             worktree.generation_receipt = result

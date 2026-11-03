@@ -3,6 +3,7 @@
 import json
 import subprocess
 import pytest
+from pb_fixtures import supported_fake_runtime as supported_fake_runtime
 from tl3_harness.test_tool import SUMMARY_BYTES, Summary
 from tl3_workers.pb_tests import TestSettings, make_test_tool
 from tl3_workers.tools import Worktree

@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import pytest
+from pb_fixtures import supported_fake_runtime as supported_fake_runtime
 from tl3_workers.forcing_rehearsal import ForcingRehearsals
 
 from worker_process import NODE

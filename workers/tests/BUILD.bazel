@@ -5,6 +5,7 @@ py_library(
     srcs = ["worker_process.py"],
     visibility = ["//visibility:public"],
     deps = [
+        ":pb_fixtures",
         "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//pytest",
@@ -84,6 +85,7 @@ tl3_py_test(
     srcs = ["test_pb_tests.py"],
     deps = [
         ":conftest",
+        ":pb_fixtures",
         ":worker_process",
         "//harness/src/tl3_harness",
         "//workers/src",
@@ -312,6 +314,7 @@ tl3_py_test(
     deps = [
         ":conftest",
         ":message_invariants",
+        ":pb_fixtures",
         ":test_prompt_cache",
         ":test_reviewer",
         ":test_workers",
@@ -422,6 +425,7 @@ tl3_py_test(
     srcs = ["test_pb_tests_base.py"],
     deps = [
         ":conftest",
+        ":pb_fixtures",
         ":worker_process",
         "//harness/src/tl3_harness",
         "//workers/src",
@@ -435,6 +439,7 @@ tl3_py_test(
     srcs = ["test_pb_tests_forcing.py"],
     deps = [
         ":conftest",
+        ":pb_fixtures",
         ":worker_process",
         "//harness/src/tl3_harness",
         "//workers/src",
@@ -448,6 +453,7 @@ tl3_py_test(
     srcs = ["test_pb_tests_generators.py"],
     deps = [
         ":conftest",
+        ":pb_fixtures",
         ":worker_process",
         "//harness/src/tl3_harness",
         "//workers/src",
@@ -461,6 +467,7 @@ tl3_py_test(
     srcs = ["test_pb_tests_rehearsal.py"],
     deps = [
         ":conftest",
+        ":pb_fixtures",
         ":worker_process",
         "//workers/src",
         "@tl3_pip//pytest",
@@ -472,6 +479,7 @@ tl3_py_test(
     srcs = ["test_pb_tests_runtime.py"],
     deps = [
         ":conftest",
+        ":pb_fixtures",
         ":worker_process",
         "//workers/src",
         "@tl3_pip//langchain_core",
@@ -484,6 +492,7 @@ tl3_py_test(
     srcs = ["test_pb_tests_candidates.py"],
     deps = [
         ":conftest",
+        ":pb_fixtures",
         ":worker_process",
         "//workers/src",
         "@tl3_pip//pytest",
@@ -495,6 +504,7 @@ tl3_py_test(
     srcs = ["test_pb_tests_overlay.py"],
     deps = [
         ":conftest",
+        ":pb_fixtures",
         ":worker_process",
         "//harness/src/tl3_harness",
         "//workers/src",
@@ -507,6 +517,7 @@ tl3_py_test(
     srcs = ["test_pb_tests_execution_cache.py"],
     deps = [
         ":conftest",
+        ":pb_fixtures",
         ":worker_process",
         "//workers/src",
         "@tl3_pip//pytest",
@@ -518,6 +529,7 @@ tl3_py_test(
     srcs = ["test_pb_tests_exhaustion.py"],
     deps = [
         ":conftest",
+        ":pb_fixtures",
         ":worker_process",
     ],
 )
@@ -808,5 +820,27 @@ tl3_py_test(
     deps = [
         ":conftest",
         ":test_pb_tests",
+    ],
+)
+
+py_library(
+    name = "pb_fixtures",
+    srcs = ["pb_fixtures.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_pb_machine_records",
+    srcs = ["test_pb_machine_records.py"],
+    deps = [
+        ":conftest",
+        ":pb_fixtures",
+        "//harness/src/tl3_harness",
+        "//workers/src",
+        "@tl3_pip//pytest",
     ],
 )
