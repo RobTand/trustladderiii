@@ -436,7 +436,8 @@ mod hostile_tests {
             "ordinary checks do not need the issue"
         );
         let helper = review(&mut store, None, true);
-        let serialized: Value = serde_json::from_slice(&serde_json::to_vec(&helper).unwrap()).unwrap();
+        let serialized: Value =
+            serde_json::from_slice(&serde_json::to_vec(&helper).unwrap()).unwrap();
         assert_eq!(serialized["checks"][0]["helper_evidence"], identity);
         assert_eq!(serialized["checks"][0]["tests"][0]["base"], "assertion");
         assert_eq!(serialized["checks"][0]["tests"][0]["head"], "passed");
