@@ -24,8 +24,9 @@ pub(super) fn at<T, E: Into<Error>>(
     boundary: &'static str,
     result: std::result::Result<T, E>,
 ) -> Result<T> {
+    let result = result.map_err(Into::into);
     #[cfg(test)]
-    if let Some(errno) = FAILURE.with(|failure| {
+    let result = if let Some(errno) = FAILURE.with(|failure| {
         let mut failure = failure.borrow_mut();
         if failure.as_ref().is_some_and(|(name, _)| *name == boundary) {
             failure.take().map(|(_, errno)| errno)
@@ -33,10 +34,18 @@ pub(super) fn at<T, E: Into<Error>>(
             None
         }
     }) {
-        return Err(std::io::Error::from_raw_os_error(errno).into());
-    }
-    let _ = boundary;
-    result.map_err(Into::into)
+        Err(std::io::Error::from_raw_os_error(errno).into())
+    } else {
+        result
+    };
+    result.map_err(|source| match source {
+        Error::WorkerSource(_) => source,
+        source => SourceError {
+            boundary,
+            source: Box::new(source),
+        }
+        .into(),
+    })
 }
 
 pub(super) fn cause(error: &Error) -> &Error {

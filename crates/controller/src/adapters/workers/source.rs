@@ -360,7 +360,7 @@ impl WorkerOutputSource {
             let Some(value) = read(&path)? else {
                 return Ok(None);
             };
-            let delivery: Delivery = serde_json::from_value(value)?;
+            let delivery: Delivery = at("read", serde_json::from_value(value))?;
             if !at("store", store.worker_reconcilable(&delivery.key))? {
                 return Ok(None);
             }

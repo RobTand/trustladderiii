@@ -105,6 +105,9 @@ fn pidfd_with(
     let fd = match open(pid) {
         Ok(fd) => fd,
         Err(rustix::io::Errno::SRCH) => return Ok(None),
+        // Linux can reap the thread group between pidfd_open's PID lookup and
+        // pidfd_prepare. Only a mismatched identity proves this EINVAL is exit.
+        Err(rustix::io::Errno::INVAL) if !matches(&identity)? => return Ok(None),
         Err(e) => return Err(std::io::Error::from(e).into()),
     };
     // Recheck after opening the pidfd, so PID reuse can never target another run.
@@ -250,10 +253,8 @@ mod tests {
             }
             Err(errno)
         });
-        if !exit {
-            drop(child.stdin.take());
-            child.wait().unwrap();
-        }
+        drop(child.stdin.take());
+        child.wait().unwrap();
         result
     }
 
