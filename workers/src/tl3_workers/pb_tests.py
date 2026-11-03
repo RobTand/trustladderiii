@@ -14,6 +14,7 @@ import tempfile
 from tl3_harness import execution
 from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT
 from tl3_harness.node_ids import selects
+from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
 from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, infrastructure, options
 from tl3_harness.trees import export
 
@@ -87,6 +88,7 @@ def _stage(worktree, root, base_sha=None, *, action="test_tool"):
     trusted.mkdir()
     shutil.copytree(harness, trusted / "tl3_harness",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    (trusted / "worker-contract.sha256").write_text(hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
     (root / "action.py").write_text(
         'import sys\nfrom pathlib import Path\n'
         'sys.path.insert(0, str(Path(__file__).resolve().parent / "trusted"))\n'
@@ -162,6 +164,12 @@ def _summary(ending, key):
     # What a maker cites and a reviewer can check against PrismaBuild's own record.
     result["receipts"] = [{"action_key": key, "status": ending["status"], "exit_code": ending["exit_code"],
                            "receipt_sha256": evidence["receipt_sha256"], "log_sha256": log["sha256"]}]
+    receipt = result["receipts"][0]
+    if type(ending.get("attempt")) is int and ending["attempt"] > 0:
+        receipt["attempt"] = ending["attempt"]
+    generation = (ending.get("publication") or {}).get("generation")
+    if isinstance(generation, str) and re.fullmatch("[0-9a-f]{64}", generation):
+        receipt["generation"] = generation
     if (result["status"] not in ("completed", "infrastructure_error", "not_available")
             or len(json.dumps(result).encode()) > SUMMARY_BYTES):
         raise ValueError("PrismaBuild returned an invalid test summary")
@@ -189,11 +197,16 @@ def _failure_receipt(ending, settings):
             record = json.loads(raw) if len(raw) <= 2_097_152 else {}
             if (isinstance(record, dict) and record.get("action_key") == ending["action_key"]
                     and record.get("published_unix") == published):
-                reason = (record.get("detail") or {}).get("termination_reason")
+                reason = (record.get("detail") or {}).get("termination_reason") or reason
         except (OSError, ValueError, TypeError):
             pass
-    if reason == "memory_limit_oom":
+    if isinstance(reason, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,127}", reason):
         receipt["termination_reason"] = reason
+    if type(ending.get("attempt")) is int and ending["attempt"] > 0:
+        receipt["attempt"] = ending["attempt"]
+    generation = publication.get("generation")
+    if isinstance(generation, str) and re.fullmatch("[0-9a-f]{64}", generation):
+        receipt["generation"] = generation
     scope = (diagnostics.get("resource_profile") or {}).get("scope") or {}
     peak = scope.get("memory_peak_bytes")
     if type(peak) is int and peak >= 0:
@@ -208,7 +221,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
     regressions = tuple(test for check in getattr(worktree, "test_checks", ())
                         if check["kind"] == "regression" for test in check["tests"])
 
-    def wait(key, base, base_sha, tree):
+    def wait(key, base, base_sha, tree, selected):
         # pbwait's observation allowance is not an execution deadline.
         # Reattach to the same action whenever that allowance expires.
         while True:
@@ -228,9 +241,13 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
             if waited["complete"]:
                 if code or not endings[0].get("succeeded"):
                     receipt = _failure_receipt(endings[0], settings)
-                    result = infrastructure("PrismaBuild action infrastructure failed."
-                                            + (" memory_limit_oom." if receipt.get("termination_reason") == "memory_limit_oom" else ""))
-                    result.update(action_key=key, receipts=[receipt])
+                    # A PB phase named 'tests', elapsed time, and missing reports prove
+                    # no test start. Only the trusted supervised summary can prove that.
+                    failure = ExecutionFailure(ExecutionOutcome.UNKNOWN_INCOMPLETE, "unknown",
+                                               receipt.get("termination_reason", "incomplete_execution"))
+                    result = infrastructure(failure.message())
+                    result.update(action_key=key, receipts=[receipt], execution=failure.as_json(),
+                                  selectors=list(selected))
                 else:
                     result = _summary(endings[0], key)
                 if base:
@@ -248,6 +265,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
         repeat, parallel = options(repeat, parallel)
         priority = _priority(priority)
         key = None
+        phase = "admission"
         try:
             if not isinstance(settings, TestSettings):
                 return infrastructure("PrismaBuild test settings were not supplied by the role.")
@@ -256,14 +274,26 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                          or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", base_sha)
                          or getattr(worktree, "test_checkout", None) is None):
                 return infrastructure("The role did not supply a check base and checkout.")
-            # A resumed maker visit waits on the action its interrupted call submitted.
-            reattach = getattr(worktree, "pb_reattach", {}).pop(base, None)
-            if reattach is not None:
-                key, tree = reattach
-                return wait(key, base, base_sha, tree)
             with tempfile.TemporaryDirectory(prefix="tl3-test-input-") as temporary:
                 root = Path(temporary)
                 tree = _stage(worktree, root, base_sha)
+                contract = {"tree": tree, "trusted": _git(root, "write-tree", "--prefix=trusted/").strip(),
+                            "image": settings.image, "cpus": settings.cpus, "mem_gb": settings.mem_gb,
+                            "quiet_seconds": settings.quiet_seconds, "exec_scratch": settings.exec_scratch,
+                            "selectors": selected, "base_sha": base_sha, "repeat": repeat,
+                            "parallel": parallel, "priority": priority, "timeout_seconds": timeout_seconds,
+                            "forcing": forcing.as_json() if forcing is not None else None}
+                identity = hashlib.sha256(json.dumps(contract, sort_keys=True).encode()).hexdigest()
+                worktree.pb_identity = identity
+                # Stage first. An old checkpoint is usable only for this immutable
+                # input, selection, resources and trusted executor implementation.
+                reattach = getattr(worktree, "pb_reattach", {}).pop(base, None)
+                if isinstance(reattach, dict) and reattach.get("identity") == identity and reattach.get("tree") == tree:
+                    key = reattach["key"]
+                    if not isinstance(key, str) or not re.fullmatch("[0-9a-f]{64}", key):
+                        raise ValueError("Invalid checkpoint action key")
+                    phase = "retrieval"
+                    return wait(key, base, base_sha, tree, selected)
                 # Each xdist worker reserves a core and the image's memory.
                 command = [sys.executable, str(Path(settings.tools_path) / "pbrun.py"),
                            "--cwd", str(root), "--anywhere", "--cpus", str(max(settings.cpus, parallel)),
@@ -298,13 +328,16 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                     key = None
                     raise ValueError("PrismaBuild returned an invalid action key")
                 getattr(worktree, "pb_submitted", lambda key, base, tree: None)(key, base, tree)
-                result = wait(key, base, base_sha, tree)
+                phase = "retrieval"
+                result = wait(key, base, base_sha, tree, selected)
                 if forcing is not None and result["status"] == "completed" and (
                         result.get("forcing") != forcing.as_json() or result.get("selectors") != list(selected)):
                     raise ValueError("PrismaBuild returned a different forcing or selection")
                 return result
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
-            result = infrastructure("PrismaBuild submission, execution or verified result retrieval failed.")
+            failure = ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, phase, "unavailable_or_unverified")
+            result = infrastructure(failure.message())
+            result.update(execution=failure.as_json(), selectors=list(selected))
             if key:
                 result["action_key"] = key
             return result
@@ -313,7 +346,8 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                   parallel: int = 0, priority: int | None = None) -> dict:
         """Run pytest; compare failures with untouched base, never demonstrating proof."""
         result = run(tests, base, repeat, parallel, priority)
-        if base or result["status"] != "completed":
+        if (base or result["status"] != "completed"
+                or result.get("execution", {}).get("outcome") == ExecutionOutcome.TEST_TIMEOUT):
             return result
         failed = [item for item in result["tests"] if item["outcome"] in ("failed", "error")]
         if not failed:

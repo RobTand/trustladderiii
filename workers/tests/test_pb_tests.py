@@ -1656,3 +1656,116 @@ def test_generator_still_requires_pb_admission_before_any_work(tmp_path, monkeyp
     with pytest.raises(RuntimeError, match="admitted PrismaBuild"):
         generator.run(tmp_path, generator.Container(IMAGE), "python3 generate.py",
                       ["**/BUILD.bazel"], [], ["tests/BUILD.bazel"])
+
+
+@pytest.mark.parametrize('reason', ['timeout', 'no_progress', 'cancelled', 'lease_lost'])
+def test_failure_receipts_preserve_terminal_reason_without_inventing_test_start(submission, reason):
+    result = call(submission, Summary().result, ['tests/test_owned.py::test_hang'], override={
+        'status': 'failed', 'succeeded': False, 'exit_code': None,
+        'diagnostics': {'termination_reason': reason, 'private': 'never retain'},
+    })
+    assert result['status'] == 'infrastructure_error'
+    assert result['receipts'][0].get('termination_reason') == reason, result
+    assert result.get('execution', {}).get('outcome') == 'unknown_incomplete', result
+    assert result['execution']['test_started'] is False
+    assert result['selectors'] == ['tests/test_owned.py::test_hang']
+    assert 'private' not in json.dumps(result)
+
+
+@pytest.mark.parametrize('change', ['input', 'selectors', 'contract', 'identical'])
+def test_reattach_checks_staged_input_selection_and_execution_contract(submission, monkeypatch, change):
+    from tl3_workers import pb_tests
+    root, scripts = submission
+    (scripts / 'response.json').write_text(json.dumps(Summary().result))
+    calls = []
+    original = pb_tests._json_command
+    with Worktree(root) as tree:
+        tool = make_test_tool(tree, TestSettings(IMAGE, scripts))
+        tree.pb_submitted = lambda key, base, staged: calls.append(
+            {'key': key, 'tree': staged, 'identity': getattr(tree, 'pb_identity', None)})
+        tool(['test_one.py::test_one'])
+        saved = calls[-1]
+        assert saved['identity'], 'checkpoint must bind the input and trusted executor contract'
+        tree.pb_reattach = {False: saved}
+        if change == 'input':
+            (root / 'test_one.py').write_text('def test_one():\n    assert True\n')
+        if change == 'contract':
+            tool = make_test_tool(tree, TestSettings(IMAGE, scripts, quiet_seconds=60))
+        def command(args):
+            if args[1].endswith('pbrun.py') and change == 'identical':
+                pytest.fail('identical interrupted execution must reattach')
+            return original(args)
+        monkeypatch.setattr(pb_tests, '_json_command', command)
+        tool(['test_two.py::test_two'] if change == 'selectors' else ['test_one.py::test_one'])
+    assert len(calls) == (1 if change == 'identical' else 2)
+    if change != 'identical':
+        assert calls[-1]['identity'] != saved['identity']
+
+
+def test_owned_timeout_receipt_cannot_validate_a_q50_blocker(submission):
+    from tl3_workers.tools import Evidence
+    summary = Summary()
+    summary.add('tests/test_owned.py::test_hang', 'error', 'Test timeout; no assertion verdict.')
+    summary.result.update(execution={'outcome': 'test_timeout', 'phase': 'test_run',
+                                    'termination_reason': 'no_progress', 'test_started': True},
+                          selectors=['tests/test_owned.py::test_hang'])
+    result = call(submission, summary.result, ['tests/test_owned.py::test_hang'])
+    evidence = Evidence()
+    evidence.test_result(result, (False, ('tests/test_owned.py::test_hang',)))
+    assert not evidence.cites({'action_key': KEY})
+    assert result['totals']['failed'] == 0 and result['totals']['error'] == 1
+    assert result['receipts'][0]['receipt_sha256'] == 'b' * 64
+    assert 'base' not in result, 'a hang has no assertion outcome to compare or retry'
+
+
+@pytest.mark.parametrize('repeat', [1, 3])
+def test_oversized_incomplete_report_cannot_become_q50_evidence(submission, monkeypatch, repeat):
+    from tl3_harness import execution, test_tool
+    from tl3_workers.tools import Evidence
+
+    root, _ = submission
+    names = ['test_' + str(index) + '_' + 'x' * 1780 for index in range(10)]
+    selected = ['test_exit.py::' + name for name in names]
+    (root / 'test_exit.py').write_text(
+        'import os\nfrom pathlib import Path\n'
+        "counter = Path(__file__).with_name('collections')\n"
+        'count = int(counter.read_text()) + 1 if counter.exists() else 1\n'
+        'counter.write_text(str(count))\n'
+        f'if count == {repeat}: os._exit(0)\n'
+        + ''.join(f'def {name}():\n    assert False\n' for name in names))
+    monkeypatch.setattr(test_tool, 'require_admission', lambda: None)
+    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_PATH', str(root / 'progress.json'))
+    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_TOKEN', 'fixture')
+    monkeypatch.setattr(test_tool, 'container_command', lambda tree, container, tests: [
+        sys.executable, '-I', '-B', str(Path(execution.__file__).with_name('runner.py')),
+        '-', str(tree),
+    ])
+    summary = test_tool.run(root, execution.Container(IMAGE), tuple(selected), repeat=repeat)
+    result = call(submission, summary, selected)
+    evidence = Evidence()
+    evidence.test_result(result, (False, tuple(selected)))
+    assert not evidence.cites({'action_key': KEY}), result
+    assert result['status'] == 'infrastructure_error'
+    assert result['origin'] == 'test_run'
+    assert result['execution'] == {'outcome': 'unknown_incomplete', 'phase': 'unknown',
+                                   'termination_reason': 'incomplete_report', 'test_started': False}
+    assert result['selectors_omitted'] + len(result['selectors']) == len(selected)
+    assert len(json.dumps(result).encode()) <= SUMMARY_BYTES
+    assert result['receipts'][0]['receipt_sha256'] == 'b' * 64
+
+
+@pytest.mark.parametrize('stage', ['admission', 'retrieval'])
+def test_transport_failure_has_typed_diagnostic_and_no_test_verdict(submission, monkeypatch, stage):
+    from tl3_workers import pb_tests
+    original = pb_tests._json_command
+    def command(args):
+        if args[1].endswith('pbrun.py' if stage == 'admission' else 'pbwait.py'):
+            raise OSError('transport fixture')
+        return original(args)
+    monkeypatch.setattr(pb_tests, '_json_command', command)
+    result = call(submission, Summary().result, ['tests/test_owned.py::test_hang'])
+    assert result['status'] == 'infrastructure_error'
+    assert result.get('execution', {}).get('outcome') == 'transport_failure', result
+    assert result['execution']['phase'] == stage
+    assert result['execution']['test_started'] is False
+    assert result['tests'] == [] and sum(result['totals'].values()) == 0

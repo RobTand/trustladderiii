@@ -246,3 +246,172 @@ def test_repeat_with_many_long_failures_stays_within_the_summary_bound(fixture):
     assert [run["totals"]["failed"] for run in result["runs"]] == [40, 40, 40]
     assert len(json.dumps(result).encode()) <= test_tool.SUMMARY_BYTES - 1024
     assert result["note"].startswith("Truncated")
+
+
+@pytest.mark.parametrize('hang', ['body', 'cleanup', 'descendant', 'session_cleanup'])
+def test_unproven_hang_stays_unknown_with_bounded_cleanup(fixture, monkeypatch, hang):
+    import time
+    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_ALLOWANCES', '{"tests": 3}')
+    source = '''import signal, time, subprocess, sys
+signal.alarm(8)
+def test_hang():
+    while True:
+        time.sleep(1)
+'''
+    if hang == 'cleanup':
+        source = '''import signal, time, pytest
+signal.alarm(8)
+@pytest.fixture
+def cleanup():
+    yield
+    while True:
+        time.sleep(1)
+def test_hang(cleanup):
+    assert True
+'''
+    if hang == 'descendant':
+        source = '''import signal, subprocess, sys
+signal.alarm(8)
+def test_hang():
+    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(8)'],
+                             stdout=subprocess.PIPE)
+    child.communicate()
+'''
+    if hang == 'session_cleanup':
+        (fixture / 'conftest.py').write_text('''import signal, time
+signal.alarm(8)
+def pytest_unconfigure(config):
+    while True:
+        time.sleep(1)
+''')
+        source = 'def test_hang():\n    assert True\n'
+    (fixture / 'test_value.py').write_text(source)
+    started = time.monotonic()
+    result = test_tool.run_current(fixture, CONTAINER, ('test_value.py::test_hang',))
+    assert result['status'] == 'infrastructure_error', result
+    assert sum(result['totals'].values()) == 0, result
+    assert result['execution']['outcome'] == 'unknown_incomplete'
+    assert result['execution']['phase'] == 'unknown'
+    assert result['execution']['termination_reason'] == 'no_progress'
+    assert result['execution']['test_started'] is False
+    assert result['origin'] == 'test_run'
+    assert result['selectors'] == ['test_value.py::test_hang']
+    assert time.monotonic() - started < 7, 'supervision must finish before the outer allowance'
+
+
+def test_pretest_hang_is_setup_infrastructure(fixture, monkeypatch):
+    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_ALLOWANCES', '{"tests": 3}')
+    (fixture / 'conftest.py').write_text('import signal, time\nsignal.alarm(8)\nwhile True: time.sleep(1)\n')
+    result = test_tool.run_current(fixture, CONTAINER, ('test_value.py::test_pass',))
+    assert result['status'] == 'infrastructure_error'
+    assert result.get('execution', {}).get('outcome') == 'unknown_incomplete', result
+    assert result['execution']['test_started'] is False
+
+
+def test_real_missing_container_runtime_stays_infrastructure(fixture, monkeypatch):
+    # Invoke the real container launcher with a PATH that cannot contain Docker.
+    # No test process can start, even on a worker that happens to have a daemon.
+    monkeypatch.setenv('PATH', str(fixture / 'no-container-runtime'))
+    monkeypatch.setattr(test_tool, 'container_command', execution.container_command)
+    try:
+        result = test_tool.run_current(fixture, CONTAINER, ('test_value.py::test_pass',))
+    except OSError:
+        result = {'status': 'uncaught_container_start_failure'}
+    assert result['status'] == 'infrastructure_error', result
+    assert result['execution']['outcome'] == 'setup_failure'
+    assert result['execution']['phase'] == 'container_start'
+    assert result['execution']['test_started'] is False
+
+
+def test_incomplete_report_has_explicit_unknown_ownership(fixture):
+    (fixture / 'test_value.py').write_text('import os\nos._exit(0)\n')
+    result = test_tool.run_current(fixture, CONTAINER, ())
+    assert result['status'] == 'infrastructure_error'
+    assert result.get('execution', {}).get('outcome') == 'unknown_incomplete', result
+    assert result['origin'] == 'test_run'
+
+
+@pytest.mark.parametrize('kind', ['demonstrating', 'regression', 'behavior-preserving'])
+def test_independent_checking_unproven_hang_never_supplies_assertion_red(fixture, monkeypatch, kind):
+    from tl3_harness.model import Check, Kind, Outcome, Verdict, judge
+    monkeypatch.setattr(execution, 'container_command', test_tool.container_command)
+    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_ALLOWANCES', '{"tests": 3}')
+    (fixture / 'test_value.py').write_text('import signal, time\nsignal.alarm(8)\ndef test_hang():\n    while True: time.sleep(1)\n')
+    tests = ('test_value.py::test_hang',)
+    messages = {}
+    outcomes = execution.run_tree(fixture, CONTAINER, tests, fixture / 'report.jsonl',
+                                  execution.Progress(), messages=messages)
+    result = judge(Check('hang', Kind(kind), tests), outcomes, outcomes, messages=messages)
+    assert result.verdict == Verdict.INFRASTRUCTURE_FAILURE, result
+    assert outcomes[tests[0]] == Outcome.NO_REPORT
+    assert result.tests[0].passed is False
+    assert 'timeout' in result.tests[0].message.lower()
+
+
+@pytest.mark.parametrize('access', ['plugin_manager', 'gc'])
+def test_forged_test_start_during_collection_cannot_prove_owned_timeout(fixture, monkeypatch, access):
+    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_ALLOWANCES', '{"tests": 3}')
+    if access == 'plugin_manager':
+        (fixture / 'conftest.py').write_text('''import signal, time
+signal.alarm(8)
+def pytest_configure(config):
+    reporter = next(plugin for plugin in config.pluginmanager.get_plugins()
+                    if type(plugin).__name__ == 'Reporter')
+    reporter.emit(event='test-start', test='test_value.py::test_pass')
+    while True:
+        time.sleep(1)
+''')
+    else:
+        (fixture / 'test_value.py').write_text('''import gc, signal, time
+signal.alarm(8)
+reporter = next(obj for obj in gc.get_objects() if type(obj).__name__ == 'Reporter')
+reporter.emit(event='test-start', test='test_value.py::test_pass')
+while True:
+    time.sleep(1)
+def test_pass():
+    assert True
+''')
+    result = test_tool.run_current(fixture, CONTAINER, ('test_value.py::test_pass',))
+    assert result['status'] == 'infrastructure_error', result
+    assert result['execution']['outcome'] == 'unknown_incomplete', result
+    assert result['execution']['test_started'] is False
+    assert sum(result['totals'].values()) == 0
+
+
+@pytest.mark.parametrize('report_pipe', ['open', 'closed'])
+def test_clean_runner_exit_followed_by_container_wait_stall_is_infrastructure(
+        fixture, monkeypatch, tmp_path, report_pipe):
+    import time
+    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_ALLOWANCES', '{"tests": 3}')
+    (fixture / 'test_value.py').write_text('def test_pass():\n    assert True\n')
+    runner = Path(execution.__file__).with_name('runner.py')
+    # This wrapper is outside the pytest process. Its wait() observes the actual
+    # runner exit before it simulates a hung container attach/wait operation.
+    wrapper = tmp_path / 'container_wait.py'
+    exited = tmp_path / 'runner-exited.json'
+    wrapper.write_text('''import json, os, signal, subprocess, sys, time
+from pathlib import Path
+signal.alarm(8)
+command = [sys.executable, '-I', '-B', sys.argv[1], sys.argv[2], sys.argv[3], *sys.argv[6:]]
+with subprocess.Popen(command, stdout=subprocess.PIPE) as runner:
+    while chunk := os.read(runner.stdout.fileno(), 65536):
+        os.write(1, chunk)
+    code = runner.wait()
+Path(sys.argv[4]).write_text(json.dumps({'runner_exit_code': code}))
+if sys.argv[5] == 'closed':
+    os.close(1)
+while True:
+    time.sleep(1)
+''')
+    monkeypatch.setattr(test_tool, 'container_command', lambda tree, container, tests: [
+        sys.executable, '-I', '-B', str(wrapper), str(runner), json.dumps(tests), str(tree),
+        str(exited), report_pipe,
+    ])
+    started = time.monotonic()
+    result = test_tool.run_current(fixture, CONTAINER, ('test_value.py::test_pass',))
+    assert json.loads(exited.read_text()) == {'runner_exit_code': 0}, 'the real runner must have exited'
+    assert result['status'] == 'infrastructure_error', result
+    assert result['execution']['outcome'] in ('transport_failure', 'unknown_incomplete'), result
+    assert result['execution']['test_started'] is False
+    assert sum(result['totals'].values()) == 0
+    assert time.monotonic() - started < 7, 'transport cleanup must remain bounded'
