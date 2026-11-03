@@ -12,6 +12,7 @@ from tl3_harness import Check, Forcing, HarnessInputError, Kind, HelperEvidence
 from tl3_harness.limits import validate_check_plan
 from tl3_harness.trees import is_test, test_function_source, bound_names, validate_helper_setup
 from tl3_workers.tools import Worktree
+from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.recall import check_citations
 
 
@@ -210,6 +211,11 @@ def check_reply(inputs, reply, *, rehearsals=None):
         for path in sorted(paths):
             if any(PurePosixPath(path).full_match(pattern) for pattern in inputs["protected_paths"]):
                 violations.append(f"Declared file matches a protected path: {path}")
+
+    if reply["kind"] == "leaf" and inputs["forecast"].get("generator"):
+        with Worktree(".") as tree:
+            paths.update(configured_outputs(tree, inputs["forecast"], inputs["protected_paths"]))
+        reply["files"] = sorted(paths)
 
     forecaster = Forecaster(inputs["forecast"])
     forecast = forecaster.measure(inputs["ingest"]["brief"], paths)

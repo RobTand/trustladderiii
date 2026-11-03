@@ -661,9 +661,9 @@ impl Adapter {
             .as_ref()
             .is_some_and(|attempt| matches!(attempt.requeue, Some(Requeue::Refused)))
         {
-            return Ok(Reconciliation::Found(Completion::permanent(
+            return Ok(Reconciliation::Found(Box::new(Completion::permanent(
                 "queue_command_refused",
-            )));
+            ))));
         }
         let (state, mut observations) = self.read(delivery)?;
         let previously_confirmed =
@@ -689,9 +689,9 @@ impl Adapter {
                     &self.records.path(&delivery.key).with_extension("intent"),
                     &serde_json::to_vec(attempt)?,
                 )?;
-                return Ok(Reconciliation::Found(Completion::permanent(
+                return Ok(Reconciliation::Found(Box::new(Completion::permanent(
                     "queue_command_refused",
-                )));
+                ))));
             }
         }
         if !previously_confirmed && self.reruns_pending(delivery)? {
@@ -699,12 +699,13 @@ impl Adapter {
         }
         let current_head = state.pull_request.head.sha == enqueue(delivery)?.1;
         if !current_head && state.state != QueueState::Merged && !previously_confirmed {
-            return Ok(Reconciliation::Found(Completion {
+            return Ok(Reconciliation::Found(Box::new(Completion {
+                diagnostic: None,
                 ack: Ack::Retryable,
                 failure_class: None,
                 observations,
                 progress: None,
-            }));
+            })));
         }
         if current_head
             && state.pull_request.merged_at.is_none()
@@ -714,7 +715,9 @@ impl Adapter {
                 node: delivery.node(),
                 fact: tl3_kernel::Fact::Conflict,
             }));
-            return Ok(Reconciliation::Found(Completion::confirmed(observations)));
+            return Ok(Reconciliation::Found(Box::new(Completion::confirmed(
+                observations,
+            ))));
         }
         let active = matches!(state.state, QueueState::Queued | QueueState::ChecksRunning);
         let terminal = matches!(
@@ -762,7 +765,7 @@ impl Adapter {
             completion.progress = Some(crate::executor::ProgressToken::Mergify(Progress::from(
                 &state,
             )));
-            return Ok(Reconciliation::Found(completion));
+            return Ok(Reconciliation::Found(Box::new(completion)));
         }
         let github = &self.clients[&delivery.repository.installation];
         let (number, _) = enqueue(delivery)?;
@@ -846,7 +849,9 @@ impl Executor for Adapter {
             self.runtime
                 .block_on(github.remove_label(&repo, number, QUEUE_LABEL))?;
         }
-        Ok(Reconciliation::Found(Completion::confirmed(vec![])))
+        Ok(Reconciliation::Found(Box::new(Completion::confirmed(
+            vec![],
+        ))))
     }
     fn retire_delivery(&mut self, delivery: &Delivery) -> Result<()> {
         for extension in ["intent", "applied", "reruns", "json", "tmp"] {
@@ -869,7 +874,7 @@ impl Executor for Adapter {
                     self.records
                         .deliver(delivery, Completion::confirmed(vec![]))?;
                 }
-                return Ok(completion);
+                return Ok(*completion);
             }
             Reconciliation::Pending => {
                 return Err(Error::Invalid("Mergify acceptance is still unknown"));
@@ -949,7 +954,7 @@ impl Executor for Adapter {
             }
             Err(tl3_mergify::Error::HeadChanged) => {
                 return match self.completion(delivery)? {
-                    Reconciliation::Found(completion) => Ok(completion),
+                    Reconciliation::Found(completion) => Ok(*completion),
                     _ => Err(Error::Invalid("PR changed during enqueue")),
                 };
             }
@@ -963,7 +968,7 @@ impl Executor for Adapter {
             Reconciliation::Found(completion) => {
                 self.records
                     .deliver(delivery, Completion::confirmed(vec![]))?;
-                Ok(completion)
+                Ok(*completion)
             }
             _ => Err(Error::Invalid(
                 "enqueue request sent; Mergify acceptance is still unknown",

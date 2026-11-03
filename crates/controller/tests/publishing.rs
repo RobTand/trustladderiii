@@ -206,6 +206,7 @@ struct State {
     mergeable_override: Option<bool>,
     closed: bool,
     fail_reads: bool,
+    denied_check_reads: bool,
     not_found: Option<&'static str>,
     not_found_reads: usize,
     lose_response: Option<&'static str>,
@@ -229,6 +230,7 @@ impl Default for State {
             mergeable_override: None,
             closed: false,
             fail_reads: false,
+            denied_check_reads: false,
             not_found: None,
             not_found_reads: 0,
             lose_response: None,
@@ -354,6 +356,10 @@ impl Respond for Api {
         }
         if s.fail_reads && method == "GET" {
             return ResponseTemplate::new(503);
+        }
+        if s.denied_check_reads && method == "GET" && path.ends_with("/check-runs") {
+            return ResponseTemplate::new(403)
+                .set_body_json(json!({"message":"synthetic-secret response body"}));
         }
         if path == "/repos/RobTand/operations/issues/81/comments" {
             return match method {
@@ -1738,7 +1744,7 @@ fn publication_recovery() {
     drop(adapter);
     let mut adapter = server.adapter(&records, 1);
     assert!(
-        matches!(adapter.reconcile(&open).unwrap(),Reconciliation::Found(Completion {observations,..}) if matches!(observations.as_slice(),[Observation::PullRequest { number:100,..}]))
+        matches!(adapter.reconcile(&open).unwrap(),Reconciliation::Found(completion) if matches!(completion.observations.as_slice(),[Observation::PullRequest { number:100,..}]))
     );
     adapter.execute(&open).unwrap();
     assert_eq!(server.api.state.lock().unwrap().opens, 1);
@@ -1781,6 +1787,168 @@ fn publication_recovery() {
         Reconciliation::Found(_)
     ));
     assert!(newer.execute(&approval).is_err());
+}
+
+fn publication_refusal_retention(settings: &tl3_config::Store, reconciliation: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let server = Server::new(Arc::new(Fixture::create(root.path())));
+    if !reconciliation {
+        server.api.state.lock().unwrap().not_found = Some("check-runs");
+    }
+    let registry = || {
+        let mut registry = adapters::simulation(root.path()).unwrap();
+        registry.register(
+            Upstream::GitHub,
+            server.adapter(&root.path().join("github"), 0),
+        );
+        registry
+    };
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry(), bootstrap()).unwrap();
+    controller
+        .intake(LabelledIssue {
+            delivery: "publication-retention".into(),
+            owner: repo().owner,
+            repo: repo().name,
+            installation: repo().installation,
+            number: 42,
+            title: "Fix the value".into(),
+            actor: 1,
+            label: "tl3".into(),
+            labels: vec![],
+        })
+        .unwrap();
+    let dispatched = std::cell::Cell::new(false);
+    let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        for _ in 0..300 {
+            controller
+                .drive_once_with(|boundary, key| {
+                    let effect = Store::open(settings).unwrap().effect(key).unwrap().unwrap();
+                    let delivery: Delivery = serde_json::from_value(effect.payload).unwrap();
+                    if matches!(
+                        delivery.output,
+                        Out::Effect {
+                            kind: EffectKind::PostApproval,
+                            ..
+                        }
+                    ) {
+                        if reconciliation && boundary == Boundary::BeforeDispatch {
+                            panic!("simulate restart after intent was sent");
+                        }
+                        if boundary == Boundary::AfterDispatch {
+                            dispatched.set(true);
+                        }
+                    }
+                })
+                .unwrap();
+            if dispatched.get() {
+                return;
+            }
+        }
+        panic!("approval never reached dispatch");
+    }));
+    assert_eq!(run.is_err(), reconciliation);
+    let pending = controller
+        .snapshot()
+        .unwrap()
+        .pending_effects
+        .into_iter()
+        .find(|effect| {
+            let delivery: Delivery = serde_json::from_value(effect.payload.clone()).unwrap();
+            matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::PostApproval,
+                    ..
+                }
+            )
+        })
+        .expect("approval must remain pending after its first refusal or lost response");
+    assert_eq!(pending.state, tl3_store::EffectState::Sent);
+    if reconciliation {
+        drop(controller);
+        server.api.state.lock().unwrap().denied_check_reads = true;
+        controller =
+            Controller::open(Store::open(settings).unwrap(), registry(), bootstrap()).unwrap();
+        controller.drive_once().unwrap(); // Sent becomes Uncertain without acknowledging it.
+        controller.drive_once().unwrap();
+    }
+    let events = Store::open(settings)
+        .unwrap()
+        .events_after(tl3_store::Revision::try_from(0).unwrap(), 1000)
+        .unwrap();
+    let diagnostic = events
+        .iter()
+        .map(|event| &event.payload["diagnostic"])
+        .find(|diagnostic| diagnostic["effect_key"] == pending.key)
+        .expect("every permanent publication refusal must be journaled before recovery");
+    assert_eq!(
+        diagnostic["class"],
+        if reconciliation {
+            "permission"
+        } else {
+            "not_found"
+        }
+    );
+    assert_eq!(diagnostic["status"], if reconciliation { 403 } else { 404 });
+    assert_eq!(diagnostic["effect_kind"], json!(EffectKind::PostApproval));
+    assert_eq!(
+        diagnostic["endpoint"],
+        if reconciliation {
+            "GET /repos/{owner}/{repo}/commits/{head}/check-runs"
+        } else {
+            "POST /repos/{owner}/{repo}/check-runs"
+        }
+    );
+    assert!(
+        !serde_json::to_string(diagnostic)
+            .unwrap()
+            .contains("synthetic-secret")
+    );
+    assert_eq!(
+        Store::open(settings)
+            .unwrap()
+            .effect(&pending.key)
+            .unwrap()
+            .unwrap()
+            .state,
+        if reconciliation {
+            tl3_store::EffectState::Uncertain
+        } else {
+            pending.state
+        },
+        "retention must not acknowledge or retry the effect"
+    );
+    assert_eq!(controller.world().unwrap().nodes[0].fx_failures, 0);
+    if !reconciliation {
+        server.api.state.lock().unwrap().not_found = None;
+        controller.look_key(&pending.key).unwrap();
+        assert_eq!(controller.world().unwrap().nodes[0].fx_failures, 1);
+        for _ in 0..20 {
+            controller.drive_once().unwrap();
+            if !server.api.state.lock().unwrap().checks.is_empty() {
+                break;
+            }
+        }
+        // The retry has a fresh key. The original refusal must survive its success.
+        assert_eq!(server.api.state.lock().unwrap().checks.len(), 1);
+        assert!(
+            Store::open(settings)
+                .unwrap()
+                .events_after(tl3_store::Revision::try_from(0).unwrap(), 1000)
+                .unwrap()
+                .iter()
+                .any(|event| event.payload["diagnostic"] == *diagnostic)
+        );
+        assert!(
+            controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|row| row.table == "publication_failures" && row.id == pending.key)
+        );
+    }
 }
 
 fn publication_404_look(settings: &tl3_config::Store, case: &str) {
@@ -2001,6 +2169,20 @@ fn stage_obligations_block_publication() {
 }
 
 fn main() {
+    if let Some(case) = env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--refusal-retention=").map(str::to_owned))
+    {
+        assert!(matches!(case.as_str(), "reconciliation" | "first-404"));
+        let mut database = scenario("publishing_database_setup", support::Database::start);
+        scenario(&format!("publication_retention_{case}"), || {
+            publication_refusal_retention(&database.create("retention"), case == "reconciliation")
+        });
+        scenario("publishing_database_stop", || database.stop());
+        println!("test publication_retention_{case} ... ok");
+        println!("1 publishing scenarios passed; no skips");
+        return;
+    }
     if env::args().nth(1).as_deref() == Some("--stage-obligations") {
         scenario(
             "stage_obligations_block_publication",
@@ -2089,6 +2271,17 @@ fn main() {
     println!("test publication_lost_response_recovery ... ok");
     let python = scenario("publishing_worker_setup", prepare_workers);
     let mut database = scenario("publishing_database_setup", support::Database::start);
+    for reconciliation in [true, false] {
+        let name = if reconciliation {
+            "publication_reconciliation_403_retained"
+        } else {
+            "publication_first_404_retained_after_success"
+        };
+        scenario(name, || {
+            publication_refusal_retention(&database.create(name), reconciliation)
+        });
+        println!("test {name} ... ok");
+    }
     for case in ["open", "approval", "open-restart"] {
         scenario(&format!("publication_404_look_{case}"), || {
             publication_404_look(&database.create(&format!("publication_404_{case}")), case);
@@ -2141,5 +2334,5 @@ fn main() {
         println!("test {mode} ... ok");
     }
     scenario("publishing_database_stop", || database.stop());
-    println!("36 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
+    println!("38 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }

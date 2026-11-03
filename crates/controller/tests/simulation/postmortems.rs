@@ -80,21 +80,21 @@ impl Executor for Workers {
             return Ok(Reconciliation::Pending);
         }
         if let Some(failure) = judge.failing {
-            return Ok(Reconciliation::Found(Completion::confirmed(vec![
-                Observation::Postmortem {
+            return Ok(Reconciliation::Found(Box::new(Completion::confirmed(
+                vec![Observation::Postmortem {
                     key: delivery.key.clone(),
                     reply: None,
                     failure: Some(failure.into()),
-                },
-            ])));
+                }],
+            ))));
         }
-        Ok(Reconciliation::Found(Completion::confirmed(vec![
-            Observation::Postmortem {
+        Ok(Reconciliation::Found(Box::new(Completion::confirmed(
+            vec![Observation::Postmortem {
                 key: delivery.key.clone(),
                 reply: Some(judge.reply.clone().unwrap_or_else(|| reply(2))),
                 failure: None,
-            },
-        ])))
+            }],
+        ))))
     }
     fn look(&mut self, delivery: &Delivery) -> Result<Look> {
         if delivery.is_postmortem() && self.judge.borrow().stalled {

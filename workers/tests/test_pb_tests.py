@@ -886,15 +886,28 @@ def test_generator_failure_and_out_of_scope_output_preserve_source(
 
 @pytest.mark.parametrize("protected,files,fragment", [
     (["**/BUILD.bazel"], None, "protected"),
-    ([], ["tests/socket_support.py"], "footprint"),
 ])
-def test_generator_cannot_override_protection_or_footprint(
+def test_generator_cannot_override_protection(
         generator_repo, generator_backend, tmp_path, protected, files, fragment):
     tree, generate = configured_generator(generator_repo, tmp_path, protected=protected, files=files)
     with tree:
         result = generate()
     assert result["status"] != "completed"
     assert fragment in result["message"], result
+
+
+
+def test_request_2709_test_only_plan_imports_configured_output(generator_repo, generator_backend, tmp_path):
+    for name in ("socket_support.py", "test_short_socket.py"):
+        (generator_repo / "tests" / name).unlink()
+    (generator_repo / "tests/test_wait.py").write_text("from pathlib import Path\n")
+    tree, generate = configured_generator(generator_repo, tmp_path, files=["tests/test_wait.py"])
+    with tree:
+        result = generate()
+        assert result["status"] == "completed", result
+        assert "tests/test_wait.py:pathlib" in (generator_repo / "tests/BUILD.bazel").read_text()
+        assert generate() == result, "verified import remains idempotent"
+    assert len(generator_backend[0]) == 1
 
 
 def test_generator_receipt_is_invalidated_by_source_edit(generator_repo, generator_backend, tmp_path):
@@ -1813,6 +1826,49 @@ def test_transport_failure_has_typed_diagnostic_and_no_test_verdict(submission, 
     assert result['execution']['phase'] == stage
     assert result['execution']['test_started'] is False
     assert result['tests'] == [] and sum(result['totals'].values()) == 0
+
+
+def test_request_2709_legacy_plan_extends_before_final_head(
+        generator_repo, generator_backend, tmp_path, monkeypatch):
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+    from tl3_workers import runtime
+    from tl3_workers.contracts import validate
+    for name in ("socket_support.py", "test_short_socket.py"):
+        (generator_repo / "tests" / name).unlink()
+    (generator_repo / "tests/test_wait.py").write_text("from socket import socket\n")
+    done = AIMessage(content=json.dumps({"kind": "done", "self_check": [
+        {"goal_id": "import", "status": "met", "evidence": "Updated test import."}]}))
+    turns = [AIMessage(content="", tool_calls=[{"name": "write", "id": "edit", "args": {
+        "path": "tests/test_wait.py", "content": "from pathlib import Path\n"}}]), done]
+    monkeypatch.setattr(runtime, "create_model", lambda _: FakeMessagesListChatModel(responses=turns))
+    request = {"protocol": 1, "role": "maker", "worktree": str(generator_repo),
+        "operation": {"node": 1, "generation": 0, "kind": "make"},
+        "inputs": {"brief": "Update only the test's import; never hand-edit generated files.",
+            "goals": [{"id": "import", "description": "Update the test import."}],
+            "plan": {"files": ["tests/test_wait.py"], "checks": [{"name": "import", "kind": "demonstrating",
+                "tests": ["tests/test_wait.py::test_wait"], "goal_ids": ["import"]}]},
+            "forecast": {"fit_tokens": 100000, "context_tokens": 150000, "overhead_tokens": {"work": 1},
+                "generated_files": ["**/BUILD.bazel"], "generator": "python3 generate.py", "generator_available": True},
+            "attempt": 1, "round": 0, "context_size": 150000,
+            "tests": {"image": IMAGE, "tools_path": str(tmp_path / "tools")}}}
+    events = []
+    runtime.run(request, events.append)
+    extension = events[-1]["reply"]
+    assert extension["kind"] == "needs_files", extension
+    validate("maker-reply", extension)
+    assert extension["fits"] is True
+    assert [entry["path"] for entry in extension["files"]] == ["tests/BUILD.bazel"]
+    # The existing controller extension transition locks these files before the next make.
+    request["inputs"]["plan"]["files"].extend(entry["path"] for entry in extension["files"])
+    monkeypatch.setattr(runtime, "create_model", lambda _: FakeMessagesListChatModel(responses=[done]))
+    runtime.run(request, events.append)
+    result = events[-1]["reply"]
+    assert result["kind"] == "done", result
+    validate("maker-reply", result)
+    tree = subprocess.check_output(["git", "rev-parse", result["head"] + "^{tree}"], cwd=generator_repo).decode().strip()
+    assert result["generation_evidence"]["output_tree"] == tree
+    subprocess.run(["python3", "generate.py", "--check"], cwd=generator_repo, check=True)
 
 
 # #600: completed negative evidence is feedback within one bounded planning run.

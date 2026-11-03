@@ -586,7 +586,7 @@ impl Adapter {
                 false,
                 &record,
             ))? {
-                Some(completion) => Reconciliation::Found(completion),
+                Some(completion) => Reconciliation::Found(Box::new(completion)),
                 None if matches!(record, RecordRead::Absent) => Reconciliation::Absent,
                 None => Reconciliation::Pending,
             },
@@ -780,7 +780,7 @@ impl Executor for Adapter {
                         .map_err(adapter_error)?;
                 }
                 match self.reconcile(delivery)? {
-                    Reconciliation::Found(completion) => Ok(completion),
+                    Reconciliation::Found(completion) => Ok(*completion),
                     _ => Err(crate::Error::Invalid(
                         "PrismaBuild withdrawal still awaits its ending",
                     )),
@@ -800,7 +800,7 @@ impl Executor for Adapter {
                 self.remove_input(delivery)?;
                 let Some(job) = self.job(delivery)? else {
                     if let Some(completion) = self.plan_failure(delivery)? {
-                        return Ok(Reconciliation::Found(completion));
+                        return Ok(Reconciliation::Found(Box::new(completion)));
                     }
                     // Publication requires this durable binding, so no attempt can exist without it.
                     return Ok(Reconciliation::Absent);
@@ -849,7 +849,9 @@ impl Executor for Adapter {
                         return Ok(Reconciliation::Pending);
                     }
                 }
-                Ok(Reconciliation::Found(Completion::confirmed(vec![])))
+                Ok(Reconciliation::Found(Box::new(Completion::confirmed(
+                    vec![],
+                ))))
             }
             _ => Err(crate::Error::Invalid("unsupported PrismaBuild effect")),
         }

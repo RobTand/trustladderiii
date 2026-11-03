@@ -273,6 +273,8 @@ impl WatchProgress {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Completion {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<crate::publication_failure::Diagnostic>,
     pub ack: Ack,
     #[serde(default)]
     pub failure_class: Option<String>,
@@ -285,6 +287,7 @@ pub struct Completion {
 impl Completion {
     pub fn permanent(class: impl Into<String>) -> Self {
         Self {
+            diagnostic: None,
             ack: Ack::Permanent,
             failure_class: Some(class.into()),
             progress: None,
@@ -310,6 +313,7 @@ impl Completion {
 
     pub fn confirmed(observations: Vec<Observation>) -> Self {
         Self {
+            diagnostic: None,
             failure_class: None,
             ack: Ack::Confirmed,
             progress: None,
@@ -319,7 +323,7 @@ impl Completion {
 }
 
 pub enum Look {
-    Found(Completion),
+    Found(Box<Completion>),
     Absent,
     Pending,
     /// An authoritative live record. Progress is an upstream-owned checkpoint.
@@ -343,7 +347,7 @@ pub enum WaitRecord {
 }
 
 pub enum Reconciliation {
-    Found(Completion),
+    Found(Box<Completion>),
     /// Authoritative absence, with any earlier executor attempt known to have ended.
     Absent,
     Pending,

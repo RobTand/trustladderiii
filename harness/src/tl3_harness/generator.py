@@ -31,7 +31,7 @@ VALIDATION_SECONDS = 20
 CLEANUP_SECONDS = 10
 # Five more seconds let the trusted wrapper serialize its bounded artifact.
 OUTER_OVERHEAD_SECONDS = PREPARATION_SECONDS + VALIDATION_SECONDS + CLEANUP_SECONDS + 5
-IMPLEMENTATION = "tl3-generator-v3"
+IMPLEMENTATION = "tl3-generator-v4"
 
 
 def budget(cpus=1, mem_gb=2, timeout_s=TIMEOUT):
@@ -138,6 +138,7 @@ def manifest(root):
 
 
 def changed(before, after, generated_files, protected_paths, files):
+    """Authorize trusted outputs from configuration; files still binds legacy action identity."""
     names = sorted(name for name in before.keys() | after.keys() if before.get(name) != after.get(name))
     if len(names) > MAX_OUTPUTS:
         raise ValueError("generator output file count exceeds limit")
@@ -148,8 +149,6 @@ def changed(before, after, generated_files, protected_paths, files):
             raise ValueError(f"generator changed protected output: {name}")
         if not any(path.full_match(pattern) for pattern in generated_files):
             raise ValueError(f"generator changed undeclared generated output: {name}")
-        if name not in files:
-            raise ValueError(f"generator output is outside the footprint: {name}")
         if name not in after:
             raise ValueError(f"generator deleted an output: {name}")
         expected_mode = before[name]["mode"] if name in before else 0o644

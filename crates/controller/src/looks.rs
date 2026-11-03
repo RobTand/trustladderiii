@@ -104,7 +104,10 @@ impl Cause {
     /// that fail because the model proxy is down still count as TL3-side;
     /// the controller can't yet tell them from worker bugs.
     pub(crate) fn of(upstream: Upstream, class: &str) -> Self {
-        if class == "redaction_infra" {
+        if matches!(
+            class,
+            "redaction_infra" | "pr_evidence" | "pr_obligation" | "pr_policy"
+        ) {
             return Cause::Tl3;
         }
         match upstream {
@@ -670,7 +673,8 @@ impl Controller {
             state.wait_ended = false;
         }
         match result {
-            Ok(Look::Found(mut completion)) => {
+            Ok(Look::Found(completion)) => {
+                let mut completion = *completion;
                 let effect = self
                     .store
                     .effect(&state.delivery.key)?
@@ -764,6 +768,7 @@ impl Controller {
                     self.complete(
                         &effect.key,
                         Completion {
+                            diagnostic: None,
                             failure_class: None,
                             progress: None,
                             ack: Ack::Retryable,
@@ -1026,6 +1031,7 @@ impl Controller {
         if !crate::input_errors::recoverable(&error) {
             return Err(error);
         }
+        self.record_publication_refusal(&state.delivery, &error)?;
         eprintln!(
             "allowance action failed for {}: {error}",
             state.delivery.key
@@ -1094,12 +1100,22 @@ impl Controller {
             .adapters
             .adapter(&state.delivery)?
             .app_login(request.repo.installation);
-        let summary = incident_summary(&request.title, &signature, needs_rob, app_login.as_deref());
+        let mut summary =
+            incident_summary(&request.title, &signature, needs_rob, app_login.as_deref());
         let mut commit = Commit::new(
             format!("incident:{id}"),
             json!({"read_outage":state.delivery.key}),
             &snapshot,
         );
+        let diagnostic =
+            crate::publication_failure::retained(&snapshot, &commit, &state.delivery.key)?;
+        if let Some(diagnostic) = &diagnostic {
+            summary.push_str(&format!(
+                " Recorded occurrence {}. {}",
+                state.read_incidents,
+                diagnostic.render()
+            ));
+        }
         commit.rows.push(put(
             "incidents",
             id.clone(),
@@ -1127,7 +1143,8 @@ impl Controller {
         delivery.note = Some(incident_note(&request.repo, request.issue, &summary));
         delivery.question_context = Some(json!({"issue_title":request.title,
             "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title,
-                request.repo.owner, request.repo.name, request.issue), "signature":signature, "incident_id":id}));
+                request.repo.owner, request.repo.name, request.issue), "signature":signature, "incident_id":id,
+            "publication_diagnostic":diagnostic, "occurrences":state.read_incidents}));
         if let Some(o) = &self.bootstrap.operations {
             delivery.repository = crate::Repository {
                 owner: o.owner.clone(),
@@ -1423,7 +1440,11 @@ impl Controller {
         node: NodeId,
         id: &str,
         commit: &mut Commit,
-    ) -> Result<(Upstream, String)> {
+    ) -> Result<(
+        Upstream,
+        String,
+        Option<crate::publication_failure::Diagnostic>,
+    )> {
         let cause = snapshot
             .rows
             .iter()
@@ -1459,15 +1480,18 @@ impl Controller {
                     .saturating_add(u64::from(self.allowance(&state.delivery).silence_secs) * 1000),
             );
             let upstream = upstream(state.delivery.output);
+            let diagnostic =
+                crate::publication_failure::retained(snapshot, commit, &state.delivery.key)?;
             commit
                 .rows
                 .push(put("allowances", state.delivery.key.clone(), json!(state)));
             Ok((
                 upstream,
                 state.failure.unwrap_or_else(|| "operation_failed".into()),
+                diagnostic,
             ))
         } else {
-            Ok((Upstream::GitHub, "operation_failed".into()))
+            Ok((Upstream::GitHub, "operation_failed".into(), None))
         }
     }
 
@@ -1618,6 +1642,13 @@ pub(crate) fn incident_summary(
     app_login: Option<&str>,
 ) -> String {
     let source = match signature.upstream {
+        _ if matches!(
+            signature.class.as_str(),
+            "pr_evidence" | "pr_obligation" | "pr_policy"
+        ) =>
+        {
+            "TL3's publication validation"
+        }
         _ if signature.class == crate::adapters::prismabuild::HARNESS => "TL3's check harness",
         Upstream::Workers => "the agent worker",
         Upstream::Worktrees => "the Git worktree",
@@ -1626,6 +1657,9 @@ pub(crate) fn incident_summary(
         Upstream::GitHub => "GitHub",
     };
     let reason = match signature.class.as_str() {
+        "pr_evidence" => "refused publication because required independent evidence is missing",
+        "pr_obligation" => "refused publication because a branch or body obligation is unmet",
+        "pr_policy" => "refused publication because the body breaks repository policy",
         "no_progress" => "stopped making progress",
         "queue_unfinished" => "has not finished its queue check",
         "permission" => "refused access",
@@ -1675,7 +1709,7 @@ pub(crate) fn incident_summary(
         _ => "could not finish the operation",
     };
     let next = if needs_rob {
-        "Rob must clear this recurring problem."
+        "Rob must clear this problem."
     } else {
         "Work is waiting for recovery."
     };

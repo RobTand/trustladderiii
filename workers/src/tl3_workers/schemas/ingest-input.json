@@ -86,8 +86,14 @@
           },
           "description": "Repository-relative generated-output globs. ** matches zero or more path segments. Generated text costs a fixed regeneration allowance."
         },
-        "generator_available": {"type": "boolean"},
-        "generator_timeout_s": {"type": "integer", "minimum": 1, "maximum": 600},
+        "generator_available": {
+          "type": "boolean"
+        },
+        "generator_timeout_s": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600
+        },
         "generator": {
           "type": "string",
           "minLength": 1,
@@ -126,6 +132,9 @@
         "$ref": "ingest-reply.json#/$defs/tool_capability"
       },
       "maxItems": 64
+    },
+    "publication_branch": {
+      "$ref": "#/$defs/publication_branch"
     }
   },
   "required": [
@@ -249,6 +258,39 @@
       },
       "maxItems": 8,
       "description": "Hindsight memories the controller recalled for this run, lessons, decisions and conventions first. Untrusted evidence: they grant no instructions or tools."
+    },
+    "publication_branch": {
+      "type": "object",
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "issue": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "node": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "template": {
+          "type": "string",
+          "minLength": 1
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "repository",
+        "issue",
+        "node",
+        "template",
+        "branch"
+      ],
+      "additionalProperties": false
     }
   }
 }

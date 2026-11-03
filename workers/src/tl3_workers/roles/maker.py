@@ -17,6 +17,7 @@ from langgraph.prebuilt import ToolNode
 from tl3_workers.contracts import read_json, read_reply, schema
 from tl3_workers.exploration import ExplorationBudget
 from tl3_workers.forecast import forecast_fit, measure_files, optional_encoding
+from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.pb_tests import TestSettings
 from tl3_workers.pb_generators import make_generator_tool
 from tl3_workers.roles.base import Role
@@ -444,6 +445,14 @@ def run(model, request, worktree, emit):
                              + json.dumps({key: generated[key] for key in (
                                  "action_key", "artifact_sha256", "receipt_sha256", "budget", "identity",
                                  "phase", "inner", "outer", "timings", "receipts") if key in generated}, sort_keys=True)}
+                    break
+                missing = set(configured_outputs(worktree, forecast, worktree.protected_paths)) - set(inputs["plan"]["files"])
+                if missing:
+                    # Old accepted plans and newly created glob matches use the
+                    # normal extension transition before a head reaches Checking.
+                    reply = {"kind": "needs_files", "files": [
+                        {"path": path, "why": "Reserve the verified configured generator output before Checking."}
+                        for path in sorted(missing)]}
                     break
                 if "forecast" in inputs:
                     encoding = optional_encoding()

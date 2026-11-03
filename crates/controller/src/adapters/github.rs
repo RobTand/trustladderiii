@@ -465,8 +465,11 @@ impl Executor for Adapter {
                 Err(Error::Permanent {
                     class: "pr_evidence",
                     ..
-                }) => Ok(Reconciliation::Found(Completion::permanent("pr_evidence"))),
-                Err(error) if error.is_github_not_found() => Err(error),
+                }) => Ok(Reconciliation::Found(Box::new(Completion::permanent(
+                    "pr_evidence",
+                )))),
+                // The controller records the refusal while leaving reconciliation pending.
+                Err(error @ Error::Permanent { .. }) => Err(error),
                 result => Ok(result.unwrap_or(Reconciliation::Pending)),
             };
         }
@@ -484,7 +487,9 @@ impl Executor for Adapter {
                     delivery.marker_key(),
                     since,
                 )) {
-                    Ok(Some(issue)) => Reconciliation::Found(Self::linked(delivery, issue)),
+                    Ok(Some(issue)) => {
+                        Reconciliation::Found(Box::new(Self::linked(delivery, issue)))
+                    }
                     Ok(None) => Reconciliation::Absent,
                     Err(_) => Reconciliation::Pending,
                 },
@@ -503,7 +508,7 @@ impl Executor for Adapter {
                     delivery.issue,
                     delivery.marker_key(),
                 )) {
-                    Ok(Some(_)) => Reconciliation::Found(Completion::confirmed(vec![])),
+                    Ok(Some(_)) => Reconciliation::Found(Box::new(Completion::confirmed(vec![]))),
                     Ok(None) => Reconciliation::Absent,
                     Err(_) => Reconciliation::Pending,
                 },
@@ -550,7 +555,9 @@ impl Executor for Adapter {
                 if self.close_original(delivery).is_err() {
                     return Ok(Reconciliation::Pending);
                 }
-                Ok(Reconciliation::Found(Completion::confirmed(vec![])))
+                Ok(Reconciliation::Found(Box::new(Completion::confirmed(
+                    vec![],
+                ))))
             }
             Ok(None) => Ok(Reconciliation::Absent),
             Err(_) => Ok(Reconciliation::Pending),
@@ -568,6 +575,14 @@ pub fn writer_input(
     request: &str,
 ) -> Result<WriteRequest> {
     let mut input = writer_facts(delivery, notice, title, request)?;
+    if let Some(context) = &delivery.question_context
+        && let Some(diagnostic) = context
+            .get("publication_diagnostic")
+            .filter(|value| !value.is_null())
+    {
+        input.facts["publication_diagnostic"] = diagnostic.clone();
+        input.facts["occurrences"] = context["occurrences"].clone();
+    }
     // #427: the draft is written for this delivery's request.
     input.request = Some(super::workers::writer::WriteFor {
         node: delivery.node().0,
@@ -989,8 +1004,27 @@ fn fixed_notice_text(delivery: &Delivery) -> Result<Option<String>> {
                 .and_then(|request| request.rsplit_once('('))
                 .and_then(|(_, url)| url.strip_suffix(')'))
                 .unwrap_or(&destination);
+            let diagnostic = delivery
+                .question_context
+                .as_ref()
+                .and_then(|context| context.get("publication_diagnostic"))
+                .filter(|value| !value.is_null())
+                .map(|value| {
+                    crate::decode_stored::<crate::publication_failure::Diagnostic>(value.clone())
+                })
+                .transpose()?;
+            let recurrence = delivery
+                .question_context
+                .as_ref()
+                .and_then(|context| context["occurrences"].as_u64())
+                .map(|count| format!("Recorded occurrence {count}."))
+                .unwrap_or_else(|| "Occurrence count unavailable.".into());
+            let details = diagnostic
+                .as_ref()
+                .map(|diagnostic| format!("{recurrence} {}\n\n", diagnostic.render()))
+                .unwrap_or_default();
             Ok(Some(format!(
-                "Reply with \"clear incident {id}\" on {destination} or on the request's issue at {request} after fixing the cause."
+                "{details}Reply with \"clear incident {id}\" on {destination} or on the request's issue at {request} after fixing the cause."
             )))
         }
         Out::Notice {
@@ -1341,5 +1375,48 @@ mod question_findings_tests {
             }
             assert!(message.chars().count() < 2_000);
         }
+    }
+}
+
+#[cfg(test)]
+mod publication_notice_tests {
+    use super::*;
+
+    #[test]
+    fn t604_machine_footer_retains_recorded_recurrence_even_when_writer_omits_it() {
+        let fixture = crate::git_tests::Repo::new();
+        let diagnostic =
+            crate::publication_failure::Diagnostic::capture(&fixture.delivery(), None, "pr_policy")
+                .unwrap();
+        let mut notice = fixture.delivery();
+        notice.output = Out::Notice {
+            node: notice.node(),
+            notice: Notice::Incident { needs_rob: true },
+        };
+        notice.note = Some("Work needs help.".into());
+        for count in [1, 2] {
+            notice.question_context = Some(
+                json!({"incident_id":"30.0", "publication_diagnostic":diagnostic,"occurrences":count}),
+            );
+            let footer = fixed_notice_text(&notice).unwrap().unwrap();
+            assert!(
+                footer.contains(&format!("Recorded occurrence {count}.")),
+                "{footer}"
+            );
+            assert!(footer.contains("pr_policy"));
+        }
+        notice
+            .question_context
+            .as_mut()
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove("occurrences");
+        assert!(
+            fixed_notice_text(&notice)
+                .unwrap()
+                .unwrap()
+                .contains("Occurrence count unavailable.")
+        );
     }
 }

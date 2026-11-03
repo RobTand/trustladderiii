@@ -2,12 +2,18 @@
 
 from tl3_workers.roles.base import Role
 from tl3_workers.evidence import preflight
+from tl3_workers.generated_scope import audit_generation_scope
 from tl3_workers.exploration import ExplorationBudget
+
+
+def check_reply(inputs, reply):
+    preflight(inputs, reply)
+    audit_generation_scope(inputs, reply)
 
 
 ROLE = Role(
     name="audit",
-    check_reply=preflight,
+    check_reply=check_reply,
     code_only_fields=("evidence_errors",),
     prompt="audit.md",
     input_schema="audit-input",

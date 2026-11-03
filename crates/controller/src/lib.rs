@@ -37,6 +37,7 @@ pub mod priority;
 pub mod production;
 pub mod prompts;
 mod protected_requests;
+pub mod publication_failure;
 mod question_findings;
 mod redaction;
 pub mod release;
@@ -111,9 +112,7 @@ fn decode_stored<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
 
 impl Error {
     fn is_github_not_found(&self) -> bool {
-        matches!(self, Self::Permanent { source, .. }
-            if matches!(source.downcast_ref::<tl3_github::Error>(),
-                Some(tl3_github::Error::Http { status: 404 })))
+        publication_failure::http_status(self) == Some(404)
     }
 }
 
@@ -1084,7 +1083,7 @@ impl Controller {
                         let reconciled = self.adapters.adapter(&delivery)?.reconcile(&delivery);
                         hook(Boundary::AfterReconcile, &delivery.key);
                         if let Ok(Reconciliation::Found(completion)) = reconciled {
-                            self.complete(&effect.key, completion)?;
+                            self.complete(&effect.key, *completion)?;
                             return Ok(true);
                         }
                         waiting_for_queue = true;
@@ -1208,11 +1207,21 @@ impl Controller {
                                 && matches!(delivery.output, DeliveryOutput::Effect { node, .. }
                                     if world.nodes[node.index().ok_or(Error::Invalid("node index overflow"))?].fx_failures == 0)) =>
                         {
-                            self.complete(&effect.key, Completion::permanent(class))?;
+                            let mut completion = Completion::permanent(class);
+                            if publication_failure::handles(&delivery) {
+                                let diagnostic = publication_failure::Diagnostic::capture(
+                                    &delivery,
+                                    Some(error),
+                                    class,
+                                )?;
+                                completion.diagnostic = Some(diagnostic);
+                            }
+                            self.complete(&effect.key, completion)?;
                             return Ok(true);
                         }
                         Err(error) => {
                             // A transport error is not an upstream acknowledgement.
+                            self.record_publication_refusal(&delivery, &error)?;
                             eprintln!("adapter execute failed for {}: {error}", effect.key);
                             if let Error::Quota { retry_after } = &error {
                                 self.defer_quota(&effect.key, *retry_after)?;
@@ -1244,7 +1253,9 @@ impl Controller {
                     hook(Boundary::BeforeReconcile, &effect.key);
                     let reconciled = if effect.state == EffectState::Cancelling {
                         if closing_queue {
-                            Ok(Reconciliation::Found(Completion::confirmed(vec![])))
+                            Ok(Reconciliation::Found(Box::new(Completion::confirmed(
+                                vec![],
+                            ))))
                         } else {
                             self.adapters
                                 .adapter(&delivery)?
@@ -1258,11 +1269,13 @@ impl Controller {
                         Ok(result) => result,
                         Err(error) => {
                             eprintln!("adapter reconciliation failed for {}: {error}", effect.key);
+                            self.record_publication_refusal(&delivery, &error)?;
                             continue;
                         }
                     };
                     match result {
                         Reconciliation::Found(completion) => {
+                            let completion = *completion;
                             if completion.releases_holds() {
                                 self.retry_held_effects(executor::upstream(delivery.output));
                             }
@@ -1349,7 +1362,7 @@ impl Controller {
                 let reconciled = self.adapters.adapter(&delivery)?.reconcile(&delivery);
                 hook(Boundary::AfterReconcile, &delivery.key);
                 let completion = match reconciled {
-                    Ok(Reconciliation::Found(completion)) => completion,
+                    Ok(Reconciliation::Found(completion)) => *completion,
                     Ok(Reconciliation::Absent)
                         if executor::upstream(delivery.output) == executor::Upstream::Workers =>
                     {
@@ -1506,7 +1519,7 @@ impl Controller {
         Ok(())
     }
 
-    fn complete(&mut self, key: &str, completion: Completion) -> Result<()> {
+    fn complete(&mut self, key: &str, mut completion: Completion) -> Result<()> {
         let snapshot = self.store.load()?;
         let effect = snapshot
             .pending_effects
@@ -1514,11 +1527,27 @@ impl Controller {
             .find(|e| e.key == key)
             .ok_or(Error::Invalid("completion has no pending effect"))?;
         let delivery: Delivery = decode_stored(effect.payload.clone())?;
+        if completion.ack == Ack::Permanent
+            && publication_failure::handles(&delivery)
+            && completion.diagnostic.is_none()
+        {
+            completion.diagnostic = Some(publication_failure::Diagnostic::capture(
+                &delivery,
+                None,
+                completion.failure_class.as_deref().unwrap_or("unknown"),
+            )?);
+        }
         let mut commit = Commit::new(
             format!("completion:{key}:{}", effect.updated_revision.get()),
             json!(&completion),
             &snapshot,
         );
+        if let Some(diagnostic) = &completion.diagnostic {
+            eprintln!("{}", diagnostic.render());
+            commit
+                .rows
+                .push(put("publication_failures", key.into(), json!(diagnostic)));
+        }
         // A confirmed completion may still name its failure, such as a check
         // action whose trusted harness rejected TL3's own input.
         if let Some(class) = completion.failure_class.as_deref() {
@@ -2050,7 +2079,8 @@ impl Controller {
             } = output
             {
                 let id = looks::incident_id(snapshot, index);
-                let (mut source, mut class) = self.attach_incident(snapshot, node, &id, commit)?;
+                let (mut source, mut class, diagnostic) =
+                    self.attach_incident(snapshot, node, &id, commit)?;
                 let blocked = blocked::evidence(commit, node)?;
                 if blocked.is_some() {
                     source = executor::Upstream::Workers;
@@ -2072,6 +2102,21 @@ impl Controller {
                     needs_rob,
                     app_login.as_deref(),
                 );
+                let occurrences = 1 + snapshot
+                    .rows
+                    .iter()
+                    .filter(|row| {
+                        row.table == "incidents"
+                            && row.value["node"] == json!(node)
+                            && row.value["signature"] == json!(signature)
+                    })
+                    .count();
+                if let Some(diagnostic) = &diagnostic {
+                    summary.push_str(&format!(
+                        " Recorded occurrence {occurrences}. {}",
+                        diagnostic.render()
+                    ));
+                }
                 if class == "queue_unfinished"
                     && let Some(detail) = looks::queue_incident_detail(snapshot, node)?
                 {
@@ -2156,7 +2201,7 @@ impl Controller {
                 delivery.question_context = Some(json!({"issue_title":request.title,
                     "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title,
                         delivery.repository.owner, delivery.repository.name, delivery.issue),
-                    "signature":signature, "incident_id":id}));
+                    "signature":signature, "incident_id":id, "publication_diagnostic":diagnostic, "occurrences":occurrences}));
                 if let Some(operations) = &self.bootstrap.operations {
                     delivery.repository = Repository {
                         owner: operations.owner.clone(),
@@ -3781,3 +3826,6 @@ mod stored_shape_tests {
         assert_eq!(json!(issue), old);
     }
 }
+
+#[cfg(test)]
+mod publication_tests;

@@ -174,7 +174,7 @@ fn terminal(
     let mut result = None;
     wait(|| match supervisor.reconcile(delivery).unwrap() {
         Reconciliation::Found(completion) => {
-            result = Some(completion);
+            result = Some(*completion);
             true
         }
         _ => false,

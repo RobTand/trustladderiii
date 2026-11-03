@@ -160,7 +160,7 @@ impl Executor for BrokenLook {
                 d.key
             ),
         );
-        Ok(Look::Found(Completion::confirmed(vec![])))
+        Ok(Look::Found(Box::new(Completion::confirmed(vec![]))))
     }
     fn retire_delivery(&mut self, d: &Delivery) -> tl3_controller::Result<()> {
         self.fake.retire_delivery(d)
