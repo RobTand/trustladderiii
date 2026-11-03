@@ -155,6 +155,8 @@ class ExplorationMiddleware(AgentMiddleware):
         self.final = False
         self.exhaustion = None
         self.finalizing = False
+        self.implementation_files = frozenset()
+        self.implementation_started = False
         self.compacted = False
         # Only a compaction that freed room has a later threshold to approach again.
         self.compacted_below = False
@@ -167,7 +169,7 @@ class ExplorationMiddleware(AgentMiddleware):
                 max(0, self.last_input + estimate - self.last_estimate))
 
     def remaining(self, phase=None):
-        return {"tool_turns": {"used": min(self.turns, self.budget.tool_turns),
+        result = {"tool_turns": {"used": min(self.turns, self.budget.tool_turns),
                                "allowed": self.budget.tool_turns,
                                "remaining": max(0, self.budget.tool_turns - self.turns)},
                 "input_tokens": {"used": self.spent, "allowed": self.budget.input_tokens,
@@ -175,13 +177,30 @@ class ExplorationMiddleware(AgentMiddleware):
                 "finalization_turns": min(self.budget.finalization_turns, self.budget.tool_turns),
                 "phase": phase or ("final" if self.exhaustion else
                                    "finalizing" if self.finalizing else "working")}
+        if self.role == "maker":
+            deadline = (self.budget.tool_turns + 1) // 2
+            result.update(implementation_started=self.implementation_started,
+                          implementation_due_at_tool_turn=deadline)
+            if self.implementation_files and not self.implementation_started and self.turns >= deadline:
+                result["warning"] = (
+                    "Implementation remains unfinished. The finalization reserve forbids edits; verify preserved "
+                    "work and report the unfinished implementation." if self.finalizing or self.final or self.exhaustion else
+                    "Stop broad exploration now. Half the tool-turn budget is spent without a completed non-test edit. "
+                    "Use the remaining working turns to implement the declared plan, preserving test-first proof, "
+                    "metadata and the finalization reserve. If you cannot implement, report unfinished work precisely.")
+        return result
 
     def wrap_tool_call(self, request, handler):
         if self.role == "maker" and (self.final or self.finalizing and request.tool_call["name"] not in FINALIZATION_TOOLS):
             return ToolMessage(content="The finalization reserve permits verification and readback only. "
                                "New edits and generation are unavailable. Report unfinished work precisely.",
                                tool_call_id=request.tool_call["id"], status="error")
-        return handler(request)
+        response = handler(request)
+        if (request.tool_call["name"] in {"write", "edit"}
+                and request.tool_call["args"].get("path") in self.implementation_files
+                and isinstance(response, ToolMessage) and response.status != "error"):
+            self.implementation_started = True
+        return response
 
     def wrap_model_call(self, request, handler):
         source = request.messages
@@ -272,7 +291,8 @@ class ExplorationMiddleware(AgentMiddleware):
                 "last_estimate": self.last_estimate, "cache_active": self.cache_active,
                 "compacted": self.compacted, "compacted_below": self.compacted_below,
                 "compaction_offset": self.compaction_offset,
-                "compaction_prefix": messages_to_dict(self.compaction_prefix), "exhaustion": self.exhaustion}
+                "compaction_prefix": messages_to_dict(self.compaction_prefix), "exhaustion": self.exhaustion,
+                "implementation_started": self.implementation_started}
 
     def restore(self, state):
         prefix = messages_from_dict(state["compaction_prefix"])
@@ -286,6 +306,7 @@ class ExplorationMiddleware(AgentMiddleware):
         self.last_estimate = state["last_estimate"]
         self.compaction_prefix = prefix
         self.exhaustion = state.get("exhaustion")
+        self.implementation_started = state.get("implementation_started") is True
 
     def _account(self, response, bound):
         usage = [message.usage_metadata for message in response.result if isinstance(message, AIMessage)]

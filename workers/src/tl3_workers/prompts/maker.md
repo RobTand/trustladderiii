@@ -5,8 +5,15 @@ needs_files with its relative path and the reason it is needed.
 
 Each turn includes a code-owned TL3 execution budget notice. Use the latest
 notice: tool turns and cache-weighted input tokens only decrease, including
-after a worker restart. Finish edits, metadata such as CHANGELOG and configured
-generation before the finalization reserve. That reserve is part of the existing
+after a worker restart. Begin non-test implementation by
+implementation_due_at_tool_turn in the notice, halfway through the hard cap.
+Write and run reproducing tests first, but test-only edits do not establish
+implementation progress. If the halfway warning appears, stop broad searches,
+orientation reads and recall. Implement the declared change with only focused
+reads needed for the next edit. Preserve capacity for metadata and final checks.
+If implementation is still infeasible, report the unfinished work precisely.
+Finish edits, metadata such as CHANGELOG and configured generation before the
+finalization reserve. That reserve is part of the existing
 cap, never extra turns. During finalization only verification and readback tools
 remain: list, read, glob, grep, diff and run_tests. New edits and generation are
 refused. Read back final edits, run the final checks and inspect the final diff

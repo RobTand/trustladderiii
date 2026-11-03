@@ -16,7 +16,7 @@ from worker_process import start_worker
 
 
 LEAF = {
-    "kind": "leaf",
+    "kind": "leaf", "estimated_exploration_turns": 0,
     "files": ["greeting.py", "tests/test_greeting.py"],
     "checks": [
         {"kind": "demonstrating", "node_ids": ["tests/test_greeting.py::test_hello"],
@@ -50,12 +50,12 @@ def test_token_fitting_leaf_is_refused_when_execution_demand_exceeds_usable_budg
 
 
 def execution_split():
-    return {"kind": "split", "reason": "execution_budget", "estimated_tool_turns": 65,
+    return {"kind": "split", "reason": "execution_budget", "estimated_tool_turns": 65, "estimated_exploration_turns": 0,
             "pieces": [
                 {"brief": "Implement and verify the greeting, including metadata.", "goal_ids": [0],
-                 "files": ["greeting.py"], "estimated_tool_turns": 25},
+                 "files": ["greeting.py"], "estimated_tool_turns": 25, "estimated_exploration_turns": 0},
                 {"brief": "Preserve the API and run final regressions.", "goal_ids": [1],
-                 "files": ["greeting.py", "new/api.py"], "estimated_tool_turns": 25}]}
+                 "files": ["greeting.py", "new/api.py"], "estimated_tool_turns": 25, "estimated_exploration_turns": 0}]}
 
 
 def test_seven_file_public_output_adoption_requires_a_split_before_maker_work(planner_request, monkeypatch):
@@ -70,11 +70,11 @@ def test_seven_file_public_output_adoption_requires_a_split_before_maker_work(pl
     assert proposal["forecast"]["fits"], "execution pressure must not falsify token fit"
     assert any("execution budget" in item.lower() for item in proposal["violations"]), proposal
     assert proposal["execution"]["estimated_tool_turns"] > 56
-    split = {"kind": "split", "reason": "execution_budget", "pieces": [
+    split = {"kind": "split", "reason": "execution_budget", "estimated_exploration_turns": 0, "pieces": [
         {"brief": "Adopt the public output and prove behavior, including metadata.",
-         "goal_ids": [0], "files": proposal["files"][:4]},
+         "goal_ids": [0], "files": proposal["files"][:4], "estimated_exploration_turns": 0},
         {"brief": "Finish adoption, preserve the interface and run final regressions.",
-         "goal_ids": [0, 1], "files": proposal["files"][4:]}]}
+         "goal_ids": [0, 1], "files": proposal["files"][4:], "estimated_exploration_turns": 0}]}
     planner.check_reply(planner_request["inputs"], split)
     assert split["violations"] == [], split
     assert {path for piece in split["pieces"] for path in piece["files"]} == set(proposal["files"])
@@ -138,10 +138,10 @@ def test_execution_split_is_bounded_before_work(planner_request, monkeypatch, da
     planner.check_reply(planner_request["inputs"], proposal)
     assert any("execution" in item.lower() for item in proposal["violations"]), proposal
 SPLIT = {
-    "kind": "split", "reason": "does_not_fit",
+    "kind": "split", "reason": "does_not_fit", "estimated_exploration_turns": 0,
     "pieces": [
-        {"brief": "Fix the greeting.", "goal_ids": [0], "files": ["greeting.py"]},
-        {"brief": "Keep the API.", "goal_ids": [1], "files": ["greeting.py", "new/api.py"]},
+        {"brief": "Fix the greeting.", "goal_ids": [0], "files": ["greeting.py"], "estimated_exploration_turns": 0},
+        {"brief": "Keep the API.", "goal_ids": [1], "files": ["greeting.py", "new/api.py"], "estimated_exploration_turns": 0},
     ],
 }
 CANT_MEET = {"kind": "cant_meet", "report": "The required API decision is unresolved.",
@@ -881,7 +881,7 @@ def digests_plan(planner_request, monkeypatch):
     monkeypatch.chdir(root)
     monkeypatch.setattr(Forecaster, 'measure', lambda *a: {'fits': True})
     return {
-        'kind': 'leaf', 'files': ['digests.py', DIGESTS],
+        'kind': 'leaf', 'estimated_exploration_turns': 0, 'files': ['digests.py', DIGESTS],
         'checks': [
             {'kind': 'demonstrating', 'node_ids': [f'{DIGESTS}::test_lazy_imports_run'], 'goal_ids': [0]},
             {'kind': 'regression', 'node_ids': [SIBLING], 'goal_ids': [1]},
@@ -1241,7 +1241,7 @@ def test_helper_preflight_requires_installed_target_observer_capability():
     from tl3_workers.evidence import preflight
     capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
                   'artifacts': ['cas_receipt', 'terminal_verdict'], 'methods': [], 'protected_files': []}
-    reply = {'kind': 'leaf', 'files': ['tests/test_helpers.py'], 'evidence_contract': [],
+    reply = {'kind': 'leaf', 'estimated_exploration_turns': 0, 'files': ['tests/test_helpers.py'], 'evidence_contract': [],
              'checks': [{'helper_evidence': {'target': 'tests/test_helpers.py::_execute'}}]}
     original = copy.deepcopy(reply)
     preflight({'tool_capabilities': [capability]}, reply, planning=True)
@@ -1264,7 +1264,7 @@ def request_149_plan(planner_request):
         {'description': 'Keep native thread bounds at one.', 'verification': 'test'},
     ]
     return {
-        'kind': 'leaf', 'files': ['tests/test_measurement_census_reader_fence_1498.py'],
+        'kind': 'leaf', 'estimated_exploration_turns': 0, 'files': ['tests/test_measurement_census_reader_fence_1498.py'],
         'checks': [{'kind': 'demonstrating', 'goal_ids': [0, 1],
                     'node_ids': ['tests/test_measurement_census_reader_fence_1498.py::test_a_busy_fence_refuses_before_any_transition_or_host_lock'],
                     'forcing': {
@@ -1384,7 +1384,7 @@ def request156(planner_request, monkeypatch):
         {**copy.deepcopy(tool), 'requirement': 'Retain base/head proof and native thread bounds.'}]
     monkeypatch.chdir(root)
     return {
-        'kind': 'leaf', 'files': ['greeting.py', PBWAIT_TESTS],
+        'kind': 'leaf', 'estimated_exploration_turns': 0, 'files': ['greeting.py', PBWAIT_TESTS],
         'edits_tests': [LATE, CONTROL],
         'checks': [{'kind': 'demonstrating', 'node_ids': [LATE], 'goal_ids': [0, 1]}],
         'no_design_questions': True, 'lands_on_its_own': True, 'evidence_contract': [],
@@ -1561,7 +1561,7 @@ def request162(planner_request, monkeypatch):
     ]
     monkeypatch.chdir(root)
     return {
-        'kind': 'leaf', 'files': [RELAY_TESTS], 'edits_tests': [CREATED],
+        'kind': 'leaf', 'estimated_exploration_turns': 0, 'files': [RELAY_TESTS], 'edits_tests': [CREATED],
         'checks': [{'kind': 'demonstrating', 'node_ids': [CREATED, *INVENTED], 'goal_ids': [0, 1],
                     'forcing': {'symptom': 'Delay daemon replies during created-container cleanup.',
                                 'environment': {},
@@ -1694,7 +1694,7 @@ def request165(planner_request, monkeypatch):
     planner_request['inputs']['ingest']['evidence_errors'] = []
     monkeypatch.chdir(root)
     return {
-        'kind': 'leaf', 'files': [EXPORT_TESTS], 'edits_tests': [FINISHED], 'evidence_contract': [],
+        'kind': 'leaf', 'estimated_exploration_turns': 0, 'files': [EXPORT_TESTS], 'edits_tests': [FINISHED], 'evidence_contract': [],
         'checks': [{'kind': 'demonstrating', 'node_ids': [FINISHED, *PROPOSED_EXPORTS],
                     'goal_ids': [0, 1, 2, 3, 4, 5, 7, 8, 9],
                     'forcing': {'symptom': 'Deschedule the export writer before its block is counted; '
@@ -1867,7 +1867,7 @@ def test_helper_setup_requires_its_installed_capability():
     capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
                   'artifacts': ['cas_receipt', 'terminal_verdict'],
                   'methods': ['helper_target_observer'], 'protected_files': []}
-    reply = {'kind': 'leaf', 'files': ['tests/test_helpers.py'], 'evidence_contract': [],
+    reply = {'kind': 'leaf', 'estimated_exploration_turns': 0, 'files': ['tests/test_helpers.py'], 'evidence_contract': [],
              'checks': [{'helper_evidence': {'target': 'tests/test_helpers.py::_execute', 'failure_cases': [
                  {'args': [{'$setup': '_failed_queue', '$call': 'execute'}], 'kwargs': {}}]}}]}
     original = copy.deepcopy(reply)

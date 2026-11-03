@@ -194,7 +194,7 @@ Rob's answers never fail for lack of credit. An answer that needs credit adds wh
 
 A node's forecast is computed by code: the token count of its slice of the brief and of its declared files, plus an overhead calibrated from MLflow. The starting constants are set in config.
 
-**Execution feasibility (Q27, Rob, 2026-11-03, [#614 approval](https://github.com/RobTand/trustladderiii/issues/614#issuecomment-6602791347)).** Code also estimates the maker's tool-turn demand. The estimate accounts for implementation, test-first proof, metadata, configured generation, readback and final verification. It must fit the maker's existing allowance minus its finalization reserve. Token fit alone does not establish execution feasibility. These are separate measurements; execution pressure must not inflate the token forecast.
+**Execution feasibility (Q27, Rob, 2026-11-03, [#614 approval](https://github.com/RobTand/trustladderiii/issues/614#issuecomment-6602791347)).** Code also estimates the maker's tool-turn demand. The estimate requires an explicit exploration allowance in addition to the structural floor for implementation, test-first proof, metadata, configured generation, readback and final verification. Structure alone cannot establish execution fit. It must fit the maker's existing allowance minus its finalization reserve. Token fit alone does not establish execution feasibility. These are separate measurements; execution pressure must not inflate the token forecast.
 
 **A node is a leaf** when all of these hold:
 
@@ -351,7 +351,7 @@ A node that spans several repos is admitted at once, because its plan must split
 The controller supplies the planner with these inputs, alongside the brief,
 goals and forecast settings:
 
-- `maker_budget`: worker code supplies the maker's actual hard tool-turn and input-token allowances and the finalization reserve within them. The planner estimates all required work against the usable allowance, including proof, metadata and final verification. A final leaf that exceeds it is refused. An initial execution-budget split uses the existing Plan: split path and preserves every obligation. It is not a retry after maker failure.
+- `maker_budget`: worker code supplies the maker's actual hard tool-turn and input-token allowances and the finalization reserve within them. The planner declares exploration separately and estimates all required work against the usable allowance, including proof, metadata and final verification. A final leaf that exceeds it is refused. An initial execution-budget split uses the existing Plan: split path and preserves every obligation. It is not a retry after maker failure.
 
 - `must_split`: true after a maker ran out of room or a fresh reviewer ran out of room, otherwise false. A leaf
   reply is rejected when it is true.

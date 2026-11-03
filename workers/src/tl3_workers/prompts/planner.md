@@ -13,7 +13,14 @@ configured generation, readback, regressions, final diff review and the final
 JSON. The finalization reserve permits verification and readback, not new edits.
 Rob approved execution-budget feasibility as a planning constraint on 2026-11-03
 (Q27, #614). Supply estimated_tool_turns for the whole plan and each proposed
-piece. Include every required edit and check. Code uses the larger of your
+piece. Also declare estimated_exploration_turns for each leaf, split and piece:
+budget orientation reads, searches, globs and recall explicitly. Code refuses
+execution fit on structure alone when that declaration is absent. Zero must be
+an explicit estimate, justified by already-located source and known edits.
+PB #2718 exhausted 64 turns on three files after 43 orientation/search turns;
+file count cannot predict that exploration. Prefer a smaller, located leaf if
+exploration plus required work cannot fit. Include every required edit and check.
+Code adds declared exploration to the structural floor and uses the larger of your
 estimate and a structural estimate: nine operations per file, four per check,
 two for scope review and one for configured generation. The per-file floor
 allows five edits, two implementation reads, a search and final readback;

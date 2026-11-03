@@ -779,7 +779,10 @@ The planner receives the maker's current hard caps and finalization reserve.
 Code refuses a leaf whose estimated tool demand exceeds the usable allowance.
 The estimate includes proof, metadata, configured generation, final readback,
 regressions and scope review. Token and execution forecasts remain separate.
-A declared estimate can increase the structural estimate, never lower it.
+The planner must explicitly estimate exploration as well as structural work.
+Code adds orientation reads, searches, globs and recall to the structural floor;
+a missing exploration declaration cannot establish execution fit. A declared
+total can increase the resulting estimate, never lower it.
 
 The new `execution_budget` split reason uses the existing PlanSplit reply and
 its existing transition. A proposal contains 2 to 8 pieces, preserves every
@@ -791,6 +794,10 @@ to bound and account for work. There is no kernel type or transition change.
 
 The maker's last 8 tool turns belong to verification and readback within its
 existing 64-turn cap. Edits and generation are refused during that reserve.
+Each turn reports the remaining budget in appended user content. By halfway
+through the cap, a maker without a completed edit to a declared non-test file
+is warned to stop broad exploration and implement with focused reads. Test-only
+edits do not satisfy that implementation milestone.
 The final JSON keeps its existing input-token reserve. Exhaustion records the
 limiting dimension, spent and allowed counts, exact preserved tree and
 unfinished obligations. It retains the existing fail_fast stop path and

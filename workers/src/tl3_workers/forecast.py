@@ -185,7 +185,7 @@ def forecast_fit(brief, file_tokens, config, encoding=None, problems=()):
     }
 
 
-def execution_forecast(files, checks, *, declared=0, generator=False):
+def execution_forecast(files, checks, *, declared=0, exploration=None, generator=False):
     """Conservative planning estimate, separate from token fit and actual usage.
 
     A file allows five edits, two implementation reads, a search and readback.
@@ -198,13 +198,15 @@ def execution_forecast(files, checks, *, declared=0, generator=False):
 
     budget = ROLE.exploration_budget
     reserve = min(budget.finalization_turns, budget.tool_turns)
-    components = {"file_operations": 9 * len(set(files)), "check_operations": 4 * checks,
+    components = {"exploration_operations": exploration or 0,
+                  "file_operations": 9 * len(set(files)), "check_operations": 4 * checks,
                   "scope_operations": 2, "generation_operations": int(generator)}
     estimated = max(sum(components.values()), declared)
     usable = max(0, budget.tool_turns - reserve)
     return {"allowed_tool_turns": budget.tool_turns, "finalization_turns": reserve,
             "usable_tool_turns": usable, "estimated_tool_turns": estimated,
-            "components": components, "fits": estimated <= usable}
+            "components": components, "exploration_declared": exploration is not None,
+            "fits": exploration is not None and estimated <= usable}
 
 
 class Forecaster:

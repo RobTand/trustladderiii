@@ -359,6 +359,9 @@ def run(model, request, worktree, emit):
     agent = build_agent(model, ROLE, worktree, reply_schema=proposal, context_size=inputs["context_size"],
                         control=control)
     allowance = control.allowance
+    if allowance is not None:
+        test_paths = {test.split("::", 1)[0] for check in inputs["plan"]["checks"] for test in check["tests"]}
+        allowance.implementation_files = frozenset(inputs["plan"]["files"]) - test_paths
     characters = ContextCharacters()
     starting_head, merge_target, merge_files = _starting_state(request, session)
     progress = session.with_suffix(".visit") if session else None

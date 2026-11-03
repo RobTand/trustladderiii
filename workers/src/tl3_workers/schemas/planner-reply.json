@@ -28,6 +28,7 @@
             "minimum": 0
           }
         },
+        "exploration_declared": {"type": "boolean"},
         "fits": {
           "type": "boolean"
         },
@@ -52,6 +53,7 @@
         "usable_tool_turns",
         "estimated_tool_turns",
         "components",
+        "exploration_declared",
         "fits"
       ],
       "additionalProperties": false,
@@ -250,6 +252,7 @@
     {
       "type": "object",
       "properties": {
+        "estimated_exploration_turns": {"type": "integer", "minimum": 0, "description": "Required for accepted leaves and splits. Estimate orientation reads, searches, globs and recall separately from implementation and proof. Zero must be explicit."},
         "estimated_tool_turns": {"type": "integer", "minimum": 0, "description": "Estimate all required tool work, including proof, metadata and final verification. Code may increase this estimate."},
         "execution": {"$ref": "#/$defs/execution", "description": "Appended by worker code. The model must omit this field."},
         "kind": {
@@ -501,6 +504,7 @@
     {
       "type": "object",
       "properties": {
+        "estimated_exploration_turns": {"type": "integer", "minimum": 0, "description": "Required for accepted leaves and splits. Estimate orientation reads, searches, globs and recall separately from implementation and proof. Zero must be explicit."},
         "estimated_tool_turns": {"type": "integer", "minimum": 0, "description": "Estimate all required tool work, including proof, metadata and final verification. Code may increase this estimate."},
         "execution": {"$ref": "#/$defs/execution", "description": "Appended by worker code. The model must omit this field."},
         "kind": {
@@ -519,6 +523,7 @@
           "items": {
             "type": "object",
             "properties": {
+              "estimated_exploration_turns": {"type": "integer", "minimum": 0},
               "estimated_tool_turns": {"type": "integer", "minimum": 0},
               "brief": {
                 "type": "string",
@@ -725,6 +730,7 @@
     {
       "type": "object",
       "properties": {
+        "estimated_exploration_turns": {"type": "integer", "minimum": 0, "description": "Required for accepted leaves and splits. Estimate orientation reads, searches, globs and recall separately from implementation and proof. Zero must be explicit."},
         "estimated_tool_turns": {"type": "integer", "minimum": 0, "description": "Estimate all required tool work, including proof, metadata and final verification. Code may increase this estimate."},
         "execution": {"$ref": "#/$defs/execution", "description": "Appended by worker code. The model must omit this field."},
         "kind": {

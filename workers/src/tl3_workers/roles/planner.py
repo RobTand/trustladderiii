@@ -222,8 +222,12 @@ def check_reply(inputs, reply, *, rehearsals=None):
     forecast = forecaster.measure(inputs["ingest"]["brief"], paths)
     check_count = (len(reply["checks"]) if reply["kind"] == "leaf" else len(goals))
     execution = execution_forecast(paths, check_count, declared=reply.get("estimated_tool_turns", 0),
+                                   exploration=reply.get("estimated_exploration_turns"),
                                    generator=bool(inputs["forecast"].get("generator")))
-    if reply["kind"] == "leaf" and not execution["fits"]:
+    if reply["kind"] in {"leaf", "split"} and not execution["exploration_declared"]:
+        violations.append("Declare estimated_exploration_turns, including searches, orientation reads and recall. "
+                          "Structural work alone cannot establish execution fit; zero must be an explicit estimate.")
+    if reply["kind"] == "leaf" and execution["exploration_declared"] and not execution["fits"]:
         violations.append(f"The leaf exceeds the execution budget: estimated {execution['estimated_tool_turns']} "
                           f"tool turns, usable {execution['usable_tool_turns']} after the finalization reserve. "
                           "Preserve every obligation in bounded pieces with reason execution_budget before maker work.")
@@ -250,8 +254,12 @@ def check_reply(inputs, reply, *, rehearsals=None):
             child = forecaster.measure(piece["brief"], piece["files"])
             estimate = execution_forecast(piece["files"], len(piece["goal_ids"]),
                                           declared=piece.get("estimated_tool_turns", 0),
+                                          exploration=piece.get("estimated_exploration_turns"),
                                           generator=bool(inputs["forecast"].get("generator")))
             pieces.append(estimate)
+            if not estimate["exploration_declared"]:
+                violations.append("Every split piece must declare estimated_exploration_turns; "
+                                  "structure alone cannot establish execution fit.")
             for error in forecaster.problems:
                 violations.append(f"Declared file can't be used: {error}. Leave it out.")
             if reason == "execution_budget":
