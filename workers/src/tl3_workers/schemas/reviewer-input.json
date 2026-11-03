@@ -173,7 +173,10 @@
     },
     "unresolved_displaced_failures": {
       "type": "array",
-      "items": {"type": "string", "minLength": 1},
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
       "minItems": 1,
       "description": "Historical selected failures without verified complete-unit head outcomes. These remain unresolved even when no test file was edited."
     },
@@ -282,6 +285,9 @@
                 "message": {
                   "type": "string",
                   "maxLength": 1000
+                },
+                "phases": {
+                  "$ref": "#/$defs/phases"
                 }
               },
               "required": [
@@ -453,6 +459,12 @@
               "failure_preservation"
             ],
             "additionalProperties": false
+          },
+          "declared_symptom": {
+            "$ref": "planner-reply.json#/$defs/declared_symptom"
+          },
+          "symptom_evidence": {
+            "$ref": "#/$defs/symptom_evidence"
           }
         },
         "required": [
@@ -576,5 +588,513 @@
     "checks",
     "standing_rules"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {
+    "phase_fact": {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "enum": [
+            "passed",
+            "failed",
+            "skipped"
+          ]
+        },
+        "exception": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "assertion": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "outcome",
+        "exception",
+        "assertion"
+      ],
+      "additionalProperties": false
+    },
+    "phase_run": {
+      "type": "object",
+      "properties": {
+        "test": {
+          "type": "string",
+          "minLength": 1
+        },
+        "setup": {
+          "$ref": "#/$defs/phase_fact"
+        },
+        "call": {
+          "$ref": "#/$defs/phase_fact"
+        },
+        "teardown": {
+          "$ref": "#/$defs/phase_fact"
+        }
+      },
+      "required": [
+        "test",
+        "setup",
+        "teardown"
+      ],
+      "additionalProperties": false
+    },
+    "phases": {
+      "type": "object",
+      "properties": {
+        "base": {
+          "$ref": "#/$defs/phase_run"
+        },
+        "head": {
+          "$ref": "#/$defs/phase_run"
+        },
+        "head_forced": {
+          "$ref": "#/$defs/phase_run"
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "symptom_record": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "start"
+            },
+            "schema": {
+              "const": 1
+            }
+          },
+          "required": [
+            "event",
+            "schema"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "finish"
+            },
+            "exit_code": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "exit_code"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "collection"
+            },
+            "tests": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "saturation": {
+              "type": "object",
+              "properties": {
+                "unit": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                },
+                "cases": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "remaining": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "unit",
+                "cases",
+                "remaining"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "event",
+            "tests"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "result"
+            },
+            "test": {
+              "type": "string",
+              "minLength": 1
+            },
+            "outcome": {
+              "enum": [
+                "passed",
+                "failed",
+                "error",
+                "skipped"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 1000
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "failures": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "exception": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 300
+                  },
+                  "phase": {
+                    "enum": [
+                      "setup",
+                      "call",
+                      "teardown"
+                    ]
+                  },
+                  "source": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "exception",
+                  "phase",
+                  "source"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "target_hits": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "forcing_tampered": {
+              "const": true
+            },
+            "forcing_refusal": {
+              "type": "object",
+              "properties": {
+                "phase": {
+                  "const": "forcing_validation"
+                },
+                "target": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "resolved_module": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "owner_category": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "reason": {
+                  "type": "string",
+                  "maxLength": 4096
+                }
+              },
+              "required": [
+                "phase",
+                "target",
+                "resolved_module",
+                "owner_category",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "event",
+            "test",
+            "outcome",
+            "message",
+            "truncated"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "phase"
+            },
+            "test": {
+              "type": "string",
+              "minLength": 1
+            },
+            "when": {
+              "enum": [
+                "setup",
+                "call",
+                "teardown"
+              ]
+            },
+            "outcome": {
+              "enum": [
+                "passed",
+                "failed",
+                "skipped"
+              ]
+            },
+            "assertion": {
+              "type": "boolean"
+            },
+            "missing": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "minItems": 2,
+                        "maxItems": 2
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "exception": {
+              "type": "string",
+              "maxLength": 300
+            },
+            "exception_type": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 1000
+            }
+          },
+          "required": [
+            "event",
+            "test",
+            "when",
+            "outcome",
+            "assertion",
+            "missing"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "collection-error"
+            },
+            "test": {
+              "type": "string"
+            },
+            "missing": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "minItems": 2,
+                        "maxItems": 2
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "exception": {
+              "type": "string",
+              "maxLength": 300
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 1000
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "event"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "unavailable"
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 1000
+            }
+          },
+          "required": [
+            "event",
+            "message"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "plan-error"
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 1000
+            }
+          },
+          "required": [
+            "event",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "symptom_run": {
+      "type": "object",
+      "properties": {
+        "side": {
+          "enum": [
+            "base",
+            "head",
+            "ordinary-head"
+          ]
+        },
+        "run": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "outcome": {
+          "enum": [
+            "passed",
+            "symptom",
+            "unrelated",
+            "unavailable"
+          ]
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/symptom_record"
+          }
+        },
+        "target_hits": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "required": [
+        "side",
+        "run",
+        "outcome",
+        "sha256",
+        "records"
+      ],
+      "additionalProperties": false
+    },
+    "symptom_evidence": {
+      "type": "object",
+      "properties": {
+        "base": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        "head": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        "forcing": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "planner-reply.json#/$defs/forcing"
+            }
+          ]
+        },
+        "declaration": {
+          "$ref": "planner-reply.json#/$defs/declared_symptom"
+        },
+        "runs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/symptom_run"
+          },
+          "maxItems": 30
+        }
+      },
+      "required": [
+        "base",
+        "head",
+        "forcing",
+        "declaration",
+        "runs"
+      ],
+      "additionalProperties": false
+    }
+  }
 }
