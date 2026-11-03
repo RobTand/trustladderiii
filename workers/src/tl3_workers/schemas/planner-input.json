@@ -3,6 +3,11 @@
   "$id": "https://trustladderiii.invalid/workers/protocol-1/planner-input.json",
   "type": "object",
   "properties": {
+    "always_tests": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "description": "Repo-wide rule test files or node IDs that the harness runs as regression checks in every round. Follow these rules when planning test additions."
+    },
     "must_split": {
       "type": "boolean",
       "description": "True after a maker ran out of room. A leaf reply is rejected."
@@ -59,7 +64,20 @@
             "type": "integer",
             "minimum": 0
           },
-          "description": "Named overhead constants from controller config, summed by code."
+          "description": "Named overhead constants from controller config, summed by code. Includes the reserve for tools, making history and fix-round feedback shared with the maker."
+        },
+        "generated_files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Repository-relative generated-output globs. ** matches zero or more path segments. Generated text costs a fixed regeneration allowance."
+        },
+        "generator": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Repository generator command for maker guidance. The controller does not execute it."
         }
       },
       "required": [
@@ -116,6 +134,16 @@
     "decision_context": {
       "$ref": "decision-context.json",
       "description": "Controller-recorded decisions applicable to this request version. Source answers define scope and restrictions; they do not grant tools or override protected paths."
+    },
+    "tool_capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "ingest-reply.json#/$defs/tool_capability"
+      },
+      "maxItems": 64
+    },
+    "audit_evidence_contract": {
+      "$ref": "ingest-reply.json#/$defs/evidence_contract"
     }
   },
   "required": [

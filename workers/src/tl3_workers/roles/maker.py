@@ -16,7 +16,7 @@ from langgraph.prebuilt import ToolNode
 
 from tl3_workers.contracts import read_json, read_reply, schema
 from tl3_workers.exploration import ExplorationBudget
-from tl3_workers.forecast import measure_files, optional_encoding
+from tl3_workers.forecast import forecast_fit, measure_files, optional_encoding
 from tl3_workers.pb_tests import TestSettings
 from tl3_workers.roles.base import Role
 from tl3_workers.session import ContextCharacters, is_unaccepted_session, out_of_room, save
@@ -34,8 +34,10 @@ def _check_inputs(inputs):
     for item in [*inputs["plan"]["checks"], *inputs.get("feedback", [])]:
         if not set(item["goal_ids"]) <= set(goals):
             raise ValueError("unknown goal id")
-    if {goal for check in inputs["plan"]["checks"] for goal in check["goal_ids"]} != set(goals):
-        raise ValueError("checks must cover every goal")
+    required = {goal["id"] for goal in inputs["goals"] if goal.get("stage", "maker") != "publishing"}
+    covered = {goal for check in inputs["plan"]["checks"] for goal in check["goal_ids"]}
+    if not required <= covered:
+        raise ValueError("checks must cover every maker and checking goal")
 
 
 def _check_reply(inputs, reply):
@@ -44,8 +46,13 @@ def _check_reply(inputs, reply):
         checked = [check["goal_id"] for check in reply["self_check"]]
         if len(checked) != len(goals) or set(checked) != set(goals):
             raise ValueError("self-check must cover every goal exactly once")
-        if any(check["status"] != "met" for check in reply["self_check"]):
-            raise ValueError("done requires every goal to be met; use cant_meet with a report")
+        stages = {goal["id"]: goal.get("stage", "maker") for goal in inputs["goals"]}
+        for check in reply["self_check"]:
+            if stages[check["goal_id"]] == "maker":
+                if check["status"] != "met":
+                    raise ValueError("done requires every maker goal to be met")
+            elif check["status"] != "pending":
+                raise ValueError("downstream goals must remain pending for their owning stage")
         findings = {item["id"] for item in inputs.get("current_review_findings", [])}
         reproductions = reply.get("reproductions", [])
         mapped = [item["finding_id"] for item in reproductions]
@@ -381,7 +388,7 @@ def run(model, request, worktree, emit):
     def check(text):
         reply = read_reply(text)
         Draft202012Validator(proposal).validate(reply)
-        if reply["kind"] == "done" and any(check["status"] != "met" for check in reply["self_check"]):
+        if reply["kind"] == "done" and any(check["status"] == "not_met" for check in reply["self_check"]):
             reply = {"kind": "cant_meet", "report": json.dumps(reply["self_check"], ensure_ascii=False)}
         if reply["kind"] == "blocked":
             # Free text alone cannot claim an environment failure (Q50). Worker
@@ -425,17 +432,11 @@ def run(model, request, worktree, emit):
         history.append(HumanMessage(content=(
             "done requires code changes; if no code change can satisfy the failing checks, "
             "reply cant_meet with a report that names them")))
-    if reply["kind"] == "needs_files" and "fit_tokens" in inputs:
-        # Match the planner's tokens, falling back to bytes without cached data.
-        # Reserve 32k tokens for tools/history.
+    if reply["kind"] == "needs_files" and "forecast" in inputs:
         encoding = optional_encoding()
-        text = json.dumps(inputs, ensure_ascii=False)
-        size = len(encoding.encode_ordinary(text) if encoding is not None else text.encode()) + 32000
         paths = set(inputs["plan"]["files"]) | {item["path"] for item in reply["files"]}
         file_tokens, problems, _ = measure_files(worktree, paths, encoding)
-        # Unknown, linked or unreadable contents cannot prove a fit.
-        size += sum(file_tokens.values()) + inputs["fit_tokens"] * len(problems)
-        reply["fits"] = size < inputs["fit_tokens"]
+        reply["fits"] = forecast_fit(inputs["brief"], file_tokens, inputs["forecast"], encoding, problems)["fits"]
     if session and reply["kind"] != "out_of_room":
         save(session, messages_to_dict(history))
     return reply

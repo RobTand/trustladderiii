@@ -193,7 +193,13 @@ def test_only_tl3_prompt_and_read_tools_reach_model(request_doc, role, monkeypat
     assert [message.type for message in messages] == ["system", "human"]
     system = messages[0].text
     expected = files("tl3_workers").joinpath("prompts", role + ".md").read_text()
+    if role == "ingest":
+        from tl3_workers.tools import Worktree
+        with Worktree(request_doc["worktree"]) as tree:
+            expected += "\n\n" + tree.generation_instruction()
     proposal = copy.deepcopy(schema(role + "-reply"))
+    for variant in proposal['oneOf']:
+        variant['properties'].pop('evidence_errors', None)
     if role == "ingest":
         del proposal["oneOf"][0]["properties"]["forecast"]
         del proposal["$defs"]["forecast"]
@@ -519,3 +525,67 @@ def test_completion_distinguishes_complete_usage_from_partial_totals(tmp_path, r
     row = json.loads(completion.read_text())
     assert row.get('usage_complete') is (not missing_last_usage)
     assert row['input_tokens'] == (11 if missing_last_usage else 22)
+
+
+
+@pytest.mark.parametrize('role', ['ingest', 'audit'])
+def test_request_evidence_contract_survives_intake_and_audit(tmp_path, request_doc, role):
+    requirement = {
+        'requirement': 'PB2640-2650 and PB2654 require normal and pinned CPU contention runs on base and head.',
+        'tool': 'run_tests', 'executor': 'buildbuddy_remote_bazel',
+        'runner_features': ['base_head', 'pinned_cpu_contention'],
+        'artifacts': ['invocation_url', 'sha', 'logs', 'terminal_verdict'],
+        'methods': ['red_green', 'forced_reproduction.contention_wrapper'], 'protected_files': [],
+    }
+    request_doc['role'] = request_doc['operation']['kind'] = role
+    request_doc['inputs']['issue']['body'] = requirement['requirement'] + ' Supply invocation URLs, SHAs, logs and terminal verdicts.'
+    request_doc['inputs']['tool_capabilities'] = [{
+        'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head', 'repeat', 'parallel'],
+        'artifacts': ['sha', 'logs', 'terminal_verdict', 'cas_receipt'], 'methods': ['red_green'], 'protected_files': [],
+    }]
+    if role == 'audit':
+        request_doc['inputs']['ingest'] = dict(copy.deepcopy(BRIEF), evidence_contract=[])
+    proposal = dict(copy.deepcopy(BRIEF if role == 'ingest' else AGREE), evidence_contract=[requirement])
+    result = start_worker(tmp_path, request_doc, [{'content': json.dumps(proposal)}])
+    assert result.exit_code == 0, result.stderr
+    reply = result.events[-1]['reply']
+    validate(role + '-reply', reply)
+    assert reply['evidence_contract'] == [requirement]
+    for missing in ['executor=buildbuddy_remote_bazel', 'runner_features=pinned_cpu_contention',
+                    'artifacts=invocation_url', 'methods=forced_reproduction.contention_wrapper']:
+        assert missing in '\n'.join(reply['evidence_errors'])
+    if role == 'ingest':
+        assert reply['goals'] == BRIEF['goals']
+
+
+def test_context_only_buildbuddy_prompt_fixture(request_doc, monkeypatch):
+    body = "The earlier BuildBuddy run showed a missing exclamation mark. Return hello!"
+    request_doc["inputs"]["issue"]["body"] = body
+    request_doc["inputs"]["tool_capabilities"] = []
+    observed = []
+
+    class InspectModel(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _generate(self, messages, **kwargs):
+            observed.append(messages)
+            return super()._generate(messages, **kwargs)
+
+    # Scripted output checks prompt delivery and contract handling, not live extraction.
+    fake = InspectModel(responses=[AIMessage(content=json.dumps(
+        dict(copy.deepcopy(BRIEF), evidence_contract=[])))])
+    monkeypatch.setattr(runtime, "create_model", lambda request: fake)
+    events = []
+    runtime.run(request_doc, events.append)
+    assert json.loads(observed[0][1].text)["issue"]["body"] == body
+    reply = events[-1]["reply"]
+    assert reply["evidence_contract"] == []
+    assert reply["evidence_errors"] == []
+    for role in ("ingest", "audit", "planner"):
+        prompt = files("tl3_workers").joinpath("prompts", role + ".md").read_text()
+        assert "Only evidence the request requires belongs in evidence_contract." in prompt, role
+        assert "history, context, non-goals or examples" in prompt, role
+        assert "the earlier BuildBuddy run showed" in prompt, role
+        assert "always_tests" in prompt, role
+    assert "Only evidence the request requires belongs in evidence_contract." in observed[0][0].text

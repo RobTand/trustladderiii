@@ -4,6 +4,7 @@ use tl3_worktrees::{CommitId, Worktrees};
 pub mod writer;
 pub use writer::{FakeWriter, Writer};
 
+mod evidence;
 mod facts;
 mod fake;
 mod json;
@@ -124,6 +125,7 @@ pub struct Supervisor {
     models: tl3_config::Models,
     planning: tl3_config::Planning,
     protected_paths: crate::scope::ProtectedPaths,
+    repositories: Vec<tl3_config::Repository>,
     limits: tl3_config::Limits,
     store: tl3_config::Store,
     records_root: PathBuf,
@@ -168,6 +170,7 @@ impl Supervisor {
             models: config.models.clone(),
             planning: config.planning.clone(),
             protected_paths: crate::scope::ProtectedPaths::new(&config.github.repos),
+            repositories: config.github.repos.clone(),
             limits: config.limits.clone(),
             store: config.store.clone(),
             records_root: records_root.to_owned(),
@@ -370,7 +373,6 @@ impl Supervisor {
             inputs["current_review_findings"] = current;
             inputs["plan"]["files"] = json!(delivery.paths);
             inputs["context_size"] = json!(self.limits.context_tokens);
-            inputs["fit_tokens"] = json!(self.limits.fit_tokens);
             inputs["tests"] = json!({"image": self.images.for_repository(&delivery.repository, &self.tests.container_image), "tools_path": self.tests.tools_dir});
             if self.images.exec_scratch(&delivery.repository) {
                 inputs["tests"]["exec_scratch"] = json!(true);
@@ -381,7 +383,22 @@ impl Supervisor {
         } else {
             self.root(&delivery.key).join("worktree")
         };
-        let forecast = json!({"fit_tokens": self.limits.fit_tokens, "context_tokens": self.limits.context_tokens, "overhead_tokens": self.planning.overhead_tokens});
+        let mut forecast = json!({"fit_tokens": self.limits.fit_tokens, "context_tokens": self.limits.context_tokens, "overhead_tokens": self.planning.overhead_tokens});
+        if let Some(repository) = self.repositories.iter().find(|repo| {
+            repo.owner.eq_ignore_ascii_case(&delivery.repository.owner)
+                && repo.name.eq_ignore_ascii_case(&delivery.repository.name)
+                && repo.installation_id == delivery.repository.installation
+        }) {
+            if !repository.generated_files.is_empty() {
+                forecast["generated_files"] = json!(repository.generated_files);
+            }
+            if let Some(generator) = &repository.generator {
+                forecast["generator"] = json!(generator);
+            }
+        }
+        if role == "maker" {
+            inputs["forecast"] = forecast.clone();
+        }
         if role == "reviewer" {
             inputs = review::inputs(
                 delivery,
@@ -399,7 +416,7 @@ impl Supervisor {
             let findings = store
                 .worker_document(&node, "findings")?
                 .unwrap_or(json!([]));
-            inputs = json!({"ingest": ingest, "must_split": matches!(n.phase, tl3_kernel::Phase::Planning { must_split: true }), "findings": findings, "protected_paths": self.protected_paths.for_repository(&delivery.repository, &self.planning.protected_paths)?, "forecast": forecast});
+            inputs = json!({"always_tests": self.images.additional_tests(&delivery.repository).always, "ingest": ingest, "must_split": matches!(n.phase, tl3_kernel::Phase::Planning { must_split: true }), "findings": findings, "protected_paths": self.protected_paths.for_repository(&delivery.repository, &self.planning.protected_paths)?, "forecast": forecast});
         } else if role == "audit" {
             inputs["ingest"] = store
                 .worker_document(&node, "briefs")?
@@ -475,6 +492,15 @@ impl Supervisor {
             if let Some(repo) = inputs["repo"].as_object_mut() {
                 repo.remove("materials");
             }
+        }
+        if matches!(role, "ingest" | "audit" | "planner") {
+            inputs["tool_capabilities"] = json!(self.planning.tool_capabilities);
+        }
+        if role == "planner" {
+            inputs["audit_evidence_contract"] = store
+                .worker_document(&node, "audits")?
+                .and_then(|audit| audit.get("evidence_contract").cloned())
+                .unwrap_or(json!([]));
         }
         protocol::validate_inputs(role, &inputs)?;
         let now = std::time::SystemTime::now()

@@ -5,7 +5,7 @@ from pathlib import Path
 import time
 
 brief = {"kind": "brief", "brief": "Fix the greeting.", "goals": [
-    {"description": "Return hello.", "verification": "test"}], "memory_ids": [], "files": ["greeting.py"]}
+    {"description": "Return hello.", "verification": "test"}], "memory_ids": [], "files": ["greeting.py"], "evidence_contract": []}
 
 
 def publish_marker(path, text):
@@ -120,4 +120,6 @@ def scripted_reply(request, mode, marker):
         reply = {"kind": "early_end", "outcome": "duplicate", "reason": "Already requested."} if request["role"] == "ingest" else reply
     if mode in {"disagree", "steering-answers"} and request["role"] == "audit":
         reply = {"verdict": "disagree", "objections": ["Preserve punctuation."]}
+    if request['role'] in {'ingest', 'audit', 'planner'}:
+        reply = {**reply, 'evidence_contract': []}
     return reply

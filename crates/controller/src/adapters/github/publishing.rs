@@ -167,15 +167,28 @@ impl Adapter {
                     let healed =
                         crate::pr_body::healed(body, rules, Some(request), &delivery.paths)
                             .unwrap_or_else(|| body.to_owned());
+                    let healed = crate::evidence::publication_lines(delivery, &healed);
                     let healed = crate::redaction::text(&healed)?;
                     let body = crate::evidence::with_publication(&healed, &evidence);
                     crate::evidence::validate_body(&body)?;
+                    crate::evidence::validate_publication(
+                        delivery,
+                        &pull.head.branch,
+                        pull.draft,
+                        &body,
+                    )?;
                     if pull.body.as_deref().unwrap_or_default() != body {
-                        self.runtime.block_on(client.update_pull_request_body(
+                        pull = self.runtime.block_on(client.update_pull_request_body(
                             &repo,
                             pull.number,
                             &body,
                         ))?;
+                        crate::evidence::validate_publication(
+                            delivery,
+                            &pull.head.branch,
+                            pull.draft,
+                            pull.body.as_deref().unwrap_or_default(),
+                        )?;
                     }
                     if pull.state == "closed" && pull.merged_at.is_none() {
                         pull = self
@@ -208,9 +221,11 @@ impl Adapter {
                         .unwrap_or_default(),
                     GitHub::marker(&delivery.key)
                 );
+                let body = crate::evidence::publication_lines(delivery, &body);
                 let body = crate::redaction::text(&body)?;
                 let body = crate::evidence::with_publication(&body, &evidence);
                 crate::evidence::validate_body(&body)?;
+                crate::evidence::validate_publication(delivery, branch.as_str(), false, &body)?;
                 // #447: a body the served repository's policy refuses is TL3's
                 // own failure. A permanent failure stops for review (#440's seam).
                 if !crate::pr_body::gaps(&body, rules).is_empty() {
@@ -228,6 +243,12 @@ impl Adapter {
                         body,
                     },
                 ))?;
+                crate::evidence::validate_publication(
+                    delivery,
+                    &pull.head.branch,
+                    pull.draft,
+                    pull.body.as_deref().unwrap_or_default(),
+                )?;
                 Ok(binding(delivery, &pull))
             }
             Out::Effect {
@@ -280,6 +301,13 @@ impl Adapter {
                     .filter(|pr| {
                         let body = pr.body.as_deref().unwrap_or_default();
                         crate::evidence::validate_body(body).is_ok()
+                            && crate::evidence::validate_publication(
+                                delivery,
+                                &pr.head.branch,
+                                pr.draft,
+                                body,
+                            )
+                            .is_ok()
                             && crate::pr_body::gaps(body, self.body_lines(&delivery.repository))
                                 .is_empty()
                             && crate::evidence::with_publication(body, &evidence) == body

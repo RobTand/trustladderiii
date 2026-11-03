@@ -1,6 +1,6 @@
 //! Request records shared by closing summaries and published proof.
 use crate::executor::Output;
-use crate::{Result, executor::Delivery};
+use crate::{Error, Result, executor::Delivery};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -19,6 +19,7 @@ pub enum PullRequestStatus {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Evidence {
     #[serde(default)]
     pub pull_request_status: PullRequestStatus,
@@ -34,6 +35,7 @@ pub struct Evidence {
     pub goals: Vec<Value>,
     pub remaining_failures: Vec<Value>,
     pub artifacts: Vec<String>,
+    pub maker_handover: Option<Value>,
 }
 
 /// The delivered effect is the durable archive. Failed posts retain live history.
@@ -290,7 +292,7 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
     let prefix = format!("{id}:");
     let relevant = |table: &str, row: &str, value: &Value| match table {
         "check_evidence" | "review_evidence" | "check_reports" => row.starts_with(&prefix),
-        "nodes" | "audits" | "goals" | "close_reasons" => row == id,
+        "nodes" | "audits" | "goals" | "close_reasons" | "maker_replies" => row == id,
         "saved_scratch" | "scratch_evidence" => value["node"].as_u64() == Some(delivery.node().0),
         "queue_facts" => {
             value["number"].as_u64() == delivery.pull_request
@@ -359,13 +361,7 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
             }
             "audits" if *row == id.as_str() => facts.audit = Some(fields(value, &["verdict"])),
             "goals" if *row == id.as_str() => {
-                facts.goals = value
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .take(MAX_ITEMS)
-                    .map(|goal| fields(goal, &["id", "description"]))
-                    .collect()
+                facts.goals = serde_json::from_value(value.clone())?;
             }
             "saved_scratch" if value["node"] == json!(delivery.node()) => {
                 if let Some(reference) = value["reference"].as_str() {
@@ -397,6 +393,19 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
             }
             _ => {}
         }
+    }
+    if let Some((_, (_, value))) = ordered
+        .iter()
+        .rev()
+        .find(|((table, _), _)| *table == "maker_replies")
+        && value["kind"] == "done"
+        && value["self_check"]
+            .as_array()
+            .is_some_and(|checks| crate::goals::handover(&facts.goals, checks).is_ok())
+    {
+        facts.maker_handover = Some(
+            json!({"kind":value["kind"], "head":value["head"], "self_check":value["self_check"]}),
+        );
     }
     // Older releases only kept the current check report. Preserve its exact
     // results without inventing a run key or a top-level verdict.
@@ -702,6 +711,71 @@ pub(crate) fn label(text: &str) -> Result<String> {
         .replace('@', "[at]"))
 }
 
+fn publication_goals(delivery: &Delivery) -> impl Iterator<Item = &Value> {
+    delivery
+        .evidence
+        .as_ref()
+        .into_iter()
+        .flat_map(|e| &e.goals)
+        .filter(|goal| goal["stage"] == "publishing")
+}
+
+pub(crate) fn publication_lines(delivery: &Delivery, body: &str) -> String {
+    let mut body = body.to_owned();
+    for goal in publication_goals(delivery) {
+        for line in goal["publication"]["body_lines"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            if !body.lines().any(|existing| existing == line) {
+                body.push('\n');
+                body.push_str(line);
+                body.push('\n');
+            }
+        }
+    }
+    body
+}
+
+pub(crate) fn validate_publication(
+    delivery: &Delivery,
+    branch: &str,
+    draft: bool,
+    body: &str,
+) -> Result<()> {
+    for goal in publication_goals(delivery) {
+        let requirements = &goal["publication"];
+        let branch_ok = requirements["branch"]
+            .as_str()
+            .is_none_or(|required| branch == required)
+            && requirements["branch_prefix"]
+                .as_str()
+                .is_none_or(|prefix| branch.starts_with(prefix));
+        let lines_ok = requirements["body_lines"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .all(|line| body.lines().filter(|existing| *existing == line).count() == 1);
+        if !branch_ok || draft || !lines_ok {
+            return Err(Error::Permanent {
+                class: "pr_obligation",
+                source: format!(
+                    "Publishing obligation {} is unmet (branch={}, non_draft={}, body_lines={})",
+                    goal["id"].as_str().unwrap_or("unnamed"),
+                    branch_ok,
+                    !draft,
+                    lines_ok
+                )
+                .into(),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn proof_required(text: &str) -> bool {
     static PUBLICATION: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(r"(?i)\b(?:pr|pull request|publish(?:ed|ing)?)\b")
@@ -755,7 +829,9 @@ pub fn publication(delivery: &Delivery, request: &str) -> Result<String> {
             .evidence
             .as_ref()
             .is_some_and(|e| red_green(&serde_json::to_string(&e.goals).expect("JSON goals")));
-    let required = proof_required(request)
+    let stage_proof = publication_goals(delivery).any(|g| g["publication"]["proof"] == true);
+    let required = stage_proof
+        || proof_required(request)
         || delivery
             .evidence
             .as_ref()
@@ -769,6 +845,43 @@ pub fn publication(delivery: &Delivery, request: &str) -> Result<String> {
         && checks
             .iter()
             .all(|record| complete_check(record, needs_red_green));
+    if stage_proof {
+        let complete = complete
+            && checks.iter().all(|record| {
+                record["report"] == true
+                    && record["pass"] == true
+                    && record["failed_results"].as_u64().unwrap_or(0) == 0
+                    && record["results"].as_array().is_some_and(|results| {
+                        results.iter().all(|result| {
+                            result["verdict"] == "pass"
+                                && result["tests"].as_array().is_some_and(|tests| {
+                                    !tests.is_empty()
+                                        && tests.iter().all(|test| {
+                                            (test["head"] == "passed"
+                                                || (result["kind"] == "regression"
+                                                    && test["pre_existing"] == true))
+                                                && test["passed"] == true
+                                                && (result.get("forcing").is_none()
+                                                    || (test["base"] == "assertion"
+                                                        && test["head_forced"] == "passed"))
+                                        })
+                                })
+                        })
+                    })
+            });
+        let approved = delivery.evidence.as_ref().is_some_and(|e| {
+            current(&e.reviews, delivery)
+                .iter()
+                .any(|review| review["verdict"] == "approve")
+        });
+        if !complete || !approved {
+            return Err(Error::Permanent {
+                class: "pr_evidence",
+                source: "Required independent proof and review for this head were not captured"
+                    .into(),
+            });
+        }
+    }
     if required && !complete {
         return Err(crate::Error::Permanent {class:"pr_evidence", source:"The request requires published proof, but completed evidence for this head was not captured".into()});
     }

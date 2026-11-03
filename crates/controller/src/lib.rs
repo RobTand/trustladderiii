@@ -1833,7 +1833,7 @@ impl Controller {
                     notice: tl3_kernel::Notice::Summary(_),
                     ..
                 } | Out::Effect {
-                    kind: tl3_kernel::EffectKind::OpenPr,
+                    kind: tl3_kernel::EffectKind::OpenPr | tl3_kernel::EffectKind::Enqueue,
                     ..
                 }
             ) {
@@ -2651,7 +2651,7 @@ impl Controller {
                             "report":report,"pass":pass,"results":results}),
                         ),
                     ));
-                    let mut report = json!({"base_sha": base_sha, "results": results});
+                    let mut report = json!({"head_sha":sha, "base_sha": base_sha, "results": results, "action_key":action_key, "report":report, "pass":pass});
                     if !selected.is_empty() {
                         report["selected_failures"] = json!(selected);
                     }
@@ -2961,7 +2961,10 @@ impl Controller {
                         let current = findings::current_review(&feedback, n.round, previous);
                         let reviewed = current.head;
                         let fixes = adapters::workers::reproducing::check(&reply, current);
-                        if expected != checked || checks.len() != goals.len() {
+                        if expected != checked
+                            || checks.len() != goals.len()
+                            || crate::goals::handover(goals, &checks).is_err()
+                        {
                             Reply::RunFailed
                         } else if let Ok(fixes) = fixes {
                             if !fixes.evidence["findings"].as_array().unwrap().is_empty() {

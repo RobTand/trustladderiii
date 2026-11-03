@@ -161,3 +161,82 @@ fn blocked_maker_reply_needs_cited_evidence() {
         assert!(map_reply("maker", &reply).is_err(), "{reply}");
     }
 }
+
+#[test]
+fn configured_evidence_preflight_does_not_accept_a_downgraded_leaf() {
+    let delivery: crate::executor::Delivery = serde_json::from_value(json!({
+        "key":"evidence-preflight", "epoch":1, "generation":3,
+        "output":{"Effect":{"node":0,"kind":{"StartRun":"Plan"},"seq":1,"head":null}},
+        "head_sha":null,"repository":{"owner":"owner","name":"repo","installation":1},
+        "issue":2640,"pull_request":null,"paths":["greeting.py"],"attempt":1,"round":0,"checks":null
+    }))
+    .unwrap();
+    let contract = json!([{"requirement":"PB2640-2650 and PB2654 require BuildBuddy base/head runs under pinned CPU contention.",
+        "tool":"run_tests", "executor":"buildbuddy_remote_bazel", "runner_features":["base_head","pinned_cpu_contention"],
+        "artifacts":["invocation_url","sha","logs","terminal_verdict"],
+        "methods":["red_green","forced_reproduction.contention_wrapper"], "protected_files":[]}]);
+    let inputs = json!({"ingest":{"evidence_contract":contract}, "tool_capabilities":[{
+        "tool":"run_tests","executor":"prismabuild_pytest", "runner_features":["base_head"],
+        "artifacts":["sha","logs","terminal_verdict"],"methods":["red_green"],"protected_files":[]}],
+        "protected_paths":[], "forecast":{"fit_tokens":100,"context_tokens":150,"overhead_tokens":{"prompt":0}}});
+    let reply = json!({"kind":"leaf","files":["greeting.py"],"checks":[],
+        "no_design_questions":true,"lands_on_its_own":true,"forecast":ingest(1)["forecast"],"violations":[]});
+    for proposal in [
+        reply,
+        json!({"kind":"split","reason":"out_of_room", "pieces":[
+        {"brief":"First part", "goal_ids":[0], "files":["greeting.py"]},
+        {"brief":"Second part", "goal_ids":[0], "files":["greeting.py"]}],
+        "forecast":ingest(1)["forecast"], "violations":[]}),
+    ] {
+        let bytes = format!(
+            "{}\n",
+            json!({"event":"reply","role":"planner","reply":proposal})
+        );
+        let crate::executor::Observation::WorkerReply { reply, .. } =
+            super::super::source::parse_reply(bytes.as_bytes(), &delivery, &inputs).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(reply["kind"], "cant_meet");
+        assert!(
+            reply["report"]
+                .as_str()
+                .unwrap()
+                .contains("buildbuddy_remote_bazel")
+        );
+        assert!(matches!(
+            map_reply("planner", &reply).unwrap(),
+            MappedReply::Kernel(Reply::PlanCantMeet)
+        ));
+    }
+}
+
+#[test]
+fn configured_evidence_preflight_accepts_always_tests() {
+    let contract = json!([{
+        "requirement":"Run the repository's always_tests alongside the planned checks.",
+        "tool":"run_tests", "executor":"prismabuild_pytest", "runner_features":["always_tests"],
+        "artifacts":["logs","terminal_verdict"], "methods":["head"], "protected_files":[]
+    }]);
+    let inputs = json!({
+        "ingest":{"evidence_contract":contract},
+        "tool_capabilities":tl3_config::Planning::default().tool_capabilities
+    });
+    let mut reply = json!({"kind":"leaf", "evidence_contract":[]});
+    super::super::evidence::preflight("planner", &inputs, &mut reply).unwrap();
+    assert_eq!(reply["kind"], "leaf", "{reply}");
+    assert_eq!(reply["evidence_contract"], contract);
+    assert_eq!(reply["evidence_errors"], json!([]));
+}
+
+#[test]
+fn request_123_pending_is_a_handover_not_a_false_success() {
+    let reply = json!({"kind":"done", "head":"a".repeat(40), "self_check":[
+        {"goal_id":"repair", "status":"met", "evidence":"Normal head passed."},
+        {"goal_id":"publication", "status":"pending", "why":"Publishing owns PR creation."}
+    ]});
+    assert!(matches!(
+        map_reply("maker", &reply).unwrap(),
+        MappedReply::Made(_)
+    ));
+}

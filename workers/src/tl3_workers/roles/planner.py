@@ -5,6 +5,7 @@ import re
 import tomllib
 
 from tl3_workers.roles.base import Role
+from tl3_workers.evidence import preflight
 from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES
 from tl3_harness import Check, Forcing, HarnessInputError, Kind
 from tl3_harness.limits import validate_check_plan
@@ -16,6 +17,7 @@ from tl3_workers.recall import check_citations
 def check_reply(inputs, reply):
     if "forecast" in reply or "violations" in reply or "decision_context" in reply:
         raise ValueError("only code may supply planning evidence")
+    preflight(inputs, reply, planning=True)
     check_citations(inputs, reply)
     goals = set(range(len(inputs["ingest"]["goals"])))
     violations = []
@@ -70,8 +72,10 @@ def check_reply(inputs, reply):
                                           for i, check in enumerate(reply['checks']) if check['node_ids']))
             except ValueError as error:
                 violations.append(str(error))
-        if covered != goals:
-            violations.append("Every goal must have a check.")
+        required = {i for i, goal in enumerate(inputs["ingest"]["goals"])
+                    if goal.get("stage", "maker") != "publishing"}
+        if not required <= covered:
+            violations.append("Every maker and checking goal must have a check.")
         paths.update(reply["files"])
     elif reply["kind"] == "split":
         covered = set()
@@ -261,7 +265,7 @@ ROLE = Role(
     prompt="planner.md",
     input_schema="planner-input",
     reply_schema="planner-reply",
-    code_only_fields=("forecast", "violations", "decision_context"),
+    code_only_fields=("forecast", "violations", "decision_context", "evidence_errors"),
     tools={
         "list": "List worktree directories to locate material for the plan.",
         "read": "Read worktree text to identify files and checks for the goals.",

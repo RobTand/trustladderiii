@@ -5,6 +5,55 @@ use toml::Value;
 const EXAMPLE: &str = include_str!("../example.toml");
 
 #[test]
+fn repository_generated_files_and_generator_are_optional() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    assert!(config.github.repos[0].generated_files.is_empty());
+    assert!(config.github.repos[0].generator.is_none());
+    let mut document: Value = EXAMPLE.parse().unwrap();
+    let repo = document["github"]["repos"][0].as_table_mut().unwrap();
+    repo.insert(
+        "generated_files".into(),
+        Value::Array(vec![Value::String("**/BUILD.bazel".into())]),
+    );
+    repo.insert(
+        "generator".into(),
+        Value::String("tools/bazel/generate.sh".into()),
+    );
+    let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+    assert_eq!(config.github.repos[0].generated_files, ["**/BUILD.bazel"]);
+    assert_eq!(
+        config.github.repos[0].generator.as_deref(),
+        Some("tools/bazel/generate.sh")
+    );
+}
+
+#[test]
+fn repository_generated_files_and_generator_reject_invalid_settings() {
+    for pattern in [
+        "",
+        "/absolute",
+        "../escape",
+        "nested/../escape",
+        "[unclosed",
+        "bad\\path",
+        "bad\npath",
+    ] {
+        let mut config = Config::parse(EXAMPLE).unwrap();
+        config.github.repos[0].generated_files.push(pattern.into());
+        assert!(
+            matches!(config.validate(), Err(tl3_config::Error::Invalid { field, .. }) if field == "github.repos[0].generated_files")
+        );
+    }
+    for command in ["", "  ", "generate\nleak", "generate\0"] {
+        let mut config = Config::parse(EXAMPLE).unwrap();
+        config.github.repos[0].generator = Some(command.into());
+        assert!(
+            matches!(config.validate(), Err(tl3_config::Error::Invalid { field, .. }) if field == "github.repos[0].generator")
+        );
+    }
+}
+
+#[test]
 fn writer_defaults_to_ingest_and_rejects_invalid_explicit_budget() {
     let config = Config::parse(EXAMPLE).unwrap();
     assert_eq!(config.models.writer[0].name, config.models.ingest[0].name);
@@ -1445,4 +1494,115 @@ fn heal_rerun_workflows_are_workflow_file_names() {
         let error = with(bad).unwrap_err().to_string();
         assert!(error.contains("heal_rerun_workflows"), "{bad:?}: {error}");
     }
+}
+
+#[test]
+fn evidence_tools_are_explicit_configuration() {
+    let mut document: toml::Value = EXAMPLE.parse().unwrap();
+    document["planning"]["tool_capabilities"] = toml::Value::Array(vec![]);
+    let source = toml::to_string(&document).unwrap();
+    assert!(
+        Config::parse(&source).is_ok(),
+        "operators must be able to disable evidence tools"
+    );
+}
+
+#[test]
+fn evidence_tools_accept_always_tests_configuration() {
+    let mut document: Value = EXAMPLE.parse().unwrap();
+    document["planning"]["tool_capabilities"][0]["runner_features"] =
+        Value::Array(vec![Value::String("always_tests".into())]);
+    let config = Config::parse(&toml::to_string(&document).unwrap())
+        .expect("the installed runner supports always_tests");
+    assert_eq!(
+        config.planning.tool_capabilities[0].runner_features,
+        ["always_tests"]
+    );
+}
+
+#[test]
+fn repository_always_tests_defaults_empty_and_accepts_files_and_node_ids() {
+    assert!(
+        Config::parse(EXAMPLE).unwrap().github.repos[0]
+            .always_tests
+            .is_empty()
+    );
+    let mut document: Value = EXAMPLE.parse().unwrap();
+    let tests = vec![
+        "tests/test_rules.py",
+        "tests/test_rules.py::test_rule[../case]",
+    ];
+    document["github"]["repos"][0]
+        .as_table_mut()
+        .unwrap()
+        .insert(
+            "always_tests".into(),
+            Value::Array(tests.iter().map(|s| Value::String((*s).into())).collect()),
+        );
+    assert_eq!(
+        Config::parse(&toml::to_string(&document).unwrap())
+            .unwrap()
+            .github
+            .repos[0]
+            .always_tests,
+        tests
+    );
+}
+
+#[test]
+fn repository_always_tests_rejects_paths_outside_the_repo_and_globs() {
+    for invalid in [
+        "/tmp/test_rule.py",
+        "../test_rule.py",
+        "tests/../test_rule.py",
+        "..",
+        "tests/*.py",
+        "tests/**/test_rule.py",
+        "tests/test_?.py",
+        "tests/[ab].py",
+        "C:/test_rule.py",
+        "tests\\test_rule.py",
+        "-test_rule.py",
+        "",
+        "tests/test_rule.py::",
+        "tests/test_rule.py\0",
+    ] {
+        let mut document: Value = EXAMPLE.parse().unwrap();
+        document["github"]["repos"][0]
+            .as_table_mut()
+            .unwrap()
+            .insert(
+                "always_tests".into(),
+                Value::Array(vec![Value::String(invalid.into())]),
+            );
+        let error = Config::parse(&toml::to_string(&document).unwrap()).expect_err(invalid);
+        assert!(error.to_string().contains("always_tests"), "{error}");
+    }
+}
+
+#[test]
+fn repository_always_tests_accepts_twenty_entries_and_names_the_limit_error() {
+    let with = |count: usize| {
+        let mut document: Value = EXAMPLE.parse().unwrap();
+        document["github"]["repos"][0]
+            .as_table_mut()
+            .unwrap()
+            .insert(
+                "always_tests".into(),
+                Value::Array(
+                    (0..count)
+                        .map(|n| Value::String(format!("tests/test_rule_{n}.py")))
+                        .collect(),
+                ),
+            );
+        Config::parse(&toml::to_string(&document).unwrap())
+    };
+    assert!(with(20).is_ok());
+    let error = with(21)
+        .expect_err("21 repo-wide rules must be refused")
+        .to_string();
+    assert!(
+        error.contains("always_tests") && error.contains("at most 20"),
+        "{error}"
+    );
 }
