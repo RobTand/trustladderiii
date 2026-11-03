@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import threading
+import time
 from types import SimpleNamespace
 
 import httpx
@@ -152,6 +153,7 @@ class RetroModel(FakeMessagesListChatModel):
     final_reply: dict = CANT_MEET
     work_turns: int = 1
     retro: object = RETRO
+    hold: object = None  # an Event the retro turn waits on, for at most 8 seconds
 
     def bind_tools(self, tools, **kwargs):
         self.offered = {tool.name for tool in tools}
@@ -170,6 +172,8 @@ class RetroModel(FakeMessagesListChatModel):
             message = AIMessage(content=json.dumps(self.final_reply), usage_metadata={
                 "input_tokens": WORK_TOKENS, "output_tokens": 1, "total_tokens": WORK_TOKENS + 1})
         else:
+            if self.hold is not None:
+                self.hold.wait(8)
             if isinstance(self.retro, BaseException):
                 raise self.retro
             text = self.retro if isinstance(self.retro, str) else json.dumps(self.retro)
@@ -253,6 +257,37 @@ def test_a_failing_retro_leaves_the_outcome_unchanged(maker_request, monkeypatch
     assert row["retro"]["status"] == status
     assert "result" not in row["retro"]
     assert "proxy text" not in (tmp_path / "facts.json").read_text()
+
+
+def test_an_out_of_room_reply_gets_no_retro(maker_request, monkeypatch, tmp_path):
+    model = install(monkeypatch, maker_request, tmp_path, final_reply={"kind": "out_of_room"})
+    events = []
+    runtime.run(maker_request, events.append)
+    assert events[-1]["reply"] == {"kind": "out_of_room"}
+    assert len(model.calls) == 1, "an out_of_room ending has no context left for a retro"
+    assert "retro" not in facts(tmp_path)
+
+
+def test_a_slow_retro_cannot_delay_or_lose_the_reply(maker_request, monkeypatch, tmp_path):
+    from tl3_workers import retro
+    # The deadline keeps a slow retro well inside the worker's silence allowance.
+    monkeypatch.setattr(retro, "DEADLINE_S", 0.5, raising=False)
+    release = threading.Event()
+    install(monkeypatch, maker_request, tmp_path, hold=release)
+    events = []
+    started = time.monotonic()
+    try:
+        runtime.run(maker_request, events.append)
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+    assert elapsed < 5, "the retro deadline bounds the wait for the reply"
+    assert events[-1] == {"event": "reply", "role": "maker", "reply": CANT_MEET}
+    assert events[-2] == {"event": "progress", "unit": "model_turn"}, "the retro turn reports progress first"
+    assert len([event for event in events if event.get("unit") == "model_turn"]) == 2
+    row = facts(tmp_path)
+    assert row["outcome"] == "succeeded"
+    assert row["retro"]["status"] == "timeout"
 
 
 def test_retro_is_a_separate_span_on_the_maker_trace(maker_request, monkeypatch, tmp_path, exporters, receiver):
