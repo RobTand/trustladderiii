@@ -36,7 +36,32 @@ def test_generated_output_fits_as_regeneration_work(tmp_path, monkeypatch, heade
     assert forecast["file_tokens"]["tests/BUILD.bazel"] == 1024
     notes = "\n".join(forecaster.notes())
     assert "tests/BUILD.bazel" in notes and "tools/bazel/generate.sh" in notes
-    assert "regenerate" in notes.lower() and "hand-edit" in notes
+    assert "minimal hunk" in notes and "exact-text" in notes
+    assert "Gate" in notes and "generator check" in notes
+    assert "Do not hand-edit" not in notes
+
+
+@pytest.mark.parametrize("prefix", [
+    "# This prose mentions @generated but does not mark an output.\n",
+    '"""Example string:\n# @generated\n"""\n',
+    'example = """\n// @generated\n"""\n',
+    'value = 1\n# @generated\n',
+    '',
+])
+def test_mislabelled_source_gets_full_cost(tmp_path, monkeypatch, prefix):
+    from tl3_workers.forecast import Forecaster
+
+    # A generated-looking name and a configured command do not classify a file.
+    content = prefix + "value = 123\n" * 4500
+    (tmp_path / "generated.py").write_text(content)
+    monkeypatch.chdir(tmp_path)
+    forecaster = Forecaster({"fit_tokens": 100_000, "context_tokens": 150_000,
+                             "overhead_tokens": {"making": 84_000},
+                             "generated_files": ["outputs/**"], "generator": "tools/bazel/generate.sh"})
+    forecast = forecaster.measure("Small real edit.", ["generated.py"])
+    assert forecast["file_tokens"]["generated.py"] == len(forecaster.encoding.encode_ordinary(content))
+    assert forecast["fits"] is False
+    assert forecaster.notes() == []
 
 
 def test_non_generated_source_keeps_full_token_cost(tmp_path, monkeypatch):
@@ -94,7 +119,10 @@ def test_maker_receives_generated_regeneration_guidance(maker_request, monkeypat
     monkeypatch.setattr(runtime, "create_model", lambda request: model)
     runtime.run(maker_request, lambda event: None)
     context = "\n".join(observed)
-    assert "BUILD.bazel" in context and "regenerate" in context.lower() and "hand-edit" in context
+    assert "BUILD.bazel" in context and "minimal hunk" in context and "exact-text" in context
+    assert "Gate" in context and "generator check" in context
+    assert "Do not hand-edit generated outputs" not in context
+    assert "Run the repository generator" not in context
     assert "target()" not in context
     if configured:
         assert "tools/bazel/generate.sh" in context
