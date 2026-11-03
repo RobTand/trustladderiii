@@ -391,3 +391,13 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_branch_publication",
+    srcs = ["test_branch_publication.py"],
+    deps = [
+        ":conftest",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)

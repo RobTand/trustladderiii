@@ -3556,3 +3556,6 @@ mod stored_shape_tests {
         assert_eq!(json!(issue), old);
     }
 }
+
+#[cfg(test)]
+mod publication_tests;

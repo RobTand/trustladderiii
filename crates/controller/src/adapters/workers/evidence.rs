@@ -158,3 +158,25 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod branch_tests {
+    use super::*;
+
+    #[test]
+    fn t604_audit_cannot_accept_a_branch_conflict_even_if_worker_agrees() {
+        let goals = json!([{"id":"branch", "description":"Publish here", "verification":"review",
+            "stage":"publishing", "publication":{"branch":"prismabuild-2646"},
+            "source":{"kind":"issue", "quote":"Use exactly prismabuild-2646."}}]);
+        let inputs = json!({"publication_branch":{"repository":"RobTand/prismabuild",
+            "issue":2646, "node":200, "template":"prismabuild-{issue}-tl3-{node}",
+            "branch":"prismabuild-2646-tl3-200"}, "tool_capabilities":[], "ingest":{"goals":goals}});
+        let mut reply = json!({"verdict":"agree", "objections":[], "evidence_contract":[]});
+        preflight("audit", &inputs, &mut reply).unwrap();
+        assert_eq!(reply["verdict"], "disagree");
+        let text = reply["objections"].to_string();
+        assert!(text.contains("prismabuild-2646-tl3-200"), "{text}");
+        assert!(text.contains("prismabuild-{issue}-tl3-{node}"), "{text}");
+        assert_eq!(inputs["ingest"]["goals"], goals);
+    }
+}

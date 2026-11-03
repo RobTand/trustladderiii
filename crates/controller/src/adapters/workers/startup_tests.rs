@@ -717,3 +717,53 @@ fn ingest_preflight_refuses_a_declared_protected_edit_without_launching_a_worker
     drop(controller);
     db.stop();
 }
+
+#[test]
+fn t604_ingest_and_audit_get_authoritative_per_repository_request_branch() {
+    use crate::git_tests::{Repo, support::Database};
+    let f = Repo::new();
+    let mut db = Database::start();
+    let mut config =
+        tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+    config.store = db.create("branch_context");
+    config.workers.runs = f.root.path().join("runs");
+    config.github.repos[0].branch_template = "prismabuild-{issue}-tl3-{node}".into();
+    let mut other = config.github.repos[0].clone();
+    other.name = "other-repo".into();
+    other.branch_template = "request-{node}-issue-{issue}".into();
+    config.github.repos.push(other);
+    let mut store = Store::open(&config.store).unwrap();
+    store.put_worker_materials("200", &json!({"issue":{"number":2646,"title":"Branch", "body":"Publish", "author":"rob","comments":[]},
+        "repo":{"readme":"Repo","file_list":[]}})).unwrap();
+    let snapshot = store.load().unwrap();
+    let mut commit = tl3_store::Commit::new("brief", json!(null), &snapshot);
+    commit.rows.push(crate::put(
+        "briefs",
+        "200".into(),
+        json!({"kind":"brief","brief":"Publish", "goals":[],"memory_ids":[]}),
+    ));
+    store.commit(&commit).unwrap();
+    let snapshot = store.load().unwrap();
+    let supervisor = Supervisor::new(&config, &f.root.path().join("records")).unwrap();
+    for (name, branch) in [
+        ("tl3-sandbox", "prismabuild-2646-tl3-200"),
+        ("other-repo", "request-200-issue-2646"),
+    ] {
+        let mut delivery = f.delivery();
+        delivery.output = crate::executor::Output::Effect {
+            node: tl3_kernel::NodeId(200),
+            seq: 1,
+            kind: tl3_kernel::EffectKind::StartRun(tl3_kernel::Role::Ingest),
+            head: None,
+        };
+        delivery.issue = 2646;
+        delivery.repository.name = name.into();
+        for role in ["ingest", "audit"] {
+            let request = supervisor
+                .request(&delivery, role, &mut store, &snapshot)
+                .unwrap();
+            assert_eq!(request["inputs"]["publication_branch"]["branch"], branch);
+            assert_eq!(request["inputs"]["publication_branch"]["node"], 200);
+        }
+    }
+}
