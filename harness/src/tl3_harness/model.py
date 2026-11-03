@@ -215,6 +215,7 @@ class Check:
     tests: tuple[str, ...]
     forcing: Forcing | None = None
     helper_evidence: HelperEvidence | None = None
+    declared_symptom: dict | None = None
 
     def __post_init__(self):
         if self.helper_evidence is not None and (self.kind != Kind.DEMONSTRATING or self.forcing is not None

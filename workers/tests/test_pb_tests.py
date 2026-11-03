@@ -2234,3 +2234,33 @@ def test_uncertain_owner_uses_runtime_guard_and_preserves_typed_stop(rehearsal, 
     assert 'outside_served_repository' in reply['report'] and 'time' in reply['report']
     assert reply['forcing_rehearsals'][0]['refusal'] == refusal
     assert len(calls) == 4, 'a new planner ledger runs once; the guard still refuses the global owner'
+
+
+def test_declared_symptom_rehearsal_binds_declaration_and_fixed_campaign(rehearsal):
+    ledger, root, inputs, calls = rehearsal
+    (root / 'tests/test_adoption.py').write_text('''
+import os
+from concurrent.futures import Future
+def test_adopt():
+    future = Future()
+    if not os.getenv('DECLARED_TIMEOUT'):
+        future.set_result(None)
+    future.result(timeout=0)
+''')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'original TimeoutError symptom')
+    inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    ledger = ForcingRehearsals(ledger.worktree, inputs)
+    forcing = {'symptom': 'Future.result times out.', 'environment': {'DECLARED_TIMEOUT': '1'}, 'patches': []}
+    symptom = {'node': NODE, 'exception': 'builtins.TimeoutError', 'phase': 'call', 'repeat': 2, 'parallel': 0}
+    import inspect
+    assert 'declared_symptom' in inspect.signature(ledger.run).parameters, 'rehearsal cannot declare exception RED'
+    result = ledger.run([NODE], forcing, declared_symptom=symptom)
+    assert result['status'] == 'validated', result
+    checks = [{'kind': 'demonstrating', 'node_ids': [NODE], 'forcing': forcing, 'declared_symptom': symptom}]
+    assert ledger.violations(inputs['base_sha'], checks) == []
+    checks[0]['declared_symptom'] = {**symptom, 'repeat': 3}
+    assert ledger.violations(inputs['base_sha'], checks), 'stale campaign receipt must be rejected'
+    count = len(calls)
+    assert ledger.run([NODE], forcing, declared_symptom=symptom) == result
+    assert len(calls) == count, 'a declared campaign cannot retry until RED'
