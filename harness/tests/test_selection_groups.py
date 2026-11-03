@@ -82,8 +82,8 @@ def head(repo, value=1):
     return save(repo, 'head')
 
 
-def selected(repo, base, commit, limit=400, plan=PLAN, container=CONTAINER):
-    return execution.run_checks(repo, base, commit, plan, container=container, selected_tests=limit)
+def selected(repo, base, commit, limit=400, plan=PLAN, container=CONTAINER, failures=()):
+    return execution.run_checks(repo, base, commit, plan, container=container, selected_tests=limit, selected_failures=failures)
 
 
 def test_complete_fixture_unit_retries_without_manufacturing_393_unused_rows(frozen_repo):
@@ -395,3 +395,45 @@ def test_unverified_base_collection_does_not_reuse_unknown_budget(frozen_repo, m
     assert receipt['skipped_units'] == [[MODULE], [tail]]
     assert 'unverified' in receipt['saturation']['reason'].lower()
     assert receipt['head_units'] == [] and receipt['skipped_checked'] is False
+
+
+@pytest.mark.parametrize('fixed', [False, True])
+def test_selection_displacement_rechecks_historical_failure_before_new_imports(frozen_repo, fixed):
+    repo, runs = frozen_repo
+    earlier = 'tests/test_aaa.py'
+    (repo / 'extra.py').write_text('VALUE = 1\n')
+    (repo / earlier).write_text('import pytest\nimport extra\n'
+        '@pytest.mark.parametrize("row", range(150))\ndef test_extra(row):\n    assert extra.VALUE\n')
+    base = save(repo, '394-case guarded unit and earlier-priority 150-case unit')
+    first = selected(repo, base, head(repo, 0), limit=500)[-1]
+    assert first.verdict == Verdict.FAIL
+    failures = tuple(test['test'] for test in json.loads(execution.result_json((first,)))[0]['tests']
+                     if not test['passed'])
+    assert failures == (MODULE,)
+    (repo / 'extra.py').write_text('VALUE = 2\n')
+    if fixed:
+        # The failed unit must still run even when it no longer imports the diff.
+        (repo / 'product.py').write_text('def value():\n    return 1\n')
+    commit = save(repo, 'another allowed source displaces the known failure without editing tests')
+    runs.clear()
+    result = selected(repo, base, commit, limit=500, failures=failures)[-1]
+    assert [test.test for test in result.tests] == [MODULE], 'historical failure must precede new import candidates'
+    assert result.verdict == (Verdict.PASS if fixed else Verdict.FAIL)
+    receipt = json.loads(execution.result_json((result,)))[0]['selection']
+    assert receipt['charged_cases'] == 394 and receipt['limit'] == 500
+    assert receipt['head_units'] == [[MODULE]] and receipt['skipped_units'] == [[earlier]]
+    assert receipt['skipped_checked'] is False
+    assert all(tests == (MODULE,) for tree, tests in runs if tree == 'head' and tests != (OTHER,))
+
+
+def test_selection_displacement_refuses_when_known_failed_units_alone_exceed_budget(frozen_repo):
+    repo, _ = frozen_repo
+    earlier = 'tests/test_aaa.py'
+    (repo / 'extra.py').write_text('VALUE = 1\n')
+    (repo / earlier).write_text('import pytest\nimport extra\n'
+        '@pytest.mark.parametrize("row", range(150))\ndef test_extra(row):\n    assert extra.VALUE\n')
+    base = save(repo, 'historically failing units cost 544 in total')
+    (repo / 'extra.py').write_text('VALUE = 2\n')
+    commit = head(repo, 0)
+    with pytest.raises(HarnessInputError, match='Previously failing.*544.*500'):
+        selected(repo, base, commit, limit=500, failures=(MODULE, earlier))

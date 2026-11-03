@@ -125,6 +125,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
 
             reviewed_sha: None,
             reproducing_unavailable: None,
+            selected_failures: Vec::new(),
             plan: vec![Check {
                 name: "value".into(),
                 kind: Kind::Demonstrating,

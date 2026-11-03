@@ -2565,6 +2565,7 @@ impl Controller {
                         base_sha: tl3_worktrees::CommitId::new(&base_sha)?,
                         reviewed_sha: None,
                         reproducing_unavailable: None,
+                        selected_failures: Vec::new(),
                         plan: decode_stored(inputs["plan"]["checks"].clone())?,
                     }
                 };
@@ -3543,6 +3544,48 @@ mod stored_shape_tests {
             ..request
         };
         assert_eq!(json!(ranked)["priority"], 1);
+    }
+
+    #[test]
+    fn selection_displacement_carries_request_history_into_check_delivery() {
+        let f = git_tests::Repo::new();
+        let run = f.delivery().checks.unwrap();
+        let mut snapshot = tl3_store::Snapshot {
+            revision: tl3_store::Revision::ZERO,
+            epoch: tl3_store::Epoch::ZERO,
+            rows: vec![],
+            pending_effects: vec![],
+            credit: vec![],
+            interned: vec![],
+        };
+        snapshot.rows.push(tl3_store::WorldRow {
+            arrival: 0,
+            version: tl3_store::Revision::ZERO,
+            table: "check_plans".into(),
+            id: format!("0:{}", f.head),
+            value: json!(run),
+        });
+        snapshot.rows.push(tl3_store::WorldRow {
+            arrival: 0,
+            version: tl3_store::Revision::ZERO,
+            table: "check_reports".into(),
+            id: "0:earlier".into(),
+            value: json!({"selected_failures":["tests/test_old.py", "tests/test_companion.py"]}),
+        });
+        snapshot.rows.push(tl3_store::WorldRow {
+            arrival: 0,
+            version: tl3_store::Revision::ZERO,
+            table: "check_reports".into(),
+            id: "1:other-request".into(),
+            value: json!({"selected_failures":["tests/test_unrelated.py"]}),
+        });
+        let next = check_run(&snapshot, NodeId(0), Some(&f.head))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            next.selected_failures,
+            ["tests/test_companion.py", "tests/test_old.py"]
+        );
     }
 
     #[test]

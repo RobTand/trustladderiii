@@ -380,6 +380,43 @@ mod hostile_tests {
     }
 
     #[test]
+    fn selection_displacement_surfaces_unedited_unchecked_historical_failures() {
+        let f = Repo::new();
+        let mut db = Database::start();
+        let mut store = Store::open(&db.create("displaced_selected")).unwrap();
+        store.put_worker_materials("0", &json!({})).unwrap();
+        let mut snapshot = documents(
+            &mut store,
+            &[
+                (
+                    "goals",
+                    json!([{"description":"Update the readme", "verification":"test"}]),
+                ),
+                ("check_reports", json!({})),
+            ],
+        );
+        let report = snapshot
+            .rows
+            .iter_mut()
+            .find(|r| r.table == "check_reports")
+            .unwrap();
+        report.id = format!("0:{}", f.head);
+        report.value = json!({"base_sha":f.base, "selected_failures":
+            ["tests/test_old.py", "tests/test_rechecked.py", "tests/test_unverified.py"],
+            "results":[{"name":"Existing tests that import the change", "verdict":"pass",
+                "tests":[{"test":"tests/test_rechecked.py", "passed":true, "head":"passed"},
+                         {"test":"tests/test_unverified.py", "passed":false, "head":"no-report"}],
+                "selection":{"limit":500,"charged_cases":480,"head_units":[["tests/test_rechecked.py"]],
+                    "skipped_units":[["tests/test_old.py"]], "skipped_checked":false}}]});
+        let value = inputs(&f.delivery(), &mut store, &snapshot, None).unwrap();
+        assert!(value.get("edited_selected_tests").is_none());
+        assert_eq!(
+            value["unresolved_displaced_failures"],
+            json!(["tests/test_old.py", "tests/test_unverified.py"])
+        );
+    }
+
+    #[test]
     fn forced_check_review_sees_the_issue() {
         // #393 review: the reviewer judges a forcing against the issue's own symptom,
         // not only the planner's description of it.

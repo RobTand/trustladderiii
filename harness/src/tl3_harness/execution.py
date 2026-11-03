@@ -473,7 +473,7 @@ def stale_result(result: Result, stale: set[str]) -> Result:
 def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                container: Container, reviewed: str | None = None, tool: TestTool = PYTEST,
                protected: tuple[str, ...] = (), selected_tests: int | None = None,
-               always_tests: tuple[str, ...] = ()) -> tuple[Result, ...]:
+               always_tests: tuple[str, ...] = (), selected_failures: tuple[str, ...] = ()) -> tuple[Result, ...]:
     """Run one round inside one admitted PB action, from trusted installed code. `protected`
     holds the repository's protected path patterns; a change to any of them is refused.
     With `selected_tests`, complete execution groups whose imports reach the change

@@ -802,6 +802,7 @@ fn stage_owned_handover_keeps_fail_fast_and_independent_checking() {
                         base_sha: tl3_worktrees::CommitId::new("a".repeat(40))?,
                         reviewed_sha: None,
                         reproducing_unavailable: None,
+                        selected_failures: Vec::new(),
                         plan: vec![adapters::prismabuild::Check {
                             name: "forced-deep-path".into(),
                             kind: adapters::prismabuild::Kind::Demonstrating,
