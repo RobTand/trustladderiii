@@ -16,6 +16,28 @@ pub struct Failure {
 impl Failure {
     pub(crate) fn capture(role: &str, error: &jsonschema::ValidationError<'_>) -> Self {
         use jsonschema::error::ValidationErrorKind;
+        if let ValidationErrorKind::AnyOf { context }
+        | ValidationErrorKind::OneOfNotValid { context } = error.kind()
+            && let Some((_, leaf)) = context
+                .iter()
+                .filter_map(|branch| {
+                    branch
+                        .iter()
+                        .map(|error| Self::capture(role, error))
+                        .max_by_key(|failure| failure.pointer.matches('/').count())
+                        .map(|failure| (branch.len(), failure))
+                })
+                // The closest branch has the fewest violations. Prefer its
+                // deepest field when equally close branches remain.
+                .min_by_key(|(count, failure)| {
+                    (
+                        *count,
+                        std::cmp::Reverse(failure.pointer.matches('/').count()),
+                    )
+                })
+        {
+            return leaf;
+        }
         let mut pointer = error.instance_path().to_string();
         let field = match error.kind() {
             ValidationErrorKind::AdditionalProperties { unexpected } => {

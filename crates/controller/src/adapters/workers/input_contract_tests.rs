@@ -270,9 +270,6 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
     let mut store = Store::open(&config.store).unwrap();
     let brief = json!({"kind":"brief","brief":"Preserve evidence","memory_ids":[],"goals":[{"description":"Preserve evidence","verification":"test"}]});
     let plan = json!({"kind":"leaf","files":["README.md"],"checks":[{"name":"evidence","kind":"regression","node_ids":["test_value.py::test_value"],"goal_ids":[0]}]});
-    store
-        .put_worker_materials("0", &provider.load(&f.delivery()).unwrap())
-        .unwrap();
     documents(
         &mut store,
         &[
@@ -288,7 +285,9 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
             ),
         ],
     );
-    let supervisor = Supervisor::new(&config, &f.root.path().join("records")).unwrap();
+    let supervisor = Supervisor::new(&config, &f.root.path().join("records"))
+        .unwrap()
+        .with_materials(provider);
     let snapshot = store.load().unwrap();
     let mut commit = tl3_store::Commit::new("contract-postmortem", json!(null), &snapshot);
     commit.postmortems.push(
