@@ -49,6 +49,20 @@ BUILTIN_TOOL_DESCRIPTIONS = {
 
 
 class ProxyChatOpenAI(ChatOpenAI):
+    def _get_request_payload(self, *args, **kwargs):
+        payload = super()._get_request_payload(*args, **kwargs)
+        messages = payload["messages"]
+        if self.model_name.startswith("claude") and any(
+            isinstance(message.get("content"), list) and any(
+                isinstance(block, dict) and "cache_control" in block for block in message["content"])
+            for message in messages
+        ):
+            # CLIProxyAPI v8.0.51 skips automatic markers when any explicit marker exists.
+            # Its translator hoists this onto the final text/tool-result block.
+            # Mark only this payload so earlier rolling markers never enter saved history.
+            payload["messages"] = [*messages[:-1], {**messages[-1], "cache_control": {"type": "ephemeral"}}]
+        return payload
+
     def _convert_chunk_to_generation_chunk(self, chunk, default_chunk_class, base_generation_info):
         from tl3_workers.tracing import record_chunk_usage
         record_chunk_usage(chunk)
