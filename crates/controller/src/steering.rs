@@ -226,9 +226,9 @@ impl Controller {
             inputs["question_context"] =
                 answered_question(snapshot, n.question, open.id).unwrap_or_default();
         }
+        let comment_id = row.value["comment"]["id"].to_string();
         if let Some(selected) = snapshot.rows.iter().find(|selected| {
-            selected.table == "console_selected_answers"
-                && selected.id == row.value["comment"]["id"].to_string()
+            selected.table == "console_selected_answers" && selected.id == comment_id
         }) {
             inputs["selected_answer"] = selected.value.clone();
         }
