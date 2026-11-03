@@ -147,6 +147,8 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None,
     if identifier:
         register_harness_profile(f"{provider}:{identifier}", profile)
     prompt = role_prompt(role)
+    if role.name == "maker" and worktree is not None:
+        prompt += "\n\n" + worktree.generation_instruction()
     prompt += "\n\n" + ONLY_JSON + " It must match this schema:\n"
     proposal = deepcopy(schema(role.reply_schema)) if reply_schema is None else reply_schema
     for variant in proposal.get("oneOf", [proposal]):

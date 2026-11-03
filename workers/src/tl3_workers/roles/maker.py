@@ -320,8 +320,7 @@ def run(model, request, worktree, emit):
         if session and session.exists() and request.get("resume_session"):
             history = messages_from_dict(read_json(session.read_text()))
         start = len(history)
-        history.append(HumanMessage(content=json.dumps(inputs, ensure_ascii=False) + "\n"
-                                    + worktree.generation_instruction()))
+        history.append(HumanMessage(content=json.dumps(inputs, ensure_ascii=False)))
 
     def checkpoint():
         if not progress:

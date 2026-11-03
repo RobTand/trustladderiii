@@ -23,7 +23,8 @@ def main():
         (root / "tests/socket_support.py").write_text("def short_socket(): return 'short'\n")
         (root / "tests/test_new.py").write_text("from socket_support import short_socket\n")
         (root / "tests/BUILD.bazel").write_text("stale\n")
-        (root / "generate.py").write_text('''from pathlib import Path
+        (root / "generate.py").write_text('''#!/usr/bin/env python3
+from pathlib import Path
 import subprocess
 import sys
 # This must succeed as uid 65534, with only the synthetic read-only index.
@@ -42,7 +43,8 @@ if "--escape" in sys.argv:
 if "--fail" in sys.argv:
     raise SystemExit(7)
 ''')
-        contract = {"command": "python3 generate.py", "generated_files": ["**/BUILD.bazel"],
+        (root / "generate.py").chmod(0o755)
+        contract = {"command": "./generate.py", "generated_files": ["**/BUILD.bazel"],
                     "protected_paths": [], "files": ["tests/BUILD.bazel"]}
         before = generator.manifest(root)
         artifact = generator.run(root, image, **contract)
@@ -52,13 +54,13 @@ if "--fail" in sys.argv:
         for output in artifact["outputs"]:
             (root / output["path"]).write_bytes(base64.b64decode(output["data"], validate=True))
         assert generator.manifest(root) == after
-        checked = generator.run(root, image, **{**contract, "command": "python3 generate.py --check"})
+        checked = generator.run(root, image, **{**contract, "command": "./generate.py --check"})
         assert checked["status"] == "completed" and checked["outputs"] == [], checked
         repeated = generator.run(root, image, **contract)
         assert repeated["status"] == "completed" and repeated["outputs"] == [], repeated
-        escaped = generator.run(root, image, **{**contract, "command": "python3 generate.py --escape"})
+        escaped = generator.run(root, image, **{**contract, "command": "./generate.py --escape"})
         assert escaped["status"] == "refused" and "undeclared" in escaped["message"], escaped
-        failed = generator.run(root, image, **{**contract, "command": "python3 generate.py --fail"})
+        failed = generator.run(root, image, **{**contract, "command": "./generate.py --fail"})
         assert failed["status"] == "failed" and failed["exit_code"] == 7, failed
         assert generator.manifest(root) == after
         # An independent Git tree records exactly the imported bytes.

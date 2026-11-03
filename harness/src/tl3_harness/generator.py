@@ -128,6 +128,14 @@ def validate_artifact(artifact, before, contract):
 
 
 def container_command(tree, container, argv, cidfile):
+    # /dev/shm can be noexec. Invoke a repository script through its declared
+    # shebang interpreter while keeping its bytes and arguments unchanged.
+    executable = tree / argv[0]
+    if not Path(argv[0]).is_absolute() and executable.is_file():
+        with executable.open("rb") as stream:
+            header = stream.readline(4096)
+        if header.startswith(b"#!"):
+            argv = [*shlex.split(header[2:].decode().strip()), argv[0], *argv[1:]]
     command = test_container_command(tree, container, ())
     # Preserve every test containment flag and PB's Docker shim/affinity. Only
     # the private copy is writable; Git's synthetic metadata stays read-only.
