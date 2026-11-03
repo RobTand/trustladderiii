@@ -65,7 +65,7 @@ def test_generated_read_is_a_bounded_region(tmp_path):
 
 def test_maker_receives_generated_regeneration_guidance(maker_request, monkeypatch):  # noqa: F811
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-    from langchain_core.messages import AIMessage, HumanMessage
+    from langchain_core.messages import AIMessage
     from tl3_workers import runtime
 
     root = Path(maker_request["worktree"])
@@ -74,8 +74,11 @@ def test_maker_receives_generated_regeneration_guidance(maker_request, monkeypat
     observed = []
 
     class RecordingModel(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
         def _generate(self, messages, **kwargs):
-            observed.extend(m.content for m in messages if isinstance(m, HumanMessage))
+            observed.extend(m.content for m in messages)
             return super()._generate(messages, **kwargs)
 
     reply = {"kind": "needs_files", "files": [{"path": "helper.py", "why": "Needed."}]}
