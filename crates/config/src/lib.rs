@@ -132,7 +132,7 @@ fn evidence_tools() -> Vec<ToolCapability> {
     vec![ToolCapability {
         tool: "run_tests".into(),
         executor: "prismabuild_pytest".into(),
-        runner_features: ["base_head", "repeat", "parallel"]
+        runner_features: ["base_head", "repeat", "parallel", "always_tests"]
             .map(String::from)
             .to_vec(),
         artifacts: [
