@@ -1,4 +1,5 @@
 load("@rules_python//python:defs.bzl", "py_binary")
+load("//tools/bazel:python.bzl", "tl3_py_test")
 
 py_binary(
     name = "inventory",
@@ -62,4 +63,11 @@ py_binary(
     srcs = ["verify_disk_scratch.py"],
     visibility = ["//visibility:public"],
     deps = ["//harness/src/tl3_harness"],
+)
+
+tl3_py_test(
+    name = "test_verify_disk_scratch",
+    srcs = ["test_verify_disk_scratch.py"],
+    data = [":verify_disk_scratch"],
+    deps = ["//harness/src/tl3_harness"],  # keep
 )
