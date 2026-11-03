@@ -5,7 +5,7 @@ use crate::sync::{
     thread,
 };
 use crate::{
-    Bootstrap, Controller, Error, LabelledIssue, Repository, Result, cli::Input,
+    Bootstrap, Controller, Error, IssueChange, LabelledIssue, Repository, Result, cli::Input,
     executor::Observation,
 };
 use chrono::{DateTime, Utc};
@@ -134,6 +134,7 @@ pub fn apply(controller: &mut Controller, input: Input) -> Result<()> {
         Input::LabelledIssue(issue) => {
             controller.intake(issue)?;
         }
+        Input::IssueChanged(change) => controller.issue_changed(&change)?,
         Input::ProposedIssue { issue, proposed } => {
             controller.intake_proposed(issue, Some(proposed))?;
         }
@@ -153,6 +154,23 @@ pub enum GitHubDelivery {
     },
 }
 
+/// An issue's labels in one order, and a digest of what it says: GitHub's
+/// updated_at has second precision, so it alone doesn't name a snapshot (Q39).
+pub(crate) fn canonical_issue(issue: &tl3_github::Issue) -> (Vec<String>, String) {
+    let mut labels: Vec<_> = issue
+        .labels
+        .iter()
+        .map(|label| label.name.clone())
+        .collect();
+    labels.sort();
+    labels.dedup();
+    let digest = format!(
+        "{:x}",
+        Sha256::digest(json!([&issue.title, &labels]).to_string())
+    );
+    (labels, digest)
+}
+
 /// Translators run on the controller thread. Keys must survive duplicate evidence and replay.
 pub trait GitHubTranslator {
     fn translate(
@@ -166,7 +184,7 @@ pub(crate) struct Translation {
     pub(crate) translator: Box<dyn GitHubTranslator>,
 }
 
-fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<Input> {
+pub(crate) fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<Input> {
     match delivery {
         GitHubDelivery::Webhook(delivery) => inputs(&delivery.id, delivery.event, bootstrap),
         GitHubDelivery::CatchUp {
@@ -196,6 +214,30 @@ fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<Input> {
                             .iter()
                             .map(|label| label.name.clone())
                             .collect(),
+                    }));
+                }
+            }
+            // Catch-up sees each changed issue as it is now, so missed or
+            // reordered edits converge on its current priority (Q39).
+            for issue in &changes.issues {
+                if issue.pull_request.is_none() {
+                    let (labels, digest) = canonical_issue(issue);
+                    result.push(Input::IssueChanged(IssueChange {
+                        delivery: format!(
+                            "catch-up-issue:{}/{}:{}:{}:{}",
+                            repository.owner,
+                            repository.name,
+                            issue.number,
+                            issue.updated_at.to_rfc3339(),
+                            digest
+                        ),
+                        owner: repository.owner.clone(),
+                        repo: repository.name.clone(),
+                        installation: repository.installation,
+                        number: issue.number,
+                        title: issue.title.clone(),
+                        labels,
+                        updated_at: issue.updated_at,
                     }));
                 }
             }
@@ -449,17 +491,24 @@ fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
             label,
             actor,
         }) if issue.pull_request.is_none() => {
-            vec![Input::LabelledIssue(LabelledIssue {
-                delivery: id.into(),
-                owner: context.repository.owner.login,
-                repo: context.repository.name,
-                installation: context.installation_id,
-                number: issue.number,
-                title: issue.title,
-                actor: actor.id,
-                label: label.name,
-                labels: issue.labels.into_iter().map(|label| label.name).collect(),
-            })]
+            let change = issue_change(id, &context, &issue);
+            vec![
+                Input::LabelledIssue(LabelledIssue {
+                    delivery: id.into(),
+                    owner: context.repository.owner.login,
+                    repo: context.repository.name,
+                    installation: context.installation_id,
+                    number: issue.number,
+                    title: issue.title,
+                    actor: actor.id,
+                    label: label.name,
+                    labels: issue.labels.into_iter().map(|label| label.name).collect(),
+                }),
+                Input::IssueChanged(change),
+            ]
+        }
+        Some(Event::IssueChanged { context, issue, .. }) if issue.pull_request.is_none() => {
+            vec![Input::IssueChanged(issue_change(id, &context, &issue))]
         }
         Some(Event::CommentCreated {
             context,
@@ -483,6 +532,24 @@ fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
                 .collect()
         }
         _ => vec![],
+    }
+}
+
+/// The issue's current title and labels, which set its request's priority (Q39).
+fn issue_change(
+    delivery: &str,
+    context: &webhook::Context,
+    issue: &tl3_github::Issue,
+) -> IssueChange {
+    IssueChange {
+        delivery: delivery.into(),
+        owner: context.repository.owner.login.clone(),
+        repo: context.repository.name.clone(),
+        installation: context.installation_id,
+        number: issue.number,
+        title: issue.title.clone(),
+        labels: canonical_issue(issue).0,
+        updated_at: issue.updated_at,
     }
 }
 
@@ -887,3 +954,63 @@ impl WebhookReceiver {
 #[cfg(all(test, loom))]
 #[path = "../tests/loom/ingress.rs"]
 mod loom_tests;
+
+#[cfg(test)]
+mod priority_tests {
+    use super::*;
+
+    fn delivery(event: &str, action: &str, labels: &[&str]) -> Option<tl3_github::webhook::Event> {
+        let body = serde_json::json!({
+            "action": action,
+            "repository": {"id": 9, "name": "tl3-sandbox", "owner": {"id": 3, "login": "RobTand"}},
+            "installation": {"id": 1},
+            "issue": {"number": 42, "title": "[P2] Fix the greeting", "body": null, "state": "open",
+                      "updated_at": "2026-11-02T12:00:00Z", "pull_request": null,
+                      "labels": labels.iter().map(|name| serde_json::json!({"name": name})).collect::<Vec<_>>()},
+            "label": {"name": labels.last().copied().unwrap_or("bug")},
+            "sender": {"id": 7, "login": "requester"},
+        });
+        tl3_github::webhook::parse("d-1", event, body.to_string().as_bytes())
+            .unwrap()
+            .event
+    }
+
+    #[test]
+    fn issue_edits_and_label_changes_refresh_priority() {
+        let config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+        let bootstrap = Bootstrap::from_config(&config).unwrap();
+        for action in ["edited", "labeled", "unlabeled"] {
+            let inputs = inputs(
+                "d-1",
+                delivery("issues", action, &["tl3", "P1"]),
+                &bootstrap,
+            );
+            let change = inputs
+                .iter()
+                .find_map(|input| match input {
+                    Input::IssueChanged(change) => Some(change.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("issues.{action} carries no issue change"));
+            assert_eq!(change.number, 42);
+            assert_eq!(change.title, "[P2] Fix the greeting");
+            assert_eq!(
+                change.labels,
+                ["P1", "tl3"],
+                "labels are stored in one order"
+            );
+        }
+        let labelled = inputs(
+            "d-1",
+            delivery("issues", "labeled", &["P1", "tl3"]),
+            &bootstrap,
+        );
+        assert!(
+            labelled
+                .iter()
+                .any(|input| matches!(input, Input::LabelledIssue(issue)
+                if issue.labels == ["P1", "tl3"] && issue.label == "tl3")),
+            "intake sees every label"
+        );
+    }
+}

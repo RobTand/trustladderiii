@@ -180,6 +180,7 @@ fn case(settings: &tl3_config::Store, name: &str) {
                 "bad-observation",
                 Observation::Kernel(tl3_kernel::Event::NewRequest {
                     repo: tl3_kernel::RepoId(0),
+                    priority: tl3_kernel::Priority::Unranked,
                 }),
             )
             .unwrap();

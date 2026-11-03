@@ -223,6 +223,53 @@ pub struct LabelledIssue {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
 }
+
+/// An issue's title or labels changed; its request's priority may follow (Q39).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IssueChange {
+    pub delivery: String,
+    pub owner: String,
+    pub repo: String,
+    pub installation: u64,
+    pub number: u64,
+    pub title: String,
+    pub labels: Vec<String>,
+    /// When GitHub last changed the issue, which orders its edits.
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+/// The newest issue edit seen for a request (Q39), by request node.
+const ISSUE_EDITS: &str = "issue_edits";
+
+/// Requests whose issue's same-second edits disagreed (Q39), by request node.
+/// Neither edit is applied; a timer rereads the issue until it settles.
+const PRIORITY_RECONCILE: &str = "priority_reconcile";
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct Reconcile {
+    pub(crate) repository: Repository,
+    pub(crate) number: u64,
+    /// The updated_at the disagreeing edits share.
+    pub(crate) updated_at: chrono::DateTime<chrono::Utc>,
+    /// Which reconciliation of this request's issue, so two never share keys.
+    pub(crate) generation: u32,
+    /// Rereads so far.
+    pub(crate) attempts: u32,
+    /// When the next reread is due, in Unix milliseconds.
+    pub(crate) next_due_ms: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct IssueEdit {
+    updated_at: chrono::DateTime<chrono::Utc>,
+    /// Same-second reconciliations started for this request (Q39).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    reconciliations: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Request {
     repo: Repository,
@@ -582,6 +629,127 @@ impl Controller {
             .cloned()
     }
 
+    /// Refresh an open request's pool priority (Q39) from its issue's current
+    /// title and labels. The stored request keeps the priority read at intake,
+    /// which sets its credit reserve (#416).
+    pub fn issue_changed(&mut self, change: &IssueChange) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let Some(repo) = stored_repositories(&snapshot)?.into_iter().find(|r| {
+            r.owner.eq_ignore_ascii_case(&change.owner)
+                && r.name.eq_ignore_ascii_case(&change.repo)
+                && r.installation == change.installation
+        }) else {
+            return Ok(());
+        };
+        let Some(row) = latest_request(&snapshot, &repo, change.number) else {
+            return Ok(());
+        };
+        let node = NodeId(
+            row.id
+                .parse()
+                .map_err(|_| Error::Invalid("invalid request node"))?,
+        );
+        let world = snapshot::decode(&snapshot)?;
+        let Some(n) = world
+            .nodes
+            .get(node.0 as usize)
+            .filter(|n| !n.phase.is_closed())
+        else {
+            return Ok(());
+        };
+        // Edits are ordered by GitHub's updated_at, not by arrival: a late or
+        // replayed older edit is stale. A newer edit is recorded even when it
+        // keeps the priority, so it makes the older ones stale too.
+        let edit = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == ISSUE_EDITS && r.id == row.id)
+            .map(|r| decode_stored::<IssueEdit>(r.value.clone()))
+            .transpose()?;
+        let seen = edit.as_ref().map(|edit| edit.updated_at);
+        let pending = snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == PRIORITY_RECONCILE && r.id == row.id);
+        let (updated_at, priority) = (
+            change.updated_at,
+            priority::pool_priority(&change.title, &change.labels),
+        );
+        if seen.is_some_and(|seen| updated_at < seen) {
+            return Ok(());
+        }
+        // The delivery's key makes a redelivery replay its stored receipt.
+        let mut commit = Commit::new(
+            format!("github-issue:{}", change.delivery),
+            json!({"issue_change": change}),
+            &snapshot,
+        );
+        if seen == Some(updated_at) && priority != n.priority {
+            // GitHub's updated_at has second precision, so two edits in one
+            // second can arrive in either order. Apply neither: a timer
+            // rereads the issue (priority::Controller::reconcile_due).
+            if pending {
+                return Ok(());
+            }
+            let generation = edit.map_or(0, |edit| edit.reconciliations) + 1;
+            commit.rows.push(put(
+                ISSUE_EDITS,
+                row.id.clone(),
+                json!(IssueEdit {
+                    updated_at,
+                    reconciliations: generation,
+                }),
+            ));
+            commit.rows.push(put(
+                PRIORITY_RECONCILE,
+                row.id.clone(),
+                json!(Reconcile {
+                    repository: repo.clone(),
+                    number: change.number,
+                    updated_at,
+                    generation,
+                    attempts: 0,
+                    next_due_ms: self.now_ms(),
+                }),
+            ));
+            self.store.commit(&commit)?;
+            return Ok(());
+        }
+        if seen.is_some_and(|seen| updated_at <= seen) && priority == n.priority {
+            return Ok(());
+        }
+        if pending && seen.is_some_and(|seen| updated_at > seen) {
+            // A newer edit settles a pending same-second disagreement.
+            commit.rows.push(RowChange::Delete {
+                table: PRIORITY_RECONCILE.into(),
+                id: row.id.clone(),
+            });
+        }
+        if seen.is_none_or(|seen| updated_at > seen) {
+            commit.rows.push(put(
+                ISSUE_EDITS,
+                row.id.clone(),
+                json!(IssueEdit {
+                    updated_at,
+                    reconciliations: edit.map_or(0, |edit| edit.reconciliations),
+                }),
+            ));
+        }
+        if priority != n.priority {
+            self.apply(
+                &snapshot,
+                world,
+                Event::Fact {
+                    node,
+                    fact: Fact::Priority(priority),
+                },
+                &mut commit,
+            )?;
+        }
+        self.store.commit(&commit)?;
+        Ok(())
+    }
+
     fn prepare_intake(
         &mut self,
         snapshot: &Snapshot,
@@ -652,10 +820,12 @@ impl Controller {
                 Event::NewAdoption {
                     repo: tl3_kernel::RepoId(index as u64),
                     head: self.head(NodeId(world.nodes.len() as u64), &proposed.head)?,
+                    priority: priority::pool_priority(&issue.title, &issue.labels),
                 }
             } else {
                 Event::NewRequest {
                     repo: tl3_kernel::RepoId(index as u64),
+                    priority: priority::pool_priority(&issue.title, &issue.labels),
                 }
             };
             commit.rows.push(put(

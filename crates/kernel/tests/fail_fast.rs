@@ -30,7 +30,10 @@ impl Run {
             notices: Vec::new(),
             head: 0,
         };
-        run.send(Event::NewRequest { repo: RepoId(0) });
+        run.send(Event::NewRequest {
+            repo: RepoId(0),
+            priority: Priority::Unranked,
+        });
         run.confirm();
         run
     }

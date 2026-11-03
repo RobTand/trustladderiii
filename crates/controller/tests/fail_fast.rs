@@ -710,6 +710,7 @@ fn a_stored_world_from_before_fail_fast_decodes_with_it_off() {
         tl3_kernel::World::new(&[1], 1),
         Event::NewRequest {
             repo: tl3_kernel::RepoId(0),
+            priority: tl3_kernel::Priority::Unranked,
         },
     );
     let mut stored = serde_json::to_value(&world).unwrap();

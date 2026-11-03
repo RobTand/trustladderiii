@@ -85,6 +85,13 @@ impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
     ) -> Result<()> {
         self.primary().intake_question(question, epoch)
     }
+    fn issue(
+        &mut self,
+        repository: &tl3_controller::Repository,
+        number: u64,
+    ) -> Result<tl3_github::Issue> {
+        self.primary().issue(repository, number)
+    }
     fn app_login(&self, installation: u64) -> Option<String> {
         match &self.real {
             Some(real) => real.app_login(installation),

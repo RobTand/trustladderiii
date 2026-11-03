@@ -34,6 +34,9 @@ const ADDITIONAL_PROOFS: &[&str] = &[
     "gate_merge_progress_w3",
     "gate_resume_progress_w2",
     "gate_resume_progress_w3",
+    // Q39: strictly priority-first agent-pool grants.
+    "pool_grant_is_priority_ordered",
+    "pool_order_is_strict_priority",
 ];
 
 const LIB: &str = include_str!("../src/lib.rs");

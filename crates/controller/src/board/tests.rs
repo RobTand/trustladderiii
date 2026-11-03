@@ -301,6 +301,8 @@ fn card_carries_counters_progress_and_incidents() {
             phase: "Making the change".into(),
             ending: None,
             waiting_on: "the current task to finish".into(),
+            priority: "unranked".into(),
+            pool_position: None,
             role: Some("Maker".into()),
             model: Some("alternate-model".into()),
             attempt: 3,
@@ -679,4 +681,36 @@ fn card_names_the_model_the_worker_runs() {
         Some("default-model".into()),
         "a past reset no longer limits"
     );
+}
+
+#[test]
+fn pool_waiters_show_their_priority_and_place_in_line() {
+    let mut older = request(1, Phase::Ingesting);
+    older.node.ticket = Some(3);
+    older.node.priority = tl3_kernel::Priority::P3;
+    let mut better = request(2, Phase::Auditing);
+    better.node.ticket = Some(5);
+    better.node.priority = tl3_kernel::Priority::P1;
+    let mut running = request(3, Phase::Making);
+    running.node.priority = tl3_kernel::Priority::P0;
+    let cards = board(vec![older, better, running]).cards;
+    let shown: Vec<_> = cards
+        .iter()
+        .map(|card| {
+            (
+                card.priority.as_str(),
+                card.pool_position,
+                card.waiting_on.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("P3", Some(2), "an agent slot (P3, 2nd in line)"),
+            ("P1", Some(1), "an agent slot (P1, 1st in line)"),
+            ("P0", None, "the change to be written"),
+        ]
+    );
+    assert!(cards[0].badges.contains(&Badge::WaitingForCapacity));
 }

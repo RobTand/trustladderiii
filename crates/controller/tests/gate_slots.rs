@@ -42,7 +42,10 @@ impl GateRun {
     }
     fn request(&mut self) -> NodeId {
         let node = NodeId(self.0.nodes.len() as u64);
-        self.send(Event::NewRequest { repo: RepoId(0) });
+        self.send(Event::NewRequest {
+            repo: RepoId(0),
+            priority: tl3_kernel::Priority::Unranked,
+        });
         self.reply(node, Reply::IngestDone { size: 1 });
         self.reply(node, Reply::AuditAgrees);
         node
@@ -151,7 +154,10 @@ fn w2_gate_uses_both_slots_and_preserves_waiters() {
     }
     assert_eq!(r.0.nodes.iter().filter(|n| n.holds).count(), 2);
     let ticket = r.0.nodes[2].ticket.unwrap();
-    r.send(Event::NewRequest { repo: RepoId(0) });
+    r.send(Event::NewRequest {
+        repo: RepoId(0),
+        priority: tl3_kernel::Priority::Unranked,
+    });
     assert_eq!(r.0.nodes[2].ticket, Some(ticket));
     r.stop(NodeId(0));
     assert!(r.0.nodes[2].holds);

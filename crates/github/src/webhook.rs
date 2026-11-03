@@ -17,6 +17,12 @@ pub enum Event {
         label: Label,
         actor: Actor,
     },
+    /// An issue's title was edited or a label removed (Q39).
+    IssueChanged {
+        context: Context,
+        issue: Issue,
+        actor: Actor,
+    },
     CommentCreated {
         context: Context,
         issue: Issue,
@@ -170,7 +176,7 @@ pub fn parse(delivery_id: &str, event_name: &str, body: &[u8]) -> Result<Deliver
     let action = value.get("action").and_then(|v| v.as_str()).unwrap_or("");
     let relevant = matches!(
         (event_name, action),
-        ("issues", "labeled")
+        ("issues", "labeled" | "unlabeled" | "edited")
             | ("issue_comment", "created")
             | ("pull_request" | "merge_group", _)
             | (
@@ -214,6 +220,11 @@ pub fn parse(delivery_id: &str, event_name: &str, body: &[u8]) -> Result<Deliver
             context,
             issue: field(&value, "issue")?,
             label: field(&value, "label")?,
+            actor: field(&value, "sender")?,
+        },
+        ("issues", _) => Event::IssueChanged {
+            context,
+            issue: field(&value, "issue")?,
             actor: field(&value, "sender")?,
         },
         ("issue_comment", "created") => Event::CommentCreated {
