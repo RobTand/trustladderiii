@@ -181,3 +181,19 @@ Each push to `main` runs every test on amd64 and arm64. A failure names the
 merged PRs and says whether their selection included the failing test. The
 job summary and the `post-merge-<sha>` artifact hold one `POST_MERGE_RECORD`
 JSON line per run.
+
+## Time budget warnings
+
+Per-test CPU, wall-only, and wall-backstop overruns are warnings. A Rust
+binary whose tests pass still passes its Bazel target. Its undeclared
+outputs include `budget-warnings.json`, with the test name, measured seconds,
+limit, and timing metric. The Python runner has no per-test timing policy.
+
+The gate collects these records as `budget_warnings`, adding each Bazel
+label. PRs and queue batches report the warnings in `gate-result.json` and
+the job summary. Post-merge results also identify the architecture and retain
+warnings in `POST_MERGE_RECORD`.
+
+The gate never reruns a test because of elapsed time. Assertion failures and
+Bazel's hard `TIMEOUT` status still fail, with no retry. Recorded budgets and
+exception lists still cannot grow against the target branch without review.

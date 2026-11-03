@@ -48,8 +48,6 @@ IRRELEVANT = [
     '.github/*.md', '.github/ISSUE_TEMPLATE/*', '.github/CODEOWNERS',
 ]
 CONFIGS = {'amd64': 'remote', 'arm64': 'remote-arm64'}
-# Written by tools/bazel/rust_runner.py when every test passed but a budget overran.
-BUDGET_MARKER = 'budget-overrun.txt'
 # .bazelrc's default names; test and build runs prefix their own.
 DIAGNOSTICS = ['bazel-remote-grpc.log', 'execution_log.binpb.zst']
 TESTS = 'tests(//...)'
@@ -301,7 +299,7 @@ class Workspace:
         except (ValueError, OSError, KeyError) as error:
             raise GateError(f'graph-impact check failed: {error}') from error
 
-    def test(self, targets, config, metadata, log_name, extra=()):
+    def test(self, targets, config, metadata, log_name):
         """Run targets; return per-label status. Build failures leave labels without status."""
         if not targets:
             return {}
@@ -311,25 +309,28 @@ class Workspace:
         bep.unlink(missing_ok=True)
         self.run(self.bazel, 'test', f'--config={config}', '--config=ci', '--keep_going',
                  f'--target_pattern_file={patterns}', f'--build_event_json_file={bep}',
-                 *diagnostic_logs(log_name), *extra,
+                 *diagnostic_logs(log_name),
                  *[f'--build_metadata={key}={value}' for key, value in metadata.items()],
                  capture=False, check=False)
         return test_statuses(bep)
 
-    def budget_only(self, labels):
-        """Failed labels whose runner reported only a time-budget overrun."""
-        found = set()
-        for label in labels:
+    def budget_warnings(self, labels):
+        """Collect timing warnings from this run, including cached test outputs."""
+        warnings = []
+        for label in sorted(labels):
             package, _, name = label.removeprefix('//').partition(':')
             outputs = self.root / 'bazel-testlogs' / package / name / 'test.outputs'
+            path = outputs / 'budget-warnings.json'
             archive = outputs / 'outputs.zip'
-            if (outputs / BUDGET_MARKER).is_file():
-                found.add(label)
+            records = []
+            if path.is_file():
+                records = json.loads(path.read_text())
             elif archive.is_file():
                 with zipfile.ZipFile(archive) as zipped:
-                    if BUDGET_MARKER in zipped.namelist():
-                        found.add(label)
-        return found
+                    if path.name in zipped.namelist():
+                        records = json.loads(zipped.read(path.name))
+            warnings.extend({**record, 'label': label} for record in records)
+        return warnings
 
     def build(self, targets, config, metadata, log_name):
         """Build targets; True when every one built."""
@@ -421,18 +422,6 @@ def runner_entrypoint(main):
     return scan_status or status
 
 
-def rerun_budget_only(workspace, labels, statuses, config, metadata, log_name):
-    """Rerun once the targets that failed only a time budget. Real failures are never retried."""
-    failed = [label for label in labels if statuses.get(label) != 'PASSED']
-    budget = sorted(workspace.budget_only(failed))
-    if not budget:
-        return statuses, {}
-    again = workspace.test(budget, config, metadata, f'{log_name}-budget-rerun',
-                           extra=['--nocache_test_results'])
-    reruns = {label: again.get(label, 'NO_STATUS') for label in budget}
-    return {**statuses, **reruns}, reruns
-
-
 def gate_pr(workspace, base, head, metadata):
     started = time.monotonic()
     for sha in [base, head]:
@@ -449,14 +438,13 @@ def gate_pr(workspace, base, head, metadata):
     decision = plan(changed, deleted, impacted, used, tests)
     selected_seconds = time.monotonic() - started
     statuses = workspace.test(decision['selected'], CONFIGS['amd64'], metadata, 'pr')
-    statuses, reruns = rerun_budget_only(workspace, decision['selected'], statuses, CONFIGS['amd64'],
-                                         metadata, 'pr')
+    warnings = workspace.budget_warnings(statuses)
     verdicts, failed = classify(decision['selected'], statuses, rust)
     inputs = workspace.inputs_check() + workspace.budget_check(base) + graph['errors']
     if not workspace.build(decision['build'], CONFIGS['amd64'], metadata, 'pr'):
         # Reported like stale inputs, so both checks fail.
         inputs.append('bazel build of impacted targets failed: ' + ' '.join(decision['build']))
-    return {**decision, 'verdicts': verdicts, 'failed': failed, 'inputs': inputs, 'budget_reruns': reruns,
+    return {**decision, 'verdicts': verdicts, 'failed': failed, 'inputs': inputs, 'budget_warnings': warnings,
             'changed': sorted(changed | deleted), 'graph_impact': graph,
             'durations': {'selection': round(selected_seconds, 1),
                           'total': round(time.monotonic() - started, 1)}}
@@ -485,17 +473,19 @@ def gate_main(workspace, base, head, metadata):
     for architecture, config in CONFIGS.items():
         begun = time.monotonic()
         statuses = workspace.test(everything, config, metadata, f'main-{architecture}')
-        statuses, reruns = rerun_budget_only(workspace, everything, statuses, config, metadata,
-                                             f'main-{architecture}')
+        warnings = workspace.budget_warnings(statuses)
         verdicts, failed = classify(everything, statuses, rust)
         failures = failed['rust'] + failed['python']
         architectures[architecture] = {
             'verdicts': verdicts, 'failed': failed,
-            'missed': sorted(set(failures) - set(selection['selected'])), 'budget_reruns': reruns,
+            'missed': sorted(set(failures) - set(selection['selected'])), 'budget_warnings': warnings,
             'seconds': round(time.monotonic() - begun, 1)}
     return {'selection': selection['selection'], 'reason': selection['reason'],
             'selected': selection['selected'], 'tests': len(everything),
-            'architectures': architectures, 'inputs': workspace.inputs_check(),
+            'architectures': architectures,
+            'budget_warnings': [{**warning, 'architecture': arch}
+                                for arch, info in architectures.items() for warning in info['budget_warnings']],
+            'inputs': workspace.inputs_check(),
             'changed': sorted(changed | deleted),
             'durations': {'total': round(time.monotonic() - started, 1)}}
 
