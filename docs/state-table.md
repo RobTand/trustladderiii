@@ -298,6 +298,13 @@ Code computes a signature for each failure from the upstream's error class, and 
 - If the operation fails again on the new release, the failure rules above raise an incident, which stays open until the next release or Rob's `clear incident`.
 - A restart on the same release clears nothing. Upstream incidents keep the rules above.
 
+Postmortem pause recovery (#632) uses this incident-clear path outside the
+kernel. Clearing or recovering its pause resets the failure boundary and the
+counted daily allowance, retaining the claim ledger and the configured limit.
+One validation claim runs with the existing deadline, still subject to model
+quota and Q39 spare capacity. Its failure immediately re-pauses with an incident;
+its success resumes ordinary pacing. No pool slot is reserved.
+
 **Delivery failures** follow the same rule, counted per effect. Every second retryable failure raises an incident, and only Rob can clear the effect's second incident.
 
 **Work failures** are failed checks, review findings and CI test failures. They follow the rules for rounds and attempts under "A failed round".

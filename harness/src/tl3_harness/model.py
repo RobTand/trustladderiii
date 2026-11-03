@@ -69,6 +69,7 @@ class FailureNotes(dict):
     def __init__(self):
         super().__init__()
         self.details: dict[str, Failure] = {}
+        self.phases: dict[str, dict] = {}
 
 
 FORCING_LIMIT = 8
@@ -263,6 +264,7 @@ class TestResult:
     message: str = ""
     # A forced check's head run under the forcing; `base` is then the base under it (#393).
     head_forced: Outcome | None = None
+    phases: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -294,6 +296,18 @@ def base_refusal(check: Check, test: str, before: Outcome, notes: FailureNotes |
     failure = (notes.details if notes is not None else {}).get(test)
     if before != Outcome.ERROR or failure is None:
         return ""
+    facts = notes.phases.get(test, {})
+    if any(facts.get(phase, {}).get('outcome') == 'failed' for phase in ('setup', 'teardown')):
+        failures = []
+        for phase in ('setup', 'call', 'teardown'):
+            fact = facts.get(phase, {})
+            if fact.get('outcome') == 'failed':
+                classification = 'an assertion failure' if fact['assertion'] else 'an error'
+                exception = (failure.exception if phase == failure.phase else fact['exception']) or 'an unknown exception'
+                failures.append(f"{classification} {WHEN[phase]} (`{exception}`)")
+        return (f"On the base this test had {'; and '.join(failures)}. "
+                f"A setup or teardown failure blocks assertion RED, so it does not {verb} the change. "
+                "Fix the setup or teardown error and keep the assertion in the test body.")
     what = f"`{failure.exception}`" if failure.exception else "an error"
     match failure.phase:
         case "collection":
@@ -318,6 +332,10 @@ def forced_base_refusal(test: str, before: Outcome, notes: FailureNotes | None) 
         return (f"The plan's forcing could not be applied: {failure.exception}. The forcing is part of the "
                 "plan, so no change to the code or tests can fix it; report the goal as not met and quote "
                 "this message.")
+    facts = (notes.phases if notes is not None else {}).get(test, {})
+    if any(facts.get(phase, {}).get('outcome') == 'failed' for phase in ('setup', 'teardown')):
+        check = Check('forced base', Kind.DEMONSTRATING, (test,))
+        return base_refusal(check, test, before, notes).replace('On the base ', 'On the base under the forcing ', 1)
     match before:
         case Outcome.ASSERTION:
             return ""
@@ -379,7 +397,12 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
                 message = message[:MESSAGE_LIMIT - len(TRUNCATED)] + TRUNCATED
         if not passed and not message:
             message = f"Check {check.kind}: base {before}, head {after}."
-        tests.append(TestResult(test, before, after, pre_existing, passed, message[:MESSAGE_LIMIT], during))
+        phases = {}
+        for side, notes in (('base', base_notes), ('head', messages), ('head_forced', forced_messages)):
+            if fact := getattr(notes, 'phases', {}).get(test):
+                phases[side] = fact
+        tests.append(TestResult(test, before, after, pre_existing, passed, message[:MESSAGE_LIMIT], during,
+                                phases or None))
     verdict = (Verdict.INFRASTRUCTURE_FAILURE if infrastructure else
                Verdict.PASS if all(test.passed for test in tests) else Verdict.FAIL)
     return Result(check.name, check.kind, verdict, tuple(tests), forcing=check.forcing, declared_symptom=check.declared_symptom)

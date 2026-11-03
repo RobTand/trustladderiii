@@ -1,5 +1,7 @@
 pub(crate) mod ci_evidence;
 mod head_checks;
+mod waiting_requeue;
+pub(crate) use waiting_requeue::PROGRESS_PREFIX as REQUEUE_PROGRESS_PREFIX;
 
 use super::record::Records;
 use crate::executor::Output as Out;
@@ -214,6 +216,30 @@ impl QueueFact {
             .iter()
             .any(|row| row.table == "queue_facts" && row.id == identity))
     }
+    fn unresolved_hold(&self, snapshot: &Snapshot) -> Result<bool> {
+        if !matches!(
+            self.evidence,
+            Evidence::DequeuedByPerson { .. }
+                | Evidence::ClosedByPerson { .. }
+                | Evidence::DequeuedByCommand { .. }
+        ) {
+            return Ok(false);
+        }
+        let Some(node) = self.node(snapshot)? else {
+            return Ok(true);
+        };
+        let observed = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "queue_facts" && row.id == self.identity());
+        let resumed = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "queue_resumes" && row.id == node.0.to_string());
+        Ok(!observed
+            .zip(resumed)
+            .is_some_and(|(observed, resumed)| resumed.version > observed.version))
+    }
     pub(crate) fn needs_queue_ack(&self) -> bool {
         matches!(
             self.evidence,
@@ -376,6 +402,7 @@ pub struct Adapter {
     branches: Option<crate::branches::Branches>,
     /// The world, so a heal touches only a node in Publishing or Queued.
     store: Option<tl3_config::Store>,
+    clock: Box<dyn crate::clock::Clock>,
 }
 /// A served repository's PR-body lines and the workflows a heal reruns (#447).
 struct BodyPolicy {
@@ -393,7 +420,12 @@ impl Adapter {
             policies: Vec::new(),
             branches: None,
             store: None,
+            clock: Box::new(crate::clock::SystemClock),
         })
+    }
+    pub fn with_clock(mut self, clock: impl crate::clock::Clock + 'static) -> Self {
+        self.clock = Box::new(clock);
+        self
     }
     pub fn with_repositories(mut self, repos: &[tl3_config::Repository]) -> Result<Self> {
         self.policies = repos
@@ -424,7 +456,12 @@ impl Adapter {
     /// repository's policy. A body that complies is left alone, and so is a PR
     /// on another branch or a node outside Publishing and Queued. Returns
     /// whether it edited the body.
-    fn heal_body(&self, delivery: &Delivery, pull: &tl3_github::PullRequest) -> Result<bool> {
+    fn heal_body(
+        &self,
+        delivery: &Delivery,
+        pull: &tl3_github::PullRequest,
+        snapshot: Option<&Snapshot>,
+    ) -> Result<bool> {
         let Some((_, policy)) = self
             .policies
             .iter()
@@ -463,7 +500,7 @@ impl Adapter {
             .as_ref()
             .is_some_and(|heal| heal.head == *head && !heal.reran);
         // Read the world only when there is something to do.
-        if (gaps.is_empty() && !pending) || !heal_phase(self.phase(delivery)?) {
+        if (gaps.is_empty() && !pending) || !heal_phase(Self::phase(delivery, snapshot)?) {
             return Ok(false);
         }
         let mut edited = false;
@@ -528,12 +565,22 @@ impl Adapter {
         )?;
         Ok(edited)
     }
-    /// The delivery's node phase, from the world; `None` without a store.
-    fn phase(&self, delivery: &Delivery) -> Result<Option<tl3_kernel::Phase>> {
-        let Some(store) = &self.store else {
+    fn snapshot(&self) -> Result<Option<Snapshot>> {
+        Ok(self
+            .store
+            .as_ref()
+            .map(|store| tl3_store::Store::open(store)?.load())
+            .transpose()?)
+    }
+    /// The delivery's node phase, from the evaluation's snapshot.
+    fn phase(
+        delivery: &Delivery,
+        snapshot: Option<&Snapshot>,
+    ) -> Result<Option<tl3_kernel::Phase>> {
+        let Some(snapshot) = snapshot else {
             return Ok(None);
         };
-        let world = crate::snapshot::decode(&tl3_store::Store::open(store)?.load()?)?;
+        let world = crate::snapshot::decode(snapshot)?;
         Ok(world
             .nodes
             .get(delivery.node().0 as usize)
@@ -547,7 +594,11 @@ impl Adapter {
         self.epoch = delivery.epoch;
         Ok(())
     }
-    fn read(&self, delivery: &Delivery) -> Result<(tl3_mergify::Observation, Vec<Observation>)> {
+    fn read(
+        &self,
+        delivery: &Delivery,
+        snapshot: Option<&Snapshot>,
+    ) -> Result<(tl3_mergify::Observation, Vec<Observation>)> {
         let (number, head) = enqueue(delivery)?;
         let github = self
             .clients
@@ -581,15 +632,10 @@ impl Adapter {
                 source: "Required recorded proof is missing from the PR body".into(),
             });
         }
-        if self.heal_body(delivery, &state.pull_request)? {
+        if self.heal_body(delivery, &state.pull_request, snapshot)? {
             // The checks read before the edit are stale; the next read decides.
             return Ok((state, Vec::new()));
         }
-        let snapshot = self
-            .store
-            .as_ref()
-            .map(|store| tl3_store::Store::open(store)?.load())
-            .transpose()?;
         let facts = self
             .runtime
             .block_on(queue_facts(
@@ -598,7 +644,7 @@ impl Adapter {
                 &state,
                 head,
                 &[],
-                snapshot.as_ref(),
+                snapshot,
             ))?
             .into_iter()
             .map(Observation::Queue)
@@ -655,19 +701,27 @@ impl Adapter {
         });
         Ok(!fresh)
     }
-    fn completion(&self, delivery: &Delivery) -> Result<Reconciliation> {
+    fn completion(
+        &self,
+        delivery: &Delivery,
+        snapshot: Option<&Snapshot>,
+    ) -> Result<Reconciliation> {
         let mut baseline = self.baseline(delivery)?;
         if baseline
             .as_ref()
             .is_some_and(|attempt| matches!(attempt.requeue, Some(Requeue::Refused)))
         {
+            self.retain_refused_command(delivery)?;
             return Ok(Reconciliation::Found(Box::new(Completion::permanent(
                 "queue_command_refused",
             ))));
         }
-        let (state, mut observations) = self.read(delivery)?;
+        let (state, mut observations) = self.read(delivery, snapshot)?;
         let previously_confirmed =
             matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_));
+        if state.state != QueueState::Merged && self.unresolved_human_hold(delivery, snapshot)? {
+            return Ok(Reconciliation::Pending);
+        }
         if !previously_confirmed
             && state.state != QueueState::Merged
             && let Some(attempt) = baseline.as_mut()
@@ -685,6 +739,7 @@ impl Adapter {
                 .is_some()
             {
                 attempt.requeue = Some(Requeue::Refused);
+                self.retain_refused_command(delivery)?;
                 self.records.write(
                     &self.records.path(&delivery.key).with_extension("intent"),
                     &serde_json::to_vec(attempt)?,
@@ -728,26 +783,35 @@ impl Adapter {
                 | QueueState::DequeuedByPerson
         );
         let mut person_removed = false;
-        if let Some(attempt) = &baseline {
+        if baseline.is_some() || self.repaired_head(delivery, snapshot)? {
             let github = &self.clients[&delivery.repository.installation];
             let events = self.runtime.block_on(
                 github.issue_events(&full_name(&delivery.repository), enqueue(delivery)?.0),
             )?;
-            let person_observations: Vec<_> = person_facts(
+            let mut person_observations = Vec::new();
+            for fact in person_facts(
                 &delivery.repository,
                 enqueue(delivery)?.0,
                 &events,
                 state.pull_request.merged_at.is_some(),
-            )
-            .into_iter()
-            .filter(|fact| match fact.evidence {
-                Evidence::DequeuedByPerson { event } | Evidence::ClosedByPerson { event } => {
-                    event > attempt.last_event
+            ) {
+                let event = match fact.evidence {
+                    Evidence::DequeuedByPerson { event } | Evidence::ClosedByPerson { event } => {
+                        event
+                    }
+                    _ => continue,
+                };
+                let fresh = if let Some(snapshot) = snapshot {
+                    fact.unresolved_hold(snapshot)?
+                } else {
+                    baseline
+                        .as_ref()
+                        .is_some_and(|attempt| event > attempt.last_event)
+                };
+                if fresh {
+                    person_observations.push(Observation::Queue(fact));
                 }
-                _ => false,
-            })
-            .map(Observation::Queue)
-            .collect();
+            }
             person_removed = !person_observations.is_empty();
             observations.extend(person_observations);
         }
@@ -772,6 +836,14 @@ impl Adapter {
         let issue = self
             .runtime
             .block_on(github.issue(&full_name(&delivery.repository), number))?;
+        // A repaired head's eligible waiting check is not dequeue completion.
+        // Its bounded recovery is reconciled by repository/PR/head below.
+        if state.state == QueueState::Waiting
+            && issue.labels.iter().any(|label| label.name == QUEUE_LABEL)
+            && (self.has_recovery(delivery)? || self.repaired_head(delivery, snapshot)?)
+        {
+            return Ok(Reconciliation::Pending);
+        }
         // Without a durable intent this key has never reached the label write.
         if baseline.is_none() {
             return Ok(if self.dequeue_pending(delivery, &state, &issue)? {
@@ -782,7 +854,8 @@ impl Adapter {
         }
         if let Some(requeue) = baseline.as_ref().and_then(|attempt| attempt.requeue) {
             return Ok(
-                if matches!(requeue, Requeue::Sending)
+                if self.has_recovery(delivery)?
+                    || matches!(requeue, Requeue::Sending)
                     || self.dequeue_pending(delivery, &state, &issue)?
                 {
                     Reconciliation::Pending
@@ -821,7 +894,8 @@ impl Executor for Adapter {
         Ok(true)
     }
     fn observations(&mut self, delivery: &Delivery) -> Result<Vec<Observation>> {
-        let (_, observations) = self.read(delivery)?;
+        let snapshot = self.snapshot()?;
+        let (_, observations) = self.read(delivery, snapshot.as_ref())?;
         Ok(observations
             .into_iter()
             .filter(|observation| {
@@ -854,6 +928,7 @@ impl Executor for Adapter {
         ))))
     }
     fn retire_delivery(&mut self, delivery: &Delivery) -> Result<()> {
+        self.retain_legacy_command(delivery)?;
         for extension in ["intent", "applied", "reruns", "json", "tmp"] {
             match std::fs::remove_file(self.records.path(&delivery.key).with_extension(extension)) {
                 Ok(()) => {}
@@ -866,7 +941,7 @@ impl Executor for Adapter {
     }
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.fence(delivery)?;
-        match self.completion(delivery)? {
+        match self.read_enqueue(delivery)? {
             Reconciliation::Found(completion) => {
                 if completion.ack == Ack::Confirmed
                     && !matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_))
@@ -881,7 +956,8 @@ impl Executor for Adapter {
             }
             Reconciliation::Absent => {}
         }
-        let (state, _) = self.read(delivery)?;
+        let snapshot = self.snapshot()?;
+        let (state, _) = self.read(delivery, snapshot.as_ref())?;
         let (number, head) = enqueue(delivery)?;
         let github = self.clients[&delivery.repository.installation].clone();
         let repo = full_name(&delivery.repository);
@@ -897,7 +973,7 @@ impl Executor for Adapter {
         {
             return Err(Error::ChecksPending);
         }
-        let mut attempt = match self.baseline(delivery)? {
+        let attempt = match self.baseline(delivery)? {
             Some(attempt) => attempt,
             None => Attempt {
                 before: state.check.clone(),
@@ -918,56 +994,35 @@ impl Executor for Adapter {
         let path = self.records.path(&delivery.key).with_extension("intent");
         self.records.write(&path, &serde_json::to_vec(&attempt)?)?;
         self.fence(delivery)?;
-        let mergify = Mergify::new(github);
-        let result = if attempt.requeue.is_some() {
-            // A crash or lost response cannot prove the command was not accepted.
-            attempt.requeue = Some(Requeue::Sending);
-            self.records.write(&path, &serde_json::to_vec(&attempt)?)?;
-            let result = self
-                .runtime
-                .block_on(mergify.requeue(&repo, number, head, &delivery.key));
-            if matches!(
-                &result,
-                Err(tl3_mergify::Error::GitHub(
-                    tl3_github::Error::RateLimited { .. }
-                    | tl3_github::Error::Http {
-                        status: 400..=407 | 409..=499,
-                    },
-                ))
-            ) {
-                attempt.requeue = Some(Requeue::Ready);
-                self.records.write(&path, &serde_json::to_vec(&attempt)?)?;
+        if attempt.requeue.is_some() {
+            if let Reconciliation::Found(completion) = self.queue_command(delivery, false)? {
+                return Ok(*completion);
             }
-            result
         } else {
-            self.runtime.block_on(mergify.queue(&repo, number, head))
-        };
-        match result {
-            Ok(()) => {}
-            Err(error @ tl3_mergify::Error::GitHub(tl3_github::Error::Http { status: 403 }))
-                if attempt.requeue.is_some() =>
+            match self
+                .runtime
+                .block_on(Mergify::new(github).queue(&repo, number, head))
             {
-                return Err(Error::Permanent {
-                    class: "queue_command_permission",
-                    source: Box::new(error),
-                });
+                Ok(()) => {}
+                Err(tl3_mergify::Error::HeadChanged) => {
+                    return match self.completion(delivery, self.snapshot()?.as_ref())? {
+                        Reconciliation::Found(completion) => Ok(*completion),
+                        _ => Err(Error::Invalid("PR changed during enqueue")),
+                    };
+                }
+                Err(error) => return Err(adapter_error(error)),
             }
-            Err(tl3_mergify::Error::HeadChanged) => {
-                return match self.completion(delivery)? {
-                    Reconciliation::Found(completion) => Ok(*completion),
-                    _ => Err(Error::Invalid("PR changed during enqueue")),
-                };
-            }
-            Err(error) => return Err(adapter_error(error)),
         }
         self.records.write(
             &self.records.path(&delivery.key).with_extension("applied"),
             b"true",
         )?;
-        match self.completion(delivery)? {
+        match self.read_enqueue(delivery)? {
             Reconciliation::Found(completion) => {
-                self.records
-                    .deliver(delivery, Completion::confirmed(vec![]))?;
+                if completion.ack == Ack::Confirmed {
+                    self.records
+                        .deliver(delivery, Completion::confirmed(vec![]))?;
+                }
                 Ok(*completion)
             }
             _ => Err(Error::Invalid(
@@ -990,7 +1045,9 @@ impl Executor for Adapter {
             Reconciliation::Found(completion) => Look::Found(completion),
             Reconciliation::Absent => Look::Absent,
             Reconciliation::Pending => Look::Alive {
-                progress: "mergify:awaiting-acknowledgement".into(),
+                progress: self
+                    .requeue_progress(delivery)?
+                    .unwrap_or_else(|| "mergify:awaiting-acknowledgement".into()),
             },
         })
     }
@@ -998,7 +1055,11 @@ impl Executor for Adapter {
 impl Adapter {
     fn read_enqueue(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         // Reads retain the original effect's epoch, including after a controller upgrade.
-        let result = self.completion(delivery)?;
+        let snapshot = self.snapshot()?;
+        let mut result = self.completion(delivery, snapshot.as_ref())?;
+        if matches!(result, Reconciliation::Pending) {
+            result = self.recover_waiting(delivery, snapshot.as_ref())?;
+        }
         if let Reconciliation::Found(completion) = &result
             && completion.ack == Ack::Confirmed
             && !matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_))
