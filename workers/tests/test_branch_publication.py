@@ -5,6 +5,7 @@ import pytest
 
 from tl3_workers.evidence import preflight
 from tl3_workers.contracts import validate
+from tl3_workers.roles import ROLES
 
 
 CONTEXT = {
@@ -57,3 +58,38 @@ def test_t604_ingest_reports_a_repairable_conflict_without_value_error():
     assert 'prismabuild-2646-tl3-200' in '\n'.join(reply['evidence_errors'])
     assert reply['goals'][0]['publication']['branch'] == 'prismabuild-2646'
     assert 'branch_prefix' not in reply['goals'][0]['publication']
+
+
+@pytest.mark.parametrize(('sentence', 'pattern'), [
+    ("Branch name follows PB's issue-link rule (TL3 uses `prismabuild-<issue>-tl3-<node>`)",
+     'prismabuild-<issue>-tl3-<node>'),
+    ('The base branch is main.', None),
+    ('Never rename it after opening the PR.', None),
+    ('Use the issue-link notation `prismabuild-<issue>[-<word>]`.',
+     'prismabuild-<issue>[-<word>]'),
+])
+def test_t604_live_pb_and_incidental_branch_wording_pass_ingest_and_audit(sentence, pattern):
+    publication = {'non_draft': True, 'body_lines': [], 'proof': False}
+    if pattern:
+        publication['branch'] = pattern
+    goals = [{'description': sentence, 'verification': 'review', 'stage': 'publishing',
+              'publication': publication}]
+    inputs = {'publication_branch': CONTEXT, 'tool_capabilities': [],
+              'issue': {'number': 2646, 'title': 'Publish', 'body': sentence,
+                        'author': 'requester', 'comments': []},
+              'repo': {'readme': 'Repo', 'file_list': []}}
+    reply = {'kind': 'brief', 'brief': sentence, 'memory_ids': [], 'goals': goals,
+             'evidence_contract': []}
+    validate('ingest-input', inputs)
+    validate('ingest-reply', reply)
+    ROLES['ingest'].check_reply(inputs, reply)
+    assert reply['evidence_errors'] == []
+    assert reply['goals'] == goals
+    validate('ingest-reply', reply)
+    inputs['ingest'] = deepcopy(reply)
+    validate('audit-input', inputs)
+    audit = {'verdict': 'agree', 'objections': [], 'evidence_contract': []}
+    ROLES['audit'].check_reply(inputs, audit)
+    assert audit['verdict'] == 'agree'
+    assert audit['objections'] == []
+    validate('audit-reply', audit)
