@@ -11,7 +11,10 @@ fn planner_protected_paths_follow_the_request_repository() {
     config.store = db.create("repo_protection");
     config.workers.runs = f.root.path().join("runs");
     config.planning.protected_paths.push("global/**".into());
-    config.github.repos[0].test_demand = Some(tl3_config::TestDemand { cpus: 4, mem_gb: 12 });
+    config.github.repos[0].test_demand = Some(tl3_config::TestDemand {
+        cpus: 4,
+        mem_gb: 12,
+    });
     config.github.repos[0].protected_paths = vec!["CHANGELOG.md".into()];
     config.github.repos[0].generated_files = vec!["**/BUILD.bazel".into()];
     config.github.repos[0].generator = Some("bash tools/bazel/generate.sh".into());

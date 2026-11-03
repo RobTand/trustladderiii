@@ -1576,9 +1576,17 @@ fn evidence_tools_are_explicit_configuration() {
     }
     for cpus in [1, 4] {
         let tools = tl3_config::Planning::default().effective_tool_capabilities(cpus);
-        assert!(tools[0].runner_features.contains(&format!("native_threads_{cpus}")));
+        assert!(
+            tools[0]
+                .runner_features
+                .contains(&format!("native_threads_{cpus}"))
+        );
         if cpus != 1 {
-            assert!(!tools[0].runner_features.contains(&"native_threads_1".into()));
+            assert!(
+                !tools[0]
+                    .runner_features
+                    .contains(&"native_threads_1".into())
+            );
         }
     }
     let mut document: toml::Value = EXAMPLE.parse().unwrap();

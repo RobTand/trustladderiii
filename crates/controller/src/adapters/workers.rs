@@ -510,7 +510,8 @@ impl Supervisor {
             .unwrap_or_default()
             .cpus;
         if matches!(role, "ingest" | "audit" | "planner") {
-            inputs["tool_capabilities"] = json!(self.planning.effective_tool_capabilities(test_cpus));
+            inputs["tool_capabilities"] =
+                json!(self.planning.effective_tool_capabilities(test_cpus));
             if generator_available {
                 inputs["tool_capabilities"].as_array_mut().unwrap().push(json!({
                     "tool": "run_generator", "executor": "prismabuild_generator",
