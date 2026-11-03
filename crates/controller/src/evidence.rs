@@ -539,6 +539,15 @@ pub fn summary(delivery: &Delivery) -> String {
         }
         .into(),
     );
+    if let Some(number) = delivery.pull_request {
+        lines.push(format!(
+            "Proposed change: https://github.com/{}/{}/pull/{number}.",
+            delivery.repository.owner, delivery.repository.name
+        ));
+    }
+    for link in facts.artifacts.iter().take(MAX_ITEMS) {
+        lines.push(format!("Recorded artifact: {}.", label(link)));
+    }
     if let Some(last) = facts.queue.last() {
         lines.push(
             if last.get("Merged").is_some() {
@@ -1159,6 +1168,8 @@ mod tests {
             assert!(text.contains(fact), "missing {fact}: {text}");
         }
         assert!(!text.contains("never ran"));
+        assert!(text.contains("https://github.com/RobTand/prismabuild/actions/runs/99"));
+        assert!(text.contains("https://github.com/RobTand/prismabuild/pull/2660"));
     }
 
     #[test]
