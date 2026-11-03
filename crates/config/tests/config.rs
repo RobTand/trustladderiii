@@ -1522,6 +1522,16 @@ fn repository_generator_contract_is_optional_and_validated() {
 
 #[test]
 fn evidence_tools_are_explicit_configuration() {
+    for planning in [
+        tl3_config::Planning::default(),
+        Config::parse(EXAMPLE).unwrap().planning,
+    ] {
+        assert!(
+            planning.tool_capabilities[0]
+                .runner_features
+                .contains(&"native_threads_1".into())
+        );
+    }
     let mut document: toml::Value = EXAMPLE.parse().unwrap();
     document["planning"]["tool_capabilities"] = toml::Value::Array(vec![]);
     let source = toml::to_string(&document).unwrap();

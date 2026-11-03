@@ -11,7 +11,7 @@ from typing import Protocol
 
 from .limits import MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, validate_check_plan
 from .model import (ALWAYS_CHECK, Check, FailureNotes, Forcing, HarnessInputError, Kind, Outcome, Result, TestResult, Verdict,
-                    judge)
+                    NATIVE_THREAD_ENVIRONMENT, judge)
 from .node_ids import selects, validate_always_tests
 from .report import InvalidReport, decode, parse
 from . import selection
@@ -53,8 +53,7 @@ def container_command(tree: Path, container: Container, tests: tuple[str, ...]) 
         "--mount", f"type=bind,src={harness},dst=/harness,readonly",
         "--tmpfs", f"/tmp:rw,nosuid,nodev,{'exec' if container.exec_scratch else 'noexec'},size={TMPFS_MIB}m,mode=1777",
         "--env", "HOME=/tmp", "--env", "TMPDIR=/tmp", "--env", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1",
-        "--env", "OMP_NUM_THREADS=1", "--env", "MKL_NUM_THREADS=1",
-        "--env", "OPENBLAS_NUM_THREADS=1", "--entrypoint=python3",
+        *[arg for name, value in NATIVE_THREAD_ENVIRONMENT.items() for arg in ("--env", f"{name}={value}")], "--entrypoint=python3",
         container.image, "-I", "-B", "/harness/runner.py", "-",
     ]
 

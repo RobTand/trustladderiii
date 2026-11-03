@@ -261,6 +261,13 @@ protocol can produce. Omit it for the PrismaBuild pytest defaults in
 can narrow the installed capabilities. It cannot grant a new executor, artifact,
 forcing mechanism or permission to edit protected files.
 
+The `native_threads_1` runner feature means the runner sets native-thread bounds
+of one. Preserve requests for those bounds in `runner_features`, with the
+required run artifacts. They are runner configuration, outside Q55 symptom
+forcing. Workers derive `forcing_capabilities` and prompt guidance from the
+harness's reserved names and prefixes. A forcing still cannot set those names,
+even to the same value as the runner.
+
 Ingest and audit derive `evidence_contract` from the original request. Planning
 preserves those requirements and adds any it discovers. Each requirement names
 the executor, runner features, artifacts, execution method and necessary edits
