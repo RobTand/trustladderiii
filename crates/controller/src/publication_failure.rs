@@ -17,7 +17,12 @@ pub enum Reason {
     BodyObligation,
     NonDraftObligation,
     MissingIndependentEvidence,
-    BodyPolicy,
+    BodyPolicy {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        rules: Vec<RuleFailure>,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        omitted_rules: usize,
+    },
     BodySize,
     Permission,
     NotFound,
@@ -26,6 +31,31 @@ pub enum Reason {
     UpstreamFailure,
     UnmetPublicationObligation,
     HistoricalCauseUnavailable,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleCategory {
+    Missing,
+    Duplicate,
+    Conflicting,
+    InvalidValue,
+    IncompatibleObligations,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuleFailure {
+    pub label: String,
+    pub category: RuleCategory,
+    pub expected_count: usize,
+    pub found_count: usize,
+    pub distinct_count: usize,
+    pub invalid_count: usize,
+    pub allowed_value_count: usize,
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -192,7 +222,10 @@ impl Diagnostic {
             match safe_class {
                 "pr_evidence" => Reason::MissingIndependentEvidence,
                 "pr_obligation" => Reason::UnmetPublicationObligation,
-                "pr_policy" => Reason::BodyPolicy,
+                "pr_policy" => Reason::BodyPolicy {
+                    rules: Vec::new(),
+                    omitted_rules: 0,
+                },
                 "permission" => Reason::Permission,
                 "not_found" => Reason::NotFound,
                 "invalid_request" => Reason::InvalidRequest,
@@ -201,7 +234,7 @@ impl Diagnostic {
                 _ => Reason::HistoricalCauseUnavailable,
             }
         };
-        // Only branch fields from a typed local refusal can carry text.
+        // Only bounded, redacted identities from typed local refusals can carry text.
         let reason = match reason {
             Reason::BranchMismatch {
                 required,
@@ -212,6 +245,24 @@ impl Diagnostic {
                 prefix: prefix.map(|v| crate::evidence::label(&v)).transpose()?,
                 generated: crate::evidence::label(&generated)?,
             },
+            Reason::BodyPolicy {
+                rules,
+                omitted_rules,
+            } => {
+                let omitted_rules = omitted_rules.saturating_add(rules.len().saturating_sub(16));
+                let rules = rules
+                    .into_iter()
+                    .take(16)
+                    .map(|mut rule| {
+                        rule.label = safe_identity(&rule.label)?.chars().take(80).collect();
+                        Ok(rule)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Reason::BodyPolicy {
+                    rules,
+                    omitted_rules,
+                }
+            }
             other => other,
         };
         let origin =

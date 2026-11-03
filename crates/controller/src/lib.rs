@@ -1578,7 +1578,7 @@ impl Controller {
             match completion.ack {
                 Ack::Confirmed => EffectState::Confirmed,
                 Ack::Retryable => EffectState::Intended,
-                Ack::Permanent => EffectState::Failed,
+                Ack::Permanent | Ack::BodyPolicyRefused => EffectState::Failed,
             }
         };
         commit.transitions.push(EffectTransition {
@@ -1620,15 +1620,22 @@ impl Controller {
                 _ => {}
             }
         }
-        if let DeliveryOutput::Effect { node, seq, .. } = delivery.output {
+        if let DeliveryOutput::Effect {
+            node, seq, kind, ..
+        } = delivery.output
+        {
+            let ack = if kind == tl3_kernel::EffectKind::OpenPr
+                && completion.ack == Ack::Permanent
+                && completion.failure_class.as_deref() == Some("pr_policy")
+            {
+                Ack::BodyPolicyRefused
+            } else {
+                completion.ack
+            };
             self.apply(
                 &snapshot,
                 snapshot::decode(&snapshot)?,
-                Event::Ack {
-                    node,
-                    seq,
-                    ack: completion.ack,
-                },
+                Event::Ack { node, seq, ack },
                 &mut commit,
             )?;
         }

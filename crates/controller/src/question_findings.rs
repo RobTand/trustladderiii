@@ -82,7 +82,7 @@ pub(crate) fn review_stop(step: ReviewStop, sources: &Sources) -> Option<Value> 
             let reply = (sources.fresh)("maker_replies")?;
             reported("maker", reply["report"].as_str()?, CANT_MEET)
         }
-        ReviewStop::ReviewerOutOfRoom => None,
+        ReviewStop::ReviewerOutOfRoom | ReviewStop::PublicationBody => None,
         ReviewStop::ChecksFailed
         | ReviewStop::ChangesRequested
         | ReviewStop::CiFailed

@@ -1,4 +1,5 @@
 //! A served repository's PR-body policy (#447): the lines its PR checks require.
+use crate::publication_failure::{LocalRefusal, Reason, RuleCategory, RuleFailure};
 use tl3_config::BodyLine;
 
 fn is_test(path: &str) -> bool {
@@ -308,8 +309,157 @@ mod tests {
 }
 
 /// Validate the repository contract on the final publication body.
-pub(crate) fn validate(_body: &str, _rules: &[BodyLine]) -> crate::Result<()> {
-    todo!("t629: bounded typed rule diagnostics")
+pub(crate) fn validate(body: &str, rules: &[BodyLine]) -> crate::Result<()> {
+    let failures: Vec<_> = rules
+        .iter()
+        .filter_map(|rule| {
+            let values: Vec<_> = body
+                .lines()
+                .filter_map(|line| declared(line, rule))
+                .collect();
+            let category = match values.as_slice() {
+                [] => RuleCategory::Missing,
+                [value] if allowed(rule, value) => return None,
+                [_] => RuleCategory::InvalidValue,
+                _ if values
+                    .iter()
+                    .all(|value| value.eq_ignore_ascii_case(values[0])) =>
+                {
+                    RuleCategory::Duplicate
+                }
+                _ => RuleCategory::Conflicting,
+            };
+            Some(failure(rule, &values, category))
+        })
+        .collect();
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(refused(failures))
+    }
+}
+
+fn allowed(rule: &BodyLine, value: &str) -> bool {
+    rule.values
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(value))
+}
+
+fn failure(rule: &BodyLine, values: &[&str], category: RuleCategory) -> RuleFailure {
+    RuleFailure {
+        label: rule.label.clone(),
+        category,
+        expected_count: 1,
+        found_count: values.len(),
+        distinct_count: values
+            .iter()
+            .map(|value| value.to_lowercase())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        invalid_count: values.iter().filter(|value| !allowed(rule, value)).count(),
+        allowed_value_count: rule.values.len(),
+    }
+}
+
+fn refused(mut rules: Vec<RuleFailure>) -> crate::Error {
+    let omitted_rules = rules.len().saturating_sub(16);
+    rules.truncate(16);
+    LocalRefusal::error(
+        "pr_policy",
+        Reason::BodyPolicy {
+            rules,
+            omitted_rules,
+        },
+    )
+}
+
+/// Resolve the exact typed lines before choosing any heuristic values. One
+/// pass replaces only configured declarations; other prose and proof stay put.
+pub(crate) fn compose(
+    body: &str,
+    rules: &[BodyLine],
+    request: Option<&str>,
+    paths: &[String],
+    required: &[&str],
+) -> crate::Result<String> {
+    let mut replacements = Vec::new();
+    for rule in rules {
+        let mut explicit: Vec<_> = required
+            .iter()
+            .copied()
+            .filter(|line| declared(line, rule).is_some())
+            .collect();
+        explicit.sort_unstable();
+        explicit.dedup();
+        let values: Vec<_> = explicit
+            .iter()
+            .filter_map(|line| declared(line, rule))
+            .collect();
+        if explicit.len() > 1 {
+            return Err(refused(vec![failure(
+                rule,
+                &values,
+                RuleCategory::IncompatibleObligations,
+            )]));
+        }
+        if values.iter().any(|value| !allowed(rule, value)) {
+            return Err(refused(vec![failure(
+                rule,
+                &values,
+                RuleCategory::InvalidValue,
+            )]));
+        }
+        let declarations: Vec<_> = body
+            .lines()
+            .filter_map(|line| declared(line, rule))
+            .collect();
+        let compliant = declarations.len() == 1 && allowed(rule, declarations[0]);
+        if compliant
+            && explicit
+                .first()
+                .is_none_or(|required| body.lines().any(|line| line == *required))
+        {
+            continue;
+        }
+        let line = explicit.first().map_or_else(
+            || format!("{}: {}", rule.label, value(rule, request, paths)),
+            |line| (*line).to_owned(),
+        );
+        replacements.push((rule, line));
+    }
+    if replacements.is_empty() {
+        return Ok(body.to_owned());
+    }
+    let kept: String = body
+        .split_inclusive('\n')
+        .filter(|line| {
+            !replacements
+                .iter()
+                .any(|(rule, _)| declared(line, rule).is_some())
+        })
+        .collect();
+    let added = replacements
+        .iter()
+        .map(|(_, line)| line.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut text = String::new();
+    let mut inserted = false;
+    for line in kept.split_inclusive('\n') {
+        text.push_str(line);
+        if !inserted && line.trim_start().starts_with("Refs #") {
+            if !line.ends_with('\n') {
+                text.push('\n');
+            }
+            text.push_str(&added);
+            text.push('\n');
+            inserted = true;
+        }
+    }
+    if !inserted {
+        text = format!("{added}\n{text}");
+    }
+    Ok(text)
 }
 
 #[cfg(test)]

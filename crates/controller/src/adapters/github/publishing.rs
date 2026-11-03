@@ -171,28 +171,21 @@ impl Adapter {
                     .or(issue.body.as_deref())
                     .unwrap_or("");
                 let evidence = crate::evidence::publication(delivery, request)?;
-                let rules = self.body_lines(&delivery.repository);
                 if let Some(mut pull) = self.branch_pr(&client, &repo, delivery)? {
                     let body = pull.body.as_deref().unwrap_or_default();
-                    let healed =
-                        crate::pr_body::healed(body, rules, Some(request), &delivery.paths)
-                            .unwrap_or_else(|| body.to_owned());
-                    let healed = crate::evidence::publication_lines(delivery, &healed);
-                    let healed = crate::redaction::text(&healed)?;
-                    let body = crate::evidence::with_publication(&healed, &evidence);
-                    crate::evidence::validate_body(&body)?;
-                    crate::evidence::validate_publication(
+                    let body = self.publication_body(
                         delivery,
-                        &pull.head.branch,
-                        pull.draft,
-                        &body,
+                        request,
+                        body,
+                        &evidence,
+                        (&pull.head.branch, pull.draft),
                     )?;
                     if pull.body.as_deref().unwrap_or_default() != body {
                         pull = self
                             .runtime
                             .block_on(client.update_pull_request_body(&repo, pull.number, &body))
                             .map_err(|error| publication_failure::http(error, Endpoint::Pull))?;
-                        crate::evidence::validate_publication(
+                        self.validate_publication_body(
                             delivery,
                             &pull.head.branch,
                             pull.draft,
@@ -207,20 +200,9 @@ impl Adapter {
                     }
                     return Ok(binding(delivery, &pull));
                 }
-                let rules = self.body_lines(&delivery.repository);
-                // Policy lines follow `Refs #N.`, where a self-heal also puts them.
-                // The issue's own instruction, such as PrismaBuild's `## PR rules`,
-                // comes before the files.
-                let request = delivery.request_text.as_deref().or(issue.body.as_deref());
-                let lines = crate::pr_body::lines(rules, request, &delivery.paths);
                 let body = format!(
-                    "Refs #{}.{}{}\n\n{}",
+                    "Refs #{}.{}\n\n{}",
                     delivery.issue,
-                    if lines.is_empty() {
-                        String::new()
-                    } else {
-                        format!("\n{}", lines.trim_end())
-                    },
                     delivery
                         .proposed
                         .as_ref()
@@ -231,21 +213,13 @@ impl Adapter {
                         .unwrap_or_default(),
                     GitHub::marker(&delivery.key)
                 );
-                let body = crate::evidence::publication_lines(delivery, &body);
-                let body = crate::redaction::text(&body)?;
-                let body = crate::evidence::with_publication(&body, &evidence);
-                crate::evidence::validate_body(&body)?;
-                crate::evidence::validate_publication(delivery, branch.as_str(), false, &body)?;
-                // #447: a body the served repository's policy refuses is TL3's
-                // own failure. A permanent failure stops for review (#440's seam).
-                if !crate::pr_body::gaps(&body, rules).is_empty() {
-                    return Err(Error::Permanent {
-                        class: "pr_policy",
-                        source: Box::new(publication_failure::LocalRefusal(
-                            publication_failure::Reason::BodyPolicy,
-                        )),
-                    });
-                }
+                let body = self.publication_body(
+                    delivery,
+                    request,
+                    &body,
+                    &evidence,
+                    (branch.as_str(), false),
+                )?;
                 let pull = self
                     .runtime
                     .block_on(client.open_pull_request(
@@ -258,7 +232,7 @@ impl Adapter {
                         },
                     ))
                     .map_err(publication_failure::open_pr)?;
-                crate::evidence::validate_publication(
+                self.validate_publication_body(
                     delivery,
                     &pull.head.branch,
                     pull.draft,
@@ -282,6 +256,42 @@ impl Adapter {
             }
             _ => Err(Error::Invalid("unsupported publication effect")),
         }
+    }
+
+    fn publication_body(
+        &self,
+        delivery: &Delivery,
+        request: &str,
+        body: &str,
+        evidence: &str,
+        target: (&str, bool),
+    ) -> Result<String> {
+        let (branch, draft) = target;
+        let rules = self.body_lines(&delivery.repository);
+        let body = crate::pr_body::compose(
+            body,
+            rules,
+            Some(request),
+            &self.semantic_paths(delivery),
+            &crate::evidence::required_publication_lines(delivery),
+        )?;
+        let body = crate::evidence::publication_lines(delivery, &body);
+        let body = crate::redaction::text(&body)?;
+        let body = crate::evidence::with_publication(&body, evidence);
+        self.validate_publication_body(delivery, branch, draft, &body)?;
+        Ok(body)
+    }
+
+    fn validate_publication_body(
+        &self,
+        delivery: &Delivery,
+        branch: &str,
+        draft: bool,
+        body: &str,
+    ) -> Result<()> {
+        crate::evidence::validate_body(body)?;
+        crate::pr_body::validate(body, self.body_lines(&delivery.repository))?;
+        crate::evidence::validate_publication(delivery, branch, draft, body)
     }
 
     pub(super) fn reconcile_publication(&self, delivery: &Delivery) -> Result<Reconciliation> {
