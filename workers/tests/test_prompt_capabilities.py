@@ -113,3 +113,6 @@ def test_base_receipts_describe_planned_subject_observer_and_untouched_modes(rol
     assert 'base_subject_head_observer' in prompt
     assert 'untouched_base' in prompt
     assert 'proof receipt' in prompt
+    assert 'Planned demonstrating runs with named head observers use base_semantics base_subject_head_observer' in prompt
+    assert 'Outcome checks and unplanned base runs use untouched_base' in prompt
+    assert 'Outcome checks include forcing with inferred subjects, declared-symptom checks and regression checks' in prompt

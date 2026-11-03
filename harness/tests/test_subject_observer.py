@@ -497,3 +497,18 @@ def test_final662_splicing_preserves_crlf_subject_bytes_and_hash(repository, tmp
     receipt = assemble_proof(old, new, staged, check, configuration(old))
     assert (staged / path).read_bytes().startswith(subject.encode())
     assert receipt['subjects'][path + '::helper']['base'] == hashlib.sha256(subject.encode()).hexdigest()
+
+
+def test_final662_support_wildcard_import_cannot_replace_base_helper(repository):
+    path = 'tests/test_subject.py'
+    before = 'VERSION = 0\ndef helper(): return "old"\n'
+    after = before.replace('= 0', '= 1').replace('"old"', '"new"') + (
+        'TOKEN = 1; from support_fix import *\n'
+        'def test_observer():\n    assert (helper(), VERSION) == ("new", 1), "declared result"\n')
+    check = Check('wildcard support', Kind.DEMONSTRATING, (path + '::test_observer',),
+                  proof=model.Proof((path + '::helper',), (path + '::TOKEN', 'support_fix.py'), 'declared result'))
+    results, _, _ = round_result(repository, {path: before},
+                                {path: after, 'support_fix.py': 'def helper(): return "new"\n'}, check)
+    assert results[0].verdict == Verdict.FAIL, results
+    assert 'wildcard import' in results[0].tests[0].message, results
+    assert path in results[0].tests[0].message and 'support_fix' in results[0].tests[0].message, results
