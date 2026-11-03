@@ -1626,7 +1626,10 @@ impl Controller {
         {
             let ack = if kind == tl3_kernel::EffectKind::OpenPr
                 && completion.ack == Ack::Permanent
-                && completion.failure_class.as_deref() == Some("pr_policy")
+                && completion
+                    .diagnostic
+                    .as_ref()
+                    .is_some_and(publication_failure::Diagnostic::is_body_refusal)
             {
                 Ack::BodyPolicyRefused
             } else {

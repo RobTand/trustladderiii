@@ -179,6 +179,14 @@ pub(crate) fn handles(delivery: &Delivery) -> bool {
 }
 
 impl Diagnostic {
+    pub(crate) fn is_body_refusal(&self) -> bool {
+        matches!(self.origin, Origin::LocalValidation)
+            && matches!(
+                self.reason,
+                Reason::BodyPolicy { .. } | Reason::BodyObligation | Reason::BodySize
+            )
+    }
+
     pub(crate) fn capture(delivery: &Delivery, error: Option<&Error>, class: &str) -> Result<Self> {
         let Output::Effect { kind, .. } = delivery.output else {
             return Err(Error::Invalid("publication diagnostic needs an effect"));
