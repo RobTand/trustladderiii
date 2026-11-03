@@ -51,7 +51,12 @@ jobs:
           BASE: ${{ steps.refs.outputs.base }}
           HEAD: ${{ steps.refs.outputs.head }}
           BRANCH: ${{ github.head_ref }}
-        run: python3 tools/ci/remote_gate.py pr --base "$BASE" --head "$HEAD" --branch "$BRANCH"
+        run: exec python3 tools/ci/remote_gate.py pr --base "$BASE" --head "$HEAD" --branch "$BRANCH"
+      - name: Cancel BuildBuddy run
+        if: cancelled()
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: python3 tools/ci/remote_gate.py cancel
       - id: token
         name: Require the Mergify token
         if: always() && steps.gate.outputs.scopes_ready == 'true'
