@@ -125,6 +125,11 @@ class RustDependencyTests(unittest.TestCase):
         # Schemas and prompts are compiled into the controller; keep them.
         self.assertIn("//workers:schemas", deps)
 
+    def test_controller_tests_do_not_add_redactor_runtime(self):
+        for target in self.rules:
+            self.assertNotIn("//tools/bazel:redactor_python", self.dependencies(target[1:]))
+
+
     def test_real_worker_scenarios_keep_the_python_environment(self):
         for name in ["workers", "publishing", "github-flow", "writer_references"]:
             with self.subTest(name=name):

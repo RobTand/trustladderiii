@@ -997,7 +997,6 @@ impl Controller {
                         commit,
                         Delivery {
                             key: format!("restart-decisions:{comment_key}"),
-                            evidence: None,
                             epoch: snapshot.epoch.get(),
                             output: Output::Comment {
                                 node: original,
@@ -1013,6 +1012,7 @@ impl Controller {
                             round: 0,
                             replanned: n.replanned,
                             checks: None,
+                            evidence: None,
                             job_generation: None,
                             question: None,
                             marker_key: None,
