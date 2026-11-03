@@ -1322,10 +1322,11 @@ def failure_tags(error):
                 and isinstance(error.judge_failure.category, FailureClass)):
             cause = error.judge_failure
             message += ": " + cause.category.value
+            tags = {"failure_class": cause.category.value, "failure_stage": error.stage}
             if type(cause.status) is int and 400 <= cause.status <= 599:
                 message += f" HTTP {cause.status}"
-            return {"failure_class": cause.category.value, "failure_stage": error.stage,
-                    "failure_message": message}
+                tags["failure_http_status"] = str(cause.status)
+            return {**tags, "failure_message": message}
         if isinstance(error.validation, ValidationError):
             message += ": " + failure_tags(error.validation)["failure_message"]
         return {"failure_class": "WorkerStageError", "failure_message": message[:512]}
