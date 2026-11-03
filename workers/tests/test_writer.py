@@ -531,3 +531,19 @@ def test_summary_prompt_forbids_inventing_missing_history():
     assert "not merged" in summary
     assert "no work done" in summary
     assert "no negative claim that the evidence does not support" in summary
+
+
+def test_prompt_puts_the_title_inside_ascii_double_quotes():
+    # PB #2757: the checker exempts only the exact title inside ASCII double quotes, so an
+    # unquoted title with an internal word ("lineage") failed every repair (#648).
+    prompt = " ".join(files("tl3_workers").joinpath("prompts", "writer.md").read_text().split())
+    assert 'Write the issue title unchanged inside ASCII double quotes (")' in prompt
+    assert "If a violation names a word inside the title, keep the title and fix its quotation marks" in prompt
+
+
+def test_prompt_states_the_message_policy_limits():
+    # The checker refuses these; stating them saves repair rounds (#648 audit of #674).
+    prompt = " ".join(files("tl3_workers").joinpath("prompts", "writer.md").read_text().split())
+    assert "at most 600 characters" in prompt and "at most 400 characters" in prompt
+    assert "one question that ends with its only question mark, and no other sentence" in prompt
+    assert "Never write the name TL3, or a name that contains it, such as a branch name" in prompt

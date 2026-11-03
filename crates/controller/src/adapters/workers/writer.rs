@@ -784,3 +784,48 @@ fn short_question(text: &str) -> bool {
         && text.trim_end().ends_with('?')
         && text.matches('?').count() == 1
 }
+
+#[cfg(test)]
+mod title_feedback_tests {
+    use super::*;
+
+    #[test]
+    fn an_internal_word_from_the_unquoted_title_asks_for_the_title_quotes() {
+        // PB #2757: "lineage" came only from the title, written without quotes.
+        let title = "Show the lineage of PrismaBuild runs";
+        let policy = Policy {
+            request_title: Some(title.into()),
+            ..Policy::default()
+        };
+        let reply = WriterReply::Text(TextDraft {
+            text: format!("You asked for {title}. The work starts next."),
+        });
+        let feedback = feedback(&reply, &[Violation::InternalVocabulary], &policy);
+        assert_eq!(feedback.len(), 1);
+        assert!(feedback[0].contains("lineage"), "{}", feedback[0]);
+        assert!(
+            feedback[0].contains(&format!("\"{title}\""))
+                && feedback[0].contains("ASCII double quotes"),
+            "{}",
+            feedback[0]
+        );
+    }
+
+    #[test]
+    fn an_internal_word_outside_the_title_still_asks_to_remove_it() {
+        let policy = Policy {
+            request_title: Some("Add a blue button".into()),
+            ..Policy::default()
+        };
+        let reply = WriterReply::Text(TextDraft {
+            text: "You asked for \"Add a blue button\". The leaf failed.".into(),
+        });
+        let feedback = feedback(&reply, &[Violation::InternalVocabulary], &policy);
+        assert!(feedback[0].contains("leaf"), "{}", feedback[0]);
+        assert!(
+            !feedback[0].contains("ASCII double quotes"),
+            "{}",
+            feedback[0]
+        );
+    }
+}
