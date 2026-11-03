@@ -91,6 +91,8 @@ def validate_support(source, module):
     modules = {'builtins', 'sys', 'inspect', 'importlib', '__main__'}
     nodes = list(ast.walk(ast.parse(textwrap.dedent(source))))
     for node in nodes:
+        if isinstance(node, ast.ImportFrom) and any(alias.name == '*' for alias in node.names):
+            raise ProofRefusal('wildcard import in support can rebind base bindings', module, node.module or '.')
         symbol = None
         if isinstance(node, ast.Name) and node.id in names:
             symbol = node.id
@@ -195,8 +197,8 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
                 return
             written = written_bindings(text, namespace)
             conflict = written & protected
-            if conflict or ('*',) in written:
-                symbol = '::'.join(sorted(conflict)[0]) if conflict else 'globals'
+            if conflict:
+                symbol = '::'.join(sorted(conflict)[0])
                 raise ProofRefusal('support graft would rebind a base or subject binding', name, symbol)
         for item in requested:
             text, _ = source_unit(new, item)

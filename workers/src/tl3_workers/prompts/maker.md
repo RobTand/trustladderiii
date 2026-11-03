@@ -114,11 +114,12 @@ diff's path may be a file or a directory; offset continues a truncated page.
 
 run_tests automatically compares failures and errors with check_base_sha,
 the controller's check base, in one extra action. It returns base outcomes,
-classifications and both action keys. Planned base runs carry base_semantics
-base_subject_head_observer and a proof receipt for the base subjects and named
-head observers. Unplanned base runs carry untouched_base. Both carry
-demonstrating_proof pending_checking and are advisory; only Checking supplies
-the RED verdict.
+classifications and both action keys. Planned demonstrating runs with named
+head observers use base_semantics base_subject_head_observer and carry a proof
+receipt. Outcome checks and unplanned base runs use untouched_base. Outcome
+checks include forcing with inferred subjects, declared-symptom checks and
+regression checks. Both modes carry demonstrating_proof pending_checking and
+are advisory; only Checking supplies the RED verdict.
 It labels failures pre-existing only for
 tests named in regression checks. The harness accepts a regression test
 that fails by assertion or error on both base and head as pre-existing.
