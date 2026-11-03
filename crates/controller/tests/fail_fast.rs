@@ -934,7 +934,10 @@ fn stage_owned_handover_keeps_fail_fast_and_independent_checking() {
             )
         });
         if mode == "pass" {
-            assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+            assert_eq!(
+                controller.world().unwrap().nodes[0].phase,
+                Phase::Closed(Outcome::Merged)
+            );
             let facts = publication
                 .expect("honest handover reaches Publishing")
                 .evidence

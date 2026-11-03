@@ -1804,7 +1804,18 @@ fn publication_404_look(settings: &tl3_config::Store, case: &str) {
 }
 
 fn stage_obligations_block_publication() {
-    for case in ["wrong-branch", "missing-proof", "draft"] {
+    for case in [
+        "wrong-branch",
+        "missing-proof",
+        "draft",
+        "duplicate-line",
+        "stale-proof",
+        "missing-review",
+        "base-passes",
+        "forced-head-fails",
+        "pass",
+        "pre-existing",
+    ] {
         let root = tempfile::tempdir().unwrap();
         let f = Arc::new(Fixture::create(root.path()));
         let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
@@ -1822,24 +1833,70 @@ fn stage_obligations_block_publication() {
             head: None,
         };
         let mut adapter = server.adapter(&root.path().join("github"), 1);
-        if case == "draft" {
+        if matches!(case, "draft" | "duplicate-line") {
             adapter.execute(&open).unwrap();
-            server.api.state.lock().unwrap().pull.as_mut().unwrap()["draft"] = json!(true);
+            let mut state = server.api.state.lock().unwrap();
+            let pull = state.pull.as_mut().unwrap();
+            if case == "draft" {
+                pull["draft"] = json!(true);
+            } else {
+                pull["body"] = json!("Change type: test\nChange type: test\n");
+            }
             open.key.push_str("-revisit");
         }
         let mut value = serde_json::to_value(&open).unwrap();
         value["evidence"] = json!({"checks":[],"reviews":[],"audit":null,"queue":[],"scratch":[],
             "remaining_failures":[],"artifacts":[],"goals":[{"id":"publication", "stage":"publishing",
-                "description":"Keep scope, stable branch, non-draft PR and before/after proof.",
+                "description":"Stable branch, non-draft PR and before/after proof.",
                 "publication":{"branch_prefix":if case == "wrong-branch" { "unavailable/" } else { "" },
-                    "non_draft":true,"body_lines":["Change type: test"],"proof":case == "missing-proof"}}]});
+                    "non_draft":true,"body_lines":["Change type: test"],"proof":!matches!(case, "wrong-branch" | "draft" | "duplicate-line")}}]});
+        if !matches!(
+            case,
+            "missing-proof" | "wrong-branch" | "draft" | "duplicate-line"
+        ) {
+            let mut result = json!({"name":"forced-deep-path", "kind":"demonstrating", "verdict":"pass",
+                "forcing":{"patches":[{"target":"example.RESIDENCY", "value":"private-forcing-value"}]},
+                "tests":[{"test":"test_deep.py::test_deep_path", "base":"assertion", "head":"passed",
+                    "head_forced":"passed", "passed":true}]});
+            if case == "base-passes" {
+                result["tests"][0]["base"] = json!("passed");
+            } else if case == "forced-head-fails" {
+                result["tests"][0]["head_forced"] = json!("assertion");
+            } else if case == "pre-existing" {
+                result["kind"] = json!("regression");
+                result.as_object_mut().unwrap().remove("forcing");
+                result["tests"][0]["head"] = json!("assertion");
+                result["tests"][0]["pre_existing"] = json!(true);
+            }
+            value["evidence"]["checks"] = json!([{"head_sha":if case == "stale-proof" {Some("a".repeat(40))} else {open.head_sha.clone()},
+                "base_sha":"a".repeat(40), "action_key":"c".repeat(64), "report":true, "pass":true, "results":[result]}]);
+            if case != "missing-review" {
+                value["evidence"]["reviews"] =
+                    json!([{"head_sha":open.head_sha, "verdict":"approve"}]);
+            }
+        }
         let open: Delivery = serde_json::from_value(value).unwrap();
         let result = adapter.execute(&open);
+        if matches!(case, "pass" | "pre-existing") {
+            result.unwrap();
+            let state = server.api.state.lock().unwrap();
+            let body = state.pull.as_ref().unwrap()["body"].as_str().unwrap();
+            assert!(body.contains("<!-- tl3:recorded-evidence:start -->"));
+            assert!(body.contains(open.head_sha.as_ref().unwrap()));
+            assert!(!body.contains("private-forcing-value"));
+            assert_eq!(
+                body.lines()
+                    .filter(|line| *line == "Change type: test")
+                    .count(),
+                1
+            );
+            continue;
+        }
         assert!(
             matches!(result, Err(tl3_controller::Error::Permanent { .. })),
             "{case} must fail at Publishing, got {result:?}"
         );
-        if case != "draft" {
+        if !matches!(case, "draft" | "duplicate-line") {
             assert_eq!(
                 server.api.state.lock().unwrap().opens,
                 0,
