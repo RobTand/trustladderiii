@@ -77,6 +77,12 @@ def exporters(monkeypatch):
         child.wait(timeout=15)
 
 
+def test_exporter_fixture_ignores_unrelated_children(exporters):
+    child = subprocess.Popen(['git', '--version'], stdout=subprocess.DEVNULL)
+    assert child.wait(timeout=15) == 0
+    assert not exporters, 'only trace shippers belong to the exporter wait set'
+
+
 def run_fake(request_doc, monkeypatch, exporters, uri, *, secret='sk-fixture296secretvalue0123456789', wait=True,
              trace=None):
     request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
