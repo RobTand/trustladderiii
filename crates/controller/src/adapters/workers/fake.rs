@@ -27,6 +27,14 @@ impl Executor for Fake {
                 key: delivery.key.clone(),
                 reply: Some(serde_json::json!({"kind": "remark"})),
             }],
+            Out::Comment {
+                kind: crate::executor::CommentKind::Postmortem,
+                ..
+            } => vec![Observation::Postmortem {
+                key: delivery.key.clone(),
+                reply: Some(crate::postmortems::simulated_reply()),
+                failure: None,
+            }],
 
             Out::Effect {
                 kind: EffectKind::StartRun(role),
