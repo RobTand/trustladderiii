@@ -133,9 +133,7 @@ def test_proxy_stream_requests_usage_and_serial_tools_and_uses_usage(
     def respond(request):
         body = json.loads(request.content)
         if is_retro(body):
-            # The retro turn (#648) is tool-free, so it sends no tool options.
             retros.append(body)
-            assert "tools" not in body and "parallel_tool_calls" not in body
             frame = {"id": "fixture-retro", "object": "chat.completion.chunk", "created": 0,
                      "model": "fixture-model", "choices": [{"index": 0, "finish_reason": "stop", "delta": {
                          "role": "assistant", "content": json.dumps(dict.fromkeys(
@@ -184,6 +182,11 @@ def test_proxy_stream_requests_usage_and_serial_tools_and_uses_usage(
         runtime.run(maker_request, events.append)
     assert len(requests) == 2
     assert len(retros) == (0 if kind == "out_of_room" else 1), "a full context ends without a retro"
+    for retro in retros:
+        # The retro (#648) keeps the cached prefix: the same tools, which it may not call.
+        assert json.dumps(retro.get("tools")) == json.dumps(requests[-1]["tools"])
+        assert retro.get("tool_choice") == "none"
+        assert retro.get("parallel_tool_calls") == requests[-1]["parallel_tool_calls"]
     # The retro reports its model turn before the reply, except after out_of_room.
     retro_turn = [] if kind == "out_of_room" else ["model_turn"]
     assert [event["unit"] for event in events[:-1]] == ["model_turn", "tool_result", "model_turn", *retro_turn]
