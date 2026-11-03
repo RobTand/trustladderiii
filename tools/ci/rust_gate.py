@@ -39,6 +39,8 @@ def runner_class():
 
 
 WALL_BACKSTOP_MULTIPLIER = 10
+# Short receipts need an absolute allowance for startup and marker attribution noise.
+CPU_FLOOR_SECONDS = 5
 
 
 def validate_limits(config, baseline):
@@ -81,7 +83,7 @@ def check_budget(results, config, baseline, runner_class='baseline', cpu_seconds
         measured = (cpu_seconds or {}).get(name)
         if measured is None or not math.isfinite(measured) or measured < 0:
             raise RuntimeError(f'Missing CPU timing or invalid CPU sample: {name}')
-        cpu_limit = cpu['slow'].get(name, cpu['seconds'])
+        cpu_limit = max(cpu['slow'].get(name, cpu['seconds']), CPU_FLOOR_SECONDS)
         if measured > cpu_limit:
             failures.append(f'{name}: CPU {measured:.3f}s > {cpu_limit:.3f}s')
         backstop = wall_limit * WALL_BACKSTOP_MULTIPLIER

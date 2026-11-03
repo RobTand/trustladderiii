@@ -20,8 +20,11 @@ The postmaster delta is added to the scenario's CPU total. Receipt field
 
 `inventory.json` retains wall `seconds` and adds `cpu_seconds`, `cpu_platform`,
 and `cpu_sampling`. Receipts using this accounting have
-`cpu_sampling: proc-postmaster-v1`. CPU limits have no hosted multiplier. A
-scenario must meet both its CPU limit and a wall backstop of 10 times its
+`cpu_sampling: proc-postmaster-v1`. Each CPU limit is the larger of its
+calibrated policy value and `CPU_FLOOR_SECONDS`, fixed at five CPU seconds.
+The floor applies to both the default and explicit per-scenario overrides,
+including tail entries. CPU limits have no hosted multiplier. A
+scenario must meet both its effective CPU limit and a wall backstop of 10 times its
 effective wall limit, including the runner multiplier below.
 Bazel's target timeout still stops binaries that never finish.
 
@@ -95,6 +98,34 @@ living child processes or backends is charged when their parent reaps them.
 A postmaster that exits between markers loses its final unsampled CPU; the
 receipt records a wall fallback for that scenario. Receipts preserve both
 measurements so these limits can be audited.
+
+## Absolute CPU allowance for short scenarios
+
+The effective CPU cap is `max(calibrated_budget, 5)` seconds. The original
+prismabuild receipt, invocation `6c5f33c2-cae2-4c16-a04d-d801a663e3e6`, measured
+`recorded_records_reach_kernel` at 0.45 CPU seconds,
+`base_moved_completion_keys_each_observation` at 0.47, and
+`quiet_alive_job_is_not_a_failed_read` at 0.37. Twice those measurements,
+rounded up, produced one-second caps. Subsequent #483 Gate and PrismaBuild
+runs passed their assertions but recorded 1.56, 1.08 and 1.14 CPU seconds
+against one-second caps, as reported by the coordinator.
+
+The committed calibration contains 251 complete scenario measurements whose
+rounded caps are below five seconds. Their measured CPU spans 0 to 1.98
+seconds. A fixed five-second minimum exceeds twice the largest of those
+measurements and is over three times the largest reported short-scenario
+failure. This allows startup and postmaster CPU to move between adjacent
+markers without a one-second cap turning small absolute noise into a Gate
+failure. The sparse receipts do not establish a noise percentile; five
+seconds is a conservative fixed allowance, not a fitted distribution.
+
+Stored calibration values and their shrink-only guard are unchanged. This
+explicit enforcement allowance leaves caps above five seconds intact, so
+an eight-second cap still rejects 24 CPU seconds. A one-second calibrated
+cap allows 1.5 CPU seconds but rejects anything above five. Wall-only
+workers, wall multipliers, wall backstops and retry rules are unchanged.
+The earlier subsecond Postgres CPU-failure probe in the calibration record
+is historical evidence from before this allowance.
 
 ## BuildBuddy stopgap while wall-only targets remain
 

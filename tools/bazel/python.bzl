@@ -8,6 +8,7 @@ load("@rules_python//python:py_library.bzl", _py_library = "py_library")
 load("@rules_python//python:py_test.bzl", "py_test")
 load("@tl3_pip//:requirements.bzl", "requirement")
 load("//tools/bazel:nonhermetic.bzl", "nonhermetic")
+load("//tools/bazel:test_sizing.bzl", "test_size")
 
 # Files a package's tests read at run time.
 _PACKAGE_DATA = {
@@ -45,6 +46,7 @@ def tl3_py_test(name, srcs, main = None, deps = [], data = [], **kwargs):
     package = native.package_name()
     module = main or srcs[0]
     tags, exec_properties = nonhermetic(name)
+    exec_properties.update(test_size(package, name))
     py_test(
         name = name,
         main = "//tools/bazel:python_runner.py",
