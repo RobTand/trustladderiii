@@ -136,8 +136,8 @@
               "forcing": {
                 "$ref": "planner-reply.json#/$defs/forcing"
               },
-              "helper_evidence": {
-                "$ref": "planner-reply.json#/$defs/helper_evidence"
+              "proof": {
+                "$ref": "planner-reply.json#/$defs/proof"
               },
               "declared_symptom": {
                 "$ref": "planner-reply.json#/$defs/declared_symptom"

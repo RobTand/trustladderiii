@@ -10,7 +10,7 @@ import time
 from typing import Protocol
 
 from .limits import MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, MAX_RESULT_BYTES, RESULT_ENVELOPE_BYTES, validate_check_plan
-from .model import (ALWAYS_CHECK, SELECTED_CHECK, Check, FailureNotes, Forcing, HarnessInputError, Kind, Outcome, Result, TestResult, Verdict,
+from .model import (ALWAYS_CHECK, SELECTED_CHECK, Check, FailureNotes, Forcing, HarnessInputError, ProofRefusal, Kind, Outcome, Result, TestResult, Verdict,
                     NATIVE_THREAD_ENVIRONMENT, judge)
 from .node_ids import validate_always_tests
 from .report import InvalidReport, decode, parse
@@ -19,7 +19,8 @@ from .scratch import directory as scratch_directory
 from . import selection
 from .trees import (UnsupportedEntry, added_names, changed_configuration, changed_existing_tests,
                     changed_files, changed_protected, commit, configuration, export, git, is_test, own_base,
-                    test_edits, helper_test_edits, validate_helper_setup)
+                    )
+from .proof import assemble_proof, conftest_subjects
 
 
 MAX_SELECTED_TESTS = 1000
@@ -224,7 +225,7 @@ def unsupported_entry_message(entry: UnsupportedEntry) -> str:
 
 
 def configuration_changes(repo: Path, root: Path, base: str, base_tree: Path, head: str,
-                          head_tree: Path, tool: "TestTool", protected: tuple[str, ...]) -> str | None:
+                          head_tree: Path, tool: "TestTool", protected: tuple[str, ...], plan=()) -> str | None:
     """Judge only what the head changed, against the commit it descends from. A head
     built on an older main than the check base must not answer for main's changes.
     Returns the refusal message, or None."""
@@ -234,6 +235,11 @@ def configuration_changes(repo: Path, root: Path, base: str, base_tree: Path, he
         if not base_tree.exists():
             export(repo, fork, base_tree)
     configuration = tool.changed_configuration(base_tree, head_tree)
+    try:
+        permitted = conftest_subjects(base_tree, head_tree, plan)
+    except (ProofRefusal, SyntaxError, OSError):
+        permitted = set()
+    configuration = [name for name in configuration if name not in permitted]
     paths = changed_protected(repo, fork, head, protected)
     return changed_files_message(configuration, paths) if configuration or paths else None
 
@@ -248,7 +254,6 @@ class TestTool(Protocol):
 
     def is_test(self, name: str, config: dict) -> bool: ...
 
-    def test_edits(self, base: Path, head: Path, destination: Path, config: dict) -> None: ...
 
     def added_names(self, base: Path, head: Path, config: dict) -> frozenset[tuple[str, str]]: ...
 
@@ -273,9 +278,6 @@ class Pytest:
 
     def is_test(self, name, config):
         return is_test(name, config["test-files"])
-
-    def test_edits(self, base, head, destination, config):
-        test_edits(base, head, destination, config["test-files"])
 
     def added_names(self, base, head, config):
         return added_names(base, head, config["test-files"])
@@ -565,7 +567,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
     with tempfile.TemporaryDirectory(prefix="tl3-checks-") as directory:
         root = Path(directory)
         root.chmod(0o755)
-        old, new, demo = [root / name for name in ("base", "head", "demonstrating")]
+        old, new = [root / name for name in ("base", "head")]
         # The base is the repository's: its errors stay upstream. The head is the maker's.
         export(repo, base, old)
         try:
@@ -576,7 +578,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                  if not (old / test.split("::")[0]).is_file() and not (new / test.split("::")[0]).is_file()}
         tests = tuple(test for test in tests if test not in stale)
         config = tool.configuration(old)
-        if refusal := configuration_changes(repo, root, base, old, head, new, tool, protected):
+        if refusal := configuration_changes(repo, root, base, old, head, new, tool, protected, plan):
             return tuple(stale_result(result, stale) for result in refused(plan, refusal))
         invalid = {test for test in tests if not tool.is_test(test.split("::")[0], config)}
         if invalid:
@@ -589,31 +591,9 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                                        if check.kind not in (Kind.DEMONSTRATING, Kind.REPRODUCING)
                                        for test in check.tests if test not in stale))
         changed = tool.changed_existing_tests(old, new, ordinary)
-        demonstrating = tuple(dict.fromkeys(test for check in plan
-                                            if check.kind == Kind.DEMONSTRATING and check.forcing is None and check.helper_evidence is None
-                                            and check.declared_symptom is None
-                                            for test in check.tests))
         candidates = (selected_candidates(repo, tool, old, new, config, base, head, plan, selected_tests, selected_failures)
                       if selected_tests else ())
-        helpers = [check for check in plan if check.helper_evidence is not None]
-        if len(helpers) > 1:
-            return refused(plan, "Helper evidence supports one target check per plan, with all its observers.")
-        helper_runs = {}
-        for check in helpers:
-            staged = root / "helper-observers"
-            shutil.copytree(old, staged)
-            try:
-                if tool is not PYTEST:
-                    raise ValueError("helper evidence requires the pytest tool")
-                if not check.helper_evidence.failure_cases:
-                    raise ValueError("helper evidence requires known-bad failure-preservation cases")
-                identity = helper_test_edits(old, new, staged, config["test-files"],
-                                             check.helper_evidence, check.tests)
-            except ValueError as error:
-                return refused(plan, str(error))
-            helper_runs[check.name] = staged, identity
         progress = Progress()
-        base_notes = {Kind.DEMONSTRATING: FailureNotes(), Kind.REPRODUCING: FailureNotes()}
         cache_key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container, ordinary)
         if ordinary and cache_key not in _BASE_RESULTS:
             before_messages = FailureNotes()
@@ -630,73 +610,41 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         # Filter complete units: no head run may lose a fixture companion.
         kept = tuple(group for group in selected_before
                      if all(outcome == Outcome.PASSED for outcome in selected_before[group].outcomes.values()))
-        if demonstrating:
-            shutil.copytree(old, demo)
-            tool.test_edits(old, new, demo, config)
-            additions = tool.added_names(old, new, config)
-            demonstrated = tool.run(demo, container, demonstrating, root / "demonstrating.jsonl", progress, additions,
-                                     messages=base_notes[Kind.DEMONSTRATING])
-        else:
-            demonstrated = {}
-        reproduced = {}
+        proofs = {}
+        reviewed_tree = None
         if reproducing:
-            reviewed_tree, round_tree = root / "reviewed", root / "reproducing"
+            reviewed_tree = root / "reviewed"
             try:
                 export(repo, reviewed, reviewed_tree)
             except UnsupportedEntry as entry:
                 return refused(plan, unsupported_entry_message(entry))
-            # `changed` holds the edited existing tests; keep it for the guard below.
-            if refusal := configuration_changes(repo, root, base, old, reviewed, reviewed_tree, tool, protected):
+            if refusal := configuration_changes(repo, root, base, old, reviewed, reviewed_tree, tool, protected, plan):
                 return refused(plan, refusal)
-            shutil.copytree(reviewed_tree, round_tree)
-            tool.test_edits(reviewed_tree, new, round_tree, config)
-            additions = tool.added_names(reviewed_tree, new, config)
-            reproduced = tool.run(round_tree, container, reproducing,
-                                  root / "reproducing.jsonl", progress, additions,
-                                  messages=base_notes[Kind.REPRODUCING])
-        # A forced check runs the old test on the original base and the new test on the
-        # head, both under its forcing; the ordinary head run is the unforced one (#393).
-        forced = {}
-        for index, check in enumerate(check for check in plan if check.forcing is not None and check.declared_symptom is None):
-            notes, head_messages = FailureNotes(), FailureNotes()
-            forced_base = tool.run(old, container, check.tests, root / f"forced-base-{index}.jsonl", progress,
-                                   messages=notes, forcing=check.forcing)
-            forced_head = tool.run(new, container, check.tests, root / f"forced-head-{index}.jsonl", progress,
-                                   messages=head_messages, forcing=check.forcing)
-            forced[check.name] = forced_base, notes, forced_head, head_messages
-        symptom_results = {}
-        for check in plan:
-            if check.declared_symptom is None:
+        for index, check in enumerate(plan):
+            if check.kind not in (Kind.DEMONSTRATING, Kind.REPRODUCING):
                 continue
-            from .test_tool import run_symptom
-            from .symptoms import judge_symptom
-            observed = run_symptom(old, container, check.tests, check.declared_symptom, forcing=check.forcing)
-            fixed = run_symptom(new, container, check.tests, check.declared_symptom, forcing=check.forcing)
-            ordinary_head = (run_symptom(new, container, check.tests, check.declared_symptom)
-                             if check.forcing else fixed)
-            symptom_results[check.name] = judge_symptom(check, observed, fixed, ordinary_head, base, head)
-        helper_outcomes = {}
-        for check in helpers:
-            staged, identity = helper_runs[check.name]
-            existing_messages = {}
-            existing = tool.run(old, container, check.tests, root / "helper-original-base.jsonl", progress,
-                                messages=existing_messages)
-            if any(existing[test] not in (Outcome.MISSING, Outcome.UNCOLLECTED) or existing_messages.get(test)
-                   for test in check.tests):
-                results = refused(plan, "Helper observers must be absent from base collection; "
-                                  "existing or unavailable tests cannot be replaced by observers.")
-                if Outcome.NO_REPORT in existing.values():
-                    results = tuple(replace(result, verdict=Verdict.INFRASTRUCTURE_FAILURE) for result in results)
-                return results
-            notes = FailureNotes()
-            outcomes = tool.run(staged, container, check.tests, root / "helper-base.jsonl", progress, messages=notes)
+            staged = root / f"proof-{index}"
+            subject = reviewed_tree if check.kind == Kind.REPRODUCING else old
             try:
-                preservation = helper_failure_preservation(tool, staged, new, check.helper_evidence,
-                                                          container, root, progress)
-            except ValueError as error:
-                return refused(plan, f"Invalid helper failure preservation: {error}")
-            identity.update(preservation)
-            helper_outcomes[check.name] = outcomes, notes, identity
+                receipt = assemble_proof(subject, new, staged, check, config)
+            except (ProofRefusal, SyntaxError, OSError) as error:
+                return refused(plan, str(error))
+            notes, forced_notes = FailureNotes(), FailureNotes()
+            if check.declared_symptom is not None:
+                from .test_tool import run_symptom
+                from .symptoms import judge_symptom
+                observed = run_symptom(staged, container, check.tests, check.declared_symptom, forcing=check.forcing)
+                fixed = run_symptom(new, container, check.tests, check.declared_symptom, forcing=check.forcing)
+                ordinary_head = (run_symptom(new, container, check.tests, check.declared_symptom)
+                                 if check.forcing else fixed)
+                result = judge_symptom(check, observed, fixed, ordinary_head, base, head)
+                proofs[check.name] = (None, None, None, None, receipt, result)
+                continue
+            observed = tool.run(staged, container, check.tests, root / f"proof-base-{index}.jsonl", progress,
+                                tool.added_names(subject, new, config), messages=notes, forcing=check.forcing)
+            forced_head = (tool.run(new, container, check.tests, root / f"proof-forced-head-{index}.jsonl", progress,
+                                    messages=forced_notes, forcing=check.forcing) if check.forcing else None)
+            proofs[check.name] = (observed, notes, forced_head, forced_notes, receipt, None)
         messages = FailureNotes()
         ordinary_tests = tuple(test for test in tests if any(
             test in check.tests and check.declared_symptom is None for check in plan))
@@ -708,38 +656,20 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                      and before[test] in (Outcome.MISSING, Outcome.UNCOLLECTED)
                      and after[test] in (Outcome.MISSING, Outcome.UNCOLLECTED)
                      and not before_messages.get(test) and not messages.get(test))
-        comparisons = {Kind.DEMONSTRATING: demonstrated, Kind.REPRODUCING: reproduced,
-                       Kind.REGRESSION: before, Kind.BEHAVIOR_PRESERVING: before}
         results = []
         for check in plan:
-            if check.name in symptom_results:
-                results.append(symptom_results[check.name])
+            if check.name in proofs:
+                observed, notes, forced_head, forced_notes, receipt, result = proofs[check.name]
+                if result is None:
+                    result = judge(check, observed, after, messages=messages, base_notes=notes,
+                                   forced=forced_head, forced_messages=forced_notes)
+                budgets = {side: item.delay_budget for side, item in (('base', notes), ('head', messages), ('head_forced', forced_notes))
+                           if getattr(item, 'delay_budget', None)}
+                if budgets:
+                    receipt['delay_budget'] = budgets
+                results.append(replace(result, proof=receipt))
                 continue
-            if check.name in helper_outcomes:
-                outcomes, notes, identity = helper_outcomes[check.name]
-                result = judge(check, outcomes, after, messages=messages, base_notes=notes)
-                # This mode requires an actual assertion, never a missing-name substitute.
-                if any(outcomes[test] != Outcome.ASSERTION for test in check.tests):
-                    result = replace(result, verdict=(Verdict.INFRASTRUCTURE_FAILURE if result.verdict == Verdict.INFRASTRUCTURE_FAILURE else Verdict.FAIL), tests=tuple(
-                        replace(test, passed=False, message="Helper observers must fail by assertion on the old helper.")
-                        if outcomes[test.test] != Outcome.ASSERTION else test for test in result.tests))
-                if any(item[side] != Outcome.PASSED for item in identity["failure_preservation"]
-                       for side in ("base", "head")):
-                    infrastructure = any(item[side] == Outcome.NO_REPORT for item in identity["failure_preservation"]
-                                         for side in ("base", "head"))
-                    result = replace(result, verdict=Verdict.INFRASTRUCTURE_FAILURE if infrastructure else Verdict.FAIL, tests=tuple(
-                        replace(test, passed=False, message="Failure preservation requires every known-bad invocation "
-                                "to fail by assertion on both helpers; setup/runtime errors and successful returns do not count.")
-                        for test in result.tests))
-                results.append(replace(result, helper_evidence=identity))
-                continue
-            if check.name in forced:
-                forced_base, notes, forced_head, head_messages = forced[check.name]
-                results.append(judge(check, forced_base, after, messages=messages, base_notes=notes,
-                                     forced=forced_head, forced_messages=head_messages))
-                continue
-            result = judge(check, comparisons[check.kind], after, messages=messages,
-                           base_notes=(base_notes.get(check.kind) if check.kind in base_notes else before_messages))
+            result = judge(check, before, after, messages=messages, base_notes=before_messages)
             if check.kind in (Kind.REGRESSION, Kind.BEHAVIOR_PRESERVING):
                 restored = tuple(replace(test, passed=False, message=(
                     f"Restore the existing test `{test.test}`; existing tests may not be changed to satisfy a check.")[:1000])
@@ -753,117 +683,6 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             selection_receipt["head_units"] = kept
             results[-1] = replace(results[-1], selection=selection_receipt)
         return tuple(results)
-
-
-def helper_failure_preservation(tool, staged, head, evidence, container, root, progress):
-    """Call the real target with bounded data or existing setup, independently of observers."""
-    module, function = evidence.target.split("::")
-    setups = validate_helper_setup((staged / module).read_text(), evidence)
-    source = """import inspect
-import json
-import shutil
-import pytest
-from pathlib import Path
-from types import SimpleNamespace
-# Select pytest's implementations even if the served repository overrides them.
-from _pytest.tmpdir import tmp_path_factory  # noqa: F401
-
-
-@pytest.fixture
-def _tl3_fixture_context(request, tmp_path_factory):
-    original_mktemp = tmp_path_factory.mktemp
-    original_basetemp = tmp_path_factory.getbasetemp
-    root = original_mktemp('tl3-helper')
-    allocated = 0
-    def mktemp(*args, **kwargs):
-        nonlocal allocated
-        if allocated >= 16:
-            raise RuntimeError('Helper setup exceeds 16 temporary directories per case')
-        allocated += 1
-        return original_mktemp(*args, **kwargs)
-    tmp_path_factory.getbasetemp = lambda: root
-    tmp_path_factory.mktemp = mktemp
-    try:
-        yield request
-    finally:
-        tmp_path_factory.mktemp = original_mktemp
-        tmp_path_factory.getbasetemp = original_basetemp
-        shutil.rmtree(root)
-
-
-@pytest.fixture
-def tmp_path(_tl3_fixture_context, tmp_path_factory):
-    return tmp_path_factory.mktemp('path')
-
-
-def argument(value, module, witnesses, request):
-    if isinstance(value, dict) and '$setup' in value:
-        name = value['$setup']
-        try:
-            factory = getattr(module, name)
-            bound = inspect.signature(factory).bind_partial()
-            bound.arguments.update({name: request.getfixturevalue(name) for name in SETUPS[name]['fixtures']})
-            bound.apply_defaults()
-            result = factory(*bound.args, **bound.kwargs)
-            method = value['$call']
-            original = getattr(result, method)
-            if not callable(original):
-                raise TypeError('declared method is not callable')
-            witness = {'returned': False}
-            def observed(*args, **kwargs):
-                outcome = original(*args, **kwargs)
-                witness['returned'] = True
-                return outcome
-            setattr(result, method, observed)
-            witnesses.append((result, method, original, witness))
-            return result
-        except Exception as error:
-            raise RuntimeError(f'Helper setup {name} failed: {type(error).__name__}') from error
-    if isinstance(value, dict) and '$attributes' in value:
-        return SimpleNamespace(**value['$attributes'])
-    return value
-"""
-    source += "\nSETUPS = " + repr(setups) + "\n"
-    for index, encoded in enumerate(evidence.failure_cases):
-        source += f"""
-
-def test_failure_{index}(_tl3_fixture_context):
-    request = _tl3_fixture_context
-    module = pytest.Module.from_parent(request.session, path=Path({module!r}).resolve()).obj
-    target = getattr(module, {function!r})
-    case = json.loads({encoded!r})
-    witnesses = []
-    try:
-        args = [argument(value, module, witnesses, request) for value in case['args']]
-        kwargs = {{key: argument(value, module, witnesses, request) for key, value in case['kwargs'].items()}}
-        try:
-            target(*args, **kwargs)
-        except AssertionError:
-            if any(not witness['returned'] for _, _, _, witness in witnesses):
-                raise RuntimeError('Helper setup did not reach the declared method return')
-            return
-        raise AssertionError('The known-bad helper invocation no longer fails by assertion')
-    finally:
-        for value, method, original, _ in reversed(witnesses):
-            setattr(value, method, original)
-"""
-    name = '_tl3_helper_failure_preservation.py'
-    tests = tuple(f'{name}::test_failure_{index}' for index in range(len(evidence.failure_cases)))
-    outcomes = []
-    for label, tree in (("base", staged), ("head", head)):
-        path = tree / name
-        if path.exists():
-            raise ValueError("reserved helper failure-preservation driver path exists")
-        path.write_text(source)
-        try:
-            observed = tool.run(tree, container, tests, root / f"helper-failure-{label}.jsonl", progress)
-            outcomes.append([observed[test] for test in tests])
-        finally:
-            path.unlink()
-    return {"failure_cases": [json.loads(case) for case in evidence.failure_cases],
-            "failure_driver_sha256": hashlib.sha256(source.encode()).hexdigest(),
-            "failure_preservation": [{"base": before, "head": after}
-                                     for before, after in zip(*outcomes)]}
 
 
 def result_json(results: tuple[Result, ...]) -> str:
@@ -884,8 +703,8 @@ def result_json(results: tuple[Result, ...]) -> str:
         # Unforced results keep their earlier shape; a forced one carries its forcing for review (#393).
         if result.selection is None:
             del report["selection"]
-        if result.helper_evidence is None:
-            del report["helper_evidence"]
+        if result.proof is None:
+            del report["proof"]
         if result.forcing is None:
             del report['forcing']
         else:

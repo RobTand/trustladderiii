@@ -55,13 +55,22 @@ pub(crate) fn check(reply: &Value, current: crate::findings::CurrentReview<'_>) 
             if tests.is_empty() || tests.iter().collect::<BTreeSet<_>>().len() != tests.len() {
                 return Err(Error::Invalid("a reproduction needs distinct tests"));
             }
+            let proof = mapping
+                .get("proof")
+                .filter(|proof| {
+                    proof["red_message"]
+                        .as_str()
+                        .is_some_and(|reason| (1..=160).contains(&reason.chars().count()))
+                })
+                .ok_or(Error::Invalid("a reproduction needs proof.red_message"))?;
             item["tests"] = json!(tests);
+            item["proof"] = proof.clone();
             checks.push(Check {
                 name: format!("reproducing/{id}"),
                 kind: Kind::Reproducing,
                 tests,
                 forcing: None,
-                helper_evidence: None,
+                proof: Some(proof.clone()),
                 declared_symptom: None,
             });
         } else {
@@ -92,6 +101,26 @@ fn exact_pytest_node_id(test: &str) -> bool {
 mod reply_defects {
     use super::*;
     #[test]
+    fn reproduction_keeps_declared_assertion_reason() {
+        let feedback =
+            json!([{"kind":"review_finding", "id":"f", "reviewed_sha":"head", "report":"fix"}]);
+        let proof = json!({"subjects":[], "observer_support":[], "red_message":"empty greeting"});
+        let mut reply = json!({"reproductions":[{"finding_id":"f", "tests":["test_greeting.py::test_empty"], "proof":proof}]});
+        let current = || crate::findings::current_review(&feedback, 1, Some("head"));
+        let fixes = check(&reply, current()).unwrap();
+        assert_eq!(fixes.checks[0].proof.as_ref(), Some(&proof));
+        assert_eq!(fixes.evidence["findings"][0]["proof"], proof);
+        reply["reproductions"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("proof");
+        assert!(
+            check(&reply, current()).is_err(),
+            "an assertion reproducer needs a declared reason"
+        );
+    }
+
+    #[test]
     fn exact_node_ids_agree_with_harness_vectors() {
         let vectors: Value = serde_json::from_str(include_str!(
             "../../../../../harness/test-vectors/pytest-node-ids.json"
@@ -101,7 +130,8 @@ mod reply_defects {
             json!([{"kind":"review_finding", "id":"f", "reviewed_sha":"head", "report":"fix"}]);
         let mut mismatches = Vec::new();
         for vector in vectors.as_array().unwrap() {
-            let reply = json!({"reproductions":[{"finding_id":"f", "tests":[vector["node_id"]]}]});
+            let reply = json!({"reproductions":[{"finding_id":"f", "tests":[vector["node_id"]],
+                "proof":{"subjects":[], "observer_support":[], "red_message":"expected regression"}}]});
             let current = crate::findings::current_review(&feedback, 1, Some("head"));
             if check(&reply, current).is_ok() != vector["valid"].as_bool().unwrap() {
                 mismatches.push(vector.clone());

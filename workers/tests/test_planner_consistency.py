@@ -37,7 +37,7 @@ def test_request156_gets_one_tool_free_consistency_correction(planner_request, r
     if correction == 'check':
         fixed['checks'][0]['node_ids'].append(CONTROL)
     elif correction == 'new_check':
-        fixed['checks'].append({'kind': 'demonstrating', 'node_ids': [CONTROL], 'goal_ids': [1]})
+        fixed['checks'].append({'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [CONTROL], 'goal_ids': [1]})
     elif correction == 'unchanged':
         fixed['edits_tests'].remove(CONTROL)
     else:
@@ -103,7 +103,7 @@ def test_request156_shares_the_single_format_correction(planner_request, request
     assert len(model.calls) == 2
 
 
-@pytest.mark.parametrize('obstacle', ['goal', 'protected', 'unsupported', 'test_only'])
+@pytest.mark.parametrize('obstacle', ['goal', 'protected', 'unsupported', 'proof_scope'])
 def test_request156_corrected_reply_is_fully_rechecked(planner_request, request156, monkeypatch, obstacle):
     from tl3_workers import runtime
 
@@ -118,9 +118,9 @@ def test_request156_corrected_reply_is_fully_rechecked(planner_request, request1
         requirement['executor'] = 'buildbuddy_remote_bazel'
         fixed['evidence_contract'] = [requirement]
     else:
-        Path(planner_request['worktree'], 'pyproject.toml').write_text(
-            '[tool.tl3.harness]\ntest-files = ["tests/**/*.py"]\n')
-        fixed['files'] = [PBWAIT_TESTS]
+        planner_request['inputs']['tool_capabilities'][0]['methods'].append('subject_observer')
+        fixed['checks'][0]['proof'] = {
+            'subjects': ['undeclared.py'], 'observer_support': [], 'red_message': 'old subject'}
     model = planner_model(monkeypatch, request156, fixed, LEAF)
     events = []
     runtime.run(planner_request, events.append)
@@ -129,7 +129,7 @@ def test_request156_corrected_reply_is_fully_rechecked(planner_request, request1
     assert result['kind'] == 'cant_meet' if obstacle == 'unsupported' else result['violations']
 
 
-@pytest.mark.parametrize('obstacle', ['cant_meet', 'unsupported', 'protected', 'out_of_room', 'forcing', 'test_only'])
+@pytest.mark.parametrize('obstacle', ['cant_meet', 'unsupported', 'protected', 'out_of_room', 'forcing', 'proof_scope'])
 def test_request156_substantive_stops_do_not_get_consistency_correction(planner_request, request156, monkeypatch, obstacle):
     from tl3_workers import runtime
 
@@ -145,9 +145,9 @@ def test_request156_substantive_stops_do_not_get_consistency_correction(planner_
         request156['checks'][0]['forcing'] = {
             'symptom': 'Delay submission.', 'environment': {'OMP_NUM_THREADS': '1'}, 'patches': []}
     else:
-        Path(planner_request['worktree'], 'pyproject.toml').write_text(
-            '[tool.tl3.harness]\ntest-files = ["tests/**/*.py"]\n')
-        request156['files'] = [PBWAIT_TESTS]
+        planner_request['inputs']['tool_capabilities'][0]['methods'].append('subject_observer')
+        request156['checks'][0]['proof'] = {
+            'subjects': ['undeclared.py'], 'observer_support': [], 'red_message': 'old subject'}
     model = planner_model(monkeypatch, request156, LEAF)
     events = []
     runtime.run(planner_request, events.append)
@@ -339,7 +339,7 @@ def test_correction_cannot_expand_draft(planner_request, request156, monkeypatch
     if expansion == 'file':
         fixed['files'].append('tests/test_existing.py')
     elif expansion == 'check':
-        fixed['checks'].append({'kind': 'demonstrating', 'node_ids': [f'{PBWAIT_TESTS}::test_unrelated'],
+        fixed['checks'].append({'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [f'{PBWAIT_TESTS}::test_unrelated'],
                                 'goal_ids': [0]})
     elif expansion == 'forcing':
         fixed['checks'][0]['forcing'] = {'symptom': 'A new condition.', 'environment': {},
@@ -377,7 +377,7 @@ def test_appended_coverage_check_cannot_introduce_forcing(planner_request, reque
         forcing['patches'][0]['value'] = 2
     elif forcing_change == 'environment':
         forcing['environment'] = {'SHIM_DELAY': '1'}
-    fixed['checks'].append({'kind': 'demonstrating', 'node_ids': [CONTROL], 'goal_ids': [1],
+    fixed['checks'].append({'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [CONTROL], 'goal_ids': [1],
                             'forcing': forcing})
     model = planner_model(monkeypatch, request156, fixed, LEAF)
     events = []

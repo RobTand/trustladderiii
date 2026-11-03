@@ -105,7 +105,8 @@ def create_model(request):
     if mode == 'review-fix' and inputs['round'] == 1:
         findings = [finding for finding in inputs['feedback'] if finding.get('reviewed_sha') == inputs.get('reviewed_sha')]
         reply['reproductions'] = [
-            {'finding_id': findings[0]['id'], 'tests': ['test_greeting.py::test_empty']},
+            {'finding_id': findings[0]['id'], 'tests': ['test_greeting.py::test_empty'],
+             'proof': {'subjects': [], 'observer_support': [], 'red_message': "assert 'goodbye' == 'hello'"}},
             {'finding_id': findings[1]['id'], 'reason': 'This is a documentation correction.'},
         ]
         reproducing_turns = [call('write', {'path': 'test_greeting.py', 'content': "def test_hello():\n    from greeting import greet\n    assert greet() == 'hello'\ndef test_empty():\n    from greeting import greet\n    assert greet() == 'hello'\n"})]

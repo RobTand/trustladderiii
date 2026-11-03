@@ -34,13 +34,41 @@ When tool_capabilities is supplied, return evidence_contract. It is an empty lis
 - Keep a required native-thread bound in runner_features, and require the run artifacts.
 - The run_tests receipt shows the action key, exit status and receipt and log digests only. If the request needs the command, the measured affinity or resource details, name that exact capability gap. Never call them observed.
 - Record provenance for each requirement: {"kind":"source","source":"issue.body or the source comment","quote":"exact source wording"} for an explicit source requirement, or {"kind":"method"} for a method that you chose. A method choice never adds a source obligation or a goal. Keep a method that the source requires, with its provenance.
-- Choose proof from the issue's obligations. Do not require helper_target_observer solely because the target is in a test file. Consider an ordinary failing test first. If ordinary test-file staging would erase RED, consider permitted environment forcings and repository Python patches on an existing base test before helper_target_observer. Select helper_target_observer only when no ordinary supported proof route can meet the source obligation, or when the source requires that method, and mark it as a method choice. Its target must be an existing undecorated synchronous top-level function with an assertion failure contract. A dictionary-returning helper or a decorated parametrized test is not such a target. Reject intermittent, setup-error or non-assertion RED, a passing smoke test and an unrelated assertion. A declared_symptom check keeps every original behavior goal and the source of each accepted clarification.
+
 - TMPDIR, TEMP, TMP and every PYTEST-prefixed name are reserved. If no permitted environment setting or repository patch can create the request's condition, report that exact missing capability: the remaining source obligation, the unsupported condition or target shape, and any rehearsal feedback. Do not ask the issue owner to remove a method that they never requested.
 
 ## Generation and branches
 
 - Configured generation is supporting work. "Edit only X" and "do not hand-edit generated files" still allow the configured generator's declared outputs. A source requirement that forbids all generated changes, configured regeneration included, conflicts with mandatory generation. Keep its exact wording, because audit must object to it before planning. Protected paths always win.
 - publication_branch holds this repository's branch template and its expansion for this request. Compare an exact publication.branch requirement by equality, and branch_prefix by prefix. Keep every exact name with its issue quote, also when it is incompatible. Never turn an exact name into a prefix or replace it with the generated branch. A convention such as `prismabuild-<issue>-tl3-<node>` is a pattern, not a literal name. Keep its source wording. A mention of the base branch, or of keeping a PR's branch name, needs no branch or branch_prefix.
+
+## Subject/observer proof
+
+Choose an ordinary failing test whose assertions observe the changed subject.
+The subject/observer rule (#645, Q27/Q55) applies to every proof. RED runs
+head observers against base subjects; GREEN runs the same observers against
+head subjects. node_ids name the observers. Every other base definition stays
+on base, including helpers, fixtures, imports and decorated class context.
+Every assertion RED requires proof.red_message before execution, including inferred partitions.
+Use proof with subjects: [] and observer_support: [] to infer the partition.
+For an explicit partition, use proof with subjects (relative Python paths or
+path::qualified::definition), observer_support (new source definitions or new
+modules needed only by observers), and red_message (the exact call assertion
+message required on base). Module-level imports needed by observers are carried
+automatically when their bindings are absent from base. New fixtures and helper
+dependencies belong in observer_support. A missing dependency refusal names its
+module and symbol. Never put the subject or a changed existing helper in support.
+Use real repository pytest setup and ordinary regression assertions for existing
+invariants. There are no literal-argument, setup-call or fixture-injection recipes.
+For forcing or declared symptoms without an explicit partition, the original
+base test is the subject and the trusted pytest outcome is its observer. A module's
+local stdlib reference may be forced through a private proxy; global stdlib
+patches remain refused. forcing_capabilities.delay declares per-call and per-test
+limits, shared across targets and forks and reset for each pytest test. Read the
+applied delay and exhaustion reports; hit counts alone do not prove applied delay.
+Planner rehearsal, maker base runs and Checking use the same source assembler.
+Independent Checking and review still judge the declared reason and source goals.
+Frozen regression controls and protected paths retain their existing rules.
 
 ## Reply
 

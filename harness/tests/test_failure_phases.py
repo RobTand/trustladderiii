@@ -8,7 +8,7 @@ import sys
 import pytest
 
 from tl3_harness import execution
-from tl3_harness.model import Check, FailureNotes, Kind, Outcome, Verdict, judge
+from tl3_harness.model import Check, Proof, FailureNotes, Kind, Outcome, Verdict, judge
 from tl3_harness.report import InvalidReport, decode, parse
 from tl3_harness.trees import git
 
@@ -25,7 +25,7 @@ def resource():
     if product.TEARDOWN:
         raise RuntimeError('teardown blocked')
 def test_probe(resource):
-    assert not product.CALL
+    assert not product.CALL, "call invariant"
 '''
 
 
@@ -55,7 +55,7 @@ def configure(repo, setup=False, call=False, teardown=False):
 
 
 def result_case(before, notes):
-    result = judge(Check('phase evidence', Kind.DEMONSTRATING, (NODE,)), before,
+    result = judge(Check('phase evidence', Kind.DEMONSTRATING, (NODE,), proof=Proof((), (), 'call invariant')), before,
                    {NODE: Outcome.PASSED}, base_notes=notes)
     return result, json.loads(execution.result_json((result,)))[0]['tests'][0]
 

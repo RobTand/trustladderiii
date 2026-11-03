@@ -3,6 +3,7 @@ import ast
 import builtins
 import copy
 import ctypes
+import dis
 import errno
 import hashlib
 import importlib
@@ -99,34 +100,80 @@ def missing_name(error):
     return None
 
 
-def forcing_owner(target):
-    """The object holding the target's attribute. It must be a module whose file is in the
-    checkout, or a class defined in one, so a forcing can't patch pytest, the standard
-    library or this reporter."""
+def assertion_reason(error):
+    reason = str(error)
+    trace = error.__traceback__
+    if isinstance(error, AssertionError) and trace is not None:
+        while trace.tb_next is not None:
+            trace = trace.tb_next
+        code = trace.tb_frame.f_code
+        instruction = next((item for item in dis.get_instructions(code) if item.offset == trace.tb_lasti), None)
+        if instruction is not None and instruction.opname == 'RAISE_VARARGS' and '@pytest_ar' in code.co_names:
+            try:
+                source = ast.parse(Path(code.co_filename).read_bytes())
+                position = instruction.positions
+                if any(isinstance(node, ast.Assert) and node.msg is not None
+                       and (node.lineno, node.col_offset) == (position.lineno, position.col_offset)
+                       for node in ast.walk(source)):
+                    # Only a rewritten assert has pytest's explanation boundary.
+                    # A manual AssertionError keeps its entire message verbatim.
+                    message, boundary, _ = reason.partition('\nassert ')
+                    if boundary:
+                        reason = message.replace('\n  ', '\n')
+            except (OSError, SyntaxError, UnicodeError):
+                pass
+    return reason[:1000]
+
+
+class LocalReference:
+    """Private delegation owned by this forcing context, never the shared module."""
+    def __init__(self, original):
+        self.original = original
+
+    def __getattr__(self, name):
+        return getattr(self.original, name)
+
+
+def forcing_owner(target, patch=None):
     root = Path.cwd()
-    parts = target.split(".")
+    parts = target.split('.')
     for split in range(len(parts) - 1, 0, -1):
         try:
-            owner = importlib.import_module(".".join(parts[:split]))
+            owner = importlib.import_module('.'.join(parts[:split]))
         except ModuleNotFoundError as error:
-            if error.name and (error.name == ".".join(parts[:split]) or ".".join(parts[:split]).startswith(error.name + ".")):
+            if error.name and (error.name == '.'.join(parts[:split]) or '.'.join(parts[:split]).startswith(error.name + '.')):
                 continue
-            raise ForcingError(target=target, module=".".join(parts[:split]), reason="import_failure") from error
+            raise ForcingError(target=target, module='.'.join(parts[:split]), reason='import_failure') from error
         except Exception as error:
-            raise ForcingError(target=target, module=".".join(parts[:split]), reason="import_failure") from error
+            raise ForcingError(target=target, module='.'.join(parts[:split]), reason='import_failure') from error
         break
     else:
-        raise ForcingError(target=target, reason="module_not_found")
-    for name in parts[split:-1]:
+        raise ForcingError(target=target, reason='module_not_found')
+    # Validate the attachment before following any external reference. A served
+    # module that replaces itself in sys.modules confers no repository ownership.
+    ownership.repository_owner('.'.join(parts[:split + 1]), owner, root)
+    for index, name in enumerate(parts[split:-1], split):
         if not hasattr(owner, name):
-            raise ForcingError(target=target, module=getattr(owner, "__name__", "unknown"), reason="missing_attribute")
-        owner = getattr(owner, name)
-    ownership.repository_owner(target, owner, root)
+            raise ForcingError(target=target, module=getattr(owner, '__name__', 'unknown'), reason='missing_attribute')
+        value = getattr(owner, name)
+        if not isinstance(value, LocalReference):
+            try:
+                ownership.repository_owner('.'.join(parts[:index + 2]), value, root)
+            except ForcingError:
+                if patch is None or not isinstance(value, types.ModuleType):
+                    raise
+                value = LocalReference(value)
+                patch.setattr(owner, name, value)
+        owner = value
+    if not isinstance(owner, LocalReference):
+        ownership.repository_owner(target, owner, root)
+    elif not hasattr(owner, parts[-1]):
+        raise ForcingError(target=target, reason='missing_attribute')
     return owner, parts[-1]
 
 
-# A forcing's delays add up to at most this per test; later calls run undelayed.
-MAX_TOTAL_DELAY_SECONDS = 10
+# Shared with the planner without importing the executable runner.
+MAX_TOTAL_DELAY_SECONDS = ownership.MAX_TOTAL_DELAY_SECONDS
 
 
 class ForcingTampered(ForcingError):
@@ -273,6 +320,8 @@ class DelayAccounting:
                     if digest != expected_digest:
                         self.tampered('journal content differs from runner-written entries')
                     self.state.pack_into(self.memory, 128, size, remaining, 2, *counts, digest)
+                    self.budget = {'applied_seconds': MAX_TOTAL_DELAY_SECONDS - remaining,
+                                   'exhausted': remaining == 0}
                     return dict(zip(self.targets, counts))
                 except OSError as error:
                     self.tampered(f'journal I/O failed: {type(error).__name__}')
@@ -338,6 +387,7 @@ class Reporter:
         self.worker = worker
         self.failures = {}
         self.target_hits = {}
+        self.delay_budget = {}
         self.forcing_tampered = {}
         self.forcing_refusals = {}
         self.phases = {}
@@ -382,7 +432,7 @@ class Reporter:
                     target = forcing["target"]
                     (mode, argument), = ((key, value) for key, value in forcing.items() if key != "target")
                     try:
-                        owner, name = forcing_owner(target)
+                        owner, name = forcing_owner(target, patch)
                     except ForcingError as error:
                         if error.refusal is not None:
                             self.forcing_refusals[request.node.nodeid] = error.refusal
@@ -394,6 +444,7 @@ class Reporter:
             if accounting is not None:
                 try:
                     self.target_hits[request.node.nodeid] = accounting.finish()
+                    self.delay_budget[request.node.nodeid] = accounting.budget
                 except ForcingTampered as error:
                     self.target_hits[request.node.nodeid] = {}
                     self.forcing_tampered[request.node.nodeid] = str(error)
@@ -507,7 +558,7 @@ class Reporter:
                 frames = list(call.excinfo.traceback)
                 own = any(Path(str(frame.path)).resolve().is_relative_to(Path.cwd()) for frame in frames)
                 # A forcing that raises an exception itself is never the old test's symptom.
-                injected = any(Path(str(frame.path)).resolve() == Path(__file__).resolve() for frame in frames)
+                injected = bool(frames and Path(str(frames[-1].path)).resolve() == Path(__file__).resolve())
                 failure = {'exception': type(error).__module__ + '.' + type(error).__qualname__,
                            'phase': call.when, 'source': own and not injected}
                 self.failures.setdefault(item.nodeid, []).append(failure)
@@ -515,13 +566,17 @@ class Reporter:
             report.tl3_assertion = bool(assertion)
             if report.when == 'teardown':
                 report.tl3_target_hits = self.target_hits.get(item.nodeid, {})
+                report.tl3_delay_budget = self.delay_budget.get(item.nodeid)
                 report.tl3_forcing_tampered = self.forcing_tampered.get(item.nodeid)
                 report.tl3_forcing_refusal = self.forcing_refusals.get(item.nodeid)
             self.phases.setdefault(item.nodeid, []).append(
                 (report.when, outcome, message[:1000], len(message) > 1000, assertion))
             return report
+        if report.when == 'teardown' and item.nodeid in self.delay_budget:
+            self.emit(event='delay-budget', test=item.nodeid, **self.delay_budget[item.nodeid])
         self.emit(event="phase", test=item.nodeid, when=report.when,
                   outcome=outcome, assertion=bool(assertion and outcome == "failed"), missing=missing,
+                  reason=assertion_reason(call.excinfo.value) if assertion and report.failed else "",
                   exception=describe(call.excinfo.value) if report.failed and call.excinfo else "",
                   exception_type=(type(call.excinfo.value).__module__ + '.' + type(call.excinfo.value).__qualname__)[:200]
                   if report.failed and call.excinfo else "",
@@ -531,6 +586,9 @@ class Reporter:
     def pytest_runtest_logreport(self, report):
         if not self.summary:
             return
+        if self.parallel and report.when == 'teardown':
+            if budget := getattr(report, 'tl3_delay_budget', None):
+                self.delay_budget[report.nodeid] = budget
         if self.parallel:
             # makereport ran in a worker. Its crash line tells an assertion from an error.
             crash = getattr(getattr(report.longrepr, "reprcrash", None), "message", "") or ""
@@ -563,6 +621,8 @@ class Reporter:
         message = "\n".join(p[2] for p in failures)
         hits = self.target_hits.pop(report.nodeid, {})
         extra = {"target_hits": hits} if self.patches else {}
+        if report.nodeid in self.delay_budget:
+            extra['delay_budget'] = self.delay_budget.pop(report.nodeid)
         if self.declared_symptom is not None:
             extra['failures'] = self.failures.pop(report.nodeid, [])
         tampered = self.forcing_tampered.pop(report.nodeid, None)

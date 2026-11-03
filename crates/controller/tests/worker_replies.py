@@ -98,7 +98,8 @@ def scripted_reply(request, mode, marker):
     if request["role"] == "planner":
         reply = {"kind": "leaf", "estimated_exploration_turns": 0,
                  "files": ["greeting.py", "tests/test_greeting.py"],
-                 "checks": [{"kind": "demonstrating", "node_ids": ["tests/test_greeting.py::test_hello"], "goal_ids": [0]}],
+                 "checks": [{"kind": "demonstrating", "node_ids": ["tests/test_greeting.py::test_hello"], "goal_ids": [0],
+                             "proof": {"subjects": [], "observer_support": [], "red_message": "expected regression"}}],
                  "no_design_questions": True, "lands_on_its_own": True}
         if mode == "plan-bad-schema":
             reply["checks"][0]["kind"] = "invalid"

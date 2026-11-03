@@ -60,7 +60,7 @@ fn fixture_repo(root: &Path, outside: bool) -> (PathBuf, String, String) {
     fs::write(repo.join("value.py"), "def value(): return 1\n").unwrap();
     fs::write(
         repo.join("test_value.py"),
-        "from value import value\ndef test_value(): assert value() == 2\n",
+        "from value import value\ndef test_value(): assert value() == 2, 'old value'\n",
     )
     .unwrap();
     git(&repo, &["add", "."]);
@@ -131,7 +131,9 @@ fn run(root: &Path, outside: bool) -> Delivery {
                 kind: Kind::Demonstrating,
                 tests: vec!["test_value.py::test_value".into()],
                 forcing: None,
-                helper_evidence: None,
+                proof: Some(
+                    serde_json::json!({"subjects":[], "observer_support":[], "red_message":"old value"}),
+                ),
                 declared_symptom: None,
             }],
         }),
@@ -839,6 +841,14 @@ fn forced_check_is_staged_and_reaches_review() {
 }
 
 fn declared_symptom_identity_is_staged_and_reaches_review() {
+    declared_symptom_identity(false);
+}
+
+fn review662_explicit_subject_symptom_keeps_receipt_bindings() {
+    declared_symptom_identity(true);
+}
+
+fn declared_symptom_identity(explicit_subject: bool) {
     use sha2::{Digest, Sha256};
     for tamper in [
         "none",
@@ -857,6 +867,11 @@ fn declared_symptom_identity_is_staged_and_reaches_review() {
         let declaration = serde_json::json!({"node":value["plan"][0]["tests"][0],
             "exception":"builtins.TimeoutError", "phase":"call", "repeat":1, "parallel":0});
         value["plan"][0]["declared_symptom"] = declaration.clone();
+        let proof = serde_json::json!({"subjects":["test_value.py::_git"],
+            "observer_support":[], "red_message":"not an assertion"});
+        if explicit_subject {
+            value["plan"][0]["proof"] = proof.clone();
+        }
         delivery.checks = Some(serde_json::from_value::<CheckRun>(value).unwrap());
         let planned = &delivery.checks.as_ref().unwrap().plan[0];
         let records = serde_json::json!([{"event":"start", "schema":1}]);
@@ -880,6 +895,14 @@ fn declared_symptom_identity_is_staged_and_reaches_review() {
         let mut result = serde_json::json!({"name":planned.name,"kind":"demonstrating","custody":"in-process",
             "verdict":"pass", "declared_symptom":declaration,"symptom_evidence":evidence,
             "tests":[{"test":planned.tests[0],"base":"error","head":"passed","pre_existing":false,"passed":true}]});
+        if explicit_subject {
+            let mut observers = serde_json::Map::new();
+            observers.insert(planned.tests[0].clone(), "c".repeat(64).into());
+            result["proof"] = serde_json::json!({"rule":"subject-observer-v1", "declaration":proof,
+                "mode":"pytest-outcome", "subjects":{"test_value.py::_git":{"base":"a".repeat(64),"head":"b".repeat(64)}},
+                "source_base_tree_sha256":"f".repeat(64), "base_tree_sha256":"d".repeat(64), "head_tree_sha256":"e".repeat(64),
+                "observer_sha256":observers, "support_sha256":{}});
+        }
         if tamper == "missing" {
             result.as_object_mut().unwrap().remove("symptom_evidence");
         }
@@ -910,67 +933,43 @@ fn declared_symptom_identity_is_staged_and_reaches_review() {
     }
 }
 
-fn helper_target_identity_is_staged_and_reaches_review() {
-    let declaration = serde_json::json!({"target":"test_value.py::_execute",
-        "failure_cases":[{"args":[{"$setup":"_failed_queue","$call":"execute"}, false],"kwargs":{}}]});
+fn subject_observer_identity_is_staged_and_reaches_review() {
+    let declaration = serde_json::json!({"subjects":["test_value.py::_execute"],
+        "observer_support":[], "red_message":"missing diagnostic"});
     for tamper in [
         "none",
-        "target",
+        "declaration",
         "old_identity",
         "observer",
         "base_passed",
-        "missing_preservation",
-        "changed_cases",
-        "changed_setup",
-        "changed_call",
-        "failure_lost",
         "missing",
     ] {
         let root = tempfile::tempdir().unwrap();
         let mut delivery = run(root.path(), false);
         let mut value = serde_json::to_value(delivery.checks.as_ref().unwrap()).unwrap();
-        value["plan"][0]["helper_evidence"] = declaration.clone();
+        value["plan"][0]["proof"] = declaration.clone();
         delivery.checks = Some(serde_json::from_value::<CheckRun>(value).unwrap());
         let planned = &delivery.checks.as_ref().unwrap().plan[0];
         let mut observers = serde_json::Map::new();
         observers.insert(planned.tests[0].clone(), "c".repeat(64).into());
-        let mut identity = serde_json::json!({"target":declaration["target"],
-            "base_target_sha256":"a".repeat(64), "head_target_sha256":"b".repeat(64),
-            "base_tree_sha256":"d".repeat(64), "head_tree_sha256":"e".repeat(64), "observers":observers,
-            "failure_cases":declaration["failure_cases"], "failure_driver_sha256":"f".repeat(64),
-            "failure_preservation":[{"base":"passed", "head":"passed"}]});
-        if tamper == "target" {
-            identity["target"] = "test_value.py::fake_old".into();
+        let mut identity = serde_json::json!({"rule":"subject-observer-v1", "declaration":declaration,
+            "mode":"head-observer", "subjects":{"test_value.py::_execute":{"base":"a".repeat(64),"head":"b".repeat(64)}},
+            "source_base_tree_sha256":"f".repeat(64), "base_tree_sha256":"d".repeat(64), "head_tree_sha256":"e".repeat(64),
+            "observer_sha256":observers, "support_sha256":{}});
+        if tamper == "declaration" {
+            identity["declaration"]["red_message"] = "different".into();
         }
         if tamper == "old_identity" {
-            identity["base_target_sha256"] = identity["head_target_sha256"].clone();
+            identity["subjects"]["test_value.py::_execute"]["base"] = "b".repeat(64).into();
         }
         if tamper == "observer" {
-            identity["observers"] = serde_json::json!({});
-        }
-        if tamper == "missing_preservation" {
-            identity
-                .as_object_mut()
-                .unwrap()
-                .remove("failure_preservation");
-        }
-        if tamper == "changed_cases" {
-            identity["failure_cases"][0]["args"] = serde_json::json!([true]);
-        }
-        if tamper == "changed_setup" {
-            identity["failure_cases"][0]["args"][0]["$setup"] = "_different_queue".into();
-        }
-        if tamper == "changed_call" {
-            identity["failure_cases"][0]["args"][0]["$call"] = "different_method".into();
-        }
-        if tamper == "failure_lost" {
-            identity["failure_preservation"][0]["head"] = "assertion".into();
+            identity["observer_sha256"] = serde_json::json!({});
         }
         let mut result = serde_json::json!({"name":planned.name,"kind":"demonstrating","custody":"in-process",
-            "verdict":"pass","helper_evidence":identity,"tests":[{"test":planned.tests[0],
+            "verdict":"pass","proof":identity,"tests":[{"test":planned.tests[0],
             "base":if tamper == "base_passed" {"passed"} else {"assertion"},"head":"passed","pre_existing":false,"passed":true}]});
         if tamper == "missing" {
-            result.as_object_mut().unwrap().remove("helper_evidence");
+            result.as_object_mut().unwrap().remove("proof");
         }
         let mut adapter = fixture(root.path(), "done");
         fs::write(
@@ -986,7 +985,7 @@ fn helper_target_identity_is_staged_and_reaches_review() {
             .unwrap();
         let request: serde_json::Value =
             serde_json::from_slice(&fs::read(staged).unwrap()).unwrap();
-        assert_eq!(request["plan"][0]["helper_evidence"], declaration);
+        assert_eq!(request["plan"][0]["proof"], declaration);
         let ended = completion(&mut adapter, &delivery);
         match &ended.observations[..] {
             [
@@ -999,7 +998,7 @@ fn helper_target_identity_is_staged_and_reaches_review() {
             ] => {
                 assert_eq!(*report && *pass, tamper == "none", "{tamper}");
                 if tamper == "none" {
-                    assert_eq!(results[0]["helper_evidence"], identity);
+                    assert_eq!(results[0]["proof"], identity);
                     assert_eq!(results[0]["tests"][0]["base"], "assertion");
                     assert_eq!(results[0]["tests"][0]["head"], "passed");
                 }
@@ -2624,8 +2623,12 @@ fn main() {
             declared_symptom_identity_is_staged_and_reaches_review as fn(),
         ),
         (
-            "helper_target_identity_is_staged_and_reaches_review",
-            helper_target_identity_is_staged_and_reaches_review as fn(),
+            "review662_explicit_subject_symptom_keeps_receipt_bindings",
+            review662_explicit_subject_symptom_keeps_receipt_bindings as fn(),
+        ),
+        (
+            "subject_observer_identity_is_staged_and_reaches_review",
+            subject_observer_identity_is_staged_and_reaches_review as fn(),
         ),
         ("source_skips_bad_waits", source_skips_bad_waits as fn()),
         (
@@ -2738,7 +2741,7 @@ fn main() {
     quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
     println!("test unreadable_job_record_is_a_failed_read ... ok");
     database.stop();
-    println!("52 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("53 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
@@ -3193,7 +3196,7 @@ fn result_budget_rejects_repeated_checks() {
             kind: Kind::Regression,
             tests: vec!["test_value.py::test_value".into()],
             forcing: None,
-            helper_evidence: None,
+            proof: None,
             declared_symptom: None,
         })
         .collect();

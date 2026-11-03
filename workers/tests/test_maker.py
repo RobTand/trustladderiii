@@ -32,7 +32,7 @@ def test_done_hands_ordinary_demonstration_to_checking(maker_request, tmp_path):
         "head_tree": git(root, "rev-parse", reply["head"] + "^{tree}"),
         "status": "pending", "owner": "checking",
         "checks": [{"name": "hello", "tests": ["test_greeting.py::test_hello"],
-                    "mode": "head_tests_on_base"}],
+                    "mode": "base_subject_head_observer"}],
     }
     validate("maker-reply", reply)
 

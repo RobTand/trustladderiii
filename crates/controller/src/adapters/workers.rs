@@ -328,8 +328,8 @@ impl Supervisor {
                     if let Some(symptom) = c.get("declared_symptom") {
                         check["declared_symptom"] = symptom.clone();
                     }
-                    if let Some(evidence) = c.get("helper_evidence") {
-                        check["helper_evidence"] = evidence.clone();
+                    if let Some(evidence) = c.get("proof") {
+                        check["proof"] = evidence.clone();
                     }
                     check
                 })

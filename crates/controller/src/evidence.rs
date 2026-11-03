@@ -210,7 +210,7 @@ pub(crate) fn check_record(record: &Value) -> Value {
                 .iter()
                 .take(MAX_ITEMS)
                 .map(|result| {
-                    let mut item = fields(result, &["name", "kind", "verdict", "url"]);
+                    let mut item = fields(result, &["name", "kind", "verdict", "url", "proof"]);
                     if let Some(forcing) = result.get("forcing") {
                         // Environment values and patch bodies are opaque inputs, not proof.
                         let mut summary = fields(forcing, &["symptom"]);

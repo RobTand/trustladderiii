@@ -96,7 +96,9 @@ fn check_plan(f: &Fixture, base: String) -> CheckRun {
             kind: Kind::Demonstrating,
             tests: vec!["test_value.py::test_value".into()],
             forcing: None,
-            helper_evidence: None,
+            proof: Some(
+                serde_json::json!({"subjects":[], "observer_support":[], "red_message":"old value"}),
+            ),
             declared_symptom: None,
         }],
     }
@@ -748,7 +750,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     commit(
         &f.source,
         "test_value.py",
-        "from value import value\ndef test_value(): assert value() == 2\n",
+        "from value import value\ndef test_value(): assert value() == 2, 'old value'\n",
     );
     assert_eq!(
         git(
