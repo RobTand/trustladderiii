@@ -437,3 +437,19 @@ def test_rereview662_declared_forcing_may_replace_its_dependency(repository):
     results, _, _ = round_result(repository, before, after, check)
     assert results[0].verdict == Verdict.PASS, results
     assert results[0].tests[0].base == Outcome.ASSERTION, results
+
+
+def test_rereview662_wrapped_subject_code_cannot_be_replaced_indirectly(repository):
+    path = 'tests/test_wrapped.py'
+    before = ('import functools\nVERSION = 0\ndef wrap(fn):\n'
+              '    @functools.wraps(fn)\n    def wrapped(): return fn()\n    return wrapped\n'
+              '@wrap\ndef helper(): return ("old", VERSION)\n'
+              'def install(value):\n    helper.__wrapped__.__code__ = value.__code__\n')
+    after = before.replace('= 0', '= 1').replace('"old"', '"new"') + (
+        'TOKEN = install(lambda: ("new", VERSION))\n'
+        'def test_observer():\n    assert helper() == ("new", 1), "declared result"\n')
+    check = Check('wrapped subject', Kind.DEMONSTRATING, (path + '::test_observer',),
+                  proof=model.Proof((path + '::helper',), (path + '::TOKEN',), 'declared result'))
+    results, _, _ = round_result(repository, {path: before}, {path: after}, check)
+    assert results[0].verdict == Verdict.FAIL, results
+    assert 'proof_subject_integrity' in results[0].tests[0].message, results
