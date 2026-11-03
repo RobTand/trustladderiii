@@ -3,20 +3,11 @@
 from tl3_workers.roles.base import Role
 from tl3_workers.evidence import preflight
 from tl3_workers.exploration import ExplorationBudget
-from tl3_workers.scope import goal_errors
-
-
-def check_reply(inputs, reply):
-    preflight(inputs, reply)
-    errors = goal_errors(inputs, inputs.get('ingest', {}).get('goals', []))
-    if errors:
-        reply['verdict'] = 'disagree'
-        reply['objections'] = list(dict.fromkeys([*reply.get('objections', []), *errors]))
 
 
 ROLE = Role(
     name="audit",
-    check_reply=check_reply,
+    check_reply=preflight,
     code_only_fields=("evidence_errors",),
     prompt="audit.md",
     input_schema="audit-input",

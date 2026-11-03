@@ -103,7 +103,6 @@ py_library(
         "tl3_workers/roles/reviewer.py",
         "tl3_workers/roles/writer.py",
         "tl3_workers/runtime.py",
-        "tl3_workers/scope.py",
         "tl3_workers/session.py",
         "tl3_workers/tools.py",
         "tl3_workers/tracing.py",
