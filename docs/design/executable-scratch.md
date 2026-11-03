@@ -47,7 +47,9 @@ The new `/tmp` bind has no explicit noexec, nosuid or nodev options. It inherits
 the host filesystem's mount flags. This is Rob's accepted containment-policy
 change, not a promise that the old tmpfs flags survive. `exec_scratch` is
 retired from configuration and action inputs because it no longer controls
-anything. Existing configurations must remove it.
+anything. The parser reports "unknown field `exec_scratch`". Before this
+release deploys, the coordinator must remove the three live
+`exec_scratch = true` entries. The implementation does not edit live config.
 
 The checkout and trusted harness remain read-only exports. The container keeps
 `--cap-drop=ALL`, `--security-opt=no-new-privileges`, `--read-only`,

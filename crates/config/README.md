@@ -307,7 +307,10 @@ Pytest scratch is a private disk directory owned and cleaned by PrismaBuild's
 > Rob accepts that inherited mount flags may allow exec, suid and dev on that scratch.
 
 `exec_scratch` is retired. Remove it from existing repository entries; it no
-longer controls a mount flag. Maker, rehearsal and Checking share this scratch
+longer controls a mount flag. Parsing rejects it with
+"unknown field `exec_scratch`". Before deploying this release, the coordinator must remove
+the three live `exec_scratch = true` entries. This change does not edit live
+configuration. Maker, rehearsal and Checking share this scratch
 path. The container runs as the leaf owner's UID:GID so PB can clean restrictive
 session directories. TL3 declares 512 MiB of disk scratch, not a filesystem
 quota. Ordinary action memory demands are unchanged; there was no separate

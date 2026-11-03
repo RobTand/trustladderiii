@@ -1069,7 +1069,11 @@ fn repository_rejects_retired_exec_scratch_setting() {
         .as_table_mut()
         .unwrap()
         .insert("exec_scratch".into(), Value::Boolean(true));
-    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+    let error = Config::parse(&toml::to_string(&document).unwrap()).unwrap_err();
+    assert!(
+        error.to_string().contains("unknown field `exec_scratch`"),
+        "{error}"
+    );
 }
 
 #[test]
