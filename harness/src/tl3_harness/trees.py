@@ -119,6 +119,14 @@ def added_names(base: Path, head: Path, patterns: list[str]) -> frozenset[tuple[
             for node in module.body:
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                     found.add((name, node.name))
+                elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                    # Module-level constants are importable names too (PQ #2662). Only
+                    # plain name stores bind a module name; attribute and subscript
+                    # stores do not, and nested statements are not module bindings.
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    for target in targets:
+                        found.update((name, item.id) for item in ast.walk(target)
+                                     if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Store))
         return found
     return frozenset(names(head) - names(base))
 
