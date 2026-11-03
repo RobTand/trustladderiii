@@ -720,3 +720,117 @@ mod scope_fix_tests {
         assert!(validate_reply(&reply, &inputs).is_ok());
     }
 }
+
+#[cfg(test)]
+mod input_contract_tests {
+    use super::*;
+    use crate::git_tests::{Repo, documents, support::Database};
+
+    fn review_with(check: &Value, f: &Repo) -> Result<Value> {
+        let mut db = Database::start();
+        let mut store = Store::open(&db.create("review_input_contract")).unwrap();
+        store
+            .put_worker_materials(
+                "0",
+                &json!({"issue": {
+                    "title":"Preserve failure evidence", "body":"Reproduce the original exception"
+                }}),
+            )
+            .unwrap();
+        let mut snapshot = documents(
+            &mut store,
+            &[
+                (
+                    "goals",
+                    json!([{"description":"Preserve failure evidence", "verification":"test"}]),
+                ),
+                ("check_reports", json!({})),
+            ],
+        );
+        let report = snapshot
+            .rows
+            .iter_mut()
+            .find(|r| r.table == "check_reports")
+            .unwrap();
+        report.id = format!("0:{}", f.head);
+        report.value = json!({"base_sha":f.base, "results":[check]});
+        inputs(&f.delivery(), &mut store, &snapshot, None)
+    }
+
+    fn check() -> Value {
+        json!({"name":"failure evidence", "kind":"demonstrating", "verdict":"pass", "custody":"in-process",
+            "tests":[{"test":"test_value.py::test_value", "base":"error", "head":"passed",
+                "pre_existing":false, "passed":true, "message":""}]})
+    }
+
+    #[test]
+    fn t653_reviewer_preserves_phase_evidence_after_checking() {
+        let f = Repo::new();
+        let fact = json!({"outcome":"passed", "exception":"", "assertion":false});
+        let run =
+            json!({"test":"test_value.py::test_value", "setup":fact, "call":fact, "teardown":fact});
+        let mut check = check();
+        check["tests"][0]["phases"] = json!({"base":run, "head":run, "head_forced":run});
+        check["tests"][0]["phases"]["base"]["call"] = json!({
+            "outcome":"failed", "exception":"builtins.TimeoutError", "assertion":false});
+        let value = review_with(&check, &f).expect("reviewer must accept #630 phase evidence");
+        assert_eq!(value["checks"][0], check);
+        for path in [
+            "/tests/0/phases/head/setup/outcome",
+            "/tests/0/phases/head/setup/assertion",
+            "/tests/0/phases/head/unexpected",
+        ] {
+            let mut invalid = value.clone();
+            let mut bad = check.clone();
+            if path.ends_with("unexpected") {
+                bad["tests"][0]["phases"]["head"]["unexpected"] = json!(true);
+            } else {
+                *bad.pointer_mut(path).unwrap() = json!("invalid");
+            }
+            invalid["checks"][0] = bad;
+            assert!(
+                super::super::protocol::validate_inputs("reviewer", &invalid).is_err(),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn t653_reviewer_preserves_declared_symptom_evidence_after_checking() {
+        let f = Repo::new();
+        let declaration = json!({"node":"test_value.py::test_value", "exception":"builtins.TimeoutError",
+            "phase":"call", "repeat":1, "parallel":0});
+        let records = json!([{"event":"start", "schema":1},
+            {"event":"collection", "tests":["test_value.py::test_value"]},
+            {"event":"result", "test":"test_value.py::test_value", "outcome":"passed",
+                "message":"", "truncated":false, "failures":[]},
+            {"event":"finish", "exit_code":0}]);
+        let mut check = check();
+        check["declared_symptom"] = declaration.clone();
+        check["symptom_evidence"] = json!({"base":f.base, "head":f.head, "forcing":null,
+        "declaration":declaration, "runs":[
+            {"side":"base", "run":1, "outcome":"symptom", "sha256":"a".repeat(64), "records":records, "target_hits":{}},
+            {"side":"head", "run":1, "outcome":"passed", "sha256":"b".repeat(64), "records":records, "target_hits":{}},
+        ]});
+        let value =
+            review_with(&check, &f).expect("reviewer must accept #626 declared-symptom evidence");
+        assert_eq!(value["checks"][0], check);
+        assert_eq!(value["issue"]["title"], "Preserve failure evidence");
+        for pointer in [
+            "/checks/0/declared_symptom/phase",
+            "/checks/0/symptom_evidence/base",
+            "/checks/0/symptom_evidence/runs/0/sha256",
+            "/checks/0/symptom_evidence/runs/0/records/0/schema",
+        ] {
+            let mut invalid = value.clone();
+            *invalid.pointer_mut(pointer).unwrap() = json!("invalid");
+            assert!(
+                super::super::protocol::validate_inputs("reviewer", &invalid).is_err(),
+                "{pointer}"
+            );
+        }
+        let mut invalid = value;
+        invalid["checks"][0]["symptom_evidence"]["unexpected"] = json!(true);
+        assert!(super::super::protocol::validate_inputs("reviewer", &invalid).is_err());
+    }
+}
