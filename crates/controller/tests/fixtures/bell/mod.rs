@@ -1,3 +1,7 @@
+// Single-event fixture receives expose no intermediate progress.
+// #673 measured the full PrismaBuild binary at 220.814 s; 450 s > 2x.
+const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(450);
+
 use std::{
     io::{BufRead, BufReader, Write},
     net::{TcpListener, TcpStream},
@@ -77,7 +81,7 @@ impl Bell {
         self.requests
             .as_ref()
             .unwrap()
-            .recv_timeout(Duration::from_secs(10))
+            .recv_timeout(SIGNAL_WAIT)
             .unwrap()
     }
 }

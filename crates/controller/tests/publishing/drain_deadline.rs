@@ -30,3 +30,41 @@ impl DrainDeadline {
         );
     }
 }
+
+// The clock seam lets lifecycle regressions exercise late work without sleeping.
+pub fn lifecycle<S, P: Eq, I>(
+    state: &mut S,
+    mut inspect: impl FnMut(&mut S) -> (P, bool),
+    mut drive: impl FnMut(&mut S),
+    mut poll: impl FnMut(&mut S) -> Vec<I>,
+    mut apply: impl FnMut(&mut S, I),
+    mut now: impl FnMut() -> Instant,
+) {
+    let mut deadline = DrainDeadline::new(now(), Duration::from_secs(90));
+    let mut phase = inspect(state).0;
+    deadline.check(now());
+    loop {
+        deadline.check(now());
+        let reached = inspect(state).1;
+        deadline.check(now());
+        if reached {
+            return;
+        }
+        drive(state);
+        deadline.check(now());
+        let inputs = poll(state);
+        deadline.check(now());
+        for input in inputs {
+            deadline.check(now());
+            apply(state, input);
+            deadline.progress(now());
+        }
+        let next = inspect(state).0;
+        deadline.check(now());
+        if next != phase {
+            phase = next;
+            deadline.progress(now());
+        }
+        std::thread::yield_now();
+    }
+}

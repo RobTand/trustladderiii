@@ -1,3 +1,7 @@
+// Single-event fixture receives expose no intermediate progress.
+// #673 measured observation_race_permanent at 98.800 s; 200 s > 2x.
+const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(200);
+
 #[path = "mergify/ack_wait.rs"]
 mod ack_wait;
 #[path = "mergify/check_reads.rs"]
@@ -2429,7 +2433,7 @@ fn failed_catch_up_retries_held_enqueue(settings: &tl3_config::Store) {
     let control = source.control();
     let (sender, receiver) = mpsc::channel();
     let running = thread::spawn(move || source.run(sender));
-    let wake = receiver.recv_timeout(Duration::from_secs(10));
+    let wake = receiver.recv_timeout(SIGNAL_WAIT);
     control.stop();
     running.join().unwrap().unwrap();
     let wake = wake.expect("failed catch-up must wake the held enqueue without a webhook");
@@ -2466,7 +2470,7 @@ fn failed_catch_up_retries_held_enqueue(settings: &tl3_config::Store) {
 struct AwaitTranslation(mpsc::Receiver<()>);
 impl Source for AwaitTranslation {
     fn run(self, _sender: mpsc::Sender<tl3_controller::cli::Input>) -> tl3_controller::Result<()> {
-        self.0.recv_timeout(Duration::from_secs(10)).map_err(|_| {
+        self.0.recv_timeout(SIGNAL_WAIT).map_err(|_| {
             tl3_controller::Error::Invalid("deferred delivery never retried without new input")
         })
     }

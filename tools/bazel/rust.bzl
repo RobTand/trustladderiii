@@ -102,7 +102,7 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
-    "tests/console_commands.rs": ["tests/fixtures/decisions/**"],
+    "tests/console_commands.rs": ["tests/fixtures/decisions/**", "tests/support/scenario.rs"],
     "tests/hindsight.rs": ["README.md"],
     "tests/fail_fast.rs": ["tests/support/**"],
     "tests/fixture_contracts.rs": ["tests/support/**"],

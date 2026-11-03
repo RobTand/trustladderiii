@@ -2,6 +2,9 @@
 //! effect of Rob's equivalent comment, refusals say why, and a crash between
 //! filing and applying loses nothing and applies once.
 
+#[allow(dead_code)]
+#[path = "support/scenario.rs"]
+mod scenario;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 
@@ -713,6 +716,29 @@ fn a_crash_between_filing_and_applying_loses_nothing_and_applies_once() {
     db.stop();
 }
 
+fn wait_for_console(
+    what: &str,
+    inactivity: std::time::Duration,
+    absolute: std::time::Duration,
+    mut done: impl FnMut() -> bool,
+    mut observe: impl FnMut() -> Vec<(String, Value)>,
+    mut changed: impl FnMut(),
+) {
+    let mut nodes = Vec::new();
+    scenario::wait(what, inactivity, absolute, || {
+        if done() {
+            return Some(());
+        }
+        let next = observe();
+        if next != nodes {
+            scenario::progress(format!("console {what}; nodes={next:?}"));
+            nodes = next;
+        }
+        changed();
+        None
+    });
+}
+
 /// tl3d wakes on the console's notification alone: no comment, webhook or
 /// stdin input arrives after the command is filed.
 #[test]
@@ -789,22 +815,35 @@ fn tl3d_wakes_for_a_filed_command() {
     }});
     writeln!(stdin, "{issue}").unwrap();
     stdin.flush().unwrap();
-    let wait_for =
+    let mut observer = tl3_store::Reader::open(&settings).unwrap();
+    let mut wait_for =
         |daemon: &mut std::process::Child, what: &str, done: &mut dyn FnMut() -> bool| {
-            let mut waited = Duration::ZERO;
-            while !done() {
-                assert!(
-                    daemon.try_wait().unwrap().is_none(),
-                    "tl3d exited waiting for {what}"
-                );
-                assert!(
-                    waited < Duration::from_secs(60),
-                    "timed out waiting for {what}"
-                );
-                if changes.recv_timeout(Duration::from_millis(500)).is_err() {
-                    waited += Duration::from_millis(500);
-                }
-            }
+            wait_for_console(
+                what,
+                Duration::from_secs(60),
+                Duration::from_secs(300),
+                || {
+                    let complete = done();
+                    assert!(
+                        daemon.try_wait().unwrap().is_none(),
+                        "tl3d exited waiting for {what}"
+                    );
+                    complete
+                },
+                || {
+                    observer
+                        .load()
+                        .unwrap()
+                        .rows
+                        .into_iter()
+                        .filter(|row| row.table == "nodes")
+                        .map(|row| (row.id, row.value))
+                        .collect()
+                },
+                || {
+                    let _ = changes.recv_timeout(Duration::from_millis(500));
+                },
+            );
         };
     let phase = |settings: &tl3_config::Store| -> Value {
         tl3_store::Reader::open(settings)
@@ -1040,7 +1079,8 @@ fn wakes_again_after_postgres_restarts() {
     std::thread::spawn(move || source.run(sender));
     let wake = |what: &str| {
         wakes
-            .recv_timeout(Duration::from_secs(60))
+            // Baseline 1007cb6e measured the whole binary at 52.981 s; 120 s > 2x.
+            .recv_timeout(Duration::from_secs(120))
             .unwrap_or_else(|_| panic!("no wake {what}"))
     };
     assert!(matches!(
@@ -1092,7 +1132,8 @@ fn a_command_filed_during_a_drain_wakes_tl3d_again() {
     });
     let wake = |what: &str| {
         wakes
-            .recv_timeout(Duration::from_secs(30))
+            // Baseline 1007cb6e measured the whole binary at 52.981 s; 120 s > 2x.
+            .recv_timeout(Duration::from_secs(120))
             .unwrap_or_else(|_| panic!("no wake {what}"))
     };
     wake("when the session opens");
@@ -1279,4 +1320,81 @@ fn changed_console_request_reconciles_existing_decisions() {
     );
     assert!(world.rows("console_selected_answers").is_empty());
     db.stop();
+}
+
+fn blocked_console_wait(test: &str, blocked: &str) {
+    use std::{
+        process::{Command, Stdio},
+        thread,
+        time::{Duration, Instant},
+    };
+    if std::env::var("TL3_CONSOLE_BLOCKED").as_deref() == Ok(blocked) {
+        wait_for_console(
+            "planted blocked console query",
+            Duration::from_secs(2),
+            Duration::from_millis(200),
+            || {
+                if blocked == "condition" {
+                    loop {
+                        thread::park();
+                    }
+                }
+                false
+            },
+            || {
+                loop {
+                    thread::park();
+                }
+            },
+            || {},
+        );
+        return;
+    }
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--nocapture"])
+        .env("TL3_CONSOLE_BLOCKED", blocked)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let start = Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if start.elapsed() >= Duration::from_secs(3) {
+            child.kill().unwrap();
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().unwrap();
+    let diagnostic = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(124),
+        "console absolute cap bypassed: {diagnostic}"
+    );
+    assert!(
+        diagnostic.contains("last progress: waiting for planted blocked console query"),
+        "{diagnostic}"
+    );
+    assert!(
+        start.elapsed() < Duration::from_secs(2),
+        "absolute cap not enforced: {diagnostic}"
+    );
+    eprintln!("{diagnostic}");
+}
+
+#[test]
+fn console_absolute_cap_covers_blocked_condition_query() {
+    blocked_console_wait(
+        "console_absolute_cap_covers_blocked_condition_query",
+        "condition",
+    );
+}
+
+#[test]
+fn console_absolute_cap_covers_blocked_observation_query() {
+    blocked_console_wait(
+        "console_absolute_cap_covers_blocked_observation_query",
+        "observation",
+    );
 }

@@ -110,3 +110,61 @@ fn completed_scenarios_disarm_the_watchdog() {
     let (output, _) = child("completed_scenarios_disarm_the_watchdog", "complete");
     assert!(output.status.success(), "{output:?}");
 }
+
+#[test]
+fn stalled_fixture_wait_exits_with_last_progress() {
+    if planted("wait-stall") {
+        scenario::wait(
+            "planted-fixture-wait",
+            Duration::from_millis(200),
+            Duration::from_secs(2),
+            || -> Option<()> {
+                scenario::progress("planner reply applied");
+                loop {
+                    thread::park();
+                }
+            },
+        );
+    }
+    let (output, elapsed) = child(
+        "stalled_fixture_wait_exits_with_last_progress",
+        "wait-stall",
+    );
+    let diagnostic = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(output.status.code(), Some(124), "{diagnostic}");
+    assert!(
+        diagnostic.contains("last progress: planner reply applied"),
+        "{diagnostic}"
+    );
+    assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+    eprintln!("{diagnostic}");
+}
+
+#[test]
+fn slow_fixture_wait_passes_while_observations_advance() {
+    if planted("wait-steady") {
+        let mut observations = 0;
+        let value = scenario::wait(
+            "planted-slow-fixture",
+            Duration::from_millis(200),
+            Duration::from_secs(2),
+            || {
+                thread::sleep(Duration::from_millis(25));
+                observations += 1;
+                scenario::progress(format!("applied observation {observations}"));
+                (observations == 20).then_some(observations)
+            },
+        );
+        assert_eq!(value, 20);
+        return;
+    }
+    let (output, elapsed) = child(
+        "slow_fixture_wait_passes_while_observations_advance",
+        "wait-steady",
+    );
+    assert!(
+        output.status.success(),
+        "progressing fixture failed: {output:?}"
+    );
+    assert!(elapsed >= Duration::from_millis(500), "{elapsed:?}");
+}
