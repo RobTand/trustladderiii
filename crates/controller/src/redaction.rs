@@ -459,14 +459,13 @@ fn spans(text: &str) -> Result<Vec<Span>> {
             .find(|end| **end > begin.end())
             .copied()
             .unwrap_or(begin.end());
-        if reach == begin.end() {
-            if let Some(lines) = rule("KEY_LINES")?
+        if reach == begin.end()
+            && let Some(lines) = rule("KEY_LINES")?
                 .find(&text[begin.end()..])
                 .map_err(|e| e.to_string())?
-                && lines.start() == 0
-            {
-                reach += lines.end();
-            }
+            && lines.start() == 0
+        {
+            reach += lines.end();
         }
         found.push((begin.start(), reach));
     }
@@ -636,10 +635,9 @@ pub(crate) fn text(value: &str) -> crate::Result<String> {
         if value.len() > LIMIT {
             return Err("redaction input exceeds one MiB".into());
         }
-        let value = value;
         let mut out = String::new();
         let mut cursor = 0;
-        for (start, end) in spans(&value)? {
+        for (start, end) in spans(value)? {
             out.push_str(
                 value
                     .get(cursor..start)
@@ -722,6 +720,7 @@ mod parity_tests {
         let output = child.wait_with_output().unwrap();
         assert!(output.status.success());
         let expected: Vec<String> = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(expected.len(), matrix.len());
         let actual = matrix
             .iter()
             .map(|text| super::text(text).unwrap_or_else(|error| panic!("{text:?}: {error:?}")))
