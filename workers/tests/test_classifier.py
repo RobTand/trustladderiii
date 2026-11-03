@@ -299,6 +299,12 @@ def test_change_request_supersedes_only_applicable_decisions(request_doc):
     validate("classifier-input", request_doc["inputs"])
     validate("classifier-reply", reply)
     check_reply(request_doc["inputs"], reply)
+    with pytest.raises(ValueError, match="assess applicable"):
+        check_reply(request_doc["inputs"], {key: value for key, value in reply.items() if key != "supersedes"})
+    request_doc["inputs"]["selected_answer"] = {key: value for key, value in reply.items() if key != "supersedes"}
+    validate("classifier-input", request_doc["inputs"])
+    with pytest.raises(ValueError, match="selected console answer"):
+        check_reply(request_doc["inputs"], {**reply, "new_text": "Change a different file."})
     with pytest.raises(ValueError, match="not applicable"):
         check_reply(request_doc["inputs"], {**reply, "supersedes": ["invented"]})
     request_doc["inputs"]["decision_context"]["decisions"][0]["superseded_by"] = "a later answer"

@@ -226,6 +226,12 @@ impl Controller {
             inputs["question_context"] =
                 answered_question(snapshot, n.question, open.id).unwrap_or_default();
         }
+        if let Some(selected) = snapshot.rows.iter().find(|selected| {
+            selected.table == "console_selected_answers"
+                && selected.id == row.value["comment"]["id"].to_string()
+        }) {
+            inputs["selected_answer"] = selected.value.clone();
+        }
         let binding: Request = crate::decode_stored(binding.value.clone())?;
         let key = format!("classify:{}", row.id);
         let delivery = Delivery {
@@ -401,6 +407,12 @@ impl Controller {
         commit
             .rows
             .push(put("github_comments", comment_key.clone(), recorded));
+        if inputs.get("selected_answer").is_some() {
+            commit.rows.push(RowChange::Delete {
+                table: "console_selected_answers".into(),
+                id: comment.value["comment"]["id"].to_string(),
+            });
+        }
         let kind: String = crate::adapters::workers::protocol::reply_field(&reply, "kind")?;
         if let Some(previous) = inputs["conversation"]["comment_id"].as_str() {
             commit.rows.push(RowChange::Delete {
@@ -596,13 +608,12 @@ impl Controller {
                             .collect()
                     })
                     .unwrap_or_else(|| {
-                        vec![
-                            reply["new_text"]
-                                .as_str()
-                                .or_else(|| reply["guidance"].as_str())
-                                .unwrap_or(origin.text)
-                                .into(),
-                        ]
+                        reply["new_text"]
+                            .as_str()
+                            .or_else(|| reply["guidance"].as_str())
+                            .map(str::to_owned)
+                            .into_iter()
+                            .collect()
                     });
                 let restrictions = reply["decision"]["restrictions"]
                     .as_array()

@@ -28,6 +28,14 @@ pub(crate) struct Decision {
 }
 
 impl Context {
+    pub fn new(node: NodeId) -> Self {
+        Self {
+            schema_version: 1,
+            request_version: node.0,
+            decisions: vec![],
+        }
+    }
+
     pub fn load(snapshot: &Snapshot, node: NodeId) -> Result<Self> {
         let context = snapshot
             .rows
@@ -35,11 +43,7 @@ impl Context {
             .find(|row| row.table == "request_decisions" && row.id == node.0.to_string())
             .map(|row| crate::decode_stored::<Self>(row.value.clone()))
             .transpose()?
-            .unwrap_or(Self {
-                schema_version: 1,
-                request_version: node.0,
-                decisions: vec![],
-            });
+            .unwrap_or_else(|| Self::new(node));
         if context.schema_version != 1 || context.request_version != node.0 {
             return Err(Error::Invalid("unsupported request decision context"));
         }

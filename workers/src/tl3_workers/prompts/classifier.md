@@ -87,3 +87,8 @@ restrictions, arrays of exact scope terms or restrictions in Rob's answer or the
 question he selects. Include every condition on an allowed exception. If no
 separate scope or restriction is stated, use empty arrays. The controller also
 keeps the whole answer and question, so these fields never replace their text.
+
+selected_answer, when supplied, is a typed choice Rob already made in the
+console. Copy its kind, question_id, answer and new_text exactly. Assess only
+its decision details and which prior decisions it contradicts. Return supersedes,
+even when empty, for every replacement with applicable prior decisions.

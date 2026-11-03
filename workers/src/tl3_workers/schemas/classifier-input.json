@@ -116,6 +116,10 @@
     "question_context": {
       "type": "object",
       "description": "The complete current question and findings whose option Rob is answering."
+    },
+    "selected_answer": {
+      "$ref": "classifier-reply.json",
+      "description": "A typed console choice. Copy these fields exactly; assess only its decision details and supersedes."
     }
   },
   "required": [

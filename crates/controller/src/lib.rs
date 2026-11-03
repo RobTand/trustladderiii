@@ -611,6 +611,13 @@ impl Controller {
             } else {
                 None
             };
+            if pending.is_none() {
+                commit.rows.push(put(
+                    "request_decisions",
+                    node.clone(),
+                    json!(decisions::Context::new(NodeId(world.nodes.len() as u64))),
+                ));
+            }
             let event = if let Some(proposed) = &proposed {
                 Event::NewAdoption {
                     repo: tl3_kernel::RepoId(index as u64),

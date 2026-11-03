@@ -4,8 +4,12 @@ from tl3_workers.roles.base import Role
 
 
 def check_reply(inputs, reply):
+    if any(reply.get(key) != value for key, value in inputs.get("selected_answer", {}).items()):
+        raise ValueError("classifier changed a selected console answer")
     active = {decision["id"] for decision in inputs.get("decision_context", {}).get("decisions", [])
               if decision["superseded_by"] is None}
+    if (reply["kind"] == "change_request" or reply.get("answer") == "change_request") and active and "supersedes" not in reply:
+        raise ValueError("replacement must assess applicable decisions")
     if not set(reply.get("supersedes", [])) <= active:
         raise ValueError("supersedes names a decision that is not applicable")
     state = inputs["state"]
