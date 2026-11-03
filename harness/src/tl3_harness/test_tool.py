@@ -133,7 +133,7 @@ def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=No
                     raise ValueError("unavailable run reported tests")
             except (ValueError, KeyError, TypeError):
                 failure = process.incomplete()
-                result = infrastructure(failure.message(), origin="test_run" if process.started else None)
+                result = infrastructure(failure.message(), origin="test_run" if process.report_started else None)
                 result.update(execution=failure.as_json(), selectors=list(tests))
                 return result
         if unavailable is not None:
@@ -159,7 +159,8 @@ def run_current(tree, container, tests, parallel=0, summary=None, *, forcing=Non
             result = result.result
             result["message"] = failure.message()
         else:
-            result = infrastructure(failure.message())
+            result = infrastructure(failure.message(), origin=(
+                "test_run" if failure.outcome == ExecutionOutcome.UNKNOWN_INCOMPLETE else None))
         result.update(execution=failure.as_json(), selectors=list(tests))
         # Keep diagnostics and counts even for a selection with very long node IDs.
         while len(json.dumps(result).encode()) > SUMMARY_BYTES - 2048:

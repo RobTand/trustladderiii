@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from enum import StrEnum
 import json
 import os
-from pathlib import PurePosixPath
 import selectors
 import signal
 import subprocess
@@ -11,7 +10,6 @@ import time
 import uuid
 
 from .limits import MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES
-from .node_ids import selects
 from .report import decode
 
 
@@ -38,14 +36,21 @@ class ExecutionFailure(Exception):
         return result
 
     def message(self):
-        return (f'Test execution timeout in {self.phase}; no assertion verdict is available.'
-                if self.outcome == ExecutionOutcome.TEST_TIMEOUT else
-                f'Test execution {self.outcome} in {self.phase}: {self.termination_reason}. '
+        if self.outcome == ExecutionOutcome.TEST_TIMEOUT:
+            return f'Test execution timeout in {self.phase}; no assertion verdict is available.'
+        if self.outcome == ExecutionOutcome.UNKNOWN_INCOMPLETE and self.termination_reason == 'no_progress':
+            return ('Test execution no-progress timeout; test start and runner exit are unproven. '
+                    'Ownership is unknown. No test verdict is available; inspect this action, not fleet availability.')
+        return (f'Test execution {self.outcome} in {self.phase}: {self.termination_reason}. '
                 'No test verdict is available; inspect this action, not fleet availability.')
 
 
 class Supervised:
-    """Only runner protocol events establish phase, never checkout stdout or elapsed PB time."""
+    """Bound the launcher without treating in-process reports as lifecycle evidence.
+
+    Repo hooks can reach the reporter and its descriptor. Until a protected
+    external start/exit boundary exists, every no-progress timeout is unknown.
+    """
 
     def __init__(self, command, selection, tests):
         quiet = json.loads(os.environ.get('PRISMABUILD_ACTION_PROGRESS_ALLOWANCES', '{}')).get('tests', 120)
@@ -54,13 +59,10 @@ class Supervised:
         # Leave the remaining allowance for termination, diagnostics and publication.
         self.allowance = quiet * 0.7
         self.cleanup_seconds = min(2, quiet * 0.1)
-        self.tests = tests
-        self.started = False
-        self.test = None
-        self.finished = False
+        self.report_started = False
         self.exit_code = None
         self.container = None
-        command = list(command) + ['--supervised']
+        command = list(command)
         if command[:2] == ['docker', 'run']:
             self.container = 'tl3-test-' + uuid.uuid4().hex
             command[2:2] = ['--name', self.container]
@@ -75,10 +77,9 @@ class Supervised:
         return self
 
     def incomplete(self):
-        setup = not self.started and self.exit_code in (125, 126, 127)
+        setup = not self.report_started and self.exit_code in (125, 126, 127)
         return ExecutionFailure(ExecutionOutcome.SETUP_FAILURE if setup else ExecutionOutcome.UNKNOWN_INCOMPLETE,
-                                'container_start' if setup else 'unknown', 'incomplete_report',
-                                self.test is not None, self.test)
+                                'container_start' if setup else 'unknown', 'incomplete_report')
 
     def records(self):
         deadline = time.monotonic() + self.allowance
@@ -89,11 +90,7 @@ class Supervised:
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    owned = self.test is not None
-                    phase = ('cleanup' if self.finished else 'test_run') if owned else (
-                        'pre_test' if self.started else 'container_start')
-                    raise ExecutionFailure(ExecutionOutcome.TEST_TIMEOUT if owned else ExecutionOutcome.SETUP_FAILURE,
-                                           phase, 'no_progress', owned, self.test)
+                    raise ExecutionFailure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'unknown', 'no_progress')
                 if not ready.select(remaining):
                     continue
                 chunk = os.read(self.child.stdout.fileno(), 65536)
@@ -110,26 +107,14 @@ class Supervised:
                     if len(line) > MAX_REPORT_LINE_BYTES:
                         raise ValueError('oversized report line')
                     record = decode(line)
-                    if not self.started:
+                    if not self.report_started:
                         if record != {'event': 'start', 'schema': 1}:
                             raise ValueError('missing report header')
-                        self.started = True
+                        self.report_started = True
                     if record.get('event') == 'test-start':
-                        test = record.get('test')
-                        if (set(record) != {'event', 'test'} or not isinstance(test, str)
-                                or self.finished or not test or len(test) > MAX_REPORT_LINE_BYTES
-                                or self.tests and not any(
-                                    selects(selector, test) or "::" not in selector and (
-                                        str(PurePosixPath(selector)) == "." or
-                                        test.startswith(str(PurePosixPath(selector)) + "/"))
-                                    for selector in self.tests)):
-                            raise ValueError('invalid test start')
-                        self.test = test
-                        # A test starting is evidence, not a PB progress unit. Only completed
-                        # results advance PB's existing progress contract.
+                        # Legacy or forged events are only untrusted process output.
+                        # They prove neither test start nor runner liveness/exit.
                         continue
-                    if record.get('event') == 'finish':
-                        self.finished = True
                     yield line + b'\n'
                     if record.get('event') == 'result' or (
                             record.get('event') == 'phase' and record.get('when') == 'teardown'):
@@ -139,9 +124,9 @@ class Supervised:
             try:
                 self.exit_code = self.child.wait(timeout=max(0.001, deadline - time.monotonic()))
             except subprocess.TimeoutExpired as error:
-                owned = self.test is not None
-                raise ExecutionFailure(ExecutionOutcome.TEST_TIMEOUT if owned else ExecutionOutcome.SETUP_FAILURE,
-                                       'cleanup' if owned else 'pre_test', 'no_progress', owned, self.test) from error
+                # EOF and a report's finish record do not prove the runner exited:
+                # the direct child may still be Docker's attach/wait transport.
+                raise ExecutionFailure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'unknown', 'no_progress') from error
 
     def __exit__(self, *args):
         # Reap the whole group even if its launcher exited while a descendant retained pipes.

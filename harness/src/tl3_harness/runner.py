@@ -164,9 +164,8 @@ def describe(error):
 
 
 class Reporter:
-    def __init__(self, tests, descriptor, summary=False, parallel=False, patches=(), supervised=False):
+    def __init__(self, tests, descriptor, summary=False, parallel=False, patches=()):
         self.tests = tests
-        self.supervised = supervised
         self.descriptor = descriptor
         self.summary = summary
         # Under xdist, workers run the tests and this plugin sees only their reports.
@@ -265,10 +264,6 @@ class Reporter:
                       message=str(report.longrepr)[:1000])
         self.collection_errors.clear()
 
-    def pytest_runtest_logstart(self, nodeid, location):
-        if self.supervised:
-            self.emit(event="test-start", test=nodeid)
-
     @pytest.hookimpl(wrapper=True, tryfirst=True)
     def pytest_runtest_makereport(self, item, call):
         report = yield
@@ -340,7 +335,7 @@ def main():
     os.chdir(checkout)
     sys.path.insert(0, str(Path.cwd()))
     reporter = Reporter(tests, descriptor, summary, parallel=bool(summary and parallel),
-                        patches=tuple(forcing.get("patches", ())), supervised="--supervised" in flags)
+                        patches=tuple(forcing.get("patches", ())))
     # Start before pytest loads the checkout's conftest files, ini options and
     # plugins. Any exit after this point may come from the code under test.
     reporter.pytest_sessionstart()
