@@ -592,3 +592,33 @@ def test_context_only_buildbuddy_prompt_fixture(request_doc, monkeypatch):
         assert "the earlier BuildBuddy run showed" in prompt, role
         assert "always_tests" in prompt, role
     assert "Only evidence the request requires belongs in evidence_contract." in observed[0][0].text
+
+
+@pytest.mark.parametrize("source,goal,fragment", [
+    ("Edit only tests/test_wait.py. Do not hand-edit generated files.",
+     "Leave generated BUILD files untouched.", "Invented generated-output prohibition"),
+    ("Do not change any generated files, even through regeneration.",
+     "Keep generated files unchanged.", "Configured generation conflicts with issue.body"),
+])
+def test_audit_objects_to_generated_scope_conflicts(source, goal, fragment):
+    from tl3_workers.roles.audit import ROLE
+    inputs = {"issue": {"body": source}, "tool_capabilities": [
+        {"tool": "run_generator", "executor": "prismabuild_generator"}],
+        "ingest": {"kind": "brief", "brief": goal, "goals": [{"description": goal}]}}
+    reply = {"verdict": "agree", "objections": [], "evidence_contract": []}
+    ROLE.check_reply(inputs, reply)
+    assert reply["verdict"] == "disagree", reply
+    assert any(fragment in objection for objection in reply["objections"]), reply
+    if "issue.body" in fragment:
+        assert any(source in objection for objection in reply["objections"])
+
+
+def test_audit_preserves_manual_edit_restriction_with_generator():
+    from tl3_workers.roles.audit import ROLE
+    inputs = {"issue": {"body": "Edit only tests/test_wait.py. Do not hand-edit generated files."},
+        "tool_capabilities": [{"tool": "run_generator", "executor": "prismabuild_generator"}],
+        "ingest": {"kind": "brief", "brief": "Do not hand-edit generated files.",
+                   "goals": [{"description": "Never hand-edit generated files."}]}}
+    reply = {"verdict": "agree", "objections": [], "evidence_contract": []}
+    ROLE.check_reply(inputs, reply)
+    assert reply["verdict"] == "agree", reply
