@@ -64,6 +64,7 @@ fn setup(settings: &tl3_config::Store, started: bool) -> (Fixture, Controller, S
     controller.intake(request(12)).unwrap();
     let mut key = None;
     for _ in 0..300 {
+        scenario_progress("held: controller step");
         if !controller
             .drive_once_with(|boundary, effect_key| {
                 if boundary == Boundary::BeforeDispatch {
@@ -272,6 +273,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
                 .unwrap();
             if mode == "stop-restart" {
                 for _ in 0..300 {
+                    scenario_progress("held: controller step");
                     if controller.effect(&key).unwrap().unwrap().state
                         == tl3_store::EffectState::Cancelling
                     {
@@ -287,6 +289,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
                 controller = fixture.open(settings);
             }
             for _ in 0..300 {
+                scenario_progress("held: controller step");
                 if matches!(controller.world().unwrap().nodes[0].phase, Phase::Closed(_)) {
                     break;
                 }

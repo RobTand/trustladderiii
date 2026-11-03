@@ -60,6 +60,7 @@ fn label(c: &mut Controller, server: &Server, settings: &tl3_config::Store, acto
 }
 
 pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
+    progress(format!("{mode}: fixture"));
     let root = tempfile::tempdir().unwrap();
     let f = Arc::new(Fixture::create(root.path()));
     commit(&f.source, "value.py", "def value(): return 1\n");

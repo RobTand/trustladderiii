@@ -1,5 +1,8 @@
 use serde_json::json;
 use tl3_controller::executor::Output as Out;
+#[path = "support/scenario_shard.rs"]
+#[allow(dead_code)]
+mod scenario_shard;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 use std::{
@@ -296,24 +299,117 @@ fn main() {
         ),
     ];
     let selected = args.iter().find_map(|arg| arg.strip_prefix("--case="));
+    // Main solo receipt, rounded seconds; each fixture remains one group.
+    let groups = [
+        ("repository_count_mismatch", 1, 14),
+        ("repository_invalid_index", 1, 2),
+        ("repository_duplicate_index", 1, 8),
+        ("repository_index_gap", 1, 4),
+        ("repository_comment_case_identity", 1, 1),
+        ("repository_pr_comment_case_identity", 1, 1),
+        ("repository_capacity_and_addition", 1, 1),
+        ("repository_add_reorder", 1, 1),
+        ("repository_case_identity", 1, 1),
+        ("repository_append_three", 1, 1),
+        ("repository_remove_active", 1, 1),
+        ("repository_remove_idle", 1, 2),
+        ("repository_installation", 1, 1),
+        ("repository_crash_event", 1, 1),
+        ("repository_crash_rows", 1, 7),
+        ("repository_crash_effects", 1, 1),
+        ("repository_crash_transitions", 1, 1),
+        ("repository_crash_credit", 1, 1),
+        ("repository_crash_before_commit", 1, 1),
+        ("repository_crash_after_commit", 1, 1),
+        ("repository_crash_intern_before", 1, 1),
+        ("repository_crash_intern_after", 1, 1),
+        ("agent_capacity_reopen", 1, 10),
+        ("agent_capacity_downgrade", 1, 2),
+        ("agent_capacity_idle_downgrade", 1, 1),
+        ("gate_capacity_ended_look", 1, 3),
+        ("agent_capacity_crash_rows", 1, 1),
+        ("agent_capacity_crash_effects", 1, 1),
+        ("agent_capacity_crash_before_commit", 1, 1),
+        ("agent_capacity_crash_after_commit", 1, 2),
+        ("q48_capacity_ticket_order", 1, 4),
+        ("gate_capacity_reopen", 1, 2),
+        ("gate_capacity_downgrade", 1, 2),
+        ("gate_capacity_idle_downgrade", 1, 1),
+        ("gate_capacity_crash_rows", 1, 2),
+        ("gate_capacity_crash_effects", 1, 2),
+        ("gate_capacity_crash_before_commit", 1, 3),
+        ("gate_capacity_crash_after_commit", 1, 2),
+        ("write_outage_goes_idle", 1, 1),
+        ("labelled_issue_closes", 1, 3),
+        ("restart_without_duplicate_deliveries", 1, 23),
+        ("sent_but_absent", 1, 11),
+        ("acknowledged_operation_look", 1, 2),
+        ("retry_uses_the_kernels_new_key", 1, 3),
+        ("adapter_errors_are_isolated", 1, 18),
+        ("lost_response_keeps_the_key", 1, 13),
+        ("inbox_arrival_order", 1, 4),
+        ("watches_and_pending", 1, 35),
+        ("reconciled_failure", 1, 28),
+        ("upgrade_with_inflight_effects", 1, 18),
+        ("cancelled_absence", 1, 1),
+        ("stale_epoch_effects", 1, 8),
+        ("invalid_footprints", 1, 1),
+        ("status_is_read_only", 1, 1),
+        ("status_nodeless_incidents", 1, 1),
+        ("status_cli_incident_commands", 1, 1),
+        ("status_page_incident_commands", 1, 1),
+        ("status_cli_unposted_incident_commands", 1, 1),
+        ("status_page_unposted_incident_commands", 1, 1),
+        ("config_permissions_and_pool", 1, 1),
+        ("fix_round_preserves_uncommitted_work", 1, 3),
+        ("mixed_registry", 1, 4),
+        ("mixed_registry_conflict", 1, 4),
+        ("merged_discards_rebase_context", 1, 2),
+        ("stopped_discards_rebase_context", 1, 2),
+        ("publication_main_advance_clean", 1, 3),
+        ("publication_main_advance_conflict", 1, 3),
+        ("postmortem_records", 1, 2),
+        ("postmortem_incident_needs_rob", 1, 1),
+        ("postmortem_exactly_once_across_crashes", 1, 5),
+        ("postmortem_running_rows_recover_at_startup", 1, 2),
+        ("postmortem_failures_are_fixed_classes", 1, 3),
+        ("postmortem_failed_runs_retry_then_pause", 1, 5),
+        ("postmortem_quota_on_a_postmortem_model_stops_claims", 1, 4),
+        ("postmortem_claims_per_day", 1, 4),
+        ("postmortem_stalls_fail_with_no_progress", 1, 4),
+        ("postmortem_result_in_the_inbox_survives_a_restart", 1, 2),
+        ("status_requires_initialized_database", 1, 2),
+        ("status_page_and_command", 1, 33),
+    ];
+    let mut shard = if selected.is_some() {
+        scenario_shard::Shard::with_groups(0, 1, &groups)
+    } else {
+        scenario_shard::Shard::from_groups(&groups)
+    };
     for (name, test) in cases {
         if selected.is_some_and(|selected| selected != *name) {
             continue;
         }
-        test(&database.create(name));
-        println!("test {name} ... ok");
+        shard.run(*name, || {
+            test(&database.create(name));
+            println!("test {name} ... ok");
+        });
     }
     if let Some(selected) = selected {
         assert!(cases.iter().any(|(name, _)| *name == selected));
         database.stop();
         return;
     }
-    status_requires_initialized_database(&database.create("status_fresh"));
-    println!("test status_requires_initialized_database ... ok");
-    status_page_and_command(&database.create("status"), &mut database);
-    println!("test status_page_and_command ... ok");
+    shard.run("status_requires_initialized_database", || {
+        status_requires_initialized_database(&database.create("status_fresh"));
+        println!("test status_requires_initialized_database ... ok");
+    });
+    shard.run("status_page_and_command", || {
+        status_page_and_command(&database.create("status"), &mut database);
+        println!("test status_page_and_command ... ok");
+    });
     database.stop();
-    println!("{} controller scenarios passed; no skips", cases.len() + 2);
+    shard.finish("controller");
 }
 
 fn config_file(settings: &tl3_config::Store, root: &Path) -> PathBuf {

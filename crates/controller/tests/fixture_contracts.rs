@@ -442,3 +442,29 @@ fn controller_restart_waits_for_the_old_postgres_session_and_releases_its_probe(
     );
     claim.expect("the synchronization probe must release ownership before restarting");
 }
+
+#[test]
+fn scenario_shards_cover_nonworker_groups_including_markerless_setup_once() {
+    use support::scenario_shard::Shard;
+    let groups = [
+        ("fast", 1, 10),
+        ("slow", 1, 240),
+        ("setup", 0, 230),
+        ("after_setup", 1, 10),
+    ];
+    let mut seen = Vec::new();
+    let mut loads = [0; 2];
+    for (index, load) in loads.iter_mut().enumerate() {
+        let mut shard = Shard::with_groups(index, 2, &groups);
+        for (group, _, seconds) in groups {
+            shard.run(group, || {
+                seen.push(group);
+                *load += seconds;
+            });
+        }
+        shard.finish("nonworker fixture");
+    }
+    seen.sort_unstable();
+    assert_eq!(seen, ["after_setup", "fast", "setup", "slow"]);
+    assert!(loads.iter().all(|load| *load <= 300), "{loads:?}");
+}

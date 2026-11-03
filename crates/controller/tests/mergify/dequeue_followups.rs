@@ -147,6 +147,7 @@ pub(super) fn transient_bound(settings: &tl3_config::Store, quota: bool) {
     store_review_event(settings, &api, "healthy", 100);
     let failures = Arc::new(AtomicUsize::new(0));
     for attempt in 1..=3 {
+        scenario_progress(format!("dequeue_followups: attempt {attempt}"));
         // A restart must not reset one delivery's retry allowance.
         let mut registry = adapters::simulation(root.path()).unwrap();
         registry.register(

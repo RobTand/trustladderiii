@@ -56,6 +56,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             // Stop at the failed round; simulated agents would otherwise carry it on.
             ingress::drain(&mut controller).unwrap();
             for _ in 0..50 {
+                scenario_progress("missing_checks: controller step");
                 if controller.world().unwrap().nodes[0].phase != Phase::Publishing
                     || !controller.drive_once().unwrap()
                 {
@@ -237,6 +238,7 @@ fn publishing(
         })
         .unwrap();
     for _ in 0..300 {
+        scenario_progress("missing_checks: controller step");
         let progressed = controller
             .drive_once_with(|boundary, key| {
                 if boundary == Boundary::BeforeDispatch {

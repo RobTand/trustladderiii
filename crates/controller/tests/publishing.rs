@@ -626,6 +626,8 @@ fn drain_with_budget(
 ) {
     let (sender, receiver) = mpsc::channel();
     let start = Instant::now();
+    let mut last_progress = start;
+    let mut phase = c.world().unwrap().nodes[0].phase;
     loop {
         let mut changed = false;
         let mut idle = false;
@@ -635,6 +637,11 @@ fn drain_with_budget(
                 break;
             }
             changed = true;
+            let next_phase = c.world().unwrap().nodes[0].phase;
+            if next_phase != phase {
+                phase = next_phase;
+                last_progress = Instant::now();
+            }
             if expected == (Phase::Planning { must_split: true })
                 && c.world().unwrap().nodes[0].phase == expected
             {
@@ -653,6 +660,7 @@ fn drain_with_budget(
         for input in receiver.try_iter() {
             if let Input::Observation { key, observation } = input {
                 c.observe(&key, observation).unwrap();
+                last_progress = Instant::now();
                 changed = true;
                 observed = true;
             }
@@ -663,8 +671,10 @@ fn drain_with_budget(
             return;
         }
         assert!(
-            start.elapsed() < budget,
-            "publishing did not settle: {:?}",
+            last_progress.elapsed() < budget && start.elapsed() < Duration::from_secs(300),
+            "publishing did not settle after {:?}, no settle progress for {:?}: {:?}",
+            start.elapsed(),
+            last_progress.elapsed(),
             c.world().unwrap().nodes[0]
         );
         if !changed {
@@ -1555,14 +1565,17 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     drop(server.runtime);
 }
 fn publication_open_conflict() {
+    progress("publication_open_conflict: fixture");
     let root = tempfile::tempdir().unwrap();
     let f = Arc::new(Fixture::create(root.path()));
     let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
     f.adapter().execute(&prepare).unwrap();
+    progress("publication fixture: prepared");
     let head = commit(&f.adapter().checkout(&prepare), "shared.txt", "leaf side\n");
     let mut push = f.delivery(EffectKind::Push, 2);
     push.head_sha = Some(head);
     f.adapter().execute(&push).unwrap();
+    progress("publication fixture: pushed");
     f.advance_main(true);
     let server = Server::new(f);
     let token = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
@@ -1654,13 +1667,16 @@ fn publication_open_conflict() {
     );
 }
 fn publication_requires_conventions() {
+    progress("publication_requires_conventions: fixture");
     let root = tempfile::tempdir().unwrap();
     let fixture = Arc::new(Fixture::create(root.path()));
     let prepare = fixture.delivery(EffectKind::PrepareWorktree, 1);
     fixture.adapter().execute(&prepare).unwrap();
+    progress("publication fixture: prepared");
     let mut push = fixture.delivery(EffectKind::Push, 2);
     push.head_sha = Some(fixture.head(&prepare));
     fixture.adapter().execute(&push).unwrap();
+    progress("publication fixture: pushed");
     let server = Server::new(fixture.clone());
     let mut adapter = server
         .adapter(&root.path().join("github"), 1)
@@ -1686,14 +1702,17 @@ fn publication_requires_conventions() {
 }
 
 fn publication_recovery() {
+    progress("publication_recovery: fixture");
     let root = tempfile::tempdir().unwrap();
     let f = Arc::new(Fixture::create(root.path()));
     let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
     f.adapter().execute(&prepare).unwrap();
+    progress("publication fixture: prepared");
     let sha = commit(&f.adapter().checkout(&prepare), "leaf.txt", "change\n");
     let mut d = f.delivery(EffectKind::Push, 2);
     d.head_sha = Some(sha.clone());
     f.adapter().execute(&d).unwrap();
+    progress("publication recovery: pushed");
     let server = Server::new(f);
     let records = root.path().join("github");
     let mut approval = d.clone();
@@ -1790,6 +1809,7 @@ fn publication_recovery() {
 }
 
 fn publication_refusal_retention(settings: &tl3_config::Store, reconciliation: bool) {
+    progress("publication_refusal_retention: fixture");
     let root = tempfile::tempdir().unwrap();
     let server = Server::new(Arc::new(Fixture::create(root.path())));
     if !reconciliation {
@@ -1821,6 +1841,7 @@ fn publication_refusal_retention(settings: &tl3_config::Store, reconciliation: b
     let dispatched = std::cell::Cell::new(false);
     let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         for _ in 0..300 {
+            progress("publication_retention: drive_once_with");
             controller
                 .drive_once_with(|boundary, key| {
                     let effect = Store::open(settings).unwrap().effect(key).unwrap().unwrap();
@@ -1952,6 +1973,7 @@ fn publication_refusal_retention(settings: &tl3_config::Store, reconciliation: b
 }
 
 fn publication_404_look(settings: &tl3_config::Store, case: &str) {
+    progress("publication_404_look: fixture");
     let kind = if case == "approval" {
         EffectKind::PostApproval
     } else {
@@ -1990,6 +2012,7 @@ fn publication_404_look(settings: &tl3_config::Store, case: &str) {
     let attempts = std::cell::Cell::new(0);
     let settle = |controller: &mut Controller| {
         for _ in 0..300 {
+            progress(format!("publication_404_look {case}: drive_once_with"));
             if !controller.drive_once_with(|boundary, key| {
                 if boundary == Boundary::BeforeDispatch {
                     let effect = Store::open(settings).unwrap().effect(key).unwrap().unwrap();
@@ -2219,29 +2242,9 @@ fn main() {
         scenario("publishing_database_stop", || database.stop());
         return;
     }
-    if env::args().len() == 1 || env::args().nth(1).as_deref() == Some("--router-regression") {
-        scenario("router_retire_delivery", || {
-            let root = tempfile::tempdir().unwrap();
-            let mut router = workers(
-                support::executor_probe::Probe,
-                support::executor_probe::Probe,
-                Arc::new(Fixture::create(root.path())),
-                "merged".into(),
-            );
-            support::executor_probe::assert_retire_delivery(&mut router);
-            assert!(
-                !drive_to_idle(|| true),
-                "a continuously active publishing driver must exhaust its burst"
-            );
-            let mut progress = [true, true, false].into_iter();
-            assert!(drive_to_idle(|| progress
-                .next()
-                .expect("an idle publishing driver must not be driven again")));
-        });
-        println!("test router_retire_delivery ... ok");
-        if std::env::args().len() > 1 {
-            return;
-        }
+    if env::args().nth(1).as_deref() == Some("--router-regression") {
+        router_regression();
+        return;
     }
 
     if let Some(mode) = env::args().nth(1) {
@@ -2258,20 +2261,76 @@ fn main() {
         println!("test publishing_{mode} ... ok");
         return;
     }
-    scenario(
-        "stage_obligations_block_publication",
-        stage_obligations_block_publication,
-    );
-    println!("test stage_obligations_block_publication ... ok");
-    scenario("publication_open_conflict", publication_open_conflict);
-    println!("test publication_open_conflict ... ok");
-    scenario(
-        "publication_requires_conventions",
-        publication_requires_conventions,
-    );
-    println!("test publication_requires_conventions ... ok");
-    scenario("publication_lost_response_recovery", publication_recovery);
-    println!("test publication_lost_response_recovery ... ok");
+    run_default();
+}
+
+fn router_regression() {
+    scenario("router_retire_delivery", || {
+        let root = tempfile::tempdir().unwrap();
+        let mut router = workers(
+            support::executor_probe::Probe,
+            support::executor_probe::Probe,
+            Arc::new(Fixture::create(root.path())),
+            "merged".into(),
+        );
+        support::executor_probe::assert_retire_delivery(&mut router);
+        assert!(
+            !drive_to_idle(|| true),
+            "a continuously active publishing driver must exhaust its burst"
+        );
+        let mut progress = [true, true, false].into_iter();
+        assert!(drive_to_idle(|| progress
+            .next()
+            .expect("an idle publishing driver must not be driven again")));
+    });
+    println!("test router_retire_delivery ... ok");
+}
+
+fn run_default() {
+    // Main, four- and eight-shard solo receipts, rounded up; retain complete fixtures.
+    // Stage obligations took 264 s on a slow executor and must have its own shard.
+    let seconds = [
+        1, 265, 20, 4, 22, 6, 3, 10, 15, 6, 20, 17, 39, 14, 13, 18, 63, 57, 150, 13, 72, 18, 13,
+        12, 116, 28, 10, 13, 69, 16, 57, 15, 84, 6, 7, 10, 156, 1,
+    ];
+    let groups: Vec<_> = seconds
+        .iter()
+        .enumerate()
+        .map(|(index, seconds)| (index, 1, *seconds))
+        .collect();
+    let mut shard = support::scenario_shard::Shard::from_groups(&groups);
+    let mut index = 0;
+    macro_rules! case {
+        ($body:block) => {{
+            shard.run(index, || $body);
+            index += 1;
+        }};
+    }
+    case!({
+        router_regression();
+    });
+    case!({
+        scenario(
+            "stage_obligations_block_publication",
+            stage_obligations_block_publication,
+        );
+        println!("test stage_obligations_block_publication ... ok");
+    });
+    case!({
+        scenario("publication_open_conflict", publication_open_conflict);
+        println!("test publication_open_conflict ... ok");
+    });
+    case!({
+        scenario(
+            "publication_requires_conventions",
+            publication_requires_conventions,
+        );
+        println!("test publication_requires_conventions ... ok");
+    });
+    case!({
+        scenario("publication_lost_response_recovery", publication_recovery);
+        println!("test publication_lost_response_recovery ... ok");
+    });
     let python = scenario("publishing_worker_setup", prepare_workers);
     let mut database = scenario("publishing_database_setup", support::Database::start);
     for reconciliation in [true, false] {
@@ -2280,14 +2339,18 @@ fn main() {
         } else {
             "publication_first_404_retained_after_success"
         };
-        scenario(name, || {
-            publication_refusal_retention(&database.create(name), reconciliation)
+        case!({
+            scenario(name, || {
+                publication_refusal_retention(&database.create(name), reconciliation)
+            });
+            println!("test {name} ... ok");
         });
-        println!("test {name} ... ok");
     }
     for case in ["open", "approval", "open-restart"] {
-        scenario(&format!("publication_404_look_{case}"), || {
-            publication_404_look(&database.create(&format!("publication_404_{case}")), case);
+        case!({
+            scenario(&format!("publication_404_look_{case}"), || {
+                publication_404_look(&database.create(&format!("publication_404_{case}")), case);
+            });
         });
     }
     for mode in [
@@ -2316,14 +2379,16 @@ fn main() {
         "reports-latest",
         "reports-closed",
     ] {
-        scenario(&format!("publishing_{mode}"), || {
-            lifecycle(
-                &database.create(&format!("publishing_{mode}")),
-                &python,
-                mode,
-            );
+        case!({
+            scenario(&format!("publishing_{mode}"), || {
+                lifecycle(
+                    &database.create(&format!("publishing_{mode}")),
+                    &python,
+                    mode,
+                );
+            });
+            println!("test publishing_{mode} ... ok");
         });
-        println!("test publishing_{mode} ... ok");
     }
     for mode in [
         "adoption-pass",
@@ -2331,11 +2396,14 @@ fn main() {
         "adoption-extras",
         "adoption-negative",
     ] {
-        scenario(mode, || {
-            publishing_adoption::run(&database.create(&mode.replace('-', "_")), &python, mode);
+        case!({
+            scenario(mode, || {
+                publishing_adoption::run(&database.create(&mode.replace('-', "_")), &python, mode);
+            });
+            println!("test {mode} ... ok");
         });
-        println!("test {mode} ... ok");
     }
     scenario("publishing_database_stop", || database.stop());
-    println!("38 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
+    assert_eq!(index, groups.len());
+    shard.finish("publishing");
 }

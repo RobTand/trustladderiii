@@ -161,6 +161,18 @@ fn open(
     Controller::open(store, registry, boot).unwrap()
 }
 pub(super) fn run(db: &mut support::Database) {
+    let groups: Vec<_> = (0..117).map(|index| (index, 1, 1)).collect();
+    let mut shard = support::scenario_shard::Shard::with_groups(0, 1, &groups);
+    let mut index = 0;
+    run_sharded(db, &mut shard, &mut index);
+    assert_eq!(index, groups.len());
+}
+
+pub(super) fn run_sharded(
+    db: &mut support::Database,
+    shard: &mut support::scenario_shard::Shard<usize>,
+    index: &mut usize,
+) {
     let mut failures = 0;
     for name in [
         "rejected_ask",
@@ -182,17 +194,21 @@ pub(super) fn run(db: &mut support::Database) {
         "lost_note",
         "filing_403",
     ] {
-        let settings = db.create(name);
-        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            scenario(&settings, name, "none")
-        }))
-        .is_err()
-        {
-            eprintln!("test notice_{name} ... FAILED");
-            failures += 1;
-        } else {
-            println!("test notice_{name} ... ok");
-        }
+        let group = *index;
+        *index += 1;
+        shard.run(group, || {
+            let settings = db.create(name);
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                scenario(&settings, name, "none")
+            }))
+            .is_err()
+            {
+                eprintln!("test notice_{name} ... FAILED");
+                failures += 1;
+            } else {
+                println!("test notice_{name} ... ok");
+            }
+        });
     }
     assert_eq!(failures, 0, "notice incident scenarios failed");
     for name in [
@@ -219,12 +235,16 @@ pub(super) fn run(db: &mut support::Database) {
             "BeforeReconcile",
             "AfterReconcile",
         ] {
-            scenario(
-                &db.create(&format!("notice_cut_{name}_{point}")),
-                name,
-                point,
-            );
-            println!("test notice_{name}_retry_{point} ... ok");
+            let group = *index;
+            *index += 1;
+            shard.run(group, || {
+                scenario(
+                    &db.create(&format!("notice_cut_{name}_{point}")),
+                    name,
+                    point,
+                );
+                println!("test notice_{name}_retry_{point} ... ok");
+            });
         }
     }
 }

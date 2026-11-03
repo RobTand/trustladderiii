@@ -600,7 +600,69 @@ fn main() {
         notice_incidents::child(&args);
         return;
     }
-    request_vocabulary::all();
+    let group = args
+        .get(1)
+        .and_then(|arg| arg.strip_prefix("--gate-group="));
+    assert!(group.is_none_or(|group| matches!(group, "notices" | "flow")));
+    let markers = if group == Some("notices") {
+        let mut markers = vec![6];
+        markers.extend([1; 118]);
+        markers
+    } else {
+        [
+            6, 11, 6, 1, 1, 1, 1, 1, 7, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        ]
+        .to_vec()
+    };
+    // Main and completed sharded solo receipts, rounded up to keep slow groups apart.
+    // Intake regressions share the vocabulary group and emit status lines, not
+    // timing markers. The group weight includes its measured post-marker tail.
+    let seconds = [
+        205, 87, 41, 23, 59, 7, 4, 8, 47, 10, 1, 6, 2, 95, 3, 23, 163, 11, 142, 16, 111, 114, 59,
+        166, 98, 141, 41, 222, 61, 7, 7, 104, 45, 63, 1, 8, 6, 76, 59, 28, 42, 3, 49, 7, 35, 14,
+        37, 16, 9, 64, 39, 54, 56, 12, 41, 5, 66, 38,
+    ];
+    // Successful main notice receipt 50fdb6d4 and completed eight- and sixteen-shard receipts.
+    let notice_seconds = [
+        20, 3, 62, 22, 9, 10, 31, 3, 2, 5, 39, 2, 7, 21, 7, 6, 50, 33, 10, 19, 19, 3, 3, 3, 10, 20,
+        2, 18, 7, 2, 5, 57, 60, 11, 42, 10, 38, 6, 46, 6, 4, 21, 3, 21, 5, 20, 12, 8, 3, 14, 21, 2,
+        5, 6, 58, 8, 6, 39, 10, 8, 19, 5, 37, 3, 17, 17, 4, 2, 3, 3, 29, 18, 4, 25, 12, 59, 8, 20,
+        62, 42, 11, 66, 5, 6, 5, 3, 7, 4, 10, 34, 3, 33, 4, 29, 59, 9, 4, 34, 5, 7, 5, 54, 52, 79,
+        3, 37, 3, 15, 21, 28, 123, 18, 42, 65, 74, 25, 10, 76, 8,
+    ];
+    let groups: Vec<_> = markers
+        .iter()
+        .enumerate()
+        .map(|(index, markers)| {
+            (
+                index,
+                *markers,
+                if group == Some("notices") {
+                    notice_seconds[index]
+                } else {
+                    seconds[index]
+                },
+            )
+        })
+        .collect();
+    let mut shard = if group.is_some() {
+        support::scenario_shard::Shard::from_groups(&groups)
+    } else {
+        support::scenario_shard::Shard::with_groups(0, 1, &groups)
+    };
+    let mut index = 0;
+    macro_rules! case {
+        ($body:block) => {{
+            shard.run(index, || $body);
+            index += 1;
+        }};
+    }
+    if group != Some("flow") {
+        case!({
+            request_vocabulary::all();
+        });
+    }
     let mut database = support::Database::start();
     if args.get(1).is_some_and(|arg| arg == "--catchup-heads") {
         catchup_heads::run(&mut database);
@@ -668,21 +730,33 @@ fn main() {
         database.stop();
         return;
     }
-    let group = args
-        .get(1)
-        .and_then(|arg| arg.strip_prefix("--gate-group="));
-    assert!(group.is_none_or(|group| matches!(group, "notices" | "flow")));
     if args.len() == 1 || group == Some("flow") {
-        intake_errors::run_with_database(&mut database);
+        if group == Some("flow") {
+            case!({
+                request_vocabulary::all();
+                intake_errors::run_with_database(&mut database);
+            });
+        } else {
+            intake_errors::run_with_database(&mut database);
+        }
     }
     if group != Some("flow") {
-        notice_incidents::run(&mut database);
-        operations_and_delivery_log(&database.create("operations"));
-        println!("test operations_messages_and_missed_delivery_recovery ... ok");
+        if group == Some("notices") {
+            notice_incidents::run_sharded(&mut database, &mut shard, &mut index);
+            case!({
+                operations_and_delivery_log(&database.create("operations"));
+                println!("test operations_messages_and_missed_delivery_recovery ... ok");
+            });
+        } else {
+            notice_incidents::run(&mut database);
+            operations_and_delivery_log(&database.create("operations"));
+            println!("test operations_messages_and_missed_delivery_recovery ... ok");
+        }
     }
     if group == Some("notices") {
         database.stop();
-        println!("124 GitHub notice scenarios passed; no skips; no live GitHub calls");
+        assert_eq!(index, groups.len());
+        shard.finish("GitHub notice");
         return;
     }
     if let Some(scenario) = args.get(1).and_then(|arg| arg.strip_prefix("--followup=")) {
@@ -695,72 +769,158 @@ fn main() {
         database.stop();
         return;
     }
-    catchup_heads::run(&mut database);
-    startup_ack::run(&mut database);
-    receiver_is_durable(&database.create("receiver"));
-    println!("test receiver_is_durable ... ok");
-    gap_catch_up(&database.create("gap"));
-    println!("test gap_catch_up ... ok");
-    post_crash_recovers(&database.create("post_crash"));
-    println!("test post_crash_recovers ... ok");
-    message_reconciliation();
-    println!("test message_reconciliation ... ok");
-    console_note_posts_once();
-    println!("test console_note_posts_once ... ok");
-    real_writer::all();
-    real_writer::classifier_contract();
-    writer_checks();
-    println!("test writer_checks ... ok");
-    receiver_limits(&database.create("receiver_limits"));
-    println!("test receiver_limits ... ok");
-    source_failures(&database.create("source_failures"));
-    println!("test source_failures ... ok");
-    {
-        let mut reconnect = support::Database::start();
-        let mut settings = reconnect.create("reconnect");
-        settings.connect_timeout_secs = 1;
-        delivery_reconnects(&settings, &mut reconnect);
-        reconnect.stop();
-    }
-    println!("test delivery_reconnects ... ok");
-    parsed_deliveries_and_translators(&database.create("parsed"));
-    println!("test parsed_deliveries_and_translators ... ok");
-    catch_up_preserves_evidence(&database.create("catch_up_evidence"));
-    println!("test catch_up_preserves_evidence ... ok");
-    daemon_with_workers(&database.create("daemon_workers"));
-    println!("test daemon_webhooks_worker_replies_and_source_failure ... ok");
-    steering::linked_reconciliation();
-    steering::commands(&database.create("steering_commands"));
-    steering::answers(&database.create("steering_answers"));
-    steering::replacement(&database.create("steering_replacement"));
-    steering::correction(&database.create("steering_correction"));
-    steering::queued_pause(&database.create("steering_queue"));
-    steering::answer_recovery(&database.create("steering_answer_recovery"));
-    steering::classifier_failures(&database.create("classifier_failures"));
-    steering::concurrent_requests(&database.create("concurrent_requests"));
-    steering::guidance(&database.create("steering_guidance"));
-    steering::credit(&database.create("steering_credit"));
-    steering::answer_replacement(&database.create("answer_replacement"));
-    steering::writer_rejection();
+    case!({
+        catchup_heads::run(&mut database);
+    });
+    case!({
+        startup_ack::run(&mut database);
+    });
+    case!({
+        receiver_is_durable(&database.create("receiver"));
+        println!("test receiver_is_durable ... ok");
+    });
+    case!({
+        gap_catch_up(&database.create("gap"));
+        println!("test gap_catch_up ... ok");
+    });
+    case!({
+        post_crash_recovers(&database.create("post_crash"));
+        println!("test post_crash_recovers ... ok");
+    });
+    case!({
+        message_reconciliation();
+        println!("test message_reconciliation ... ok");
+    });
+    case!({
+        console_note_posts_once();
+        println!("test console_note_posts_once ... ok");
+    });
+    case!({
+        real_writer::all();
+    });
+    case!({
+        real_writer::classifier_contract();
+    });
+    case!({
+        writer_checks();
+        println!("test writer_checks ... ok");
+    });
+    case!({
+        receiver_limits(&database.create("receiver_limits"));
+        println!("test receiver_limits ... ok");
+    });
+    case!({
+        source_failures(&database.create("source_failures"));
+        println!("test source_failures ... ok");
+    });
+    case!({
+        {
+            let mut reconnect = support::Database::start();
+            let mut settings = reconnect.create("reconnect");
+            settings.connect_timeout_secs = 1;
+            delivery_reconnects(&settings, &mut reconnect);
+            reconnect.stop();
+        }
+        println!("test delivery_reconnects ... ok");
+    });
+    case!({
+        parsed_deliveries_and_translators(&database.create("parsed"));
+        println!("test parsed_deliveries_and_translators ... ok");
+    });
+    case!({
+        catch_up_preserves_evidence(&database.create("catch_up_evidence"));
+        println!("test catch_up_preserves_evidence ... ok");
+    });
+    case!({
+        daemon_with_workers(&database.create("daemon_workers"));
+        println!("test daemon_webhooks_worker_replies_and_source_failure ... ok");
+    });
+    case!({
+        steering::linked_reconciliation();
+    });
+    case!({
+        steering::commands(&database.create("steering_commands"));
+    });
+    case!({
+        steering::answers(&database.create("steering_answers"));
+    });
+    case!({
+        steering::replacement(&database.create("steering_replacement"));
+    });
+    case!({
+        steering::correction(&database.create("steering_correction"));
+    });
+    case!({
+        steering::queued_pause(&database.create("steering_queue"));
+    });
+    case!({
+        steering::answer_recovery(&database.create("steering_answer_recovery"));
+    });
+    case!({
+        steering::classifier_failures(&database.create("classifier_failures"));
+    });
+    case!({
+        steering::concurrent_requests(&database.create("concurrent_requests"));
+    });
+    case!({
+        steering::guidance(&database.create("steering_guidance"));
+    });
+    case!({
+        steering::credit(&database.create("steering_credit"));
+    });
+    case!({
+        steering::answer_replacement(&database.create("answer_replacement"));
+    });
+    case!({
+        steering::writer_rejection();
+    });
     for race in ["label", "merge", "crash"] {
-        steering::replacement_race(
-            &database.create(&format!("replacement_window_{race}")),
-            race,
-        );
+        case!({
+            steering::replacement_race(
+                &database.create(&format!("replacement_window_{race}")),
+                race,
+            );
+        });
     }
-    steering::unanswered_clarification_closes(&database.create("unanswered_clarification"));
-    steering::dropped_change_quote();
-    steering::second_replacement(&database.create("second_replacement"));
-    restart::open_request(&database.create("restart_open"));
-    restart::delegated_restart(&database.create("restart_delegated"));
-    restart::revoked_issue(&database.create("restart_revoked"));
-    restart::stopped_request(&database.create("restart_stopped"));
-    restart::merged_request(&database.create("restart_merged"));
-    restart::reopens_issue_tl3_closed();
-    restart::stopping_request(&database.create("restart_stopping"));
-    restart::unreadable_issue(&database.create("restart_unreadable"));
-    restart::gone_issue(&database.create("restart_gone"));
-    restart::duplicate_request(&database.create("restart_duplicate"));
+    case!({
+        steering::unanswered_clarification_closes(&database.create("unanswered_clarification"));
+    });
+    case!({
+        steering::dropped_change_quote();
+    });
+    case!({
+        steering::second_replacement(&database.create("second_replacement"));
+    });
+    case!({
+        restart::open_request(&database.create("restart_open"));
+    });
+    case!({
+        restart::delegated_restart(&database.create("restart_delegated"));
+    });
+    case!({
+        restart::revoked_issue(&database.create("restart_revoked"));
+    });
+    case!({
+        restart::stopped_request(&database.create("restart_stopped"));
+    });
+    case!({
+        restart::merged_request(&database.create("restart_merged"));
+    });
+    case!({
+        restart::reopens_issue_tl3_closed();
+    });
+    case!({
+        restart::stopping_request(&database.create("restart_stopping"));
+    });
+    case!({
+        restart::unreadable_issue(&database.create("restart_unreadable"));
+    });
+    case!({
+        restart::gone_issue(&database.create("restart_gone"));
+    });
+    case!({
+        restart::duplicate_request(&database.create("restart_duplicate"));
+    });
     for point in [
         "none",
         "EventWritten",
@@ -775,10 +935,17 @@ fn main() {
         "BeforeReconcile",
         "AfterReconcile",
     ] {
-        steering::merge_pending(&database.create(&format!("pending_{point}")), point);
+        case!({
+            steering::merge_pending(&database.create(&format!("pending_{point}")), point);
+        });
     }
     database.stop();
-    let scenario_count = if group == Some("flow") { 84 } else { 202 };
+    if group == Some("flow") {
+        assert_eq!(index, groups.len());
+        shard.finish("GitHub integration");
+        return;
+    }
+    let scenario_count = 202;
     println!(
         "{scenario_count} GitHub integration scenarios passed; no skips; no live GitHub calls"
     );

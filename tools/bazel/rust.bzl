@@ -42,6 +42,16 @@ _RUNTIME = {}
 # rust_gate.py runs the controller's github binary as two timed groups.
 _GATE_GROUPS = {"tl3-controller/github": ["flow", "notices"]}
 
+# These custom harnesses select complete scenario groups through scenario_shard.rs.
+_SCENARIO_SHARDS = {
+    "tl3-controller/github-flow": 50,
+    "tl3-controller/github-notices": 32,
+    "tl3-controller/mergify": 8,
+    "tl3-controller/publishing": 38,
+    "tl3-controller/simulation": 16,
+    "tl3-controller/workers": 8,
+}
+
 # Inputs read by controller tests, rather than by the controller library.
 _CONTROLLER_TEST_DATA = [
     "//crates/config:sources",
@@ -106,7 +116,7 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/reproducing_rebase.rs": ["tests/worktree_fixture/**"],
     "tests/scenario_watchdog.rs": ["tests/support/scenario.rs"],
     "tests/scope.rs": ["tests/support/**", "tests/worktree_fixture/**"],
-    "tests/simulation.rs": ["tests/worktree_fixture/**"],
+    "tests/simulation.rs": ["tests/worktree_fixture/**", "tests/support/scenario_shard.rs"],
     "tests/workers.rs": [
         "tests/support/**",
         "tests/fixtures/pb.py",
@@ -167,7 +177,7 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
         tags = ["rust"] + tags,
         exec_properties = exec_properties,
         size = "large",
-        shard_count = 8 if controller and name == "test_test_workers" else 0,
+        shard_count = _SCENARIO_SHARDS.get(binary_id, 0),
         # Keep #472 while worker shards need CPU calibration and wall_only entries remain.
         timeout = "eternal" if binary_id == "tl3-controller/workers" else "long",
     )
