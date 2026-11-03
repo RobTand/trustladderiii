@@ -47,6 +47,9 @@ def tl3_py_test(name, srcs, main = None, deps = [], data = [], **kwargs):
     module = main or srcs[0]
     tags, exec_properties = nonhermetic(name)
     exec_properties.update(test_size(package, name))
+    # Main and wave 5 both exceeded 300s in uncached solo remote runs.
+    if package == "workers/tests" and name == "test_pb_machine_records":
+        kwargs["timeout"] = "long"
     py_test(
         name = name,
         main = "//tools/bazel:python_runner.py",
