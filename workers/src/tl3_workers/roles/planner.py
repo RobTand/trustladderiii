@@ -1,6 +1,7 @@
 """Report plan measurements and rule violations to the controller."""
 
 from copy import deepcopy
+import configparser
 import ast
 import tomllib
 from pathlib import PurePosixPath
@@ -347,24 +348,108 @@ def test_files():
     return patterns if isinstance(patterns, list) and all(isinstance(item, str) for item in patterns) else None
 
 
-def base_file_selection(path, read_sources):
-    """Enumerate only unambiguous static definitions already visible in the same run."""
+def discovery_text(tree, path):
+    """Read optional base metadata without following links or echoing its contents."""
     try:
-        validate_always_tests([path])
-        patterns = test_files()
-        if patterns is None or not is_test(path, patterns):
-            return (), 'Base test definitions are unavailable for this configured path.'
-        with Worktree('.') as tree, tree._file(path) as stream:
+        with tree._file(path) as stream:
             source = stream.read(HARD_CAP_BYTES + 1)
-        if len(source.encode()) > HARD_CAP_BYTES:
-            return (), f'Base test discovery exceeds the {HARD_CAP_BYTES}-byte limit.'
-        module = ast.parse(source)
-    except (OSError, ValueError, UnicodeError, SyntaxError, RecursionError, MemoryError):
-        return (), 'Base test definitions are unavailable.'
+    except FileNotFoundError:
+        return None, None
+    except ValueError as error:
+        return (None, None) if str(error) == 'File not found' else (None, 'unavailable discovery metadata')
+    except (OSError, UnicodeError):
+        return None, 'unavailable discovery metadata'
+    if len(source.encode()) > HARD_CAP_BYTES:
+        return None, 'discovery metadata exceeds the byte limit'
+    return source, None
+
+
+COLLECTION_DEFAULTS = {
+    'python_files': ('test_*.py', '*_test.py'),
+    'python_functions': ('test',),
+    'python_classes': ('Test',),
+}
+
+
+def collection_settings(name, source):
+    """Accept only certain default collection, independently of config precedence."""
+    try:
+        if name == 'pyproject.toml':
+            settings = tomllib.loads(source).get('tool', {}).get('pytest', {}).get('ini_options', {})
+        else:
+            config = configparser.ConfigParser(interpolation=None)
+            config.read_string(source)
+            if config.defaults() or name == 'setup.cfg' and config.has_section('pytest'):
+                return 'uncertain collection settings'
+            section = 'tool:pytest' if name == 'setup.cfg' else 'pytest'
+            settings = dict(config[section]) if config.has_section(section) else {}
+        if not isinstance(settings, dict):
+            return 'uncertain collection settings'
+        for key, default in COLLECTION_DEFAULTS.items():
+            value = settings.get(key, default)
+            if isinstance(value, str):
+                value = value.split()
+            if not isinstance(value, (list, tuple)) or tuple(value) != default:
+                return 'non-default collection settings'
+        # Explicit plugin loading can replace collection even with default prefixes.
+        options = settings.get('addopts', '')
+        if not isinstance(options, (str, list, tuple)):
+            return 'uncertain collection settings'
+        words = options.split() if isinstance(options, str) else options
+        if (not all(isinstance(word, str) for word in words)
+                or any(word.startswith(('-p', '--override-ini', '-o')) for word in words)
+                or settings.get('required_plugins')):
+            return 'dynamic plugin collection settings'
+    except (ValueError, TypeError, AttributeError, configparser.Error):
+        return 'unavailable collection settings'
+    return None
+
+
+def collection_context(path):
+    """Inspect all ancestor config/conftest files; uncertain precedence refuses too."""
+    parents = list(reversed(PurePosixPath(path).parents))
+    if len(parents) > 64:
+        return 'discovery ancestor limit'
+    used = 0
+    with Worktree('.') as tree:
+        for parent in parents:
+            for name in ('pytest.ini', '.pytest.ini', 'pyproject.toml', 'setup.cfg', 'tox.ini',
+                         'pytest.toml', '.pytest.toml', 'conftest.py'):
+                source, problem = discovery_text(tree, str(parent / name))
+                if problem:
+                    return 'unavailable collection settings' if name != 'conftest.py' else problem
+                if source is None:
+                    continue
+                used += len(source.encode())
+                if used > HARD_CAP_BYTES:
+                    return 'discovery metadata exceeds the byte limit'
+                if name == 'conftest.py':
+                    _, problem = static_test_definitions(source, str(parent / name), collect=False)
+                elif name.endswith('.toml') and name != 'pyproject.toml':
+                    problem = 'unsupported collection settings'
+                else:
+                    problem = collection_settings(name, source)
+                if problem:
+                    return problem
+    return None
+
+
+def literal_or_name(node):
+    if isinstance(node, ast.Name):
+        return True
+    try:
+        ast.literal_eval(node)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def static_test_definitions(source, path, *, collect=True):
+    """Allow static statements and inert definition expressions, never execute Python."""
     nodes = []
     selection_bytes = 0
 
-    def scan(body, prefix):
+    def scan(body, prefix, collecting):
         nonlocal selection_bytes
         seen = set()
         for node in body:
@@ -372,33 +457,48 @@ def base_file_selection(path, read_sources):
                 names = [node.name]
                 if node.name.startswith('pytest_') or node.name in {'__getattr__', '__init__', '__new__'}:
                     return 'dynamic collection hooks'
-                decorators = [ast.unparse(item.func if isinstance(item, ast.Call) else item)
-                              for item in node.decorator_list]
-                if any(not (item.startswith('pytest.mark.') or item == 'pytest.fixture') for item in decorators):
-                    return 'dynamic decorators'
-                if node.name.startswith('test_') and 'pytest.fixture' in decorators:
-                    return 'dynamic test fixture discovery'
+                if getattr(node, 'type_params', ()):
+                    return 'dynamic definition expressions'
+                for decorator in node.decorator_list:
+                    mark = decorator.func if isinstance(decorator, ast.Call) else decorator
+                    if not (isinstance(mark, ast.Attribute) and isinstance(mark.value, ast.Attribute)
+                            and mark.value.attr == 'mark' and isinstance(mark.value.value, ast.Name)
+                            and mark.value.value.id == 'pytest'):
+                        return 'dynamic decorators'
+                    if isinstance(decorator, ast.Call) and (
+                            not all(literal_or_name(arg) for arg in decorator.args)
+                            or not all(item.arg is not None and literal_or_name(item.value)
+                                       for item in decorator.keywords)):
+                        return 'dynamic decorator arguments'
                 if isinstance(node, ast.ClassDef):
-                    if (prefix != path or not node.name.startswith('Test')
-                            or node.bases or node.keywords or node.decorator_list):
+                    if prefix != path or node.bases or node.keywords:
                         return 'dynamic class discovery'
-                    problem = scan(node.body, prefix + '::' + node.name)
+                    problem = scan(node.body, prefix + '::' + node.name,
+                                   collecting and node.name.startswith('Test'))
                     if problem:
                         return problem
-                elif node.name.startswith('test_'):
-                    selector = prefix + '::' + node.name
-                    selection_bytes += len(selector.encode()) + 2
-                    # Leave half the existing repair prompt for instructions and diagnostics.
-                    if selection_bytes > REPAIR_MESSAGE_BYTES // 2:
-                        return 'base discovery exceeds the bounded correction message limit'
-                    Check('planned', Kind.REGRESSION, (selector,))
-                    if test_function_source(source, selector) is None:
-                        return 'ambiguous test definitions'
-                    nodes.append(selector)
+                else:
+                    annotations = [arg.annotation for arg in (*node.args.posonlyargs, *node.args.args,
+                                   *node.args.kwonlyargs) if arg.annotation is not None]
+                    annotations.extend(arg.annotation for arg in (node.args.vararg, node.args.kwarg)
+                                       if arg is not None and arg.annotation is not None)
+                    values = [*node.args.defaults, *(value for value in node.args.kw_defaults if value is not None),
+                              *annotations, *([node.returns] if node.returns is not None else [])]
+                    if not all(literal_or_name(value) for value in values):
+                        return 'dynamic definition expressions'
+                    # Pytest's default is a prefix, not the narrower test_ convention.
+                    if collecting and node.name.startswith('test'):
+                        selector = prefix + '::' + node.name
+                        selection_bytes += len(selector.encode()) + 2
+                        if selection_bytes > REPAIR_MESSAGE_BYTES // 2:
+                            return 'base discovery exceeds the bounded correction message limit'
+                        Check('planned', Kind.REGRESSION, (selector,))
+                        nodes.append(selector)
             elif isinstance(node, (ast.Import, ast.ImportFrom)):
                 names = [alias.asname or alias.name.split('.')[0] for alias in node.names]
-                if any(name == '*' or name.startswith(('test_', 'Test')) for name in names):
-                    return 'dynamic imported tests'
+                if (any(name == '*' or name.startswith(('test', 'Test', 'pytest_')) for name in names)
+                        or any(alias.name.startswith('pytest_') for alias in node.names)):
+                    return 'dynamic imported tests or collection hooks'
                 if 'pytest' in names and not (isinstance(node, ast.Import)
                         and any(alias.name == 'pytest' and alias.asname in (None, 'pytest') for alias in node.names)):
                     return 'dynamic pytest binding'
@@ -407,11 +507,11 @@ def base_file_selection(path, read_sources):
                 if not all(isinstance(target, ast.Name) for target in targets):
                     return 'dynamic bindings'
                 names = [target.id for target in targets]
-                if any(name.startswith(('test_', 'Test', 'pytest_')) or name == '__test__' for name in names):
+                if any(name.startswith(('test', 'Test', 'pytest')) or name == '__test__' for name in names):
                     return 'dynamic test bindings'
-                try:
-                    ast.literal_eval(node.value)
-                except (ValueError, TypeError):
+                if (not literal_or_name(node.value)
+                        or isinstance(node, ast.AnnAssign) and not literal_or_name(node.annotation)
+                        or '__all__' in names and isinstance(node.value, ast.Name)):
                     return 'dynamic module initialization'
             elif isinstance(node, ast.Pass) or (isinstance(node, ast.Expr)
                     and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)):
@@ -424,16 +524,38 @@ def base_file_selection(path, read_sources):
         return None
 
     try:
-        problem = scan(module.body, path)
-    except (ValueError, RecursionError, MemoryError):
+        problem = scan(ast.parse(source).body, path, collect)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
         problem = 'unavailable definitions'
-    if problem:
-        return (), f'Cannot establish complete base selection: {problem}.'
+    return tuple(nodes), problem
+
+
+def base_file_selection(path, read_sources):
+    """Enumerate only unambiguous static definitions already visible in the same run."""
+    try:
+        validate_always_tests([path])
+        patterns = test_files()
+        if patterns is None or not is_test(path, patterns):
+            return (), 'unavailable configured test definitions'
+        with Worktree('.') as tree:
+            source, problem = discovery_text(tree, path)
+        if problem:
+            return (), problem
+        if source is None:
+            return (), 'unavailable base definitions'
+        nodes, problem = static_test_definitions(source, path)
+        if problem:
+            return (), problem
+        problem = collection_context(path)
+        if problem:
+            return (), problem
+    except (OSError, ValueError, UnicodeError, RecursionError, MemoryError):
+        return (), 'unavailable base definitions'
     if not nodes:
-        return (), 'Base test definitions are unavailable.'
+        return (), 'unavailable base definitions'
     if read_sources.get(path) != source:
-        return (), 'Complete already-read base definitions are required for correction.'
-    return tuple(nodes), None
+        return (), 'unavailable complete already-read base definitions'
+    return nodes, None
 
 
 def base_definition(node_id):
