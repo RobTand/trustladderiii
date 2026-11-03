@@ -61,7 +61,9 @@ class ProofIntegrity:
 
     def __call__(self, module, local, namespace, protected, filename):
         self.check()
+        namespace = tuple(namespace)
         for path in protected:
+            path = tuple(path)
             resolved = self.resolve(module, path, local, namespace)
             if resolved is None:
                 continue
@@ -85,6 +87,46 @@ class ProofIntegrity:
 
 proof_integrity = ProofIntegrity()
 builtins.__tl3_proof_integrity__ = proof_integrity
+
+
+def install_proof_integrity(root):
+    manifest = root / '.tl3-proof-integrity.json'
+    if not manifest.is_file():
+        return
+    modules = {str((root / name).resolve()): (name, data) for name, data in json.loads(manifest.read_text()).items()}
+    compile_source = builtins.compile
+
+    def compile_proof(source, filename, mode, flags=0, dont_inherit=False, optimize=-1, **kwargs):
+        entry = modules.get(str(Path(os.fsdecode(filename)).resolve())) if isinstance(filename, (str, bytes, os.PathLike)) else None
+        if entry is not None and mode == 'exec' and not flags & ast.PyCF_ONLY_AST:
+            name, data = entry
+            if not isinstance(source, ast.Module):
+                source = compile_source(source, filename, mode, flags | ast.PyCF_ONLY_AST, dont_inherit, optimize, **kwargs)
+            grafts = {(span[0] + 1, span[1]): item['namespace'] for item in data['grafts'] if (span := item['span'])}
+            def guard(namespace=()):
+                return ast.parse(f'__tl3_proof_integrity__(globals(), locals(), {namespace!r}, '
+                                 f'{data["bindings"]!r}, {name!r})').body[0]
+            class Instrument(ast.NodeTransformer):
+                def visit(self, node):
+                    node = super().visit(node)
+                    if isinstance(node, ast.stmt) and hasattr(node, 'lineno'):
+                        start = min([node.lineno, *(d.lineno for d in getattr(node, 'decorator_list', []))])
+                        namespace = grafts.get((start, getattr(node, 'end_lineno', None)))
+                        if namespace is not None:
+                            return [ast.copy_location(guard(namespace), node), node,
+                                    ast.copy_location(guard(namespace), node)]
+                    return node
+            source = Instrument().visit(source)
+            source.body.append(guard())
+            ast.fix_missing_locations(source)
+        return compile_source(source, filename, mode, flags, dont_inherit, optimize, **kwargs)
+
+    builtins.compile = compile_proof
+
+
+# Xdist imports this plugin before the checkout's conftest modules.
+if __name__ != '__main__':
+    install_proof_integrity(Path.cwd())
 
 
 def module_candidates(module):
@@ -594,7 +636,7 @@ class Reporter:
                 frames = list(call.excinfo.traceback)
                 own = any(Path(str(frame.path)).resolve().is_relative_to(Path.cwd()) for frame in frames)
                 # A forcing that raises an exception itself is never the old test's symptom.
-                injected = any(Path(str(frame.path)).resolve() == Path(__file__).resolve() for frame in frames)
+                injected = bool(frames and Path(str(frames[-1].path)).resolve() == Path(__file__).resolve())
                 failure = {'exception': type(error).__module__ + '.' + type(error).__qualname__,
                            'phase': call.when, 'source': own and not injected}
                 self.failures.setdefault(item.nodeid, []).append(failure)
@@ -711,6 +753,7 @@ def main():
     parallel = next((int(flag.split("=", 1)[1]) for flag in flags if flag.startswith("--parallel=")), 0)
     checkout = arguments[0] if arguments else "/checkout"
     os.chdir(checkout)
+    install_proof_integrity(Path.cwd())
     sys.path.insert(0, str(Path.cwd()))
     reporter = Reporter(tests, descriptor, summary, parallel=bool(summary and parallel),
                         patches=tuple(forcing.get("patches", ())), selection=selection,
@@ -727,7 +770,7 @@ def main():
             reporter.pytest_sessionfinish(0)
             return 0
         worker_plugin = []
-        if declared_symptom is not None:
+        if declared_symptom is not None or Path('.tl3-proof-integrity.json').is_file():
             harness = Path(__file__).resolve().parent
             sys.path.insert(0, str(harness.parent))
             # Pytest owns the short plugin name "runner". Use the mounted package's name.

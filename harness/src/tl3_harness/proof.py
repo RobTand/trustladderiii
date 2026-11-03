@@ -2,6 +2,7 @@
 import ast
 import builtins
 import hashlib
+import json
 from pathlib import Path
 import shutil
 import symtable
@@ -12,6 +13,7 @@ from .trees import bound_names, is_test, tree_sha256
 
 
 RULE = 'subject-observer-v1'
+INTEGRITY = '.tl3-proof-integrity.json'
 
 
 def source_unit(source, identity, *, optional=False):
@@ -103,22 +105,12 @@ def deny_namespace_apis(source, module):
 
 
 def guard_runtime(source, name, protected, grafts=()):
-    """Emit checks, but execute repository code only inside the admitted runner."""
+    """Describe runtime checks without changing the subject/observer source bytes."""
     if '__tl3_proof_integrity__' in source:
         raise ProofRefusal('reserved proof integrity binding', name, '__tl3_proof_integrity__')
-    def call(namespace=()):
-        return (f'__tl3_proof_integrity__(globals(), locals(), {namespace!r}, '
-                f'{tuple(sorted(protected))!r}, {name!r})\n')
-    lines = source.splitlines(keepends=True)
-    insertions = {}
-    spans = {source_unit(source, item)[1]: tuple(item.split('::')[1:-1]) for item in grafts}
-    for (start, end), namespace in spans.items():
-        indentation = lines[start][:len(lines[start]) - len(lines[start].lstrip())]
-        for position in (start, end):
-            insertions.setdefault(position, []).append(indentation + call(namespace))
-    for position, checks in sorted(insertions.items(), reverse=True):
-        lines[position:position] = checks
-    return ''.join(lines) + '\n' + call()
+    return {'bindings': sorted(protected), 'grafts': [
+        {'span': source_unit(source, item)[1], 'namespace': item.split('::')[1:-1]}
+        for item in sorted(grafts)]}
 
 
 def conftest_subjects(base, head, plan):
@@ -145,6 +137,8 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
     """Base subject plus head observers. No head subject code is ever copied to RED."""
     if destination.exists():
         raise ProofRefusal('destination must be a fresh tree')
+    if any((tree / INTEGRITY).exists() for tree in (base, head)):
+        raise ProofRefusal('reserved proof integrity manifest', INTEGRITY)
     shutil.copytree(base, destination)
     declaration = check.proof
     subjects = declaration.subjects if declaration else ()
@@ -286,9 +280,10 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         for name in {subject.split('::')[0] for subject in subjects} - runtime.keys():
             if (base / name).is_file():
                 runtime[name] = (written_bindings((base / name).read_text()), ())
-        for name, (protected, grafts) in runtime.items():
-            target = destination / name
-            target.write_text(guard_runtime(target.read_text(), name, protected, grafts))
+        if runtime:
+            (destination / INTEGRITY).write_text(json.dumps({
+                name: guard_runtime((destination / name).read_text(), name, protected, grafts)
+                for name, (protected, grafts) in sorted(runtime.items())}, sort_keys=True))
     inferred = sorted({path.relative_to(tree).as_posix() for tree in (base, head)
                        for path in tree.rglob('*') if path.is_file()
                        and (not (base / path.relative_to(tree)).is_file()

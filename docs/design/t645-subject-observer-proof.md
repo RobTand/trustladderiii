@@ -42,4 +42,8 @@ Commit the corpus first and show intended failures on main through BuildBuddy. T
 
 Assertion RED always declares `proof.red_message`. A reason-only declaration uses empty `subjects` and `observer_support` lists to infer the partition. A base assertion with no declaration is refused. Support grafts may add new bindings only; statically detectable global writes and aliases cannot replace a base binding. Maker base runs preserve each check's source partition, forcing and symptom campaign separately.
 
+Support cannot access dynamic namespace APIs, including aliases obtained through `globals`, `locals`, `vars`, reflection, dynamic compilation or namespace modules. Refusals name the module and API. This replaces the incomplete list of recognized global mutation methods.
+
+Assembly also emits a reserved integrity manifest bound by the staged-tree receipt. The trusted runner instruments compilation from that manifest, preserving every source byte and pytest's assertion rewriting. It captures actual base bindings before graft execution and compares their object identities and function code afterward. It checks again before an observer runs, after fixture setup, and after the observer returns. Thus an indirect call through an existing base installer cannot replace the subject and manufacture RED. Repository code is never imported or executed during assembly or maker staging. Integrity failures originate in the trusted runner and cannot count as a declared source symptom.
+
 Maker review reproductions carry the same `proof` declaration in `done.reproductions`. The controller preserves it in the reproducing check and finding evidence, so the assertion reason remains bound through Checking and review.
