@@ -54,7 +54,16 @@ fn completed(attempt: &Path) -> Result<Option<WorkerRunFacts>> {
         None => WorkerRunFacts {
             started_ms,
             finished_ms: None,
-            outcome: "crashed".into(),
+            outcome: if exit
+                .as_ref()
+                .and_then(|v| v["code"].as_i64())
+                .is_some_and(|code| code > 0)
+            {
+                "failed"
+            } else {
+                "crashed"
+            }
+            .into(),
             release: request["trace"]["release"].as_str().map(str::to_owned),
             model: request["model"]["name"]
                 .as_str()
@@ -66,7 +75,12 @@ fn completed(attempt: &Path) -> Result<Option<WorkerRunFacts>> {
             output_tokens: None,
             trace_id: None,
             session_id: None,
-            failure: None,
+            failure: Some(WorkerBoundaryFailure {
+                origin: "worker".into(),
+                class: "ProcessExited".into(),
+                status: None,
+                request_id: None,
+            }),
         },
     };
     facts.started_ms = started_ms;
@@ -84,9 +98,11 @@ fn completed(attempt: &Path) -> Result<Option<WorkerRunFacts>> {
             request_id: None,
         });
     }
-    if stopped.is_some() && exit.is_none() {
+    if stopped.is_some() {
         facts.outcome = "stopped".into();
-        facts.finished_ms = stopped.and_then(|v| v["finished_ms"].as_i64());
+        facts.finished_ms = facts
+            .finished_ms
+            .or_else(|| stopped.and_then(|v| v["finished_ms"].as_i64()));
         facts.failure = Some(WorkerBoundaryFailure {
             origin: "worker".into(),
             class: "WorkerStopped".into(),
