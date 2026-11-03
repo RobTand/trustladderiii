@@ -235,6 +235,8 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                     result = _summary(endings[0], key)
                 if base:
                     result["base_sha"] = base_sha
+                    result["base_semantics"] = "untouched_base"
+                    result["demonstrating_proof"] = "pending_checking"
                 if tree is not None:
                     result["tree"] = tree
                 return result
@@ -309,7 +311,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
 
     def run_tests(tests: list[str] | None = None, base: bool = False, repeat: int = 1,
                   parallel: int = 0, priority: int | None = None) -> dict:
-        """Run pytest; automatically compare failures with the role's check base."""
+        """Run pytest; compare failures with untouched base, never demonstrating proof."""
         result = run(tests, base, repeat, parallel, priority)
         if base or result["status"] != "completed":
             return result

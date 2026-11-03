@@ -137,6 +137,24 @@ def test_maker_declares_only_file_and_pb_tools():
     assert ROLES["maker"].tools.keys() == READ_TOOLS | WRITE_TOOLS | {"run_tests", "run_generator", "recall"}
 
 
+def test_done_hands_ordinary_demonstration_to_checking(maker_request, tmp_path):
+    root = Path(maker_request["worktree"])
+    base = git(root, "rev-parse", "HEAD")
+    maker_request["inputs"]["check_base_sha"] = base
+    result = start_worker(tmp_path, maker_request, [write_turn(), turn(DONE)])
+    assert result.exit_code == 0, result.stderr
+    reply = result.events[-1]["reply"]
+    assert reply["kind"] == "done", reply
+    assert reply["checking_handoff"] == {
+        "base_sha": base, "head_sha": reply["head"],
+        "head_tree": git(root, "rev-parse", reply["head"] + "^{tree}"),
+        "status": "pending", "owner": "checking",
+        "checks": [{"name": "hello", "tests": ["test_greeting.py::test_hello"],
+                    "mode": "head_tests_on_base"}],
+    }
+    validate("maker-reply", reply)
+
+
 @pytest.mark.parametrize("reply", [
     {"kind": "needs_files", "files": [{"path": "helper.py", "why": "The shared greeting lives here."}]},
     {"kind": "cant_meet", "report": "The requested interface contradicts the greeting goal."},
@@ -250,6 +268,7 @@ def test_done_with_an_unmet_goal_is_rejected_before_commit(tmp_path, maker_reque
 
 @pytest.mark.parametrize("reply", [
     {**DONE, "head": "b" * 40},
+    {**DONE, "checking_handoff": {"status": "passed"}},
     {**DONE, "self_check": [DONE["self_check"][0]]},
     {**DONE, "self_check": [DONE["self_check"][0]] * 2},
     {**DONE, "self_check": [DONE["self_check"][0], {"goal_id": "unknown", "status": "met", "evidence": "x"}]},
@@ -683,7 +702,10 @@ def test_prompt_requires_reds_the_harness_accepts():
     assert "a test failure, not a collection error" in prompt
     assert "Prefer new test files where the plan allows" in prompt
     assert "force the bad interleaving or timing deterministically with injected clocks, events or barriers" in prompt
-    assert "Confirm the base outcome with run_tests and its base comparison before replying done" in prompt
+    assert "head's tests overlaid on the base implementation" in prompt
+    assert "Ordinary demonstrating proof is controller-owned and remains pending until Checking" in prompt
+    assert "A plain base pass neither supplies nor disproves that RED" in prompt
+    assert "Confirm the base outcome with run_tests and its base comparison before replying done" not in prompt
 
 
 def test_fix_round_inputs_and_test_settings_reach_their_destinations(tmp_path, maker_request, monkeypatch):
@@ -1523,6 +1545,8 @@ def test_done_reply_carries_the_run_tests_receipts(maker_request, monkeypatch):
 
 def test_runs_before_a_later_edit_are_not_evidence_for_the_head(maker_request, monkeypatch):
     # #432: run, edit, done. The run tested a tree the head no longer has.
+    root = Path(maker_request["worktree"])
+    maker_request["inputs"]["check_base_sha"] = git(root, "rev-parse", "HEAD")
     fake = FakeMessagesListChatModel(responses=[
         AIMessage(**write_turn("test_greeting.py", "def test_hello(): pass\n")),
         RUN_FIVE,
@@ -1536,6 +1560,17 @@ def test_runs_before_a_later_edit_are_not_evidence_for_the_head(maker_request, m
     reply = events[-1]["reply"]
     assert reply["kind"] == "done"
     assert "test_evidence" not in reply
+    assert reply["checking_handoff"]["head_tree"] == git(root, "rev-parse", reply["head"] + "^{tree}")
+    assert reply["checking_handoff"]["status"] == "pending"
+
+
+@pytest.mark.parametrize("special", [{"forcing": {"symptom": "Q55"}},
+                                   {"helper_evidence": {"target": "test_greeting.py::helper"}}])
+def test_ordinary_handoff_never_substitutes_for_forced_or_helper_proof(maker_request, special):
+    inputs = maker_request["inputs"]
+    inputs["check_base_sha"] = "a" * 40
+    inputs["plan"]["checks"][0].update(special)
+    assert maker._checking_handoff(inputs, "b" * 40, "c" * 40) is None
 
 
 def test_test_evidence_is_bounded():

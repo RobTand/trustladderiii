@@ -69,6 +69,19 @@ def _check_reply(inputs, reply):
                 raise ValueError("expected a requested file")
 
 
+def _checking_handoff(inputs, head, tree):
+    """Describe pending ordinary proof, never infer it from development receipts."""
+    if not inputs.get("check_base_sha"):
+        return None
+    checks = [{"name": check["name"], "tests": check["tests"], "mode": "head_tests_on_base"}
+              for check in inputs["plan"]["checks"] if check["kind"] == "demonstrating"
+              and check.get("forcing") is None and check.get("helper_evidence") is None]
+    if not checks:
+        return None
+    return {"base_sha": inputs.get("check_base_sha"), "head_sha": head, "head_tree": tree,
+            "status": "pending", "owner": "checking", "checks": checks}
+
+
 def _git(request, *args, check=True):
     # Discard inherited Git overrides as well as user/system configuration.
     env = {
@@ -274,6 +287,7 @@ def run(model, request, worktree, emit):
     del done["properties"]["head"]
     del done["properties"]["test_evidence"]
     del done["properties"]["generation_evidence"]
+    del done["properties"]["checking_handoff"]
     needs_files = next(variant for variant in proposal["oneOf"]
                        if variant["properties"]["kind"]["const"] == "needs_files")
     del needs_files["properties"]["fits"]
@@ -450,6 +464,8 @@ def run(model, request, worktree, emit):
             if evidence := [entry for entry in worktree.evidence.test_evidence()
                             if entry["tree"] == trees.get(entry["base"])]:
                 reply["test_evidence"] = evidence
+            if handoff := _checking_handoff(inputs, head, trees[False]):
+                reply["checking_handoff"] = handoff
             break
         if completion == 1 or budget_exhausted:
             reply = {"kind": "cant_meet", "report": "no code change was made"}
