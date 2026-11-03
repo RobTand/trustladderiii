@@ -293,3 +293,35 @@ fn t653_input_failure_names_role_pointer_and_rule_without_values() {
         assert_eq!(crate::looks::failure_class(&error), "worker_input_schema");
     }
 }
+
+#[test]
+fn t653_composed_writer_failure_names_the_applicable_branch_field() {
+    let error = validate_inputs(
+        "writer",
+        &json!({"kind":"summary","facts":{"issue_title":"private-input-value",
+            "request":"private-input-value","outcome":"Delivered"}}),
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "worker inputs break role schema: role=writer pointer=/facts/unmet_goals rule=required"
+    );
+}
+
+#[test]
+fn t653_nested_anyof_failure_keeps_the_matching_leaf_without_values() {
+    let schema = json!({"anyOf":[
+        {"properties":{"kind":{"const":"other"},"facts":{"required":["unrelated"]}}},
+        {"properties":{"kind":{"const":"summary"},"facts":{"oneOf":[
+            {"type":"string"},
+            {"type":"object","properties":{"goals":{"type":"array","items":{"type":"integer"}}}}
+        ]}}}
+    ]});
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let inputs = json!({"kind":"summary","facts":{"goals":["private-input-value"]}});
+    let error = validator.validate(&inputs).unwrap_err();
+    assert_eq!(
+        crate::worker_inputs::Failure::capture("writer", &error).to_string(),
+        "worker inputs break role schema: role=writer pointer=/facts/goals/0 rule=type"
+    );
+}

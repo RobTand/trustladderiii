@@ -1,6 +1,94 @@
 use super::*;
-use crate::git_tests::{Repo, documents, support::Database};
+use crate::git_tests::{Repo, documents, git, support::Database};
 use tl3_kernel::{Command as KernelCommand, Fact, NodeId, Notice, Phase, Priority, RepoId, World};
+
+fn materials(
+    f: &Repo,
+    config: &tl3_config::Config,
+) -> (
+    tokio::runtime::Runtime,
+    wiremock::MockServer,
+    crate::production::Materials,
+) {
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+    let runtime = crate::executor::runtime().unwrap();
+    let server = runtime.block_on(MockServer::start());
+    for (verb, route, status, body) in [
+        (
+            "POST",
+            "/app/installations/1/access_tokens",
+            201,
+            json!({"token":"fixture-installation-token","expires_at":"2099-01-01T00:00:00Z"}),
+        ),
+        (
+            "GET",
+            "/repos/RobTand/tl3-sandbox/issues/42",
+            200,
+            json!({"number":42,"title":"Production Materials issue","body":"Preserve evidence",
+                "state":"open","updated_at":"2026-01-01T00:00:00Z"}),
+        ),
+        (
+            "GET",
+            "/repos/RobTand/tl3-sandbox/issues/42/comments",
+            200,
+            json!([]),
+        ),
+    ] {
+        runtime.block_on(
+            Mock::given(method(verb))
+                .and(path(route))
+                .respond_with(ResponseTemplate::new(status).set_body_json(body))
+                .mount(&server),
+        );
+    }
+    let client = tl3_github::GitHub::new(
+        tl3_github::AppConfig {
+            id: 123,
+            slug: "fixture".into(),
+            webhook_secret: "unused".into(),
+            pem: include_str!("../../../../mergify/tests/fixtures/throwaway-key.pem").into(),
+        },
+        1,
+        tl3_github::ClientOptions {
+            api_url: format!("{}/", server.uri()).parse().unwrap(),
+            max_retries: 0,
+            mutation_interval: std::time::Duration::ZERO,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mirror = config
+        .worktrees_root
+        .join(".repositories/robtand/tl3-sandbox.git");
+    std::fs::create_dir_all(mirror.parent().unwrap()).unwrap();
+    git(
+        f.root.path(),
+        &[
+            "clone",
+            "--bare",
+            "--quiet",
+            f.path.to_str().unwrap(),
+            mirror.to_str().unwrap(),
+        ],
+    );
+    // Only this fixture repository rewrites the production fetch to local Git.
+    git(
+        &mirror,
+        &[
+            "config",
+            &format!("url.{}.insteadOf", f.path.display()),
+            "https://github.com/RobTand/tl3-sandbox.git",
+        ],
+    );
+    (
+        runtime,
+        server,
+        crate::production::Materials::fixture_client(config, client),
+    )
+}
 
 // These worlds are reached through kernel events, including repair, re-ingest,
 // replan, rebase and pause/resume. No fixture invents an invalid kernel phase.
@@ -162,6 +250,8 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
         tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
     config.store = db.create("all_input_contracts");
     config.workers.runs = f.root.path().join("runs");
+    config.worktrees_root = f.root.path().join("worktrees");
+    let (_runtime, _upstream, provider) = materials(&f, &config);
     let registry = crate::adapters::simulation(&f.root.path().join("fakes")).unwrap();
     let mut controller = crate::Controller::open(
         Store::open(&config.store).unwrap(),
@@ -185,8 +275,9 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
     let mut store = Store::open(&config.store).unwrap();
     let brief = json!({"kind":"brief","brief":"Preserve evidence","memory_ids":[],"goals":[{"description":"Preserve evidence","verification":"test"}]});
     let plan = json!({"kind":"leaf","files":["README.md"],"checks":[{"name":"evidence","kind":"regression","node_ids":["test_value.py::test_value"],"goal_ids":[0]}]});
-    let repo = crate::production::repository_materials(&f.path, &f.base).unwrap();
-    store.put_worker_materials("0", &json!({"issue":{"number":42,"title":"Preserve evidence","body":"Preserve evidence","author":"owner","comments":[]},"repo":repo,"ingest":{"issue":{"number":42,"title":"Preserve evidence","body":"Preserve evidence","author":"owner","comments":[]},"repo":repo},"audit":{"repo":repo},"maker":crate::production::maker_inputs(&brief,&plan).unwrap(),"base_checkout":{"repository":f.path,"commit":f.base}})).unwrap();
+    store
+        .put_worker_materials("0", &provider.load(&f.delivery()).unwrap())
+        .unwrap();
     documents(
         &mut store,
         &[
@@ -264,6 +355,18 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
                         .request(&delivery, role, &mut store, &snapshot)
                         .unwrap_or_else(|error| panic!("{role} {:?}: {error}", n.phase));
                     protocol::validate_inputs(role, &request["inputs"]).unwrap();
+                    if matches!(role, "ingest" | "audit") {
+                        assert_eq!(
+                            request["inputs"]["issue"]["title"],
+                            "Production Materials issue"
+                        );
+                    }
+                    if role == "maker" {
+                        assert_eq!(
+                            store.worker_materials("0").unwrap().unwrap()["check_run"]["plan"][0]["name"],
+                            "check-1"
+                        );
+                    }
                     coverage.insert(role);
                     variants.insert(format!("{role}:{:?}:{}", n.phase, n.round));
                 }
