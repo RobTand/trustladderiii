@@ -199,14 +199,14 @@ def facts(tmp_path):
     return json.loads((tmp_path / "facts.json").read_text())
 
 
-def test_retro_follows_the_accepted_reply_without_tools(maker_request, monkeypatch, tmp_path):
+def test_retro_follows_the_accepted_reply_with_uncallable_tools(maker_request, monkeypatch, tmp_path):
     model = install(monkeypatch, maker_request, tmp_path)
     events = []
     runtime.run(maker_request, events.append)
     assert events[-1]["reply"] == CANT_MEET
     assert len(model.calls) == 2, "one retro turn follows the accepted reply"
     messages, offered = model.calls[1]
-    assert offered == set(), "the retro turn is tool-free"
+    assert offered == model.calls[0][1], "the retro binds the maker's tools, uncallable, for its cached prefix"
     assert any(isinstance(m, AIMessage) and json.loads(m.text) == CANT_MEET for m in messages), \
         "the retro sees the run it looks back on"
     assert isinstance(messages[-1], HumanMessage)

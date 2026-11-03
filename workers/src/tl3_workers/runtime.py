@@ -233,6 +233,7 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None,
     )
     middleware = [filesystem]
     control = TurnControl() if control is None else control
+    control.hidden_tools = profile.excluded_tools
     if role.exploration_budget is not None:
         # The allowance wraps the turn control, so it charges dropped calls and repairs.
         control.allowance = ExplorationMiddleware(role.exploration_budget, role.name, context_size)
