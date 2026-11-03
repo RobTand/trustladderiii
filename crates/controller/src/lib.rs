@@ -237,71 +237,38 @@ pub struct IssueChange {
     pub labels: Vec<String>,
     /// When GitHub last changed the issue, which orders its edits.
     pub updated_at: chrono::DateTime<chrono::Utc>,
-    /// A catch-up reread of an issue whose same-second edits disagreed (Q39).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub reread: bool,
 }
 /// The newest issue edit seen for a request (Q39), by request node.
 const ISSUE_EDITS: &str = "issue_edits";
 
-/// An issue to reread on the next catch-up pass (Q39), by request node.
-pub(crate) struct PendingRead {
-    pub(crate) repository: Repository,
-    pub(crate) number: u64,
-    /// Rereads so far, which keeps each pass's read distinct.
-    pub(crate) reads: u32,
-}
-
 /// Requests whose issue's same-second edits disagreed (Q39), by request node.
-/// Neither edit is applied; catch-up rereads the issue until it settles.
+/// Neither edit is applied; a timer rereads the issue until it settles.
 const PRIORITY_RECONCILE: &str = "priority_reconcile";
 
 #[derive(Serialize, Deserialize)]
-struct Reconcile {
-    repository: Repository,
-    number: u64,
+pub(crate) struct Reconcile {
+    pub(crate) repository: Repository,
+    pub(crate) number: u64,
     /// The updated_at the disagreeing edits share.
-    updated_at: chrono::DateTime<chrono::Utc>,
-    reads: u32,
-    /// The previous same-second reread's priority, which the next must match.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    last: Option<tl3_kernel::Priority>,
-}
-
-/// Issues whose same-second edits disagreed and await a reread.
-pub(crate) fn pending_reads(snapshot: &Snapshot) -> Result<Vec<PendingRead>> {
-    let mut rows: Vec<_> = snapshot
-        .rows
-        .iter()
-        .filter(|row| row.table == PRIORITY_RECONCILE)
-        .collect();
-    rows.sort_by_key(|row| row.id.parse::<u64>().unwrap_or(u64::MAX));
-    // A request that has since closed keeps no priority to settle.
-    let world = (!rows.is_empty())
-        .then(|| snapshot::decode(snapshot))
-        .transpose()?;
-    rows.retain(|row| {
-        row.id
-            .parse::<usize>()
-            .ok()
-            .and_then(|index| world.as_ref()?.nodes.get(index))
-            .is_some_and(|node| !node.phase.is_closed())
-    });
-    rows.into_iter()
-        .map(|row| {
-            let pending: Reconcile = decode_stored(row.value.clone())?;
-            Ok(PendingRead {
-                repository: pending.repository,
-                number: pending.number,
-                reads: pending.reads,
-            })
-        })
-        .collect()
+    pub(crate) updated_at: chrono::DateTime<chrono::Utc>,
+    /// Which reconciliation of this request's issue, so two never share keys.
+    pub(crate) generation: u32,
+    /// Rereads so far.
+    pub(crate) attempts: u32,
+    /// When the next reread is due, in Unix milliseconds.
+    pub(crate) next_due_ms: u64,
 }
 
 #[derive(Serialize, Deserialize)]
 struct IssueEdit {
     updated_at: chrono::DateTime<chrono::Utc>,
+    /// Same-second reconciliations started for this request (Q39).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    reconciliations: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -346,8 +313,6 @@ pub struct Controller {
     postmortem_paused: bool,
     /// Starting credit reserve by priority, P0 first (#416). Empty keeps the kernel's.
     priority_reserve: BTreeMap<u8, u8>,
-    /// Requests catch-up passes for pending priority rereads (Q39).
-    catch_up: Option<ingress::WebhookControl>,
     request_protection: Vec<(Repository, Vec<String>)>,
     delegated_attributions: Vec<String>,
 }
@@ -419,7 +384,6 @@ impl Controller {
             postmortem_since: 0,
             postmortem_paused: false,
             priority_reserve: BTreeMap::new(),
-            catch_up: None,
             request_protection: Vec::new(),
             delegated_attributions: Vec::new(),
         };
@@ -697,95 +661,79 @@ impl Controller {
         // Edits are ordered by GitHub's updated_at, not by arrival: a late or
         // replayed older edit is stale. A newer edit is recorded even when it
         // keeps the priority, so it makes the older ones stale too.
-        let seen = snapshot
+        let edit = snapshot
             .rows
             .iter()
             .find(|r| r.table == ISSUE_EDITS && r.id == row.id)
             .map(|r| decode_stored::<IssueEdit>(r.value.clone()))
-            .transpose()?
-            .map(|edit| edit.updated_at);
+            .transpose()?;
+        let seen = edit.as_ref().map(|edit| edit.updated_at);
         let pending = snapshot
             .rows
             .iter()
-            .find(|r| r.table == PRIORITY_RECONCILE && r.id == row.id)
-            .map(|r| decode_stored::<Reconcile>(r.value.clone()))
-            .transpose()?;
+            .any(|r| r.table == PRIORITY_RECONCILE && r.id == row.id);
         let (updated_at, priority) = (
             change.updated_at,
             priority::pool_priority(&change.title, &change.labels),
         );
+        if seen.is_some_and(|seen| updated_at < seen) {
+            return Ok(());
+        }
         // The delivery's key makes a redelivery replay its stored receipt.
         let mut commit = Commit::new(
             format!("github-issue:{}", change.delivery),
             json!({"issue_change": change}),
             &snapshot,
         );
-        if change.reread {
-            let Some(mut pending) = pending else {
-                return Ok(());
-            };
-            // A same-second reread may be the intermediate state, so it
-            // applies only when the next pass's reread agrees with it.
-            let settled = updated_at > pending.updated_at
-                || (updated_at == pending.updated_at && pending.last == Some(priority));
-            if !settled {
-                pending.reads += 1;
-                if updated_at == pending.updated_at {
-                    pending.last = Some(priority);
-                }
-                commit
-                    .rows
-                    .push(put(PRIORITY_RECONCILE, row.id.clone(), json!(pending)));
-                self.store.commit(&commit)?;
-                self.request_catch_up();
+        if seen == Some(updated_at) && priority != n.priority {
+            // GitHub's updated_at has second precision, so two edits in one
+            // second can arrive in either order. Apply neither: a timer
+            // rereads the issue (priority::Controller::reconcile_due).
+            if pending {
                 return Ok(());
             }
+            let generation = edit.map_or(0, |edit| edit.reconciliations) + 1;
+            commit.rows.push(put(
+                ISSUE_EDITS,
+                row.id.clone(),
+                json!(IssueEdit {
+                    updated_at,
+                    reconciliations: generation,
+                }),
+            ));
+            commit.rows.push(put(
+                PRIORITY_RECONCILE,
+                row.id.clone(),
+                json!(Reconcile {
+                    repository: repo.clone(),
+                    number: change.number,
+                    updated_at,
+                    generation,
+                    attempts: 0,
+                    next_due_ms: self.now_ms(),
+                }),
+            ));
+            self.store.commit(&commit)?;
+            return Ok(());
+        }
+        if seen.is_some_and(|seen| updated_at <= seen) && priority == n.priority {
+            return Ok(());
+        }
+        if pending && seen.is_some_and(|seen| updated_at > seen) {
+            // A newer edit settles a pending same-second disagreement.
             commit.rows.push(RowChange::Delete {
                 table: PRIORITY_RECONCILE.into(),
                 id: row.id.clone(),
             });
-        } else {
-            if seen.is_some_and(|seen| updated_at < seen) {
-                return Ok(());
-            }
-            if seen == Some(updated_at) && priority != n.priority {
-                // GitHub's updated_at has second precision, so two edits in
-                // one second can arrive in either order. Apply neither: the
-                // next catch-up pass rereads the issue.
-                if pending.is_some() {
-                    return Ok(());
-                }
-                commit.rows.push(put(
-                    PRIORITY_RECONCILE,
-                    row.id.clone(),
-                    json!(Reconcile {
-                        repository: repo.clone(),
-                        number: change.number,
-                        updated_at,
-                        reads: 0,
-                        last: None,
-                    }),
-                ));
-                self.store.commit(&commit)?;
-                self.request_catch_up();
-                return Ok(());
-            }
-            if seen.is_some_and(|seen| updated_at <= seen) && priority == n.priority {
-                return Ok(());
-            }
-            if pending.is_some() && seen.is_some_and(|seen| updated_at > seen) {
-                // A newer edit settles a pending same-second disagreement.
-                commit.rows.push(RowChange::Delete {
-                    table: PRIORITY_RECONCILE.into(),
-                    id: row.id.clone(),
-                });
-            }
         }
         if seen.is_none_or(|seen| updated_at > seen) {
             commit.rows.push(put(
                 ISSUE_EDITS,
                 row.id.clone(),
-                json!(IssueEdit { updated_at }),
+                json!(IssueEdit {
+                    updated_at,
+                    reconciliations: edit.map_or(0, |edit| edit.reconciliations),
+                }),
             ));
         }
         if priority != n.priority {
@@ -801,18 +749,6 @@ impl Controller {
         }
         self.store.commit(&commit)?;
         Ok(())
-    }
-
-    /// Ask the webhook source for a catch-up pass, which rereads pending issues.
-    fn request_catch_up(&self) {
-        if let Some(control) = &self.catch_up {
-            control.gap();
-        }
-    }
-
-    /// The webhook source whose catch-up passes reread pending issues (Q39).
-    pub fn set_catch_up(&mut self, control: ingress::WebhookControl) {
-        self.catch_up = Some(control);
     }
 
     fn prepare_intake(

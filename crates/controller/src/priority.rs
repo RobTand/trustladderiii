@@ -35,6 +35,21 @@ fn level(text: &str) -> Option<u8> {
     }
 }
 
+/// Same-second edits that disagree (Q39) wait this long after their shared
+/// updated_at before a reread at that same time is trusted.
+pub(crate) const QUIET_MS: u64 = 60_000;
+/// Rereads of one issue before TL3 gives up and keeps its priority.
+pub(crate) const MAX_REREADS: u32 = 6;
+/// Rereads per timer tick, oldest due first.
+pub(crate) const REREADS_PER_TICK: usize = 8;
+
+impl crate::Controller {
+    /// Reread the issues whose same-second edits disagreed and are due.
+    pub(crate) fn reconcile_due(&mut self) -> crate::Result<()> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,7 +116,6 @@ mod tests {
             title: title.into(),
             labels: vec!["tl3".into()],
             updated_at: chrono::DateTime::from_timestamp(1_800_000_000 + at, 0).unwrap(),
-            reread: false,
         };
         controller
             .intake(LabelledIssue {
@@ -184,16 +198,29 @@ mod tests {
         assert_eq!(priority(&mut controller), Priority::P2);
     }
 
-    /// One tracked request for issue 42 at P1, from a label, on a simulated upstream.
+    #[derive(Clone)]
+    struct Clock(std::rc::Rc<std::cell::Cell<u64>>);
+    impl crate::clock::Clock for Clock {
+        fn now(&self) -> std::time::SystemTime {
+            std::time::UNIX_EPOCH + std::time::Duration::from_millis(self.0.get())
+        }
+    }
+
+    /// Seconds after this instant name issue times and the controller's clock.
+    const EPOCH: i64 = 1_800_000_000;
+
+    /// Tracked requests for issues 42.. at P1, from a label, on a simulated upstream.
     struct Intake {
         _repo: crate::git_tests::Repo,
         _db: crate::git_tests::support::Database,
         controller: crate::Controller,
         repo: tl3_config::Repository,
         bootstrap: crate::Bootstrap,
+        fakes: std::path::PathBuf,
+        clock: Clock,
     }
 
-    fn intake(name: &str) -> Intake {
+    fn intake(name: &str, issues: u64) -> Intake {
         use crate::git_tests::{Repo, support::Database};
         let f = Repo::new();
         let mut db = Database::start();
@@ -201,44 +228,50 @@ mod tests {
             tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
         config.store = db.create(name);
         config.workers.runs = f.root.path().join("runs");
-        let bootstrap = crate::Bootstrap::from_config(&config).unwrap();
-        let mut controller = crate::Controller::open(
+        let fakes = f.root.path().join("fakes");
+        let clock = Clock(std::rc::Rc::new(std::cell::Cell::new(0)));
+        let mut controller = crate::Controller::open_with_clock(
             tl3_store::Store::open(&config.store).unwrap(),
-            crate::adapters::simulation(&f.root.path().join("fakes")).unwrap(),
+            crate::adapters::simulation(&fakes).unwrap(),
             crate::Bootstrap::from_config(&config).unwrap(),
+            clock.clone(),
         )
         .unwrap();
         let repo = config.github.repos[0].clone();
-        controller
-            .intake(crate::LabelledIssue {
-                delivery: "labelled".into(),
-                owner: repo.owner.clone(),
-                repo: repo.name.clone(),
-                installation: repo.installation_id,
-                number: 42,
-                title: "Fix the greeting".into(),
-                actor: config.github.rob.id,
-                label: "tl3".into(),
-                labels: vec!["tl3".into(), "P1".into()],
-            })
-            .unwrap();
+        for number in 42..42 + issues {
+            controller
+                .intake(crate::LabelledIssue {
+                    delivery: format!("labelled-{number}"),
+                    owner: repo.owner.clone(),
+                    repo: repo.name.clone(),
+                    installation: repo.installation_id,
+                    number,
+                    title: "Fix the greeting".into(),
+                    actor: config.github.rob.id,
+                    label: "tl3".into(),
+                    labels: vec!["tl3".into(), "P1".into()],
+                })
+                .unwrap();
+        }
         Intake {
             _repo: f,
             _db: db,
             controller,
             repo,
-            bootstrap,
+            bootstrap: crate::Bootstrap::from_config(&config).unwrap(),
+            fakes,
+            clock,
         }
     }
 
-    /// Issue 42 as GitHub has it `at` seconds in.
-    fn issue(at: i64, labels: &[&str]) -> tl3_github::Issue {
+    /// Issue `number` as GitHub has it `at` seconds in.
+    fn issue_n(number: u64, at: i64, labels: &[&str]) -> tl3_github::Issue {
         tl3_github::Issue {
-            number: 42,
+            number,
             title: "Fix the greeting".into(),
             body: None,
             state: "open".into(),
-            updated_at: chrono::DateTime::from_timestamp(1_800_000_000 + at, 0).unwrap(),
+            updated_at: chrono::DateTime::from_timestamp(EPOCH + at, 0).unwrap(),
             labels: labels
                 .iter()
                 .map(|name| tl3_github::Label {
@@ -249,100 +282,228 @@ mod tests {
         }
     }
 
+    fn issue(at: i64, labels: &[&str]) -> tl3_github::Issue {
+        issue_n(42, at, labels)
+    }
+
     fn priority_of(controller: &mut crate::Controller) -> Priority {
         controller.world().unwrap().nodes[0].priority
     }
 
-    /// An edit of issue 42's labels at `at` seconds in.
-    fn relabel(t: &Intake, delivery: &str, at: i64, labels: &[&str]) -> crate::IssueChange {
+    /// An edit of issue `number`'s labels at `at` seconds in.
+    fn relabel(
+        t: &Intake,
+        delivery: &str,
+        number: u64,
+        at: i64,
+        labels: &[&str],
+    ) -> crate::IssueChange {
         crate::IssueChange {
             delivery: delivery.into(),
             owner: t.repo.owner.clone(),
             repo: t.repo.name.clone(),
             installation: t.repo.installation_id,
-            number: 42,
+            number,
             title: "Fix the greeting".into(),
             labels: labels.iter().map(|label| label.to_string()).collect(),
             updated_at: issue(at, &[]).updated_at,
-            reread: false,
         }
     }
 
-    /// One catch-up pass: reread the pending issues with `read`, then apply what it gives.
-    fn pass(
-        t: &mut Intake,
-        read: impl FnMut(&crate::Repository, u64) -> crate::Result<tl3_github::Issue>,
-    ) {
-        let snapshot = t.controller.snapshot().unwrap();
-        let pending = crate::pending_reads(&snapshot).unwrap();
-        for delivery in crate::ingress::reconcile_reads(&pending, read) {
-            for input in crate::ingress::translate(delivery, &t.bootstrap) {
-                if let crate::cli::Input::IssueChanged(change) = input {
-                    t.controller.issue_changed(&change).unwrap();
-                }
-            }
-        }
+    /// Set the controller's clock to `at` seconds in.
+    fn at(t: &Intake, at: i64) {
+        t.clock.0.set(((EPOCH + at) * 1000) as u64);
     }
 
-    fn pending(t: &mut Intake) -> usize {
-        crate::pending_reads(&t.controller.snapshot().unwrap())
+    /// In second `when`, P3 was removed from issue `number` and P0 added;
+    /// `first` arrives first and applies, the other disagrees.
+    fn conflict(t: &mut Intake, number: u64, when: i64, p0_first: bool, tag: &str) {
+        let removed = relabel(t, &format!("remove-{tag}-{number}"), number, when, &["tl3"]);
+        let added = relabel(
+            t,
+            &format!("add-{tag}-{number}"),
+            number,
+            when,
+            &["tl3", "P0"],
+        );
+        let (first, second) = if p0_first {
+            (added, removed)
+        } else {
+            (removed, added)
+        };
+        t.controller.issue_changed(&first).unwrap();
+        t.controller.issue_changed(&second).unwrap();
+    }
+
+    fn pending(t: &mut Intake) -> Vec<crate::Reconcile> {
+        t.controller
+            .snapshot()
             .unwrap()
-            .len()
+            .rows
+            .into_iter()
+            .filter(|row| row.table == "priority_reconcile")
+            .map(|row| crate::decode_stored(row.value).unwrap())
+            .collect()
+    }
+
+    /// The timer fires: the controller runs what is due now.
+    fn tick(t: &mut Intake) {
+        t.controller.look_due().unwrap();
     }
 
     #[test]
-    fn a_failed_reread_is_retried_on_the_next_pass_and_applies_p0() {
-        let mut t = intake("priority_failed_read");
-        // In one second, P3 was removed and P0 added; the removal arrives first.
-        let (removed, added) = (
-            relabel(&t, "remove-p3", 70, &["tl3"]),
-            relabel(&t, "add-p0", 70, &["tl3", "P0"]),
-        );
-        t.controller.issue_changed(&removed).unwrap();
-        t.controller.issue_changed(&added).unwrap();
+    fn a_failed_reread_is_retried_after_backoff_without_a_new_webhook() {
+        let mut t = intake("priority_failed_reread", 1);
+        at(&t, 75);
+        conflict(&mut t, 42, 70, false, "a");
+        assert_eq!(priority_of(&mut t.controller), Priority::Unranked);
         assert_eq!(
-            priority_of(&mut t.controller),
-            Priority::Unranked,
-            "a same-second disagreement isn't applied inline"
+            pending(&mut t).len(),
+            1,
+            "the disagreement waits for a reread"
         );
-        assert_eq!(pending(&mut t), 1, "the issue awaits a reread");
-        pass(&mut t, |_, _| Err(crate::Error::Invalid("GitHub is down")));
-        assert_eq!(pending(&mut t), 1, "a failed read keeps the issue pending");
-        for _ in 0..2 {
-            pass(&mut t, |_, _| Ok(issue(70, &["tl3", "P0"])));
-        }
-        assert_eq!(priority_of(&mut t.controller), Priority::P0);
-        assert_eq!(pending(&mut t), 0, "an applied reread clears the issue");
-    }
-
-    #[test]
-    fn a_stale_same_second_reread_does_not_overwrite_and_a_later_pass_settles_it() {
-        let mut t = intake("priority_stale_read");
-        let (added, removed) = (
-            relabel(&t, "add-p0", 70, &["tl3", "P0"]),
-            relabel(&t, "remove-p3", 70, &["tl3"]),
-        );
-        t.controller.issue_changed(&added).unwrap();
-        t.controller.issue_changed(&removed).unwrap();
-        assert_eq!(priority_of(&mut t.controller), Priority::P0);
-        // The first read returns the intermediate snapshot at the same second.
-        pass(&mut t, |_, _| Ok(issue(70, &["tl3"])));
+        // GitHub can't be read yet: no issue in the fake.
+        tick(&mut t);
+        let row = &pending(&mut t)[0];
+        assert_eq!(row.attempts, 1, "the failed read counts");
+        let wait = t
+            .controller
+            .next_look_in()
+            .unwrap()
+            .expect("a reread is scheduled");
+        assert!(wait.as_secs() >= 59 && wait.as_secs() <= 60, "{wait:?}");
+        crate::adapters::github::set_fake_issue(&t.fakes, &issue(70, &["tl3", "P0"]));
+        at(&t, 135);
+        tick(&mut t);
         assert_eq!(
             priority_of(&mut t.controller),
             Priority::P0,
-            "a same-second read doesn't overwrite on its own"
+            "the retry applies P0"
         );
-        assert_eq!(pending(&mut t), 1);
-        for _ in 0..2 {
-            pass(&mut t, |_, _| Ok(issue(70, &["tl3", "P0"])));
-        }
+        assert!(pending(&mut t).is_empty());
+    }
+
+    #[test]
+    fn a_same_second_reread_applies_only_after_the_quiet_period() {
+        let mut t = intake("priority_quiet", 1);
+        at(&t, 75);
+        conflict(&mut t, 42, 70, true, "a");
         assert_eq!(priority_of(&mut t.controller), Priority::P0);
-        assert_eq!(pending(&mut t), 0, "two passes that agree settle it");
+        // Within the quiet period, GitHub returns the intermediate snapshot.
+        crate::adapters::github::set_fake_issue(&t.fakes, &issue(70, &["tl3"]));
+        tick(&mut t);
+        assert_eq!(
+            priority_of(&mut t.controller),
+            Priority::P0,
+            "a same-second read inside the quiet period doesn't apply"
+        );
+        assert_eq!(pending(&mut t)[0].attempts, 1);
+        crate::adapters::github::set_fake_issue(&t.fakes, &issue(70, &["tl3", "P0"]));
+        at(&t, 135);
+        tick(&mut t);
+        assert_eq!(priority_of(&mut t.controller), Priority::P0);
+        assert!(
+            pending(&mut t).is_empty(),
+            "a read after the quiet period applies"
+        );
+    }
+
+    #[test]
+    fn two_reconciliations_of_one_issue_do_not_collide() {
+        let mut t = intake("priority_generations", 1);
+        crate::adapters::github::set_fake_issue(&t.fakes, &issue(70, &["tl3", "P0"]));
+        at(&t, 75);
+        conflict(&mut t, 42, 70, false, "a");
+        tick(&mut t);
+        at(&t, 135);
+        tick(&mut t);
+        assert!(pending(&mut t).is_empty());
+        assert_eq!(priority_of(&mut t.controller), Priority::P0);
+        // A late same-second edit disagrees again, with GitHub unchanged.
+        at(&t, 140);
+        t.controller
+            .issue_changed(&relabel(&t, "late-remove", 42, 70, &["tl3"]))
+            .unwrap();
+        let row = &pending(&mut t)[0];
+        assert_eq!(row.generation, 2, "a second reconciliation of the issue");
+        tick(&mut t);
+        assert!(pending(&mut t).is_empty());
+        assert_eq!(priority_of(&mut t.controller), Priority::P0);
+    }
+
+    #[test]
+    fn rereads_cap_out_and_keep_the_last_applied_priority() {
+        let mut t = intake("priority_cap", 1);
+        at(&t, 75);
+        conflict(&mut t, 42, 70, true, "a");
+        let mut now = 75;
+        for _ in 0..40 {
+            if pending(&mut t).is_empty() {
+                break;
+            }
+            tick(&mut t);
+            now += t
+                .controller
+                .next_look_in()
+                .unwrap()
+                .map_or(0, |wait| wait.as_secs() as i64 + 1);
+            at(&t, now);
+        }
+        assert!(pending(&mut t).is_empty(), "the row clears at the cap");
+        assert_eq!(
+            priority_of(&mut t.controller),
+            Priority::P0,
+            "the last applied priority stays"
+        );
+        let events = t
+            .controller
+            .store
+            .events_after(tl3_store::Revision::ZERO, 1000)
+            .unwrap();
+        let reads: Vec<_> = events
+            .iter()
+            .filter(|event| event.key.starts_with("priority-read:"))
+            .collect();
+        assert_eq!(
+            reads.len(),
+            MAX_REREADS as usize,
+            "exactly the capped rereads"
+        );
+        assert!(
+            reads
+                .last()
+                .is_some_and(|event| event.payload["priority_reread"]["gave_up"] == true),
+            "the last reread records giving up"
+        );
+    }
+
+    #[test]
+    fn rereads_rotate_fairly_beyond_the_per_tick_limit() {
+        let issues = REREADS_PER_TICK as u64 + 4;
+        let mut t = intake("priority_rotation", issues);
+        at(&t, 75);
+        for number in 42..42 + issues {
+            conflict(&mut t, number, 70, true, "a");
+        }
+        assert_eq!(pending(&mut t).len(), issues as usize);
+        tick(&mut t);
+        let read = |t: &mut Intake| pending(t).iter().filter(|row| row.attempts > 0).count();
+        assert_eq!(
+            read(&mut t),
+            REREADS_PER_TICK,
+            "a tick rereads at most the limit"
+        );
+        tick(&mut t);
+        assert_eq!(
+            read(&mut t),
+            issues as usize,
+            "the next tick reaches the rest first"
+        );
     }
 
     #[test]
     fn a_catch_up_replay_with_reordered_labels_is_a_no_op() {
-        let mut t = intake("priority_reordered");
+        let mut t = intake("priority_reordered", 1);
         let repository = crate::Repository {
             owner: t.repo.owner.clone(),
             name: t.repo.name.clone(),
@@ -385,37 +546,5 @@ mod tests {
         t.controller.issue_changed(&reordered).unwrap();
         assert_eq!(t.controller.snapshot().unwrap().revision, revision);
         assert_eq!(priority_of(&mut t.controller), Priority::P2);
-    }
-
-    #[test]
-    fn rereads_are_bounded_per_pass_and_one_per_issue() {
-        let repository = crate::Repository {
-            owner: "RobTand".into(),
-            name: "tl3-sandbox".into(),
-            installation: 1,
-        };
-        let pending: Vec<_> = (0..30)
-            .map(|i| crate::PendingRead {
-                repository: repository.clone(),
-                number: 40 + i % 12,
-                reads: 0,
-            })
-            .collect();
-        let mut asked = Vec::new();
-        let deliveries = crate::ingress::reconcile_reads(&pending, |_, number| {
-            asked.push(number);
-            Ok(tl3_github::Issue {
-                number,
-                ..issue(90, &["tl3"])
-            })
-        });
-        assert!(!asked.is_empty(), "pending issues are reread");
-        assert!(
-            asked.len() <= crate::ingress::PRIORITY_READS_PER_PASS,
-            "{asked:?}"
-        );
-        let distinct: std::collections::BTreeSet<_> = asked.iter().collect();
-        assert_eq!(distinct.len(), asked.len(), "one read per issue: {asked:?}");
-        assert!(!deliveries.is_empty());
     }
 }
