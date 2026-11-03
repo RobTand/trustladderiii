@@ -30,7 +30,7 @@ worker_groups! {
     Summaries: 3,
     Sessions: 4,
     Retirement: 5,
-    Planning: 8,
+    Planning: 12,
     MakerRepositoryImages: 1,
     MakerAdoptedFix: 1,
     MakerReproducingFix: 1,

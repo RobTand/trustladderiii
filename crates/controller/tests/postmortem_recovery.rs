@@ -463,3 +463,84 @@ fn new_release_recovers_the_pause_for_a_validation_run() {
     );
     assert!(f.pause_id().is_none());
 }
+
+fn postmortem_quotas(f: &mut Fixture, models: &[&str], reset: u64) {
+    let mut store = Store::open(&f.settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let mut commit = tl3_store::Commit::new("fixture-postmortem-quotas", json!({}), &snapshot);
+    for model in models {
+        commit.rows.push(tl3_store::RowChange::Put {
+            table: "model_quotas".into(),
+            id: (*model).into(),
+            value: json!({"reset_ms": reset}),
+        });
+    }
+    store.commit(&commit).unwrap();
+}
+
+fn quota_pace() -> PostmortemPace {
+    PostmortemPace {
+        per_day: 10,
+        models: vec!["claude-opus-5-5".into(), "claude-sonnet-5-5".into()],
+    }
+}
+
+fn future_reset() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+        + 600_000
+}
+
+#[test]
+fn postmortem_runs_with_only_opus_quota() {
+    let mut f = Fixture::new();
+    postmortem_quotas(&mut f, &["claude-opus-5-5"], future_reset());
+    f.controller.run_postmortems(quota_pace());
+    drain(&mut f.controller);
+    assert_eq!(f.reason(), None, "one eligible postmortem model is enough");
+    assert_eq!(f.claims(), 1, "the postmortem is dispatched");
+}
+
+#[test]
+fn postmortem_runs_with_only_sonnet_quota() {
+    let mut f = Fixture::new();
+    postmortem_quotas(&mut f, &["claude-sonnet-5-5"], future_reset());
+    f.controller.run_postmortems(quota_pace());
+    drain(&mut f.controller);
+    assert_eq!(
+        f.reason(),
+        None,
+        "Sonnet quota must not block available Opus"
+    );
+    assert_eq!(f.claims(), 1);
+}
+
+#[test]
+fn postmortem_waits_when_every_model_has_quota() {
+    let mut f = Fixture::new();
+    postmortem_quotas(
+        &mut f,
+        &["claude-opus-5-5", "claude-sonnet-5-5"],
+        future_reset(),
+    );
+    f.controller.run_postmortems(quota_pace());
+    drain(&mut f.controller);
+    assert_eq!(f.reason(), Some(status::PostmortemBlock::ModelQuota));
+    assert_eq!(f.claims(), 0);
+}
+
+#[test]
+fn expired_postmortem_quota_does_not_block() {
+    let mut f = Fixture::new();
+    postmortem_quotas(&mut f, &["claude-opus-5-5", "claude-sonnet-5-5"], 1);
+    f.controller.run_postmortems(quota_pace());
+    drain(&mut f.controller);
+    assert_eq!(
+        f.reason(),
+        None,
+        "pacing and the worker ladder agree on expired resets"
+    );
+    assert_eq!(f.claims(), 1);
+}

@@ -637,6 +637,24 @@ fn a_postmortem_request_carries_a_valid_case_file() {
         .unwrap();
     assert_eq!(request["role"], "postmortem");
     assert_eq!(request["model"]["name"], config.models.postmortem[0].name);
+    for (limited, expected) in [(0, 1), (1, 0)] {
+        let mut snapshot = snapshot.clone();
+        snapshot.rows.push(tl3_store::WorldRow {
+            table: "model_quotas".into(),
+            id: config.models.postmortem[limited].name.clone(),
+            value: json!({"reset_ms": u64::MAX}),
+            version: snapshot.revision,
+            arrival: 0,
+        });
+        let fallback = supervisor
+            .request(&delivery, "postmortem", &mut store, &snapshot)
+            .unwrap();
+        assert_eq!(
+            fallback["model"]["name"],
+            config.models.postmortem[expected].name
+        );
+    }
+
     let inputs = &request["inputs"];
     assert_eq!(inputs["grade_model"], config.models.postmortem[1].name);
     assert_eq!(inputs["record"]["trigger"], "close");
