@@ -481,3 +481,15 @@ def test_helper_failure_cases_are_bounded_data(cases):
     from tl3_harness.model import HelperEvidence, HarnessInputError
     with pytest.raises(HarnessInputError):
         HelperEvidence.parse({'target': 'tests/test_product.py::_check', 'failure_cases': cases})
+
+
+@pytest.mark.parametrize("cpus", [None, "4"])
+def test_container_preserves_admitted_native_thread_bounds(tmp_path, monkeypatch, cpus):
+    names = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+        if cpus is not None:
+            monkeypatch.setenv(name, cpus)
+    command = container_command(tmp_path, Container(IMAGE), ())
+    for name in names:
+        assert f"{name}={cpus or '1'}" in command

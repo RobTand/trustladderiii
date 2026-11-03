@@ -119,8 +119,8 @@ Compare the requirements with tool_capabilities. Do not replace mandatory runs
 with review goals, omit requirements, or substitute a different executor's proof.
 
 The installed executor is prismabuild_pytest. It supports base_head, repeat,
-parallel, always_tests and native_threads_1, with action_key, cas_receipt, sha, logs and terminal_verdict artifacts.
-native_threads_1 is runner configuration for the native-thread bounds in the
+parallel, always_tests and the configured native_threads_N, with action_key, cas_receipt, sha, logs and terminal_verdict artifacts.
+native_threads_N is runner configuration for the native-thread bounds in the
 code-supplied forcing_capabilities. Preserve a required bound in runner_features
 and require the run artifacts; do not label it forced_reproduction.environment
 or place it in forcing.environment. Reserved names and prefixes come from

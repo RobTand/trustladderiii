@@ -5,6 +5,48 @@ use toml::Value;
 const EXAMPLE: &str = include_str!("../example.toml");
 
 #[test]
+fn repository_test_demand_is_optional_and_bounded() {
+    assert!(
+        Config::parse(EXAMPLE).unwrap().github.repos[0]
+            .test_demand
+            .is_none()
+    );
+    for (cpus, mem_gb) in [(1, 1), (4, 12), (16, 64)] {
+        let text = EXAMPLE.replace(
+            "installation_id = 1",
+            &format!("installation_id = 1\ntest_demand = {{ cpus = {cpus}, mem_gb = {mem_gb} }}"),
+        );
+        let demand = Config::parse(&text).unwrap().github.repos[0]
+            .test_demand
+            .unwrap();
+        assert_eq!((demand.cpus, demand.mem_gb), (cpus, mem_gb));
+    }
+    for value in [
+        "{ cpus = 0, mem_gb = 12 }",
+        "{ cpus = 17, mem_gb = 12 }",
+        "{ cpus = 4, mem_gb = 0 }",
+        "{ cpus = 4, mem_gb = 65 }",
+        "{ cpus = -1, mem_gb = 12 }",
+        "{ cpus = 4, mem_gb = -1 }",
+        "{ cpus = 1.5, mem_gb = 12 }",
+        "{ cpus = 4, mem_gb = 2.5 }",
+        "{ cpus = true, mem_gb = 12 }",
+        "{ cpus = 4, mem_gb = '12' }",
+        "{ cpus = 4 }",
+        "{ mem_gb = 12 }",
+        "{}",
+        "{ cpus = 4, mem_gb = 12, gpu = true }",
+        "{ cpus = 4, mem_gb = 12, gpu = false }",
+    ] {
+        let text = EXAMPLE.replace(
+            "installation_id = 1",
+            &format!("installation_id = 1\ntest_demand = {value}"),
+        );
+        assert!(Config::parse(&text).is_err(), "accepted {value}");
+    }
+}
+
+#[test]
 fn repository_generated_files_and_generator_are_optional() {
     let config = Config::parse(EXAMPLE).unwrap();
     assert!(config.github.repos[0].generated_files.is_empty());
@@ -1531,6 +1573,21 @@ fn evidence_tools_are_explicit_configuration() {
                 .runner_features
                 .contains(&"native_threads_1".into())
         );
+    }
+    for cpus in [1, 4] {
+        let tools = tl3_config::Planning::default().effective_tool_capabilities(cpus);
+        assert!(
+            tools[0]
+                .runner_features
+                .contains(&format!("native_threads_{cpus}"))
+        );
+        if cpus != 1 {
+            assert!(
+                !tools[0]
+                    .runner_features
+                    .contains(&"native_threads_1".into())
+            );
+        }
     }
     let mut document: toml::Value = EXAMPLE.parse().unwrap();
     document["planning"]["tool_capabilities"] = toml::Value::Array(vec![]);

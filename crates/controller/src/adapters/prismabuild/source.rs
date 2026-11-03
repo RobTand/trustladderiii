@@ -235,16 +235,22 @@ impl Source {
                     if self.tool_errors.contains(&key) && !changes.bell_available {
                         continue;
                     }
-                    let completion =
-                        match results::ending(&self.settings.result_tool, job, false).await {
-                            Ok(Some(completion)) => completion,
-                            Ok(None) => continue,
-                            Err(error) => {
-                                eprintln!("PrismaBuild result {key}: {error}");
-                                self.tool_errors.insert(key.clone());
-                                continue;
-                            }
-                        };
+                    let completion = match results::ending(
+                        &self.settings.result_tool,
+                        job,
+                        false,
+                        &record,
+                    )
+                    .await
+                    {
+                        Ok(Some(completion)) => completion,
+                        Ok(None) => continue,
+                        Err(error) => {
+                            eprintln!("PrismaBuild result {key}: {error}");
+                            self.tool_errors.insert(key.clone());
+                            continue;
+                        }
+                    };
                     // Teardown may run as soon as the controller consumes this observation.
                     // Hold the lock through delivery and marker fsync, and discard cached
                     // jobs removed by teardown while the result tool was running.

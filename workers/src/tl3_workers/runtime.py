@@ -117,13 +117,14 @@ def create_model(request) -> BaseChatModel:
 ONLY_JSON = "Reply with one JSON object only: no prose, no code fences."
 # The run's prompt version from the controller (PRD #327, C5), if it sent one.
 run_prompt = ContextVar("run_prompt", default=None)
+run_test_cpus = ContextVar("run_test_cpus", default=1)
 
 
 def role_prompt(role):
     supplied = run_prompt.get()
     prompt = supplied if supplied is not None else files("tl3_workers").joinpath("prompts", role.prompt).read_text()
     if role.name in {"ingest", "audit", "planner"}:
-        prompt += "\n\n" + forcing_guidance()
+        prompt += "\n\n" + forcing_guidance(run_test_cpus.get())
     return prompt
 
 
@@ -190,6 +191,7 @@ def run(request, emit: Callable[[dict], None]):
         summary = Summary(request)
         token = current.set(summary)
         prompt = run_prompt.set(request.get("prompt", {}).get("text"))
+        test_cpus = run_test_cpus.set(request.get("test_cpus", 1))
         summary.save()
         reply, error = None, None
         try:
@@ -201,6 +203,7 @@ def run(request, emit: Callable[[dict], None]):
         finally:
             summary.finish(reply, error)
             run_prompt.reset(prompt)
+            run_test_cpus.reset(test_cpus)
             current.reset(token)
 
 
@@ -225,7 +228,7 @@ def _run(request, emit):
                 control=control)
             model_inputs = request["inputs"]
             if role.name in {"ingest", "audit", "planner"}:
-                model_inputs = {"forcing_capabilities": forcing_capabilities(), **model_inputs}
+                model_inputs = {"forcing_capabilities": forcing_capabilities(run_test_cpus.get()), **model_inputs}
             history = [HumanMessage(content=json.dumps(model_inputs, ensure_ascii=False))]
             reply = repaired(control, history, lambda: _run_agent(agent, history, emit),
                              lambda text: _checked(role, request["inputs"], read_reply(text)))

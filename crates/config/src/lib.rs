@@ -107,6 +107,21 @@ impl Planning {
         protected_paths(&self.protected_paths, &[])
     }
 
+    /// Native-thread support follows the repository's effective runner CPU demand.
+    pub fn effective_tool_capabilities(&self, cpus: u32) -> Vec<ToolCapability> {
+        let mut tools = self.tool_capabilities.clone();
+        for tool in &mut tools {
+            if tool.tool == "run_tests" && tool.executor == "prismabuild_pytest" {
+                for feature in &mut tool.runner_features {
+                    if feature.starts_with("native_threads_") {
+                        *feature = format!("native_threads_{cpus}");
+                    }
+                }
+            }
+        }
+        tools
+    }
+
     /// Defaults this file doesn't list. They stay protected; a newer release can
     /// add a default without the live file repeating it.
     pub fn defaults_not_listed(&self) -> Vec<String> {
@@ -368,6 +383,9 @@ pub struct Repository {
     pub generator: Option<String>,
     #[serde(default)]
     pub container_image: Option<String>,
+    /// CPU and memory reservation for this repository's PrismaBuild tests.
+    #[serde(default)]
+    pub test_demand: Option<TestDemand>,
     #[serde(default)]
     pub exec_scratch: bool,
     /// Run up to this many existing tests that import the change, and pass on the base,
@@ -402,6 +420,19 @@ pub struct BodyLine {
     pub values: Vec<String>,
     /// Used when TL3 can't tell the kind of change from its files.
     pub default: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TestDemand {
+    pub cpus: u32,
+    pub mem_gb: u32,
+}
+
+impl Default for TestDemand {
+    fn default() -> Self {
+        Self { cpus: 1, mem_gb: 2 }
+    }
 }
 
 /// The harness's `MAX_SELECTED_TESTS`.
@@ -821,6 +852,20 @@ impl Config {
             let field = format!("github.repos[{index}]");
             github_name(&format!("{field}.owner"), &repo.owner, false)?;
             github_name(&format!("{field}.name"), &repo.name, true)?;
+            if let Some(demand) = repo.test_demand {
+                if !(1..=16).contains(&demand.cpus) {
+                    return Err(invalid(
+                        format!("{field}.test_demand.cpus"),
+                        "use 1 to 16 CPUs",
+                    ));
+                }
+                if !(1..=64).contains(&demand.mem_gb) {
+                    return Err(invalid(
+                        format!("{field}.test_demand.mem_gb"),
+                        "use 1 to 64 GiB",
+                    ));
+                }
+            }
             validate_protected_paths(&format!("{field}.protected_paths"), &repo.protected_paths)?;
             validate_protected_paths(&format!("{field}.generated_files"), &repo.generated_files)?;
             if let Some(command) = &repo.generator

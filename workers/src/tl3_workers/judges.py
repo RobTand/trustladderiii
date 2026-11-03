@@ -11,6 +11,7 @@ the annotations below give the Bazel targets the same dependencies.
 # gazelle:include_dep @tl3_pip//pandas
 
 from contextlib import contextmanager
+import json
 import os
 from typing import Literal
 
@@ -135,9 +136,29 @@ def grade_judges(rubric, model):
     return built
 
 
+def postmortem_contract(prompt):
+    from tl3_workers.contracts import schema
+
+    envelope = schema("postmortem-reply")
+    contract = {"$ref": "#/$defs/postmortem", "$defs": envelope["$defs"]}
+    return prompt + "\nAuthoritative result JSON Schema:\n" + json.dumps(contract)
+
+
+@contextmanager
+def postmortem_turns():
+    # Reserve the last of the writer's twelve turns for the shared reply repair.
+    previous = os.environ["MLFLOW_JUDGE_MAX_ITERATIONS"]
+    os.environ["MLFLOW_JUDGE_MAX_ITERATIONS"] = str(MAX_TURNS - 1)
+    try:
+        yield
+    finally:
+        os.environ["MLFLOW_JUDGE_MAX_ITERATIONS"] = previous
+
+
 def postmortem_judge(prompt, model):
     """The postmortem's judge. Its value is the postmortem as JSON text."""
-    return judge("postmortem", PREAMBLE + prompt, model, str)
+    # MLflow 3.17.2 supports primitive Feedback types, not nested JSON Schemas.
+    return judge("postmortem", PREAMBLE + postmortem_contract(prompt), model, str)
 
 
 def failed(feedback):

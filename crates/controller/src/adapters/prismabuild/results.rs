@@ -24,6 +24,21 @@ struct Ending {
     succeeded: bool,
     exit_code: Option<i32>,
     result: Option<Evidence>,
+    #[serde(default)]
+    diagnostics: Diagnostics,
+}
+#[derive(Default, Deserialize)]
+struct Diagnostics {
+    returncode: Option<i32>,
+    resource_profile: Option<ResourceProfile>,
+}
+#[derive(Deserialize)]
+struct ResourceProfile {
+    scope: Option<ResourceScope>,
+}
+#[derive(Deserialize)]
+struct ResourceScope {
+    memory_peak_bytes: Option<u64>,
 }
 #[derive(Deserialize)]
 struct Evidence {
@@ -100,7 +115,12 @@ enum Outcome {
     NoReport,
 }
 
-pub(super) async fn ending(tool: &Tool, job: &Job, withdrawal: bool) -> Result<Option<Completion>> {
+pub(super) async fn ending(
+    tool: &Tool,
+    job: &Job,
+    withdrawal: bool,
+    record: &tl3_prismabuild::RecordRead,
+) -> Result<Option<Completion>> {
     let output = tokio::process::Command::new(&tool.program)
         .args(&tool.args)
         .args([
@@ -133,6 +153,29 @@ pub(super) async fn ending(tool: &Tool, job: &Job, withdrawal: bool) -> Result<O
     }
     if withdrawal {
         return Ok(Some(Completion::confirmed(vec![])));
+    }
+    if !ending.succeeded
+        && let tl3_prismabuild::RecordRead::Present(record) = record
+        && record.termination_reason.as_deref() == Some("memory_limit_oom")
+    {
+        let peak = ending
+            .diagnostics
+            .resource_profile
+            .as_ref()
+            .and_then(|profile| profile.scope.as_ref())
+            .and_then(|scope| scope.memory_peak_bytes);
+        let failed = FailedTest {
+            test: "PrismaBuild".into(),
+            message: format!(
+                "memory_limit_oom; action {}; returncode {:?}; memory_peak_bytes {peak:?}",
+                job.action,
+                ending
+                    .exit_code
+                    .or(ending.diagnostics.returncode)
+                    .or(record.returncode)
+            ),
+        };
+        return Ok(Some(completion(job, false, false, vec![], vec![failed])?));
     }
     let (report, pass, results, failed_tests, failure) = match evidence(ending, job) {
         Ok(verdict) => verdict,

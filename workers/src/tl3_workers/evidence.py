@@ -3,19 +3,19 @@
 from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT, RESERVED_ENVIRONMENT, RESERVED_PREFIXES
 
 
-def forcing_capabilities():
+def forcing_capabilities(cpus=1):
     """Code-owned model context, independent of operator-selected executor support."""
     return {
         "reserved_environment": sorted(RESERVED_ENVIRONMENT),
         "reserved_prefixes": list(RESERVED_PREFIXES),
-        "runner_environment": dict(NATIVE_THREAD_ENVIRONMENT),
-        "runner_feature": "native_threads_1",
+        "runner_environment": {name: str(cpus) for name in NATIVE_THREAD_ENVIRONMENT},
+        "runner_feature": f"native_threads_{cpus}",
         "executor": "prismabuild_pytest",
     }
 
 
-def forcing_guidance():
-    contract = forcing_capabilities()
+def forcing_guidance(cpus=1):
+    contract = forcing_capabilities(cpus)
     return ("Q55 forcing environment cannot set these reserved names: "
             + ", ".join(contract["reserved_environment"])
             + ". It also cannot set any name starting with: "
@@ -23,7 +23,7 @@ def forcing_guidance():
             + ". Native-thread bounds are runner configuration: "
             + ", ".join(f"{name}={value}" for name, value in contract["runner_environment"].items())
             + ". Keep these names out of forcing.environment, including when the requested value matches. "
-            "Represent a required bound of one with runner_features=[native_threads_1] on "
+            f"Represent the configured bound with runner_features=[{contract['runner_feature']}] on "
             "prismabuild_pytest and retain its required run artifacts. Check tool_capabilities for support. "
             "forced_reproduction.environment describes only symptom mutations. "
             "A delay patch can use an empty environment. The reviewer still judges causal relevance "

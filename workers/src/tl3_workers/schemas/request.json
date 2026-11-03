@@ -72,6 +72,7 @@
       "type": "string",
       "pattern": "^/"
     },
+    "test_cpus": {"type": "integer", "minimum": 1},
     "inputs": {
       "type": "object"
     },

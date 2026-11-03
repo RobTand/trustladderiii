@@ -1153,8 +1153,10 @@ def test_request_149_reports_the_reserved_bound(tmp_path, planner_request, reque
     assert plan['checks'][0]['forcing'] == request_149_plan['checks'][0]['forcing']
 
 
+@pytest.mark.parametrize('cpus', [1, 4])
 @pytest.mark.parametrize('stored_prompt', [False, True])
-def test_request_149_compliant_plan_and_model_contract(tmp_path, planner_request, request_149_plan, monkeypatch, stored_prompt):
+def test_request_149_compliant_plan_and_model_contract(tmp_path, planner_request, request_149_plan, monkeypatch, stored_prompt, cpus):
+    planner_request['test_cpus'] = cpus
     setup = '''
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 original_generate = FakeMessagesListChatModel._generate
@@ -1165,10 +1167,21 @@ def inspect_contract(self, messages, **kwargs):
     contract = inputs['forcing_capabilities']
     assert set(contract['reserved_environment']) == RESERVED_ENVIRONMENT
     assert tuple(contract['reserved_prefixes']) == RESERVED_PREFIXES
-    assert contract['runner_environment'] == {'OMP_NUM_THREADS': '1', 'MKL_NUM_THREADS': '1', 'OPENBLAS_NUM_THREADS': '1'}
+    cpus = inputs['tool_capabilities'][0]['runner_features'][-1].removeprefix('native_threads_')
+    assert contract['runner_environment'] == {name: cpus for name in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS')}
+    assert contract['runner_feature'] == f'native_threads_{cpus}'
+    from tl3_harness.model import Forcing, HarnessInputError
+    for name in contract['runner_environment']:
+        try:
+            Forcing.parse({'symptom': 'Reserved runner value', 'environment': {name: cpus}})
+        except HarnessInputError as error:
+            assert 'runner-owned' in str(error)
+        else:
+            raise AssertionError(f'forcing accepted {name}')
     assert all(name in system for name in RESERVED_ENVIRONMENT | set(RESERVED_PREFIXES))
     assert 'runner configuration' in system
-    assert 'native_threads_1' in system
+    assert f'native_threads_{cpus}' in system
+    assert all(f'{name}={cpus}' in system for name in contract['runner_environment'])
     return original_generate(self, messages, **kwargs)
 FakeMessagesListChatModel._generate = inspect_contract
 '''
@@ -1177,11 +1190,11 @@ FakeMessagesListChatModel._generate = inspect_contract
         planner_request['prompt'] = {'version': 1, 'text': 'Plan this deflake.'}
     request_149_plan['checks'][0]['forcing']['environment'] = {}
     tool = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
-            'runner_features': ['base_head', 'native_threads_1'],
+            'runner_features': ['base_head', f'native_threads_{cpus}'],
             'artifacts': ['logs', 'terminal_verdict', 'cas_receipt'],
             'methods': ['forced_reproduction.patches'], 'protected_files': []}
-    requirement = {**copy.deepcopy(tool), 'runner_features': ['native_threads_1'],
-                   'methods': [], 'requirement': 'Keep native thread bounds at one.'}
+    requirement = {**copy.deepcopy(tool), 'runner_features': [f'native_threads_{cpus}'],
+                   'methods': [], 'requirement': f'Keep native thread bounds at {cpus}.'}
     planner_request['inputs']['tool_capabilities'] = [tool]
     planner_request['inputs']['ingest']['evidence_contract'] = [requirement]
     request_149_plan['evidence_contract'] = []
@@ -1205,4 +1218,4 @@ def test_request_149_keeps_reserved_protections(planner_request, request_149_pla
     violation = next(v for v in request_149_plan['violations'] if v.startswith('Invalid forcing:'))
     assert repr(name) in violation
     if name in {'OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS'}:
-        assert f'{name}=1 is a runner-owned native-thread bound' in violation
+        assert f'{name} is a runner-owned native-thread bound' in violation

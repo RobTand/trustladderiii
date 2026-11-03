@@ -168,6 +168,39 @@ def _summary(ending, key):
     return result
 
 
+def _failure_receipt(ending, settings):
+    """Keep failure diagnosis without copying PB's private scheduler metadata."""
+    diagnostics = ending.get("diagnostics") or {}
+    receipt = {"action_key": ending["action_key"], "status": ending["status"],
+               "exit_code": ending.get("exit_code")}
+    if receipt["exit_code"] is None:
+        receipt["exit_code"] = diagnostics.get("returncode")
+    reason = diagnostics.get("termination_reason") or ending.get("reason")
+    # Older pbwait consumer endings omit termination_reason. Read only this
+    # failed action's terminal record, from the same installed fleet layout
+    # used by the controller, and require its publication to match the ending.
+    publication = ending.get("publication") or {}
+    published = publication.get("published_unix")
+    if reason != "memory_limit_oom" and published is not None:
+        path = Path(settings.tools_path).parent.parent / "pb-queue" / "failed" / f"{ending['action_key']}.json"
+        try:
+            with path.open("rb") as stream:
+                raw = stream.read(2_097_153)
+            record = json.loads(raw) if len(raw) <= 2_097_152 else {}
+            if (isinstance(record, dict) and record.get("action_key") == ending["action_key"]
+                    and record.get("published_unix") == published):
+                reason = (record.get("detail") or {}).get("termination_reason")
+        except (OSError, ValueError, TypeError):
+            pass
+    if reason == "memory_limit_oom":
+        receipt["termination_reason"] = reason
+    scope = (diagnostics.get("resource_profile") or {}).get("scope") or {}
+    peak = scope.get("memory_peak_bytes")
+    if type(peak) is int and peak >= 0:
+        receipt["memory_peak_bytes"] = peak
+    return receipt
+
+
 def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None):
     """Bind settings from role inputs, directly or via worktree.test_settings."""
     settings = settings if settings is not None else getattr(worktree, "test_settings", None)
@@ -193,9 +226,13 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
             if len(endings) != 1 or endings[0]["action_key"] != key:
                 raise ValueError("PrismaBuild returned another action")
             if waited["complete"]:
-                if code:
-                    raise ValueError("PrismaBuild action infrastructure failed")
-                result = _summary(endings[0], key)
+                if code or not endings[0].get("succeeded"):
+                    receipt = _failure_receipt(endings[0], settings)
+                    result = infrastructure("PrismaBuild action infrastructure failed."
+                                            + (" memory_limit_oom." if receipt.get("termination_reason") == "memory_limit_oom" else ""))
+                    result.update(action_key=key, receipts=[receipt])
+                else:
+                    result = _summary(endings[0], key)
                 if base:
                     result["base_sha"] = base_sha
                 if tree is not None:
@@ -232,8 +269,9 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
                            *(("--priority", str(priority)) if priority is not None else ()),
                            "--container-image", settings.image,
                            "--progress-phase", f"tests={settings.quiet_seconds}",
-                           *[arg for name, value in NATIVE_THREAD_ENVIRONMENT.items()
-                             for arg in ("--env", f"{name}={value}")], "--detach", "--",
+                           *[arg for name in NATIVE_THREAD_ENVIRONMENT
+                             for arg in ("--env", f"{name}={max(1, settings.cpus // max(1, parallel))}")],
+                           "--detach", "--",
                            "python3", "-I", "-B", "action.py", settings.image, json.dumps(selected)]
                 if settings.exec_scratch:
                     command.append("--exec-scratch")

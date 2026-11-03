@@ -24,6 +24,15 @@ model. If that review also runs out of room, Planning must split the leaf using
 the maker's credit rules. The [decision log](docs/state-machine.md) separates
 Rob's decision from the coordinator defaults that Rob still needs to check.
 
+## Repository test resources
+
+A `[[github.repos]]` entry can set `test_demand = { cpus = 4, mem_gb = 12 }`
+for PrismaBuild tests. Independent Checking and the maker's `run_tests` and
+`run_generator` actions use it. Omitting it keeps 1 CPU and 2 GiB. CPU and memory must be integers in
+1..16 and 1..64 GiB respectively; GPU requests are excluded. See the
+[config reference](crates/config/README.md) and
+[example](crates/config/example.toml) for parallel-run sizing and failure receipts.
+
 ## Queue a pull request
 
 Wait for the required `Rust` and `Python` checks to pass.
