@@ -321,6 +321,7 @@ tl3_py_test(
         ":conftest",
         ":message_invariants",
         ":test_maker",
+        ":test_pb_tests",
         ":test_prompt_cache",
         ":test_reviewer",
         ":test_workers",

@@ -1,5 +1,6 @@
 """The run_tests factory. The role supplies the base and execution settings."""
 from dataclasses import dataclass
+from functools import cache
 import hashlib
 import json
 import os
@@ -129,17 +130,65 @@ def _git(root, *args):
                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
 
 
+@cache
+def _machine_record_supported(runtime: str) -> bool:
+    """Probe once per runtime path and process, without queue or CAS access."""
+    try:
+        with tempfile.TemporaryFile(mode="w+b") as output:
+            result = subprocess.run([sys.executable, runtime, "--machine-record-capability"],
+                                    stdout=output, stderr=subprocess.DEVNULL)
+            output.seek(0)
+            raw = output.read(4097)
+        if result.returncode or len(raw) > 4096 or not raw.endswith(b"\n") or raw.count(b"\n") != 1:
+            return False
+        value = json.loads(raw.decode("utf-8"))
+        return (isinstance(value, dict) and set(value) == {"schema", "machine_record_fd"}
+                and value["schema"] == "prismabuild.machine_record_capability.v1"
+                and type(value["machine_record_fd"]) is int and value["machine_record_fd"] >= 1)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
 def _json_command(command):
-    with tempfile.TemporaryFile() as output:
-        result = subprocess.run(command, stdout=output, stderr=subprocess.DEVNULL)
-        output.seek(0)
-        raw = output.read(2_097_153)
-    if len(raw) > 2_097_152:
-        raise ValueError("PrismaBuild response exceeded its limit")
-    value = json.loads(raw)
-    if not isinstance(value, dict):
-        raise ValueError("PrismaBuild response must be an object")
-    return result.returncode, value
+    if not _machine_record_supported(str(Path(command[1]).resolve())):
+        raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_capability",
+                               "machine_record_unsupported")
+    cause = "machine_record_io_failed"
+    try:
+        with tempfile.TemporaryFile(mode="w+b") as channel:
+            fd = channel.fileno()
+            if fd <= 2:
+                raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_channel",
+                                       "machine_record_descriptor_unavailable")
+            os.fchmod(fd, 0o600)
+            # PB flags precede the payload separator. Public output is never a
+            # result source, even when the private channel is empty or corrupt.
+            args = [*command[:2], "--machine-record-fd", str(fd), *command[2:]]
+            result = subprocess.run(args, pass_fds=(fd,), stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL)
+            channel.seek(0)
+            raw = channel.read(2_097_153)
+        if result.returncode < 0:
+            raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_channel",
+                                   "machine_record_command_killed")
+        if not raw and result.returncode and "--detach" in command:
+            raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_submission",
+                                   f"submission_refused_exit_{result.returncode}")
+        if not raw:
+            cause = "machine_record_empty"
+        elif len(raw) > 2_097_152:
+            cause = "machine_record_too_large"
+        elif not raw.endswith(b"\n"):
+            cause = "machine_record_unterminated"
+        else:
+            cause = "machine_record_invalid_json"
+            value = json.loads(raw.decode("utf-8"))
+            if isinstance(value, dict):
+                return result.returncode, value
+            cause = "machine_record_not_object"
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_channel", cause) from error
+    raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_channel", cause)
 
 
 def _summary(ending, key):

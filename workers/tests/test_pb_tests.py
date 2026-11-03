@@ -21,6 +21,29 @@ IMAGE = "sha256:" + "1" * 64
 KEY = "a" * 64
 
 
+def machine_cli(source):
+    """Adapt receipt-producing fakes to PB's private descriptor protocol."""
+    return '''import builtins
+import fcntl
+import json
+import os
+import sys
+if sys.argv[1:] == ["--machine-record-capability"]:
+    print(json.dumps({"schema": "prismabuild.machine_record_capability.v1", "machine_record_fd": 1}))
+    raise SystemExit(0)
+if "--machine-record-fd" in sys.argv:
+    index = sys.argv.index("--machine-record-fd")
+    record_fd = int(sys.argv[index + 1])
+    del sys.argv[index:index + 2]
+    fcntl.fcntl(record_fd, fcntl.F_SETFD, fcntl.FD_CLOEXEC)
+    public_print = builtins.print
+    def emit_record(document, *args, **kwargs):
+        os.write(record_fd, (document + "\\n").encode())
+        public_print(document, *args, **kwargs)
+    builtins.print = emit_record
+''' + source
+
+
 @pytest.fixture
 def submission(tmp_path):
     root = tmp_path / "worktree"
@@ -64,6 +87,9 @@ if (here / "override.json").exists():
     ending.update(json.loads((here / "override.json").read_text()))
 print(json.dumps({"schema": "prismabuild.endings.v1", "complete": True, "endings": [ending]}))
 ''')
+    for name in ("pbrun.py", "pbwait.py"):
+        script = scripts / name
+        script.write_text(machine_cli(script.read_text()))
     return root, scripts
 
 
