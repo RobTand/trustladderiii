@@ -10,6 +10,11 @@ from unittest.mock import patch
 
 class VerifierRunfilesTests(unittest.TestCase):
     def test_declared_runfiles_supply_the_disk_specimen(self):
+        for strategy in ('directory', 'manifest'):
+            with self.subTest(strategy=strategy):
+                self.verify_packaged_specimen(strategy)
+
+    def verify_packaged_specimen(self, strategy):
         runfiles = Path(os.environ['TEST_SRCDIR'])
         with tempfile.TemporaryDirectory() as temporary:
             isolated = Path(temporary)
@@ -26,6 +31,14 @@ class VerifierRunfilesTests(unittest.TestCase):
 
             environment = dict(os.environ, RUNFILES_DIR=str(isolated))
             environment.pop('RUNFILES_MANIFEST_FILE', None)
+            if strategy == 'manifest':
+                fixture = isolated / '_main/harness/tests/fixtures/scratch/test_disk.py'
+                relocated = isolated / 'specimen.py'
+                fixture.rename(relocated)
+                manifest = isolated / 'MANIFEST'
+                manifest.write_text(f'_main/harness/tests/fixtures/scratch/test_disk.py {relocated}\n')
+                environment.pop('RUNFILES_DIR')
+                environment['RUNFILES_MANIFEST_FILE'] = str(manifest)
             with patch.dict(os.environ, environment, clear=True), patch.dict(verify.__globals__, {
                 'require_admission': lambda: None,
                 'git': first_git_command,

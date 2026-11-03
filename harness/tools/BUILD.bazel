@@ -1,3 +1,6 @@
+# gazelle:resolve py python.runfiles @rules_python//python/runfiles
+# gazelle:resolve py python.runfiles.runfiles @rules_python//python/runfiles
+
 load("@rules_python//python:defs.bzl", "py_binary")
 load("//tools/bazel:python.bzl", "tl3_py_test")
 
@@ -61,13 +64,20 @@ py_binary(
 py_binary(
     name = "verify_disk_scratch",
     srcs = ["verify_disk_scratch.py"],
+    data = ["//harness/tests:fixtures/scratch/test_disk.py"],
     visibility = ["//visibility:public"],
-    deps = ["//harness/src/tl3_harness"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@rules_python//python/runfiles",
+    ],
 )
 
 tl3_py_test(
     name = "test_verify_disk_scratch",
     srcs = ["test_verify_disk_scratch.py"],
     data = [":verify_disk_scratch"],
-    deps = ["//harness/src/tl3_harness"],  # keep
+    deps = [
+        "//harness/src/tl3_harness",  # keep
+        "@rules_python//python/runfiles",  # keep
+    ],
 )

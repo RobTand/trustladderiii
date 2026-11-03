@@ -1,5 +1,6 @@
 """Run the unmodified disk-scratch specimen through both admitted pytest paths."""
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -15,13 +16,19 @@ from tl3_harness.trees import git
 from tl3_harness.scratch import registered_leaf
 
 
+def specimen():
+    if os.environ.get('RUNFILES_DIR') or os.environ.get('RUNFILES_MANIFEST_FILE'):
+        from python.runfiles import runfiles
+        return Path(runfiles.Create().Rlocation('_main/harness/tests/fixtures/scratch/test_disk.py'))
+    return Path(__file__).resolve().parents[1] / 'tests/fixtures/scratch/test_disk.py'
+
+
 def verify(image, mode='success'):
     require_admission()
     with tempfile.TemporaryDirectory(prefix='tl3-disk-specimen-') as directory:
         repo = Path(directory)
         repo.chmod(0o755)
-        shutil.copyfile(Path(__file__).resolve().parents[1] / 'tests/fixtures/scratch/test_disk.py',
-                        repo / 'test_disk.py')
+        shutil.copyfile(specimen(), repo / 'test_disk.py')
         (repo / 'pyproject.toml').write_text('[tool.tl3.harness]\ncommand=["python","-m","pytest"]\ntest-files=["test_*.py"]\n')
         git(repo, 'init', '-q')
         git(repo, 'add', '.')

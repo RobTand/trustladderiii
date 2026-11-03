@@ -1,5 +1,7 @@
 load("//tools/bazel:python.bzl", "tl3_py_test")
 
+exports_files(["fixtures/scratch/test_disk.py"])
+
 tl3_py_test(
     name = "test_git_environment",
     srcs = ["test_git_environment.py"],
