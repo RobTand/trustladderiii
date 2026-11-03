@@ -181,6 +181,28 @@ def test_unsupported_runtime_refuses_without_stdout_fallback(consumer, name, cap
     assert not (scripts / ('submitted.json' if name == 'pbrun' else 'waited.json')).exists()
 
 
+
+@pytest.mark.parametrize('name', ['pbrun', 'pbwait'])
+def test_runtime_without_capability_flag_refuses_safely(consumer, name):
+    run, scripts = consumer
+    (scripts / (name + '.py')).write_text(
+        'import argparse\n'
+        'from pathlib import Path\n'
+        'parser = argparse.ArgumentParser(prog="fixture-secret-old-runtime")\n'
+        'parser.add_argument("--detach", action="store_true")\n'
+        'parser.add_argument("--endings", action="store_true")\n'
+        'parser.parse_args()\n'
+        'Path(__file__).with_suffix(".executed").touch()\n')
+    result = run()
+    assert result['status'] in ('infrastructure_error', 'failed'), result
+    assert result['execution']['outcome'] == 'transport_failure'
+    assert result['execution']['phase'] == 'prismabuild_capability'
+    assert result['execution']['termination_reason'] == 'machine_record_unsupported'
+    assert 'fixture-secret' not in json.dumps(result)
+    assert not (scripts / (name + '.executed')).exists()
+    assert not (scripts / ('submitted.json' if name == 'pbrun' else 'waited.json')).exists()
+
+
 def test_public_stdout_is_not_machine_data(consumer):
     run, scripts = consumer
     for name in ('pbrun', 'pbwait'):
