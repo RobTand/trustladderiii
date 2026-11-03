@@ -603,7 +603,9 @@ impl Executor for HeldQueue {
         Ok(Completion::confirmed(vec![]))
     }
     fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
-        Ok(Reconciliation::Found(Completion::confirmed(vec![])))
+        Ok(Reconciliation::Found(Box::new(Completion::confirmed(
+            vec![],
+        ))))
     }
 }
 

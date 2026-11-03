@@ -323,13 +323,13 @@ impl Executor for WriteDown {
             }
         ) && self.found.get()
         {
-            return Ok(Reconciliation::Found(Completion::confirmed(vec![
-                Observation::Kernel(Event::Reply {
+            return Ok(Reconciliation::Found(Box::new(Completion::confirmed(
+                vec![Observation::Kernel(Event::Reply {
                     node: d.node(),
                     generation: d.generation,
                     reply: tl3_kernel::Reply::IngestDone { size: 1 },
-                }),
-            ])));
+                })],
+            ))));
         }
         self.fake.reconcile(d)
     }
@@ -960,7 +960,7 @@ impl Executor for TokenQueue {
         Ok(self.completion(delivery))
     }
     fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
-        Ok(Reconciliation::Found(self.completion(delivery)))
+        Ok(Reconciliation::Found(Box::new(self.completion(delivery))))
     }
 }
 fn token_only_queue_progress(settings: &tl3_config::Store) {
@@ -1685,7 +1685,7 @@ fn look_that_closes_request(settings: &tl3_config::Store) {
             Ok(Reconciliation::Pending)
         }
         fn look(&mut self, _: &Delivery) -> tl3_controller::Result<Look> {
-            Ok(Look::Found(Completion::confirmed(vec![])))
+            Ok(Look::Found(Box::new(Completion::confirmed(vec![]))))
         }
     }
     let root = tempfile::tempdir().unwrap();

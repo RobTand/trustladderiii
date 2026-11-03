@@ -161,7 +161,7 @@ fn observed(completion: Completion) -> (bool, bool, Vec<String>) {
 }
 fn completion(adapter: &mut Adapter, delivery: &Delivery) -> Completion {
     match adapter.reconcile(delivery).unwrap() {
-        Reconciliation::Found(completion) => completion,
+        Reconciliation::Found(completion) => *completion,
         _ => panic!("expected ending"),
     }
 }

@@ -297,7 +297,7 @@ impl Executor for Fake {
         Ok(if pending {
             Reconciliation::Pending
         } else {
-            Reconciliation::Found(completion)
+            Reconciliation::Found(Box::new(completion))
         })
     }
 }

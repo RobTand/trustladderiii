@@ -439,7 +439,9 @@ impl Executor for Adapter {
                 Err(Error::Permanent {
                     class: "pr_evidence",
                     ..
-                }) => Ok(Reconciliation::Found(Completion::permanent("pr_evidence"))),
+                }) => Ok(Reconciliation::Found(Box::new(Completion::permanent(
+                    "pr_evidence",
+                )))),
                 // The controller records the refusal while leaving reconciliation pending.
                 Err(error @ Error::Permanent { .. }) => Err(error),
                 result => Ok(result.unwrap_or(Reconciliation::Pending)),
@@ -459,7 +461,9 @@ impl Executor for Adapter {
                     delivery.marker_key(),
                     since,
                 )) {
-                    Ok(Some(issue)) => Reconciliation::Found(Self::linked(delivery, issue)),
+                    Ok(Some(issue)) => {
+                        Reconciliation::Found(Box::new(Self::linked(delivery, issue)))
+                    }
                     Ok(None) => Reconciliation::Absent,
                     Err(_) => Reconciliation::Pending,
                 },
@@ -478,7 +482,7 @@ impl Executor for Adapter {
                     delivery.issue,
                     delivery.marker_key(),
                 )) {
-                    Ok(Some(_)) => Reconciliation::Found(Completion::confirmed(vec![])),
+                    Ok(Some(_)) => Reconciliation::Found(Box::new(Completion::confirmed(vec![]))),
                     Ok(None) => Reconciliation::Absent,
                     Err(_) => Reconciliation::Pending,
                 },
@@ -525,7 +529,9 @@ impl Executor for Adapter {
                 if self.close_original(delivery).is_err() {
                     return Ok(Reconciliation::Pending);
                 }
-                Ok(Reconciliation::Found(Completion::confirmed(vec![])))
+                Ok(Reconciliation::Found(Box::new(Completion::confirmed(
+                    vec![],
+                ))))
             }
             Ok(None) => Ok(Reconciliation::Absent),
             Err(_) => Ok(Reconciliation::Pending),

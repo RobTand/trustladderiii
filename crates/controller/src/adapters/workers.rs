@@ -950,7 +950,7 @@ impl Supervisor {
         if let Reconciliation::Found(completion) =
             super::record::Records::new(&self.records_root).reconcile(delivery)?
         {
-            return Ok(completion);
+            return Ok(*completion);
         }
         let root = self.root(&delivery.key);
         let previous = latest(&root)?;
@@ -969,7 +969,7 @@ impl Supervisor {
                     if let Some((number, _)) = latest(&self.root(&delivery.key))? {
                         self.active.remove(delivery, number);
                     }
-                    return Ok(completion);
+                    return Ok(*completion);
                 }
             }
             Reconciliation::Pending => {
@@ -1183,7 +1183,7 @@ impl Executor for Supervisor {
 
     fn stop_stalled(&mut self, delivery: &Delivery) -> Result<Completion> {
         if let Reconciliation::Found(c) = self.reconcile(delivery)? {
-            return Ok(c);
+            return Ok(*c);
         }
         self.stop_run(&delivery.key, delivery.epoch)?;
         if let Some((number, _)) = latest(&self.root(&delivery.key))? {
@@ -1196,7 +1196,7 @@ impl Executor for Supervisor {
             None => Reconciliation::Absent,
         };
         Ok(match result {
-            Reconciliation::Found(c) => c,
+            Reconciliation::Found(c) => *c,
             Reconciliation::Absent => failed(delivery),
             Reconciliation::Pending => return Err(Error::Invalid("stalled worker has not ended")),
         })
@@ -1373,11 +1373,11 @@ pub(super) fn inspect(attempt: &Path, delivery: &Delivery) -> Result<Reconciliat
                 .ok()
                 .flatten()
                 .is_some_and(|summary| summary["reason"]["failure_class"] == "PostmortemDeadline");
-            return Ok(Reconciliation::Found(if deadline {
+            return Ok(Reconciliation::Found(Box::new(if deadline {
                 failed_with(delivery, "deadline")
             } else {
                 failed(delivery)
-            }));
+            })));
         }
         let mut completion = failed(delivery);
         if delivery.job_table().is_none()
@@ -1403,7 +1403,7 @@ pub(super) fn inspect(attempt: &Path, delivery: &Delivery) -> Result<Reconciliat
                 failure_message: message.into(),
             }];
         }
-        return Ok(Reconciliation::Found(completion));
+        return Ok(Reconciliation::Found(Box::new(completion)));
     }
     let observation = match fs::read(attempt.join("stdout.jsonl")) {
         Ok(bytes) => read(&attempt.join("request.json"))?
@@ -1422,10 +1422,10 @@ pub(super) fn inspect(attempt: &Path, delivery: &Delivery) -> Result<Reconciliat
         }
         Err(e) => return Err(e.into()),
     };
-    Ok(Reconciliation::Found(match observation {
+    Ok(Reconciliation::Found(Box::new(match observation {
         Ok(observation) => Completion::confirmed(vec![observation]),
         Err(_) => failed_with(delivery, "invalid_reply"),
-    }))
+    })))
 }
 
 fn remove_ready(path: &Path) -> Result<()> {

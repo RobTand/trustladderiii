@@ -72,7 +72,9 @@ impl Executor for Recorder {
             return Err(std::io::Error::from(std::io::ErrorKind::ConnectionRefused).into());
         }
         Ok(match &self.observation {
-            Some(observation) => Look::Found(Completion::confirmed(vec![observation.clone()])),
+            Some(observation) => {
+                Look::Found(Box::new(Completion::confirmed(vec![observation.clone()])))
+            }
             None => Look::Healthy,
         })
     }

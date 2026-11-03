@@ -913,7 +913,7 @@ impl Controller {
                         let reconciled = self.adapters.adapter(&delivery)?.reconcile(&delivery);
                         hook(Boundary::AfterReconcile, &delivery.key);
                         if let Ok(Reconciliation::Found(completion)) = reconciled {
-                            self.complete(&effect.key, completion)?;
+                            self.complete(&effect.key, *completion)?;
                             return Ok(true);
                         }
                         waiting_for_queue = true;
@@ -1083,7 +1083,9 @@ impl Controller {
                     hook(Boundary::BeforeReconcile, &effect.key);
                     let reconciled = if effect.state == EffectState::Cancelling {
                         if closing_queue {
-                            Ok(Reconciliation::Found(Completion::confirmed(vec![])))
+                            Ok(Reconciliation::Found(Box::new(Completion::confirmed(
+                                vec![],
+                            ))))
                         } else {
                             self.adapters
                                 .adapter(&delivery)?
@@ -1103,6 +1105,7 @@ impl Controller {
                     };
                     match result {
                         Reconciliation::Found(completion) => {
+                            let completion = *completion;
                             if completion.releases_holds() {
                                 self.retry_held_effects(executor::upstream(delivery.output));
                             }
@@ -1189,7 +1192,7 @@ impl Controller {
                 let reconciled = self.adapters.adapter(&delivery)?.reconcile(&delivery);
                 hook(Boundary::AfterReconcile, &delivery.key);
                 let completion = match reconciled {
-                    Ok(Reconciliation::Found(completion)) => completion,
+                    Ok(Reconciliation::Found(completion)) => *completion,
                     Ok(Reconciliation::Absent)
                         if executor::upstream(delivery.output) == executor::Upstream::Workers =>
                     {

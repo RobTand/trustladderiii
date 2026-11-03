@@ -347,7 +347,7 @@ impl Adapter {
             _ => return Err(Error::Invalid("unsupported publication reconciliation")),
         };
         Ok(completion
-            .map(Reconciliation::Found)
+            .map(|completion| Reconciliation::Found(Box::new(completion)))
             .unwrap_or(Reconciliation::Absent))
     }
 }

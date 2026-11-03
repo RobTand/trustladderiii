@@ -323,7 +323,7 @@ impl Completion {
 }
 
 pub enum Look {
-    Found(Completion),
+    Found(Box<Completion>),
     Absent,
     Pending,
     /// An authoritative live record. Progress is an upstream-owned checkpoint.
@@ -347,7 +347,7 @@ pub enum WaitRecord {
 }
 
 pub enum Reconciliation {
-    Found(Completion),
+    Found(Box<Completion>),
     /// Authoritative absence, with any earlier executor attempt known to have ended.
     Absent,
     Pending,

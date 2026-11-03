@@ -667,7 +667,8 @@ impl Controller {
             state.wait_ended = false;
         }
         match result {
-            Ok(Look::Found(mut completion)) => {
+            Ok(Look::Found(completion)) => {
+                let mut completion = *completion;
                 let effect = self
                     .store
                     .effect(&state.delivery.key)?

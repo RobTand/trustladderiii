@@ -1744,7 +1744,7 @@ fn publication_recovery() {
     drop(adapter);
     let mut adapter = server.adapter(&records, 1);
     assert!(
-        matches!(adapter.reconcile(&open).unwrap(),Reconciliation::Found(Completion {observations,..}) if matches!(observations.as_slice(),[Observation::PullRequest { number:100,..}]))
+        matches!(adapter.reconcile(&open).unwrap(),Reconciliation::Found(completion) if matches!(completion.observations.as_slice(),[Observation::PullRequest { number:100,..}]))
     );
     adapter.execute(&open).unwrap();
     assert_eq!(server.api.state.lock().unwrap().opens, 1);
