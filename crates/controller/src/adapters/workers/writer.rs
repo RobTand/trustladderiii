@@ -978,6 +978,23 @@ mod title_feedback_tests {
     }
 
     #[test]
+    fn a_title_inside_a_longer_word_is_not_a_bare_title() {
+        // #685 re-review: "Capture stdout" matches inside "Capture stdout_file", but the
+        // checker's \b rule does not; only "stderr" fails.
+        let title = "Capture stdout";
+        let reply = text(format!(
+            "You asked for \"{title}\". Capture stdout_file next; stderr is missing."
+        ));
+        let feedback = feedback(&reply, &[Violation::Log], &titled(title));
+        assert!(feedback[0].contains("'stderr'"), "{}", feedback[0]);
+        assert!(
+            !feedback[0].contains("ASCII double quotes"),
+            "{}",
+            feedback[0]
+        );
+    }
+
+    #[test]
     fn a_bare_title_word_and_another_word_get_both_fixes() {
         let title = "Show the lineage of PrismaBuild runs";
         let reply = text(format!("You asked for {title}. The leaf failed."));
