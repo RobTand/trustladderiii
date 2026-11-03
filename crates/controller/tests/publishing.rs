@@ -36,8 +36,7 @@ use tl3_store::{Commit, RowChange, Store};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 use worktree_fixture::{Fixture, commit};
 
-// Loaded BuildBuddy batches run publishing about twice as slowly as an isolated target.
-const PUBLISHING_SCENARIO_TIMEOUT: Duration = Duration::from_secs(60);
+const PUBLISHING_SCENARIO_INACTIVITY: Duration = Duration::from_secs(60);
 
 fn git(path: &Path, args: &[&str]) -> String {
     progress(format!("git {args:?}"));
@@ -45,7 +44,7 @@ fn git(path: &Path, args: &[&str]) -> String {
 }
 
 fn scenario<T>(name: &str, run: impl FnOnce() -> T) -> T {
-    support::scenario::run(name, PUBLISHING_SCENARIO_TIMEOUT, run)
+    support::scenario::run(name, PUBLISHING_SCENARIO_INACTIVITY, run)
 }
 
 fn drive_to_idle(mut drive: impl FnMut() -> bool) -> bool {
