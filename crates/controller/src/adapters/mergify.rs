@@ -1290,8 +1290,13 @@ async fn queue_facts(
                 .unwrap_or(false)
             {
                 if let Evidence::CiFailed { details, .. } = &mut fact.evidence {
-                    *details =
-                        ci_evidence::read_checks(github, &repo_name, &state.check_runs).await;
+                    *details = ci_evidence::read_checks(
+                        github,
+                        &repo_name,
+                        &pull.head.sha,
+                        &state.check_runs,
+                    )
+                    .await;
                 }
                 facts.push(fact);
             }

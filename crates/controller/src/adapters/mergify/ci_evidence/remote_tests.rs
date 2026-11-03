@@ -90,11 +90,16 @@ async fn evidence(mode: &str) -> (QueueCiEvidence, Vec<Request>) {
         },
     )
     .unwrap();
+    let reproduction = if mode == "two-environments" {
+        "PB reproduction: EPERM: io_uring denied on base and head"
+    } else {
+        ""
+    };
     let checks: Vec<CheckRun> = serde_json::from_value(json!([{
         "id":7,"name":"Bazel","head_sha":HEAD,"status":"completed","conclusion":"failure",
         "app":{"id":15368,"slug":"github-actions"},
         "details_url":"https://github.com/owner/project/actions/runs/6/job/7",
-        "output":{"summary":format!("FAILED: {TARGET}\n{KEY}\nhttps://blob.example/log?X-Amz-Signature=private-download")}
+        "output":{"summary":format!("FAILED: {TARGET}\n{KEY}\n{reproduction}\nhttps://blob.example/log?X-Amz-Signature=private-download")}
     }])).unwrap();
     let client = remote::Client {
         api: format!("{}/api/v1/", server.uri()),
@@ -159,7 +164,7 @@ async fn trusted_access_never_exports_credentials_headers_or_signed_urls() {
 
 #[tokio::test]
 async fn preserves_remote_node_outcomes_and_prerequisites_separately_from_local_eperm() {
-    let (details, _) = evidence("observed").await;
+    let (details, _) = evidence("two-environments").await;
     let value = json!(details);
     let nodes = value["target_results"][0]["nodes"]
         .as_array()
@@ -181,6 +186,7 @@ async fn preserves_remote_node_outcomes_and_prerequisites_separately_from_local_
     );
     let local_reproduction = "EPERM: io_uring denied on base and head";
     assert!(!json!(details).to_string().contains(local_reproduction));
+    assert!(!value["failed_tests"].to_string().contains("EPERM"));
     assert!(json!(details).to_string().contains("pytest-130"));
 }
 
@@ -232,6 +238,16 @@ async fn complete_target_evidence_retains_repair_diagnostics_without_claiming_ca
     assert!(
         details.decision.is_none(),
         "the evidence adapter does not decide scope or queue operations"
+    );
+    let maker: Value = serde_json::from_str(include_str!(
+        "../../../../../../workers/src/tl3_workers/schemas/maker-input.json"
+    ))
+    .unwrap();
+    let schema = json!({"$defs":maker["$defs"],"type":"object","properties":{"feedback":maker["properties"]["feedback"]}});
+    let input = json!({"feedback":[{"kind":"failed_check","report":"Remote CI failed","goal_ids":[],"ci_target_results":details.target_results}]});
+    assert!(
+        jsonschema::validator_for(&schema).unwrap().is_valid(&input),
+        "complete evidence must reach a valid maker input"
     );
 }
 

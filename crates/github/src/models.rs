@@ -107,6 +107,8 @@ pub struct CheckRun {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JobLogTail {
+    /// Bounded prefix retained for durable remote invocation identifiers.
+    pub prefix: String,
     pub text: String,
     pub truncated: bool,
 }

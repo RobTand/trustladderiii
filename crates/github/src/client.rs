@@ -895,7 +895,6 @@ impl GitHub {
                 .0
                 .http
                 .get(url)
-                .header(reqwest::header::RANGE, format!("bytes=-{CAP}"))
                 .send()
                 .await
                 .map_err(|_| Error::Transport)?;
@@ -921,8 +920,10 @@ impl GitHub {
         let partial =
             response.status() == StatusCode::PARTIAL_CONTENT && full_range() != Some(true);
         let mut tail = Vec::new();
+        let mut prefix = Vec::new();
         let mut read = 0;
         while let Some(chunk) = response.chunk().await.map_err(|_| Error::Transport)? {
+            prefix.extend_from_slice(&chunk[..chunk.len().min(CAP.saturating_sub(prefix.len()))]);
             read += chunk.len();
             if read > 8 * 1024 * 1024 {
                 return Err(Error::Response);
@@ -942,6 +943,7 @@ impl GitHub {
             tail.drain(..first_line);
         }
         Ok(JobLogTail {
+            prefix: String::from_utf8_lossy(&prefix).into_owned(),
             text: String::from_utf8_lossy(&tail).into_owned(),
             truncated,
         })

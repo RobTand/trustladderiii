@@ -293,6 +293,106 @@
               ],
               "additionalProperties": false
             }
+          },
+          "ci_target_results": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sha": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "parent_invocation": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "invocation": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "target": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                },
+                "check": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "shard": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "run": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "attempt": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "nodes": {
+                  "type": "array",
+                  "maxItems": 200,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "test": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096
+                      },
+                      "status": {
+                        "enum": [
+                          "failed",
+                          "errored",
+                          "passed",
+                          "skipped"
+                        ]
+                      },
+                      "message": {
+                        "type": "string",
+                        "maxLength": 1000
+                      }
+                    },
+                    "required": [
+                      "test",
+                      "status",
+                      "message"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "excerpt": {
+                  "type": "string",
+                  "maxLength": 2000
+                }
+              },
+              "required": [
+                "repository",
+                "sha",
+                "parent_invocation",
+                "invocation",
+                "target",
+                "check",
+                "shard",
+                "run",
+                "attempt",
+                "nodes",
+                "excerpt"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "required": [
