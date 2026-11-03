@@ -303,6 +303,20 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
     let checks_running = checks_source.spawn(tx.clone());
     let mut source_thread = Some(thread::spawn(move || source.run(tx)));
     controller.intake(labelled()).unwrap();
+    if mode == "normal" && !fail {
+        let mut store = Store::open(settings).unwrap();
+        let mut commit = tl3_store::Commit::new(
+            "reviewed-maker-decisions",
+            json!({}),
+            &store.load().unwrap(),
+        );
+        commit.rows.push(tl3_store::RowChange::Put {
+            table: "request_decisions".into(),
+            id: "0".into(),
+            value: serde_json::from_str(include_str!("../fixtures/decisions/pq2662.json")).unwrap(),
+        });
+        store.commit(&commit).unwrap();
+    }
     let mut checked_self_check_failure = false;
     loop {
         let world = controller.world().unwrap();
@@ -470,6 +484,17 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
         );
     }
     let runs = requests(&config);
+    if mode == "normal" && !fail {
+        let expected: Value =
+            serde_json::from_str(include_str!("../fixtures/decisions/pq2662.json")).unwrap();
+        assert!(!runs.is_empty());
+        for run in &runs {
+            assert_eq!(
+                run["inputs"]["decision_context"], expected,
+                "maker needs approved scope and restrictions"
+            );
+        }
+    }
     if matches!(
         mode,
         "killed-after-commit"

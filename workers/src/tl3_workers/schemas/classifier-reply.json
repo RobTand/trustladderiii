@@ -11,6 +11,14 @@
         "new_text": {
           "type": "string",
           "minLength": 1
+        },
+        "supersedes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
         }
       },
       "required": [
@@ -102,6 +110,9 @@
             "mark_handled",
             "unclear"
           ]
+        },
+        "decision": {
+          "$ref": "#/$defs/decision"
         }
       },
       "required": [
@@ -127,6 +138,17 @@
         "new_text": {
           "type": "string",
           "minLength": 1
+        },
+        "decision": {
+          "$ref": "#/$defs/decision"
+        },
+        "supersedes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
         }
       },
       "required": [
@@ -154,6 +176,9 @@
           "type": "string",
           "minLength": 1,
           "pattern": "\\S"
+        },
+        "decision": {
+          "$ref": "#/$defs/decision"
         }
       },
       "required": [
@@ -181,6 +206,9 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 100
+        },
+        "decision": {
+          "$ref": "#/$defs/decision"
         }
       },
       "required": [
@@ -190,6 +218,74 @@
         "amount"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "reconcile_decisions"
+        },
+        "assessments": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "contradicted": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            },
+            "required": [
+              "id",
+              "contradicted",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "assessments"
+      ],
+      "additionalProperties": false
     }
-  ]
+  ],
+  "$defs": {
+    "decision": {
+      "type": "object",
+      "properties": {
+        "allowed_scope": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "restrictions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "allowed_scope",
+        "restrictions"
+      ],
+      "additionalProperties": false
+    }
+  }
 }

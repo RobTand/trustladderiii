@@ -4,6 +4,22 @@ from tl3_workers.roles.base import Role
 
 
 def check_reply(inputs, reply):
+    if 'reconcile_issue' in inputs or reply['kind'] == 'reconcile_decisions':
+        if 'reconcile_issue' not in inputs or reply['kind'] != 'reconcile_decisions':
+            raise ValueError('restart must reconcile the current issue')
+        active = {d['id'] for d in inputs['decision_context']['decisions']}
+        ids = [a['id'] for a in reply['assessments']]
+        if len(ids) != len(set(ids)) or set(ids) != active:
+            raise ValueError('reconciliation must assess every applicable decision exactly once')
+        return
+    if any(reply.get(key) != value for key, value in inputs.get("selected_answer", {}).items()):
+        raise ValueError("classifier changed a selected console answer")
+    active = {decision["id"] for decision in inputs.get("decision_context", {}).get("decisions", [])
+              if decision["superseded_by"] is None}
+    if (reply["kind"] == "change_request" or reply.get("answer") == "change_request") and active and "supersedes" not in reply:
+        raise ValueError("replacement must assess applicable decisions")
+    if not set(reply.get("supersedes", [])) <= active:
+        raise ValueError("supersedes names a decision that is not applicable")
     state = inputs["state"]
     if reply["kind"] == "restart":
         if state.get("restartable") is not True:

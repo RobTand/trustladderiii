@@ -40,6 +40,19 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
     )
     .unwrap();
     controller.intake(labelled()).unwrap();
+    if mode == "normal" {
+        let mut commit = Commit::new(
+            "reviewed-decision-fixture",
+            json!({}),
+            &store.load().unwrap(),
+        );
+        commit.rows.push(RowChange::Put {
+            table: "request_decisions".into(),
+            id: "0".into(),
+            value: serde_json::from_str(include_str!("../fixtures/decisions/pq2662.json")).unwrap(),
+        });
+        store.commit(&commit).unwrap();
+    }
     wait(|| {
         drive(&mut controller, &mut source, &mut store);
         let n = &controller.world().unwrap().nodes[0];
@@ -79,6 +92,18 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
     );
     if mode == "normal" {
         // #422: Hindsight is down in this fixture, so recall degrades and work proceeds.
+        let context: Value =
+            serde_json::from_str(include_str!("../fixtures/decisions/pq2662.json")).unwrap();
+        for role in ["ingest", "audit", "planner"] {
+            let run = recorded_runs(root.path())
+                .into_iter()
+                .find(|r| r["request"]["role"] == role)
+                .unwrap();
+            assert_eq!(
+                run["request"]["inputs"]["decision_context"], context,
+                "{role} needs explicit decisions even with recall down"
+            );
+        }
         assert_eq!(requests[0]["inputs"]["memories"], json!([]));
         assert!(requests[0]["inputs"]["memory_note"].is_string());
         assert!(n.phase.is_closed());
