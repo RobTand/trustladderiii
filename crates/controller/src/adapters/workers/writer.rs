@@ -829,6 +829,46 @@ mod title_feedback_tests {
     }
 
     #[test]
+    fn a_log_word_from_the_unquoted_title_asks_for_the_title_quotes() {
+        // PB #2783: "stdout" came only from the title, written without quotes.
+        let title = "[P1] Project publish-sealed refusal stdout at the pbrun writer";
+        let policy = Policy {
+            request_title: Some(title.into()),
+            ..Policy::default()
+        };
+        let reply = WriterReply::Text(TextDraft {
+            text: format!("You asked for {title}. The work starts next."),
+        });
+        let feedback = feedback(&reply, &[Violation::Log], &policy);
+        assert_eq!(feedback.len(), 1);
+        assert!(feedback[0].contains("stdout"), "{}", feedback[0]);
+        assert!(
+            feedback[0].contains(&format!("\"{title}\""))
+                && feedback[0].contains("ASCII double quotes"),
+            "{}",
+            feedback[0]
+        );
+    }
+
+    #[test]
+    fn a_log_word_outside_the_title_still_asks_to_remove_it() {
+        let policy = Policy {
+            request_title: Some("Add a blue button".into()),
+            ..Policy::default()
+        };
+        let reply = WriterReply::Text(TextDraft {
+            text: "You asked for \"Add a blue button\". The stderr shows a failure.".into(),
+        });
+        let feedback = feedback(&reply, &[Violation::Log], &policy);
+        assert!(feedback[0].contains("stderr"), "{}", feedback[0]);
+        assert!(
+            !feedback[0].contains("ASCII double quotes"),
+            "{}",
+            feedback[0]
+        );
+    }
+
+    #[test]
     fn an_internal_word_outside_the_title_still_asks_to_remove_it() {
         let policy = Policy {
             request_title: Some("Add a blue button".into()),
