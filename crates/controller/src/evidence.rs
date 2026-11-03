@@ -92,7 +92,7 @@ fn recorded_value(value: &Value, field: Option<&str>, depth: usize) -> Value {
     if depth == 0 {
         return json!("[nested value omitted]");
     }
-    if field.is_some_and(crate::memory::sensitive_key) {
+    if field.is_some_and(crate::memory::sensitive_key) && !proof_hash(value, field) {
         return json!("[redacted]");
     }
     match value {
@@ -824,7 +824,7 @@ pub(crate) fn validate_body(body: &str) -> Result<()> {
 
 // Redact values before serializing. Redacting JSON text can consume its quotes,
 // and the generic token filter also removes IDs needed to verify proof.
-fn public_value(value: &Value, field: Option<&str>) -> Result<Value> {
+fn proof_hash(value: &Value, field: Option<&str>) -> bool {
     if let (Some(field), Some(text)) = (field, value.as_str())
         && matches!(
             field,
@@ -833,6 +833,13 @@ fn public_value(value: &Value, field: Option<&str>) -> Result<Value> {
         && matches!(text.len(), 40 | 64)
         && text.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
+        return true;
+    }
+    false
+}
+
+fn public_value(value: &Value, field: Option<&str>) -> Result<Value> {
+    if proof_hash(value, field) {
         return Ok(value.clone());
     }
     if field.is_some_and(crate::memory::sensitive_key) {
