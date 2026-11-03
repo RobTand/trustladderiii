@@ -900,6 +900,7 @@ impl tl3_controller::executor::Executor for RetryWorker {
             .or_default() += 1;
         if std::mem::take(&mut self.first) {
             return Ok(tl3_controller::executor::Completion {
+                diagnostic: None,
                 failure_class: None,
                 progress: None,
                 ack: tl3_kernel::Ack::Retryable,
@@ -1443,12 +1444,13 @@ impl Executor for FaultyWorker {
                 }
                 Fault::Pending => return Ok(Reconciliation::Pending),
                 Fault::Found(ack) => {
-                    return Ok(Reconciliation::Found(Completion {
+                    return Ok(Reconciliation::Found(Box::new(Completion {
+                        diagnostic: None,
                         failure_class: None,
                         progress: None,
                         ack,
                         observations: vec![],
-                    }));
+                    })));
                 }
                 _ => {}
             }
@@ -2170,7 +2172,7 @@ impl Executor for GitHeadWorker {
     fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
         Ok(match self.fake.reconcile(delivery)? {
             Reconciliation::Found(completion) => {
-                Reconciliation::Found(self.actual_head(delivery, completion))
+                Reconciliation::Found(Box::new(self.actual_head(delivery, *completion)))
             }
             other => other,
         })
@@ -2205,7 +2207,7 @@ impl Executor for ConflictQueue {
     fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
         Ok(match self.fake.reconcile(delivery)? {
             Reconciliation::Found(completion) => {
-                Reconciliation::Found(self.result(delivery, completion))
+                Reconciliation::Found(Box::new(self.result(delivery, *completion)))
             }
             other => other,
         })

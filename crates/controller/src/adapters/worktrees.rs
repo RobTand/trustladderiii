@@ -800,7 +800,7 @@ impl Executor for Real {
             return Ok(Reconciliation::Absent);
         };
         if let Some(completion) = record.completion {
-            return Ok(Reconciliation::Found(completion));
+            return Ok(Reconciliation::Found(Box::new(completion)));
         }
         let writable = delivery.epoch >= repo.fence()?;
         Ok(
@@ -811,7 +811,7 @@ impl Executor for Real {
                 writable,
                 &mut |_| {},
             )? {
-                Some(completion) => Reconciliation::Found(completion),
+                Some(completion) => Reconciliation::Found(Box::new(completion)),
                 None if !writable => Reconciliation::Absent,
                 // Not a quiet live operation (#369): under the repository mutex
                 // this read runs the recorded operation to completion, so

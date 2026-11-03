@@ -747,12 +747,23 @@ pub(crate) fn validate_publication(
 ) -> Result<()> {
     for goal in publication_goals(delivery) {
         let requirements = &goal["publication"];
-        let branch_ok = requirements["branch"]
-            .as_str()
-            .is_none_or(|required| branch == required)
-            && requirements["branch_prefix"]
-                .as_str()
-                .is_none_or(|prefix| branch.starts_with(prefix));
+        let branch_ok = requirements["branch"].as_str().is_none_or(|required| {
+            crate::goals::branch_satisfies(
+                required,
+                branch,
+                Some(delivery.issue),
+                Some(delivery.node().0),
+                false,
+            )
+        }) && requirements["branch_prefix"].as_str().is_none_or(|prefix| {
+            crate::goals::branch_satisfies(
+                prefix,
+                branch,
+                Some(delivery.issue),
+                Some(delivery.node().0),
+                true,
+            )
+        });
         let lines_ok = requirements["body_lines"]
             .as_array()
             .into_iter()
@@ -760,17 +771,19 @@ pub(crate) fn validate_publication(
             .filter_map(Value::as_str)
             .all(|line| body.lines().filter(|existing| *existing == line).count() == 1);
         if !branch_ok || draft || !lines_ok {
-            return Err(Error::Permanent {
-                class: "pr_obligation",
-                source: format!(
-                    "Publishing obligation {} is unmet (branch={}, non_draft={}, body_lines={})",
-                    goal["id"].as_str().unwrap_or("unnamed"),
-                    branch_ok,
-                    !draft,
-                    lines_ok
-                )
-                .into(),
-            });
+            use crate::publication_failure::{LocalRefusal, Reason};
+            let reason = if !branch_ok {
+                Reason::BranchMismatch {
+                    required: requirements["branch"].as_str().map(str::to_owned),
+                    prefix: requirements["branch_prefix"].as_str().map(str::to_owned),
+                    generated: branch.into(),
+                }
+            } else if draft {
+                Reason::NonDraftObligation
+            } else {
+                Reason::BodyObligation
+            };
+            return Err(LocalRefusal::error("pr_obligation", reason));
         }
     }
     Ok(())
@@ -877,13 +890,19 @@ pub fn publication(delivery: &Delivery, request: &str) -> Result<String> {
         if !complete || !approved {
             return Err(Error::Permanent {
                 class: "pr_evidence",
-                source: "Required independent proof and review for this head were not captured"
-                    .into(),
+                source: Box::new(crate::publication_failure::LocalRefusal(
+                    crate::publication_failure::Reason::MissingIndependentEvidence,
+                )),
             });
         }
     }
     if required && !complete {
-        return Err(crate::Error::Permanent {class:"pr_evidence", source:"The request requires published proof, but completed evidence for this head was not captured".into()});
+        return Err(crate::Error::Permanent {
+            class: "pr_evidence",
+            source: Box::new(crate::publication_failure::LocalRefusal(
+                crate::publication_failure::Reason::MissingIndependentEvidence,
+            )),
+        });
     }
     if checks.is_empty() {
         return Ok(String::new());
@@ -950,7 +969,12 @@ fn encode_proof(value: &Value) -> Result<String> {
 
 pub(crate) fn validate_body(body: &str) -> Result<()> {
     if body.len() > BODY_BYTES {
-        return Err(crate::Error::Permanent {class:"pr_evidence", source:"PR body exceeds the 60000-byte publication budget; shorten the existing prose or publish report artifacts".into()});
+        return Err(crate::Error::Permanent {
+            class: "pr_evidence",
+            source: Box::new(crate::publication_failure::LocalRefusal(
+                crate::publication_failure::Reason::BodySize,
+            )),
+        });
     }
     Ok(())
 }

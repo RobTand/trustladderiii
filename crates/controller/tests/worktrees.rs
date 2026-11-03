@@ -20,7 +20,7 @@ static VERIFIED_KILLS: AtomicUsize = AtomicUsize::new(0);
 
 fn found(result: Reconciliation) -> Completion {
     match result {
-        Reconciliation::Found(completion) => completion,
+        Reconciliation::Found(completion) => *completion,
         _ => panic!("expected terminal Git evidence"),
     }
 }

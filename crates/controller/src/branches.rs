@@ -3,7 +3,7 @@ use crate::{Repository, Result, executor::Delivery};
 use tl3_worktrees::{BranchName, branch_template::BranchTemplate};
 
 #[derive(Clone)]
-pub(crate) struct Branches(Vec<(Repository, BranchTemplate, BranchName)>);
+pub(crate) struct Branches(Vec<(Repository, BranchTemplate, BranchName, String)>);
 
 impl Branches {
     pub(crate) fn new(repos: &[tl3_config::Repository]) -> Result<Self> {
@@ -19,16 +19,17 @@ impl Branches {
                         },
                         BranchTemplate::new(&repo.branch_template)?,
                         BranchName::new(&repo.base_branch)?,
+                        repo.branch_template.clone(),
                     ))
                 })
                 .collect::<Result<_>>()?,
         ))
     }
 
-    fn find(&self, repo: &Repository) -> Result<&(Repository, BranchTemplate, BranchName)> {
+    fn find(&self, repo: &Repository) -> Result<&(Repository, BranchTemplate, BranchName, String)> {
         self.0
             .iter()
-            .find(|(identity, _, _)| {
+            .find(|(identity, _, _, _)| {
                 identity.installation == repo.installation
                     && identity.owner.eq_ignore_ascii_case(&repo.owner)
                     && identity.name.eq_ignore_ascii_case(&repo.name)
@@ -43,6 +44,15 @@ impl Branches {
             .find(&delivery.repository)?
             .1
             .format(delivery.issue, delivery.node().0)?)
+    }
+
+    pub(crate) fn context(&self, delivery: &Delivery) -> Result<serde_json::Value> {
+        let convention = self.find(&delivery.repository)?;
+        Ok(serde_json::json!({
+            "repository":format!("{}/{}", delivery.repository.owner, delivery.repository.name),
+            "issue":delivery.issue, "node":delivery.node().0,
+            "template":convention.3, "branch":self.branch(delivery)?.as_str(),
+        }))
     }
 
     pub(crate) fn matches(&self, delivery: &Delivery, branch: &str) -> Result<bool> {

@@ -176,6 +176,7 @@ cas_receipt, input_tree, output_tree, artifact_sha256, logs and terminal_verdict
 Use that capability only when it appears in tool_capabilities. It cannot edit
 protected files or replace the independent test executor.
 
+<<<<<<< 3d12b9f847863f631fdbed672cfa55eccf716012
 
 Configured generation is necessary supporting work. "Edit only X" restricts
 model edits; it does not forbid the configured generator's declared outputs.
@@ -186,3 +187,21 @@ regeneration, conflicts with mandatory generation. Preserve its exact source
 wording and raise an audit objection before planning, rather than deferring it
 to final generation. Protected paths always win. The model cannot hand-edit
 generated outputs, including outputs code adds to the effective plan footprint.
+=======
+The controller supplies publication_branch with this repository's configured
+branch template and its expansion for this request, including adopted requests.
+Compare exact publication.branch requirements by equality and branch_prefix by
+prefix. A satisfied requirement has no conflict. Preserve every explicit exact
+name and its issue-source quote, even when incompatible; never turn it into a
+prefix or substitute the generated branch. Code records incompatible requirements
+as request-scope audit objections before planning. Resolve the scope disagreement
+through the existing audit path, never by claiming later publication can fix it.
+
+A convention such as `prismabuild-<issue>-tl3-<node>` is a pattern, not an exact
+literal name. Keep its source wording. Code matches `<issue>` and `<node>` to the
+request identity, and `[-<word>]` to an optional hyphen plus a nonempty slug of
+letters, digits, underscores or hyphens. Compare that pattern with the configured
+branch. Mentions of the base branch or keeping a PR's branch name unchanged do
+not require a particular publication branch; omit branch and branch_prefix for
+those goals.
+>>>>>>> 5958d911181370fa29cb7ee6b3320f8bc373518e

@@ -49,6 +49,11 @@ pub enum Error {
     Transport,
     #[error("GitHub returned HTTP {status}")]
     Http { status: u16 },
+    #[error("GitHub installation token request failed: {source}")]
+    InstallationToken {
+        #[source]
+        source: Box<Error>,
+    },
     #[error("GitHub refused an Actions request: {0}")]
     ActionsForbidden(ActionsRefusal),
     #[error("GitHub rate limited requests; retry after {retry_after:?}")]
@@ -123,7 +128,9 @@ impl Error {
 
     pub fn failure_class(&self) -> FailureClass {
         match self {
-            Self::CatchUp { source, .. } => source.failure_class(),
+            Self::CatchUp { source, .. } | Self::InstallationToken { source } => {
+                source.failure_class()
+            }
             Self::RateLimited { .. } => FailureClass::Quota,
             Self::ActionsForbidden(ActionsRefusal::AppAccess) => {
                 FailureClass::Permanent("actions_write_required")
@@ -270,7 +277,13 @@ impl GitHub {
         // Issuing another token is safe. Creating PRs, comments and check runs is not.
         let value = self
             .send(Method::POST, &path, &[], Some(json!({})), &jwt, true)
-            .await?;
+            .await
+            .map_err(|source| match source {
+                Error::Http { .. } => Error::InstallationToken {
+                    source: Box::new(source),
+                },
+                other => other,
+            })?;
         let token: TokenResponse = serde_json::from_value(value).map_err(|_| Error::Response)?;
         if token.token.is_empty() || token.expires_at <= Utc::now() {
             return Err(Error::Response);

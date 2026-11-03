@@ -34,7 +34,65 @@ def forcing_guidance(cpus=1):
 DIMENSIONS = ('runner_features', 'artifacts', 'methods', 'protected_files')
 
 
+def branch_satisfies(required, branch, context, *, prefix=False):
+    if '<' not in required:
+        return branch.startswith(required) if prefix else branch == required
+    import re
+    optional_word = required.endswith('[-<word>]')
+    rest = required[:-len('[-<word>]')] if optional_word else required
+    pattern = ''
+    while '<' in rest:
+        literal, tail = rest.split('<', 1)
+        pattern += re.escape(literal)
+        slot, end, rest = tail.partition('>')
+        if not end:
+            return False
+        if slot in ('issue', 'node') and context.get(slot) is not None:
+            pattern += re.escape(str(context[slot]))
+        elif slot == 'word':
+            pattern += '[A-Za-z0-9][A-Za-z0-9_-]*'
+        else:
+            return False
+    pattern += re.escape(rest)
+    if optional_word:
+        pattern += '(?:-[A-Za-z0-9][A-Za-z0-9_-]*)?'
+    return (re.match(pattern, branch) if prefix else re.fullmatch(pattern, branch)) is not None
+
+
+def branch_objections(inputs, goals):
+    context = inputs.get('publication_branch')
+    if context is None:
+        return []
+    from tl3_workers.tracing import Redactor
+    import json
+    redactor = Redactor(None)
+
+    def label(text):
+        return json.dumps(redactor.text(text, limit=512)).replace('`', "'").replace('<', '[').replace('>', ']').replace('@', '[at]')
+
+    errors = []
+    for goal in goals:
+        requirements = goal.get('publication', {})
+        for field in ('branch', 'branch_prefix'):
+            required = requirements.get(field)
+            if required is None:
+                continue
+            branch = context['branch']
+            satisfied = branch_satisfies(required, branch, context, prefix=field == 'branch_prefix')
+            if not satisfied:
+                errors.append(
+                    f'Request-scope branch conflict: {field} requires {label(required)}; '
+                    f'configured template {label(context["template"])} generates {label(branch)}. '
+                    'Preserve the explicit requirement and its source. Change the request scope or repository convention before planning.')
+    return errors
+
+
 def preflight(inputs, reply, *, planning=False):
+    goals = inputs.get('ingest', {}).get('goals', []) if 'verdict' in reply else reply.get('goals', [])
+    branch_errors = branch_objections(inputs, goals)
+    if 'verdict' in reply and branch_errors:
+        reply['verdict'] = 'disagree'
+        reply['objections'] = list(dict.fromkeys([*reply['objections'], *branch_errors]))
     # Old in-flight requests have no capability declaration (#372).
     if 'tool_capabilities' not in inputs:
         return
@@ -61,7 +119,7 @@ def preflight(inputs, reply, *, planning=False):
         for requirement in requirements:
             if requirement not in contract:
                 contract.append(requirement)
-    errors = []
+    errors = list(branch_errors)
     for requirement in contract:
         candidates = []
         for capability in inputs['tool_capabilities']:

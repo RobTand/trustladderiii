@@ -1345,3 +1345,40 @@ async fn ci_log_tail_reports_ranges_and_untruncated_responses() {
         assert!(tail.text.ends_with("FAILED: //tests:test_fixture\n"));
     }
 }
+
+#[tokio::test]
+async fn publication_token_refusal_retains_typed_status_without_response_body() {
+    for status in [403, 404, 422] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/app/installations/3/access_tokens"))
+            .respond_with(
+                ResponseTemplate::new(status)
+                    .set_body_json(json!({"message":"Bearer synthetic-secret"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let github = GitHub::new(config(), 3, options(&server)).unwrap();
+        let error = github.installation_token().await.unwrap_err();
+        assert!(!format!("{error:?}").contains("synthetic-secret"));
+        assert!(
+            matches!(error, Error::InstallationToken { source } if matches!(*source,Error::Http {status:actual} if actual==status))
+        );
+    }
+}
+
+#[tokio::test]
+async fn publication_token_quota_keeps_its_existing_recovery_class() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/app/installations/3/access_tokens"))
+        .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "60"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let github = GitHub::new(config(), 3, options(&server)).unwrap();
+    assert!(
+        matches!(github.installation_token().await,Err(Error::RateLimited {retry_after}) if retry_after==Duration::from_secs(60))
+    );
+}

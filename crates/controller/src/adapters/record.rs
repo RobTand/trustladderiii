@@ -32,9 +32,9 @@ impl Records {
     }
     pub fn reconcile(&self, delivery: &Delivery) -> Result<Reconciliation> {
         match fs::read(self.path(&delivery.key)) {
-            Ok(bytes) => Ok(Reconciliation::Found(
+            Ok(bytes) => Ok(Reconciliation::Found(Box::new(
                 serde_json::from_slice::<Record>(&bytes)?.completion,
-            )),
+            ))),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Reconciliation::Absent),
             Err(e) => Err(e.into()),
         }
