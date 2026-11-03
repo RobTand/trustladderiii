@@ -534,6 +534,22 @@ def test_review_sees_a_forced_reproduction(review_request):
         validate("reviewer-input", review_request["inputs"])
 
 
+def test_review662_fixed_finding_retains_declared_assertion_reason(review_request):
+    from jsonschema import ValidationError
+    from tl3_workers.contracts import validate
+
+    finding = {
+        'id': 'review-4-0', 'report': 'Empty names fail.',
+        'tests': ['test_greeting.py::test_empty'],
+        'proof': {'subjects': [], 'observer_support': [], 'red_message': 'empty greeting'},
+    }
+    review_request['inputs']['review_fixes'] = {'reviewed_sha': BASE, 'findings': [finding]}
+    validate('reviewer-input', review_request['inputs'])
+    finding['proof']['red_message'] = ''
+    with pytest.raises(ValidationError):
+        validate('reviewer-input', review_request['inputs'])
+
+
 def test_prompt_judges_the_forcing_against_the_symptom():
     from importlib.resources import files
     prompt = " ".join(files("tl3_workers").joinpath("prompts", "reviewer.md").read_text().split())
