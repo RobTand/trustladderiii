@@ -83,6 +83,24 @@ fn set_payload(state: &mut State, payload: Value) {
 }
 
 fn setup(prior: bool) -> (support::Database, Fixture, Controller) {
+    setup_at(prior, false)
+}
+fn prepare_repaired_head(api: &Server, d: &Delivery) {
+    let mut state = api.state.lock().unwrap();
+    state.pull["head"]["sha"] = json!(d.head_sha);
+    state.dequeued = false;
+    state.lag = true;
+    state.queue_rule["completed_at"] = Value::Null;
+    state.required = true;
+    state.head_checks = vec![
+        json!({"id":900,"name":"Sandbox tests","head_sha":d.head_sha,
+            "status":"completed","conclusion":"failure","app":{"id":15368,"slug":"github-actions"}}),
+        json!({"id":901,"name":"Sandbox tests","head_sha":d.head_sha,
+            "status":"completed","conclusion":"success","app":{"id":15368,"slug":"github-actions"}}),
+    ];
+    set_payload(&mut state, waiting_payload());
+}
+fn setup_at(prior: bool, intended: bool) -> (support::Database, Fixture, Controller) {
     let mut database = support::Database::start();
     let settings = database.create("waiting_requeue");
     let api = Server::new();
@@ -144,6 +162,23 @@ fn setup(prior: bool) -> (support::Database, Fixture, Controller) {
     let mut delivery = None;
     if prior {
         for _ in 0..300 {
+            if intended
+                && let Some(effect) =
+                    controller
+                        .snapshot()
+                        .unwrap()
+                        .pending_effects
+                        .iter()
+                        .find(|effect| {
+                            effect.state == tl3_store::EffectState::Intended
+                                && effect.payload["output"]["Effect"]["kind"] == "Enqueue"
+                        })
+            {
+                let d: Delivery = serde_json::from_value(effect.payload.clone()).unwrap();
+                prepare_repaired_head(&api, &d);
+                delivery = Some(d);
+                break;
+            }
             let progressed = controller
                 .drive_once_with(|boundary, key| {
                     if boundary == Boundary::BeforeDispatch {
@@ -160,19 +195,7 @@ fn setup(prior: bool) -> (support::Database, Fixture, Controller) {
                                 ..
                             }
                         ) {
-                            let mut state = api.state.lock().unwrap();
-                            state.pull["head"]["sha"] = json!(d.head_sha);
-                            state.dequeued = false;
-                            state.lag = true;
-                            state.queue_rule["completed_at"] = Value::Null;
-                            state.required = true;
-                            state.head_checks = vec![
-                                json!({"id":900,"name":"Sandbox tests","head_sha":d.head_sha,
-                                    "status":"completed","conclusion":"failure","app":{"id":15368,"slug":"github-actions"}}),
-                                json!({"id":901,"name":"Sandbox tests","head_sha":d.head_sha,
-                                    "status":"completed","conclusion":"success","app":{"id":15368,"slug":"github-actions"}})
-                            ];
-                            set_payload(&mut state, waiting_payload());
+                            prepare_repaired_head(&api, &d);
                             delivery = Some(d);
                         }
                     }
@@ -547,4 +570,166 @@ pub(super) fn run() {
         }
     }
     assert!(failures.is_empty(), "#608 regressions: {failures:?}");
+}
+
+fn recorded_human_removal_before_first_dispatch_requires_explicit_resume() {
+    let (_db, f, mut c) = setup_at(true, true);
+    assert_eq!(
+        c.effect(&f.delivery.key).unwrap().unwrap().state,
+        tl3_store::EffectState::Intended
+    );
+    let fact = tl3_controller::adapters::mergify::QueueFact {
+        repository: f.delivery.repository.clone(),
+        number: 100,
+        evidence: tl3_controller::adapters::mergify::Evidence::DequeuedByPerson { event: 100 },
+    };
+    {
+        let mut state = f.api.state.lock().unwrap();
+        state.label = false;
+        state.events.push(json!({"id":100,"event":"unlabeled","actor":{"id":42,"login":"RobTand"},"label":{"name":"tl3-queue"},"created_at":"2026-11-03T10:00:00Z"}));
+    }
+    c.observe(
+        "human-before-dispatch",
+        tl3_controller::executor::Observation::Queue(fact),
+    )
+    .unwrap();
+    for _ in 0..20 {
+        c.drive_once().unwrap();
+        if c.snapshot().unwrap().rows.iter().any(|row| {
+            row.table == "queue_facts" && row.value["evidence"]["DequeuedByPerson"]["event"] == 100
+        }) {
+            break;
+        }
+    }
+    assert_eq!(
+        c.effect(&f.delivery.key).unwrap().unwrap().state,
+        tl3_store::EffectState::Intended
+    );
+    assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Publishing);
+    assert!(
+        !c.world().unwrap().nodes[0].paused,
+        "kernel ignores this fact in Publishing"
+    );
+    drop(c);
+    let mut c = f.open();
+    drain(&mut c);
+    f.advance(301);
+    c.look_now().unwrap();
+    drain(&mut c);
+    assert!(
+        !f.api.state.lock().unwrap().label,
+        "recorded human removal must still block queue-label restoration"
+    );
+    assert_eq!(f.commands(), 0, "a receipt is not evidence of human resume");
+    // A different accepted command cannot release the hold.
+    c.observe(
+        "unrelated-command",
+        tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+            node: NodeId(0),
+            id: 1,
+            command: tl3_kernel::Command::Pause,
+        }),
+    )
+    .unwrap();
+    drain(&mut c);
+    drop(c);
+    let mut c = f.open();
+    c.observe(
+        "explicit-resume",
+        tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+            node: NodeId(0),
+            id: 2,
+            command: tl3_kernel::Command::Resume,
+        }),
+    )
+    .unwrap();
+    drain(&mut c);
+    c.look_now().unwrap();
+    drain(&mut c);
+    f.advance(301);
+    c.look_now().unwrap();
+    drain(&mut c);
+    assert_eq!(
+        f.commands(),
+        1,
+        "an explicit later resume releases the stored human hold"
+    );
+}
+
+fn legacy_command_survives_retirement_and_replacement_effect() {
+    let (_db, f, c) = setup(true);
+    drop(c);
+    f.api
+        ._runtime
+        .block_on(
+            tl3_mergify::Mergify::new(f.api.clients()[&3].clone()).requeue(
+                "owner/sandbox",
+                100,
+                f.delivery.head_sha.as_ref().unwrap(),
+                &f.delivery.key,
+            ),
+        )
+        .unwrap();
+    assert_eq!(f.commands(), 1);
+    f.adapter().retire_delivery(&f.delivery).unwrap();
+    let mut replacement = f.delivery.clone();
+    replacement.key.push_str("-replacement");
+    let mut adapter = f.adapter();
+    let _ = adapter.look(&replacement);
+    f.advance(301);
+    let _ = adapter.look(&replacement);
+    assert_eq!(
+        f.commands(),
+        1,
+        "retired legacy effect command must consume the replacement head budget"
+    );
+}
+
+fn consumed_head_budget_also_blocks_legacy_dispatch_path() {
+    let (_db, f, mut c) = setup(true);
+    f.grace(&mut c);
+    f.look(&mut c);
+    assert_eq!(f.commands(), 1);
+    drop(c);
+    {
+        let mut state = f.api.state.lock().unwrap();
+        state.checks = fixture("interrupted", "checks");
+        state.queue_check_mut()["completed_at"] = json!("2026-10-31T22:19:34Z");
+        state.dequeued = true;
+        state.events.push(json!({"id":1000,"event":"labeled","actor":{"id":37929162,"login":"mergify[bot]"},"label":{"name":"dequeued"},"created_at":"2026-10-31T22:20:03Z"}));
+    }
+    let mut replacement = f.delivery.clone();
+    replacement.key.push_str("-legacy-dispatch");
+    let _ = f.adapter().execute(&replacement);
+    assert_eq!(
+        f.commands(),
+        1,
+        "legacy execute must consult the consumed per-head command budget"
+    );
+}
+
+pub(super) fn review() {
+    let mut failures = Vec::new();
+    for (name, case) in [
+        (
+            "recorded_human_removal_before_first_dispatch_requires_explicit_resume",
+            recorded_human_removal_before_first_dispatch_requires_explicit_resume as fn(),
+        ),
+        (
+            "legacy_command_survives_retirement_and_replacement_effect",
+            legacy_command_survives_retirement_and_replacement_effect,
+        ),
+        (
+            "consumed_head_budget_also_blocks_legacy_dispatch_path",
+            consumed_head_budget_also_blocks_legacy_dispatch_path,
+        ),
+    ] {
+        if std::panic::catch_unwind(case).is_err() {
+            eprintln!("FAILED #608 review {name}");
+            failures.push(name);
+        } else {
+            println!("test {name} ... ok");
+        }
+    }
+    assert!(failures.is_empty(), "#608 review regressions: {failures:?}");
 }

@@ -2649,6 +2649,11 @@ fn legacy_intent_ignores_completed_at() {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--review-requeue") {
+        waiting_requeue::review();
+        println!("3 Mergify scenarios passed; no skips; no live upstream calls");
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("--waiting-requeue") {
         waiting_requeue::run();
         println!("6 Mergify scenarios passed; no skips; no live upstream calls");
@@ -3205,5 +3210,7 @@ fn main() {
     database.stop();
     waiting_requeue::run();
     scenario_count += 6;
+    waiting_requeue::review();
+    scenario_count += 3;
     println!("{scenario_count} Mergify scenarios passed; no skips; no live upstream calls");
 }
