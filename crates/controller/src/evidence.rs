@@ -485,6 +485,20 @@ pub fn summary(delivery: &Delivery) -> Result<String> {
     let Some(facts) = &delivery.evidence else {
         return Ok("Details of checks and review were not captured in this summary.".into());
     };
+    let review_stop = delivery
+        .question_context
+        .as_ref()
+        .filter(|_| {
+            matches!(
+                delivery.output,
+                Output::Notice {
+                    notice: Notice::Summary(Outcome::Stopped),
+                    ..
+                }
+            )
+        })
+        .map(|context| &context["review_stop"])
+        .filter(|stop| stop["text"].is_string());
     let mut lines: Vec<String> = Vec::new();
     for check in &facts.checks {
         let results = check["results"].as_array();
@@ -633,10 +647,16 @@ pub fn summary(delivery: &Delivery) -> Result<String> {
                 Some("protected_paths") => {
                     "Work stopped because the request requires changes to protected paths."
                 }
+                _ if review_stop.is_some() => {
+                    "Work stopped for TL3's maintainers to review the recorded failure before retrying."
+                }
                 _ => "The reason for stopping was not captured.",
             }
             .into(),
         );
+    }
+    if let Some(report) = review_stop.and_then(|stop| stop["findings"]["report"].as_str()) {
+        lines.push(format!("Recorded stop evidence: {}.", label(report)?));
     }
     for blocker in facts
         .remaining_failures
