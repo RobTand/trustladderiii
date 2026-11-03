@@ -109,3 +109,13 @@ def test_run_tests_options_say_what_the_tool_enforces():
 @pytest.mark.parametrize("name", ["maker.md", "reviewer.md"])
 def test_saturation_guidance_bounds_a_passing_check(name):
     assert 'A saturation receipt means "PASS covers only the checked prefix"' in prompt_text(name)
+
+
+CONFLICT_MARKER = re.compile(r"^(<{7} |={7}$|>{7} )", re.M)
+
+
+@pytest.mark.parametrize("name", PROMPTS)
+def test_no_prompt_carries_unresolved_merge_conflict_markers(name):
+    # Audit and ingest shipped both sides of a #612/#607 merge conflict, markers and all.
+    raw = files("tl3_workers").joinpath("prompts", name).read_text()
+    assert not CONFLICT_MARKER.search(raw), f"{name} contains unresolved merge-conflict markers"
