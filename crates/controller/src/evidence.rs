@@ -34,6 +34,15 @@ pub struct Evidence {
     pub artifacts: Vec<String>,
 }
 
+pub(crate) fn retire_delivered(
+    _snapshot: &Snapshot,
+    _commit: &mut Commit,
+    _delivery: &Delivery,
+    _ack: tl3_kernel::Ack,
+) {
+    todo!("retire evidence after durable closing delivery")
+}
+
 /// Include writes made by the event that emits the delivery. Check reports and
 /// queue facts retired at close remain reporting evidence for that close.
 pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Result<Evidence> {
@@ -721,5 +730,207 @@ mod tests {
         assert_eq!(proof["head_sha"], head);
         assert_eq!(proof["checks"][0]["action_key"], action);
         assert!(!body.contains("secret-fixture-value"));
+    }
+
+    #[test]
+    fn fix_round_summary_never_calls_a_model_and_reports_recorded_status() {
+        struct UntrustedWriter(usize);
+        impl Writer for UntrustedWriter {
+            fn draft(&mut self, _: &str, _: &WriteRequest) -> Result<WriterReply> {
+                self.0 += 1;
+                Ok(WriterReply::Text(TextDraft {
+                    text: "Tests never ran. Review did not happen. Everything is merged.".into(),
+                }))
+            }
+        }
+        let (snapshot, mut delivery) = fixture();
+        delivery.evidence = Some(
+            capture(
+                &snapshot,
+                &Commit::new("stop", json!({}), &snapshot),
+                &delivery,
+            )
+            .unwrap(),
+        );
+        let input = writer_input(
+            &delivery,
+            Some(Notice::Summary(Outcome::Stopped)),
+            "Fix process departure",
+            "Fix the test",
+        )
+        .unwrap();
+        let mut writer = UntrustedWriter(0);
+        let text = checked_draft(&mut writer, "summary", input, &Default::default()).unwrap();
+        assert_eq!(writer.0, 0, "closing summaries must not call the model");
+        for fact in [
+            "checks passed",
+            "forced reproduction",
+            "review approved",
+            "queue",
+            "stopped",
+            "closed",
+            "unresolved",
+        ] {
+            assert!(text.contains(fact), "missing {fact}: {text}");
+        }
+        assert!(!text.contains("never ran"));
+    }
+
+    #[test]
+    fn fix_round_publication_uses_shared_sensitive_key_and_text_redaction() {
+        let planted = "Z7vQ9mN4pR6xT8cL2hK5sD3f";
+        let mut fields = serde_json::Map::new();
+        for key in [
+            "token",
+            "apikey",
+            "cookie",
+            "passwd",
+            "PGPASSWORD",
+            "refresh_token",
+        ] {
+            fields.insert(key.into(), json!({"nested": planted}));
+        }
+        fields.insert(
+            "environment".into(),
+            json!({"ALLOWED_FORCE_VALUE":"ghp_abcdefgh1234567890abcdefgh1234567890"}),
+        );
+        let redacted = public_value(&Value::Object(fields), None).to_string();
+        assert!(
+            !redacted.contains(planted),
+            "sensitive-key values escaped redaction"
+        );
+        assert!(
+            !redacted.contains("ghp_abcdefgh"),
+            "forcing values escaped text redaction"
+        );
+    }
+
+    #[test]
+    fn fix_round_eight_mib_report_publishes_bounded_proof_and_artifacts() {
+        let (snapshot, mut delivery) = fixture();
+        delivery.evidence = Some(
+            capture(
+                &snapshot,
+                &Commit::new("publish", json!({}), &snapshot),
+                &delivery,
+            )
+            .unwrap(),
+        );
+        let evidence = delivery.evidence.as_mut().unwrap();
+        evidence.checks[0]["results"][0]["diagnostic"] =
+            json!("report noise ".repeat(8 * 1024 * 1024 / 13));
+        evidence.artifacts = vec!["https://example.org/results/receipt".into()];
+        let proof = publication(&delivery, "Publish red/green proof in the PR body").unwrap();
+        assert!(
+            proof.len() <= 24_000,
+            "published proof exceeds its byte budget: {}",
+            proof.len()
+        );
+        assert!(!proof.contains("report noise"));
+        for fact in [
+            "test_departure",
+            "pass",
+            "head_forced",
+            "https://example.org/results/receipt",
+        ] {
+            assert!(proof.contains(fact), "missing {fact}");
+        }
+    }
+
+    #[test]
+    fn fix_round_capture_ignores_foreign_rows_and_projects_reports() {
+        let (mut snapshot, delivery) = fixture();
+        snapshot.rows.push(tl3_store::WorldRow {
+            arrival: 9,
+            version: Revision::ZERO,
+            table: "queue_facts".into(),
+            id: "foreign".into(),
+            value: json!({"number":999,"evidence":"unrelated obsolete shape"}),
+        });
+        snapshot
+            .rows
+            .iter_mut()
+            .find(|r| r.table == "check_reports")
+            .unwrap()
+            .value["results"][0]["diagnostic"] = json!("noise".repeat(1024 * 1024));
+        let captured = capture(
+            &snapshot,
+            &Commit::new("capture", json!({}), &snapshot),
+            &delivery,
+        )
+        .unwrap();
+        assert!(
+            serde_json::to_vec(&captured).unwrap().len() < 24_000,
+            "capture cloned full report data"
+        );
+        assert_eq!(captured.queue.len(), 1);
+    }
+
+    #[test]
+    fn fix_round_retention_waits_for_confirmed_summary_and_preserves_other_requests() {
+        use tl3_kernel::Ack;
+        let (mut snapshot, mut delivery) = fixture();
+        for (table, id, value) in [
+            (
+                "check_evidence",
+                "118:7",
+                json!({"head_sha":"reviewed-head"}),
+            ),
+            ("review_evidence", "119:7", json!({"head_sha":"other"})),
+            (
+                "scratch_evidence",
+                "saved",
+                json!({"node":118,"status":"saved"}),
+            ),
+        ] {
+            snapshot.rows.push(tl3_store::WorldRow {
+                arrival: 0,
+                version: Revision::ZERO,
+                table: table.into(),
+                id: id.into(),
+                value,
+            });
+        }
+        delivery.evidence = Some(
+            capture(
+                &snapshot,
+                &Commit::new("capture", json!({}), &snapshot),
+                &delivery,
+            )
+            .unwrap(),
+        );
+        for ack in [Ack::Retryable, Ack::Permanent] {
+            let mut commit = Commit::new("retry", json!({}), &snapshot);
+            retire_delivered(&snapshot, &mut commit, &delivery, ack);
+            assert!(
+                commit.rows.is_empty(),
+                "evidence must survive failed delivery"
+            );
+        }
+        let mut commit = Commit::new("delivered", json!({}), &snapshot);
+        retire_delivered(&snapshot, &mut commit, &delivery, Ack::Confirmed);
+        for (table, id) in [
+            ("check_evidence", "118:7"),
+            ("review_evidence", "118:7"),
+            ("scratch_evidence", "saved"),
+        ] {
+            assert!(
+                commit
+                    .rows
+                    .iter()
+                    .any(|r| matches!(r, RowChange::Delete {table:t,id:i} if t==table && i==id)),
+                "missing retirement {table}:{id}"
+            );
+        }
+        assert!(
+            !commit
+                .rows
+                .iter()
+                .any(|r| matches!(r, RowChange::Delete {id,..} if id.starts_with("119:")))
+        );
+        assert!(
+            !delivery.evidence.unwrap().checks.is_empty(),
+            "durable delivery retains captured proof"
+        );
     }
 }
