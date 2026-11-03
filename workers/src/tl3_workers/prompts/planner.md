@@ -116,6 +116,10 @@ those marked for review. Return exactly one of these proposals:
   test already meets the goals. Never remove a required edit, weaken a goal,
   invent a base failure or count a passing control as red. Return cant_meet
   when the required proof is unavailable.
+  A correction is bound to the original draft. Keep its files, goals, check
+  kinds and forcings. Only add the missing demonstrating coverage, replace
+  forced non-base selections with existing base nodes, or drop an uncovered
+  unnecessary edit declaration. Do not add files, unrelated checks or goals.
   A goal that asks the maker to change an existing test, for
   example to extend, patch, update, fix or rewrite it, needs that test in
   edits_tests; code refuses a plan whose goal asks that of a test a regression

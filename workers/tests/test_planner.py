@@ -629,13 +629,12 @@ def test_forcing_belongs_only_on_demonstrating_checks(planner_request, deflake_w
 
 
 def test_forced_check_names_the_old_test_at_the_base(planner_request, deflake_worktree):
-    from tl3_workers.roles.planner import PlanConsistencyError, check_reply
+    from tl3_workers.roles.planner import check_reply
 
     test = 'tests/test_sampler.py::test_departure_is_stated'
     deflake_worktree['checks'][0]['node_ids'] = [test]
-    with pytest.raises(PlanConsistencyError, match='Existing check must name a test defined at the base') as raised:
-        check_reply(planner_request['inputs'], deflake_worktree)
-    assert raised.value.node_ids == (test,)
+    check_reply(planner_request['inputs'], deflake_worktree)
+    assert any(test in item and 'base' in item for item in deflake_worktree['violations'])
 
 
 def test_invalid_forcing_is_a_planner_violation(planner_request, deflake_worktree):
@@ -818,14 +817,12 @@ def test_declared_edit_may_not_be_frozen(planner_request, digests_plan, frozen, 
 
 
 def test_declared_edit_needs_a_demonstrating_check(planner_request, digests_plan):
-    from tl3_workers.roles.planner import PlanConsistencyError
-
     digests_plan['edits_tests'] = [FROZEN]
     digests_plan['checks'] = digests_plan['checks'][:2]
     digests_plan['checks'][0]['goal_ids'] = [0]
-    with pytest.raises(PlanConsistencyError, match='no demonstrating check names it') as raised:
-        planned(planner_request, digests_plan)
-    assert raised.value.node_ids == (FROZEN,)
+    violations = planned(planner_request, digests_plan)
+    assert any(f'`{FROZEN}` is in edits_tests but no demonstrating check names it' in item
+               for item in violations), violations
 
 
 @pytest.mark.parametrize('edited,files,reason', [
@@ -1222,6 +1219,7 @@ CONTROL = f'{PBWAIT_TESTS}::test_a_key_nothing_ever_records_still_gives_up_as_wa
 
 @pytest.fixture
 def request156(planner_request, monkeypatch):
+    planner_request['inputs']['repair_plan_consistency'] = True
     root = Path(planner_request['worktree'])
     (root / PBWAIT_TESTS).write_text(
         'def test_finds_a_later_submission():\n    assert True\n\n'
@@ -1248,7 +1246,7 @@ def request156(planner_request, monkeypatch):
     }
 
 
-@pytest.mark.parametrize('correction', ['check', 'unchanged', 'cant_meet'])
+@pytest.mark.parametrize('correction', ['check', 'new_check', 'unchanged', 'cant_meet'])
 def test_request156_gets_one_tool_free_consistency_correction(planner_request, request156, monkeypatch, correction):
     from tl3_workers import runtime
     from tl3_workers.forecast import Forecaster
@@ -1256,13 +1254,13 @@ def test_request156_gets_one_tool_free_consistency_correction(planner_request, r
     fixed = copy.deepcopy(request156)
     if correction == 'check':
         fixed['checks'][0]['node_ids'].append(CONTROL)
+    elif correction == 'new_check':
+        fixed['checks'].append({'kind': 'demonstrating', 'node_ids': [CONTROL], 'goal_ids': [1]})
     elif correction == 'unchanged':
         fixed['edits_tests'].remove(CONTROL)
-        fixed['checks'].append({'kind': 'regression', 'node_ids': [CONTROL], 'goal_ids': [1]})
     else:
         fixed = {**copy.deepcopy(CANT_MEET), 'evidence_contract': []}
-    # The final forecast must measure the corrected footprint, not the discarded draft.
-    fixed['files'].append('tests/test_existing.py')
+    # Recompute trusted measurements even though a correction cannot expand the footprint.
     measurements = []
     original = Forecaster.measure
 
@@ -1405,6 +1403,7 @@ INVENTED = [f'{RELAY_TESTS}::test_a_created_container_whose_removal_is_denied_is
 
 @pytest.fixture
 def request162(planner_request, monkeypatch):
+    planner_request['inputs']['repair_plan_consistency'] = True
     root = Path(planner_request['worktree'])
     (root / RELAY_TESTS).write_text(
         'def test_a_term_reaches_the_client_and_the_receipt_names_the_container():\n    assert True\n\n'
@@ -1508,3 +1507,152 @@ def test_request162_correction_cannot_drop_mutant_coverage(planner_request, requ
     runtime.run(planner_request, events.append)
     assert len(model.calls) == 2
     assert 'Every maker and checking goal must have a check.' in events[-1]['reply']['violations']
+
+
+EXPORT_TESTS = 'tests/test_paced_exports_share_a_tier.py'
+FINISHED = f'{EXPORT_TESTS}::test_a_finished_export_files_its_rate_and_prices_the_next_seal'
+PROPOSED_EXPORTS = [f'{EXPORT_TESTS}::test_a_fast_writer_is_held_and_flushed_under_virtual_time',
+                    f'{EXPORT_TESTS}::test_a_delayed_writer_files_a_sub_one_rate_and_seals_one',
+                    f'{EXPORT_TESTS}::test_a_virtual_receipt_prices_ceiled_and_capped_by_the_offer']
+
+
+@pytest.fixture
+def request165(planner_request, monkeypatch):
+    planner_request['inputs']['repair_plan_consistency'] = True
+    planner_request['inputs']['tool_capabilities'] = [
+        {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+         'runner_features': ['base_head', 'native_threads_1'],
+         'artifacts': ['logs', 'terminal_verdict', 'cas_receipt'],
+         'methods': ['red_green', 'forced_reproduction.patches'], 'protected_files': []}]
+    root = Path(planner_request['worktree'])
+    (root / EXPORT_TESTS).write_text(
+        'def test_a_finished_export_files_its_rate_and_prices_the_next_seal():\n    assert True\n')
+    (root / 'pyproject.toml').write_text('[tool.tl3.harness]\ntest-files = ["tests/**/*.py"]\n')
+    planner_request['inputs']['ingest']['goals'] = [
+        {'description': description, 'verification': 'review' if index == 6 else 'test',
+         **({'stage': 'publishing', 'publication': {'non_draft': True, 'body_lines': [], 'proof': True}}
+            if index == 6 else {})}
+        for index, description in enumerate([
+            'Use virtual time through the real export, pacer and receipt-writing path.',
+            'A fast writer must incur a virtual pacing hold and flush.',
+            'A delayed writer must file a sub-1 MB/s rate without a required sleep.',
+            'Keep real CAS requests, receipt filing and next-export seal pricing.',
+            'Assert independent literal rates and prices, not pricing-function tautologies.',
+            'Keep ceil, minimum-one and offer-cap pricing and tier token totals within the offer.',
+            'Report focused base/head proof and receipt hashes in the PR.',
+            'Keep launch and receipt integration smoke coverage.',
+            'Preserve the seal ceiling without introducing a scheduler throughput floor.',
+            'Deterministic schedules must fail faulty pacing or receipt pricing.',
+        ])]
+    planner_request['inputs']['ingest']['evidence_errors'] = []
+    monkeypatch.chdir(root)
+    return {
+        'kind': 'leaf', 'files': [EXPORT_TESTS], 'edits_tests': [FINISHED], 'evidence_contract': [],
+        'checks': [{'kind': 'demonstrating', 'node_ids': [FINISHED, *PROPOSED_EXPORTS],
+                    'goal_ids': [0, 1, 2, 3, 4, 5, 7, 8, 9],
+                    'forcing': {'symptom': 'Deschedule the export writer before its block is counted; '
+                                           'the old rate floor and positive-hold assertions fail.',
+                                'environment': {},
+                                'patches': [{'target': 'prismabuild.produced_spool.ExportPacer.wrote',
+                                             'delay_seconds': 2}]}}],
+        'no_design_questions': True, 'lands_on_its_own': True,
+    }
+
+
+@pytest.mark.parametrize('resolution', ['base_node', 'cant_meet', 'still_invented', 'drop_tier_goal'])
+def test_request165_preserves_deterministic_tier_and_rate_goals(planner_request, request165, monkeypatch, resolution):
+    from tl3_workers import runtime
+    from tl3_workers.turns import InvalidReply
+
+    fixed = copy.deepcopy(request165)
+    fixed['checks'][0]['node_ids'] = [FINISHED]
+    if resolution == 'cant_meet':
+        fixed = copy.deepcopy(CANT_MEET)
+        fixed['evidence_contract'] = []
+        fixed['report'] = 'No existing base test can honestly demonstrate all the deterministic tier/rate goals.'
+    elif resolution == 'still_invented':
+        fixed = copy.deepcopy(request165)
+    elif resolution == 'drop_tier_goal':
+        fixed['checks'][0]['goal_ids'].remove(5)
+    model = planner_model(monkeypatch, request165, fixed, LEAF)
+    events = []
+    if resolution == 'still_invented':
+        with pytest.raises(InvalidReply) as raised:
+            runtime.run(planner_request, events.append)
+        assert all(node in str(raised.value.errors[1]) for node in PROPOSED_EXPORTS)
+        assert not any(event['event'] == 'reply' for event in events)
+    else:
+        runtime.run(planner_request, events.append)
+        result = events[-1]['reply']
+        if resolution == 'drop_tier_goal':
+            assert 'Every maker and checking goal must have a check.' in result['violations']
+        else:
+            assert result['kind'] == fixed['kind'] and result['violations'] == []
+            if resolution == 'base_node':
+                assert result['checks'] == [{**request165['checks'][0], 'node_ids': [FINISHED]}]
+                assert result['edits_tests'] == [FINISHED]
+                assert result['checks'][0]['forcing']['environment'] == {}
+            else:
+                assert result['report'] == fixed['report']
+            assert result['evidence_errors'] == []
+    assert len(model.calls) == 2
+    history, offered = model.calls[1]
+    assert not offered
+    assert all(node in history[-1].text for node in PROPOSED_EXPORTS)
+    inputs = json.loads(next(m.text for m in history if isinstance(m, HumanMessage)))
+    assert inputs['ingest']['goals'] == planner_request['inputs']['ingest']['goals']
+    assert inputs['ingest']['evidence_errors'] == []
+
+
+@pytest.mark.parametrize('shape', ['request156', 'request162', 'request165'])
+@pytest.mark.parametrize('enabled', [None, False])
+def test_consistency_correction_defaults_off(planner_request, request, monkeypatch, shape, enabled):
+    from tl3_workers import runtime
+
+    draft = request.getfixturevalue(shape)
+    if enabled is None:
+        planner_request['inputs'].pop('repair_plan_consistency', None)
+    else:
+        planner_request['inputs']['repair_plan_consistency'] = enabled
+    fixed = copy.deepcopy(draft)
+    if shape == 'request156':
+        fixed['checks'][0]['node_ids'].append(CONTROL)
+    else:
+        fixed['checks'][0]['node_ids'] = draft['checks'][0]['node_ids'][:1]
+    model = planner_model(monkeypatch, draft, fixed)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 1, 'default-off must keep the original PlanCantMeet classification'
+    assert events[-1]['reply']['violations']
+
+
+@pytest.mark.parametrize('expansion', ['file', 'check', 'forcing', 'goal', 'edit'])
+def test_correction_cannot_expand_draft(planner_request, request156, monkeypatch, expansion):
+    from tl3_workers import runtime
+
+    fixed = copy.deepcopy(request156)
+    fixed['checks'][0]['node_ids'].append(CONTROL)
+    if expansion == 'file':
+        fixed['files'].append('tests/test_existing.py')
+    elif expansion == 'check':
+        fixed['checks'].append({'kind': 'demonstrating', 'node_ids': [f'{PBWAIT_TESTS}::test_unrelated'],
+                                'goal_ids': [0]})
+    elif expansion == 'forcing':
+        fixed['checks'][0]['forcing'] = {'symptom': 'A new condition.', 'environment': {},
+                                         'patches': [{'target': 'shim.DELAY', 'value': 1}]}
+    elif expansion == 'goal':
+        fixed['checks'][0]['goal_ids'] = [0, 1, 2]
+    else:
+        unrelated = f'{PBWAIT_TESTS}::test_unrelated'
+        with Path(planner_request['worktree'], PBWAIT_TESTS).open('a') as stream:
+            stream.write('\ndef test_unrelated():\n    assert True\n')
+        fixed['edits_tests'].append(unrelated)
+        fixed['checks'][0]['node_ids'].append(unrelated)
+    model = planner_model(monkeypatch, request156, fixed, LEAF)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    violations = events[-1]['reply']['violations']
+    assert violations, 'a coherent correction must not authorize a wider draft'
+    if expansion == 'file':
+        assert any('Correction expands the draft footprint: tests/test_existing.py' in v for v in violations)

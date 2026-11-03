@@ -3,6 +3,11 @@
   "$id": "https://trustladderiii.invalid/workers/protocol-1/planner-input.json",
   "type": "object",
   "properties": {
+    "repair_plan_consistency": {
+      "type": "boolean",
+      "default": false,
+      "description": "Explicitly enable one tool-free correction bound to the original draft. Defaults off pending Rob's Q27/Q54 decision."
+    },
     "always_tests": {
       "type": "array",
       "items": {"type": "string", "minLength": 1},
