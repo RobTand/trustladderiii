@@ -360,7 +360,12 @@ impl Adapter {
             .unwrap_or_default()
             .as_millis()
             .min(u64::MAX as u128) as u64;
-        let mut recovery = self.command_budget(delivery)?;
+        // Poll the saved timer without rereading the delivery archive. Dispatch
+        // adopts historical commands again before consuming the head budget.
+        let mut recovery = match self.recovery(delivery)? {
+            Some(recovery) if recovery.eligible_since_ms.is_some() => recovery,
+            _ => self.command_budget(delivery)?,
+        };
         if let Some(result) = self.reconcile_command(delivery, &mut recovery)? {
             return Ok(result);
         }
