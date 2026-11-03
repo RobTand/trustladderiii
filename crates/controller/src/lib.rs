@@ -2758,9 +2758,14 @@ impl Controller {
                                 }));
                             }
                         };
-                    commit.rows.push(put("review_evidence",format!("{}:{generation:020}",node.0),
-                        json!({"head_sha":criteria["head_sha"],"verdict":reply["verdict"],
-                            "blocking_findings":reply["blocking_findings"],"findings":reply["findings"]})));
+                    commit.rows.push(put(
+                        "review_evidence",
+                        format!("{}:{generation:020}", node.0),
+                        evidence::review_record(
+                            &json!({"head_sha":criteria["head_sha"],"verdict":reply["verdict"],
+                            "blocking_findings":reply["blocking_findings"]}),
+                        ),
+                    ));
                     if reply["verdict"] == "approve" {
                         mapped =
                             adapters::workers::protocol::MappedReply::Kernel(Reply::Approved {

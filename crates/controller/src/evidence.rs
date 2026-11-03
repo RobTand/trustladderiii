@@ -218,7 +218,7 @@ pub(crate) fn check_record(record: &Value) -> Value {
     out
 }
 
-fn review_record(record: &Value) -> Value {
+pub(crate) fn review_record(record: &Value) -> Value {
     let mut out = fields(record, &["head_sha", "verdict", "url"]);
     out["blocking_findings"] = Value::Array(
         record["blocking_findings"]
@@ -599,7 +599,7 @@ pub fn summary(delivery: &Delivery) -> String {
     }
     if !facts.scratch.is_empty() {
         lines.push(format!(
-            "Unfinished work was saved in {} scratch reference(s).",
+            "Saved scratch references: {}.",
             facts.scratch.len()
         ));
     }
@@ -1187,6 +1187,22 @@ mod tests {
         assert!(
             !redacted.contains("ghp_abcdefgh"),
             "forcing values escaped text redaction"
+        );
+        let (snapshot, mut delivery) = fixture();
+        delivery.evidence = Some(
+            capture(
+                &snapshot,
+                &Commit::new("publish", json!({}), &snapshot),
+                &delivery,
+            )
+            .unwrap(),
+        );
+        delivery.evidence.as_mut().unwrap().checks[0]["results"][0]["forcing"]["environment"] =
+            json!({"ALLOWED_FORCE_VALUE":planted});
+        let published = publication(&delivery, "Publish proof in the PR").unwrap();
+        assert!(
+            !published.contains(planted),
+            "opaque forcing values must not be published"
         );
     }
 
