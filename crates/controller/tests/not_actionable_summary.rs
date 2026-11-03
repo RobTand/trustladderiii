@@ -68,13 +68,13 @@ fn summary_uses_pending_ingest_reason() {
 fn summary_redacts_and_quotes_ingest_reason() {
     let s = snapshot(json!({
         "kind":"early_end","outcome":"not_actionable",
-        "reason":"Missing prerequisite; password=secret-fixture-value <details> @operator `command`"
+        "reason":"Missing prerequisite; password=Z7vQ9mN4pR6xT8cL2hK5sD3f <details> @operator `command`"
     }));
     let mut d = delivery();
     d.evidence = Some(capture(&s, &Commit::new("close", json!({}), &s), &d).unwrap());
     let text = summary(&d).unwrap();
     assert!(text.contains("Missing prerequisite"), "{text}");
-    assert!(!text.contains("secret-fixture-value"), "{text}");
+    assert!(!text.contains("Z7vQ9mN4pR6xT8cL2hK5sD3f"), "{text}");
     assert!(text.contains("[details] [at]operator 'command'"), "{text}");
     assert!(!text.contains(MISSING), "{text}");
 }
