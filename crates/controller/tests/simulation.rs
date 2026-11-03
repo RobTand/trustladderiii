@@ -1125,7 +1125,7 @@ fn status_page_and_command(settings: &tl3_config::Store, database: &mut Database
     let expected_text = concat!(
         "Request\tPhase\tWaiting on\tCredit\tLast progress\tOpen incidents\n",
         "RobTand/tl3-sandbox#42: Fix <script>alert('oops')</script> & spacing\t",
-        "Making the change\tpreparing the change files\t4\tnone recorded\tnone recorded\n"
+        "Making the change\tpreparing the change files\t4\tnone recorded\tnone recorded\nPostmortems: 0 running, 0 owed\n"
     );
     assert_eq!(status::render_text(&model), expected_text);
     let expected_html = status::render_html(&model);

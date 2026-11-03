@@ -886,16 +886,13 @@ impl Reason {
     }
 }
 
-/// Q32's selection at close: everything that needed a fix, a retry or Rob, and
-/// everything that closed without merging, plus a sampled share of clean merges.
-/// Returns the reason and, for a sampled node, the share in force.
+/// Every close owes a postmortem (#642). Keep the stored reasons and record
+/// a share of 1 for clean merges, so existing readers need no schema change.
 pub(crate) fn close_reason(
     node: &Node,
     outcome: Outcome,
     history: &History,
-    share: f64,
-    sample_key: &str,
-) -> Option<(Reason, Option<f64>)> {
+) -> (Reason, Option<f64>) {
     let reason = if !history.questions.is_empty()
         || history.incidents.iter().any(|(_, needs_rob)| *needs_rob)
     {
@@ -913,20 +910,10 @@ pub(crate) fn close_reason(
         Reason::Retry
     } else if outcome != Outcome::Merged {
         Reason::ClosedWithoutMerge
-    } else if sampled(sample_key, share) {
-        return Some((Reason::Sampled, Some(share)));
     } else {
-        return None;
+        return (Reason::Sampled, Some(1.0));
     };
-    Some((reason, None))
-}
-
-/// The same node is always sampled the same way at the same share.
-fn sampled(key: &str, share: f64) -> bool {
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(key.as_bytes());
-    let bucket = u16::from_be_bytes([digest[0], digest[1]]) % 10_000;
-    f64::from(bucket) < share * 10_000.0
+    (reason, None)
 }
 
 /// 5 for none, then one grade lower for each more, down to 1.
@@ -1093,7 +1080,7 @@ fn phase_name(phase: &Value) -> String {
 }
 
 impl crate::Controller {
-    /// Q32 at close: code grades for every node, and a postmortem for the selected ones.
+    /// Code grades and an owed postmortem for every closed node (#642).
     pub(crate) fn record_postmortems(
         &mut self,
         snapshot: &Snapshot,
@@ -1125,18 +1112,10 @@ impl crate::Controller {
                     fact,
                 });
             }
-            let share = self.store.postmortem_sample_share()?;
-            let request = crate::request(snapshot, id)?;
-            let sample_key = format!(
-                "{}/{}#{}:{}",
-                request.repo.owner, request.repo.name, request.issue, id.0
-            );
-            if let Some((reason, share)) = close_reason(node, outcome, &history, share, &sample_key)
-            {
-                commit
-                    .postmortems
-                    .push(owed(snapshot, id, "close".into(), reason, share)?);
-            }
+            let (reason, share) = close_reason(node, outcome, &history);
+            commit
+                .postmortems
+                .push(owed(snapshot, id, "close".into(), reason, share)?);
         }
         Ok(())
     }
@@ -1229,7 +1208,7 @@ mod tests {
     }
 
     fn reason(node: &Node, outcome: Outcome, history: &History) -> Option<Reason> {
-        close_reason(node, outcome, history, 0.0, "node:0").map(|(reason, _)| reason)
+        Some(close_reason(node, outcome, history).0)
     }
 
     #[test]
@@ -1256,9 +1235,12 @@ mod tests {
     }
 
     #[test]
-    fn selection_follows_q32() {
+    fn close_reasons_preserve_history() {
         let quiet = History::default();
-        assert_eq!(reason(&clean(), Outcome::Merged, &quiet), None);
+        assert_eq!(
+            reason(&clean(), Outcome::Merged, &quiet),
+            Some(Reason::Sampled)
+        );
         let mut fixed = clean();
         fixed.round = 1;
         assert_eq!(
@@ -1340,37 +1322,11 @@ mod tests {
     }
 
     #[test]
-    fn clean_merges_are_sampled_at_the_stored_share() {
-        let quiet = History::default();
+    fn every_clean_merge_owes_a_postmortem() {
         assert_eq!(
-            close_reason(&clean(), Outcome::Merged, &quiet, 1.0, "node:3"),
-            Some((Reason::Sampled, Some(1.0)))
+            close_reason(&clean(), Outcome::Merged, &History::default()),
+            (Reason::Sampled, Some(1.0))
         );
-        assert_eq!(
-            close_reason(&clean(), Outcome::Merged, &quiet, 0.0, "node:3"),
-            None
-        );
-        let sampled = (0..1000)
-            .filter(|n| {
-                close_reason(
-                    &clean(),
-                    Outcome::Merged,
-                    &quiet,
-                    0.25,
-                    &format!("node:{n}"),
-                )
-                .is_some()
-            })
-            .count();
-        assert!((180..=320).contains(&sampled), "{sampled} of 1000 at 0.25");
-        for n in 0..50 {
-            let key = format!("node:{n}");
-            assert_eq!(
-                close_reason(&clean(), Outcome::Merged, &quiet, 0.25, &key),
-                close_reason(&clean(), Outcome::Merged, &quiet, 0.25, &key),
-                "the same node is always sampled the same way"
-            );
-        }
     }
 
     fn graded(

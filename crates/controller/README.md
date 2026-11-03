@@ -1001,10 +1001,9 @@ one and no delivery work waits on one.
   so the grades depend only on stored times. A postmortem is owed when the node asked Rob or raised an incident
   that needed him (`escalation`), had a fix round, later attempt or replan
   (`needed_fix`), had a run, effect or plan retry (`retry`), or closed without
-  merging (`closed_without_merge`). Otherwise a clean merge is `sampled` when it
-  falls in the stored share `postmortem_sample_share` (default 0.1); the record
-  keeps the share in force. Sampling hashes the request and node, so the same
-  node is always sampled the same way.
+  merging (`closed_without_merge`). Every clean merge also owes one (#642). Its
+  stored reason remains `sampled` with a share of 1 for existing readers. The
+  legacy `postmortem_sample_share` setting no longer selects work.
 - **Every question to Rob** owes one (`question:<id>`), and so does every kernel
   incident that needs him (`incident:<id>`).
 - **Rob's console button**, `{"kind": "postmortem"}`, owes one (`rob:<command

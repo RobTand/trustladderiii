@@ -758,7 +758,7 @@ Slice one uses one account. Each agent run takes a ticket, then waits for a free
 - **Waiting.** A waiter is granted once no waiter of better priority, and no older waiter of its own priority, remains. If no better-priority run arrives while it waits, that takes at most as many grants as there are waiters ahead of it. Better-priority work that keeps arriving can hold it back indefinitely; as in Q30, starvation is accepted.
 - `tl3 status` and the console's cards show each waiting run's priority and place in line.
 
-Rob amended Q39 on 2026-11-03 (#642): "postmortems should not eat the same budget as everything else. Everything gets a postmortem regardless of budget." Postmortems run in their own controller lane, at most two concurrently, oldest owed first. They never wait for or consume agent-pool capacity and have no daily allowance. Model quota for the models actually used, the failure-streak pause and recovery validation (#632), and the deadline still apply. Delivery grants are unchanged.
+Rob amended Q39 on 2026-11-03 (#642): "postmortems should not eat the same budget as everything else. Everything gets a postmortem regardless of budget." Every closed node owes a postmortem, including clean merges regardless of the former sample share (Q32 amended). Postmortems run in their own controller lane, at most two concurrently, oldest owed first. They never wait for or consume agent-pool capacity and have no daily allowance. Model quota for the models actually used, the failure-streak pause and recovery validation (#632), and the deadline still apply. Delivery grants are unchanged.
 
 From slice two on:
 

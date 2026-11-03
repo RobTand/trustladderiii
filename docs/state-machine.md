@@ -246,7 +246,7 @@ TL3 adds dimensions for its own steps:
 - whether the raised-effort attempt rescued the leaf;
 - whether an escalation report led to the right decision.
 
-**Scope.** Every node gets one postmortem when it ends: a leaf when it merges or is abandoned, and a parent after integration. Each postmortem sees only that node's own materials, the same insulation that escalation uses. Code grades every run. The judge grades every node that needed a fix round, a later attempt or an escalation, plus a random share of the clean ones, and that share is logged.
+**Scope.** Every node gets one postmortem when it ends: a leaf when it merges or is abandoned, and a parent after integration. Each postmortem sees only that node's own materials, the same insulation that escalation uses. Code grades every run. Rob amended this on 2026-11-03 (#642): "postmortems should not eat the same budget as everything else. Everything gets a postmortem regardless of budget." The judge now grades every closed node, including every clean merge; the former sample share no longer selects work.
 
 **Ranking models and effort levels.** Grades alone can't rank them. TL1 graded everything and still couldn't compare models, because every role ran at a single effort level and nothing varied. TL3 sends a logged, random share of runs to a candidate model or effort level, starting at 1 in 10 and never on work that other work is waiting on. Later attempts, with a bigger budget or another model, don't count as comparisons by themselves, because they only happen after a failure. Results reach Rob as proposals, and he picks models and effort levels.
 
@@ -586,7 +586,7 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 
 **Slice three and later**
 
-- **Q32 Postmortems and model trials:** they reuse TL1's rubric and judge. The judge grades everything that needed a fix, a retry or an escalation, plus a random share of clean work. 1 run in 10 tries a candidate model, never on work that other work is waiting on. A change reaches Rob as a proposal once 3 postmortems point to it.
+- **Q32 Postmortems and model trials:** they reuse TL1's rubric and judge. Rob amended the scope on 2026-11-03 (#642): the judge grades every closed node, including all clean merges, without sampling. 1 run in 10 tries a candidate model, never on work that other work is waiting on. A change reaches Rob as a proposal once 3 postmortems point to it.
 - **Q33 Earned autonomy:** a kind of change applies without Rob only after he grants that kind, following a clean record. Rolling back never needs approval.
 - **Q34 Decomposition dry run:** before splits go live, a dry run decomposes real requests without changing code, to calibrate the fit limit and the forecast.
 
