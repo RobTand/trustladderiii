@@ -435,6 +435,17 @@ class GateTests(unittest.TestCase):
                                             f'fixture/custom:.*declared {declared}.*received {actual}'):
                     rust_gate.execute_binary(binary, custom=True)
 
+    def test_computed_shard_summary_still_rejects_missing_or_duplicated_scenarios(self):
+        planned = ['first', 'second', 'third', 'added_independently']
+        for emitted in [planned[:-1], planned[:-1] + [planned[0]]]:
+            with self.subTest(emitted=emitted), tempfile.TemporaryDirectory() as temporary:
+                executable = Path(temporary, 'fixture.py')
+                executable.write_text(''.join(f'print("test {name} ... ok")\n' for name in emitted)
+                                      + f'print("{len(planned)} fixture scenarios passed; no skips")\n')
+                with self.assertRaisesRegex(RuntimeError, 'declared|duplicate'):
+                    rust_gate.execute_binary({'name': 'fixture/shard',
+                                              'command': [sys.executable, str(executable)]}, custom=True)
+
     def test_custom_harness_requires_one_scenario_count_declaration(self):
         for summaries in [[], ['1 fixture scenarios passed'] * 2]:
             with self.subTest(summaries=summaries), tempfile.TemporaryDirectory() as temporary:

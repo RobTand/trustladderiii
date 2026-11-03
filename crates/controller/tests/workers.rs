@@ -1,4 +1,5 @@
 mod maker;
+use support::scenario_shard::{self, WorkerGroup};
 use tl3_controller::executor::Output as Out;
 #[path = "workers/planning.rs"]
 mod planning;
@@ -335,10 +336,8 @@ fn finish_fixture(database: Database, group: &str) {
 
 fn main() {
     if env::args().len() == 1 {
-        maker::router_regression(false);
-        println!("test maker_router_retire ... ok");
-        maker::router_regression(true);
-        println!("test maker_router_look_retire ... ok");
+        run_default();
+        return;
     }
 
     if let Some(mode) = env::args().nth(1).filter(|s| s.starts_with("--router-")) {
@@ -560,7 +559,7 @@ fn main() {
         return;
     }
     if args.get(1).is_some_and(|s| s == "--maker-only") {
-        maker::run(&mut database);
+        maker::run(&mut database, &mut scenario_shard::Shard::unsharded());
         database.stop();
         return;
     }
@@ -592,136 +591,7 @@ fn main() {
         database.stop();
         return;
     }
-    quota_resumes_same_operation(&database.create("workers_quota"));
-    println!("test announced_quota_resumes_same_operation_without_failure ... ok");
-    clock_stops_stalled_worker(&database.create("workers_stall"));
-    println!("test fake_clock_stops_real_stalled_worker_before_retry ... ok");
-    external_wait_survives_restart(&database.create("workers_external_wait"));
-    println!("test external_wait_persists_across_source_and_controller_restart ... ok");
-    writer_prompt(&database.create("writer_prompt"));
-    println!("test process_writer_sends_the_active_writer_prompt ... ok");
-    missing_prompt_holds_launch(&database.create("missing_prompt"));
-    println!("test missing_prompt_holds_the_launch_without_claiming_a_worker ... ok");
-    finish_fixture(database, "worker_waits");
-    let mut database = Database::start();
-    for wrapped in [false, true] {
-        linked_materials(
-            &database.create(&format!("linked_materials_{wrapped}")),
-            wrapped,
-        );
-        println!("test linked_issue_role_materials_wrapped_{wrapped} ... ok");
-        narrowed_materials(
-            &database.create(&format!("narrowed_materials_{wrapped}")),
-            wrapped,
-        );
-        println!(
-            "test narrowed_request_ingest_carries_issue_scope_and_question_wrapped_{wrapped} ... ok"
-        );
-    }
-    simulation(&database.create("workers_sim"));
-    println!("test real_ingest_audit_reaches_unplanned_and_posts_goals ... ok");
-    finish_fixture(database, "ingest_audit");
-    let mut database = Database::start();
-    killed_worker(&database.create("workers_kill"));
-    println!("test sigkill_worker_retry_is_idempotent_by_key ... ok");
-    kernel_retries_killed_worker(&database.create("workers_kernel_retry"));
-    println!("test sigkill_worker_failure_retries_through_kernel ... ok");
-    late_launcher(&database.create("workers_late"));
-    println!("test cancelled_late_launcher_cannot_start_a_second_copy ... ok");
-    finish_fixture(database, "worker_launch");
-    let mut database = Database::start();
-    killed_controller(&database.create("controller_kill"), "blocked");
-    killed_controller(&database.create("planner_controller_kill"), "plan-blocked");
-    println!("test sigkill_controller_reattaches_to_the_same_worker ... ok");
-    finish_fixture(database, "worker_restart");
-    let mut database = Database::start();
-    invalid_replies(&database.create("workers_invalid"));
-    println!("test schema_missing_nonzero_and_duplicate_replies_fail ... ok");
-    stop_and_exit_gate(&database.create("workers_stop"));
-    println!("test reply_requires_exit_zero_and_stop_waits_for_death ... ok");
-    early_and_objections(&mut database);
-    println!("test early_end_and_audit_disagreement_mapping ... ok");
-    never_started(&database.create("workers_unclaimed"));
-    println!("test unclaimed_crash_window_emits_no_failure_and_retries_same_key ... ok");
-    partial_crash(&database.create("workers_partial_crash"));
-    println!("test partial_last_line_at_sigkill_keeps_only_complete_progress ... ok");
-    killed_reply(&database.create("workers_reply_kill"));
-    println!("test sigkill_after_valid_reply_is_a_failed_exit ... ok");
-    killed_supervisor(&database.create("workers_supervisor_kill"));
-    println!("test supervisor_death_keeps_live_worker_and_discards_unrecorded_exit ... ok");
-    fake_stop(&database.create("workers_fake_stop"));
-    println!("test stop_run_reaches_fake_delivery_and_uses_active_node_index ... ok");
-    finish_fixture(database, "worker_reply");
-    let mut database = Database::start();
-    event_source(&database.create("workers_events"));
-    println!("test source_run_wakes_on_new_run_output_and_exit_without_polling ... ok");
-    bounded_startup(&database.create("workers_bounded"));
-    println!("test startup_reads_only_watched_runs_and_skips_bad_records ... ok");
-    retirement_review::recall_key_request_wiring(&database.create("memory_wiring"));
-    println!("test recall_key_request_wiring ... ok");
-    retirement_review::memory_store_error_retries_retirement(
-        &database.create("memory_store_error"),
-    );
-    println!("test memory_store_error_retries_retirement ... ok");
-    retirement_review::bad_memory_never_blocks_retirement(&database.create("bad_memory"));
-    println!("test bad_memory_never_blocks_retirement ... ok");
-    retirement_review::feed_retirement_end_to_end(&database.create("memory_feed"));
-    println!("test feed_retirement_end_to_end ... ok");
-    retirement(&database.create("workers_retirement"));
-    println!("test retirement_requires_terminal_unwatched_effect_and_recovers_from_sigkill ... ok");
-    retirement_review::retirement_keeps_an_unshipped_span_log(
-        &database.create("span_log_retirement"),
-    );
-    println!("test retirement_keeps_an_unshipped_span_log ... ok");
-    retirement_review::trace_log_cap_raises_one_operations_incident(
-        &database.create("span_log_cap"),
-    );
-    println!("test trace_log_cap_raises_one_operations_incident ... ok");
-    finish_fixture(database, "worker_memory");
-    let mut database = Database::start();
-    retirement_review::summaries_and_states(&database.create("retirement_summaries"));
-    println!("test retirement_states_keep_one_summary_until_closure ... ok");
-    retirement_review::blocked_identities(&database.create("retirement_blocked"));
-    println!("test retirement_skips_corrupt_and_foreign_identities_after_one_attempt ... ok");
-    finish_fixture(database, "worker_summaries");
-    let mut database = Database::start();
-    for guard in ["inbox", "effect", "progress"] {
-        retirement_review::session_guard(&database.create(&format!("session_{guard}")), guard);
-        println!("test session_retirement_{guard}_guard ... ok");
-    }
-    finish_fixture(database, "worker_sessions");
-    let mut database = Database::start();
-    retirement_review::session_unlink_error(&database.create("session_unlink"));
-    println!("test session_retirement_logs_retains_and_retries_unlink_error ... ok");
-    retirement_review::transient_io(&database.create("source_emfile"));
-    println!("test live_source_fails_on_emfile_and_restart_reattaches ... ok");
-    confirmed_absence(&database.create("workers_confirmed_absence"));
-    println!("test confirmed_absence_reports_one_failure_and_retries_with_new_key ... ok");
-    overflow(&database.create("workers_overflow"));
-    println!("test inotify_overflow_rescans_active_runs_and_keeps_ingress_alive ... ok");
-    finish_fixture(database, "worker_retirement");
-    let mut database = Database::start();
-    for mode in [
-        "normal",
-        "plan-split",
-        "plan-invalid",
-        "plan-cant-meet",
-        "plan-bad-split",
-        "plan-bad-schema",
-    ] {
-        planning::planning(&database.create(&mode.replace('-', "_")), mode);
-    }
-    println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
-    planning::memories(&database.create("plan_memories"));
-    println!("test planner_memories_recall_and_flag ... ok");
-    planning::stop(&database.create("planner_stop"));
-    println!("test planner_stop ... ok");
-    quota_scenarios(&mut database);
-    finish_fixture(database, "worker_planning");
-    let mut database = Database::start();
-    maker::run(&mut database);
-    finish_fixture(database, "maker");
-    println!("88 worker supervisor, planning and maker scenarios passed; no skips");
+    panic!("unknown worker scenario arguments");
 }
 
 /// PRD #327, C5: the writer drafts with the writer's active prompt version and
@@ -1232,6 +1102,7 @@ fn killed_controller(settings: &tl3_config::Store, mode: &str) {
     let worker_pid = fs::read_to_string(root.path().join("entered")).unwrap();
     child.kill().unwrap();
     assert!(!child.wait().unwrap().success());
+    support::controller_restart::wait_for_owner_release(&mut owner(settings));
     let (registry, mut source) =
         worker_simulation(&root.path().join("fakes"), &config, mode != "plan-blocked").unwrap();
     let mut controller = Controller::open(
@@ -2680,4 +2551,172 @@ fn external_wait_survives_restart(settings: &tl3_config::Store) {
     c.look_due().unwrap();
     assert!(c.drive_once().unwrap());
     assert_eq!(c.world().unwrap().nodes[0].run_failures, 1);
+}
+
+fn run_default() {
+    let mut shard = scenario_shard::Shard::from_env();
+    shard.run(WorkerGroup::Router, || {
+        maker::router_regression(false);
+        println!("test maker_router_retire ... ok");
+        maker::router_regression(true);
+        println!("test maker_router_look_retire ... ok");
+    });
+    prepare_workers();
+    shard.run(WorkerGroup::Waits, || {
+        let mut database = Database::start();
+        quota_resumes_same_operation(&database.create("workers_quota"));
+        println!("test announced_quota_resumes_same_operation_without_failure ... ok");
+        clock_stops_stalled_worker(&database.create("workers_stall"));
+        println!("test fake_clock_stops_real_stalled_worker_before_retry ... ok");
+        external_wait_survives_restart(&database.create("workers_external_wait"));
+        println!("test external_wait_persists_across_source_and_controller_restart ... ok");
+        writer_prompt(&database.create("writer_prompt"));
+        println!("test process_writer_sends_the_active_writer_prompt ... ok");
+        missing_prompt_holds_launch(&database.create("missing_prompt"));
+        println!("test missing_prompt_holds_the_launch_without_claiming_a_worker ... ok");
+        finish_fixture(database, "worker_waits");
+    });
+    shard.run(WorkerGroup::IngestAudit, || {
+        let mut database = Database::start();
+        for wrapped in [false, true] {
+            linked_materials(
+                &database.create(&format!("linked_materials_{wrapped}")),
+                wrapped,
+            );
+            println!("test linked_issue_role_materials_wrapped_{wrapped} ... ok");
+            narrowed_materials(
+                &database.create(&format!("narrowed_materials_{wrapped}")),
+                wrapped,
+            );
+            println!(
+                "test narrowed_request_ingest_carries_issue_scope_and_question_wrapped_{wrapped} ... ok"
+            );
+        }
+        simulation(&database.create("workers_sim"));
+        println!("test real_ingest_audit_reaches_unplanned_and_posts_goals ... ok");
+        finish_fixture(database, "ingest_audit");
+    });
+    shard.run(WorkerGroup::Launch, || {
+        let mut database = Database::start();
+        killed_worker(&database.create("workers_kill"));
+        println!("test sigkill_worker_retry_is_idempotent_by_key ... ok");
+        kernel_retries_killed_worker(&database.create("workers_kernel_retry"));
+        println!("test sigkill_worker_failure_retries_through_kernel ... ok");
+        late_launcher(&database.create("workers_late"));
+        println!("test cancelled_late_launcher_cannot_start_a_second_copy ... ok");
+        finish_fixture(database, "worker_launch");
+    });
+    shard.run(WorkerGroup::Restart, || {
+        let mut database = Database::start();
+        killed_controller(&database.create("controller_kill"), "blocked");
+        killed_controller(&database.create("planner_controller_kill"), "plan-blocked");
+        println!("test sigkill_controller_reattaches_to_the_same_worker ... ok");
+        finish_fixture(database, "worker_restart");
+    });
+    shard.run(WorkerGroup::Reply, || {
+        let mut database = Database::start();
+        invalid_replies(&database.create("workers_invalid"));
+        println!("test schema_missing_nonzero_and_duplicate_replies_fail ... ok");
+        stop_and_exit_gate(&database.create("workers_stop"));
+        println!("test reply_requires_exit_zero_and_stop_waits_for_death ... ok");
+        early_and_objections(&mut database);
+        println!("test early_end_and_audit_disagreement_mapping ... ok");
+        never_started(&database.create("workers_unclaimed"));
+        println!("test unclaimed_crash_window_emits_no_failure_and_retries_same_key ... ok");
+        partial_crash(&database.create("workers_partial_crash"));
+        println!("test partial_last_line_at_sigkill_keeps_only_complete_progress ... ok");
+        killed_reply(&database.create("workers_reply_kill"));
+        println!("test sigkill_after_valid_reply_is_a_failed_exit ... ok");
+        killed_supervisor(&database.create("workers_supervisor_kill"));
+        println!("test supervisor_death_keeps_live_worker_and_discards_unrecorded_exit ... ok");
+        fake_stop(&database.create("workers_fake_stop"));
+        println!("test stop_run_reaches_fake_delivery_and_uses_active_node_index ... ok");
+        finish_fixture(database, "worker_reply");
+    });
+    shard.run(WorkerGroup::Memory, || {
+        let mut database = Database::start();
+        event_source(&database.create("workers_events"));
+        println!("test source_run_wakes_on_new_run_output_and_exit_without_polling ... ok");
+        bounded_startup(&database.create("workers_bounded"));
+        println!("test startup_reads_only_watched_runs_and_skips_bad_records ... ok");
+        retirement_review::recall_key_request_wiring(&database.create("memory_wiring"));
+        println!("test recall_key_request_wiring ... ok");
+        retirement_review::memory_store_error_retries_retirement(
+            &database.create("memory_store_error"),
+        );
+        println!("test memory_store_error_retries_retirement ... ok");
+        retirement_review::bad_memory_never_blocks_retirement(&database.create("bad_memory"));
+        println!("test bad_memory_never_blocks_retirement ... ok");
+        retirement_review::feed_retirement_end_to_end(&database.create("memory_feed"));
+        println!("test feed_retirement_end_to_end ... ok");
+        retirement(&database.create("workers_retirement"));
+        println!(
+            "test retirement_requires_terminal_unwatched_effect_and_recovers_from_sigkill ... ok"
+        );
+        retirement_review::retirement_keeps_an_unshipped_span_log(
+            &database.create("span_log_retirement"),
+        );
+        println!("test retirement_keeps_an_unshipped_span_log ... ok");
+        retirement_review::trace_log_cap_raises_one_operations_incident(
+            &database.create("span_log_cap"),
+        );
+        println!("test trace_log_cap_raises_one_operations_incident ... ok");
+        finish_fixture(database, "worker_memory");
+    });
+    shard.run(WorkerGroup::Summaries, || {
+        let mut database = Database::start();
+        retirement_review::summaries_and_states(&database.create("retirement_summaries"));
+        println!("test retirement_states_keep_one_summary_until_closure ... ok");
+        retirement_review::blocked_identities(&database.create("retirement_blocked"));
+        println!("test retirement_skips_corrupt_and_foreign_identities_after_one_attempt ... ok");
+        finish_fixture(database, "worker_summaries");
+    });
+    shard.run(WorkerGroup::Sessions, || {
+        let mut database = Database::start();
+        for guard in ["inbox", "effect", "progress"] {
+            retirement_review::session_guard(&database.create(&format!("session_{guard}")), guard);
+            println!("test session_retirement_{guard}_guard ... ok");
+        }
+        finish_fixture(database, "worker_sessions");
+    });
+    shard.run(WorkerGroup::Retirement, || {
+        let mut database = Database::start();
+        retirement_review::session_unlink_error(&database.create("session_unlink"));
+        println!("test session_retirement_logs_retains_and_retries_unlink_error ... ok");
+        retirement_review::transient_io(&database.create("source_emfile"));
+        println!("test live_source_fails_on_emfile_and_restart_reattaches ... ok");
+        confirmed_absence(&database.create("workers_confirmed_absence"));
+        println!("test confirmed_absence_reports_one_failure_and_retries_with_new_key ... ok");
+        overflow(&database.create("workers_overflow"));
+        println!("test inotify_overflow_rescans_active_runs_and_keeps_ingress_alive ... ok");
+        finish_fixture(database, "worker_retirement");
+    });
+    shard.run(WorkerGroup::Planning, || {
+        let mut database = Database::start();
+        for mode in [
+            "normal",
+            "plan-split",
+            "plan-invalid",
+            "plan-cant-meet",
+            "plan-bad-split",
+            "plan-bad-schema",
+        ] {
+            planning::planning(&database.create(&mode.replace('-', "_")), mode);
+        }
+        println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
+        planning::memories(&database.create("plan_memories"));
+        println!("test planner_memories_recall_and_flag ... ok");
+        planning::stop(&database.create("planner_stop"));
+        println!("test planner_stop ... ok");
+        quota_scenarios(&mut database);
+        finish_fixture(database, "worker_planning");
+    });
+    let mut database = Database::start();
+    maker::run(&mut database, &mut shard);
+    database.stop();
+    drop(database);
+    shard.run(WorkerGroup::MakerCleanup, || {
+        println!("test maker_fixture_cleanup ... ok")
+    });
+    shard.finish("worker supervisor, planning and maker");
 }
