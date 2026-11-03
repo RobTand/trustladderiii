@@ -34,6 +34,7 @@ pub(super) fn bootstrap() -> Bootstrap {
         operations: None,
         slots: 1,
         pool: 1,
+        fail_fast: false,
     }
 }
 

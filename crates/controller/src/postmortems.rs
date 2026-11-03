@@ -786,7 +786,8 @@ pub(crate) fn close_reason(
         || history.incidents.iter().any(|(_, needs_rob)| *needs_rob)
     {
         Reason::Escalation
-    } else if node.attempt > 1 || node.round > 0 || node.replanned {
+    } else if node.attempt > 1 || node.round > 0 || node.replanned || node.review_stop.is_some() {
+        // Q54: a stop for TL3 review is TL3's own failure to fix.
         Reason::NeededFix
     } else if history.run_failure
         || history.retries > 0
@@ -1115,6 +1116,29 @@ mod tests {
 
     fn reason(node: &Node, outcome: Outcome, history: &History) -> Option<Reason> {
         close_reason(node, outcome, history, 0.0, "node:0").map(|(reason, _)| reason)
+    }
+
+    #[test]
+    fn a_stop_for_tl3_review_owes_needed_fix() {
+        // Q54 (#440): a planner cant_meet stop has a plan retry and no fix
+        // round, and a maker cant_meet stop may have neither.
+        let retried = History {
+            retries: 1,
+            ..History::default()
+        };
+        for step in [
+            tl3_kernel::ReviewStop::PlanCantMeet,
+            tl3_kernel::ReviewStop::MakerCantMeet,
+        ] {
+            let mut stopped = clean();
+            stopped.plan_retries = 1;
+            stopped.review_stop = Some(step);
+            assert_eq!(
+                reason(&stopped, Outcome::Stopped, &retried),
+                Some(Reason::NeededFix),
+                "{step:?}"
+            );
+        }
     }
 
     #[test]

@@ -41,6 +41,7 @@ pub enum Task {
         text: String,
     },
     /// PRD #327, C3: the audit note for a console command, posted as written.
+    /// Q54's operations note uses it too.
     ConsoleNote {
         text: String,
     },

@@ -30,6 +30,8 @@ pub enum CommentKind {
     ReplacementDropped,
     Restart,
     ConsoleNote,
+    /// Q54: a code-written line for the coordinator on the operations issue.
+    OperationsNote,
     /// #403: a judged postmortem of a node, run by a worker outside the kernel.
     Postmortem,
 }

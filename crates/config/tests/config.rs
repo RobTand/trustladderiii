@@ -1357,6 +1357,23 @@ fn configured_extra_paths_are_protected() {
 }
 
 #[test]
+fn fail_fast_defaults_off_and_takes_a_boolean() {
+    assert!(!Config::parse(EXAMPLE).unwrap().limits.fail_fast);
+    let omitted = EXAMPLE.replace("fail_fast = false\n", "");
+    assert_ne!(omitted, EXAMPLE);
+    assert!(!Config::parse(&omitted).unwrap().limits.fail_fast);
+    let on = changed(&["limits", "fail_fast"], Value::Boolean(true));
+    assert!(Config::parse(&on).unwrap().limits.fail_fast);
+    for wrong in [Value::Integer(1), Value::String("true".into())] {
+        let error = Config::parse(&changed(&["limits", "fail_fast"], wrong))
+            .unwrap_err()
+            .to_string();
+        assert!(error.starts_with("config TOML:"), "{error}");
+        assert!(error.contains("fail_fast"), "{error}");
+    }
+}
+
+#[test]
 fn pr_body_lines_need_a_label_values_and_an_allowed_default() {
     // #447: PrismaBuild's PR-body policy.
     let rule = |label: &str, values: &[&str], default: &str| {

@@ -32,6 +32,7 @@ fn open(settings: &tl3_config::Store, root: &std::path::Path, adapter: Recorder)
             rob: 42,
             slots: 1,
             pool: 1,
+            fail_fast: false,
             operations: None,
         },
     )

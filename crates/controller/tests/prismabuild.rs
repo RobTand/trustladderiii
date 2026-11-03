@@ -313,6 +313,7 @@ fn base_moved_completion_keys_each_observation(
                 rob: 1,
                 slots: 1,
                 pool: 1,
+                fail_fast: false,
             },
         )
         .unwrap()
@@ -1663,6 +1664,7 @@ fn quiet_alive_job_is_not_a_failed_read(settings: &tl3_config::Store, unreadable
             rob: 1,
             slots: 1,
             pool: 1,
+            fail_fast: false,
         },
         clock.clone(),
     )
@@ -1770,6 +1772,7 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
             rob: 1,
             slots: 1,
             pool: 1,
+            fail_fast: false,
         },
     )
     .unwrap();
@@ -2032,6 +2035,7 @@ fn retirement_continues_after_corrupt_node(settings: &tl3_config::Store) {
             rob: 1,
             slots: 1,
             pool: 1,
+            fail_fast: false,
             operations: None,
         },
     )
@@ -2767,6 +2771,7 @@ fn oversized_planner_reply_reaches_plan_feedback(settings: &tl3_config::Store) {
             rob: 1,
             slots: 1,
             pool: 1,
+            fail_fast: false,
         },
     )
     .unwrap();

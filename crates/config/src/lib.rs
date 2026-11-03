@@ -236,6 +236,9 @@ pub struct Limits {
     /// default, keeps the kernel's reserve of 3 for every request.
     #[serde(default)]
     pub priority_credit_reserve: BTreeMap<String, u8>,
+    /// Q54 (#440): stop for TL3 review instead of retrying the work.
+    #[serde(default, deserialize_with = "fail_fast_setting")]
+    pub fail_fast: bool,
     /// #486: postmortems the spare-capacity runner may claim per UTC day.
     #[serde(default = "default_postmortems_per_day")]
     pub postmortems_per_day: u32,
@@ -256,6 +259,11 @@ impl Limits {
 
 fn default_agent_pool() -> u8 {
     1
+}
+
+fn fail_fast_setting<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    bool::deserialize(deserializer)
+        .map_err(|_| serde::de::Error::custom("limits.fail_fast must be true or false"))
 }
 
 fn default_postmortems_per_day() -> u32 {
