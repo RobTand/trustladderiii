@@ -351,6 +351,12 @@ pub struct Identity {
 pub struct Repository {
     #[serde(default)]
     pub protected_paths: Vec<String>,
+    /// Generated outputs cost a regeneration allowance rather than a source edit.
+    #[serde(default)]
+    pub generated_files: Vec<String>,
+    /// Guidance for the maker, not a command the controller executes.
+    #[serde(default)]
+    pub generator: Option<String>,
     #[serde(default)]
     pub container_image: Option<String>,
     #[serde(default)]
@@ -788,6 +794,15 @@ impl Config {
             github_name(&format!("{field}.owner"), &repo.owner, false)?;
             github_name(&format!("{field}.name"), &repo.name, true)?;
             validate_protected_paths(&format!("{field}.protected_paths"), &repo.protected_paths)?;
+            validate_protected_paths(&format!("{field}.generated_files"), &repo.generated_files)?;
+            if let Some(command) = &repo.generator
+                && (command.trim().is_empty() || command.chars().any(char::is_control))
+            {
+                return Err(invalid(
+                    format!("{field}.generator"),
+                    "use a nonempty single-line generator command",
+                ));
+            }
             for (line, rule) in repo.pr_body_lines.iter().enumerate() {
                 let label = &rule.label;
                 if label.trim().is_empty()
