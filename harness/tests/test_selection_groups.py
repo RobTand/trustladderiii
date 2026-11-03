@@ -267,3 +267,41 @@ def test_group_declarations_reject_ambiguous_or_partial_modules(frozen_repo, gro
     (repo / 'pyproject.toml').write_text(CONFIG + f'selection-groups={groups}\n')
     with pytest.raises(ValueError, match='selection group'):
         execution.configuration(repo)
+
+
+def test_editing_a_passing_companion_of_a_failed_unit_cannot_hide_the_failure(frozen_repo):
+    repo, _ = frozen_repo
+    companion = 'tests/test_companion.py'
+    (repo / 'pyproject.toml').write_text(CONFIG + f'selection-groups=[["{MODULE}", "{companion}"]]\n')
+    (repo / MODULE).write_text('from product import value\ndef test_a():\n    assert value() == 1\n')
+    (repo / companion).write_text('def test_b():\n    assert True\n')
+    base = save(repo, 'complete unit passes on base')
+    first = selected(repo, base, head(repo, 2))[-1]
+    assert first.verdict == Verdict.FAIL
+    outcomes = {test.test: test.head for test in first.tests}
+    assert outcomes == {MODULE: Outcome.ASSERTION, companion: Outcome.PASSED}
+    # This is the controller's persisted selected_failures input, before the next round.
+    failures = {test['test'] for test in json.loads(execution.result_json((first,)))[0]['tests']
+                if not test['passed']}
+    (repo / companion).write_text('def test_b():\n    assert 2\n')
+    commit = save(repo, 'edit only the passing companion without fixing A')
+    second = selected(repo, base, commit)
+    assert [result.name for result in second] == ['other'], 'the edited whole unit is excluded'
+    assert failures == {MODULE, companion}, 'review must retain every member of the unresolved failed unit'
+    assert 'companion' in first.tests[1].message.lower()
+
+
+def test_twenty_passing_receipts_do_not_displace_failure_diagnostics(frozen_repo):
+    repo, _ = frozen_repo
+    for index in range(20):
+        (repo / f'tests/test_{index:02}.py').write_text(
+            'from product import value\ndef test_passes():\n    assert value() > 0\n')
+    (repo / MODULE).write_text('from product import value\ndef test_fails():\n    assert value() == 1, "unresolved assertion"\n')
+    base = save(repo, 'twenty passing modules precede a failing one')
+    result = selected(repo, base, head(repo, 2), limit=21)[-1]
+    assert [test.test for test in result.tests].index(MODULE) == 20
+    serialized = json.loads(execution.result_json((result,)))[0]['tests']
+    failure = next(test for test in serialized if not test['passed'])
+    assert 'unresolved assertion' in failure['message']
+    assert 'sha256 ' in failure['message'] and 'retry unit:' in failure['message']
+    assert sum(bool(test['message']) for test in serialized) <= execution.MAX_DETAILED_FAILURES
