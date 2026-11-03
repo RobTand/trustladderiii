@@ -1578,3 +1578,64 @@ def test_maker_prompt_explains_forced_checks():
     prompt = " ".join((Path(__file__).parents[1] / "src/tl3_workers/prompts/maker.md").read_text().split())
     assert "forcing" in prompt
     assert "both with and without the forcing" in prompt
+
+
+@pytest.fixture
+def request_123_handover(maker_request):
+    """Sanitized fail-fast shape: test repair, Q55 proof, and mixed scope/PR goal."""
+    request = maker_request
+    request["inputs"]["goals"] = [
+        {"id": "repair", "description": "Make the deep-path test deterministic.", "verification": "test"},
+        {"id": "scope", "description": "Change only the declared ordinary test file.", "verification": "review"},
+        {"id": "forced-proof", "description": "Independently prove forced base red and head green.",
+         "verification": "test", "stage": "checking"},
+        {"id": "publication", "description": "Publish a stable branch and non-draft PR with proof.",
+         "verification": "review", "stage": "publishing",
+         "publication": {"non_draft": True, "body_lines": ["Change type: test"], "proof": True}},
+    ]
+    request["inputs"]["plan"]["checks"] = [{
+        "name": "deep-path", "kind": "demonstrating", "tests": ["test_greeting.py::test_hello"],
+        "goal_ids": ["repair", "scope", "forced-proof"],
+        "forcing": {"symptom": "The old test depends on residency.", "environment": {},
+                    "patches": [{"target": "greeting.RESIDENCY", "value": False}]},
+    }]
+    reply = {"kind": "done", "self_check": [
+        {"goal_id": "repair", "status": "met", "evidence": "Normal head run passed; plain base is unforced."},
+        {"goal_id": "scope", "status": "met", "evidence": "Diff stays within the declared footprint."},
+        {"goal_id": "forced-proof", "status": "pending", "why": "Controller Checking owns the Q55 verdict."},
+        {"goal_id": "publication", "status": "pending", "why": "Publishing owns Git and PR creation."},
+    ]}
+    return request, reply
+
+
+def test_request_123_honest_handover_with_downstream_pending(request_123_handover):
+    request, reply = request_123_handover
+    maker._check_inputs(request["inputs"])
+    maker._check_reply(request["inputs"], reply)
+
+
+def test_request_123_pending_handover_commits_through_real_worker(tmp_path, request_123_handover):
+    request, reply = request_123_handover
+    del request["inputs"]["plan"]["checks"][0]["forcing"]
+    result = start_worker(tmp_path, request, [write_turn("test_greeting.py", "def test_hello(): assert True\n"), turn(reply)])
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1]["reply"]["kind"] == "done"
+    assert result.events[-1]["reply"]["self_check"] == reply["self_check"]
+
+
+@pytest.mark.parametrize("goal_id", ["repair", "scope"])
+def test_request_123_maker_cannot_defer_implementation_or_scope(request_123_handover, goal_id):
+    request, reply = request_123_handover
+    for check in reply["self_check"]:
+        if check["goal_id"] == goal_id:
+            check.clear()
+            check.update(goal_id=goal_id, status="pending", why="Calling this downstream does not change ownership.")
+    with pytest.raises(ValueError, match="maker"):
+        maker._check_reply(request["inputs"], reply)
+
+
+def test_request_123_maker_cannot_claim_future_proof(request_123_handover):
+    request, reply = request_123_handover
+    reply["self_check"][-1] = {"goal_id": "publication", "status": "met", "evidence": "Imaginary PR."}
+    with pytest.raises(ValueError, match="pending"):
+        maker._check_reply(request["inputs"], reply)

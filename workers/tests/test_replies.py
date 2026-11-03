@@ -130,7 +130,11 @@ def test_run_uses_the_prompt_version_it_was_given(role, request_fixture, text, r
     model = answer(monkeypatch, text)
     runtime.run(doc, lambda _: None)
     system = [m for m in model.seen[0] if isinstance(m, SystemMessage)]
-    assert system[0].text.startswith(f"Version 7 of Rob's {role} prompt.\n\n" + ONLY_JSON)
+    from tl3_workers.tools import Worktree
+    with Worktree(doc["worktree"]) as tree:
+        guidance = tree.generation_instruction()
+    assert system[0].text.startswith(f"Version 7 of Rob's {role} prompt.\n\n" + guidance + "\n\n" + ONLY_JSON)
+    assert "minimal hunk" in guidance and "exact-text" in guidance and "Gate's generator check" in guidance
     packaged = files("tl3_workers").joinpath("prompts", f"{role}.md").read_text()
     assert packaged.strip().splitlines()[0] not in system[0].text
 

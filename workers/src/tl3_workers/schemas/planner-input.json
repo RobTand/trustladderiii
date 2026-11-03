@@ -65,6 +65,19 @@
             "minimum": 0
           },
           "description": "Named overhead constants from controller config, summed by code. Includes the reserve for tools, making history and fix-round feedback shared with the maker."
+        },
+        "generated_files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Repository-relative generated-output globs. ** matches zero or more path segments. Generated text costs a fixed regeneration allowance."
+        },
+        "generator": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Repository generator command for maker guidance. The controller does not execute it."
         }
       },
       "required": [

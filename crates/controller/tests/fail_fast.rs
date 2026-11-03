@@ -707,3 +707,268 @@ fn a_stored_world_from_before_fail_fast_decodes_with_it_off() {
     assert_eq!(decoded.nodes[0].review_stop, None);
     assert_eq!(decoded, world);
 }
+
+/// A request-123-shaped scripted protocol flow; the real harness's Q55 negatives
+/// are exercised separately in test_forced_reproduction.py.
+#[test]
+fn stage_owned_handover_keeps_fail_fast_and_independent_checking() {
+    struct Workers {
+        fake: adapters::workers::Fake,
+        settings: tl3_config::Store,
+        mode: &'static str,
+    }
+    fn goals() -> Value {
+        json!([
+            {"description":"Repair the ordinary deep-path test.","verification":"test"},
+            {"description":"Keep changes inside the declared test file.","verification":"review"},
+            {"description":"Independent Q55 forced-base proof.","verification":"test","stage":"checking"},
+            {"description":"Stable branch and non-draft PR with before/after proof.","verification":"review","stage":"publishing",
+             "publication":{"non_draft":true,"body_lines":["Change type: test"],"proof":true}}
+        ])
+    }
+    fn forcing() -> Value {
+        json!({"symptom":"Old test assumes residency", "environment":{},
+            "patches":[{"target":"example.RESIDENCY","value":false}]})
+    }
+    impl Executor for Workers {
+        fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+            let reply = match d.output {
+                Output::Effect {
+                    kind: EffectKind::StartRun(Role::Ingest),
+                    ..
+                } => Some((
+                    "ingest",
+                    json!({
+                    "kind":"brief","brief":"Repair the test; scope remains maker-owned; publish the proof.",
+                    "goals":goals(),"memory_ids":[],"files":["test_deep.py"],
+                    "forecast":{"tokenizer":"o200k_base","brief_tokens":1,"file_tokens":{"test_deep.py":0},
+                        "overhead_tokens":0,"tokens":1,"fit_tokens":100,"context_tokens":150,"fits":true}}),
+                )),
+                Output::Effect {
+                    kind: EffectKind::StartRun(Role::Plan),
+                    ..
+                } => {
+                    return Ok(Completion::confirmed(vec![Observation::Plan {
+                        node: d.node(),
+                        generation: d.generation,
+                        paths: vec!["test_deep.py".into()],
+                        fits: true,
+                    }]));
+                }
+                Output::Effect {
+                    kind: EffectKind::StartRun(Role::Make),
+                    ..
+                } => {
+                    let mut supplied = goals();
+                    for (i, g) in supplied.as_array_mut().unwrap().iter_mut().enumerate() {
+                        g["id"] = json!(format!("goal-{}", i + 1));
+                    }
+                    Store::open(&self.settings)?.put_worker_materials(
+                        &d.node().0.to_string(),
+                        &json!({"maker":{"goals":supplied}}),
+                    )?;
+                    let checks = json!([
+                        {"goal_id":"goal-1","status":if self.mode=="unmet-maker" {"not_met"}else{"met"},
+                            "evidence":"Normal head passed; development base pass is intentionally unforced.","why":"Repair is incomplete."},
+                        {"goal_id":"goal-2","status":"met","evidence":"Only the declared test changed."},
+                        {"goal_id":"goal-3","status":"pending","why":"Controller Checking owns forced proof."},
+                        {"goal_id":"goal-4","status":"pending","why":"Publishing owns branch and PR actions."}]);
+                    let mut checks = checks;
+                    checks[0]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove(if self.mode == "unmet-maker" {
+                            "evidence"
+                        } else {
+                            "why"
+                        });
+                    let plan = adapters::prismabuild::CheckRun {
+                        repository: "/fixture".into(),
+                        base_sha: tl3_worktrees::CommitId::new("a".repeat(40))?,
+                        reviewed_sha: None,
+                        reproducing_unavailable: None,
+                        plan: vec![adapters::prismabuild::Check {
+                            name: "forced-deep-path".into(),
+                            kind: adapters::prismabuild::Kind::Demonstrating,
+                            tests: vec!["test_deep.py::test_deep_path".into()],
+                            forcing: Some(forcing()),
+                        }],
+                    };
+                    return Ok(Completion::confirmed(vec![
+                        Observation::CheckPlan {
+                            node: d.node(),
+                            sha: "b".repeat(40),
+                            run: plan,
+                        },
+                        Observation::WorkerReply {
+                            node: d.node(),
+                            generation: d.generation,
+                            role: "maker".into(),
+                            reply: json!({"kind":"done","head":"b".repeat(40),"self_check":checks}),
+                            model: None,
+                        },
+                    ]));
+                }
+                Output::Effect {
+                    kind: EffectKind::StartRun(Role::Review),
+                    ..
+                } => Some((
+                    "reviewer",
+                    json!({
+                    "verdict":"approve","head_sha":d.head_sha,"blocking_findings":[],"findings":[]}),
+                )),
+                _ => None,
+            };
+            if let Some((role, reply)) = reply {
+                Ok(Completion::confirmed(vec![Observation::WorkerReply {
+                    node: d.node(),
+                    generation: d.generation,
+                    role: role.into(),
+                    reply,
+                    model: None,
+                }]))
+            } else {
+                self.fake.execute(d)
+            }
+        }
+        fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            self.fake.reconcile(d)
+        }
+    }
+    struct Checking {
+        mode: &'static str,
+        fake: adapters::prismabuild::Fake,
+    }
+    impl Executor for Checking {
+        fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+            if !matches!(
+                d.output,
+                Output::Effect {
+                    kind: EffectKind::SubmitChecks,
+                    ..
+                }
+            ) {
+                return self.fake.execute(d);
+            }
+            assert_eq!(
+                d.checks.as_ref().unwrap().plan[0].forcing,
+                Some(forcing()),
+                "forcing reaches independent Checking unchanged"
+            );
+            let passed = !matches!(self.mode, "base-passes" | "forced-head-fails");
+            Ok(Completion::confirmed(vec![Observation::Checks {
+                node: d.node(),
+                generation: d.generation,
+                action_key: "c".repeat(64),
+                base_sha: "a".repeat(40),
+                sha: d.head_sha.clone().unwrap(),
+                changed_paths: vec![
+                    if self.mode == "outside-scope" {
+                        "unrelated.py"
+                    } else {
+                        "test_deep.py"
+                    }
+                    .into(),
+                ],
+                failed_tests: vec![],
+                report: true,
+                pass: passed,
+                results: vec![json!({
+                    "name":"forced-deep-path","kind":"demonstrating","forcing":forcing(),
+                    "verdict":if passed {"pass"}else{"fail"},"tests":[{"test":"test_deep.py::test_deep_path",
+                        "base":if self.mode=="base-passes" {"passed"}else{"assertion"},
+                        "head_forced":if self.mode=="forced-head-fails" {"assertion"}else{"passed"},"head":"passed","passed":passed}]})],
+            }]))
+        }
+        fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            self.fake.reconcile(d)
+        }
+    }
+    let mut database = support::Database::start();
+    for mode in [
+        "pass",
+        "unmet-maker",
+        "outside-scope",
+        "base-passes",
+        "forced-head-fails",
+    ] {
+        let settings = database.create(&format!("stage_{}", mode.replace('-', "_")));
+        let root = tempfile::tempdir().unwrap();
+        let fakes = root.path().join("fakes");
+        let posted: Posted = Arc::default();
+        let mut registry = adapters::simulation(&fakes).unwrap();
+        registry.register(
+            Upstream::Workers,
+            Workers {
+                fake: adapters::workers::Fake::new(&fakes),
+                settings: settings.clone(),
+                mode,
+            },
+        );
+        registry.register(
+            Upstream::PrismaBuild,
+            Checking {
+                mode,
+                fake: adapters::prismabuild::Fake::new(&fakes),
+            },
+        );
+        registry.register(
+            Upstream::GitHub,
+            GitHub {
+                fake: adapters::github::Fake::new(&fakes),
+                posted: posted.clone(),
+            },
+        );
+        let mut controller =
+            Controller::open(Store::open(&settings).unwrap(), registry, bootstrap(true)).unwrap();
+        controller.intake(labelled()).unwrap();
+        drain(&mut controller);
+        let deliveries = posted.lock().unwrap();
+        let publication = deliveries.iter().find(|d| {
+            matches!(
+                d.output,
+                Output::Effect {
+                    kind: EffectKind::OpenPr,
+                    ..
+                }
+            )
+        });
+        if mode == "pass" {
+            assert_eq!(
+                controller.world().unwrap().nodes[0].phase,
+                Phase::Closed(Outcome::Merged)
+            );
+            let facts = publication
+                .expect("honest handover reaches Publishing")
+                .evidence
+                .as_ref()
+                .unwrap();
+            assert_eq!(facts.goals.len(), 4);
+            assert_eq!(
+                facts.maker_handover.as_ref().unwrap()["self_check"][2]["status"],
+                "pending"
+            );
+            assert_eq!(
+                facts.checks[0]["results"][0]["tests"][0]["base"],
+                "assertion"
+            );
+            assert_eq!(facts.reviews[0]["verdict"], "approve");
+        } else {
+            assert!(
+                publication.is_none(),
+                "{mode} must fail at its owning stage"
+            );
+            assert!(
+                deliveries.iter().any(|d| matches!(
+                    d.output,
+                    Output::Notice {
+                        notice: Notice::Summary(Outcome::Stopped),
+                        ..
+                    }
+                )),
+                "fail_fast still stops {mode}"
+            );
+        }
+    }
+    database.stop();
+}

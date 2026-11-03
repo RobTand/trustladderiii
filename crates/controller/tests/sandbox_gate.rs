@@ -110,6 +110,7 @@ fn replay(name: &str) -> Vec<bool> {
         job_generation: None,
         steering: None,
         request_text: None,
+        evidence: None,
         proposed: None,
     };
     let Reconciliation::Found(completion) = adapter.reconcile(&delivery).unwrap() else {
