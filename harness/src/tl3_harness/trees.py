@@ -203,24 +203,48 @@ def bound_names(source: str) -> set[str]:
     return names
 
 
+HELPER_SETUP_FIXTURES = frozenset({'tmp_path', 'tmp_path_factory'})
+
+
 def validate_helper_setup(source: str, evidence):
-    """Check named setup on base without importing or executing served code."""
+    """Resolve bounded fixture dependencies without importing served code."""
     module = ast.parse(source)
+    identities = {}
     for name in evidence.setup_functions:
-        matches = [node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == name]
-        if len(matches) != 1 or name == evidence.target.split("::")[1]:
+        matches = [node for node in module.body if getattr(node, 'name', None) == name]
+        if len(matches) == 1 and isinstance(matches[0], ast.ClassDef):
+            raise ValueError(f"Unsupported helper setup {name}: class-based worlds are unsupported; "
+                             "select an existing module-level factory")
+        if len(matches) == 1 and isinstance(matches[0], ast.AsyncFunctionDef):
+            raise ValueError(f"Unsupported helper setup {name}: needs a synchronous function")
+        if (len(matches) != 1 or not isinstance(matches[0], ast.FunctionDef)
+                or name == evidence.target.split("::")[1]):
             raise ValueError(f"Unsupported helper setup {name}: needs one existing local function distinct from target")
         factory = matches[0]
         args = factory.args
-        if (factory.decorator_list or len(args.posonlyargs) + len(args.args) > len(args.defaults)
-                or any(default is None for default in args.kw_defaults)
-                or any(isinstance(node, (ast.Yield, ast.YieldFrom)) for node in ast.walk(factory))):
-            raise ValueError(f"Unsupported helper setup {name}: needs an undecorated synchronous function callable without arguments")
+        if factory.decorator_list:
+            raise ValueError(f"Unsupported helper setup {name}: decorated functions are unsupported")
+        if args.vararg or args.kwarg:
+            raise ValueError(f"Unsupported helper setup {name}: variadic parameters are unsupported")
+        if any(isinstance(node, (ast.Yield, ast.YieldFrom)) for node in ast.walk(factory)):
+            raise ValueError(f"Unsupported helper setup {name}: generator functions are unsupported")
+        positional = [*args.posonlyargs, *args.args]
+        required = [arg.arg for arg in positional[:len(positional) - len(args.defaults)]]
+        required.extend(arg.arg for arg, default in zip(args.kwonlyargs, args.kw_defaults) if default is None)
+        unsupported = sorted(set(required) - HELPER_SETUP_FIXTURES)
+        if unsupported:
+            raise ValueError(f"Unsupported helper setup {name}: required parameters {', '.join(unsupported)} "
+                             "are not TL3 fixtures; supported fixtures: tmp_path, tmp_path_factory")
         for node in module.body:
             if node is factory:
                 continue
             if name in bound_names(ast.unparse(node)):
                 raise ValueError(f"Unsupported helper setup {name}: the function has another binding")
+        fixtures = [arg.arg for arg in [*positional, *args.kwonlyargs] if arg.arg in HELPER_SETUP_FIXTURES]
+        factory_source = test_function_source(source, f"setup.py::{name}")
+        identities[name] = {"fixtures": fixtures,
+                            "source_sha256": hashlib.sha256(factory_source.encode()).hexdigest()}
+    return identities
 
 
 def helper_test_edits(base: Path, head: Path, destination: Path, patterns: list[str], evidence,
@@ -282,7 +306,7 @@ def helper_test_edits(base: Path, head: Path, destination: Path, patterns: list[
     new = definitions.get(("head", evidence.target))
     if old is None or new is None:
         reject("target must exist once on base and head")
-    validate_helper_setup(sources["base", target_path], evidence)
+    setup_functions = validate_helper_setup(sources["base", target_path], evidence)
     if ast.dump(old) == ast.dump(new):
         reject("target must change")
     for attribute in ("args", "returns", "type_params", "type_comment"):
@@ -305,6 +329,6 @@ def helper_test_edits(base: Path, head: Path, destination: Path, patterns: list[
     def target_hash(label):
         source = test_function_source(sources[label, target_path], evidence.target)
         return hashlib.sha256(source.encode()).hexdigest()
-    return {"target": evidence.target, "base_target_sha256": target_hash("base"),
+    return {"target": evidence.target, "setup_functions": setup_functions, "base_target_sha256": target_hash("base"),
             "head_target_sha256": target_hash("head"), "observers": receipts,
             "base_tree_sha256": tree_sha256(destination), "head_tree_sha256": tree_sha256(head)}

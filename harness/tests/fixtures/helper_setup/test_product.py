@@ -124,6 +124,18 @@ def _fixture_method_raises(tmp_path):
 
 
 def _too_many_paths(tmp_path_factory):
+    import json
+    from pathlib import Path
+    with Path('fixture-roots.jsonl').open('a') as stream:
+        stream.write(json.dumps(str(tmp_path_factory.getbasetemp())) + '\n')
     for _ in range(17):
         tmp_path_factory.mktemp('extra')
     return Queue(7)
+
+
+def _positional_fixture(tmp_path, /):
+    return _staged_world(tmp_path)
+
+
+def _defaulted_factory(code=7):
+    return Queue(code)

@@ -1728,7 +1728,7 @@ def test_appended_coverage_check_cannot_introduce_forcing(planner_request, reque
 
 
 @pytest.mark.parametrize('setup', ['_failed_queue', '_fixture_queue', '_factory_queue', '_World',
-                                         '_missing_setup', '_needs_argument', '_unsupported_fixture'])
+                                        '_missing_setup', '_needs_argument', '_unsupported_fixture'])
 def test_helper_setup_is_preflighted_before_maker(planner_request, digests_plan, setup):
     path = Path(planner_request['worktree']) / DIGESTS
     path.write_text(path.read_text() + '\ndef _execute(q):\n    assert q.execute().returncode == 0\n'
@@ -1767,3 +1767,24 @@ def test_helper_setup_requires_its_installed_capability():
     capability['methods'].append('helper_target_observer.setup_function')
     preflight({'tool_capabilities': [capability]}, original, planning=True)
     assert original['kind'] == 'leaf' and original['evidence_errors'] == []
+
+
+@pytest.mark.parametrize('fixture', ['tmp_path', 'tmp_path_factory', 'monkeypatch'])
+def test_helper_setup_receipt_fixture_identity_is_bounded(fixture):
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema
+    identity = {'target': 'tests/test_helpers.py::_execute',
+                'base_target_sha256': 'a' * 64, 'head_target_sha256': 'b' * 64,
+                'base_tree_sha256': 'c' * 64, 'head_tree_sha256': 'd' * 64,
+                'observers': {'tests/test_helpers.py::test_diagnostic': 'e' * 64},
+                'failure_cases': [{'args': [], 'kwargs': {}}],
+                'failure_driver_sha256': 'f' * 64,
+                'failure_preservation': [{'base': 'passed', 'head': 'passed'}],
+                'setup_functions': {'_factory': {'source_sha256': 'e' * 64, 'fixtures': [fixture]}}}
+    receipt_schema = schema('reviewer-input')['properties']['checks']['items']['properties']['helper_evidence']
+    validator = Draft202012Validator(receipt_schema)
+    if fixture == 'monkeypatch':
+        with pytest.raises(ValidationError):
+            validator.validate(identity)
+    else:
+        validator.validate(identity)

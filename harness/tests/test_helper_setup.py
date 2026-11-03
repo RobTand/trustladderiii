@@ -180,7 +180,22 @@ def test_setup_function_cannot_change_with_the_target(tmp_path):
 FIXTURE_OBSERVER = OBSERVER_SOURCE.replace(
     '_failed_queue, _execute_mover', '_staged_world, _execute_mover').replace(
     'def test_inner():', 'def test_inner(tmp_path):').replace(
-    'q = _failed_queue()', 'q = _staged_world(tmp_path)')
+    'q = _failed_queue()', 'q = _staged_world(tmp_path)').replace(
+    'assert q.cleaned\\n', 'assert q.cleaned\\n        assert not q.records.path.exists()\\n'
+    '        assert (q.root / \"cleaned\").exists()\\n')
+
+FIXTURE_OBSERVER = FIXTURE_OBSERVER[:FIXTURE_OBSERVER.index('    q = Queue(0)')] + '''
+    with tempfile.TemporaryDirectory() as directory:
+        q = _staged_world(Path(directory))
+        q.result.returncode = 0
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            assert _execute_mover(q, 'mover-key') is q.result
+        assert q.cleaned
+        assert not q.records.path.exists()
+        assert (q.root / 'cleaned').exists()
+        assert output.getvalue() == ''
+'''
 
 
 def fixture_repo(helper_repo):
@@ -193,6 +208,8 @@ def capture_fixture_cleanup(monkeypatch):
     original = execution.PYTEST.run
     runs = []
     def observed(tree, container, tests, report, progress, *args, **kwargs):
+        if report.name.startswith('helper-failure-'):
+            (tree / 'fixture-roots.jsonl').unlink(missing_ok=True)
         result = original(tree, container, tests, report, progress, *args, **kwargs)
         if report.name.startswith('helper-failure-'):
             paths = [Path(json.loads(line)) for line in (tree / 'fixture-roots.jsonl').read_text().splitlines()]
@@ -207,6 +224,7 @@ def capture_fixture_cleanup(monkeypatch):
 @pytest.mark.parametrize('setup,fixtures', [
     ('_staged_world', ['tmp_path']), ('_two_real_generations', ['tmp_path_factory']),
     ('_both_fixtures', ['tmp_path', 'tmp_path_factory']),
+    ('_positional_fixture', ['tmp_path']),
 ])
 def test_fixture_setup_claims_row_preserves_failure_and_cleans_up(helper_repo, monkeypatch, setup, fixtures):
     fixture_repo(helper_repo)
@@ -232,9 +250,11 @@ def test_fixture_precondition_assertions_are_errors_and_cleanup_runs(helper_repo
     assert result.helper_evidence['failure_preservation'] == [{'base': 'error', 'head': 'error'}]
 
 
-def test_fixture_factory_path_allocation_is_bounded(helper_repo):
+def test_fixture_factory_path_allocation_is_bounded(helper_repo, monkeypatch):
     fixture_repo(helper_repo)
+    runs = capture_fixture_cleanup(monkeypatch)
     result = check_repo(helper_repo, evidence('_too_many_paths'))
+    assert len(runs) == 2
     assert result.verdict == Verdict.FAIL
     assert result.helper_evidence['failure_preservation'] == [{'base': 'error', 'head': 'error'}]
 
@@ -265,7 +285,7 @@ def test_ordinary_overlay_erases_red_for_test_module_helper(helper_repo, separat
         path.write_text(path.read_text().replace(FIXTURE_OBSERVER, ''))
         (repo / 'tests/test_observer.py').write_text(
             FIXTURE_OBSERVER.replace('def test_diagnostics():',
-                                     'def test_diagnostics():\n    from test_product import Queue, _execute_mover'))
+                                     'def test_diagnostics():\n    from test_product import _staged_world, _execute_mover'))
         observer = 'tests/test_observer.py::test_diagnostics'
     head = save()
     check = Check('ordinary diagnostics', Kind.DEMONSTRATING, (observer,))
@@ -286,3 +306,49 @@ def test_ordinary_overlay_preserves_red_for_production_target(helper_repo):
     result, = run_checks(repo, base, head, (check,), container=Container(IMAGE))
     assert result.verdict == Verdict.PASS, result
     assert (result.tests[0].base, result.tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
+
+
+def test_fixture_injection_uses_trusted_pytest_fixtures(helper_repo, monkeypatch):
+    fixture_repo(helper_repo)
+    repo, _, _ = helper_repo
+    (repo / 'conftest.py').write_text(
+        'import pytest\n@pytest.fixture\ndef tmp_path(): raise AssertionError("untrusted path")\n'
+        '@pytest.fixture(scope="session")\ndef tmp_path_factory(): raise AssertionError("untrusted factory")\n')
+    # Existing conftest is part of base, as protected setup cannot change on head.
+    path = repo / 'tests/test_product.py'
+    head_source = path.read_text()
+    path.write_text(FIXTURE.read_text())
+    _, _, save = helper_repo
+    base = save()
+    path.write_text(head_source)
+    # Observers intentionally use their normal pytest fixtures, so here run only
+    # the independent trusted driver, against real base and head modules.
+    from tl3_harness.execution import helper_failure_preservation
+    from tl3_harness.trees import export
+    root = repo.parent / 'driver'
+    root.mkdir()
+    staged, head = root / 'base', root / 'head'
+    export(repo, base, staged)
+    export(repo, save(), head)
+    runs = capture_fixture_cleanup(monkeypatch)
+    receipt = helper_failure_preservation(execution.PYTEST, staged, head, evidence('_staged_world'),
+                                          Container(IMAGE), root, Progress())
+    assert receipt['failure_preservation'] == [{'base': 'passed', 'head': 'passed'}]
+    assert len(runs) == 2
+
+
+def test_defaulted_zero_argument_factory_remains_supported(helper_repo):
+    result = check_repo(helper_repo, evidence('_defaulted_factory'))
+    assert result.verdict == Verdict.PASS, result
+    assert result.helper_evidence['setup_functions']['_defaulted_factory']['fixtures'] == []
+
+
+def test_each_fixture_failure_case_gets_its_own_cleanup_scope(helper_repo, monkeypatch):
+    fixture_repo(helper_repo)
+    runs = capture_fixture_cleanup(monkeypatch)
+    declaration = evidence('_staged_world')
+    declaration = HelperEvidence(TARGET, declaration.failure_cases * 2)
+    result = check_repo(helper_repo, declaration)
+    assert result.verdict == Verdict.PASS, result
+    assert len(runs) == 2
+    assert result.helper_evidence['failure_preservation'] == [{'base': 'passed', 'head': 'passed'}] * 2
