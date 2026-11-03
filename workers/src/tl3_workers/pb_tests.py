@@ -95,8 +95,9 @@ def _stage(worktree, root, base_sha=None, *, action="test_tool", checks=(), forc
         # Planner rehearsal has no edited head observer yet. The trusted pytest
         # outcome observes the original test subject, through this same path.
         projection_forcing = forcing or next((Forcing.parse(item['forcing']) for item in proving if item.get('forcing')), None)
+        projection_symptom = declared_symptom or next((item['declared_symptom'] for item in proving if item.get('declared_symptom')), None)
         check = Check('development proof' if proving or forcing or declared_symptom else ALWAYS_CHECK, Kind.DEMONSTRATING if proving or forcing or declared_symptom else Kind.REGRESSION,
-                      tests or selected or ('_tl3_unselected.py::test_outcome',), projection_forcing, proof, declared_symptom)
+                      tests or selected or ('_tl3_unselected.py::test_outcome',), projection_forcing, proof, projection_symptom)
         receipt = assemble_proof(base, head if proving else base, checkout, check, configuration(base) if proving else {})
         (root / 'proof.json').write_text(json.dumps(receipt, sort_keys=True))
         shutil.rmtree(base)

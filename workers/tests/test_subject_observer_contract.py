@@ -64,6 +64,17 @@ def test_maker_and_rehearsal_use_the_same_source_partition_as_checking(tmp_path)
     receipt = assemble_proof(base, head, tmp_path / 'checking',
                              Check('proof', Kind.DEMONSTRATING, tuple(declaration['tests'])), configuration(base))
     assert json.loads((stage / 'proof.json').read_text()) == receipt
+    symptom_stage = tmp_path / 'maker-symptom'
+    symptom_stage.mkdir()
+    symptom = {'node': 'test_queue.py::test_value', 'exception': 'builtins.TimeoutError',
+               'phase': 'call', 'repeat': 1, 'parallel': 0}
+    with Worktree(repo) as tree:
+        tree.test_checkout = repo
+        _stage(tree, symptom_stage, base_sha, checks=[{**declaration, 'declared_symptom': symptom}],
+               selected=tuple(declaration['tests']))
+    symptom_receipt = json.loads((symptom_stage / 'proof.json').read_text())
+    assert symptom_receipt['mode'] == 'pytest-outcome'
+    assert (symptom_stage / 'checkout/test_queue.py').read_bytes() == (base / 'test_queue.py').read_bytes()
     forcing = Forcing.parse({'symptom': 'old subject', 'patches': [{'target': 'queue.clock', 'returns': 0}]})
     rehearsal = tmp_path / 'rehearsal'
     rehearsal.mkdir()
