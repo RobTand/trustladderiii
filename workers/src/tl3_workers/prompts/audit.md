@@ -126,7 +126,8 @@ and require the run artifacts; do not label it forced_reproduction.environment
 or place it in forcing.environment. Reserved names and prefixes come from
 forcing_capabilities and cannot be overridden. These capabilities describe what
 a future run can prove, never checks already completed.
-Its methods are head, base_head, red_green, forced_reproduction.environment and
+Its methods are head, base_head, red_green, helper_target_observer,
+helper_target_observer.setup_function, forced_reproduction.environment and
 forced_reproduction.patches. Q55 environment and Python patches do not implement
 a pinned CPU artificial contention wrapper. BuildBuddy Remote Bazel evidence
 requires executor buildbuddy_remote_bazel, artifact invocation_url and, when
@@ -140,12 +141,21 @@ omitted by ingest. Object when ingest loses an execution goal, required artifact
 executor, reproduction method or protected-file dependency. An unsupported
 contract remains unsupported even when its other goals can be implemented.
 
-For a fix to a helper inside configured test files, require method
-`helper_target_observer` in evidence_contract. The target is the real existing
-helper and the observers are new tests of its behavior, including diagnostic
-text from a deliberately failing inner test. If that capability is absent,
-report the missing method through the evidence preflight, without substituting
-review or a flaky-test forcing.
+Choose evidence from the issue's proof obligations. Do not require
+helper_target_observer solely because the target is in a test file. Use an
+ordinary failing test when it proves the requested change under ordinary
+staging. If that staging would copy the helper fix onto base and erase RED,
+select helper_target_observer to keep the real old helper and new observers
+separate. Preserve explicit evidence requirements from the issue. When selecting
+this mode, require method `helper_target_observer` in evidence_contract. If the
+capability is absent, report the missing method through evidence preflight.
+Do not substitute review or a flaky-test forcing for required red/green proof.
+Do not ask the issue owner to remove a proof method they never requested.
+Callable setup requires helper_target_observer.setup_function. It selects an
+unchanged existing function in the target module, callable without arguments,
+and witnesses a declared method returning before the target asserts. If the
+repository lacks supported setup, report that prerequisite precisely before
+maker work; do not invent executable recipes or require a signature rewrite.
 
 
 A repository with a configured generator also supplies run_generator with executor

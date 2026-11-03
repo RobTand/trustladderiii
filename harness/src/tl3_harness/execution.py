@@ -517,7 +517,8 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                                          for side in ("base", "head"))
                     result = replace(result, verdict=Verdict.INFRASTRUCTURE_FAILURE if infrastructure else Verdict.FAIL, tests=tuple(
                         replace(test, passed=False, message="Failure preservation requires every known-bad invocation "
-                                "to fail by assertion on both helpers.") for test in result.tests))
+                                "to fail by assertion on both helpers; setup/runtime errors and successful returns do not count.")
+                        for test in result.tests))
                 results.append(replace(result, helper_evidence=identity))
                 continue
             if check.name in forced:
@@ -540,7 +541,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
 
 
 def helper_failure_preservation(tool, staged, head, evidence, container, root, progress):
-    """Trusted driver calls the real target with data, independently of observers."""
+    """Call the real target with bounded data or existing setup, independently of observers."""
     module, function = evidence.target.split("::")
     source = """import json
 import pytest
@@ -548,7 +549,25 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
-def argument(value):
+def argument(value, module, witnesses):
+    if isinstance(value, dict) and '$setup' in value:
+        name = value['$setup']
+        try:
+            result = getattr(module, name)()
+            method = value['$call']
+            original = getattr(result, method)
+            if not callable(original):
+                raise TypeError('declared method is not callable')
+            witness = {'returned': False}
+            def observed(*args, **kwargs):
+                outcome = original(*args, **kwargs)
+                witness['returned'] = True
+                return outcome
+            setattr(result, method, observed)
+            witnesses.append((result, method, original, witness))
+            return result
+        except Exception as error:
+            raise RuntimeError(f'Helper setup {name} failed: {type(error).__name__}') from error
     if isinstance(value, dict) and '$attributes' in value:
         return SimpleNamespace(**value['$attributes'])
     return value
@@ -560,13 +579,20 @@ def test_failure_{index}(request):
     module = pytest.Module.from_parent(request.session, path=Path({module!r}).resolve()).obj
     target = getattr(module, {function!r})
     case = json.loads({encoded!r})
-    args = [argument(value) for value in case['args']]
-    kwargs = {{key: argument(value) for key, value in case['kwargs'].items()}}
+    witnesses = []
     try:
-        target(*args, **kwargs)
-    except AssertionError:
-        return
-    raise AssertionError('The known-bad helper invocation no longer fails by assertion')
+        args = [argument(value, module, witnesses) for value in case['args']]
+        kwargs = {{key: argument(value, module, witnesses) for key, value in case['kwargs'].items()}}
+        try:
+            target(*args, **kwargs)
+        except AssertionError:
+            if any(not witness['returned'] for _, _, _, witness in witnesses):
+                raise RuntimeError('Helper setup did not reach the declared method return')
+            return
+        raise AssertionError('The known-bad helper invocation no longer fails by assertion')
+    finally:
+        for value, method, original, _ in reversed(witnesses):
+            setattr(value, method, original)
 """
     name = '_tl3_helper_failure_preservation.py'
     tests = tuple(f'{name}::test_failure_{index}' for index in range(len(evidence.failure_cases)))

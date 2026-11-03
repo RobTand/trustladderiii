@@ -252,7 +252,8 @@ and require the run artifacts; do not label it forced_reproduction.environment
 or place it in forcing.environment. Reserved names and prefixes come from
 forcing_capabilities and cannot be overridden. These capabilities describe what
 a future run can prove, never checks already completed.
-Its methods are head, base_head, red_green, helper_target_observer, forced_reproduction.environment and
+Its methods are head, base_head, red_green, helper_target_observer,
+helper_target_observer.setup_function, forced_reproduction.environment and
 forced_reproduction.patches. Q55 environment and Python patches do not implement
 a pinned CPU artificial contention wrapper. BuildBuddy Remote Bazel evidence
 requires executor buildbuddy_remote_bazel, artifact invocation_url and, when
@@ -265,12 +266,16 @@ Preserve ingest.evidence_contract and audit_evidence_contract. Add requirements
 found during planning. Code retains their union and converts any unsupported
 proposal into cant_meet with the exact missing capability before a maker runs.
 
-For a fix to a helper inside configured test files, require method
-`helper_target_observer` in evidence_contract. The target is the real existing
-helper and the observers are new tests of its behavior, including diagnostic
-text from a deliberately failing inner test. If that capability is absent,
-report the missing method through the evidence preflight, without substituting
-review or a flaky-test forcing.
+Choose evidence from the issue's proof obligations. Do not require
+helper_target_observer solely because the target is in a test file. Use an
+ordinary failing test when it proves the requested change under ordinary
+staging. If that staging would copy the helper fix onto base and erase RED,
+select helper_target_observer to keep the real old helper and new observers
+separate. Preserve explicit evidence requirements from the issue. When selecting
+this mode, require method `helper_target_observer` in evidence_contract. If the
+capability is absent, report the missing method through evidence preflight.
+Do not substitute review or a flaky-test forcing for required red/green proof.
+Do not ask the issue owner to remove a proof method they never requested.
 
 For method `helper_target_observer`, use an unforced demonstrating check with
 `helper_evidence: {"target": "tests/test_helpers.py::_execute", "failure_cases":
@@ -290,6 +295,30 @@ These cases preserve failures independently of observer assertions. Choose cases
 that exercise the helper's existing failure contract. Observer names must have
 no existing base binding, including assignment aliases. Helper evidence is not
 a Q55 forcing.
+
+For callable setup preconditions, a top-level argument may instead be
+{"$setup": "_failed_queue", "$call": "execute"}. This requires method
+helper_target_observer.setup_function. The trusted driver calls that existing
+function without arguments in the target's own pytest module and passes its
+return value to the target. $call names one callable, replaceable method on that
+argument. A trusted forwarder records its real return without changing arguments
+or results. Every declared method must return before the target AssertionError
+can prove preservation. An earlier row/setup assertion or a method that raises
+before returning is an error. The driver restores methods after each case.
+Only one unambiguous, undecorated synchronous
+function already present on base is supported. It must accept zero arguments
+and stay unchanged with all other setup and dependencies. No imported functions,
+classes, generators, fixture dependency injection, dotted names, recipes or
+model-supplied code are supported. Each function and method name is at most 128 characters and
+counts toward the existing eight-case, 4096-byte limit. Only top-level args and
+kwargs values are interpreted; nested JSON remains literal. Inspect the real
+call contract and available base setup before maker work. Report unsupported
+prerequisites precisely if no existing factory can satisfy them. Do not rewrite
+the target signature to fit the driver. Setup executes inside the existing
+admitted, network-disabled test container. Setup exceptions, including
+AssertionError, are errors and never preservation proof or observer RED. A
+target that returns success fails preservation. The case references, unchanged
+setup in the tree hashes and driver hash bind the setup semantics in receipts.
 
 
 A repository with a configured generator also supplies run_generator with executor

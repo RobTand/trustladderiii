@@ -170,9 +170,26 @@ class HelperEvidence:
                     or any(not key.isidentifier() for key in case["kwargs"])):
                 raise HarnessInputError("helper failure cases need bounded args and kwargs")
             for value in [*case["args"], *case["kwargs"].values()]:
+                if isinstance(value, dict) and "$setup" in value:
+                    name = value["$setup"]
+                    call = value.get("$call")
+                    if (set(value) != {"$setup", "$call"} or not isinstance(name, str)
+                            or not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,127}", name)
+                            or name.startswith(("test_", "__")) or not isinstance(call, str)
+                            or not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,127}", call)
+                            or call.startswith("__")):
+                        raise HarnessInputError("$setup needs one local function and a $call method witness, "
+                                                "each at most 128 characters")
                 if isinstance(value, dict) and "$attributes" in value:
                     if set(value) != {"$attributes"} or not isinstance(value["$attributes"], dict):
                         raise HarnessInputError("$attributes must name one object of literal attributes")
+
+    @property
+    def setup_functions(self):
+        return tuple(dict.fromkeys(value["$setup"] for encoded in self.failure_cases
+                                   for case in [json.loads(encoded)]
+                                   for value in [*case["args"], *case["kwargs"].values()]
+                                   if isinstance(value, dict) and "$setup" in value))
 
     @classmethod
     def parse(cls, data):
