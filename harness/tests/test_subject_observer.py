@@ -422,3 +422,18 @@ def test_rereview662_old_subject_can_update_its_own_runtime_state(repository):
     results, _, _ = round_result(repository, {path: before}, {path: after}, check)
     assert results[0].verdict == Verdict.PASS, results
     assert results[0].tests[0].base == Outcome.ASSERTION, results
+
+
+def test_rereview662_declared_forcing_may_replace_its_dependency(repository):
+    before = {'pool.py': 'def now(): return 0\ndef held(): return now()\n',
+              'tests/test_clock.py': 'def test_control(): pass\n'}
+    after = {'pool.py': before['pool.py'].replace('return now()', 'return now() + 1'),
+             'tests/test_clock.py': 'import pool\ndef test_observer():\n'
+             '    assert pool.held() != 100, "clock result stayed at 100"\n'}
+    check = Check('forced dependency', Kind.DEMONSTRATING, ('tests/test_clock.py::test_observer',),
+                  forcing=Forcing.parse({'symptom': 'clock result stays at 100',
+                                         'patches': [{'target': 'pool.now', 'returns': 100}]}),
+                  proof=model.Proof(('pool.py::held',), (), 'clock result stayed at 100'))
+    results, _, _ = round_result(repository, before, after, check)
+    assert results[0].verdict == Verdict.PASS, results
+    assert results[0].tests[0].base == Outcome.ASSERTION, results
