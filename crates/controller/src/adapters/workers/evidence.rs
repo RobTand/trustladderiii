@@ -35,6 +35,39 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result
             contract.push(requirement);
         }
     }
+    if role == "planner"
+        && reply["checks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|check| {
+                check["helper_evidence"]["failure_cases"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|case| {
+                        case["args"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .chain(
+                                case["kwargs"]
+                                    .as_object()
+                                    .into_iter()
+                                    .flat_map(|o| o.values()),
+                            )
+                            .any(|argument| argument.get("$setup").is_some())
+                    })
+            })
+    {
+        let requirement = json!({
+            "requirement":"Construct helper arguments with unchanged existing repository setup functions.",
+            "tool":"run_tests", "executor":"prismabuild_pytest", "runner_features":["base_head"],
+            "artifacts":["cas_receipt", "terminal_verdict"], "methods":["helper_target_observer.setup_function"], "protected_files":[]});
+        if !contract.contains(&requirement) {
+            contract.push(requirement);
+        }
+    }
     let mut errors = Vec::new();
     if role != "planner" && reply.get("evidence_contract").is_none() {
         return Err(Error::Invalid("worker evidence contract is missing"));

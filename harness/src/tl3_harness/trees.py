@@ -221,6 +221,26 @@ def bound_names(source: str) -> set[str]:
     return names
 
 
+def validate_helper_setup(source: str, evidence):
+    """Check named setup on base without importing or executing served code."""
+    module = ast.parse(source)
+    for name in evidence.setup_functions:
+        matches = [node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == name]
+        if len(matches) != 1 or name == evidence.target.split("::")[1]:
+            raise ValueError(f"Unsupported helper setup {name}: needs one existing local function distinct from target")
+        factory = matches[0]
+        args = factory.args
+        if (factory.decorator_list or len(args.posonlyargs) + len(args.args) > len(args.defaults)
+                or any(default is None for default in args.kw_defaults)
+                or any(isinstance(node, (ast.Yield, ast.YieldFrom)) for node in ast.walk(factory))):
+            raise ValueError(f"Unsupported helper setup {name}: needs an undecorated synchronous function callable without arguments")
+        for node in module.body:
+            if node is factory:
+                continue
+            if name in bound_names(ast.unparse(node)):
+                raise ValueError(f"Unsupported helper setup {name}: the function has another binding")
+
+
 def helper_test_edits(base: Path, head: Path, destination: Path, patterns: list[str], evidence,
                       observers: tuple[str, ...]) -> dict:
     """Append new observers to base modules, leaving every old definition intact.
@@ -280,6 +300,7 @@ def helper_test_edits(base: Path, head: Path, destination: Path, patterns: list[
     new = definitions.get(("head", evidence.target))
     if old is None or new is None:
         reject("target must exist once on base and head")
+    validate_helper_setup(sources["base", target_path], evidence)
     if ast.dump(old) == ast.dump(new):
         reject("target must change")
     for attribute in ("args", "returns", "type_params", "type_comment"):

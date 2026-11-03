@@ -97,3 +97,11 @@ def test_audit_objects_to_goals_the_answer_excludes():
         'Return "disagree" if the brief carries goals or acceptance tests that '
         "Rob's answer excludes or does not ask for" in prompt
     )
+
+
+@pytest.mark.parametrize('role', ['ingest', 'audit', 'planner'])
+def test_helper_location_alone_does_not_mandate_observer_evidence(role):
+    prompt = prompt_text(role)
+    assert 'Do not require helper_target_observer solely because the target is in a test file.' in prompt
+    assert 'ordinary failing test' in prompt
+    assert 'For a fix to a helper inside configured test files, require method' not in prompt

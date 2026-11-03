@@ -78,3 +78,16 @@ must land `.mergify.yml` on `main` before the queue can use this configuration.
 Helper diagnostics evidence uses planning capability method `helper_target_observer`.
 It stages only new observer tests over the real base helper and records the old
 and new source and tree identities for review. See docs/state-table.md, Q27 #549.
+
+Helper arguments can select existing setup with `{"$setup": "_failed_queue", "$call": "execute"}`
+when method `helper_target_observer.setup_function` is installed. The factory
+must already be an undecorated synchronous function in the target's base test
+module, callable without arguments and unchanged on head. Its return value is
+one target argument. The declared callable method must be replaceable. A trusted
+forwarder requires its real return before accepting the target assertion, so a
+missing-row assertion cannot stand in for the failed outcome. No new code, imports or fixture dependency resolution is
+accepted by this declaration. Setup exceptions cannot prove helper failure.
+The existing case, driver and tree identities bind setup in the receipt. The
+helper must still raise AssertionError on both versions. Select this mode when
+ordinary staging cannot prove the requested change, rather than requiring it
+for every helper in a test file.
