@@ -544,6 +544,25 @@ mod tests {
     }
 
     #[test]
+    fn execution_budget_split_reports_the_constraint_before_maker_work() {
+        let plan = json!({"kind": "split", "reason": "execution_budget",
+            "forecast": {"tokens": 1200, "fit_tokens": 100000, "file_tokens": {}},
+            "execution": {"estimated_tool_turns": 60, "usable_tool_turns": 56},
+            "pieces": [{"brief": "Implement and prove behavior.", "files": ["a.py"]},
+                {"brief": "Update metadata and verify.", "files": ["CHANGELOG.md"]}]});
+        let found = split(&plan).unwrap();
+        let report = text(&found, "report");
+        assert!(report.contains("execution budget"), "{report}");
+        assert!(report.contains("before work starts"), "{report}");
+        assert!(
+            report.contains("60 tool turns") && report.contains("56 usable"),
+            "{report}"
+        );
+        assert!(!report.contains("ran out of room"), "{report}");
+        assert_eq!(found["pieces"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
     fn split_pieces_clip_their_file_lists() {
         let files: Vec<_> = (0..40)
             .map(|index| format!("src/{}/module_{index}.py", "deep/".repeat(200)))
