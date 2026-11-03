@@ -8,6 +8,7 @@ twice and logs no assessment twice.
 
 import base64
 from contextlib import contextmanager
+import hashlib
 import json
 from pathlib import Path
 import secrets
@@ -15,14 +16,19 @@ import signal
 import sys
 import time
 
+from jsonschema import ValidationError
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
 from tl3_workers import judges, tracing
-from tl3_workers.contracts import read_reply
+from tl3_workers.contracts import read_json, read_reply
 from tl3_workers.roles.base import Role
+from tl3_workers.turns import TurnControl, repaired
 
 
 # The newest runs are judged, and their tokens counted; the reply says how many.
 MAX_TRACES = 24
 MAX_RECOMMENDATIONS = 3
+ASSESSMENT_SETTLE_SECS = 0.1
 # Trace attributes that hold structure rather than content.
 STRUCTURAL = {"mlflow.spanType", "mlflow.traceRequestId", "mlflow.chat.tokenUsage",
               "mlflow.llm.model", "tl3.role", "tl3.proxy.usage_chunks",
@@ -123,13 +129,32 @@ class MlflowTraces:
                                           order_by=["timestamp_ms DESC"], include_spans=True)
         return [trace for trace in found if trace.info.tags.get("role") != "postmortem"][:limit]
 
+    def assessment(self, trace_id, key):
+        for item in self.client.get_trace_info(trace_id).assessments:
+            if (item.metadata or {}).get("idempotency_key") == key:
+                return item.assessment_id
+        return None
+
     def log(self, trace_id, name, value, rationale, judge_model, metadata):
         from mlflow.entities import AssessmentSource, Feedback
+        from mlflow.environment_variables import MLFLOW_HTTP_REQUEST_MAX_RETRIES
 
         feedback = Feedback(name=name, value=value, rationale=rationale,
                             source=AssessmentSource(source_type="LLM_JUDGE", source_id=judge_model),
                             metadata=metadata)
-        return self.client.log_assessment(trace_id, feedback).assessment_id
+        # MLflow preserves caller-supplied IDs and enforces their uniqueness.
+        # Metadata lookup handles lag; the ID also prevents a late duplicate POST.
+        feedback.assessment_id = metadata["idempotency_key"]
+        # Keep one POST per attempt; checkpoint reconciliation owns retries.
+        previous = MLFLOW_HTTP_REQUEST_MAX_RETRIES.get_raw()
+        MLFLOW_HTTP_REQUEST_MAX_RETRIES.set(0)
+        try:
+            return self.client.log_assessment(trace_id, feedback).assessment_id
+        finally:
+            if previous is None:
+                MLFLOW_HTTP_REQUEST_MAX_RETRIES.unset()
+            else:
+                MLFLOW_HTTP_REQUEST_MAX_RETRIES.set(previous)
 
 
 # Tests replace this with a fake; production reads MLflow.
@@ -260,7 +285,7 @@ def check_reply(inputs, reply):
 
 
 def _load(path):
-    return json.loads(path.read_text()) if path.exists() else None
+    return read_json(path.read_text()) if path.exists() else None
 
 
 def _save(path, value):
@@ -269,35 +294,76 @@ def _save(path, value):
     temporary.replace(path)
 
 
-def _judge(run):
+def _judge(run, stage):
     try:
         feedback = run()
-    except Exception as error:
-        raise ValueError("judge failed") from error
-    if judges.failed(feedback):
-        raise ValueError("judge failed")
+        if judges.failed(feedback):
+            raise tracing.WorkerStageError(stage)
+    except Exception:
+        raise tracing.WorkerStageError(stage) from None
     return feedback
 
 
+def assessment_key(run, dimension, model, release):
+    identity = json.dumps([run, dimension, model, release], separators=(",", ":"))
+    # Match MLflow's a-<32 hex> ID shape and its 50-character database bound.
+    return "a-" + hashlib.sha256(identity.encode()).hexdigest()[:32]
+
+
+def _checked(inputs, reply):
+    from tl3_workers.runtime import _checked as checked
+
+    try:
+        return checked(ROLE, inputs, reply)
+    except ValidationError as error:
+        if "recommendations" in error.absolute_schema_path:
+            raise tracing.WorkerStageError(
+                "postmortem recommendation contract failure", error) from None
+        raise
+    except ValueError:
+        raise tracing.WorkerStageError("postmortem recommendation contract failure") from None
+
+
+def _cached(path, inputs, envelope=None):
+    try:
+        cached = _load(path)
+        if cached is None:
+            return None
+        # Older judged checkpoints held only the postmortem and grades.
+        if envelope is not None and set(cached) == {"postmortem", "grades"}:
+            cached = envelope(cached["postmortem"], cached["grades"])
+        return _checked(inputs, cached)
+    except (ValueError, ValidationError, KeyError, TypeError) as error:
+        stage = "postmortem cached reply failure" if path.name == "reply.json" else (
+            "postmortem cached judged failure")
+        raise tracing.WorkerStageError(stage, error) from None
+
+
 def run(model, request, worktree, emit):
-    del model, worktree  # The judges call the proxy through MLflow, not LangChain.
+    del worktree
     workdir = Path(request["worktree"])
-    if (cached := _load(workdir / "reply.json")) is not None:
-        return cached
-    # The whole run, every judge and MLflow call, has one wall-clock allowance (#486).
+    # Cached artifacts and all external calls share the whole-run deadline.
     with deadline(request["inputs"]["deadline_secs"]):
-        return _judged_run(request, workdir, emit)
+        if (cached := _cached(workdir / "reply.json", request["inputs"])) is not None:
+            return cached
+        return _judged_run(model, request, workdir, emit)
 
 
-def _judged_run(request, workdir, emit):
+def _judged_run(model, request, workdir, emit):
     inputs = request["inputs"]
     redactor = redactor_for(request)
-    settings = tracing.mlflow_settings(request)
-    source = SOURCE(settings)
+    source = SOURCE(tracing.mlflow_settings(request))
     traces = source.find(inputs["trace_tags"], MAX_TRACES)
     postmortem_model = request["model"]["name"]
     grade_model = inputs["grade_model"]
-    judged = _load(workdir / "judged.json")
+
+    def envelope(written, grades):
+        return {"postmortem": written,
+                "grades": [{"assessment_id": None, **grade} for grade in grades],
+                "assessment_ids": [], "usage": usage(traces),
+                "models": {"postmortem": postmortem_model, "grades": grade_model}}
+
+    judged = _cached(workdir / "judged.json", inputs, envelope)
     if judged is None:
         judges.configure(request["model"]["base_url"], tracing.model_key.get())
         trace = case_trace(traces, redactor, inputs["record"]["id"])
@@ -309,45 +375,110 @@ def _judged_run(request, workdir, emit):
         grades = []
         with judges.guarded_tools(redactor, progress):
             for dimension, grader in judges.grade_judges(inputs["rubric"], grade_model).items():
-                feedback = _judge(lambda: grader(inputs=case, trace=trace))
+                feedback = _judge(lambda: grader(inputs=case, trace=trace), "grade judge failure")
                 value = feedback.value
                 grade = value if type(value) is int and 1 <= value <= 5 else None
                 grades.append({"dimension": dimension, "grade": grade,
                                "rationale": redactor.text(feedback.rationale or "", 4000)[:4000],
                                "judge_model": grade_model})
             prompt = run_prompt()
-            feedback = _judge(lambda: judges.postmortem_judge(prompt, postmortem_model)(
-                inputs=case, trace=trace))
-        written = feedback.value if isinstance(feedback.value, dict) else read_reply(
-            str(feedback.value))
-        written = scrub(written, redactor)
-        if isinstance(written, dict) and isinstance(written.get("recommendations"), list):
-            written["recommendations"], dropped = applicable(written["recommendations"],
-                                                             RELEASE_ROOT)
-            if isinstance(written.get("notes"), str):
-                written["notes"] = with_drops(written["notes"], dropped)
-        judged = {"postmortem": written, "grades": grades}
+            with judges.postmortem_turns():
+                feedback = _judge(lambda: judges.postmortem_judge(prompt, postmortem_model)(
+                    inputs=case, trace=trace), "postmortem judge failure")
+
+        raw = feedback.value
+        history = [SystemMessage(content=judges.postmortem_contract(prompt)),
+                   HumanMessage(content=json.dumps(case, ensure_ascii=False)),
+                   AIMessage(content=json.dumps(scrub(raw, redactor))
+                             if isinstance(raw, dict) else redactor.text(str(raw)))]
+        control = TurnControl()
+
+        def ask():
+            if not control.repairing:
+                return raw
+            try:
+                # No tools or new judge loop: one turn reserved from MAX_TURNS.
+                message = model.invoke(history)
+            except Exception:
+                raise tracing.WorkerStageError("postmortem repair failure") from None
+            progress()
+            return message.text
+
+        def check(value):
+            try:
+                written = value if isinstance(value, dict) else read_reply(value)
+            except (ValueError, TypeError):
+                raise tracing.WorkerStageError("postmortem JSON parse failure") from None
+            written = scrub(written, redactor)
+            result = _checked(inputs, envelope(written, grades))
+            try:
+                written["recommendations"], dropped = applicable(
+                    written["recommendations"], RELEASE_ROOT)
+            except Exception:
+                raise tracing.WorkerStageError(
+                    "postmortem recommendation contract failure") from None
+            written["notes"] = with_drops(written["notes"], dropped)
+            return _checked(inputs, result)
+
+        judged = repaired(control, history, ask, check)
         _save(workdir / "judged.json", judged)
-    logged = _load(workdir / "assessments.json") or {}
+
+    # Every success checkpoint and assessment follows full schema and role validation.
+    _checked(inputs, judged)
+    try:
+        logged = _load(workdir / "assessments.json") or {}
+        pending = _load(workdir / "assessment-pending.json") or {}
+        if not isinstance(pending, dict) or not all(
+                isinstance(key, str) and isinstance(value, str) for key, value in pending.items()):
+            raise ValueError()
+        for grade in judged["grades"]:
+            grade["assessment_id"] = logged.get(grade["dimension"])
+        judged["assessment_ids"] = [logged[key] for key in sorted(logged)]
+        _checked(inputs, judged)
+    except (ValueError, ValidationError, AttributeError, TypeError):
+        raise tracing.WorkerStageError("postmortem assessment cache failure") from None
     target = traces[0].info.trace_id if traces else None
     tags = inputs["trace_tags"]
+    run_key = hashlib.sha256(str(workdir).encode()).hexdigest()
     for grade in judged["grades"]:
         dimension = grade["dimension"]
-        if target and grade["grade"] is not None and dimension not in logged:
-            logged[dimension] = source.log(target, dimension, grade["grade"], grade["rationale"],
-                                           grade["judge_model"], {
-                **{key: str(tags[key]) for key in ("node", "request", "repo", "issue")},
-                "release": inputs["release"],
-                "rubric_version": str(inputs["rubric"]["version"]),
-                "dimension": dimension, "judge_model": grade["judge_model"]})
-            _save(workdir / "assessments.json", logged)
+        key = assessment_key(run_key, dimension, grade["judge_model"], inputs["release"])
+        assessment_target = pending.get(dimension, target)
+        metadata = {**{key: str(tags[key]) for key in ("node", "request", "repo", "issue")},
+                    "release": inputs["release"], "rubric_version": str(inputs["rubric"]["version"]),
+                    "dimension": dimension, "judge_model": grade["judge_model"],
+                    "postmortem_run": run_key, "idempotency_key": key}
+        if dimension not in logged and dimension in pending:
+            # The intent may precede the POST, or the POST's response may be lost.
+            # Query twice, allowing a bounded read-after-write delay, before retrying
+            # the same server-enforced ID on the intent's original trace.
+            try:
+                recovered = source.assessment(assessment_target, key)
+                if recovered is None:
+                    time.sleep(ASSESSMENT_SETTLE_SECS)
+                    recovered = source.assessment(assessment_target, key)
+            except Exception:
+                raise tracing.WorkerStageError("postmortem assessment lookup failure") from None
+            if recovered is not None:
+                logged[dimension] = recovered
+        if assessment_target and grade["grade"] is not None and dimension not in logged:
+            pending[dimension] = assessment_target
+            _save(workdir / "assessment-pending.json", pending)
+            try:
+                logged[dimension] = source.log(
+                    assessment_target, dimension, grade["grade"], grade["rationale"],
+                    grade["judge_model"], metadata)
+            except Exception:
+                raise tracing.WorkerStageError("postmortem assessment write failure") from None
         grade["assessment_id"] = logged.get(dimension)
-    reply = {"postmortem": judged["postmortem"], "grades": judged["grades"],
-             "assessment_ids": [logged[key] for key in sorted(logged)],
-             "usage": usage(traces),
-             "models": {"postmortem": postmortem_model, "grades": grade_model}}
-    _save(workdir / "reply.json", reply)
-    return reply
+        judged["assessment_ids"] = [logged[key] for key in sorted(logged)]
+        _checked(inputs, judged)
+        _save(workdir / "assessments.json", logged)
+        pending.pop(dimension, None)
+        _save(workdir / "assessment-pending.json", pending)
+    _checked(inputs, judged)
+    _save(workdir / "reply.json", judged)
+    return judged
 
 
 def run_prompt():
@@ -364,5 +495,6 @@ ROLE = Role(
     tools={},
     check_reply=check_reply,
     run=run,
+    validates_reply=True,
     prepare_inputs=redact_case,
 )
