@@ -188,6 +188,8 @@ Rob will often just comment rather than answer a question. An agent reads each o
 
 Restart is how Rob starts a request over after something went wrong (Q49). It reads the issue's current title and body from GitHub when it applies, so he can edit the issue first. On an open request, it works like changing the request: the request stops as replaced, and a new one linked to the same issue starts on its own. On a request that closed without merging, it files a new linked request and reopens the issue if TL3 closed it. Merged and Done work isn't restarted; a complaint files a correction. A restart that arrives while a stop is finishing waits for the close. If the issue is gone (404 or 410), nothing is filed and Rob gets a note on the operations issue; any other failed read raises an incident, and clearing it retries. A stop no longer closes the issue: the summary says to comment `restart` to start again.
 
+When a restart or replacement first loads its materials, it fetches the served repo's configured default branch and saves that commit with the repository inputs. Every retry and reattachment of that request uses the saved commit. The linked issue text and applicable decisions and pins survive under #525 and #545. Saved scratch references remain prior work to consult. Ancestor source snapshots, implementation overlays and check receipts do not carry over. Trace tags expose the selected base SHA and immediate parent request separately from later maker and check bases.
+
 Decided by Rob, 2026-11-03: restart comments posted by the TL3 build coordinator
 under Rob's standing approval count as Rob's own. Code requires Rob's configured
 numeric GitHub account ID, an unedited comment (`updated_at <= created_at`),

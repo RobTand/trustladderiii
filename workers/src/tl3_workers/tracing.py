@@ -962,6 +962,8 @@ class Capture:
         trace = request.get('trace', {})
         self.tags = {key: str(trace.get(key, 'unknown'))
                      for key in ('repo', 'issue', 'request', 'attempt', 'round')}
+        self.tags.update({key: str(trace[key]) for key in ('base_sha', 'request_origin')
+                          if key in trace})
         self.tags.update(node=str(request['operation']['node']),
                          generation=str(request['operation']['generation']),
                          role=request['role'], model=request['model']['name'],

@@ -75,6 +75,8 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
             clients: clients.clone(),
             worktrees: config.worktrees_root.clone(),
             branches: crate::branches::Branches::new(&config.github.repos)?,
+            #[cfg(test)]
+            local_repository: None,
         })
         .with_operations(crate::memory::OperationsIssue {
             client: operations_client,
@@ -185,6 +187,8 @@ pub(crate) struct Materials {
     clients: std::collections::BTreeMap<u64, tl3_github::GitHub>,
     worktrees: std::path::PathBuf,
     branches: crate::branches::Branches,
+    #[cfg(test)]
+    local_repository: Option<std::path::PathBuf>,
 }
 
 impl Materials {
@@ -205,6 +209,10 @@ impl Materials {
 
     pub(crate) fn load(&self, delivery: &crate::executor::Delivery) -> Result<serde_json::Value> {
         use serde_json::json;
+        #[cfg(test)]
+        if let Some(source) = &self.local_repository {
+            return self.load_local_repository(source, delivery);
+        }
         let base_branch = self.branches.base(&delivery.repository)?;
         let client = &self.clients[&delivery.repository.installation];
         let runtime = crate::executor::runtime()?;
@@ -488,7 +496,41 @@ impl Materials {
             clients: Default::default(),
             branches: crate::branches::Branches::new(&[]).unwrap(),
             worktrees,
+            local_repository: None,
         }
+    }
+
+    pub(crate) fn repository_fixture(
+        worktrees: std::path::PathBuf,
+        source: std::path::PathBuf,
+        repos: &[tl3_config::Repository],
+    ) -> Self {
+        Self {
+            clients: Default::default(),
+            worktrees,
+            branches: crate::branches::Branches::new(repos).unwrap(),
+            local_repository: Some(source),
+        }
+    }
+
+    fn load_local_repository(
+        &self,
+        source: &std::path::Path,
+        delivery: &crate::executor::Delivery,
+    ) -> Result<serde_json::Value> {
+        use serde_json::json;
+        let path = repository_path(&self.worktrees, &delivery.repository);
+        std::fs::create_dir_all(&path)?;
+        tl3_worktrees::Worktrees::init_bare(&path)?;
+        let mut git = tl3_worktrees::Worktrees::open(&path, &self.worktrees)?;
+        git.set_base_branch(self.branches.base(&delivery.repository)?)?;
+        let base = git.fetch_base(&tl3_worktrees::Remote::local(source)?, None)?;
+        let repo = repository_materials(&path, base.as_str())?;
+        let issue = json!({"number":delivery.issue,"title":"Upstream title","body":"Upstream body","author":"unknown","comments":[{"author":"TL3","body":"Saved unfinished work: refs/tl3/scratch/issue-42-node-0"}]});
+        let inputs = json!({"issue":issue,"repo":repo});
+        Ok(
+            json!({"issue":issue,"repo":repo,"ingest":inputs,"audit":inputs,"base_checkout":{"repository":path,"commit":base.as_str()}}),
+        )
     }
 }
 
