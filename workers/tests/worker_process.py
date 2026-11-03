@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+import httpx
 import pytest
 
 from tl3_workers.forcing_rehearsal import ForcingRehearsals
@@ -336,3 +337,51 @@ def reachable():
     result = deepcopy(FORCING)
     result['patches'] = [{'target': 'publisher.Publisher.try_adopt', 'delay_seconds': 1}]
     return result
+
+
+def response_frames(content, *, duplicate_usage=False, trailing_usage=None, tool_calls=None):
+    chunk = {"id": "fixture-completion", "object": "chat.completion.chunk", "created": 0,
+             "model": "fixture-model"}
+    usage = {"prompt_tokens": 1000, "completion_tokens": 5, "total_tokens": 1005,
+             "prompt_tokens_details": {"cached_tokens": 800, "cache_write_tokens": 100}}
+    delta = {"role": "assistant", "content": content}
+    if tool_calls is not None:
+        delta["tool_calls"] = tool_calls
+    frames = [{**chunk, "choices": [{"index": 0, "delta": delta,
+                                    "finish_reason": None}]},
+              {**chunk, "choices": [{"index": 0, "delta": {},
+                                    "finish_reason": "tool_calls" if tool_calls else "stop"}], "usage": usage}]
+    if duplicate_usage or trailing_usage is not None:
+        frames.append({**chunk, "choices": [], "usage": trailing_usage or usage})
+    stream = "".join("data: " + json.dumps(frame) + "\n\n" for frame in frames) + "data: [DONE]\n\n"
+    return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=stream)
+
+
+BRIEF = {
+    "kind": "brief", "brief": "Fix the greeting without changing its interface.",
+    "goals": [
+        {"description": "Return the requested greeting.", "verification": "test"},
+        {"description": "Keep the public interface clear.", "verification": "review"},
+    ],
+    "memory_ids": [],
+}
+
+AGREE = {"verdict": "agree", "objections": []}
+
+
+@pytest.fixture
+def request_doc(tmp_path):
+    return {
+        "protocol": 1,
+        "operation": {"node": 1, "generation": 0, "kind": "ingest"},
+        "role": "ingest",
+        "model": {"base_url": "http://model.invalid/v1", "name": "fixture-model",
+                  "effort": "high", "budget_tokens": 32000},
+        "key_file": str(tmp_path / "never-read-this-key"),
+        "inputs": {
+            "issue": {"number": 1, "title": "Fix greeting", "body": "Return hello.",
+                      "author": "requester", "comments": []},
+            "repo": {"readme": "A greeting library.", "file_list": ["greeting.py"]},
+        },
+        "worktree": str(tmp_path),
+    }

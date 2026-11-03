@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import pytest
+from pb_fixtures import call, submission  # noqa: F401
 from pb_fixtures import supported_fake_runtime as supported_fake_runtime
 from tl3_harness.test_tool import SUMMARY_BYTES, Summary, infrastructure
 from tl3_workers.pb_tests import TestSettings, make_test_tool
@@ -18,11 +19,9 @@ from tl3_workers.tools import Worktree
 from worker_process import IMAGE
 from worker_process import KEY
 from worker_process import NODE
-from worker_process import call
 from worker_process import invoke
 from worker_process import prepare_base_submission
 from worker_process import reachable
-from worker_process import submission  # noqa: F401
 from worker_process import submitted
 
 

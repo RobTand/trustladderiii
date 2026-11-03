@@ -1,7 +1,8 @@
 import json
 from pathlib import Path
 
-from test_pb_tests import submission, call, Summary  # noqa: F401
+from pb_fixtures import submission, call  # noqa: F401
+from tl3_harness.test_tool import Summary
 
 
 def test_pytest_submission_seals_registered_disk_scratch(submission):  # noqa: F811

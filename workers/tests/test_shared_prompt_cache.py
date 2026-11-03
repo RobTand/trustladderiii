@@ -8,8 +8,8 @@ import pytest
 
 from tl3_workers import runtime
 from tl3_workers.evidence import forcing_capabilities
-from test_prompt_cache import response_frames
-import test_workers
+from worker_process import response_frames
+import worker_process as test_workers
 
 
 request_doc = test_workers.request_doc

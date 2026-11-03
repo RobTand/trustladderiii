@@ -14,7 +14,7 @@ from tl3_workers.exploration import ExplorationBudget, ExplorationMiddleware, FI
 from tl3_workers.roles import ROLES
 from tl3_workers.tools import Worktree
 from tl3_workers.turns import TurnControl
-from test_prompt_cache import response_frames
+from worker_process import response_frames
 
 
 TOOL_ROLES = [name for name, role in ROLES.items() if role.tools]
