@@ -19,6 +19,7 @@ def main():
     image = generator.Container(sys.argv[1])
     with tempfile.TemporaryDirectory(prefix="tl3-generator-qualification-") as directory:
         root = Path(directory)
+        root.chmod(0o755)
         (root / "tests").mkdir()
         (root / "tests/__init__.py").write_text("")
         (root / "tests/test_old.py").write_text("from tests.socket_support import short_socket\ndef test_wait(): assert short_socket() == 'short'\n")
