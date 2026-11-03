@@ -401,3 +401,15 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_pb_machine_records",
+    srcs = ["test_pb_machine_records.py"],
+    deps = [
+        ":conftest",
+        ":test_pb_tests",
+        "//harness/src/tl3_harness",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
