@@ -123,6 +123,7 @@ struct ApiState {
     linked: Vec<Value>,
     lose_issue_reply: bool,
     forbidden_question: bool,
+    forbidden_summary: bool,
     question_status: Option<u16>,
     rejected_question_posts: usize,
     forbidden_filing: bool,
@@ -273,6 +274,13 @@ impl Respond for Api {
                 if path.starts_with("/repos/owner/sandbox/issues/")
                     && path.ends_with("/comments") =>
             {
+                if state.forbidden_summary
+                    && serde_json::from_slice::<Value>(&request.body).unwrap()["body"]
+                        .as_str()
+                        .is_some_and(|body| body.lines().any(|line| line.starts_with("Request ")))
+                {
+                    return ResponseTemplate::new(403);
+                }
                 if (state.forbidden_question || state.question_status.is_some())
                     && original_path.contains("/sandbox/")
                     && String::from_utf8_lossy(&request.body).contains("recommend option")
@@ -1304,12 +1312,12 @@ fn writer_checks() {
     };
     assert_eq!(
         rejecting.execute(&draft).unwrap().ack,
-        tl3_kernel::Ack::Permanent
+        tl3_kernel::Ack::Confirmed
     );
-    assert_eq!(calls.lock().unwrap().len(), 3);
+    assert!(calls.lock().unwrap().is_empty());
     let state = api.state.lock().unwrap();
-    assert_eq!(state.posts, posted + 1);
-    assert!(!state.closed, "a rejected summary must not close the issue");
+    assert_eq!(state.posts, posted + 2);
+    assert!(!state.closed, "a stopped summary must leave the issue open");
 }
 
 fn raw_http(address: SocketAddr, request: &[u8]) -> String {
