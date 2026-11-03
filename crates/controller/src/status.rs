@@ -423,9 +423,13 @@ mod tests {
                 .chars()
                 .any(|c| hidden.contains(c) || c == '\0' || c == '\x1b')
         );
+        // Table rows are the tab-separated lines after the header; the
+        // postmortem lane summary (#642) is a plain line outside the table.
+        assert!(text.lines().any(|line| line.starts_with("Postmortems: ")));
         let text_rows: Vec<Vec<_>> = text
             .lines()
             .skip(1)
+            .filter(|line| line.contains('\t'))
             .map(|line| line.split('\t').collect())
             .collect();
         assert_eq!(
