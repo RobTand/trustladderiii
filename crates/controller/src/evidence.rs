@@ -25,6 +25,7 @@ pub struct Evidence {
     pub pull_request_status: PullRequestStatus,
     #[serde(default)]
     pub stop_reason: Option<String>,
+    pub not_actionable_reason: Option<String>,
     pub checks: Vec<Value>,
     pub reviews: Vec<Value>,
     pub audit: Option<Value>,
@@ -292,7 +293,7 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
     let prefix = format!("{id}:");
     let relevant = |table: &str, row: &str, value: &Value| match table {
         "check_evidence" | "review_evidence" | "check_reports" => row.starts_with(&prefix),
-        "nodes" | "audits" | "goals" | "close_reasons" | "maker_replies" => row == id,
+        "nodes" | "briefs" | "audits" | "goals" | "close_reasons" | "maker_replies" => row == id,
         "saved_scratch" | "scratch_evidence" => value["node"].as_u64() == Some(delivery.node().0),
         "queue_facts" => {
             value["number"].as_u64() == delivery.pull_request
@@ -358,6 +359,9 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
             }
             "close_reasons" if *row == id.as_str() => {
                 facts.stop_reason = value["reason"].as_str().map(str::to_owned)
+            }
+            "briefs" if value["kind"] == "early_end" && value["outcome"] == "not_actionable" => {
+                facts.not_actionable_reason = value["reason"].as_str().map(str::to_owned);
             }
             "audits" if *row == id.as_str() => facts.audit = Some(fields(value, &["verdict"])),
             "goals" if *row == id.as_str() => {
@@ -645,6 +649,22 @@ pub fn summary(delivery: &Delivery) -> Result<String> {
             ..
         }
     ) {
+        let recorded_reason = if matches!(
+            delivery.output,
+            Output::Notice {
+                notice: Notice::Summary(Outcome::NotActionable),
+                ..
+            }
+        ) {
+            facts
+                .not_actionable_reason
+                .as_deref()
+                .map(label)
+                .transpose()?
+                .map(|reason| format!("Recorded not-actionable reason: {reason}."))
+        } else {
+            None
+        };
         lines.push(
             match facts.stop_reason.as_deref() {
                 Some("user_stop") => "Work stopped because you asked to stop.",
@@ -659,7 +679,9 @@ pub fn summary(delivery: &Delivery) -> Result<String> {
                 _ if review_stop.is_some() => {
                     "Work stopped for TL3's maintainers to review the recorded failure before retrying."
                 }
-                _ => "The reason for stopping was not captured.",
+                _ => recorded_reason
+                    .as_deref()
+                    .unwrap_or("The reason for stopping was not captured."),
             }
             .into(),
         );
