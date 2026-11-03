@@ -388,3 +388,34 @@ def test_supplied_memories_are_redacted_before_the_model(request_doc, monkeypatc
     assert "Deploy with export GITHUB_TOKEN=" in sent
     assert json.loads(sent)["memories"][0]["id"] == "m-1"
     assert events[-1]["reply"]["memory_ids"] == ["m-1"]
+
+
+
+@pytest.mark.parametrize('role', ['ingest', 'audit'])
+def test_request_evidence_contract_survives_intake_and_audit(tmp_path, request_doc, role):
+    requirement = {
+        'requirement': 'PB2640-2650 and PB2654 require normal and pinned CPU contention runs on base and head.',
+        'tool': 'run_tests', 'executor': 'buildbuddy_remote_bazel',
+        'runner_features': ['base_head', 'pinned_cpu_contention'],
+        'artifacts': ['invocation_url', 'sha', 'logs', 'terminal_verdict'],
+        'methods': ['red_green', 'forced_reproduction.contention_wrapper'], 'protected_files': [],
+    }
+    request_doc['role'] = request_doc['operation']['kind'] = role
+    request_doc['inputs']['issue']['body'] = requirement['requirement'] + ' Supply invocation URLs, SHAs, logs and terminal verdicts.'
+    request_doc['inputs']['tool_capabilities'] = [{
+        'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head', 'repeat', 'parallel'],
+        'artifacts': ['sha', 'logs', 'terminal_verdict', 'cas_receipt'], 'methods': ['red_green'], 'protected_files': [],
+    }]
+    if role == 'audit':
+        request_doc['inputs']['ingest'] = dict(copy.deepcopy(BRIEF), evidence_contract=[])
+    proposal = dict(copy.deepcopy(BRIEF if role == 'ingest' else AGREE), evidence_contract=[requirement])
+    result = start_worker(tmp_path, request_doc, [{'content': json.dumps(proposal)}])
+    assert result.exit_code == 0, result.stderr
+    reply = result.events[-1]['reply']
+    validate(role + '-reply', reply)
+    assert reply['evidence_contract'] == [requirement]
+    for missing in ['executor=buildbuddy_remote_bazel', 'runner_features=pinned_cpu_contention',
+                    'artifacts=invocation_url', 'methods=forced_reproduction.contention_wrapper']:
+        assert missing in '\n'.join(reply['evidence_errors'])
+    if role == 'ingest':
+        assert reply['goals'] == BRIEF['goals']
