@@ -297,9 +297,14 @@ impl Fixture {
     }
 
     fn reason(&self) -> Option<status::PostmortemBlock> {
-        status::load(&mut Reader::open(&self.settings).unwrap())
-            .unwrap()
-            .postmortem_blocked
+        let view = status::load(&mut Reader::open(&self.settings).unwrap()).unwrap();
+        if let Some(reason) = view.postmortem_blocked {
+            let text = format!("Postmortems blocked: {}", reason.as_str());
+            assert!(status::render_text(&view).contains(&text));
+            assert!(status::render_html(&view).contains(&text));
+            assert_eq!(serde_json::to_value(reason).unwrap(), reason.as_str());
+        }
+        view.postmortem_blocked
     }
 
     fn capacity(&mut self, waiting: bool) {

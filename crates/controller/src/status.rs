@@ -24,6 +24,18 @@ pub enum PostmortemBlock {
     ModelQuota,
 }
 
+impl PostmortemBlock {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PausedStreak => "paused_streak",
+            Self::DailyAllowance => "daily_allowance",
+            Self::Q39WaitingDelivery => "q39_waiting_delivery",
+            Self::NoSpareCapacity => "no_spare_capacity",
+            Self::ModelQuota => "model_quota",
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Status {
     pub postmortem_blocked: Option<PostmortemBlock>,
@@ -152,9 +164,21 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
             ))
         })
         .collect();
+    let postmortem_blocked = tx
+        .query_opt(
+            "SELECT value FROM tl3_world WHERE table_name = $1 AND row_id = 'status'",
+            &[&crate::postmortems::SCHEDULER],
+        )
+        .map_err(tl3_store::Error::from)?
+        .map(|row| {
+            let value: serde_json::Value = row.get(0);
+            crate::decode_stored::<Option<PostmortemBlock>>(value["blocked"].clone())
+        })
+        .transpose()?
+        .flatten();
     tx.commit().map_err(tl3_store::Error::from)?;
     Ok(Status {
-        postmortem_blocked: None,
+        postmortem_blocked,
         requests: board
             .cards
             .iter()
@@ -214,6 +238,9 @@ pub fn render_text(status: &Status) -> String {
     for note in &status.quota_models {
         writeln!(output, "{}", plain(note)).expect("write to string");
     }
+    if let Some(reason) = status.postmortem_blocked {
+        writeln!(output, "Postmortems blocked: {}", reason.as_str()).expect("write to string");
+    }
     output
 }
 
@@ -262,6 +289,9 @@ pub fn render_html(status: &Status) -> String {
     }
     for note in &status.quota_models {
         write!(output, "<p>{}</p>", escape_html(&plain(note))).expect("write to string");
+    }
+    if let Some(reason) = status.postmortem_blocked {
+        write!(output, "<p>Postmortems blocked: {}</p>", reason.as_str()).expect("write to string");
     }
     writeln!(
         output,

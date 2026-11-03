@@ -1038,7 +1038,10 @@ it holds no pool grant, and no delivery work waits on it.
   claims nothing while a model in the postmortem ladder (`PostmortemPace`, from
   `models.postmortem`) has a `model_quotas` row, and at most
   `limits.postmortems_per_day` (default 10) a UTC day, counted by claim time in
-  `tl3_postmortem_claims`. A day's limit or an ended quota is noticed on the
+  `tl3_postmortem_claims`. Recovery resets the counted allowance to claims after
+  the recovery revision. It preserves every earlier claim and outcome for audit;
+  the configured daily limit does not increase. The validation claim counts
+  toward the reset allowance. A day's limit or an ended quota is noticed on the
   next drive pass, so owed rows drain over days, not in one burst.
 - **Claim.** The oldest owed row, first runs before retries, becomes `running` with a `run_key`, which is
   also its delivery's key (`postmortem:<id>:<revision>`), in the commit that
@@ -1065,14 +1068,32 @@ it holds no pool grant, and no delivery work waits on it.
   `invalid_reply`, `no_progress` (the controller stopped it as stalled) or
   `deadline` (the run passed its allowance). A `worker_failed` or `deadline`
   row is owed again instead, twice at most, behind rows owed since (#486).
-  Three failed runs in a row since tl3d started pause claims until a run
-  succeeds or tl3d starts again, and the pause writes one journal line. With
-  one postmortem at a time, a pause lasts until tl3d starts again.
+  Three failed runs in a row since startup or the latest recovery pause claims
+  and raise one operations incident. Clearing that incident resets the failure
+  boundary in the same commit, without restarting tl3d. The first start under a
+  new release clears this TL3-side pause through the same path, including pauses
+  recorded as upstream incidents by older releases.
 - **Recovery.** At startup, a `running` row whose delivery isn't live (no pending
   effect, watch or queued result) is owed again, and a `postmortem_jobs` row
   with no live delivery is removed. A live delivery finishes as it would have:
   the worker's attempt directory holds its reply, and the role caches each step
   under the run key, so no judge runs twice.
+  Clearing or recovering a pause also persists one validation permit. The next
+  eligible claim consumes it atomically with the delivery, even if the daily
+  allowance is exhausted or zero. It uses the same worker deadline and allowance
+  as an ordinary postmortem. Its claim event records `postmortem_validation`, and
+  the claim ledger records its outcome. A successful validation resumes ordinary
+  pacing. Any validation failure, including a permanent launch failure or an
+  orphaned claim released at startup, immediately raises a new pause incident.
+  A restart preserves the permit and its running or failed validation state.
+  Recovery does not bypass model quota or Q39 and reserves no pool slot.
+- **Blocking reason (#632).** `tl3 status` and its HTML view expose
+  `Status.postmortem_blocked`, a typed `PostmortemBlock` from the last scheduler
+  pass. The first blocking gate is `paused_streak`, `daily_allowance`,
+  `q39_waiting_delivery`, or `no_spare_capacity`. Model quota reports
+  `model_quota`. A running postmortem uses the runner's only available claim
+  slot. The reason clears when an eligible claim starts or no owed work remains.
+  Repeated passes at the same gate write no additional events.
 
 Nothing in slice B acts on a verdict.
 

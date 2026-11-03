@@ -3,8 +3,10 @@
 //! postmortem at a time on spare agent-pool capacity (Q39).
 
 use crate::executor::{CommentKind, Completion, Delivery, Observation, Output};
+use crate::status::PostmortemBlock;
 use crate::steering::Task;
 use crate::{Error, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tl3_kernel::{Node, NodeId, Outcome, Phase, World};
@@ -400,7 +402,7 @@ fn failure_class(failure: Option<&str>) -> &'static str {
     }
 }
 
-/// Failed runs in a row, since tl3d started, that pause the runner (#486).
+/// Failed runs in a row since startup or recovery that pause the runner.
 const PAUSE_AFTER_FAILURES: usize = 3;
 
 /// The incident class of a paused runner.
@@ -446,6 +448,52 @@ impl PostmortemPace {
     }
 }
 
+pub(crate) const SCHEDULER: &str = "postmortem_scheduler";
+
+#[derive(Serialize, Deserialize)]
+struct Recovery {
+    since: i64,
+    validation: Validation,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Validation {
+    Pending,
+    Running { key: String },
+    Passed,
+    Failed,
+}
+
+impl Recovery {
+    fn load(snapshot: &Snapshot) -> Result<Option<Self>> {
+        snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == SCHEDULER && row.id == "recovery")
+            .map(|row| crate::decode_stored(row.value.clone()))
+            .transpose()
+    }
+
+    fn row(&self) -> RowChange {
+        crate::put(SCHEDULER, "recovery".into(), json!(self))
+    }
+}
+
+fn record_block(snapshot: &Snapshot, reason: Option<PostmortemBlock>, commit: &mut Commit) {
+    let current = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == SCHEDULER && row.id == "status");
+    let value = json!({"blocked": reason});
+    if current.is_some_and(|row| row.value == value) || (current.is_none() && reason.is_none()) {
+        return;
+    }
+    commit
+        .rows
+        .push(crate::put(SCHEDULER, "status".into(), value));
+}
+
 impl crate::Controller {
     /// Judge owed postmortems from now on, at `pace`. tl3d turns this on as it
     /// starts; embedders and tests whose workers run no postmortem role leave
@@ -460,38 +508,58 @@ impl crate::Controller {
         let Some(pace) = &self.postmortems else {
             return Ok(false);
         };
-        let running = snapshot.rows.iter().filter(|row| row.table == JOBS).count();
-        // Spare slots aren't spare quota (#486).
-        if running > 0
-            || snapshot
-                .rows
-                .iter()
-                .any(|row| row.table == "model_quotas" && pace.models.contains(&row.id))
-        {
-            return Ok(false);
-        }
         let per_day = pace.per_day;
-        // Every drive pass asks; most find nothing owed and stop here.
+        let quota = snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "model_quotas" && pace.models.contains(&row.id));
+        let running = snapshot.rows.iter().filter(|row| row.table == JOBS).count();
         let Some(owed) = self.store.owed_postmortem()? else {
-            return Ok(false);
+            return self.postmortem_blocked(snapshot, None);
         };
-        let failures = self
-            .store
-            .postmortem_failure_streak(self.postmortem_since)?;
-        if failures.len() >= PAUSE_AFTER_FAILURES {
-            if !self.postmortem_paused {
-                self.raise_postmortem_pause(snapshot, &failures)?;
-                self.postmortem_paused = true;
+        let mut recovery = Recovery::load(snapshot)?;
+        let since = recovery.as_ref().map_or(self.postmortem_since, |state| {
+            state.since.max(self.postmortem_since)
+        });
+        let failures = self.store.postmortem_failure_streak(since)?;
+        if failures.len() >= PAUSE_AFTER_FAILURES
+            || recovery
+                .as_ref()
+                .is_some_and(|state| matches!(state.validation, Validation::Failed))
+        {
+            let mut commit = Commit::new(
+                format!("postmortem:paused:{}", snapshot.revision.get()),
+                json!({"postmortems_paused": failures}),
+                snapshot,
+            );
+            self.pause_postmortems(snapshot, &failures, &mut commit)?;
+            if commit.rows.is_empty() {
+                return Ok(false);
             }
-            return Ok(false);
+            self.store.commit(&commit)?;
+            return Ok(true);
         }
-        self.postmortem_paused = false;
-        if self.store.postmortem_claims_today()? >= per_day {
-            return Ok(false);
+        let validation = recovery
+            .as_ref()
+            .is_some_and(|state| matches!(state.validation, Validation::Pending));
+        let allowance_since = recovery.as_ref().map_or(0, |state| state.since);
+        if !validation && self.store.postmortem_claims_today_since(allowance_since)? >= per_day {
+            return self.postmortem_blocked(snapshot, Some(PostmortemBlock::DailyAllowance));
+        }
+        // Recovery never bypasses model quota or Q39.
+        if quota {
+            return self.postmortem_blocked(snapshot, Some(PostmortemBlock::ModelQuota));
         }
         let world = crate::snapshot::decode(snapshot)?;
-        if !spare_pool_capacity(&world, running) {
-            return Ok(false);
+        if world
+            .nodes
+            .iter()
+            .any(|node| node.ticket.is_some() && !node.pool)
+        {
+            return self.postmortem_blocked(snapshot, Some(PostmortemBlock::Q39WaitingDelivery));
+        }
+        if running > 0 || !spare_pool_capacity(&world, running) {
+            return self.postmortem_blocked(snapshot, Some(PostmortemBlock::NoSpareCapacity));
         }
         let node = NodeId(
             owed.node
@@ -537,9 +605,14 @@ impl crate::Controller {
         };
         let mut commit = Commit::new(
             format!("postmortem:claim:{key}"),
-            json!({"postmortem_claim": owed.id, "run_key": key}),
+            json!({"postmortem_claim": owed.id, "run_key": key, "postmortem_validation": validation}),
             snapshot,
         );
+        record_block(snapshot, None, &mut commit);
+        if validation && let Some(state) = recovery.as_mut() {
+            state.validation = Validation::Running { key: key.clone() };
+            commit.rows.push(state.row());
+        }
         commit.rows.push(self.allowance_row(delivery.clone()));
         commit
             .rows
@@ -557,18 +630,45 @@ impl crate::Controller {
         Ok(true)
     }
 
-    /// Claims paused after failed runs: one operations incident per tl3d
-    /// start, naming the failure classes, newest first. It blocks nothing.
-    fn raise_postmortem_pause(&mut self, snapshot: &Snapshot, failures: &[String]) -> Result<()> {
+    fn postmortem_blocked(
+        &mut self,
+        snapshot: &Snapshot,
+        reason: Option<PostmortemBlock>,
+    ) -> Result<bool> {
+        let mut commit = Commit::new(
+            format!("postmortem:gate:{}", snapshot.revision.get()),
+            json!({"postmortem_blocked": reason}),
+            snapshot,
+        );
+        record_block(snapshot, reason, &mut commit);
+        if commit.rows.is_empty() {
+            return Ok(false);
+        }
+        self.store.commit(&commit)?;
+        Ok(true)
+    }
+
+    /// The clear and its recovery permit share the incident's commit.
+    pub(crate) fn reset_postmortem_pause(&self, snapshot: &Snapshot, commit: &mut Commit) {
+        commit.rows.push(
+            Recovery {
+                since: snapshot.revision.get(),
+                validation: Validation::Pending,
+            }
+            .row(),
+        );
+        record_block(snapshot, None, commit);
+    }
+
+    fn pause_postmortems(
+        &self,
+        snapshot: &Snapshot,
+        failures: &[String],
+        commit: &mut Commit,
+    ) -> Result<()> {
         let title = format!(
             "Postmortems paused after failed runs: {}",
             failures.join(", ")
-        );
-        eprintln!("{title}; owed postmortems wait for tl3d to start again");
-        let mut commit = Commit::new(
-            format!("postmortem:paused:{}", snapshot.revision.get()),
-            json!({"postmortems_paused": failures}),
-            snapshot,
         );
         self.input_failed(
             snapshot,
@@ -579,13 +679,34 @@ impl crate::Controller {
             crate::executor::Upstream::Workers,
             Error::Permanent {
                 class: PAUSED,
-                source: "three postmortem runs in a row failed".into(),
+                source: "postmortem failure streak or recovery validation failed".into(),
             },
-            &mut commit,
+            commit,
         )?;
-        if !commit.rows.is_empty() {
-            self.store.commit(&commit)?;
+        record_block(snapshot, Some(PostmortemBlock::PausedStreak), commit);
+        Ok(())
+    }
+
+    fn finish_validation(
+        &self,
+        snapshot: &Snapshot,
+        key: &str,
+        failure: Option<&str>,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        let Some(mut state) = Recovery::load(snapshot)? else {
+            return Ok(());
+        };
+        if !matches!(&state.validation, Validation::Running { key: claimed } if claimed == key) {
+            return Ok(());
         }
+        state.validation = if let Some(failure) = failure {
+            self.pause_postmortems(snapshot, &[failure.into()], commit)?;
+            Validation::Failed
+        } else {
+            Validation::Passed
+        };
+        commit.rows.push(state.row());
         Ok(())
     }
 
@@ -623,7 +744,7 @@ impl crate::Controller {
             check_reply(&reply)?;
             result(&claimed, &reply)
         });
-        commit.postmortem_updates.push(match judged {
+        let update = match judged {
             Some(Ok(result)) => PostmortemUpdate::Done {
                 id,
                 run_key,
@@ -640,11 +761,17 @@ impl crate::Controller {
                 run_key,
                 failure: failure_class(failure.as_deref()).into(),
             },
-        });
+        };
+        let failure = match &update {
+            PostmortemUpdate::Failed { failure, .. } => Some(failure.as_str()),
+            _ => None,
+        };
+        self.finish_validation(snapshot, key, failure, commit)?;
+        commit.postmortem_updates.push(update);
         Ok(())
     }
 
-    /// A postmortem whose launch failed permanently fails; it raises no incident.
+    /// A permanent launch failure fails its claim and re-pauses a validation run.
     pub(crate) fn postmortem_failed(
         &mut self,
         snapshot: &Snapshot,
@@ -652,11 +779,11 @@ impl crate::Controller {
         class: &str,
         commit: &mut Commit,
     ) -> Result<()> {
-        let _ = snapshot;
         let Some(Task::Postmortem { id, run_key }) = &delivery.steering else {
             return Err(Error::Invalid("invalid postmortem delivery"));
         };
         retire_job(commit, &delivery.key);
+        self.finish_validation(snapshot, run_key, Some(failure_class(Some(class))), commit)?;
         commit.postmortem_updates.push(PostmortemUpdate::Failed {
             id: *id,
             run_key: run_key.clone(),
@@ -704,6 +831,7 @@ impl crate::Controller {
                 continue;
             };
             if !(has(JOBS, &run_key) && live(&run_key)) {
+                self.finish_validation(&snapshot, &run_key, Some("worker_failed"), &mut commit)?;
                 commit.postmortem_updates.push(PostmortemUpdate::Release {
                     id: record.id,
                     run_key,
