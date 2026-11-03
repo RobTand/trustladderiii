@@ -409,6 +409,100 @@ fn staged_request_carries_the_repository_protected_paths() {
     }
 }
 
+fn always_tests_are_staged_required_and_reported_in_every_round() {
+    const ALWAYS: &str = "Repository always tests";
+    for round in [0, 1] {
+        for pre_existing in [false, true] {
+            for omitted in [false, true] {
+                let root = tempfile::tempdir().unwrap();
+                let mut delivery = run(root.path(), false);
+                delivery.round = round;
+                let mut config =
+                    tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+                config.github.repos[0].always_tests = vec!["test_rules.py".into()];
+                let mut adapter =
+                    fixture(root.path(), "done").with_repositories(&config.github.repos);
+                let planned = &delivery.checks.as_ref().unwrap().plan[0];
+                let mut results = vec![
+                    serde_json::json!({"name": planned.name, "kind": "demonstrating", "custody": "in-process",
+                    "verdict": "pass", "tests": [{"test": planned.tests[0], "base": "assertion", "head": "passed", "pre_existing": false, "passed": true}]}),
+                ];
+                if !omitted {
+                    results.push(serde_json::json!({"name": ALWAYS, "kind": "regression", "custody": "in-process",
+                        "verdict": if pre_existing { "pass" } else { "fail" }, "tests": [{"test": "test_rules.py", "base": if pre_existing { "assertion" } else { "passed" },
+                        "head": "assertion", "pre_existing": pre_existing, "passed": pre_existing, "message": "Tests must not sleep"}]}));
+                }
+                fs::write(
+                    root.path().join("queue/recorded_results.json"),
+                    serde_json::to_vec(&results).unwrap(),
+                )
+                .unwrap();
+                adapter.execute(&delivery).unwrap();
+                let staged = fs::read_dir(root.path().join("queue"))
+                    .unwrap()
+                    .map(|p| p.unwrap().path())
+                    .find(|p| p.extension().is_some_and(|e| e == "request"))
+                    .unwrap();
+                let request: serde_json::Value =
+                    serde_json::from_slice(&fs::read(staged).unwrap()).unwrap();
+                assert_eq!(
+                    request["always_tests"],
+                    serde_json::json!(["test_rules.py"])
+                );
+                match &completion(&mut adapter, &delivery).observations[..] {
+                    [
+                        Observation::Checks {
+                            report,
+                            pass,
+                            failed_tests,
+                            ..
+                        },
+                    ] => {
+                        assert_eq!(*report, !omitted);
+                        assert_eq!(*pass, pre_existing && !omitted);
+                        if !pre_existing && !omitted {
+                            assert_eq!(failed_tests[0].test, "test_rules.py");
+                            assert_eq!(failed_tests[0].message, "Tests must not sleep");
+                        }
+                    }
+                    other => panic!("expected check feedback: {other:?}"),
+                }
+            }
+        }
+    }
+}
+
+fn stale_always_test_notes_survive_controller_evidence() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+    config.github.repos[0].always_tests = vec!["test_removed.py".into()];
+    let mut adapter = fixture(root.path(), "done").with_repositories(&config.github.repos);
+    let planned = &delivery.checks.as_ref().unwrap().plan[0];
+    let note = "Ignored stale always_tests entry `test_removed.py`: missing on both the base and the head.";
+    fs::write(root.path().join("queue/recorded_results.json"), serde_json::to_vec(&serde_json::json!([
+        {"name": planned.name, "kind": "demonstrating", "custody": "in-process", "verdict": "pass", "tests": [{"test": planned.tests[0], "base": "assertion", "head": "passed", "pre_existing": false, "passed": true}]},
+        {"name": "Repository always tests", "kind": "regression", "custody": "in-process", "verdict": "pass", "tests": [{"test": "test_removed.py", "base": "missing", "head": "missing", "pre_existing": false, "passed": true, "message": note}]}
+    ])).unwrap()).unwrap();
+    adapter.execute(&delivery).unwrap();
+    match &completion(&mut adapter, &delivery).observations[..] {
+        [
+            Observation::Checks {
+                report,
+                pass,
+                failed_tests,
+                results,
+                ..
+            },
+        ] => {
+            assert!(*report && *pass);
+            assert!(failed_tests.is_empty());
+            assert_eq!(results[1]["tests"][0]["message"], note);
+        }
+        other => panic!("expected nonblocking evidence: {other:?}"),
+    }
+}
+
 /// #359: a repository with `selected_tests` stages the limit, and the harness's one
 /// trailing regression check of selected existing tests is accepted, failing the round
 /// when it fails. Without the limit, the same trailing result is an invalid report.
@@ -2107,6 +2201,11 @@ fn main() {
     }
 
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).is_some_and(|arg| arg == "--always-tests") {
+        always_tests_are_staged_required_and_reported_in_every_round();
+        stale_always_test_notes_survive_controller_evidence();
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--r5") {
         let mut failures = 0;
         for (name, test) in [
@@ -2235,6 +2334,14 @@ fn main() {
         ),
         ("bounded_failure_details", bounded_failure_details),
         (
+            "stale_always_test_notes_survive_controller_evidence",
+            stale_always_test_notes_survive_controller_evidence,
+        ),
+        (
+            "always_tests_are_staged_required_and_reported_in_every_round",
+            always_tests_are_staged_required_and_reported_in_every_round,
+        ),
+        (
             "selected_tests_are_staged_and_their_check_accepted",
             selected_tests_are_staged_and_their_check_accepted,
         ),
@@ -2321,7 +2428,7 @@ fn main() {
     quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
     println!("test unreadable_job_record_is_a_failed_read ... ok");
     database.stop();
-    println!("45 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("47 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {

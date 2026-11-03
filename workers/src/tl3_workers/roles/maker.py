@@ -16,7 +16,7 @@ from langgraph.prebuilt import ToolNode
 
 from tl3_workers.contracts import read_json, read_reply, schema
 from tl3_workers.exploration import ExplorationBudget
-from tl3_workers.forecast import measure_files, optional_encoding
+from tl3_workers.forecast import forecast_fit, measure_files, optional_encoding
 from tl3_workers.pb_tests import TestSettings
 from tl3_workers.pb_generators import make_generator_tool
 from tl3_workers.roles.base import Role
@@ -419,12 +419,10 @@ def run(model, request, worktree, emit):
                     reply = {"kind": "cant_meet", "report": "Generation failed before final head: "
                              + generated["message"]}
                     break
-                if "fit_tokens" in inputs:
+                if "forecast" in inputs:
                     encoding = optional_encoding()
                     tokens, problems, _ = measure_files(worktree, inputs["plan"]["files"], encoding)
-                    brief = json.dumps(inputs, ensure_ascii=False)
-                    total = len(encoding.encode_ordinary(brief) if encoding else brief.encode()) + 32000
-                    if problems or total + sum(tokens.values()) >= inputs["fit_tokens"]:
+                    if not forecast_fit(inputs["brief"], tokens, inputs["forecast"], encoding, problems)["fits"]:
                         reply = {"kind": "cant_meet", "report": "Generated tree exceeds final fit or file limits."}
                         break
             head = _commit(request, starting_head, merge_target, merge_files)
@@ -452,17 +450,11 @@ def run(model, request, worktree, emit):
         history.append(HumanMessage(content=(
             "done requires code changes; if no code change can satisfy the failing checks, "
             "reply cant_meet with a report that names them")))
-    if reply["kind"] == "needs_files" and "fit_tokens" in inputs:
-        # Match the planner's tokens, falling back to bytes without cached data.
-        # Reserve 32k tokens for tools/history.
+    if reply["kind"] == "needs_files" and "forecast" in inputs:
         encoding = optional_encoding()
-        text = json.dumps(inputs, ensure_ascii=False)
-        size = len(encoding.encode_ordinary(text) if encoding is not None else text.encode()) + 32000
         paths = set(inputs["plan"]["files"]) | {item["path"] for item in reply["files"]}
         file_tokens, problems, _ = measure_files(worktree, paths, encoding)
-        # Unknown, linked or unreadable contents cannot prove a fit.
-        size += sum(file_tokens.values()) + inputs["fit_tokens"] * len(problems)
-        reply["fits"] = size < inputs["fit_tokens"]
+        reply["fits"] = forecast_fit(inputs["brief"], file_tokens, inputs["forecast"], encoding, problems)["fits"]
     if session and reply["kind"] != "out_of_room":
         save(session, messages_to_dict(history))
     return reply

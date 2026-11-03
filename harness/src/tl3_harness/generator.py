@@ -185,7 +185,7 @@ def run(tree, container, command, generated_files, protected_paths, files, timeo
                 continue
             path.chmod(0o777 if path.is_dir() else 0o666 | (path.stat().st_mode & 0o111))
         cidfile = root / "container.id"
-        with tempfile.TemporaryFile() as log:
+        with tempfile.TemporaryFile(dir=root) as log:
             try:
                 child = subprocess.run(container_command(copy, container, argv, cidfile), cwd=copy,
                                        stdout=log, stderr=subprocess.STDOUT, timeout=timeout)

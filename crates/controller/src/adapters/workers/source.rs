@@ -558,7 +558,12 @@ pub(super) fn parse_reply(
             }
             protocol::validate_forecast_settings(&value["reply"], &inputs["forecast"])?;
         }
-        reply = Some(value["reply"].clone());
+        let mut checked = value["reply"].clone();
+        super::evidence::preflight(role, inputs, &mut checked)?;
+        if !delivery.is_classifier() && !delivery.is_postmortem() {
+            protocol::map_reply(role, &checked)?;
+        }
+        reply = Some(checked);
     }
     if delivery.is_classifier() {
         return Ok(Observation::Classified {

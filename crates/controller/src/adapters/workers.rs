@@ -4,6 +4,7 @@ use tl3_worktrees::{CommitId, Worktrees};
 pub mod writer;
 pub use writer::{FakeWriter, Writer};
 
+mod evidence;
 mod facts;
 mod fake;
 mod json;
@@ -372,7 +373,6 @@ impl Supervisor {
             inputs["current_review_findings"] = current;
             inputs["plan"]["files"] = json!(delivery.paths);
             inputs["context_size"] = json!(self.limits.context_tokens);
-            inputs["fit_tokens"] = json!(self.limits.fit_tokens);
             inputs["tests"] = json!({"image": self.images.for_repository(&delivery.repository, &self.tests.container_image), "tools_path": self.tests.tools_dir});
             if self.images.exec_scratch(&delivery.repository) {
                 inputs["tests"]["exec_scratch"] = json!(true);
@@ -396,6 +396,7 @@ impl Supervisor {
             forecast["generator_available"] =
                 json!(repository.generator.is_some() && !repository.generated_files.is_empty());
         }
+        let generator_available = forecast["generator_available"] == true;
         if role == "maker" {
             inputs["forecast"] = forecast.clone();
             inputs["protected_paths"] = json!(
@@ -420,7 +421,7 @@ impl Supervisor {
             let findings = store
                 .worker_document(&node, "findings")?
                 .unwrap_or(json!([]));
-            inputs = json!({"ingest": ingest, "must_split": matches!(n.phase, tl3_kernel::Phase::Planning { must_split: true }), "findings": findings, "protected_paths": self.protected_paths.for_repository(&delivery.repository, &self.planning.protected_paths)?, "forecast": forecast});
+            inputs = json!({"always_tests": self.images.additional_tests(&delivery.repository).always, "ingest": ingest, "must_split": matches!(n.phase, tl3_kernel::Phase::Planning { must_split: true }), "findings": findings, "protected_paths": self.protected_paths.for_repository(&delivery.repository, &self.planning.protected_paths)?, "forecast": forecast});
         } else if role == "audit" {
             inputs["ingest"] = store
                 .worker_document(&node, "briefs")?
@@ -496,6 +497,23 @@ impl Supervisor {
             if let Some(repo) = inputs["repo"].as_object_mut() {
                 repo.remove("materials");
             }
+        }
+        if matches!(role, "ingest" | "audit" | "planner") {
+            inputs["tool_capabilities"] = json!(self.planning.tool_capabilities);
+            if generator_available {
+                inputs["tool_capabilities"].as_array_mut().unwrap().push(json!({
+                    "tool": "run_generator", "executor": "prismabuild_generator",
+                    "runner_features": ["git_index", "scoped_outputs", "idempotent_import"],
+                    "artifacts": ["action_key", "cas_receipt", "input_tree", "output_tree", "artifact_sha256", "logs", "terminal_verdict"],
+                    "methods": ["configured_generation"], "protected_files": [],
+                }));
+            }
+        }
+        if role == "planner" {
+            inputs["audit_evidence_contract"] = store
+                .worker_document(&node, "audits")?
+                .and_then(|audit| audit.get("evidence_contract").cloned())
+                .unwrap_or(json!([]));
         }
         protocol::validate_inputs(role, &inputs)?;
         let now = std::time::SystemTime::now()

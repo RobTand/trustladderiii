@@ -10,6 +10,7 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
             .unwrap()
             .into();
     }
+    config.github.repos[0].always_tests = vec!["tests/test_rules.py".into()];
     config.models.planner.push(config.models.audit[0].clone());
     if mode == "plan-split" || mode == "plan-bad-split" {
         config.limits.fit_tokens = 31_000;
@@ -69,6 +70,12 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
         .map(|value| value["request"].clone())
         .filter(|v: &Value| v["role"] == "planner")
         .collect();
+    for request in &requests {
+        assert_eq!(
+            request["inputs"]["always_tests"],
+            json!(["tests/test_rules.py"])
+        );
+    }
     assert_retired(&config, &mut store);
     if mode == "plan-bad-schema" {
         assert!(matches!(n.phase, Phase::Planning { .. }));

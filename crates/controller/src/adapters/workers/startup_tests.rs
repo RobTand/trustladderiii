@@ -70,6 +70,13 @@ fn planner_protected_paths_follow_the_request_repository() {
         } else {
             assert!(forecast.get("generator").is_none());
         }
+        let mut reply = json!({"kind":"leaf", "evidence_contract":[{
+            "requirement":"Regenerate indexed Bazel outputs", "tool":"run_generator",
+            "executor":"prismabuild_generator", "runner_features":["git_index", "scoped_outputs"],
+            "artifacts":["cas_receipt", "output_tree"], "methods":["configured_generation"], "protected_files":[],
+        }]});
+        super::evidence::preflight("planner", &request["inputs"], &mut reply).unwrap();
+        assert_eq!(reply["evidence_errors"] == json!([]), name == "TL3-SANDBOX");
         let paths = request["inputs"]["protected_paths"].as_array().unwrap();
         assert!(paths.contains(&json!(own)), "missing {own}: {paths:?}");
         assert!(
@@ -147,6 +154,15 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
         .request(&delivery, "maker", &mut store, &snapshot)
         .unwrap();
     let inputs = &request["inputs"];
+    assert_eq!(inputs["forecast"]["fit_tokens"], config.limits.fit_tokens);
+    assert_eq!(
+        inputs["forecast"]["context_tokens"],
+        config.limits.context_tokens
+    );
+    assert_eq!(
+        inputs["forecast"]["overhead_tokens"],
+        json!(config.planning.overhead_tokens)
+    );
     assert_eq!(inputs["forecast"]["generator_available"], true);
     assert_eq!(inputs["forecast"]["generator"], "tools/bazel/generate.sh");
     assert!(

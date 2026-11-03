@@ -22,8 +22,11 @@ def decode(request):
         selected = request.get("selected_tests")
         if selected is not None and (type(selected) is not int or selected < 1):
             raise ValueError("selected_tests must be a positive limit")
+        always = request.get("always_tests", [])
+        if not isinstance(always, list):
+            raise ValueError("always_tests must list pytest files or node IDs")
         return (plan, Container(request["image"], exec_scratch=request.get("exec_scratch", False)),
-                tuple(protected), selected)
+                tuple(protected), selected, tuple(always))
     except (KeyError, TypeError, ValueError) as error:
         raise HarnessInputError(f"invalid check request: {type(error).__name__}") from error
 
@@ -36,9 +39,10 @@ with tempfile.TemporaryDirectory(prefix="tl3-controller-checks-") as directory:
     git(root, "clone", "--quiet", "--template=", "--", str(root / "served.bundle"), str(repo))
     git(repo, "checkout", "--quiet", "--detach", request["head"])
     try:
-        plan, container, protected, selected = decode(request)
+        plan, container, protected, selected, always = decode(request)
         results = run_checks(repo, request["base"], request["head"], plan, container=container,
-                             reviewed=request.get("reviewed"), protected=protected, selected_tests=selected)
+                             reviewed=request.get("reviewed"), protected=protected, selected_tests=selected,
+                             always_tests=always)
     except HarnessInputError as error:
         # The trusted harness rejected TL3's own check input. Repository configuration,
         # admission and container failures stay upstream.

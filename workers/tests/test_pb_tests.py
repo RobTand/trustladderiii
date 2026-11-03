@@ -813,8 +813,9 @@ def test_generator_reattaches_after_interrupted_import(generator_repo, generator
     assert len(generator_backend[0]) == 1
 
 
+@pytest.mark.parametrize("overhead", [30000, 100000])
 def test_request_132_maker_returns_only_the_generated_final_head(
-        generator_repo, generator_backend, tmp_path, monkeypatch):
+        generator_repo, generator_backend, tmp_path, monkeypatch, overhead):
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
     from langchain_core.messages import AIMessage
     from tl3_workers import runtime
@@ -841,15 +842,19 @@ def test_request_132_maker_returns_only_the_generated_final_head(
                                                "tests": ["tests/test_short_socket.py::test_short"],
                                                "goal_ids": ["socket"]}]},
                           "forecast": {"fit_tokens": 100000, "context_tokens": 150000,
-                                       "overhead_tokens": {"work": 30000},
+                                       "overhead_tokens": {"work": overhead},
                                        "generated_files": ["**/BUILD.bazel"],
                                        "generator": "python3 generate.py", "generator_available": True},
-                          "attempt": 1, "round": 0, "context_size": 150000, "fit_tokens": 100000,
+                          "attempt": 1, "round": 0, "context_size": 150000,
                           "tests": {"image": IMAGE, "tools_path": str(tmp_path / "tools")}}}
     validate("maker-input", request["inputs"])
     events = []
     runtime.run(request, events.append)
     result = events[-1]["reply"]
+    if overhead == 100000:
+        assert result["kind"] == "cant_meet" and "final fit" in result["report"], result
+        assert "head" not in result
+        return
     assert result["kind"] == "done", result
     validate("maker-reply", result)
     tree = subprocess.check_output(["git", "rev-parse", result["head"] + "^{tree}"], cwd=generator_repo).decode().strip()

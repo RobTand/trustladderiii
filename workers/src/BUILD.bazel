@@ -81,6 +81,7 @@ py_library(
         "tl3_workers/classifier_eval.py",
         "tl3_workers/contracts.py",
         "tl3_workers/diff.py",
+        "tl3_workers/evidence.py",
         "tl3_workers/exploration.py",
         "tl3_workers/facts.py",
         "tl3_workers/forecast.py",
