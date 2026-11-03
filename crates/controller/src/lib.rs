@@ -228,6 +228,14 @@ pub struct IssueChange {
     /// When GitHub last changed the issue, which orders its edits.
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
+/// The newest issue edit seen for a request (Q39), by request node.
+const ISSUE_EDITS: &str = "issue_edits";
+
+#[derive(Serialize, Deserialize)]
+struct IssueEdit {
+    updated_at: chrono::DateTime<chrono::Utc>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Request {
     repo: Repository,
@@ -586,29 +594,58 @@ impl Controller {
                 .map_err(|_| Error::Invalid("invalid request node"))?,
         );
         let world = snapshot::decode(&snapshot)?;
-        let priority = priority::pool_priority(&change.title, &change.labels);
-        if world
+        let Some(n) = world
             .nodes
             .get(node.0 as usize)
-            .is_none_or(|n| n.phase.is_closed() || n.priority == priority)
-        {
+            .filter(|n| !n.phase.is_closed())
+        else {
+            return Ok(());
+        };
+        // Edits are ordered by GitHub's updated_at, not by arrival: a late or
+        // replayed older edit is stale. A newer edit is recorded even when it
+        // keeps the priority, so it makes the older ones stale too.
+        let seen = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == ISSUE_EDITS && r.id == row.id)
+            .map(|r| decode_stored::<IssueEdit>(r.value.clone()))
+            .transpose()?
+            .map(|edit| edit.updated_at);
+        if seen.is_some_and(|seen| change.updated_at < seen) {
             return Ok(());
         }
-        // The delivery's key makes a stale redelivery replay its stored receipt.
+        let newer = seen.is_none_or(|seen| change.updated_at > seen);
+        let priority = priority::pool_priority(&change.title, &change.labels);
+        let changed = n.priority != priority;
+        if !newer && !changed {
+            return Ok(());
+        }
+        // The delivery's key makes a redelivery replay its stored receipt.
         let mut commit = Commit::new(
             format!("github-issue:{}", change.delivery),
             json!({"issue_change": change}),
             &snapshot,
         );
-        self.apply(
-            &snapshot,
-            world,
-            Event::Fact {
-                node,
-                fact: Fact::Priority(priority),
-            },
-            &mut commit,
-        )?;
+        if newer {
+            commit.rows.push(put(
+                ISSUE_EDITS,
+                row.id.clone(),
+                json!(IssueEdit {
+                    updated_at: change.updated_at
+                }),
+            ));
+        }
+        if changed {
+            self.apply(
+                &snapshot,
+                world,
+                Event::Fact {
+                    node,
+                    fact: Fact::Priority(priority),
+                },
+                &mut commit,
+            )?;
+        }
         self.store.commit(&commit)?;
         Ok(())
     }

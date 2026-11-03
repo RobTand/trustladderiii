@@ -1399,7 +1399,7 @@ fn check_gate_leaf_progress(width: u8) {
 proof!(gate_leaf_progress_w2, check_gate_leaf_progress(2));
 proof!(gate_leaf_progress_w3, check_gate_leaf_progress(3));
 
-// Q39: agent-pool grants are priority-first with bounded aging.
+// Q39: agent-pool grants go strictly by priority, then ticket.
 
 fn check_priority() {
     let before = any_settled_world(None);

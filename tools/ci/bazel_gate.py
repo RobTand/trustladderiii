@@ -46,6 +46,9 @@ FALLBACK = [
 IRRELEVANT = [
     'docs/*', '*.md', 'assets/*', 'spikes/*', 'LICENSE', 'LICENSE.*', '.mergify.yml',
     '.github/*.md', '.github/ISSUE_TEMPLATE/*', '.github/CODEOWNERS',
+    # The kernel's Kani runner. Only PrismaBuild proof campaigns read it
+    # (`run.py manifest` and `run.py prove`); no Bazel target does.
+    'crates/kernel/run.py',
 ]
 CONFIGS = {'amd64': 'remote', 'arm64': 'remote-arm64'}
 # Written by tools/bazel/rust_runner.py when every test passed but a budget overran.

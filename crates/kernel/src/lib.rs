@@ -2749,39 +2749,23 @@ fn slot_free(w: &World, i: usize) -> bool {
     holders < gate.w as u32
 }
 
-/// Tickets of seniority that one priority level is worth in the pool (Q39).
-pub const POOL_AGING_TICKETS: u64 = 8;
-const _: () = assert!(POOL_AGING_TICKETS == 1 << 3);
-
-/// A pool waiter's score (Q39): its ticket plus POOL_AGING_TICKETS per level
-/// below P0. A better priority passes only waiters fewer than that many tickets
-/// per level older. The score is fixed while the waiter keeps its ticket, so
-/// two waiters never swap places.
-pub fn pool_score(priority: Priority, ticket: u64) -> u64 {
-    // POOL_AGING_TICKETS is 8: a shift, which Kani encodes as wiring.
-    ticket.saturating_add(u64::from(priority.rank()) << 3)
-}
-
-/// A node's place in the agent pool's line (Q39), lowest first: its score, then
-/// the older ticket. None unless it waits for the pool.
-pub fn pool_key(n: &Node) -> Option<(u64, u64)> {
+/// A node's place in the agent pool's line (Q39), lowest first: its priority,
+/// then the older ticket. None unless it waits for the pool.
+pub fn pool_key(n: &Node) -> Option<(Priority, u64)> {
     let ticket = n.ticket.filter(|_| !matches!(n.phase, Phase::Ready(_)))?;
-    Some((pool_score(n.priority, ticket), ticket))
+    Some((n.priority, ticket))
 }
 
 /// Older slot waiters block runnable or overlapping younger leaves.
-/// The agent pool goes priority first, with bounded aging (Q39).
+/// The agent pool goes strictly by priority, then ticket (Q39).
 fn first_in_line(w: &World, i: usize) -> bool {
     let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };
     if !matches!(me.phase, Phase::Ready(_)) {
-        let score = pool_score(me.priority, mine);
         return !w.nodes.iter().any(|n| {
             !matches!(n.phase, Phase::Ready(_))
-                && n.ticket.is_some_and(|theirs| {
-                    let their_score = pool_score(n.priority, theirs);
-                    their_score < score || (their_score == score && theirs < mine)
-                })
+                && n.ticket
+                    .is_some_and(|theirs| (n.priority, theirs) < (me.priority, mine))
         });
     }
     let mut first_runnable = mine;
