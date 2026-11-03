@@ -88,6 +88,32 @@ pub(crate) fn context(snapshot: &Snapshot, commit: &Commit, node: NodeId) -> Opt
         .map(|record| json!({"review_stop": record}))
 }
 
+/// Code-owned budget facts shared by the status page and operations notice.
+pub(crate) fn budget_text(budget: &Value) -> Option<String> {
+    if budget["kind"] != "execution_budget_exhausted" {
+        return None;
+    }
+    let dimension = match budget["dimension"].as_str() {
+        Some(value @ ("no_progress" | "backstop" | "input_tokens")) => value,
+        _ => "unknown",
+    };
+    let progress = match budget["last_progress_kind"].as_str() {
+        Some(value @ ("write" | "edit" | "read" | "grep" | "glob" | "run_tests")) => value,
+        _ => "none",
+    };
+    Some(format!(
+        "execution_budget_exhausted ({}): tool turns {}/{}, no-progress turns {}/{}, last progress {}; input tokens {}/{}.",
+        dimension,
+        budget["tool_turns"]["used"].as_u64()?,
+        budget["tool_turns"]["allowed"].as_u64()?,
+        budget["no_progress_turns"].as_u64()?,
+        budget["no_progress_window"].as_u64()?,
+        progress,
+        budget["input_tokens"]["used"].as_u64()?,
+        budget["input_tokens"]["allowed"].as_u64()?,
+    ))
+}
+
 impl Controller {
     /// Records each stop this step made and queues its operations note.
     pub(crate) fn record_review_stops(
@@ -200,15 +226,8 @@ impl Controller {
                     .collect::<Vec<_>>()
                     .join("; ");
                 let detail = format!(
-                    " execution_budget_exhausted ({}): tool turns {}/{}, no-progress turns {}/{}, last progress {}; input tokens {}/{}. Preserved tree {}. Unfinished: {}. Review the preserved work and budget before any authorized continuation.",
-                    budget["dimension"].as_str().unwrap_or("unknown"),
-                    budget["tool_turns"]["used"],
-                    budget["tool_turns"]["allowed"],
-                    budget["no_progress_turns"],
-                    budget["no_progress_window"],
-                    budget["last_progress_kind"].as_str().unwrap_or("none"),
-                    budget["input_tokens"]["used"],
-                    budget["input_tokens"]["allowed"],
+                    " {} Preserved tree {}. Unfinished: {}. Review the preserved work and budget before any authorized continuation.",
+                    budget_text(&budget).unwrap_or_else(|| "execution_budget_exhausted".into()),
                     budget["preserved_work"]["tree"]
                         .as_str()
                         .unwrap_or("unknown"),

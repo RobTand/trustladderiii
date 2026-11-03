@@ -340,6 +340,10 @@ class Evidence:
             return list(self.test_runs)
 
 
+class MissingWorktreeFile(ValueError):
+    """A confined file is absent, rather than unsafe to open."""
+
+
 class Worktree:
     def __init__(self, root, *, generated_files=(), generator=None):
         self._root = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -445,7 +449,7 @@ class Worktree:
                     parts[-1], flags | os.O_NOFOLLOW | os.O_NONBLOCK, 0o644, dir_fd=parent,
                 )
             except FileNotFoundError:
-                raise ValueError("File not found") from None
+                raise MissingWorktreeFile("File not found") from None
             try:
                 info = os.fstat(fd)
                 # Never open devices or FIFOs as text, or modify an external hard link.
@@ -618,7 +622,7 @@ class Worktree:
         try:
             with self._file(path) as stream:
                 return hashlib.file_digest(stream.buffer, "sha256").hexdigest()
-        except FileNotFoundError:
+        except (FileNotFoundError, MissingWorktreeFile):
             return None
 
     def write(self, path: str, content: str) -> str:

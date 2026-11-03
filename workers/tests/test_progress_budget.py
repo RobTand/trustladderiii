@@ -137,7 +137,7 @@ def test_progress_fingerprints_and_streak_survive_visit_restore(maker_request, m
     restored.restore(json.loads(json.dumps(original.state())))
     assert restored.no_progress_turns == original.no_progress_turns
     assert restored.last_progress_kind == 'read'
-    assert not restored.begin_tool('read', {'path': 'greeting.py'})
+    assert not restored.begin_tool('read', {'path': 'greeting.py', 'offset': 0, 'limit': 200, 'column': 0})
     restored.observe_tool('read', {'path': 'other.py'}, "def greet(): return 'goodbye'\n", fresh=True)
     assert restored.no_progress_turns == original.no_progress_turns, 'new arguments with old content earn no allowance'
 
@@ -171,4 +171,15 @@ def test_new_evidence_can_leave_no_progress_reserve(maker_request, monkeypatch):
     assert snapshots(model)[10]['phase'] == 'finalizing'
     assert snapshots(model)[11]['phase'] == 'working'
     assert Path(maker_request['worktree'], 'greeting.py').read_text() == 'implemented = True\n'
+    assert 'budget_exhaustion' not in reply
+
+
+def test_progress_tracking_allows_new_files_and_parent_directories(maker_request, monkeypatch):
+    model, reply = run(maker_request, monkeypatch, [
+        ('write', {'path': 'new.py', 'content': 'new = True\n'}),
+        ('write', {'path': 'new/package.py', 'content': 'nested = True\n'}),
+    ])
+    assert Path(maker_request['worktree'], 'new.py').read_text() == 'new = True\n'
+    assert Path(maker_request['worktree'], 'new/package.py').read_text() == 'nested = True\n'
+    assert snapshots(model)[-1]['no_progress_turns'] == 0
     assert 'budget_exhaustion' not in reply

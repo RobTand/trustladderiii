@@ -674,6 +674,21 @@ fn maker_budget_exhaustion_reaches_the_stop_report_and_operations_notice() {
     );
     let snapshot = stopped.controller.snapshot().unwrap();
     assert!(!snapshot.rows.iter().any(|r| r.table == "questions"));
+    let status =
+        tl3_controller::status::load(&mut tl3_store::Reader::open(&stopped.settings).unwrap())
+            .unwrap();
+    for rendered in [
+        tl3_controller::status::render_text(&status),
+        tl3_controller::status::render_html(&status),
+    ] {
+        assert!(
+            rendered.contains("execution_budget_exhausted (no_progress)"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("tool turns 83/512"), "{rendered}");
+        assert!(rendered.contains("no-progress turns 16/16"), "{rendered}");
+        assert!(rendered.contains("last progress edit"), "{rendered}");
+    }
     assert_operations_note(&stopped.posted, "maker_cant_meet");
 }
 
