@@ -42,6 +42,16 @@ impl Executor for Spy {
     ) -> Result<()> {
         self.hit("intake_question", format!("{}:{epoch}", question.key()))
     }
+    fn issue(
+        &mut self,
+        repository: &tl3_controller::Repository,
+        number: u64,
+    ) -> Result<tl3_github::Issue> {
+        self.hit(
+            "issue",
+            format!("{}/{}#{number}", repository.owner, repository.name),
+        )
+    }
     fn app_login(&self, installation: u64) -> Option<String> {
         let _: Result<()> = self.hit("app_login", installation.to_string());
         Some(self.name.into())
@@ -200,6 +210,7 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
         assert!(router.input_incident(&incident, 3).is_err());
         assert!(router.wait_record("key", Path::new("checkout")).is_err());
         assert!(router.recover_deliveries(17, 29).is_err());
+        assert!(router.issue(&question.repository, 17).is_err());
         assert!(router.retire(&mut store).is_err());
         assert_eq!(
             *calls.lock().unwrap(),
@@ -210,6 +221,14 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
                 (primary, "input_incident", "incident:probe:3".into()),
                 (primary, "wait_record", "key:checkout".into()),
                 (primary, "recover_deliveries", "17:29".into()),
+                (
+                    primary,
+                    "issue",
+                    format!(
+                        "{}/{}#17",
+                        question.repository.owner, question.repository.name
+                    ),
+                ),
                 (primary, "retire", String::new()),
             ]
         );
