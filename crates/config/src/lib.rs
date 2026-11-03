@@ -370,6 +370,14 @@ pub struct Identity {
     pub id: u64,
 }
 
+fn generator_timeout_setting<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u32>, D::Error> {
+    Option::<u32>::deserialize(deserializer).map_err(|_| {
+        serde::de::Error::custom("generator_timeout_s must be a whole number from 1 to 600 seconds")
+    })
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Repository {
@@ -382,7 +390,7 @@ pub struct Repository {
     #[serde(default)]
     pub generator: Option<String>,
     /// Container startup plus command deadline. Unset keeps 120 seconds.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "generator_timeout_setting")]
     pub generator_timeout_s: Option<u32>,
     #[serde(default)]
     pub container_image: Option<String>,
