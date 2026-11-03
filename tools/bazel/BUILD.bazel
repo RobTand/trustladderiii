@@ -149,3 +149,9 @@ py_binary(
     srcs = ["execution_receipt.py"],
     visibility = ["//visibility:public"],
 )
+
+py_binary(
+    name = "stage_contract",
+    srcs = ["stage_contract.py"],
+    visibility = ["//visibility:public"],
+)

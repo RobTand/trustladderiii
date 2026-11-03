@@ -15,7 +15,6 @@ impl Writer for WriterFault {
         let f = self.0.lock().unwrap();
         let targeted = match f.kind.as_str() {
             "question" | "cleanup" => input.kind == MessageKind::Question,
-            "summary" => input.kind == MessageKind::Summary,
             "note" => input.kind == MessageKind::Note && !key.starts_with("incident:"),
             "dropped" => input.facts["change_quote"].is_string(),
             _ => false,
@@ -248,14 +247,17 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
         "filing_403" => "filing",
         _ => "summary",
     };
-    // #322: a writer-rejected question still posts its fixed text, so questions
-    // exercise the failed-post path through GitHub refusing the post.
+    // Fixed questions and closing summaries exercise failed delivery through
+    // GitHub refusing the post, independently of model draft rejection.
     let is_ask = matches!(kind, "question" | "cleanup");
     let faults = Arc::new(Mutex::new(Faults {
-        reject: !is_ask,
+        reject: !is_ask && kind != "summary",
         incident: name == "incident_no_loop",
         kind: kind.into(),
     }));
+    if kind == "summary" {
+        api.state.lock().unwrap().forbidden_summary = true;
+    }
     if is_ask && !name.starts_with("question_4") && name != "question_retry_rejected" {
         api.state.lock().unwrap().forbidden_question = true;
     }
@@ -365,7 +367,7 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
         "question_401" | "question_403" | "question_retry_rejected" | "filing_403" => "permission",
         "question_404" | "question_410" => "not_found",
         "question_422" => "invalid_request",
-        _ if is_ask => "permission",
+        _ if is_ask || kind == "summary" => "permission",
         _ => "message_rejected",
     }));
     if is_ask {
@@ -519,6 +521,7 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
     faults.lock().unwrap().reject = false;
     faults.lock().unwrap().incident = false;
     api.state.lock().unwrap().forbidden_question = false;
+    api.state.lock().unwrap().forbidden_summary = false;
     api.state.lock().unwrap().question_status = None;
     api.state.lock().unwrap().forbidden_filing = false;
     let before_retry = c.world().unwrap();

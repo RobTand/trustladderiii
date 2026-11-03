@@ -228,6 +228,7 @@ Each leaf's plan lists checks of three kinds, which Rob confirmed on 2026-10-30 
 | Kind | Used for | Passes when |
 |---|---|---|
 | **Demonstrating** | A measure that changes behavior | Each named test fails on the base and passes on the leaf's commit. The base run applies only the leaf's test changes. On the base, the failure must be an assertion, or a missing name the leaf adds. |
+| **Demonstrating, helper target/observer** | A deterministic fix to an existing helper in a configured Python test file (#549) | Only the named new observers overlay the real base. Every observer fails by assertion there and passes with the head helper. Named known-bad data invocations use pytest's module import context and must still raise AssertionError with both helpers. See Q27 below. |
 | **Regression** | Showing that nothing which worked is now broken | It passes on the leaf's commit. A test already failing on the base is recorded as pre-existing and excused. Base results are cached per base commit. |
 | **Demonstrating, forced** | Making a named flaky test deterministic (Q55) | The check carries the plan's forcing, which the harness applies outside the test. Each named test fails by assertion on the base, running the old test as the base wrote it under the forcing. On the leaf's commit it passes both under the forcing and without it. Review judges whether the forcing models the flake's symptom. |
 | **Behavior-preserving** | A measure that changes no behavior, such as a refactor | It passes on both trees. Review judges the rest. |
@@ -885,3 +886,16 @@ Three more slice-two rules:
 - A valid split in Planning spends k − 1 credit, creates the children in Unplanned, and moves the node to Children.
 - A leaf that gains a dependency leaves the gate until the dependency is delivered.
 - At the root, Rob's questions also offer "accept as is". It goes to Stopping(AcceptedPartial), with the unmet measures listed.
+
+## Q27: helper target and observer evidence (#549)
+
+"Approved" (Rob, 2026-11-03). A demonstrating check may name one existing
+helper inside configured Python test files as its target and new tests as its
+observers. Trusted staging appends only the identical new observers to the base
+modules, preserving the real base helper and every other base definition. Each
+observer must fail by assertion on that base and pass with the head helper.
+The receipt records both target source identities, observer identities and both
+staged tree identities. This mode rejects ambiguous targets, changed signatures,
+decorators, imports and undeclared test edits. It does not relax frozen existing
+regression or behavior-preserving checks or Q55's forced reproduction rules.
+Adding an irrelevant non-test file cannot validate a failing demonstration.

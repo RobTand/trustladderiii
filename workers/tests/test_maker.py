@@ -134,7 +134,25 @@ def maker_request(tmp_path):
 
 
 def test_maker_declares_only_file_and_pb_tools():
-    assert ROLES["maker"].tools.keys() == READ_TOOLS | WRITE_TOOLS | {"run_tests", "recall"}
+    assert ROLES["maker"].tools.keys() == READ_TOOLS | WRITE_TOOLS | {"run_tests", "run_generator", "recall"}
+
+
+def test_done_hands_ordinary_demonstration_to_checking(maker_request, tmp_path):
+    root = Path(maker_request["worktree"])
+    base = git(root, "rev-parse", "HEAD")
+    maker_request["inputs"]["check_base_sha"] = base
+    result = start_worker(tmp_path, maker_request, [write_turn(), turn(DONE)])
+    assert result.exit_code == 0, result.stderr
+    reply = result.events[-1]["reply"]
+    assert reply["kind"] == "done", reply
+    assert reply["checking_handoff"] == {
+        "base_sha": base, "head_sha": reply["head"],
+        "head_tree": git(root, "rev-parse", reply["head"] + "^{tree}"),
+        "status": "pending", "owner": "checking",
+        "checks": [{"name": "hello", "tests": ["test_greeting.py::test_hello"],
+                    "mode": "head_tests_on_base"}],
+    }
+    validate("maker-reply", reply)
 
 
 @pytest.mark.parametrize("reply", [
@@ -250,6 +268,7 @@ def test_done_with_an_unmet_goal_is_rejected_before_commit(tmp_path, maker_reque
 
 @pytest.mark.parametrize("reply", [
     {**DONE, "head": "b" * 40},
+    {**DONE, "checking_handoff": {"status": "passed"}},
     {**DONE, "self_check": [DONE["self_check"][0]]},
     {**DONE, "self_check": [DONE["self_check"][0]] * 2},
     {**DONE, "self_check": [DONE["self_check"][0], {"goal_id": "unknown", "status": "met", "evidence": "x"}]},
@@ -683,7 +702,10 @@ def test_prompt_requires_reds_the_harness_accepts():
     assert "a test failure, not a collection error" in prompt
     assert "Prefer new test files where the plan allows" in prompt
     assert "force the bad interleaving or timing deterministically with injected clocks, events or barriers" in prompt
-    assert "Confirm the base outcome with run_tests and its base comparison before replying done" in prompt
+    assert "head's tests overlaid on the base implementation" in prompt
+    assert "Ordinary demonstrating proof is controller-owned and remains pending until Checking" in prompt
+    assert "A plain base pass neither supplies nor disproves that RED" in prompt
+    assert "Confirm the base outcome with run_tests and its base comparison before replying done" not in prompt
 
 
 def test_fix_round_inputs_and_test_settings_reach_their_destinations(tmp_path, maker_request, monkeypatch):
@@ -757,7 +779,9 @@ def test_maker_rejects_shell_and_other_undeclared_tools(tmp_path, maker_request,
 
 @pytest.mark.parametrize('fit_tokens,linked,expected', [(100000, False, True), (1, False, False), (100000, True, False)])
 def test_requested_file_fit_is_computed_by_worker_code(tmp_path, maker_request, cache_tokenizer, fit_tokens, linked, expected):
-    maker_request['inputs']['fit_tokens'] = fit_tokens
+    maker_request['inputs']['forecast'] = {
+        'fit_tokens': fit_tokens, 'context_tokens': 150000, 'overhead_tokens': {'reserve': 32000},
+    }
     root = Path(maker_request['worktree'])
     if linked:
         (root / 'helper.py').symlink_to(root / 'greeting.py')
@@ -770,7 +794,9 @@ def test_requested_file_fit_is_computed_by_worker_code(tmp_path, maker_request, 
 @pytest.mark.parametrize('content_source', ['brief', 'file'])
 @pytest.mark.parametrize('cache', ['available', 'disabled', 'empty', 'corrupt'])
 def test_requested_file_fit_counts_tokens_with_byte_fallback(tmp_path, maker_request, cache_tokenizer, content_source, cache):
-    maker_request['inputs']['fit_tokens'] = 100000
+    maker_request['inputs']['forecast'] = {
+        'fit_tokens': 100000, 'context_tokens': 150000, 'overhead_tokens': {'reserve': 32000},
+    }
     if content_source == 'brief':
         maker_request['inputs']['brief'] = 'token ' * 18000
     else:
@@ -795,10 +821,70 @@ def test_requested_file_fit_counts_tokens_with_byte_fallback(tmp_path, maker_req
 
 
 def test_model_cannot_claim_that_requested_files_fit(tmp_path, maker_request):
-    maker_request['inputs']['fit_tokens'] = 100000
+    maker_request['inputs']['forecast'] = {
+        'fit_tokens': 100000, 'context_tokens': 150000, 'overhead_tokens': {'reserve': 32000},
+    }
     result = start_worker(tmp_path, maker_request, [turn({'kind': 'needs_files', 'files': [{'path': 'helper.py', 'why': 'Needed.'}], 'fits': True})])
     assert result.exit_code == 1
     assert all(event['event'] != 'reply' for event in result.events)
+
+
+def requested_fit(maker_request, paths):
+    from tl3_workers.tools import Worktree
+
+    response = {'kind': 'needs_files', 'files': [{'path': path, 'why': 'Needed.'} for path in paths]}
+    with Worktree(maker_request['worktree']) as tree:
+        return maker.run(ToolModel(responses=[AIMessage(**turn(response))]),
+                         maker_request, tree, lambda event: None)['fits']
+
+
+@pytest.mark.parametrize('extra_tokens,expected', [(0, True), (4000, True), (18000, False)])
+def test_pq_2629_plan_and_requested_file_fit(maker_request, cache_tokenizer, monkeypatch, extra_tokens, expected):
+    from tl3_workers.forecast import Forecaster
+
+    monkeypatch.setenv('TIKTOKEN_CACHE_DIR', cache_tokenizer)
+    root = Path(maker_request['worktree'])
+    monkeypatch.chdir(root)
+    inputs = maker_request['inputs']
+    config = {'fit_tokens': 100000, 'context_tokens': 150000,
+              'overhead_tokens': {'prompt': 5000, 'making': 20000}}
+    inputs['forecast'] = config
+    inputs['brief'] = 'x\n' * 1643
+    # Model PQ #2629's eight files: two ranged files and six small files.
+    costs = dict(zip([f'plan_{i}.py' for i in range(8)], [16384, 16384, 4000, 4000, 4000, 4000, 4000, 2232]))
+    for index, (path, tokens) in enumerate(costs.items()):
+        (root / path).write_text('large ' * 14000 if index < 2 else 'x\n' * (tokens // 2))
+    inputs['plan']['files'] = list(costs)
+    # The remaining input brought the old maker JSON count to about 25k.
+    inputs['goals'][0]['description'] = ' token' * 21000
+    inputs.update(round=1, feedback=[{'kind': 'failed_check', 'report': 'Fix the check.', 'goal_ids': ['greeting']}])
+    forecast = Forecaster(config).measure(inputs['brief'], inputs['plan']['files'])
+    assert forecast['brief_tokens'] == 3286
+    assert forecast['file_tokens'] == costs
+    assert forecast['tokens'] == 83286
+    assert forecast['fits'] is True
+    (root / 'requested.py').write_text('x\n' * (extra_tokens // 2))
+    paths = [*inputs['plan']['files'], 'requested.py'] if extra_tokens else inputs['plan']['files']
+    assert requested_fit(maker_request, paths) is expected
+
+
+@pytest.mark.parametrize('overhead', [0, 25000, 45000])
+@pytest.mark.parametrize('fix_round', [False, True])
+def test_planner_fit_implies_maker_fit(maker_request, cache_tokenizer, monkeypatch, overhead, fix_round):
+    from tl3_workers.forecast import Forecaster
+
+    monkeypatch.setenv('TIKTOKEN_CACHE_DIR', cache_tokenizer)
+    monkeypatch.chdir(maker_request['worktree'])
+    inputs = maker_request['inputs']
+    config = {'fit_tokens': 100000, 'context_tokens': 150000,
+              'overhead_tokens': {'reserve': overhead}}
+    total = Forecaster(config).measure(inputs['brief'], inputs['plan']['files'])['tokens']
+    config['fit_tokens'] = total + 1
+    inputs['forecast'] = config
+    if fix_round:
+        inputs.update(round=1, feedback=[{'kind': 'failed_check', 'report': 'Fix it. ' * 2000, 'goal_ids': ['greeting']}])
+    assert Forecaster(config).measure(inputs['brief'], inputs['plan']['files'])['fits'] is True
+    assert requested_fit(maker_request, inputs['plan']['files']) is True
 
 
 @pytest.mark.parametrize('resume_requested', [False, True])
@@ -1459,6 +1545,8 @@ def test_done_reply_carries_the_run_tests_receipts(maker_request, monkeypatch):
 
 def test_runs_before_a_later_edit_are_not_evidence_for_the_head(maker_request, monkeypatch):
     # #432: run, edit, done. The run tested a tree the head no longer has.
+    root = Path(maker_request["worktree"])
+    maker_request["inputs"]["check_base_sha"] = git(root, "rev-parse", "HEAD")
     fake = FakeMessagesListChatModel(responses=[
         AIMessage(**write_turn("test_greeting.py", "def test_hello(): pass\n")),
         RUN_FIVE,
@@ -1472,6 +1560,17 @@ def test_runs_before_a_later_edit_are_not_evidence_for_the_head(maker_request, m
     reply = events[-1]["reply"]
     assert reply["kind"] == "done"
     assert "test_evidence" not in reply
+    assert reply["checking_handoff"]["head_tree"] == git(root, "rev-parse", reply["head"] + "^{tree}")
+    assert reply["checking_handoff"]["status"] == "pending"
+
+
+@pytest.mark.parametrize("special", [{"forcing": {"symptom": "Q55"}},
+                                   {"helper_evidence": {"target": "test_greeting.py::helper"}}])
+def test_ordinary_handoff_never_substitutes_for_forced_or_helper_proof(maker_request, special):
+    inputs = maker_request["inputs"]
+    inputs["check_base_sha"] = "a" * 40
+    inputs["plan"]["checks"][0].update(special)
+    assert maker._checking_handoff(inputs, "b" * 40, "c" * 40) is None
 
 
 def test_test_evidence_is_bounded():
@@ -1514,3 +1613,64 @@ def test_maker_prompt_explains_forced_checks():
     prompt = " ".join((Path(__file__).parents[1] / "src/tl3_workers/prompts/maker.md").read_text().split())
     assert "forcing" in prompt
     assert "both with and without the forcing" in prompt
+
+
+@pytest.fixture
+def request_123_handover(maker_request):
+    """Sanitized fail-fast shape: test repair, Q55 proof, and mixed scope/PR goal."""
+    request = maker_request
+    request["inputs"]["goals"] = [
+        {"id": "repair", "description": "Make the deep-path test deterministic.", "verification": "test"},
+        {"id": "scope", "description": "Change only the declared ordinary test file.", "verification": "review"},
+        {"id": "forced-proof", "description": "Independently prove forced base red and head green.",
+         "verification": "test", "stage": "checking"},
+        {"id": "publication", "description": "Publish a stable branch and non-draft PR with proof.",
+         "verification": "review", "stage": "publishing",
+         "publication": {"non_draft": True, "body_lines": ["Change type: test"], "proof": True}},
+    ]
+    request["inputs"]["plan"]["checks"] = [{
+        "name": "deep-path", "kind": "demonstrating", "tests": ["test_greeting.py::test_hello"],
+        "goal_ids": ["repair", "scope", "forced-proof"],
+        "forcing": {"symptom": "The old test depends on residency.", "environment": {},
+                    "patches": [{"target": "greeting.RESIDENCY", "value": False}]},
+    }]
+    reply = {"kind": "done", "self_check": [
+        {"goal_id": "repair", "status": "met", "evidence": "Normal head run passed; plain base is unforced."},
+        {"goal_id": "scope", "status": "met", "evidence": "Diff stays within the declared footprint."},
+        {"goal_id": "forced-proof", "status": "pending", "why": "Controller Checking owns the Q55 verdict."},
+        {"goal_id": "publication", "status": "pending", "why": "Publishing owns Git and PR creation."},
+    ]}
+    return request, reply
+
+
+def test_request_123_honest_handover_with_downstream_pending(request_123_handover):
+    request, reply = request_123_handover
+    maker._check_inputs(request["inputs"])
+    maker._check_reply(request["inputs"], reply)
+
+
+def test_request_123_pending_handover_commits_through_real_worker(tmp_path, request_123_handover):
+    request, reply = request_123_handover
+    del request["inputs"]["plan"]["checks"][0]["forcing"]
+    result = start_worker(tmp_path, request, [write_turn("test_greeting.py", "def test_hello(): assert True\n"), turn(reply)])
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1]["reply"]["kind"] == "done"
+    assert result.events[-1]["reply"]["self_check"] == reply["self_check"]
+
+
+@pytest.mark.parametrize("goal_id", ["repair", "scope"])
+def test_request_123_maker_cannot_defer_implementation_or_scope(request_123_handover, goal_id):
+    request, reply = request_123_handover
+    for check in reply["self_check"]:
+        if check["goal_id"] == goal_id:
+            check.clear()
+            check.update(goal_id=goal_id, status="pending", why="Calling this downstream does not change ownership.")
+    with pytest.raises(ValueError, match="maker"):
+        maker._check_reply(request["inputs"], reply)
+
+
+def test_request_123_maker_cannot_claim_future_proof(request_123_handover):
+    request, reply = request_123_handover
+    reply["self_check"][-1] = {"goal_id": "publication", "status": "met", "evidence": "Imaginary PR."}
+    with pytest.raises(ValueError, match="pending"):
+        maker._check_reply(request["inputs"], reply)

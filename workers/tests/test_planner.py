@@ -6,7 +6,10 @@ from pathlib import Path
 import pytest
 from jsonschema import ValidationError
 import tiktoken
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+from langchain_core.messages import AIMessage, HumanMessage
 
+from tl3_workers.evidence import RESERVED_ENVIRONMENT, RESERVED_PREFIXES
 from tl3_workers.contracts import validate
 import worker_process
 from worker_process import start_worker
@@ -37,6 +40,28 @@ CANT_MEET = {"kind": "cant_meet", "report": "The required API decision is unreso
              "files": []}
 
 
+class PlannerModel(FakeMessagesListChatModel):
+    calls: list = []
+    offered: bool = False
+
+    def bind_tools(self, tools, **kwargs):
+        self.offered = bool(tools)
+        return self
+
+    def _generate(self, messages, **kwargs):
+        self.calls.append((copy.deepcopy(messages), self.offered))
+        self.offered = False
+        return super()._generate(messages, **kwargs)
+
+
+def planner_model(monkeypatch, *replies):
+    from tl3_workers import runtime
+
+    model = PlannerModel(responses=[AIMessage(content=json.dumps(reply)) for reply in replies], calls=[])
+    monkeypatch.setattr(runtime, 'create_model', lambda _: model)
+    return model
+
+
 @pytest.fixture(scope="session", autouse=True)
 def cache_tokenizer(tmp_path_factory):
     # Provision public tokenizer data before the per-test socket denial. Worker
@@ -55,7 +80,7 @@ def tool_capable_fake(monkeypatch):
     setup = '''
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 def bind_tools(self, tools, **kwargs):
-    assert {tool.name for tool in tools} == {'list', 'read', 'glob', 'grep'}
+    assert {tool.name for tool in tools} == {'list', 'read', 'glob', 'grep', 'rehearse_forcing'}
     assert all(tool.description for tool in tools)
     return self
 FakeMessagesListChatModel.bind_tools = bind_tools
@@ -587,12 +612,12 @@ def deflake_worktree(planner_request, monkeypatch):
     return reply
 
 
-def test_forced_reproduction_is_a_valid_plan(planner_request, deflake_worktree):
+def test_forced_reproduction_needs_a_matching_rehearsal(planner_request, deflake_worktree):
     from tl3_workers.roles.planner import check_reply
 
     validate("planner-reply", deflake_worktree)
     check_reply(planner_request['inputs'], deflake_worktree)
-    assert deflake_worktree['violations'] == []
+    assert any('matching forcing rehearsal receipt' in v for v in deflake_worktree['violations'])
 
 
 def test_forcing_belongs_only_on_demonstrating_checks(planner_request, deflake_worktree):
@@ -847,8 +872,8 @@ def test_test_only_change_without_a_forcing_needs_a_forced_reproduction(planner_
     assert not any('#393' in item for item in violations), violations
 
 
-def test_test_only_change_with_a_forced_reproduction_is_accepted(planner_request, digests_plan):
-    # Q55: the same deflake with a forcing on its demonstrating check is a valid plan.
+def test_test_only_change_with_a_forcing_still_needs_rehearsal(planner_request, digests_plan):
+    # Q55 forcing still supports test-only changes, but now needs plan-time execution.
     digests_plan['files'] = [DIGESTS]
     digests_plan['edits_tests'] = [FROZEN]
     digests_plan['checks'] = [
@@ -856,7 +881,8 @@ def test_test_only_change_with_a_forced_reproduction_is_accepted(planner_request
         {'kind': 'regression', 'node_ids': [SIBLING], 'goal_ids': [1]},
     ]
     validate('planner-reply', digests_plan)
-    assert planned(planner_request, copy.deepcopy(digests_plan)) == []
+    assert any('matching forcing rehearsal receipt' in v
+               for v in planned(planner_request, copy.deepcopy(digests_plan)))
     # Every demonstrating check needs the forcing, and it must be valid.
     digests_plan['checks'].append({'kind': 'demonstrating', 'node_ids': [SIBLING], 'goal_ids': [0]})
     assert any(TEST_ONLY in item for item in planned(planner_request, copy.deepcopy(digests_plan)))
@@ -947,3 +973,792 @@ def test_test_only_regression_plan_is_accepted(planner_request, digests_plan):
     digests_plan['files'] = [DIGESTS]
     digests_plan['checks'] = [{'kind': 'regression', 'node_ids': [FROZEN, SIBLING], 'goal_ids': [0, 1]}]
     assert planned(planner_request, digests_plan) == []
+
+
+def test_publication_obligations_have_guards_instead_of_pretend_tests(tmp_path, planner_request):
+    planner_request['inputs']['ingest']['goals'].append({
+        'description': 'Publish a non-draft PR with recorded independent proof.',
+        'verification': 'review', 'stage': 'publishing',
+        'publication': {'non_draft': True, 'body_lines': ['Change type: test'], 'proof': True},
+    })
+    result = run_reply(tmp_path, planner_request, LEAF)
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1]['reply']['violations'] == []
+
+
+def test_restart_plans_approved_retention_exception(tmp_path, planner_request):
+    context = {"schema_version": 1, "request_version": 121, "decisions": [{
+        "id": "pq2662-q10", "source_comment": "https://github.com/RobTand/prismaquant/issues/2662#issuecomment-6580255177",
+        "question": {"id": 10, "kind": "cant_meet"},
+        "answer": "Allow the current-source pin update.",
+        "allowed_scope": ["tests/test_guarded_read_digest_retention_2637.py"],
+        "restrictions": ["CURRENT_SOURCE_BLOBS only", "Preserve historical manifest material"],
+        "origin_request_version": 83, "superseded_by": None,
+    }]}
+    planner_request["inputs"]["decision_context"] = context
+    reply = copy.deepcopy(LEAF)
+    reply["files"].append("tests/test_guarded_read_digest_retention_2637.py")
+    result = run_reply(tmp_path, planner_request, reply)
+    assert result.exit_code == 0, result.stderr
+    planned = [event["reply"] for event in result.events if event["event"] == "reply"][0]
+    assert "tests/test_guarded_read_digest_retention_2637.py" in planned["files"]
+    assert planned["kind"] == "leaf"
+
+
+def test_decision_drives_retention_plan_and_preserves_restrictions(tmp_path, planner_request, monkeypatch):
+    context = {"schema_version": 1, "request_version": 121, "decisions": [{
+        "id": "pq2662-q10", "source_comment": "https://github.com/RobTand/prismaquant/issues/2662#issuecomment-6580255177",
+        "question": {"id": 10}, "answer": "Allow the pin update with restrictions.",
+        "allowed_scope": ["tests/test_guarded_read_digest_retention_2637.py"],
+        "restrictions": ["CURRENT_SOURCE_BLOBS only", "Preserve historical manifest material"],
+        "origin_request_version": 83, "superseded_by": None,
+    }]}
+    planner_request['inputs']['decision_context'] = context
+    setup = '''
+class DecisionReadingModel(FakeMessagesListChatModel):
+    def _generate(self, messages, **kwargs):
+        inputs = json.loads(next(m.content for m in messages if m.type == 'human'))
+        decisions = inputs.get('decision_context', {}).get('decisions', [])
+        if not decisions:
+            reply = {'kind':'cant_meet', 'report':'May I update the retention pin?', 'files':[]}
+        else:
+            decision = decisions[0]
+            assert decision['restrictions'] == ['CURRENT_SOURCE_BLOBS only', 'Preserve historical manifest material']
+            reply = BASE_LEAF.copy()
+            reply['files'] = BASE_LEAF['files'] + decision['allowed_scope']
+        self.responses = [AIMessage(content=json.dumps(reply))]
+        return super()._generate(messages, **kwargs)
+'''.replace('BASE_LEAF', repr(LEAF))
+    monkeypatch.setattr(worker_process, 'LAUNCH', worker_process.LAUNCH.replace(
+        'model = FakeMessagesListChatModel(', setup + '\nmodel = DecisionReadingModel('))
+    result = run_reply(tmp_path, planner_request, LEAF)
+    assert result.exit_code == 0, result.stderr
+    plan = next(event['reply'] for event in result.events if event['event'] == 'reply')
+    assert plan['kind'] == 'leaf', 'the answered scope question must not be repeated'
+    assert context['decisions'][0]['allowed_scope'][0] in plan['files']
+    assert plan.get('decision_context') == context, 'the plan must preserve the approved restrictions'
+    del planner_request['inputs']['decision_context']
+    result = run_reply(tmp_path, planner_request, LEAF)
+    assert result.exit_code == 0, result.stderr
+    plan = next(event['reply'] for event in result.events if event['event'] == 'reply')
+    assert plan['kind'] == 'cant_meet', 'without the decision the scope question is unresolved'
+
+
+@pytest.mark.parametrize('dimension,value', [
+    ('executor', 'buildbuddy_remote_bazel'),
+    ('runner_features', ['pinned_cpu_contention']),
+    ('runner_features', ['native_threads_1']),
+    ('artifacts', ['invocation_url']),
+    ('methods', ['forced_reproduction.contention_wrapper']),
+    ('protected_files', ['.github/workflows/gate.yml']),
+])
+def test_evidence_contract_blocks_unsupported_requirements(planner_request, monkeypatch, dimension, value):
+    from tl3_workers.roles.planner import check_reply
+    monkeypatch.chdir(planner_request['worktree'])
+    tool = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+            'runner_features': ['base_head'], 'artifacts': ['logs', 'terminal_verdict', 'sha'],
+            'methods': ['red_green'], 'protected_files': []}
+    requirement = {**copy.deepcopy(tool), 'requirement': 'PB2640-2650 and PB2654 require exact remote evidence.'}
+    requirement[dimension] = value
+    inputs = copy.deepcopy(planner_request['inputs'])
+    inputs['tool_capabilities'] = [tool]
+    inputs['ingest']['evidence_contract'] = [requirement]
+    proposal = copy.deepcopy(LEAF)
+    proposal['evidence_contract'] = []  # Planning cannot erase an intake requirement.
+    check_reply(inputs, proposal)
+    assert proposal['kind'] == 'cant_meet'
+    assert dimension in proposal['report']
+    assert (value if isinstance(value, str) else value[0]) in proposal['report']
+    assert requirement in proposal['evidence_contract']
+
+
+def test_evidence_contract_requires_one_tool_to_supply_all_artifacts(planner_request, monkeypatch):
+    from tl3_workers.roles.planner import check_reply
+    monkeypatch.chdir(planner_request['worktree'])
+    inputs = copy.deepcopy(planner_request['inputs'])
+    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+                  'runner_features': ['base_head'], 'artifacts': ['logs', 'terminal_verdict'],
+                  'methods': ['red_green'], 'protected_files': []}
+    inputs['tool_capabilities'] = [dict(capability, artifacts=['logs']),
+                                   dict(capability, artifacts=['terminal_verdict'])]
+    inputs['ingest']['evidence_contract'] = [dict(capability, requirement='Both artifacts from the run.')]
+    reply = dict(copy.deepcopy(LEAF), evidence_contract=[])
+    check_reply(inputs, reply)
+    assert reply['kind'] == 'cant_meet'
+    inputs['tool_capabilities'] = [capability]
+    reply = dict(copy.deepcopy(LEAF), evidence_contract=[])
+    check_reply(inputs, reply)
+    assert reply['kind'] == 'leaf'
+    assert reply['violations'] == []
+
+
+
+def test_evidence_contract_rechecks_current_capabilities(planner_request, monkeypatch):
+    from tl3_workers.roles.planner import check_reply
+    monkeypatch.chdir(planner_request['worktree'])
+    inputs = copy.deepcopy(planner_request['inputs'])
+    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+                  'runner_features': ['base_head'], 'artifacts': ['logs'],
+                  'methods': ['forced_reproduction.patches'], 'protected_files': []}
+    inputs['tool_capabilities'] = [capability]
+    inputs['ingest']['evidence_contract'] = [dict(capability, requirement='Keep the log and force the flake.')]
+    inputs['ingest']['evidence_errors'] = ['Unsupported evidence requirement: artifacts=logs.']
+    reply = dict(copy.deepcopy(LEAF), evidence_contract=[])
+    check_reply(inputs, reply)
+    assert reply['kind'] == 'leaf'
+    assert reply['evidence_errors'] == []
+
+
+@pytest.mark.parametrize("separate", [False, True])
+def test_helper_target_observer_plan_is_supported(planner_request, digests_plan, separate):
+    path = Path(planner_request['worktree']) / DIGESTS
+    path.write_text(path.read_text() + '\ndef _execute(result):\n    assert result.returncode == 0\n    return result\n')
+    planner_request['inputs']['ingest']['goals'] = [
+        {'description': 'Improve failed helper diagnostics while the inner pytest still fails.', 'verification': 'test'}]
+    observer = 'tests/test_observer.py' if separate else DIGESTS
+    digests_plan.update(files=list(dict.fromkeys([DIGESTS, observer])), checks=[{
+        'kind': 'demonstrating', 'node_ids': [f'{observer}::test_new_diagnostic'], 'goal_ids': [0],
+        'helper_evidence': {'target': f'{DIGESTS}::_execute', 'failure_cases': [
+            {'args': [{'$attributes': {'returncode': 1, 'stdout': 'broken transfer'}}], 'kwargs': {}}]}}])
+    validate('planner-reply', digests_plan)
+    assert planned(planner_request, copy.deepcopy(digests_plan)) == []
+    digests_plan['checks'][0]['helper_evidence']['target'] = f'{DIGESTS}::missing'
+    digests_plan['files'].append('README.md')
+    assert any('helper evidence' in item for item in planned(planner_request, copy.deepcopy(digests_plan)))
+
+
+def test_helper_preflight_requires_installed_target_observer_capability():
+    from tl3_workers.evidence import preflight
+    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
+                  'artifacts': ['cas_receipt', 'terminal_verdict'], 'methods': [], 'protected_files': []}
+    reply = {'kind': 'leaf', 'files': ['tests/test_helpers.py'], 'evidence_contract': [],
+             'checks': [{'helper_evidence': {'target': 'tests/test_helpers.py::_execute'}}]}
+    original = copy.deepcopy(reply)
+    preflight({'tool_capabilities': [capability]}, reply, planning=True)
+    assert reply['kind'] == 'cant_meet'
+    assert 'methods=helper_target_observer' in reply['report']
+    capability['methods'] = ['helper_target_observer']
+    preflight({'tool_capabilities': [capability]}, original, planning=True)
+    assert original['kind'] == 'leaf' and original['evidence_errors'] == []
+
+
+@pytest.fixture
+def request_149_plan(planner_request):
+    root = Path(planner_request['worktree'])
+    (root / 'tests/test_measurement_census_reader_fence_1498.py').write_text(
+        'def test_a_busy_fence_refuses_before_any_transition_or_host_lock():\n'
+        '    elapsed = 0.0\n    assert elapsed < 5.0, elapsed\n')
+    planner_request['inputs']['ingest']['goals'] = [
+        {'description': 'Deflake the busy-fence test with virtual polling time, preserving refusal evidence, no transition or host lock before refusal, and reuse after release.',
+         'verification': 'test'},
+        {'description': 'Keep native thread bounds at one.', 'verification': 'test'},
+    ]
+    return {
+        'kind': 'leaf', 'files': ['tests/test_measurement_census_reader_fence_1498.py'],
+        'checks': [{'kind': 'demonstrating', 'goal_ids': [0, 1],
+                    'node_ids': ['tests/test_measurement_census_reader_fence_1498.py::test_a_busy_fence_refuses_before_any_transition_or_host_lock'],
+                    'forcing': {
+                        'symptom': 'A slow locked_census adds four seconds while a busy reader fence is polled; the old elapsed < 5.0 assertion measures scheduler stalls.',
+                        'environment': {'OMP_NUM_THREADS': '1', 'MKL_NUM_THREADS': '1',
+                                        'OPENBLAS_NUM_THREADS': '1'},
+                        'patches': [{'target': 'prismabuild._measurement_reservation.locked_census',
+                                     'delay_seconds': 4}],
+                    }}],
+        'no_design_questions': True, 'lands_on_its_own': True,
+    }
+
+
+def test_request_149_reports_the_reserved_bound(tmp_path, planner_request, request_149_plan):
+    result = run_reply(tmp_path, planner_request, request_149_plan)
+    assert result.exit_code == 0, result.stderr
+    plan = next(event['reply'] for event in result.events if event['event'] == 'reply')
+    violation = next(v for v in plan['violations'] if v.startswith('Invalid forcing:'))
+    assert "Invalid forcing: a forcing can't set the environment variable 'MKL_NUM_THREADS'" in violation
+    assert 'runner-owned' in violation
+    assert plan['checks'][0]['forcing'] == request_149_plan['checks'][0]['forcing']
+
+
+@pytest.mark.parametrize('cpus', [1, 4])
+@pytest.mark.parametrize('stored_prompt', [False, True])
+def test_request_149_compliant_plan_and_model_contract(tmp_path, planner_request, request_149_plan, monkeypatch, stored_prompt, cpus):
+    planner_request['test_cpus'] = cpus
+    setup = '''
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+original_generate = FakeMessagesListChatModel._generate
+def inspect_contract(self, messages, **kwargs):
+    from tl3_harness.model import RESERVED_ENVIRONMENT, RESERVED_PREFIXES
+    system = next(m.content for m in messages if m.type == 'system')
+    inputs = json.loads(next(m.content for m in messages if m.type == 'human'))
+    contract = inputs['forcing_capabilities']
+    assert set(contract['reserved_environment']) == RESERVED_ENVIRONMENT
+    assert tuple(contract['reserved_prefixes']) == RESERVED_PREFIXES
+    cpus = inputs['tool_capabilities'][0]['runner_features'][-1].removeprefix('native_threads_')
+    assert contract['runner_environment'] == {name: cpus for name in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS')}
+    assert contract['runner_feature'] == f'native_threads_{cpus}'
+    from tl3_harness.model import Forcing, HarnessInputError
+    for name in contract['runner_environment']:
+        try:
+            Forcing.parse({'symptom': 'Reserved runner value', 'environment': {name: cpus}})
+        except HarnessInputError as error:
+            assert 'runner-owned' in str(error)
+        else:
+            raise AssertionError(f'forcing accepted {name}')
+    assert all(name in system for name in RESERVED_ENVIRONMENT | set(RESERVED_PREFIXES))
+    assert 'runner configuration' in system
+    assert f'native_threads_{cpus}' in system
+    assert all(f'{name}={cpus}' in system for name in contract['runner_environment'])
+    return original_generate(self, messages, **kwargs)
+FakeMessagesListChatModel._generate = inspect_contract
+'''
+    monkeypatch.setattr(worker_process, 'LAUNCH', setup + worker_process.LAUNCH)
+    if stored_prompt:
+        planner_request['prompt'] = {'version': 1, 'text': 'Plan this deflake.'}
+    request_149_plan['checks'][0]['forcing']['environment'] = {}
+    tool = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+            'runner_features': ['base_head', f'native_threads_{cpus}'],
+            'artifacts': ['logs', 'terminal_verdict', 'cas_receipt'],
+            'methods': ['forced_reproduction.patches'], 'protected_files': []}
+    requirement = {**copy.deepcopy(tool), 'runner_features': [f'native_threads_{cpus}'],
+                   'methods': [], 'requirement': f'Keep native thread bounds at {cpus}.'}
+    planner_request['inputs']['tool_capabilities'] = [tool]
+    planner_request['inputs']['ingest']['evidence_contract'] = [requirement]
+    request_149_plan['evidence_contract'] = []
+    result = run_reply(tmp_path, planner_request, request_149_plan)
+    assert result.exit_code == 0, result.stderr
+    plan = next(event['reply'] for event in result.events if event['event'] == 'reply')
+    assert plan['kind'] == 'leaf'
+    assert all('matching forcing rehearsal receipt' in v for v in plan['violations'])
+    assert plan['violations']
+    assert plan['evidence_contract'] == [requirement]
+    assert plan['checks'] == request_149_plan['checks']
+
+
+@pytest.mark.parametrize('name', sorted(RESERVED_ENVIRONMENT) + [prefix + 'TEST' for prefix in RESERVED_PREFIXES])
+def test_request_149_keeps_reserved_protections(planner_request, request_149_plan, monkeypatch, name):
+    from tl3_workers.forecast import Forecaster
+    from tl3_workers.roles.planner import check_reply
+    monkeypatch.chdir(planner_request['worktree'])
+    monkeypatch.setattr(Forecaster, 'measure', lambda *a: {'fits': True})
+    request_149_plan['checks'][0]['forcing']['environment'] = {name: '1'}
+    check_reply(planner_request['inputs'], request_149_plan)
+    violation = next(v for v in request_149_plan['violations'] if v.startswith('Invalid forcing:'))
+    assert repr(name) in violation
+    if name in {'OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS'}:
+        assert f'{name} is a runner-owned native-thread bound' in violation
+
+
+PBWAIT_TESTS = 'tests/test_pbwait_finds_a_later_submission.py'
+LATE = f'{PBWAIT_TESTS}::test_finds_a_later_submission'
+CONTROL = f'{PBWAIT_TESTS}::test_a_key_nothing_ever_records_still_gives_up_as_waiting'
+
+
+@pytest.fixture
+def request156(planner_request, monkeypatch):
+    planner_request['inputs']['repair_plan_consistency'] = True
+    root = Path(planner_request['worktree'])
+    (root / PBWAIT_TESTS).write_text(
+        'def test_finds_a_later_submission():\n    assert True\n\n'
+        'def test_a_key_nothing_ever_records_still_gives_up_as_waiting():\n'
+        '    wait_s = 0.0\n    verdict = "waiting"\n    assert verdict == "waiting"\n')
+    planner_request['inputs']['ingest']['goals'] = [
+        {'description': 'Find a later submission deterministically.', 'verification': 'test'},
+        {'description': 'Keep the no-submission control returning waiting with wait_s=0.0.',
+         'verification': 'test'},
+    ]
+    tool = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+            'runner_features': ['base_head', 'native_threads_1'],
+            'artifacts': ['logs', 'terminal_verdict', 'cas_receipt'],
+            'methods': ['red_green'], 'protected_files': []}
+    planner_request['inputs']['tool_capabilities'] = [tool]
+    planner_request['inputs']['ingest']['evidence_contract'] = [
+        {**copy.deepcopy(tool), 'requirement': 'Retain base/head proof and native thread bounds.'}]
+    monkeypatch.chdir(root)
+    return {
+        'kind': 'leaf', 'files': ['greeting.py', PBWAIT_TESTS],
+        'edits_tests': [LATE, CONTROL],
+        'checks': [{'kind': 'demonstrating', 'node_ids': [LATE], 'goal_ids': [0, 1]}],
+        'no_design_questions': True, 'lands_on_its_own': True, 'evidence_contract': [],
+    }
+
+
+@pytest.mark.parametrize('correction', ['check', 'new_check', 'unchanged', 'cant_meet'])
+def test_request156_gets_one_tool_free_consistency_correction(planner_request, request156, monkeypatch, correction):
+    from tl3_workers import runtime
+    from tl3_workers.forecast import Forecaster
+
+    fixed = copy.deepcopy(request156)
+    if correction == 'check':
+        fixed['checks'][0]['node_ids'].append(CONTROL)
+    elif correction == 'new_check':
+        fixed['checks'].append({'kind': 'demonstrating', 'node_ids': [CONTROL], 'goal_ids': [1]})
+    elif correction == 'unchanged':
+        fixed['edits_tests'].remove(CONTROL)
+    else:
+        fixed = {**copy.deepcopy(CANT_MEET), 'evidence_contract': []}
+    # Recompute trusted measurements even though a correction cannot expand the footprint.
+    measurements = []
+    original = Forecaster.measure
+
+    def measure(self, brief, paths):
+        measurements.append(set(paths))
+        return original(self, brief, paths)
+
+    monkeypatch.setattr(Forecaster, 'measure', measure)
+    model = planner_model(monkeypatch, request156, fixed)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2, 'the inconsistent draft must reach the existing correction boundary'
+    history, offered = model.calls[1]
+    assert model.calls[0][1] and not offered
+    assert isinstance(history[-1], HumanMessage)
+    assert CONTROL in history[-1].text and 'no demonstrating check' in history[-1].text
+    assert 'Tools are unavailable' in history[-1].text
+    assert json.loads(next(m.text for m in history if isinstance(m, HumanMessage)))['ingest'] == planner_request['inputs']['ingest']
+    result = events[-1]['reply']
+    assert result['kind'] == fixed['kind'] and result['violations'] == []
+    assert result['files'] == fixed['files']
+    assert measurements == [set(request156['files']), set(fixed['files'])]
+    assert result['evidence_contract'] == planner_request['inputs']['ingest']['evidence_contract']
+    assert result['evidence_errors'] == []
+    assert sum(event['event'] == 'reply' for event in events) == 1
+    if correction != 'cant_meet':
+        assert result['checks'] == fixed['checks'] and result['edits_tests'] == fixed['edits_tests']
+
+
+def test_request156_second_mismatch_stops_with_both_named_diagnostics(planner_request, request156, monkeypatch):
+    from tl3_workers import runtime
+    from tl3_workers.tracing import failure_tags
+    from tl3_workers.turns import InvalidReply
+
+    second = copy.deepcopy(request156)
+    second['checks'][0]['node_ids'] = [CONTROL]
+    model = planner_model(monkeypatch, request156, second, LEAF)
+    events = []
+    with pytest.raises(InvalidReply) as raised:
+        runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    assert CONTROL in str(raised.value.errors[0])
+    assert LATE in str(raised.value.errors[1])
+    diagnostics = failure_tags(raised.value)['failure_message']
+    assert CONTROL in diagnostics and LATE in diagnostics
+    assert not any(event['event'] == 'reply' for event in events)
+
+
+@pytest.mark.parametrize('first', [{'kind': 'not-a-plan'}, {**LEAF, 'forecast': {'fits': True}}])
+def test_request156_shares_the_single_format_correction(planner_request, request156, monkeypatch, first):
+    from tl3_workers import runtime
+    from tl3_workers.turns import InvalidReply
+
+    model = planner_model(monkeypatch, first, request156, LEAF)
+    with pytest.raises(InvalidReply) as raised:
+        runtime.run(planner_request, lambda _: None)
+    assert CONTROL in str(raised.value.errors[1])
+    assert len(model.calls) == 2
+
+
+@pytest.mark.parametrize('obstacle', ['goal', 'protected', 'unsupported', 'test_only'])
+def test_request156_corrected_reply_is_fully_rechecked(planner_request, request156, monkeypatch, obstacle):
+    from tl3_workers import runtime
+
+    fixed = copy.deepcopy(request156)
+    fixed['checks'][0]['node_ids'].append(CONTROL)
+    if obstacle == 'goal':
+        fixed['checks'][0]['goal_ids'] = [0]
+    elif obstacle == 'protected':
+        fixed['files'].append('conftest.py')
+    elif obstacle == 'unsupported':
+        requirement = copy.deepcopy(planner_request['inputs']['ingest']['evidence_contract'][0])
+        requirement['executor'] = 'buildbuddy_remote_bazel'
+        fixed['evidence_contract'] = [requirement]
+    else:
+        Path(planner_request['worktree'], 'pyproject.toml').write_text(
+            '[tool.tl3.harness]\ntest-files = ["tests/**/*.py"]\n')
+        fixed['files'] = [PBWAIT_TESTS]
+    model = planner_model(monkeypatch, request156, fixed, LEAF)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    result = events[-1]['reply']
+    assert result['kind'] == 'cant_meet' if obstacle == 'unsupported' else result['violations']
+
+
+@pytest.mark.parametrize('obstacle', ['cant_meet', 'unsupported', 'protected', 'out_of_room', 'forcing', 'test_only'])
+def test_request156_substantive_stops_do_not_get_consistency_correction(planner_request, request156, monkeypatch, obstacle):
+    from tl3_workers import runtime
+
+    if obstacle == 'cant_meet':
+        request156 = {**CANT_MEET, 'evidence_contract': []}
+    elif obstacle == 'unsupported':
+        planner_request['inputs']['tool_capabilities'] = []
+    elif obstacle == 'protected':
+        request156['files'].append('conftest.py')
+    elif obstacle == 'out_of_room':
+        planner_request['inputs']['must_split'] = True
+    elif obstacle == 'forcing':
+        request156['checks'][0]['forcing'] = {
+            'symptom': 'Delay submission.', 'environment': {'OMP_NUM_THREADS': '1'}, 'patches': []}
+    else:
+        Path(planner_request['worktree'], 'pyproject.toml').write_text(
+            '[tool.tl3.harness]\ntest-files = ["tests/**/*.py"]\n')
+        request156['files'] = [PBWAIT_TESTS]
+    model = planner_model(monkeypatch, request156, LEAF)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 1
+    result = events[-1]['reply']
+    if obstacle in {'cant_meet', 'unsupported'}:
+        assert result['kind'] == 'cant_meet'
+        if obstacle == 'unsupported':
+            assert result['evidence_errors']
+    else:
+        assert result['violations']
+        assert any(CONTROL in violation and 'no demonstrating check' in violation
+                   for violation in result['violations'])
+
+
+def test_request156_trace_diagnostics_redact_model_text():
+    from tl3_workers.roles.planner import PlanConsistencyError
+    from tl3_workers.tracing import failure_tags
+    from tl3_workers.turns import InvalidReply
+
+    secret = 'sk-proj-' + 'aB7cD9eF2gH4jK6mN8pQ0rS3tU5vW1xY'
+    error = PlanConsistencyError([CONTROL + '[api_key=' + secret + ']'])
+    tags = failure_tags(InvalidReply(error, error))
+    assert secret not in json.dumps(tags)
+    assert CONTROL in tags['failure_message']
+    assert 'repaired reply: planner check inconsistency:' in tags['failure_message']
+
+
+RELAY_TESTS = 'tests/test_docker_shim_relays_termination_1599.py'
+SMOKE = f'{RELAY_TESTS}::test_a_term_reaches_the_client_and_the_receipt_names_the_container'
+CREATED = f'{RELAY_TESTS}::test_a_created_container_that_cannot_be_removed_is_start_unresolved'
+INVENTED = [f'{RELAY_TESTS}::test_a_created_container_whose_removal_is_denied_is_start_unresolved_in_virtual_time',
+            f'{RELAY_TESTS}::test_a_mutant_treating_created_as_stopped_fails_the_removal_denied_scenario']
+
+
+@pytest.fixture
+def request162(planner_request, monkeypatch):
+    planner_request['inputs']['repair_plan_consistency'] = True
+    root = Path(planner_request['worktree'])
+    (root / RELAY_TESTS).write_text(
+        'def test_a_term_reaches_the_client_and_the_receipt_names_the_container():\n    assert True\n\n'
+        'def test_a_created_container_that_cannot_be_removed_is_start_unresolved():\n    assert True\n')
+    (root / 'pyproject.toml').write_text('[tool.tl3.harness]\ntest-files = ["tests/**/*.py"]\n')
+    planner_request['inputs']['ingest']['goals'] = [
+        {'description': 'Drive rejected created-container removal with virtual time.', 'verification': 'test'},
+        {'description': 'Reject a mutant treating Running=False as proof of stop.', 'verification': 'test'},
+        {'description': 'Keep the OS signal smoke check.', 'verification': 'test'},
+    ]
+    monkeypatch.chdir(root)
+    return {
+        'kind': 'leaf', 'files': [RELAY_TESTS], 'edits_tests': [CREATED],
+        'checks': [{'kind': 'demonstrating', 'node_ids': [CREATED, *INVENTED], 'goal_ids': [0, 1],
+                    'forcing': {'symptom': 'Delay daemon replies during created-container cleanup.',
+                                'environment': {},
+                                'patches': [{'target': 'shim.DAEMON_DELAY', 'value': 1}]}},
+                   {'kind': 'regression', 'node_ids': [SMOKE], 'goal_ids': [2]}],
+        'no_design_questions': True, 'lands_on_its_own': True,
+    }
+
+
+@pytest.mark.parametrize('resolution', ['base_nodes', 'cant_meet', 'still_invented'])
+def test_request162_forced_check_gets_the_same_single_correction(planner_request, request162, monkeypatch, resolution):
+    from tl3_workers import runtime
+    from tl3_workers.turns import InvalidReply
+
+    fixed = copy.deepcopy(request162)
+    if resolution == 'base_nodes':
+        fixed['checks'][0]['node_ids'] = [CREATED]
+    elif resolution == 'cant_meet':
+        fixed = copy.deepcopy(CANT_MEET)
+        fixed['report'] = 'The existing base tests cannot honestly demonstrate the required mutant and deterministic goals.'
+    model = planner_model(monkeypatch, request162, fixed, LEAF)
+    events = []
+    if resolution == 'still_invented':
+        with pytest.raises(InvalidReply) as raised:
+            runtime.run(planner_request, events.append)
+        assert all(node in str(raised.value.errors[1]) for node in INVENTED)
+        assert not any(event['event'] == 'reply' for event in events)
+    else:
+        runtime.run(planner_request, events.append)
+        result = events[-1]['reply']
+        assert result['kind'] == fixed['kind']
+        if resolution == 'base_nodes':
+            assert result['violations'] and all('matching forcing rehearsal receipt' in v for v in result['violations'])
+            assert result['checks'][0]['node_ids'] == [CREATED]
+            assert result['checks'][0]['goal_ids'] == [0, 1]
+            assert result['checks'][1] == request162['checks'][1]
+            assert result['checks'][0]['forcing'] == request162['checks'][0]['forcing']
+        else:
+            assert result['violations'] == []
+            assert result['report'] == fixed['report']
+    assert len(model.calls) == 2
+    history, offered = model.calls[1]
+    assert not offered
+    assert all(node in history[-1].text for node in INVENTED)
+    assert 'Existing check must name a test defined at the base' in history[-1].text
+    inputs = json.loads(next(m.text for m in history if isinstance(m, HumanMessage)))
+    assert inputs['ingest']['goals'] == planner_request['inputs']['ingest']['goals']
+
+
+def test_request162_ordinary_missing_regression_still_stops(planner_request, request162, monkeypatch):
+    from tl3_workers import runtime
+
+    # Only the forced demonstrating mismatch is locally repairable.
+    request162['files'].append('greeting.py')
+    request162['checks'][0].pop('forcing')
+    request162['checks'][0]['kind'] = 'regression'
+    request162.pop('edits_tests')
+    model = planner_model(monkeypatch, request162, LEAF)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 1
+    assert all(any(node in v for v in events[-1]['reply']['violations']) for node in INVENTED)
+
+
+@pytest.mark.parametrize('obstacle', ['protected', 'forcing', 'out_of_room'])
+def test_request162_substantive_stops_bypass_correction(planner_request, request162, monkeypatch, obstacle):
+    from tl3_workers import runtime
+
+    if obstacle == 'protected':
+        request162['files'].append('conftest.py')
+    elif obstacle == 'forcing':
+        request162['checks'][0]['forcing']['environment'] = {'OMP_NUM_THREADS': '1'}
+    else:
+        planner_request['inputs']['must_split'] = True
+    model = planner_model(monkeypatch, request162, LEAF)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 1
+    assert all(any(node in v for v in events[-1]['reply']['violations']) for node in INVENTED)
+
+
+def test_request162_correction_cannot_drop_mutant_coverage(planner_request, request162, monkeypatch):
+    from tl3_workers import runtime
+
+    fixed = copy.deepcopy(request162)
+    fixed['checks'][0]['node_ids'] = [CREATED]
+    fixed['checks'][0]['goal_ids'] = [0, 2]
+    model = planner_model(monkeypatch, request162, fixed)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    assert 'Every maker and checking goal must have a check.' in events[-1]['reply']['violations']
+
+
+EXPORT_TESTS = 'tests/test_paced_exports_share_a_tier.py'
+FINISHED = f'{EXPORT_TESTS}::test_a_finished_export_files_its_rate_and_prices_the_next_seal'
+PROPOSED_EXPORTS = [f'{EXPORT_TESTS}::test_a_fast_writer_is_held_and_flushed_under_virtual_time',
+                    f'{EXPORT_TESTS}::test_a_delayed_writer_files_a_sub_one_rate_and_seals_one',
+                    f'{EXPORT_TESTS}::test_a_virtual_receipt_prices_ceiled_and_capped_by_the_offer']
+
+
+@pytest.fixture
+def request165(planner_request, monkeypatch):
+    planner_request['inputs']['repair_plan_consistency'] = True
+    planner_request['inputs']['tool_capabilities'] = [
+        {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+         'runner_features': ['base_head', 'native_threads_1'],
+         'artifacts': ['logs', 'terminal_verdict', 'cas_receipt'],
+         'methods': ['red_green', 'forced_reproduction.patches'], 'protected_files': []}]
+    root = Path(planner_request['worktree'])
+    (root / EXPORT_TESTS).write_text(
+        'def test_a_finished_export_files_its_rate_and_prices_the_next_seal():\n    assert True\n')
+    (root / 'pyproject.toml').write_text('[tool.tl3.harness]\ntest-files = ["tests/**/*.py"]\n')
+    planner_request['inputs']['ingest']['goals'] = [
+        {'description': description, 'verification': 'review' if index == 6 else 'test',
+         **({'stage': 'publishing', 'publication': {'non_draft': True, 'body_lines': [], 'proof': True}}
+            if index == 6 else {})}
+        for index, description in enumerate([
+            'Use virtual time through the real export, pacer and receipt-writing path.',
+            'A fast writer must incur a virtual pacing hold and flush.',
+            'A delayed writer must file a sub-1 MB/s rate without a required sleep.',
+            'Keep real CAS requests, receipt filing and next-export seal pricing.',
+            'Assert independent literal rates and prices, not pricing-function tautologies.',
+            'Keep ceil, minimum-one and offer-cap pricing and tier token totals within the offer.',
+            'Report focused base/head proof and receipt hashes in the PR.',
+            'Keep launch and receipt integration smoke coverage.',
+            'Preserve the seal ceiling without introducing a scheduler throughput floor.',
+            'Deterministic schedules must fail faulty pacing or receipt pricing.',
+        ])]
+    planner_request['inputs']['ingest']['evidence_errors'] = []
+    monkeypatch.chdir(root)
+    return {
+        'kind': 'leaf', 'files': [EXPORT_TESTS], 'edits_tests': [FINISHED], 'evidence_contract': [],
+        'checks': [{'kind': 'demonstrating', 'node_ids': [FINISHED, *PROPOSED_EXPORTS],
+                    'goal_ids': [0, 1, 2, 3, 4, 5, 7, 8, 9],
+                    'forcing': {'symptom': 'Deschedule the export writer before its block is counted; '
+                                           'the old rate floor and positive-hold assertions fail.',
+                                'environment': {},
+                                'patches': [{'target': 'prismabuild.produced_spool.ExportPacer.wrote',
+                                             'delay_seconds': 2}]}}],
+        'no_design_questions': True, 'lands_on_its_own': True,
+    }
+
+
+@pytest.mark.parametrize('resolution', ['base_node', 'cant_meet', 'still_invented', 'drop_tier_goal'])
+def test_request165_preserves_deterministic_tier_and_rate_goals(planner_request, request165, monkeypatch, resolution):
+    from tl3_workers import runtime
+    from tl3_workers.turns import InvalidReply
+
+    fixed = copy.deepcopy(request165)
+    fixed['checks'][0]['node_ids'] = [FINISHED]
+    if resolution == 'cant_meet':
+        fixed = copy.deepcopy(CANT_MEET)
+        fixed['evidence_contract'] = []
+        fixed['report'] = 'No existing base test can honestly demonstrate all the deterministic tier/rate goals.'
+    elif resolution == 'still_invented':
+        fixed = copy.deepcopy(request165)
+    elif resolution == 'drop_tier_goal':
+        fixed['checks'][0]['goal_ids'].remove(5)
+    model = planner_model(monkeypatch, request165, fixed, LEAF)
+    events = []
+    if resolution == 'still_invented':
+        with pytest.raises(InvalidReply) as raised:
+            runtime.run(planner_request, events.append)
+        assert all(node in str(raised.value.errors[1]) for node in PROPOSED_EXPORTS)
+        assert not any(event['event'] == 'reply' for event in events)
+    else:
+        runtime.run(planner_request, events.append)
+        result = events[-1]['reply']
+        if resolution == 'drop_tier_goal':
+            assert 'Every maker and checking goal must have a check.' in result['violations']
+        else:
+            assert result['kind'] == fixed['kind']
+            if resolution == 'base_node':
+                assert result['violations'] and all('matching forcing rehearsal receipt' in v for v in result['violations'])
+                assert result['checks'] == [{**request165['checks'][0], 'node_ids': [FINISHED]}]
+                assert result['edits_tests'] == [FINISHED]
+                assert result['checks'][0]['forcing']['environment'] == {}
+            else:
+                assert result['violations'] == []
+                assert result['report'] == fixed['report']
+            assert result['evidence_errors'] == []
+    assert len(model.calls) == 2
+    history, offered = model.calls[1]
+    assert not offered
+    assert all(node in history[-1].text for node in PROPOSED_EXPORTS)
+    inputs = json.loads(next(m.text for m in history if isinstance(m, HumanMessage)))
+    assert inputs['ingest']['goals'] == planner_request['inputs']['ingest']['goals']
+    assert inputs['ingest']['evidence_errors'] == []
+
+
+@pytest.mark.parametrize('shape', ['request156', 'request162', 'request165'])
+@pytest.mark.parametrize('enabled', [None, False])
+def test_consistency_correction_defaults_off(planner_request, request, monkeypatch, shape, enabled):
+    from tl3_workers import runtime
+
+    draft = request.getfixturevalue(shape)
+    if enabled is None:
+        planner_request['inputs'].pop('repair_plan_consistency', None)
+    else:
+        planner_request['inputs']['repair_plan_consistency'] = enabled
+    fixed = copy.deepcopy(draft)
+    if shape == 'request156':
+        fixed['checks'][0]['node_ids'].append(CONTROL)
+    else:
+        fixed['checks'][0]['node_ids'] = draft['checks'][0]['node_ids'][:1]
+    model = planner_model(monkeypatch, draft, fixed)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 1, 'default-off must keep the original PlanCantMeet classification'
+    assert events[-1]['reply']['violations']
+
+
+@pytest.mark.parametrize('expansion', ['file', 'check', 'forcing', 'goal', 'edit'])
+def test_correction_cannot_expand_draft(planner_request, request156, monkeypatch, expansion):
+    from tl3_workers import runtime
+
+    fixed = copy.deepcopy(request156)
+    fixed['checks'][0]['node_ids'].append(CONTROL)
+    if expansion == 'file':
+        fixed['files'].append('tests/test_existing.py')
+    elif expansion == 'check':
+        fixed['checks'].append({'kind': 'demonstrating', 'node_ids': [f'{PBWAIT_TESTS}::test_unrelated'],
+                                'goal_ids': [0]})
+    elif expansion == 'forcing':
+        fixed['checks'][0]['forcing'] = {'symptom': 'A new condition.', 'environment': {},
+                                         'patches': [{'target': 'shim.DELAY', 'value': 1}]}
+    elif expansion == 'goal':
+        fixed['checks'][0]['goal_ids'] = [0, 1, 2]
+    else:
+        unrelated = f'{PBWAIT_TESTS}::test_unrelated'
+        with Path(planner_request['worktree'], PBWAIT_TESTS).open('a') as stream:
+            stream.write('\ndef test_unrelated():\n    assert True\n')
+        fixed['edits_tests'].append(unrelated)
+        fixed['checks'][0]['node_ids'].append(unrelated)
+    model = planner_model(monkeypatch, request156, fixed, LEAF)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    violations = events[-1]['reply']['violations']
+    assert violations, 'a coherent correction must not authorize a wider draft'
+    if expansion == 'file':
+        assert any('Correction expands the draft footprint: tests/test_existing.py' in v for v in violations)
+
+
+@pytest.mark.parametrize('forcing_change', ['new', 'same', 'target', 'value', 'environment'])
+def test_appended_coverage_check_cannot_introduce_forcing(planner_request, request156, monkeypatch, forcing_change):
+    from tl3_workers import runtime
+
+    forcing = {'symptom': 'Delay daemon replies.', 'environment': {},
+               'patches': [{'target': 'shim.DELAY', 'value': 1}]}
+    if forcing_change != 'new':
+        request156['checks'][0]['forcing'] = copy.deepcopy(forcing)
+    fixed = copy.deepcopy(request156)
+    if forcing_change == 'target':
+        forcing['patches'][0]['target'] = 'shim.OTHER_DELAY'
+    elif forcing_change == 'value':
+        forcing['patches'][0]['value'] = 2
+    elif forcing_change == 'environment':
+        forcing['environment'] = {'SHIM_DELAY': '1'}
+    fixed['checks'].append({'kind': 'demonstrating', 'node_ids': [CONTROL], 'goal_ids': [1],
+                            'forcing': forcing})
+    model = planner_model(monkeypatch, request156, fixed, LEAF)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    assert not model.calls[1][1]
+    result = events[-1]['reply']
+    if forcing_change == 'same':
+        assert result['violations'] and all('matching forcing rehearsal receipt' in v for v in result['violations'])
+        assert result['checks'] == fixed['checks']
+    else:
+        assert 'Correction adds a forcing absent from the draft.' in result['violations']
+
+
+@pytest.mark.parametrize('setup', ['_failed_queue', '_missing_setup', '_needs_argument'])
+def test_helper_setup_is_preflighted_before_maker(planner_request, digests_plan, setup):
+    path = Path(planner_request['worktree']) / DIGESTS
+    path.write_text(path.read_text() + '\ndef _execute(q):\n    assert q.execute().returncode == 0\n'
+                    '\ndef _failed_queue():\n    return object()\n'
+                    '\ndef _needs_argument(value):\n    return value\n')
+    planner_request['inputs']['ingest']['goals'] = [
+        {'description': 'Improve helper failure text, preserving failure.', 'verification': 'test'}]
+    digests_plan.update(files=[DIGESTS], checks=[{
+        'kind': 'demonstrating', 'node_ids': [f'{DIGESTS}::test_new_diagnostic'], 'goal_ids': [0],
+        'helper_evidence': {'target': f'{DIGESTS}::_execute', 'failure_cases': [
+            {'args': [{'$setup': setup, '$call': 'execute'}], 'kwargs': {}}]}}])
+    validate('planner-reply', digests_plan)
+    violations = planned(planner_request, copy.deepcopy(digests_plan))
+    if setup == '_failed_queue':
+        assert violations == []
+    else:
+        assert any('setup' in item for item in violations), violations
+
+
+def test_helper_setup_requires_its_installed_capability():
+    from tl3_workers.evidence import preflight
+    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
+                  'artifacts': ['cas_receipt', 'terminal_verdict'],
+                  'methods': ['helper_target_observer'], 'protected_files': []}
+    reply = {'kind': 'leaf', 'files': ['tests/test_helpers.py'], 'evidence_contract': [],
+             'checks': [{'helper_evidence': {'target': 'tests/test_helpers.py::_execute', 'failure_cases': [
+                 {'args': [{'$setup': '_failed_queue', '$call': 'execute'}], 'kwargs': {}}]}}]}
+    original = copy.deepcopy(reply)
+    preflight({'tool_capabilities': [capability]}, reply, planning=True)
+    assert reply['kind'] == 'cant_meet'
+    assert 'methods=helper_target_observer.setup_function' in reply['report']
+    capability['methods'].append('helper_target_observer.setup_function')
+    preflight({'tool_capabilities': [capability]}, original, planning=True)
+    assert original['kind'] == 'leaf' and original['evidence_errors'] == []

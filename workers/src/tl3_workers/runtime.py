@@ -20,8 +20,11 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 from langchain_core.outputs import ChatGenerationChunk
 from langchain_openai import ChatOpenAI
 
+from tl3_workers.evidence import forcing_capabilities, forcing_guidance
 from tl3_workers.contracts import read_json, read_reply, schema, validate
 from tl3_workers.roles import ROLES
+from tl3_workers.roles.planner import PlanConsistencyError
+from tl3_workers.forcing_rehearsal import ForcingRehearsals
 from tl3_workers.tools import Worktree, build_tools
 from tl3_workers.memory import Summary, current
 from tl3_workers.recall import redacted_memories
@@ -58,15 +61,18 @@ class ProxyChatOpenAI(ChatOpenAI):
 
     def _stream(self, *args, **kwargs):
         last_usage = None
-        for chunk in super()._stream(*args, **kwargs):
-            if chunk.message.usage_metadata is not None:
-                # CLIProxyAPI sends totals on finish and again on a trailing chunk.
-                last_usage = chunk.message.usage_metadata
-                chunk = chunk.model_copy(update={"message": chunk.message.model_copy(
-                    update={"usage_metadata": None})})
-            yield chunk
-        if last_usage is not None:
-            yield ChatGenerationChunk(message=AIMessageChunk(content="", usage_metadata=last_usage))
+        try:
+            for chunk in super()._stream(*args, **kwargs):
+                if chunk.message.usage_metadata is not None:
+                    # CLIProxyAPI sends totals on finish and again on a trailing chunk.
+                    last_usage = chunk.message.usage_metadata
+                    chunk = chunk.model_copy(update={"message": chunk.message.model_copy(
+                        update={"usage_metadata": None})})
+                yield chunk
+        finally:
+            # Keep measured usage even when the stream fails after its usage chunk.
+            if last_usage is not None:
+                yield ChatGenerationChunk(message=AIMessageChunk(content="", usage_metadata=last_usage))
 
 
 def session_identity(request):
@@ -92,6 +98,9 @@ def create_model(request) -> BaseChatModel:
     record_model_key(key)
     spec = request["model"]
     identity = session_identity(request)
+    from tl3_workers.facts import current as current_facts
+    if facts := current_facts.get():
+        facts.session_id = identity
     return ProxyChatOpenAI(
         base_url=spec["base_url"],
         model=spec["name"],
@@ -110,13 +119,18 @@ def create_model(request) -> BaseChatModel:
 ONLY_JSON = "Reply with one JSON object only: no prose, no code fences."
 # The run's prompt version from the controller (PRD #327, C5), if it sent one.
 run_prompt = ContextVar("run_prompt", default=None)
+run_test_cpus = ContextVar("run_test_cpus", default=1)
 
 
 def role_prompt(role):
     supplied = run_prompt.get()
-    if supplied is not None:
-        return supplied
-    return files("tl3_workers").joinpath("prompts", role.prompt).read_text()
+    prompt = supplied if supplied is not None else files("tl3_workers").joinpath("prompts", role.prompt).read_text()
+    if role.name in {"ingest", "audit", "planner"}:
+        prompt += "\n\n" + forcing_guidance(run_test_cpus.get())
+    if role.name == 'planner':
+        from tl3_workers.forcing_rehearsal import GUIDANCE
+        prompt += "\n\n" + GUIDANCE
+    return prompt
 
 
 def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None, context_size=150_000,
@@ -141,6 +155,8 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None,
     if identifier:
         register_harness_profile(f"{provider}:{identifier}", profile)
     prompt = role_prompt(role)
+    if worktree is not None and role.name in {"ingest", "planner", "maker"}:
+        prompt += "\n\n" + worktree.generation_instruction()
     prompt += "\n\n" + ONLY_JSON + " It must match this schema:\n"
     proposal = deepcopy(schema(role.reply_schema)) if reply_schema is None else reply_schema
     for variant in proposal.get("oneOf", [proposal]):
@@ -174,10 +190,13 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None,
 def run(request, emit: Callable[[dict], None]):
     from tl3_workers.tracing import observe, record_reply
 
-    with observe(request):
+    from tl3_workers.facts import observe as observe_facts
+
+    with observe_facts(request), observe(request):
         summary = Summary(request)
         token = current.set(summary)
         prompt = run_prompt.set(request.get("prompt", {}).get("text"))
+        test_cpus = run_test_cpus.set(request.get("test_cpus", 1))
         summary.save()
         reply, error = None, None
         try:
@@ -189,6 +208,7 @@ def run(request, emit: Callable[[dict], None]):
         finally:
             summary.finish(reply, error)
             run_prompt.reset(prompt)
+            run_test_cpus.reset(test_cpus)
             current.reset(token)
 
 
@@ -200,18 +220,45 @@ def _run(request, emit):
                                          "memories": redacted_memories(request["inputs"]["memories"])}}
     if role.prepare_inputs is not None:
         request = {**request, "inputs": role.prepare_inputs(request["inputs"], request)}
-    with Worktree(request["worktree"]) if role.tools else nullcontext() as worktree:
+    forecast = request["inputs"].get("forecast", {})
+    with Worktree(request["worktree"], generated_files=forecast.get("generated_files", ()),
+                  generator=forecast.get("generator")) if role.tools else nullcontext() as worktree:
         if worktree is not None:
             worktree.hindsight_key_file = request.get("hindsight_key_file")
             worktree.progress_emit = emit
+        if role.name == 'planner':
+            worktree.forcing_rehearsals = ForcingRehearsals(worktree, request['inputs'], checkout=request['worktree'])
         if role.run is None:
             control = TurnControl()
             agent = build_agent(model, role, worktree, context_size=request["inputs"].get(
                 "context_size", request["inputs"].get("forecast", {}).get("context_tokens", 150_000)),
                 control=control)
-            history = [HumanMessage(content=json.dumps(request["inputs"], ensure_ascii=False))]
+            model_inputs = request["inputs"]
+            if role.name in {"ingest", "audit", "planner"}:
+                model_inputs = {"forcing_capabilities": forcing_capabilities(run_test_cpus.get()), **model_inputs}
+            history = [HumanMessage(content=json.dumps(model_inputs, ensure_ascii=False))]
+            draft_error = None
+
+            def checked(text):
+                nonlocal draft_error
+                # A completed failed rehearsal is substantive work evidence. Even malformed
+                # final text cannot route it into tool-free format or consistency correction.
+                ledger = getattr(worktree, 'forcing_rehearsals', None)
+                if ledger is not None and ledger.failure:
+                    return _checked(role, request['inputs'], {
+                        'kind': 'cant_meet', 'files': [], 'evidence_contract': [], 'report': ledger.failure['message']}, worktree=worktree)
+                try:
+                    result = _checked(role, request["inputs"], read_reply(text), worktree=worktree)
+                except PlanConsistencyError as error:
+                    if draft_error is None:
+                        draft_error = error
+                    raise
+                if draft_error is not None:
+                    draft_error.constrain(result)
+                return result
+
             reply = repaired(control, history, lambda: _run_agent(agent, history, emit),
-                             lambda text: _checked(role, request["inputs"], read_reply(text)))
+                             checked)
         else:
             reply = role.run(model, request, worktree, emit)
             if not role.validates_reply:
@@ -220,10 +267,13 @@ def _run(request, emit):
     return reply
 
 
-def _checked(role, inputs, reply):
+def _checked(role, inputs, reply, *, worktree=None):
     validate(role.reply_schema, reply)
     if role.check_reply is not None:
-        role.check_reply(inputs, reply)
+        if role.name == 'planner':
+            role.check_reply(inputs, reply, rehearsals=getattr(worktree, 'forcing_rehearsals', None))
+        else:
+            role.check_reply(inputs, reply)
     return reply
 
 

@@ -56,7 +56,6 @@ pub use source::{RunningSource, Source};
 
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
     ffi::OsString,
     fs::{self, File},
     io::Write,
@@ -90,6 +89,8 @@ struct Job {
     /// The harness may report one trailing selected regression check (#359).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     selected_tests: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    always_tests: Vec<String>,
 }
 
 pub struct Adapter {
@@ -472,7 +473,8 @@ impl Adapter {
             .images
             .for_repository(&delivery.repository, &self.settings.image);
         let run = checks::descended_base(delivery)?;
-        let selected_tests = self.images.selected_tests(&delivery.repository);
+        let tests = self.images.additional_tests(&delivery.repository);
+        let selected_tests = tests.selected;
         let mut staged = delivery.clone();
         staged.checks = Some(run.clone());
         let changed_paths = checks::stage(
@@ -482,21 +484,41 @@ impl Adapter {
             image,
             self.images.exec_scratch(&delivery.repository),
             &self.protected_paths(&delivery.repository),
-            selected_tests,
+            &tests,
         )?;
+        let mut seen = std::collections::BTreeSet::new();
+        let always_tests = tests
+            .always
+            .into_iter()
+            .filter(|test| seen.insert(test.clone()))
+            .collect();
         let mut command = self.settings.python.clone();
         command.extend(["-I".into(), "-B".into(), "action.py".into()]);
+        let demand = self.images.test_demand(&delivery.repository).map_or_else(
+            || self.settings.demand.clone(),
+            |demand| Demand {
+                cpus: demand
+                    .cpus
+                    .try_into()
+                    .expect("validated positive test demand"),
+                mem_gb: demand.mem_gb,
+                gpu: false,
+            },
+        );
+        let threads = demand.cpus.to_string();
         let action = SubmitAction {
             checkout: input,
             command,
-            demand: self.settings.demand.clone(),
+            demand,
             container_image: image.to_owned(),
             progress: vec![ProgressPhase {
                 name: "tests".into(),
                 stall_allowance: self.settings.quiet,
             }],
             progress_cycle: false,
-            env: BTreeMap::new(),
+            env: ["OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"]
+                .map(|name| (name.to_owned(), threads.clone()))
+                .into(),
         };
         let key = self
             .runtime
@@ -511,6 +533,7 @@ impl Adapter {
             changed_paths,
             run,
             selected_tests,
+            always_tests,
         };
         // The sealed key reaches stable storage before PB may execute anything.
         write(&record_path(&self.settings.records, delivery, "job"), &job)?;
@@ -557,10 +580,12 @@ impl Adapter {
             return Ok(Reconciliation::Pending);
         }
         Ok(
-            match self
-                .runtime
-                .block_on(results::ending(&self.settings.result_tool, job, false))?
-            {
+            match self.runtime.block_on(results::ending(
+                &self.settings.result_tool,
+                job,
+                false,
+                &record,
+            ))? {
                 Some(completion) => Reconciliation::Found(completion),
                 None if matches!(record, RecordRead::Absent) => Reconciliation::Absent,
                 None => Reconciliation::Pending,
@@ -813,7 +838,12 @@ impl Executor for Adapter {
                     }
                     if self
                         .runtime
-                        .block_on(results::ending(&self.settings.result_tool, &job, true))?
+                        .block_on(results::ending(
+                            &self.settings.result_tool,
+                            &job,
+                            true,
+                            &record,
+                        ))?
                         .is_none()
                     {
                         return Ok(Reconciliation::Pending);

@@ -12,6 +12,7 @@ import sys
 import tempfile
 
 from tl3_harness import execution
+from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT
 from tl3_harness.node_ids import selects
 from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, infrastructure, options
 from tl3_harness.trees import export
@@ -62,7 +63,7 @@ def _priority(priority):
     return priority
 
 
-def _stage(worktree, root, base_sha=None):
+def _stage(worktree, root, base_sha=None, *, action="test_tool"):
     harness = Path(execution.__file__).resolve().parent
     owner = os.fstat(worktree._root)
     if any(os.path.samestat(parent.stat(), owner) for parent in (harness, *harness.parents)):
@@ -89,7 +90,7 @@ def _stage(worktree, root, base_sha=None):
     (root / "action.py").write_text(
         'import sys\nfrom pathlib import Path\n'
         'sys.path.insert(0, str(Path(__file__).resolve().parent / "trusted"))\n'
-        'from tl3_harness.test_tool import main\nmain()\n'
+        f'from tl3_harness.{action} import main\nmain()\n'
     )
     # PB snapshots a Git checkout. These fixed commands create its private input,
     # never invoking hooks or commands from the role's Git configuration.
@@ -167,7 +168,40 @@ def _summary(ending, key):
     return result
 
 
-def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None):
+def _failure_receipt(ending, settings):
+    """Keep failure diagnosis without copying PB's private scheduler metadata."""
+    diagnostics = ending.get("diagnostics") or {}
+    receipt = {"action_key": ending["action_key"], "status": ending["status"],
+               "exit_code": ending.get("exit_code")}
+    if receipt["exit_code"] is None:
+        receipt["exit_code"] = diagnostics.get("returncode")
+    reason = diagnostics.get("termination_reason") or ending.get("reason")
+    # Older pbwait consumer endings omit termination_reason. Read only this
+    # failed action's terminal record, from the same installed fleet layout
+    # used by the controller, and require its publication to match the ending.
+    publication = ending.get("publication") or {}
+    published = publication.get("published_unix")
+    if reason != "memory_limit_oom" and published is not None:
+        path = Path(settings.tools_path).parent.parent / "pb-queue" / "failed" / f"{ending['action_key']}.json"
+        try:
+            with path.open("rb") as stream:
+                raw = stream.read(2_097_153)
+            record = json.loads(raw) if len(raw) <= 2_097_152 else {}
+            if (isinstance(record, dict) and record.get("action_key") == ending["action_key"]
+                    and record.get("published_unix") == published):
+                reason = (record.get("detail") or {}).get("termination_reason")
+        except (OSError, ValueError, TypeError):
+            pass
+    if reason == "memory_limit_oom":
+        receipt["termination_reason"] = reason
+    scope = (diagnostics.get("resource_profile") or {}).get("scope") or {}
+    peak = scope.get("memory_peak_bytes")
+    if type(peak) is int and peak >= 0:
+        receipt["memory_peak_bytes"] = peak
+    return receipt
+
+
+def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None, forcing=None, timeout_seconds=None):
     """Bind settings from role inputs, directly or via worktree.test_settings."""
     settings = settings if settings is not None else getattr(worktree, "test_settings", None)
     emit = emit if emit is not None else getattr(worktree, "progress_emit", lambda event: None)
@@ -192,11 +226,17 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
             if len(endings) != 1 or endings[0]["action_key"] != key:
                 raise ValueError("PrismaBuild returned another action")
             if waited["complete"]:
-                if code:
-                    raise ValueError("PrismaBuild action infrastructure failed")
-                result = _summary(endings[0], key)
+                if code or not endings[0].get("succeeded"):
+                    receipt = _failure_receipt(endings[0], settings)
+                    result = infrastructure("PrismaBuild action infrastructure failed."
+                                            + (" memory_limit_oom." if receipt.get("termination_reason") == "memory_limit_oom" else ""))
+                    result.update(action_key=key, receipts=[receipt])
+                else:
+                    result = _summary(endings[0], key)
                 if base:
                     result["base_sha"] = base_sha
+                    result["base_semantics"] = "untouched_base"
+                    result["demonstrating_proof"] = "pending_checking"
                 if tree is not None:
                     result["tree"] = tree
                 return result
@@ -231,9 +271,14 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
                            *(("--priority", str(priority)) if priority is not None else ()),
                            "--container-image", settings.image,
                            "--progress-phase", f"tests={settings.quiet_seconds}",
-                           "--env", "OMP_NUM_THREADS=1", "--env", "MKL_NUM_THREADS=1",
-                           "--env", "OPENBLAS_NUM_THREADS=1", "--detach", "--",
+                           *[arg for name in NATIVE_THREAD_ENVIRONMENT
+                             for arg in ("--env", f"{name}={max(1, settings.cpus // max(1, parallel))}")],
+                           "--detach", "--",
                            "python3", "-I", "-B", "action.py", settings.image, json.dumps(selected)]
+                if forcing is not None:
+                    command.extend(["--forcing", json.dumps(forcing.as_json(), sort_keys=True)])
+                if timeout_seconds is not None:
+                    command[2:2] = ["--timeout-s", str(timeout_seconds)]
                 if settings.exec_scratch:
                     command.append("--exec-scratch")
                 # Defaults add nothing, so a default call keeps its action identity.
@@ -253,7 +298,11 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
                     key = None
                     raise ValueError("PrismaBuild returned an invalid action key")
                 getattr(worktree, "pb_submitted", lambda key, base, tree: None)(key, base, tree)
-                return wait(key, base, base_sha, tree)
+                result = wait(key, base, base_sha, tree)
+                if forcing is not None and result["status"] == "completed" and (
+                        result.get("forcing") != forcing.as_json() or result.get("selectors") != list(selected)):
+                    raise ValueError("PrismaBuild returned a different forcing or selection")
+                return result
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
             result = infrastructure("PrismaBuild submission, execution or verified result retrieval failed.")
             if key:
@@ -262,7 +311,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
 
     def run_tests(tests: list[str] | None = None, base: bool = False, repeat: int = 1,
                   parallel: int = 0, priority: int | None = None) -> dict:
-        """Run pytest; automatically compare failures with the role's check base."""
+        """Run pytest; compare failures with untouched base, never demonstrating proof."""
         result = run(tests, base, repeat, parallel, priority)
         if base or result["status"] != "completed":
             return result

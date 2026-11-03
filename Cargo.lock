@@ -2898,6 +2898,7 @@ dependencies = [
 name = "tl3-controller"
 version = "0.1.0"
 dependencies = [
+ "fancy-regex",
  "chrono",
  "hex",
  "hmac 0.12.1",

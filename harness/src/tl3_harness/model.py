@@ -5,6 +5,9 @@ import json
 import re
 
 
+ALWAYS_CHECK = "Repository always tests"
+
+
 class HarnessInputError(ValueError):
     """TL3's own check input is malformed: TL3's error, never the repo's or PrismaBuild's (Q51)."""
 
@@ -58,9 +61,10 @@ FORCING_TEXT = 1000
 FORCING_LITERAL_BYTES = 4096
 MAX_DELAY_SECONDS = 5
 PATCH_MODES = ("value", "returns", "raises", "delay_seconds")
+NATIVE_THREAD_ENVIRONMENT = {"OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
+                             "OPENBLAS_NUM_THREADS": "1"}
 # Variables the harness itself sets or the interpreter reads; a forcing can't override them.
-RESERVED_ENVIRONMENT = frozenset({"HOME", "PATH", "TMPDIR", "TEMP", "TMP", "OMP_NUM_THREADS",
-                                  "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"})
+RESERVED_ENVIRONMENT = frozenset({"HOME", "PATH", "TMPDIR", "TEMP", "TMP", *NATIVE_THREAD_ENVIRONMENT})
 RESERVED_PREFIXES = ("PYTHON", "PYTEST", "LD_", "TL3_", "PRISMABUILD_")
 ENVIRONMENT_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,63}")
 TARGET = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+")
@@ -94,7 +98,9 @@ class Forcing:
         for name, value in self.environment:
             if (not isinstance(name, str) or not ENVIRONMENT_NAME.fullmatch(name) or name in RESERVED_ENVIRONMENT
                     or name.startswith(RESERVED_PREFIXES)):
-                raise HarnessInputError(f"a forcing can't set the environment variable {name!r}")
+                detail = (f"; {name} is a runner-owned native-thread bound set by the configured CPU demand"
+                          if isinstance(name, str) and name in NATIVE_THREAD_ENVIRONMENT else "")
+                raise HarnessInputError(f"a forcing can't set the environment variable {name!r}{detail}")
             if not isinstance(value, str) or len(value) > FORCING_TEXT or "\x00" in value:
                 raise HarnessInputError(f"{name} needs a string value of at most {FORCING_TEXT} characters")
         for target, mode, argument in self.patches:
@@ -140,13 +146,79 @@ class Forcing:
 
 
 @dataclass(frozen=True)
+class HelperEvidence:
+    target: str
+    failure_cases: tuple[str, ...] = ()
+
+    def __post_init__(self):
+        if (not isinstance(self.target, str) or len(self.target) > 1000
+                or not re.fullmatch(r"[\w./-]+\.py::[A-Za-z_]\w*", self.target)
+                or self.target.startswith(("/", "-")) or ".." in self.target.split("/")
+                or self.target.split("::")[1].startswith("test_")):
+            raise HarnessInputError("helper evidence needs a relative Python path and top-level helper name")
+
+        if len(self.failure_cases) > 8 or sum(len(case.encode()) for case in self.failure_cases) > 4096:
+            raise HarnessInputError("helper failure preservation allows at most eight cases and 4096 bytes")
+        for encoded in self.failure_cases:
+            try:
+                case = json.loads(encoded)
+            except (ValueError, TypeError) as error:
+                raise HarnessInputError("helper failure cases must be JSON") from error
+            if (not isinstance(case, dict) or set(case) != {"args", "kwargs"}
+                    or not isinstance(case["args"], list) or len(case["args"]) > 16
+                    or not isinstance(case["kwargs"], dict) or len(case["kwargs"]) > 16
+                    or any(not key.isidentifier() for key in case["kwargs"])):
+                raise HarnessInputError("helper failure cases need bounded args and kwargs")
+            for value in [*case["args"], *case["kwargs"].values()]:
+                if isinstance(value, dict) and "$setup" in value:
+                    name = value["$setup"]
+                    call = value.get("$call")
+                    if (set(value) != {"$setup", "$call"} or not isinstance(name, str)
+                            or not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,127}", name)
+                            or name.startswith(("test_", "__")) or not isinstance(call, str)
+                            or not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,127}", call)
+                            or call.startswith("__")):
+                        raise HarnessInputError("$setup needs one local function and a $call method witness, "
+                                                "each at most 128 characters")
+                if isinstance(value, dict) and "$attributes" in value:
+                    if set(value) != {"$attributes"} or not isinstance(value["$attributes"], dict):
+                        raise HarnessInputError("$attributes must name one object of literal attributes")
+
+    @property
+    def setup_functions(self):
+        return tuple(dict.fromkeys(value["$setup"] for encoded in self.failure_cases
+                                   for case in [json.loads(encoded)]
+                                   for value in [*case["args"], *case["kwargs"].values()]
+                                   if isinstance(value, dict) and "$setup" in value))
+
+    @classmethod
+    def parse(cls, data):
+        if (not isinstance(data, dict) or set(data) != {"target", "failure_cases"}
+                or not isinstance(data["failure_cases"], list) or not data["failure_cases"]):
+            raise HarnessInputError("helper evidence needs a target and nonempty failure_cases")
+        try:
+            cases = tuple(json.dumps(case, sort_keys=True, separators=(",", ":"), allow_nan=False)
+                          for case in data["failure_cases"])
+        except (ValueError, TypeError) as error:
+            raise HarnessInputError("helper failure cases must be JSON literals") from error
+        return cls(data["target"], cases)
+
+    def as_json(self):
+        return {"target": self.target, "failure_cases": [json.loads(case) for case in self.failure_cases]}
+
+
+@dataclass(frozen=True)
 class Check:
     name: str
     kind: Kind
     tests: tuple[str, ...]
     forcing: Forcing | None = None
+    helper_evidence: HelperEvidence | None = None
 
     def __post_init__(self):
+        if self.helper_evidence is not None and (self.kind != Kind.DEMONSTRATING or self.forcing is not None
+                                                or not isinstance(self.helper_evidence, HelperEvidence)):
+            raise HarnessInputError("helper evidence requires an unforced demonstrating check")
         if not self.name or not isinstance(self.kind, Kind) or not self.tests:
             raise HarnessInputError("a check needs a name, a kind and named tests")
         if self.forcing is not None and (self.kind != Kind.DEMONSTRATING or not isinstance(self.forcing, Forcing)):
@@ -155,10 +227,10 @@ class Check:
             raise HarnessInputError("a check repeats a test")
         for test in self.tests:
             path, *names = test.split("::")
-            if (not names or not all(names) or not path.endswith(".py")
+            if (not names and (self.kind != Kind.REGRESSION or self.name != ALWAYS_CHECK) or not all(names) or not path.endswith(".py")
                     or path.startswith(("/", "-")) or ".." in path.split("/")
                     or "\\" in path or "\x00" in test):
-                raise HarnessInputError(f"not an exact pytest node id: {test!r}")
+                raise HarnessInputError(f"not a pytest selector: {test!r}")
 
 
 @dataclass(frozen=True)
@@ -181,6 +253,7 @@ class Result:
     tests: tuple[TestResult, ...]
     custody: Custody = field(default=Custody.IN_PROCESS, init=False)
     forcing: Forcing | None = None
+    helper_evidence: dict | None = None
 
 
 MESSAGE_LIMIT = 1000

@@ -515,6 +515,15 @@ forecast settings in ingest inputs, ingest must declare `files` for the root's
 scope. The shared forecaster counts those files and the brief with the pinned
 o200k_base tokenizer. A model-supplied forecast is rejected.
 
+Ingest, audit and planner receive code-generated `forcing_capabilities` alongside
+their inputs. Reserved names and prefixes come from `tl3_harness.model`, and the
+same constants build their prompt guidance. This guidance also accompanies a
+controller-supplied prompt. The `runner_environment` values are native-thread
+bounds supplied by the runner. They belong to the `native_threads_1` runner
+feature in evidence contracts. Q55 `forcing.environment` carries only symptom
+mutations. `tool_capabilities` still controls which requirements preflight can
+accept; this context does not grant an executor or claim that a run has happened.
+
 Planner replies also append code-generated `violations`. Leaf and split rule
 violations are successful evidence reports, so the controller can preserve the
 reason for the kernel's next planner run. Transport errors, malformed replies
@@ -775,6 +784,34 @@ preserve the role's result. Deep Agents remains the engine. Stored traces aren't
 pruned yet; `deploy/dl380g10/README.md` gives their growth and how to reclaim
 space. `workers/tools/trial_live_traces.py` checks all of this against a real
 server, in the scratch experiment `tl3-430-scratch`, through PrismaBuild.
+
+## Completion facts
+
+When `trace.completion` names an attempt file, the runtime atomically checkpoints
+numeric usage after each model call and writes a terminal record when the run
+ends, even when MLflow is unavailable. It records the model, pinned worker
+release, trace ID and the session ID sent to CLIProxyAPI. Streamed totals count
+once per call, including the last measured usage of an interrupted stream.
+Missing usage stays unknown. `usage_complete` is false when any model call lacks
+usage, is interrupted or is still running. Cached tokens are input cache reads.
+
+The waitpid owner records worker start and exit times separately from the launch
+acknowledgement. The controller imports the completion before reporting its
+observation and before deleting the attempt. If the waitpid owner died, a missing
+finish time stays unknown. A deliberate stop uses the confirmed stop boundary.
+Retirement continues if completion facts cannot be read or stored. That attempt
+may have no measurement; the diagnostic contains no file contents or error text.
+
+Failure records contain only the observed boundary, exception class, HTTP status
+and a redacted request ID capped at 128 characters. They retain no error text,
+credentials, URLs or response bodies. An error returned by CLIProxyAPI names the
+proxy boundary; it does not prove which provider failed behind it. A direct
+provider response can name the provider boundary. Wrapped API errors keep their
+bounded cause. The session ID also correlates calls without a response ID.
+
+For focused process coverage, run `cargo test -p tl3-controller --test workers --
+--worker-facts` through PrismaBuild. This exercises completion ingress, retirement,
+worker and supervisor crashes, retries and deliberate stops.
 
 ## Postmortems
 

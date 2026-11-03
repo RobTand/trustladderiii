@@ -1,24 +1,108 @@
 """Report plan measurements and rule violations to the controller."""
 
+from copy import deepcopy
 from pathlib import PurePosixPath
 import re
 import tomllib
 
 from tl3_workers.roles.base import Role
+from tl3_workers.evidence import preflight
 from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES
-from tl3_harness import Check, Forcing, HarnessInputError, Kind
+from tl3_harness import Check, Forcing, HarnessInputError, Kind, HelperEvidence
 from tl3_harness.limits import validate_check_plan
-from tl3_harness.trees import is_test, test_function_source
+from tl3_harness.trees import is_test, test_function_source, bound_names, validate_helper_setup
 from tl3_workers.tools import Worktree
 from tl3_workers.recall import check_citations
+from tl3_workers.scope import plan_errors
 
 
-def check_reply(inputs, reply):
-    if "forecast" in reply or "violations" in reply:
+class PlanConsistencyError(ValueError):
+    """A draft's checks disagree with its edit declarations or forced base selection."""
+
+    def __init__(self, uncovered, missing_forced=(), *, draft=None):
+        self.draft = deepcopy(draft)
+        self.uncovered = set(uncovered)
+        self.missing_forced = set(missing_forced)
+        self.node_ids = (*uncovered, *missing_forced)
+        self.violations = [
+            f"`{node_id}` is in edits_tests but no demonstrating check names it. "
+            "Name it in a demonstrating check that fails on the base by an assertion."
+            for node_id in uncovered]
+        self.violations.extend(f"Existing check must name a test defined at the base: {node_id}"
+                               for node_id in missing_forced)
+        super().__init__("\n".join(self.violations) +
+                         "\nReconcile the declaration and checks using already-read facts. "
+                         "Keep the draft's files, goals, check kinds and forcings. Only add missing "
+                         "demonstrating coverage, replace forced non-base selections with base tests, "
+                         "or drop an uncovered unnecessary edit. Do not expand the draft. "
+                         "Drop an edit only if it is unnecessary for the goals. "
+                         "A forced check must name existing base tests and preserve every required goal, "
+                         "including deterministic and mutant proof; do not treat a passing smoke as red. "
+                         "Do not weaken goals or invent base failures; return cant_meet if needed.")
+
+    def constrain(self, reply):
+        """Keep the correction within the declarations of the rejected draft."""
+        draft = self.draft
+        errors = []
+        if reply['kind'] not in {'leaf', 'cant_meet'}:
+            reply['violations'].append('Correction must remain a leaf or honestly report cant_meet.')
+            return
+        added = set(reply['files']) - set(draft['files'])
+        if added:
+            errors.append('Correction expands the draft footprint: ' + ', '.join(sorted(added)))
+        if reply['kind'] == 'cant_meet':
+            reply['violations'].extend(errors)
+            return
+        if set(reply['files']) != set(draft['files']) and not added:
+            errors.append('Correction changes the draft footprint.')
+        mutable = {'checks', 'edits_tests', 'forecast', 'violations', 'decision_context', 'evidence_errors', 'forcing_rehearsals'}
+        if ({key: value for key, value in reply.items() if key not in mutable}
+                != {key: value for key, value in draft.items() if key not in mutable}):
+            errors.append('Correction changes declarations outside the test consistency error.')
+        before, after = set(draft.get('edits_tests', [])), set(reply.get('edits_tests', []))
+        if after - before or (before - after) - self.uncovered:
+            errors.append('Correction may only drop uncovered edit declarations.')
+        checks = draft['checks']
+        if len(reply['checks']) < len(checks):
+            errors.append('Correction removes a draft check.')
+        uncovered = {function(node) for node in self.uncovered}
+        goals = {goal for check in checks for goal in check['goal_ids']}
+        for index, check in enumerate(reply['checks']):
+            if not set(check['goal_ids']) <= goals:
+                errors.append('Correction introduces a goal outside the draft checks.')
+            if index >= len(checks):
+                if (check['kind'] != 'demonstrating'
+                        or any(function(node) not in uncovered for node in check['node_ids'])):
+                    errors.append('Correction may only add demonstrating checks for uncovered edits.')
+                if ('forcing' in check
+                        and not any(check['forcing'] == original.get('forcing') for original in checks)):
+                    errors.append('Correction adds a forcing absent from the draft.')
+                continue
+            original = checks[index]
+            if ({key: value for key, value in check.items() if key != 'node_ids'}
+                    != {key: value for key, value in original.items() if key != 'node_ids'}):
+                errors.append('Correction changes a draft check kind, goals or forcing.')
+            old_nodes, new_nodes = set(original['node_ids']), set(check['node_ids'])
+            replacing = original['kind'] == 'demonstrating' and 'forcing' in original
+            removable = self.missing_forced if replacing else set()
+            if (old_nodes - new_nodes) - removable:
+                errors.append('Correction removes a required draft test selection.')
+            if not (replacing and old_nodes & self.missing_forced):
+                if any(check['kind'] != 'demonstrating' or function(node) not in uncovered
+                       for node in new_nodes - old_nodes):
+                    errors.append('Correction adds test selections outside the draft consistency error.')
+        reply['violations'].extend(dict.fromkeys(errors))
+
+
+def check_reply(inputs, reply, *, rehearsals=None):
+    if any(field in reply for field in ("forecast", "violations", "decision_context", "forcing_rehearsals")):
         raise ValueError("only code may supply planning evidence")
+    preflight(inputs, reply, planning=True)
     check_citations(inputs, reply)
     goals = set(range(len(inputs["ingest"]["goals"])))
     violations = []
+    uncovered = []
+    missing_forced = []
     paths = set()
     if reply["kind"] == "leaf":
         if inputs["must_split"]:
@@ -29,6 +113,30 @@ def check_reply(inputs, reply):
             violations.append("A leaf must resolve every design question.")
         if not reply["lands_on_its_own"]:
             violations.append("A leaf must land on its own.")
+        helper_checks = [check for check in reply["checks"] if "helper_evidence" in check]
+        if len(helper_checks) > 1:
+            violations.append("helper evidence supports one target check per plan")
+        for check in helper_checks:
+            try:
+                evidence = HelperEvidence.parse(check["helper_evidence"])
+                Check("helper", Kind(check["kind"]), tuple(check["node_ids"]),
+                      Forcing.parse(check["forcing"]) if "forcing" in check else None, evidence)
+                path = evidence.target.split("::")[0]
+                patterns = test_files()
+                oversized, exists = base_definition(evidence.target)
+                if oversized or not exists or patterns is None or not is_test(path, patterns) or path not in reply["files"]:
+                    raise ValueError("target must name an existing helper in a declared configured test file")
+                if evidence.setup_functions:
+                    with Worktree(".") as tree, tree._file(path) as stream:
+                        source = stream.read(HARD_CAP_BYTES + 1)
+                    validate_helper_setup(source, evidence)
+                for observer in check["node_ids"]:
+                    parts = observer.split("::")
+                    if (len(parts) != 2 or not parts[1].isidentifier() or not parts[1].startswith("test_")
+                            or base_definition(observer, binding=True)[1] or parts[0] not in reply["files"]):
+                        raise ValueError("observers must name new top-level tests in declared files")
+            except ValueError as error:
+                violations.append(f"Invalid helper evidence: {error}")
         covered = set()
         forcings = {}
         for index, check in enumerate(reply["checks"]):
@@ -57,21 +165,28 @@ def check_reply(inputs, reply):
                     if oversized:
                         violations.append(f"Existing check's test file is over the {HARD_CAP_BYTES}-byte limit: {path}")
                     elif not exists:
-                        violations.append(f"Existing check must name a test defined at the base: {node_id}")
+                        if check["kind"] == "demonstrating" and "forcing" in check:
+                            missing_forced.append(node_id)
+                        else:
+                            violations.append(f"Existing check must name a test defined at the base: {node_id}")
             cited = set(check["goal_ids"])
             if not cited <= goals:
                 violations.append("A check cites an unknown goal.")
             covered.update(cited)
-        violations.extend(edit_violations(inputs["ingest"]["goals"], reply))
+        edit_errors, uncovered = edit_violations(inputs["ingest"]["goals"], reply)
+        violations.extend(edit_errors)
         if "Checks must name exact pytest node IDs." not in violations:
             try:
                 validate_check_plan(tuple(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']),
-                                                (forcings.get(i) if check['kind'] == 'demonstrating' else None))
+                                                (forcings.get(i) if check['kind'] == 'demonstrating' else None),
+                                                HelperEvidence.parse(check['helper_evidence']) if 'helper_evidence' in check else None)
                                           for i, check in enumerate(reply['checks']) if check['node_ids']))
             except ValueError as error:
                 violations.append(str(error))
-        if covered != goals:
-            violations.append("Every goal must have a check.")
+        required = {i for i, goal in enumerate(inputs["ingest"]["goals"])
+                    if goal.get("stage", "maker") != "publishing"}
+        if not required <= covered:
+            violations.append("Every maker and checking goal must have a check.")
         paths.update(reply["files"])
     elif reply["kind"] == "split":
         covered = set()
@@ -91,6 +206,7 @@ def check_reply(inputs, reply):
         paths.update(reply["files"])
 
     if reply["kind"] in {"leaf", "split"}:
+        violations.extend(plan_errors(inputs, paths))
         for path in sorted(paths):
             if any(PurePosixPath(path).full_match(pattern) for pattern in inputs["protected_paths"]):
                 violations.append(f"Declared file matches a protected path: {path}")
@@ -116,11 +232,30 @@ def check_reply(inputs, reply):
                 violations.append(f"Declared file can't be used: {error}. Leave it out.")
             if child["tokens"] >= forecast["tokens"]:
                 violations.append("Every proposed piece must have a smaller forecast than its parent.")
+    if rehearsals is not None and rehearsals.failure:
+        violations.append(rehearsals.failure['message'])
+    if uncovered or missing_forced:
+        mismatch = PlanConsistencyError(uncovered, missing_forced, draft=reply)
+        # Only these intrinsic inconsistencies enter the existing tool-free repair.
+        # Substantive plan failures still reach the controller under Q54.
+        if not violations and inputs.get('repair_plan_consistency', False):
+            raise mismatch
+        violations.extend(mismatch.violations)
+    if reply['kind'] == 'leaf':
+        valid = [check for check in reply['checks'] if valid_forcing(check)]
+        if rehearsals is not None:
+            violations.extend(rehearsals.violations(inputs.get('base_sha'), valid))
+        elif valid:
+            violations.append('Q55 check lacks a matching forcing rehearsal receipt for the exact base, selectors and forcing.')
+    if rehearsals is not None and (rehearsals.receipts or rehearsals.failure):
+        reply['forcing_rehearsals'] = deepcopy(rehearsals.receipts + ([rehearsals.failure] if rehearsals.failure else []))
+    if "decision_context" in inputs:
+        reply["decision_context"] = inputs["decision_context"]
     reply["forecast"] = forecast
     reply["violations"] = list(dict.fromkeys(violations))
 
 
-def base_definition(node_id):
+def base_definition(node_id, *, binding=False):
     """Whether the base defines the test, after whether its file is over the hard cap."""
     # The whole module is parsed to find the test, so the
     # declared-file hard cap bounds it, not a page size.
@@ -131,6 +266,12 @@ def base_definition(node_id):
         return False, False
     if len(source.encode("utf-8")) > HARD_CAP_BYTES:
         return True, False
+    if binding:
+        try:
+            names = bound_names(source)
+        except SyntaxError:
+            return False, True
+        return False, node_id.split("::", 1)[1] in names or "*" in names
     return False, test_function_source(source, node_id) is not None
 
 
@@ -191,8 +332,10 @@ def function(node_id):
 
 def edit_violations(goals, reply):
     """Regression and behavior-preserving checks run tests exactly as the base wrote them,
-    so a test the change edits can only be shown by a demonstrating check (#438)."""
+    so a test the change edits can only be shown by a demonstrating check (#438).
+    Return substantive violations separately from uncovered edit declarations."""
     violations = []
+    uncovered = []
     frozen, demonstrated = {}, set()
     for index, check in enumerate(reply["checks"]):
         for node_id in check["node_ids"]:
@@ -223,8 +366,7 @@ def edit_violations(goals, reply):
                               "can't name it: those checks run tests exactly as the base wrote them. "
                               "Name it only in a demonstrating check.")
         if function(node_id) not in demonstrated:
-            violations.append(f"`{node_id}` is in edits_tests but no demonstrating check names it. "
-                              "Name it in a demonstrating check that fails on the base by an assertion.")
+            uncovered.append(node_id)
     patterns = test_files()
     # The base run applies every test-file edit, so a head that changes only test files is its own base.
     test_only = bool(reply["files"]) and patterns is not None and all(
@@ -245,13 +387,13 @@ def edit_violations(goals, reply):
                                   "behavior with other existing tests.")
     # Q55: a forced reproduction recreates the flake outside the test, so it can show a test-only change.
     demonstrating = [check for check in reply["checks"] if check["kind"] == "demonstrating"]
-    forced = bool(demonstrating) and all(valid_forcing(check) for check in demonstrating)
+    forced = bool(demonstrating) and all(valid_forcing(check) or "helper_evidence" in check for check in demonstrating)
     if test_only and (edited or demonstrated or names_frozen) and not forced:
         violations.append("This leaf changes only tests, so an ordinary demonstrating check can't show it: the "
                           "base run applies the leaf's test edits, so base and head run the same test. A change "
                           "to tests alone needs a forced reproduction (Q55) on its demonstrating check; if no "
                           "forcing can be written, return can't meet.")
-    return violations
+    return violations, uncovered
 
 
 ROLE = Role(
@@ -259,8 +401,9 @@ ROLE = Role(
     prompt="planner.md",
     input_schema="planner-input",
     reply_schema="planner-reply",
-    code_only_fields=("forecast", "violations"),
+    code_only_fields=("forecast", "violations", "decision_context", "evidence_errors", "forcing_rehearsals"),
     tools={
+        "rehearse_forcing": "Rehearse exact existing base tests with a Q55 forcing through PrismaBuild before returning a forced leaf. No commands, repeats or head execution. A failed rehearsal stops planning; never retry it.",
         "list": "List worktree directories to locate material for the plan.",
         "read": "Read worktree text to identify files and checks for the goals.",
         "glob": "Find worktree paths using relative glob patterns for planning. The path must be a directory.",

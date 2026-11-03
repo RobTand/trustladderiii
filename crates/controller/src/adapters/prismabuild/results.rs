@@ -24,6 +24,21 @@ struct Ending {
     succeeded: bool,
     exit_code: Option<i32>,
     result: Option<Evidence>,
+    #[serde(default)]
+    diagnostics: Diagnostics,
+}
+#[derive(Default, Deserialize)]
+struct Diagnostics {
+    returncode: Option<i32>,
+    resource_profile: Option<ResourceProfile>,
+}
+#[derive(Deserialize)]
+struct ResourceProfile {
+    scope: Option<ResourceScope>,
+}
+#[derive(Deserialize)]
+struct ResourceScope {
+    memory_peak_bytes: Option<u64>,
 }
 #[derive(Deserialize)]
 struct Evidence {
@@ -57,6 +72,8 @@ struct CheckResult {
     /// A forced check echoes its forcing so review can judge it (#393).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     forcing: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    helper_evidence: Option<serde_json::Value>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -98,7 +115,12 @@ enum Outcome {
     NoReport,
 }
 
-pub(super) async fn ending(tool: &Tool, job: &Job, withdrawal: bool) -> Result<Option<Completion>> {
+pub(super) async fn ending(
+    tool: &Tool,
+    job: &Job,
+    withdrawal: bool,
+    record: &tl3_prismabuild::RecordRead,
+) -> Result<Option<Completion>> {
     let output = tokio::process::Command::new(&tool.program)
         .args(&tool.args)
         .args([
@@ -131,6 +153,29 @@ pub(super) async fn ending(tool: &Tool, job: &Job, withdrawal: bool) -> Result<O
     }
     if withdrawal {
         return Ok(Some(Completion::confirmed(vec![])));
+    }
+    if !ending.succeeded
+        && let tl3_prismabuild::RecordRead::Present(record) = record
+        && record.termination_reason.as_deref() == Some("memory_limit_oom")
+    {
+        let peak = ending
+            .diagnostics
+            .resource_profile
+            .as_ref()
+            .and_then(|profile| profile.scope.as_ref())
+            .and_then(|scope| scope.memory_peak_bytes);
+        let failed = FailedTest {
+            test: "PrismaBuild".into(),
+            message: format!(
+                "memory_limit_oom; action {}; returncode {:?}; memory_peak_bytes {peak:?}",
+                job.action,
+                ending
+                    .exit_code
+                    .or(ending.diagnostics.returncode)
+                    .or(record.returncode)
+            ),
+        };
+        return Ok(Some(completion(job, false, false, vec![], vec![failed])?));
     }
     let (report, pass, results, failed_tests, failure) = match evidence(ending, job) {
         Ok(verdict) => verdict,
@@ -322,12 +367,22 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
     {
         return None;
     }
+    let mut plan = job.run.plan.clone();
+    if !job.always_tests.is_empty() {
+        plan.push(super::Check {
+            name: "Repository always tests".into(),
+            kind: Kind::Regression,
+            tests: job.always_tests.clone(),
+            forcing: None,
+            helper_evidence: None,
+        });
+    }
     // Only a job staged with selection may carry one trailing selected check (#359).
-    let extra = report.results.len().checked_sub(job.run.plan.len())?;
+    let extra = report.results.len().checked_sub(plan.len())?;
     if extra > usize::from(job.selected_tests.is_some()) {
         return None;
     }
-    if let Some(selected) = report.results.get(job.run.plan.len()) {
+    if let Some(selected) = report.results.get(plan.len()) {
         let Custody::InProcess = selected.custody;
         if selected.name != SELECTED_CHECK
             || selected.kind != Kind::Regression
@@ -338,7 +393,7 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             return None;
         }
     }
-    for (result, check) in report.results.iter().zip(&job.run.plan) {
+    for (result, check) in report.results.iter().zip(&plan) {
         if result.name != check.name
             || result.kind != check.kind
             || result.tests.len() != check.tests.len()
@@ -352,6 +407,62 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             }
         }
         if matches!(result.verdict, Verdict::Pass) != result.tests.iter().all(|t| t.passed) {
+            return None;
+        }
+        if let Some(declaration) = &check.helper_evidence {
+            if check.kind != Kind::Demonstrating || check.forcing.is_some() {
+                return None;
+            }
+            if let Some(identity) = &result.helper_evidence {
+                let hash = |v: &serde_json::Value| {
+                    v.as_str().is_some_and(|s| {
+                        s.len() == 64
+                            && s.bytes()
+                                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                    })
+                };
+                if identity["target"] != declaration["target"]
+                    || [
+                        "base_target_sha256",
+                        "head_target_sha256",
+                        "base_tree_sha256",
+                        "head_tree_sha256",
+                    ]
+                    .iter()
+                    .any(|k| !hash(&identity[k]))
+                    || !hash(&identity["failure_driver_sha256"])
+                    || identity["failure_cases"] != declaration["failure_cases"]
+                    || declaration["failure_cases"]
+                        .as_array()
+                        .is_none_or(|cases| cases.is_empty() || cases.len() > 8)
+                    || identity["failure_preservation"]
+                        .as_array()
+                        .is_none_or(|items| {
+                            items.len()
+                                != declaration["failure_cases"].as_array().map_or(0, Vec::len)
+                                || (result.tests.iter().any(|t| t.passed)
+                                    && items.iter().any(|item| {
+                                        item["base"] != "passed" || item["head"] != "passed"
+                                    }))
+                        })
+                    || identity["base_target_sha256"] == identity["head_target_sha256"]
+                    || identity["base_tree_sha256"] == identity["head_tree_sha256"]
+                    || identity["observers"].as_object().is_none_or(|o| {
+                        o.len() != check.tests.len()
+                            || check.tests.iter().any(|t| !o.get(t).is_some_and(hash))
+                    })
+                    || result.tests.iter().any(|t| {
+                        t.passed
+                            && (!matches!(t._base, Outcome::Assertion)
+                                || !matches!(t._head, Outcome::Passed))
+                    })
+                {
+                    return None;
+                }
+            } else if result.tests.iter().any(|t| t.passed) {
+                return None;
+            }
+        } else if result.helper_evidence.is_some() {
             return None;
         }
         // A forced check passes only on evidence from its forced head run (#393).

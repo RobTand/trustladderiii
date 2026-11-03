@@ -10,6 +10,7 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
             .unwrap()
             .into();
     }
+    config.github.repos[0].always_tests = vec!["tests/test_rules.py".into()];
     config.models.planner.push(config.models.audit[0].clone());
     if mode == "plan-split" || mode == "plan-bad-split" {
         config.limits.fit_tokens = 31_000;
@@ -40,6 +41,19 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
     )
     .unwrap();
     controller.intake(labelled()).unwrap();
+    if mode == "normal" {
+        let mut commit = Commit::new(
+            "reviewed-decision-fixture",
+            json!({}),
+            &store.load().unwrap(),
+        );
+        commit.rows.push(RowChange::Put {
+            table: "request_decisions".into(),
+            id: "0".into(),
+            value: serde_json::from_str(include_str!("../fixtures/decisions/pq2662.json")).unwrap(),
+        });
+        store.commit(&commit).unwrap();
+    }
     wait(|| {
         drive(&mut controller, &mut source, &mut store);
         let n = &controller.world().unwrap().nodes[0];
@@ -56,6 +70,12 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
         .map(|value| value["request"].clone())
         .filter(|v: &Value| v["role"] == "planner")
         .collect();
+    for request in &requests {
+        assert_eq!(
+            request["inputs"]["always_tests"],
+            json!(["tests/test_rules.py"])
+        );
+    }
     assert_retired(&config, &mut store);
     if mode == "plan-bad-schema" {
         assert!(matches!(n.phase, Phase::Planning { .. }));
@@ -79,6 +99,18 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
     );
     if mode == "normal" {
         // #422: Hindsight is down in this fixture, so recall degrades and work proceeds.
+        let context: Value =
+            serde_json::from_str(include_str!("../fixtures/decisions/pq2662.json")).unwrap();
+        for role in ["ingest", "audit", "planner"] {
+            let run = recorded_runs(root.path())
+                .into_iter()
+                .find(|r| r["request"]["role"] == role)
+                .unwrap();
+            assert_eq!(
+                run["request"]["inputs"]["decision_context"], context,
+                "{role} needs explicit decisions even with recall down"
+            );
+        }
         assert_eq!(requests[0]["inputs"]["memories"], json!([]));
         assert!(requests[0]["inputs"]["memory_note"].is_string());
         assert!(n.phase.is_closed());

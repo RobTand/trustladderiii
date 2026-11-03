@@ -71,7 +71,12 @@ impl Executor for Workers {
     }
 }
 
-fn run(body: &str, mode: &'static str, should_close: bool, expected_planners: usize) {
+fn run(
+    body: &str,
+    mode: &'static str,
+    should_close: bool,
+    expected_planners: usize,
+) -> Vec<Delivery> {
     let mut db = support::Database::start();
     let settings = db.create("protected_request");
     let root = tempfile::tempdir().unwrap();
@@ -199,7 +204,20 @@ fn run(body: &str, mode: &'static str, should_close: bool, expected_planners: us
             .count(),
         expected_planners
     );
+    let notes = store
+        .effects()
+        .unwrap()
+        .into_iter()
+        .map(|effect| serde_json::from_value::<Delivery>(effect.payload).unwrap())
+        .filter(|delivery| {
+            matches!(
+                delivery.steering,
+                Some(tl3_controller::steering::Task::ConsoleNote { .. })
+            )
+        })
+        .collect();
     db.stop();
+    notes
 }
 
 #[test]
@@ -227,5 +245,153 @@ fn mentions_negated_edits_and_unprotected_tests_keep_normal_flow() {
         "## Expected footprint\n- `tests/test_gate.py`\n\n## Out of scope\n- Edit `tools/ci/bazel_gate.py`.",
     ] {
         run(body, "nonmatching", false, 2);
+    }
+}
+
+const PATH_TOKEN: &str = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+
+fn post_protected_refusal(operations: bool, oversized: bool) {
+    use std::{collections::BTreeMap, time::Duration};
+    use tl3_github::{AppConfig, ClientOptions, GitHub, message::Policy};
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+
+    let notes = run(
+        &format!(
+            "## Expected footprint\n- `tools/ci/bazel_gate.py`\n- `.github/workflows/{PATH_TOKEN}.yml`"
+        ),
+        "planner",
+        true,
+        0,
+    );
+    assert_eq!(notes.len(), 2);
+    let mut note = notes
+        .into_iter()
+        .find(|note| (note.issue == 81) == operations)
+        .unwrap();
+    let Some(tl3_controller::steering::Task::ConsoleNote { text }) = &mut note.steering else {
+        panic!("protected refusal must use ConsoleNote");
+    };
+    assert!(
+        text.contains(PATH_TOKEN),
+        "fixture must retain the requested path before publication"
+    );
+    if oversized {
+        text.push_str(&"x".repeat(1024 * 1024 + 1));
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let server = runtime.block_on(MockServer::start());
+    let comments = format!(
+        "/repos/{}/{}/issues/{}/comments",
+        note.repository.owner, note.repository.name, note.issue
+    );
+    runtime.block_on(async {
+        Mock::given(method("POST"))
+            .and(path(format!(
+                "/app/installations/{}/access_tokens",
+                note.repository.installation
+            )))
+            .respond_with(ResponseTemplate::new(201).set_body_json(
+                json!({"token":"fixture-access", "expires_at":"2099-01-01T00:00:00Z"}),
+            ))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(&comments))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../github/tests/fixtures/issue-comment-created.json"
+        ))
+        .unwrap();
+        Mock::given(method("POST"))
+            .and(path(&comments))
+            .respond_with(ResponseTemplate::new(201).set_body_json(fixture["comment"].clone()))
+            .mount(&server)
+            .await;
+    });
+    let client = GitHub::new(
+        AppConfig {
+            id: 123,
+            slug: "factory".into(),
+            pem: include_str!("../../mergify/tests/fixtures/throwaway-key.pem").into(),
+            webhook_secret: "fixture-secret".into(),
+        },
+        note.repository.installation,
+        ClientOptions {
+            api_url: format!("{}/", server.uri()).parse().unwrap(),
+            max_retries: 0,
+            mutation_interval: Duration::ZERO,
+            max_wait: Duration::ZERO,
+            ..ClientOptions::default()
+        },
+    )
+    .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let mut adapter = adapters::github::Adapter::new(
+        BTreeMap::from([(note.repository.installation, client)]),
+        adapters::workers::writer::FakeWriter,
+        note.epoch,
+        Policy::default(),
+        root.path(),
+        Some(tl3_config::OperationsIssue {
+            owner: note.repository.owner.clone(),
+            name: note.repository.name.clone(),
+            installation_id: note.repository.installation,
+            number: 81,
+        }),
+    )
+    .unwrap();
+    let result = adapter.execute(&note);
+    let posted = runtime
+        .block_on(server.received_requests())
+        .unwrap()
+        .into_iter()
+        .filter(|request| request.method == "POST" && request.url.path() == comments)
+        .collect::<Vec<_>>();
+    if oversized {
+        assert!(
+            matches!(result, Err(tl3_controller::Error::RedactionInfra(_))),
+            "ConsoleNote must propagate typed redaction infrastructure errors: {result:?}"
+        );
+        assert!(
+            posted.is_empty(),
+            "failed redaction must prevent publication"
+        );
+    } else {
+        result.unwrap();
+        assert_eq!(posted.len(), 1);
+        let payload: serde_json::Value = serde_json::from_slice(&posted[0].body).unwrap();
+        let body = payload["body"].as_str().unwrap();
+        assert!(
+            !body.contains(PATH_TOKEN),
+            "protected refusal leaked a requested path in POST {comments}: {body}"
+        );
+        assert!(body.contains("[REDACTED]"));
+        assert!(body.contains("outside TL3"));
+    }
+}
+
+#[test]
+fn protected_refusal_summary_redacts_requested_paths_before_posting() {
+    post_protected_refusal(false, false);
+}
+
+#[test]
+fn protected_refusal_operations_redacts_requested_paths_before_posting() {
+    post_protected_refusal(true, false);
+}
+
+#[test]
+fn protected_refusal_redaction_failure_prevents_both_posts() {
+    for operations in [false, true] {
+        post_protected_refusal(operations, true);
     }
 }

@@ -1,5 +1,5 @@
 use super::{
-    ActiveRuns, inspect, latest,
+    ActiveRuns, inspect_recorded, latest,
     process::{self, read},
     protocol, remove_ready, run_root, trace, watched_deliveries,
 };
@@ -450,7 +450,7 @@ impl WorkerOutputSource {
                 }
             }
         }
-        let ended = inspect(attempt, delivery)?;
+        let ended = inspect_recorded(attempt, delivery, store)?;
         if !matches!(ended, Reconciliation::Pending) {
             self.ended.push(attempt.clone());
         }
@@ -558,7 +558,12 @@ pub(super) fn parse_reply(
             }
             protocol::validate_forecast_settings(&value["reply"], &inputs["forecast"])?;
         }
-        reply = Some(value["reply"].clone());
+        let mut checked = value["reply"].clone();
+        super::evidence::preflight(role, inputs, &mut checked)?;
+        if !delivery.is_classifier() && !delivery.is_postmortem() {
+            protocol::map_reply(role, &checked)?;
+        }
+        reply = Some(checked);
     }
     if delivery.is_classifier() {
         return Ok(Observation::Classified {

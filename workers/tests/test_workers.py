@@ -192,15 +192,24 @@ def test_only_tl3_prompt_and_read_tools_reach_model(request_doc, role, monkeypat
     assert not options.get("tools")
     assert [message.type for message in messages] == ["system", "human"]
     system = messages[0].text
+    from tl3_workers.evidence import forcing_capabilities, forcing_guidance
     expected = files("tl3_workers").joinpath("prompts", role + ".md").read_text()
+    expected += "\n\n" + forcing_guidance()
+    if role == "ingest":
+        from tl3_workers.tools import Worktree
+        with Worktree(request_doc["worktree"]) as tree:
+            expected += "\n\n" + tree.generation_instruction()
     proposal = copy.deepcopy(schema(role + "-reply"))
+    for variant in proposal['oneOf']:
+        variant['properties'].pop('evidence_errors', None)
     if role == "ingest":
         del proposal["oneOf"][0]["properties"]["forecast"]
         del proposal["$defs"]["forecast"]
     assert system == expected + "\n\nReply with one JSON object only: no prose, no code fences. It must match this schema:\n" + json.dumps(proposal, ensure_ascii=False)
     assert request_doc["key_file"] not in system
     assert "key_file" not in messages[1].text.replace(request_doc["inputs"]["issue"]["body"], "")
-    assert json.loads(messages[1].text) == request_doc["inputs"]
+    assert json.loads(messages[1].text) == {**request_doc["inputs"],
+                                             "forcing_capabilities": forcing_capabilities()}
 
 
 def test_excluded_tool_is_rejected_and_progress_is_streamed(tmp_path, request_doc):
@@ -388,3 +397,198 @@ def test_supplied_memories_are_redacted_before_the_model(request_doc, monkeypatc
     assert "Deploy with export GITHUB_TOKEN=" in sent
     assert json.loads(sent)["memories"][0]["id"] == "m-1"
     assert events[-1]["reply"]["memory_ids"] == ["m-1"]
+
+
+def test_completion_records_actual_worker_time_and_model_usage(tmp_path, request_doc, monkeypatch):
+    from tl3_workers import facts
+    import time
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+
+    completion = tmp_path / "facts.json"
+    request_doc["trace"] = {"completion": str(completion), "release": "release-fixture"}
+    clock = iter([1_000_000_000_000, 9_666_000_000_000])
+    monkeypatch.setattr(time, "time_ns", lambda: next(clock))
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="ok", usage_metadata={
+        "input_tokens": 1_600_000, "output_tokens": 170_000, "total_tokens": 1_770_000,
+        "input_token_details": {"cache_read": 1_000_000},
+    })])
+    with facts.observe(request_doc):
+        model.invoke("fixture")
+    row = json.loads(completion.read_text())
+    assert (row["started_ms"], row["finished_ms"]) == (1_000_000, 9_666_000)
+    assert row["finished_ms"] - row["started_ms"] == 8_666_000
+    assert row["outcome"] == "succeeded"
+    assert row["model"] == "fixture-model"
+    assert row["release"] == "release-fixture"
+    assert (row["input_tokens"], row["cached_tokens"], row["output_tokens"]) == (
+        1_600_000, 1_000_000, 170_000)
+    assert row["trace_id"] is None
+    assert row["failure"] is None
+
+
+def test_failed_worker_keeps_usage_and_redacted_proxy_correlation(tmp_path, request_doc):
+    from tl3_workers import facts
+    import httpx
+    from openai import InternalServerError
+
+    completion = tmp_path / "facts.json"
+    request_doc["trace"] = {"completion": str(completion)}
+    response = httpx.Response(502, headers={"x-request-id": "req-fixture-120"},
+                              request=httpx.Request("POST", "http://model.invalid/v1"))
+    failure = InternalServerError("Bearer fixture-secret-value response body", response=response,
+                                  body={"secret": "fixture-secret-value"})
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="ok", usage_metadata={
+        "input_tokens": 1_600_000, "output_tokens": 170_000, "total_tokens": 1_770_000})])
+    with pytest.raises(InternalServerError), facts.observe(request_doc):
+        model.invoke("fixture")
+        raise failure
+    row = json.loads(completion.read_text())
+    assert row["outcome"] == "failed"
+    assert row["input_tokens"] + row["output_tokens"] == 1_770_000
+    assert row["cached_tokens"] is None
+    assert row["failure"] == {"origin": "proxy", "class": "InternalServerError",
+                              "status": 502, "request_id": "req-fixture-120"}
+    assert "fixture-secret-value" not in completion.read_text()
+    assert "response body" not in completion.read_text()
+
+
+@pytest.mark.parametrize("error", [RuntimeError("secret local text"),
+                                  ValueError("secret invalid reply")])
+def test_missing_usage_stays_unknown_and_local_failure_has_no_body(tmp_path, request_doc, error):
+    from tl3_workers import facts
+
+    completion = tmp_path / "facts.json"
+    request_doc["trace"] = {"completion": str(completion)}
+    with pytest.raises(type(error)), facts.observe(request_doc):
+        raise error
+    row = json.loads(completion.read_text())
+    assert row["failure"]["origin"] == "worker"
+    assert row["failure"]["class"] == type(error).__name__
+    assert all(row[key] is None for key in ("input_tokens", "cached_tokens", "output_tokens"))
+    assert "secret" not in completion.read_text()
+
+
+def test_real_process_writes_completion_without_changing_protocol(tmp_path, request_doc):
+    completion = tmp_path / "facts.json"
+    request_doc["trace"] = {"completion": str(completion)}
+    result = start_worker(tmp_path, request_doc, [{"content": json.dumps(BRIEF), "usage_metadata": {
+        "input_tokens": 11, "output_tokens": 7, "total_tokens": 18}}])
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1] == {"event": "reply", "role": "ingest", "reply": BRIEF}
+    row = json.loads(completion.read_text())
+    assert row["outcome"] == "succeeded"
+    assert row["input_tokens"] == 11 and row["output_tokens"] == 7
+    assert row["finished_ms"] >= row["started_ms"]
+
+
+def test_callback_checkpoints_usage_before_a_worker_can_be_killed(tmp_path, request_doc):
+    from tl3_workers import facts
+    completion = tmp_path / "facts.json"
+    request_doc["trace"] = {"completion": str(completion)}
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="ok", usage_metadata={
+        "input_tokens": 11, "output_tokens": 7, "total_tokens": 18})])
+    with facts.observe(request_doc):
+        model.invoke("one")
+        model.invoke("two")
+        checkpoint = json.loads(completion.read_text())
+        assert checkpoint["outcome"] == "running"
+        assert checkpoint["finished_ms"] is None
+        assert (checkpoint["input_tokens"], checkpoint["output_tokens"]) == (22, 14)
+
+
+@pytest.mark.parametrize("request_id", ["Bearer secret", "x" * 129, "fixture-key-value"])
+def test_failure_correlation_rejects_secrets_and_unbounded_headers(tmp_path, request_doc, request_id):
+    from tl3_workers import facts
+    from tl3_workers.tracing import record_model_key
+    import httpx
+    from openai import InternalServerError
+    record_model_key("fixture-key-value")
+    completion = tmp_path / "facts.json"
+    request_doc["trace"] = {"completion": str(completion)}
+    response = httpx.Response(502, headers={"x-request-id": request_id},
+                              request=httpx.Request("POST", "http://model.invalid/v1"))
+    with pytest.raises(InternalServerError), facts.observe(request_doc):
+        raise InternalServerError("never stored", response=response, body=None)
+    assert json.loads(completion.read_text())["failure"]["request_id"] is None
+
+
+@pytest.mark.parametrize('missing_last_usage', [False, True])
+def test_completion_distinguishes_complete_usage_from_partial_totals(tmp_path, request_doc, missing_last_usage):
+    from tl3_workers import facts
+    completion = tmp_path / 'facts.json'
+    request_doc['trace'] = {'completion': str(completion)}
+    usage = {'input_tokens': 11, 'output_tokens': 7, 'total_tokens': 18}
+    model = FakeMessagesListChatModel(responses=[
+        AIMessage(content='one', usage_metadata=usage),
+        AIMessage(content='two', usage_metadata=None if missing_last_usage else usage),
+    ])
+    with facts.observe(request_doc):
+        model.invoke('one')
+        model.invoke('two')
+    row = json.loads(completion.read_text())
+    assert row.get('usage_complete') is (not missing_last_usage)
+    assert row['input_tokens'] == (11 if missing_last_usage else 22)
+
+
+
+@pytest.mark.parametrize('role', ['ingest', 'audit'])
+def test_request_evidence_contract_survives_intake_and_audit(tmp_path, request_doc, role):
+    requirement = {
+        'requirement': 'PB2640-2650 and PB2654 require normal and pinned CPU contention runs on base and head.',
+        'tool': 'run_tests', 'executor': 'buildbuddy_remote_bazel',
+        'runner_features': ['base_head', 'pinned_cpu_contention'],
+        'artifacts': ['invocation_url', 'sha', 'logs', 'terminal_verdict'],
+        'methods': ['red_green', 'forced_reproduction.contention_wrapper'], 'protected_files': [],
+    }
+    request_doc['role'] = request_doc['operation']['kind'] = role
+    request_doc['inputs']['issue']['body'] = requirement['requirement'] + ' Supply invocation URLs, SHAs, logs and terminal verdicts.'
+    request_doc['inputs']['tool_capabilities'] = [{
+        'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head', 'repeat', 'parallel'],
+        'artifacts': ['sha', 'logs', 'terminal_verdict', 'cas_receipt'], 'methods': ['red_green'], 'protected_files': [],
+    }]
+    if role == 'audit':
+        request_doc['inputs']['ingest'] = dict(copy.deepcopy(BRIEF), evidence_contract=[])
+    proposal = dict(copy.deepcopy(BRIEF if role == 'ingest' else AGREE), evidence_contract=[requirement])
+    result = start_worker(tmp_path, request_doc, [{'content': json.dumps(proposal)}])
+    assert result.exit_code == 0, result.stderr
+    reply = result.events[-1]['reply']
+    validate(role + '-reply', reply)
+    assert reply['evidence_contract'] == [requirement]
+    for missing in ['executor=buildbuddy_remote_bazel', 'runner_features=pinned_cpu_contention',
+                    'artifacts=invocation_url', 'methods=forced_reproduction.contention_wrapper']:
+        assert missing in '\n'.join(reply['evidence_errors'])
+    if role == 'ingest':
+        assert reply['goals'] == BRIEF['goals']
+
+
+def test_context_only_buildbuddy_prompt_fixture(request_doc, monkeypatch):
+    body = "The earlier BuildBuddy run showed a missing exclamation mark. Return hello!"
+    request_doc["inputs"]["issue"]["body"] = body
+    request_doc["inputs"]["tool_capabilities"] = []
+    observed = []
+
+    class InspectModel(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _generate(self, messages, **kwargs):
+            observed.append(messages)
+            return super()._generate(messages, **kwargs)
+
+    # Scripted output checks prompt delivery and contract handling, not live extraction.
+    fake = InspectModel(responses=[AIMessage(content=json.dumps(
+        dict(copy.deepcopy(BRIEF), evidence_contract=[])))])
+    monkeypatch.setattr(runtime, "create_model", lambda request: fake)
+    events = []
+    runtime.run(request_doc, events.append)
+    assert json.loads(observed[0][1].text)["issue"]["body"] == body
+    reply = events[-1]["reply"]
+    assert reply["evidence_contract"] == []
+    assert reply["evidence_errors"] == []
+    for role in ("ingest", "audit", "planner"):
+        prompt = files("tl3_workers").joinpath("prompts", role + ".md").read_text()
+        assert "Only evidence the request requires belongs in evidence_contract." in prompt, role
+        assert "history, context, non-goals or examples" in prompt, role
+        assert "the earlier BuildBuddy run showed" in prompt, role
+        assert "always_tests" in prompt, role
+    assert "Only evidence the request requires belongs in evidence_contract." in observed[0][0].text

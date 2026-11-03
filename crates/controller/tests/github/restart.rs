@@ -79,6 +79,24 @@ pub(super) fn open_request(settings: &tl3_config::Store) {
     controller.intake(labelled()).unwrap();
     drain(&mut controller);
     assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    let context: Value =
+        serde_json::from_str(include_str!("../fixtures/decisions/pq2662.json")).unwrap();
+    let mut store = Store::open(settings).unwrap();
+    let mut commit = tl3_store::Commit::new(
+        "reviewed-fixture-backfill",
+        json!({}),
+        &store.load().unwrap(),
+    );
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "request_decisions".into(),
+        id: "0".into(),
+        value: context.clone(),
+    });
+    store.commit(&commit).unwrap();
+    // A process restart must read the durable context, not a recalled memory.
+    drop(controller);
+    let mut controller =
+        steering::race_controller(settings, root.path(), &api, json!({"kind": "restart"}));
     edit_issue(&api);
     restart_comment(&mut controller, 20001);
     drain(&mut controller);
@@ -91,6 +109,89 @@ pub(super) fn open_request(settings: &tl3_config::Store) {
     assert_eq!(world.nodes[0].phase, Phase::Closed(Outcome::Replaced));
     assert!(!world.nodes[1].phase.is_closed());
     assert_restarted(&mut controller, &api, "1", 0);
+    let inherited = store
+        .load()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|r| r.table == "request_decisions" && r.id == "1")
+        .expect("restart must preserve approved decisions")
+        .value;
+    assert_eq!(inherited["request_version"], 1);
+    assert_eq!(inherited["decision_ids"], json!(["pq2662-q10"]));
+    assert!(inherited.get("decisions").is_none());
+    // A change request revokes the contradictory approval without erasing its history.
+    drop(controller);
+    let mut controller = steering::race_controller(
+        settings,
+        root.path(),
+        &api,
+        json!({
+            "kind": "change_request", "new_text": "Do not update the retention pin.",
+            "supersedes": ["pq2662-q10"],
+        }),
+    );
+    let mut comment = fixture(true)["comment"].clone();
+    comment["id"] = json!(20011);
+    comment["body"] = json!("Change the request: do not update the retention pin.");
+    controller
+        .observe(
+            "contradict-q10",
+            Observation::GitHubComment {
+                repository: bootstrap().repos.remove(0),
+                issue: 12,
+                comment: serde_json::from_value(comment).unwrap(),
+            },
+        )
+        .unwrap();
+    drain(&mut controller);
+    let updated = store
+        .load()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|r| r.table == "request_decisions" && r.id == "2")
+        .unwrap()
+        .value;
+    assert_eq!(updated["request_version"], 2);
+    assert_eq!(updated["decision_ids"], json!([]));
+    let history = store
+        .load()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|r| r.table == "decisions")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        history.len(),
+        1,
+        "history is stored once across all request versions"
+    );
+    assert_eq!(
+        history[0].value["superseded_by"],
+        "https://github.com/owner/sandbox/issues/12#issuecomment-20011"
+    );
+    assert!(
+        history[0].value["supersession_reason"]
+            .as_str()
+            .unwrap()
+            .contains("contradicts")
+    );
+    assert_eq!(
+        history[0].value["answer"],
+        context["decisions"][0]["answer"]
+    );
+    assert_eq!(
+        store
+            .load()
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|r| r.table == "request_decisions" && r.id == "0")
+            .unwrap()
+            .value,
+        json!({"schema_version":2, "request_version":0, "decision_ids":["pq2662-q10"]})
+    );
     println!("test restart_open_request_starts_from_edited_issue ... ok");
 }
 
@@ -513,4 +614,214 @@ pub(super) fn duplicate_request(settings: &tl3_config::Store) {
         "TL3 reopens its own close"
     );
     println!("test restart_duplicate_request_reopens_issue ... ok");
+}
+
+pub(super) fn revoked_issue(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("hold-merges"), "hold").unwrap();
+    let api = Server::new();
+    let mut controller =
+        steering::race_controller(settings, root.path(), &api, json!({"kind":"restart"}));
+    controller.intake(labelled()).unwrap();
+    drain(&mut controller);
+    let context: Value =
+        serde_json::from_str(include_str!("../fixtures/decisions/pq2662.json")).unwrap();
+    let mut store = Store::open(settings).unwrap();
+    let mut commit = tl3_store::Commit::new("reviewed-q10", json!({}), &store.load().unwrap());
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "request_decisions".into(),
+        id: "0".into(),
+        value: context,
+    });
+    store.commit(&commit).unwrap();
+    api.state.lock().unwrap().issue_body =
+        Some("Do not update the retention pin. Preserve the original two-file scope.".into());
+    restart_comment(&mut controller, 20100);
+    drain(&mut controller);
+    let snapshot = store.load().unwrap();
+    let latest = snapshot
+        .rows
+        .iter()
+        .filter(|r| r.table == "request_decisions")
+        .max_by_key(|r| r.id.parse::<u64>().unwrap())
+        .unwrap();
+    assert_eq!(
+        latest.value["decision_ids"],
+        json!([]),
+        "current issue text must revoke the restored pin approval"
+    );
+    let history = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "decisions" && r.id == "pq2662-q10")
+        .expect("revoked approval keeps one durable history record");
+    assert!(
+        history.value["supersession_reason"]
+            .as_str()
+            .unwrap()
+            .contains("current issue")
+    );
+    let request = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "requests" && r.id == latest.id)
+        .unwrap();
+    assert!(
+        request.value["source"]
+            .as_str()
+            .unwrap()
+            .contains("Do not update")
+    );
+    println!("test restart_current_issue_revokes_approval ... ok");
+}
+
+pub(super) fn delegated_restart(settings: &tl3_config::Store) {
+    const LINE: &str = "(Posted by the TL3 build coordinator under Rob's standing approval.)";
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("hold-merges"), "hold").unwrap();
+    let api = Server::new();
+    // Any classifier call would return unsure and prevent the restart.
+    let mut controller = steering::race_controller(
+        settings,
+        root.path(),
+        &api,
+        json!({"kind":"unsure", "question":"Confirm the delegate?"}),
+    );
+    controller.set_delegated_attributions(&[LINE.into()]);
+    controller.intake(labelled()).unwrap();
+    drain(&mut controller);
+    edit_issue(&api);
+    let observe = |controller: &mut Controller, id: u64, actor: u64, body: String| {
+        let mut comment = fixture(true)["comment"].clone();
+        comment["id"] = json!(id);
+        comment["user"]["id"] = json!(actor);
+        comment["body"] = json!(body);
+        controller
+            .observe(
+                &format!("delegated-{id}"),
+                Observation::GitHubComment {
+                    repository: bootstrap().repos.remove(0),
+                    issue: 12,
+                    comment: serde_json::from_value(comment).unwrap(),
+                },
+            )
+            .unwrap();
+        drain(controller);
+    };
+    observe(&mut controller, 29001, 42, format!("restart\n\n{LINE}"));
+    assert_eq!(controller.world().unwrap().nodes.len(), 2);
+    assert_restarted(&mut controller, &api, "1", 0);
+    assert!(
+        controller
+            .effect("classify:owner/sandbox/3/29001")
+            .unwrap()
+            .is_none(),
+        "no classifier effect or model call"
+    );
+    let snapshot = controller.snapshot().unwrap();
+    let provenance = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "request_delegations" && r.id.ends_with("/29001"))
+        .unwrap();
+    assert_eq!(provenance.value["attribution"], LINE);
+    let link = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "request_links" && r.id == "1")
+        .unwrap();
+    assert_eq!(link.value["delegated_by"], LINE);
+    observe(&mut controller, 29001, 42, format!("restart\n\n{LINE}"));
+    assert_eq!(
+        controller.world().unwrap().nodes.len(),
+        2,
+        "redelivery is idempotent"
+    );
+    observe(
+        &mut controller,
+        29002,
+        42,
+        format!("restart\n\n{}", LINE.replace("coordinator", "co-ordinator")),
+    );
+    assert!(
+        controller
+            .effect("classify:owner/sandbox/3/29002")
+            .unwrap()
+            .is_some(),
+        "near miss retains model classification"
+    );
+    observe(&mut controller, 29004, 42, format!("pause\n\n{LINE}"));
+    let classified = controller
+        .effect("classify:owner/sandbox/3/29004")
+        .unwrap()
+        .unwrap();
+    let inputs = &classified.payload["steering"]["Classify"]["inputs"];
+    assert_eq!(inputs["comment"]["body"], "pause");
+    assert_eq!(inputs["comment"]["delegated_by"], LINE);
+    observe(&mut controller, 29003, 7, format!("restart\n\n{LINE}"));
+    assert!(
+        controller
+            .effect("classify:owner/sandbox/3/29003")
+            .unwrap()
+            .is_none(),
+        "another account remains ignored"
+    );
+    assert_eq!(controller.world().unwrap().nodes.len(), 2);
+    let mut edited = fixture(true)["comment"].clone();
+    edited["id"] = json!(29005);
+    edited["body"] = json!(format!("restart\n\n{LINE}"));
+    edited["created_at"] = json!(Utc::now() - chrono::Duration::minutes(1));
+    edited["updated_at"] = json!(Utc::now());
+    api.state.lock().unwrap().catch_up_comments = Some(vec![edited.clone()]);
+    let mut catch_up_store = Store::open(settings).unwrap();
+    let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap();
+    catch_up.pass(&mut catch_up_store, &bootstrap()).unwrap();
+    drain(&mut controller);
+    let classified = controller
+        .effect("classify:owner/sandbox/3/29005")
+        .unwrap()
+        .expect("a first-seen edited comment must keep normal classification");
+    let inputs = &classified.payload["steering"]["Classify"]["inputs"];
+    assert_eq!(inputs["comment"]["body"], edited["body"]);
+    assert!(inputs["comment"].get("delegated_by").is_none());
+    assert_eq!(controller.world().unwrap().nodes.len(), 2);
+    for (index, body) in [
+        format!("restart\n```\n{LINE}\n```"),
+        format!("restart\n~~~\n{LINE}\n~~~"),
+        format!("restart\n\n    {LINE}"),
+        format!("restart\n\n> {LINE}"),
+        format!("restart\n\n> quoted attribution\n{LINE}"),
+        format!("restart\n\n<!--\n{LINE}\n-->"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let id = 29100 + index as u64;
+        observe(&mut controller, id, 42, body.clone());
+        let classified = controller
+            .effect(&format!("classify:owner/sandbox/3/{id}"))
+            .unwrap()
+            .expect("Markdown attributions must keep normal classification");
+        let inputs = &classified.payload["steering"]["Classify"]["inputs"];
+        assert_eq!(inputs["comment"]["body"], body);
+        assert!(inputs["comment"].get("delegated_by").is_none());
+    }
+    assert!(!controller.snapshot().unwrap().rows.iter().any(|row| {
+        row.table == "request_delegations"
+            && (row.id.ends_with("/29005")
+                || row.value["comment_id"]
+                    .as_u64()
+                    .is_some_and(|id| (29100..29106).contains(&id)))
+    }));
+    drop(controller);
+    let mut store = Store::open(settings).unwrap();
+    assert!(
+        store
+            .load()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "request_delegations" && r.value["attribution"] == LINE)
+    );
+    println!("test delegated_restart_is_deterministic_with_provenance_and_negatives ... ok");
 }

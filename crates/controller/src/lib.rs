@@ -16,6 +16,8 @@ mod branches;
 pub mod cli;
 pub mod clock;
 pub mod console;
+mod decisions;
+pub mod evidence;
 pub mod executor;
 mod goals;
 mod http;
@@ -36,6 +38,7 @@ pub mod production;
 pub mod prompts;
 mod protected_requests;
 mod question_findings;
+mod redaction;
 pub mod release;
 mod review_stops;
 mod scope;
@@ -92,6 +95,8 @@ pub enum Error {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
+    #[error("redaction helper infrastructure failed")]
+    RedactionInfra(#[source] std::io::Error),
     #[error("upstream quota exhausted")]
     Quota { retry_after: std::time::Duration },
     /// The enqueue guard is waiting for required checks to report. This is
@@ -284,6 +289,7 @@ pub struct Controller {
     /// Starting credit reserve by priority, P0 first (#416). Empty keeps the kernel's.
     priority_reserve: BTreeMap<u8, u8>,
     request_protection: Vec<(Repository, Vec<String>)>,
+    delegated_attributions: Vec<String>,
 }
 impl Controller {
     pub fn open(store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
@@ -354,6 +360,7 @@ impl Controller {
             postmortem_paused: false,
             priority_reserve: BTreeMap::new(),
             request_protection: Vec::new(),
+            delegated_attributions: Vec::new(),
         };
         controller.reconcile_capacity()?;
         controller.cleanup_ended_looks()?;
@@ -746,9 +753,13 @@ impl Controller {
                         .map_err(|_| Error::Invalid("invalid request node"))?,
                 );
                 let replacement = steering::replacement_issue(snapshot, original, &pending.value)?;
+                decisions::inherit(snapshot, commit, original, NodeId(world.nodes.len() as u64))?;
                 let mut link = json!({
                     "original": original, "authorized_by": self.bootstrap.rob, "issue": replacement
                 });
+                if let Some(delegate) = steering::replacement_delegate(snapshot, original) {
+                    link["delegated_by"] = delegate.clone();
+                }
                 // #449: Rob's answer is the scope; ingest reads the original issue as context.
                 if let steering::Task::FileRequest { question, .. } =
                     decode_stored(pending.value.clone())?
@@ -766,6 +777,10 @@ impl Controller {
             } else {
                 None
             };
+            if pending.is_none() {
+                decisions::Context::new(NodeId(world.nodes.len() as u64))
+                    .store(snapshot, commit)?;
+            }
             let event = if let Some(proposed) = &proposed {
                 Event::NewAdoption {
                     repo: tl3_kernel::RepoId(index as u64),
@@ -1509,17 +1524,34 @@ impl Controller {
         // Preserve teardown evidence in the same transaction that can emit the summary.
         for observation in &completion.observations {
             match observation {
-                Observation::ScratchSaved { node, reference } => commit.rows.push(put(
-                    "saved_scratch",
-                    reference.clone(),
-                    json!({
-                        "node": node, "reference": reference,
-                    }),
-                )),
-                Observation::ScratchPruned { reference } => commit.rows.push(RowChange::Delete {
-                    table: "saved_scratch".into(),
-                    id: reference.clone(),
-                }),
+                Observation::ScratchSaved { node, reference } => {
+                    let value = json!({"node":node,"reference":reference});
+                    commit
+                        .rows
+                        .push(put("saved_scratch", reference.clone(), value));
+                    commit.rows.push(put(
+                        "scratch_evidence",
+                        reference.clone(),
+                        json!({"node":node,"reference":reference,"status":"saved"}),
+                    ));
+                }
+                Observation::ScratchPruned { reference } => {
+                    if let Some(saved) = snapshot
+                        .rows
+                        .iter()
+                        .find(|r| r.table == "saved_scratch" && r.id == *reference)
+                    {
+                        let mut value = saved.value.clone();
+                        value["status"] = json!("pruned");
+                        commit
+                            .rows
+                            .push(put("scratch_evidence", reference.clone(), value));
+                    }
+                    commit.rows.push(RowChange::Delete {
+                        table: "saved_scratch".into(),
+                        id: reference.clone(),
+                    });
+                }
                 _ => {}
             }
         }
@@ -1589,6 +1621,7 @@ impl Controller {
             }
             self.queue_observation(&snapshot, &mut commit, key, index, observation)?;
         }
+        evidence::retire_delivered(&snapshot, &mut commit, &delivery, completion.ack);
         self.store.commit(&commit)?;
         self.remove_hold(&delivery);
         Ok(())
@@ -1601,7 +1634,60 @@ impl Controller {
         event: Event,
         commit: &mut Commit,
     ) -> Result<()> {
+        let closing_cause = match event {
+            Event::Command {
+                node,
+                command:
+                    tl3_kernel::Command::Stop
+                    | tl3_kernel::Command::Answer {
+                        answer: tl3_kernel::Answer::Stop,
+                        ..
+                    },
+                ..
+            } => Some((node, "user_stop")),
+            Event::Command {
+                node,
+                command:
+                    tl3_kernel::Command::ChangeRequest
+                    | tl3_kernel::Command::Answer {
+                        answer: tl3_kernel::Answer::ChangeRequest,
+                        ..
+                    },
+                ..
+            } => Some((node, "replaced")),
+            Event::Fact {
+                node,
+                fact: tl3_kernel::Fact::PrClosedByPerson,
+            } => Some((node, "pr_closed")),
+            Event::Fact {
+                node,
+                fact: tl3_kernel::Fact::PrDequeuedByPerson,
+            } => Some((node, "pr_dequeued")),
+            _ => None,
+        }
+        .filter(|(node, _)| {
+            world.nodes.get(node.0 as usize).is_some_and(|n| {
+                !matches!(
+                    n.phase,
+                    tl3_kernel::Phase::Stopping(_) | tl3_kernel::Phase::Closed(_)
+                )
+            })
+        });
         let (world, outputs) = tl3_kernel::step(world, event);
+        if let Some((node, reason)) = closing_cause
+            && world.nodes.get(node.0 as usize).is_some_and(|n| {
+                matches!(
+                    n.phase,
+                    tl3_kernel::Phase::Stopping(_) | tl3_kernel::Phase::Closed(_)
+                )
+            })
+        {
+            commit.rows.push(put(
+                "close_reasons",
+                node.0.to_string(),
+                json!({"reason":reason}),
+            ));
+        }
         self.record_kernel_result(snapshot, world, outputs, commit)?;
         commit.result = json!({"kernel_event": event});
         Ok(())
@@ -1878,7 +1964,20 @@ impl Controller {
                 question_context,
                 steering: None,
                 request_text: request.source,
+                evidence: None,
             };
+            if matches!(
+                output,
+                Out::Notice {
+                    notice: tl3_kernel::Notice::Summary(_),
+                    ..
+                } | Out::Effect {
+                    kind: tl3_kernel::EffectKind::OpenPr | tl3_kernel::EffectKind::Enqueue,
+                    ..
+                }
+            ) {
+                delivery.evidence = Some(evidence::capture(snapshot, commit, &delivery)?);
+            }
             if matches!(
                 output,
                 Out::Notice {
@@ -1888,29 +1987,15 @@ impl Controller {
             ) {
                 delivery.scope_removals = scope::summary(snapshot, node)?;
                 delivery.question_context = review_stops::context(snapshot, commit, node);
-                let mut references = std::collections::BTreeSet::new();
-                for value in snapshot
-                    .rows
-                    .iter()
-                    .filter(|r| r.table == "saved_scratch")
-                    .map(|r| &r.value)
-                    .chain(commit.rows.iter().filter_map(|row| match row {
-                        RowChange::Put { table, value, .. } if table == "saved_scratch" => {
-                            Some(value)
-                        }
-                        _ => None,
-                    }))
-                {
-                    if value["node"] == json!(node)
-                        && let Some(reference) = value["reference"].as_str()
-                    {
-                        references.insert(reference.to_owned());
-                    }
-                }
+                let references = &delivery
+                    .evidence
+                    .as_ref()
+                    .expect("captured summary evidence")
+                    .scratch;
                 if !references.is_empty() {
                     delivery.note = Some(format!(
                         "Saved unfinished work, kept for 30 days:\n{}",
-                        references.into_iter().collect::<Vec<_>>().join("\n")
+                        references.join("\n")
                     ));
                 }
             }
@@ -2664,7 +2749,7 @@ impl Controller {
                 pass,
                 results,
                 base_sha,
-                ..
+                action_key,
             } => {
                 let request = request(snapshot, node)?;
                 let repo = self
@@ -2697,7 +2782,15 @@ impl Controller {
                         earlier.iter().map(|row| &row.value),
                         &results,
                     );
-                    let mut report = json!({"base_sha": base_sha, "results": results});
+                    commit.rows.push(put(
+                        "check_evidence",
+                        format!("{}:{generation:020}", node.0),
+                        evidence::check_record(
+                            &json!({"head_sha":sha,"base_sha":base_sha,"action_key":action_key,
+                            "report":report,"pass":pass,"results":results}),
+                        ),
+                    ));
+                    let mut report = json!({"head_sha":sha, "base_sha": base_sha, "results": results, "action_key":action_key, "report":report, "pass":pass});
                     if !selected.is_empty() {
                         report["selected_failures"] = json!(selected);
                     }
@@ -2811,6 +2904,7 @@ impl Controller {
                                 kind: serde_json::from_value(check["kind"].clone())?,
                                 tests: adapters::workers::protocol::reply_field(check, "node_ids")?,
                                 forcing: check.get("forcing").cloned(),
+                                helper_evidence: check.get("helper_evidence").cloned(),
                             })
                         })
                         .collect::<Result<Vec<_>>>()?;
@@ -2852,6 +2946,14 @@ impl Controller {
                                 }));
                             }
                         };
+                    commit.rows.push(put(
+                        "review_evidence",
+                        format!("{}:{generation:020}", node.0),
+                        evidence::review_record(
+                            &json!({"head_sha":criteria["head_sha"],"verdict":reply["verdict"],
+                            "blocking_findings":reply["blocking_findings"]}),
+                        ),
+                    ));
                     if reply["verdict"] == "approve" {
                         mapped =
                             adapters::workers::protocol::MappedReply::Kernel(Reply::Approved {
@@ -2999,7 +3101,10 @@ impl Controller {
                         let current = findings::current_review(&feedback, n.round, previous);
                         let reviewed = current.head;
                         let fixes = adapters::workers::reproducing::check(&reply, current);
-                        if expected != checked || checks.len() != goals.len() {
+                        if expected != checked
+                            || checks.len() != goals.len()
+                            || crate::goals::handover(goals, &checks).is_err()
+                        {
                             Reply::RunFailed
                         } else if let Ok(fixes) = fixes {
                             if !fixes.evidence["findings"].as_array().unwrap().is_empty() {

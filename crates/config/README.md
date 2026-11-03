@@ -68,6 +68,31 @@ tools. The harness image uses `sha256:<64 lowercase hex digits>` or
 `repository@sha256:<64 lowercase hex digits>`, matching `harness.Container`.
 PB's `content:sha256:` form is not a harness image reference.
 
+Set `test_demand = { cpus = 4, mem_gb = 12 }` in a `[[github.repos]]`
+entry to reserve that repository's PrismaBuild test resources. Both values
+are required positive integers: `cpus` is at most 16 and `mem_gb` is at most
+64 GiB. Unknown fields, including `gpu`, are rejected. Omitting the key keeps
+1 CPU and 2 GiB. The demand follows the repository's owner, name and
+installation, including case-insensitive owner/name matching.
+
+This applies to independent Checking, the maker's `run_tests` (including
+base and head runs), and the maker's configured `run_generator` actions. A maker's parallel run keeps the existing memory rule:
+`mem_gb` per pytest worker, with at least `cpus` total reserved CPUs. Native
+thread limits follow `cpus`; parallel maker runs divide that budget among
+pytest workers. The harness forwards these limits into its test containers.
+PrismaBuild still decides admission and placement. Manual image and generator
+qualification tools run inside an already admitted action; they do not submit
+repository request actions.
+
+Failed maker test and generator actions return an allowlisted receipt with the action key,
+status, exit code and recorded scope memory peak when available. An exact
+`memory_limit_oom` reason is retained in the receipt and summary. Older PB
+consumer endings omit that reason, so TL3 reads the matching failed terminal
+record from the installed fleet layout, bounded to 2 MiB and matched by action
+key and publication. Missing or mismatched records leave the reason unknown.
+Independent Checking retains the OOM reason, return code and available scope
+peak in its check evidence. Neither path treats an OOM as a test assertion.
+
 `store` configures `tl3-store` with `host`, `port`, `database`, `user`,
 `connect_timeout_secs` and an optional `password_file`. Omitting the section
 uses local TCP port 5432 and database/user `tl3`. The store accepts only
@@ -151,6 +176,92 @@ repository's patterns. Other repositories do not inherit that entry's additions.
 Both lists require valid repository-relative globs without parent traversal,
 backslashes or control characters. Empty patterns are rejected.
 
+## Repository generators
+
+Each `[[github.repos]]` entry accepts optional `generated_files` globs and a
+`generator` command string. The field names match the generated-file fit config.
+
+```toml
+generated_files = ["**/BUILD.bazel", "src/generated/**"]
+generator = "bash tools/bazel/generate.sh"
+```
+
+The command is a single line parsed as argv. Use an explicit image interpreter,
+for example `python3 tools/bazel/build_files.py` or `bash tools/bazel/generate.sh`.
+Repository entrypoints such as `./generate.py` are refused. The action never
+resolves a shebang from the worktree. Shell operators are not interpreted.
+The maker's argument-free `run_generator` tool runs only this configured command
+in a PrismaBuild-admitted action using the repository's immutable test image.
+It has no network, host credentials or served-repo Git metadata. A private Git
+index includes all snapshot files, including new source files, for `git ls-files`.
+Generators reuse `test_demand`, including its 1 CPU / 2 GiB default and native
+thread bounds. A separate resource profile would duplicate the same admission
+contract. Both explicit `run_generator` and final-head generation use it.
+
+`generator_timeout_s` bounds container startup plus the command. It defaults to
+120 seconds and accepts whole seconds from 1 through 600. For example:
+
+```toml
+test_demand = { cpus = 2, mem_gb = 4 }
+generator_timeout_s = 300
+```
+
+The enclosing PB execution and progress budgets are the configured deadline
+plus 60 seconds, so the default stays 180 seconds. Preparation has 25 seconds,
+validation 20, cleanup 10, and artifact serialization has 5 seconds of headroom.
+The trusted action bounds preparation and validation with process timers.
+Its timing receipt reports those phases, container execution, cleanup, and the
+total generator lifecycle. The outer verdict separately retains PB's whole action
+`elapsed_s`, or null when older PB records omit it. Container startup and command
+time share one measurement. Queue/admission wait is outside both totals. Cleanup failure cannot replace the original
+inner timeout. If PB terminates the action without an artifact, its outer verdict
+is retained and the inner verdict is explicitly unavailable.
+
+The implementation version and selected resource/deadline budget enter both the
+sealed action input and checkpoint identity. A budget change submits fresh work.
+The same failed input/budget returns its journaled failure without retrying.
+Failure reports preserve the action key, verified receipt identity when present,
+selected budget, phase timings and distinct inner/outer verdicts. Raw container
+logs remain in the artifact and are excluded from model-facing failure reports.
+The image must contain the generator's interpreter, Git and dependencies.
+
+Every changed path must match `generated_files`, occur in the plan footprint,
+and avoid the effective protected paths. The action rejects the entire output
+for any other write, deletion, mode change, symlink, binary or invalid UTF-8 output.
+Existing output modes must stay unchanged; new outputs must have mode 0644. Limits
+are 128 changed files, 16 MiB per file and 32 MiB of output in total. There is no
+partial import after refusal. The snapshot is limited to 512 MiB. Writable scratch
+is memory-backed and charged to the admitted scope, so excessive writes cannot
+fill the worker disk. Model file tools reject hand edits of generated
+outputs and protected files. Generated headers alone never authorize execution.
+
+PrismaBuild's verified stdout artifact carries the output bytes. The maker
+checks its CAS log digest, terminal verdict, receipt and complete output diff
+before import. The durable import journal lives beside the maker session,
+outside the served worktree. Each replacement is atomic. A retry reuses the
+same action and permits only the original or verified bytes during recovery.
+A source edit invalidates an applied receipt. Worker code ensures generation
+before its final commit, then records the input tree, command, exact argv, image identity,
+action key, exit status, artifact digest and final output tree. Independent
+checks and review still run on that final head.
+
+Generated text costs a 1,024-token regeneration allowance in fit forecasts;
+reads return at most 40 lines and 3,072 bytes. Ordinary source retains its usual
+cost and text limits. Missing command or output patterns means generation is
+unavailable, which planner and maker receive as `generator_available = false`.
+Globs use repository-relative paths without traversal; `**` matches zero or
+more path segments. The default list is empty. TL3 also recognizes an explicit
+`@generated` or `generated by` marker immediately after a comment token in the
+leading comment header, within the first 20 lines and 4,096 bytes. A prose
+mention or a marker inside a string does not classify ordinary source.
+Existing generated text files cost 1,024 tokens each in the shared ingest,
+planner and maker fit estimate. New files cost zero base-content tokens.
+Ordinary files keep their full token cost up to 65,536 bytes and the existing
+16,384-token ranged-file allowance above that size. Binary, invalid UTF-8 and
+files over 16 MiB remain unusable, including generated outputs.
+
+Configuration is optional; existing repositories keep their current tools.
+
 ## Repository branches
 
 Each `[[github.repos]]` entry accepts `branch_template` and `base_branch`.
@@ -194,3 +305,70 @@ is false. It allows compiled libraries and executables on the harness's private
 the other container restrictions still apply. Tmpfs is RAM charged to the
 PrismaBuild action's declared memory demand. See the
 [design note](../../docs/design/executable-scratch.md) for containment and risk.
+
+## Request evidence preflight
+
+`planning.tool_capabilities` declares the evidence the installed `run_tests`
+protocol can produce. Omit it for the PrismaBuild pytest defaults in
+`example.toml`, or set it to `[]` to disable execution evidence. Configuration
+can narrow the installed capabilities. It cannot grant a new executor, artifact,
+forcing mechanism or permission to edit protected files.
+
+The `native_threads_1` runner feature means the runner sets native-thread bounds
+of one. Preserve requests for those bounds in `runner_features`, with the
+required run artifacts. They are runner configuration, outside Q55 symptom
+forcing. Workers derive `forcing_capabilities` and prompt guidance from the
+harness's reserved names and prefixes. A forcing still cannot set those names,
+even to the same value as the runner.
+
+Ingest and audit derive `evidence_contract` from the original request. Planning
+preserves those requirements and adds any it discovers. Each requirement names
+the executor, runner features, artifacts, execution method and necessary edits
+to protected files. One configured tool must meet every dimension. The worker
+and controller compare the contract against the capabilities saved with the
+request. Unsupported requirements reach the existing `PlanCantMeet` path before
+a maker starts, with the exact missing capability in the report. With fail-fast
+enabled, that path stops without credit spent. No kernel rule changes here.
+
+For example, a mandatory BuildBuddy base and head run under pinned CPU
+contention requires `buildbuddy_remote_bazel`, `pinned_cpu_contention`,
+`invocation_url` and `forced_reproduction.contention_wrapper`. PrismaBuild
+pytest repetition, parallelism, CAS receipts and Q55 environment or Python
+patch forcings do not meet that contract. Implement the missing adapter before
+advertising those capabilities. Contract extraction remains agent judgment;
+the structured comparison and prevention of dropped intake requirements are
+code checks. Old in-flight requests without capabilities keep their protocol.
+
+## Repository rule tests
+
+Each `[[github.repos]]` entry accepts `always_tests`, a list of at most 20 pytest
+file paths or node IDs. The default is an empty list. Exceeding the cap reports
+an `always_tests` validation error. Paths are relative to the repository root.
+Absolute paths, parent traversal, and globs are rejected. Parameter labels in
+node IDs remain literal pytest selectors.
+
+```toml
+always_tests = ["tests/test_rules.py", "tests/test_limits.py::test_limit"]
+```
+
+Every entry runs in every check run of every leaf in this repository, in
+round 0 and fix rounds, alongside the plan's checks and any `selected_tests`.
+A file entry runs all its collected cases, including parametrized cases.
+`MAX_SELECTED_TESTS` does not apply to `always_tests`. Entries should be fast
+rule tests because their cost is paid on every check run.
+
+The planner receives the list. A file entry freezes the whole file, which
+prevents a maker from weakening the rule to make a violation pass. If a goal
+requires changing a frozen file, the planner reports `cant_meet` naming it.
+Rule changes belong to the repository's owner.
+
+An assertion or error that also occurs on the base is pre-existing under the
+regression rules. An entry missing on both the base and head is stale. The
+harness drops it from execution and retains a nonblocking result with a note
+naming it in the controller's check evidence for the repository owner. Deleting
+or renaming an entry that existed on the base still fails. Empty or skipped
+rule files fail. An empty list adds no check.
+
+A new failure returns the test selector and assertion to the maker before
+publication. See [the harness guide](../../harness/README.md#repository-rule-tests)
+for execution and result details.

@@ -232,9 +232,9 @@ impl Adapter {
         ))?;
         Ok(Self::linked(delivery, issue))
     }
-    /// PRD #327: a console command's audit note. Code writes it, so it is
-    /// posted as written, without the writer model.
+    /// PRD #327: redact code-written audit notes before posting, without the writer model.
     fn console_note(&mut self, delivery: &Delivery, text: &str) -> Result<Completion> {
+        let text = crate::redaction::text(text)?;
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
         if self
@@ -247,7 +247,7 @@ impl Adapter {
                 &repo,
                 delivery.issue,
                 delivery.marker_key(),
-                text,
+                &text,
             ))?;
         }
         Ok(Completion::confirmed(vec![]))
@@ -462,6 +462,10 @@ impl Executor for Adapter {
         self.records.fence(self.epoch)?;
         if publishing::handles(delivery) {
             return match self.reconcile_publication(delivery) {
+                Err(Error::Permanent {
+                    class: "pr_evidence",
+                    ..
+                }) => Ok(Reconciliation::Found(Completion::permanent("pr_evidence"))),
                 Err(error) if error.is_github_not_found() => Err(error),
                 result => Ok(result.unwrap_or(Reconciliation::Pending)),
             };
@@ -749,7 +753,13 @@ fn writer_facts(
                 Outcome::NotActionable => "This request could not be acted on.",
                 Outcome::Stopped => stopped.as_deref().unwrap_or("Work on this request has stopped."),
                 Outcome::Replaced => "This request has been replaced. Work continues on your new request.",
-            }, "unmet_goals": if matches!(outcome, Outcome::Merged | Outcome::AlreadyDone) { vec![] } else { vec!["The original request was not completed by this work."] }});
+            }, "unmet_goals": crate::evidence::unmet_goals(delivery.evidence.as_ref()),
+            "evidence_status": if delivery.evidence.is_some() {"captured"} else {"not_captured"},
+            "merge_status": if outcome == Outcome::Merged || delivery.evidence.as_ref().is_some_and(|e| e.pull_request_status == crate::evidence::PullRequestStatus::Merged) {"merged"} else {"not_recorded"},
+            "evidence": delivery.evidence,
+            "recorded_summary": crate::evidence::summary(delivery)?,
+            "pull_request": delivery.pull_request.map(|number| json!({"number":number,
+                "url":format!("https://github.com/{}/{}/pull/{number}",delivery.repository.owner,delivery.repository.name)}))});
             if let Some(findings) = review_stop.and_then(crate::review_stops::findings) {
                 facts["findings"] = findings;
             }

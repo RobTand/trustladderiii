@@ -84,6 +84,7 @@ fn fixture(root: &Path) -> Delivery {
         scope_removals: None,
         steering: None,
         request_text: None,
+        evidence: None,
         proposed: None,
         question_context: None,
         question: None,
@@ -99,6 +100,7 @@ fn fixture(root: &Path) -> Delivery {
                 kind: Kind::Demonstrating,
                 tests: vec!["test_value.py::test_value".into()],
                 forcing: None,
+                helper_evidence: None,
             }],
         }),
     }

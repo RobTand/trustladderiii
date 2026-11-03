@@ -104,6 +104,9 @@ impl Cause {
     /// that fail because the model proxy is down still count as TL3-side;
     /// the controller can't yet tell them from worker bugs.
     pub(crate) fn of(upstream: Upstream, class: &str) -> Self {
+        if class == "redaction_infra" {
+            return Cause::Tl3;
+        }
         match upstream {
             Upstream::Workers => Cause::Tl3,
             Upstream::Worktrees if matches!(class, "git_remote" | "invalid_token") => {
@@ -1566,6 +1569,7 @@ pub(crate) const CHECKS_PENDING: &str = "checks_pending";
 pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
     match error {
         crate::Error::ChecksPending => CHECKS_PENDING,
+        crate::Error::RedactionInfra(_) => "redaction_infra",
         crate::Error::Quota { .. } => "quota",
         crate::Error::Permanent { class, .. } => class,
         crate::Error::Io(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
@@ -2164,6 +2168,7 @@ impl Controller {
             marker_key: None,
             steering: None,
             request_text: None,
+            evidence: None,
             question_context: Some(
                 json!({"issue_title":request.title, "signature":signature,"incident_id":id}),
             ),

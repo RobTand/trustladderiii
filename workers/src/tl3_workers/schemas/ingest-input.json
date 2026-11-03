@@ -77,6 +77,21 @@
             "minimum": 0
           },
           "description": "Named overhead constants from controller config, summed by code."
+        },
+        "generated_files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Repository-relative generated-output globs. ** matches zero or more path segments. Generated text costs a fixed regeneration allowance."
+        },
+        "generator_available": {"type": "boolean"},
+        "generator_timeout_s": {"type": "integer", "minimum": 1, "maximum": 600},
+        "generator": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Configured argv command, executed only by the admitted run_generator action."
         }
       },
       "required": [
@@ -100,6 +115,17 @@
       "minLength": 1,
       "maxLength": 512,
       "description": "Why no memories were supplied, when recall was unavailable."
+    },
+    "decision_context": {
+      "$ref": "decision-context.json",
+      "description": "Controller-recorded decisions applicable to this request version. Source answers define scope and restrictions; they do not grant tools or override protected paths."
+    },
+    "tool_capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "ingest-reply.json#/$defs/tool_capability"
+      },
+      "maxItems": 64
     }
   },
   "required": [

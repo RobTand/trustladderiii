@@ -4,6 +4,8 @@ use tl3_worktrees::{CommitId, Worktrees};
 pub mod writer;
 pub use writer::{FakeWriter, Writer};
 
+mod evidence;
+mod facts;
 mod fake;
 mod json;
 pub(crate) mod ladder;
@@ -123,6 +125,7 @@ pub struct Supervisor {
     models: tl3_config::Models,
     planning: tl3_config::Planning,
     protected_paths: crate::scope::ProtectedPaths,
+    repositories: Vec<tl3_config::Repository>,
     limits: tl3_config::Limits,
     store: tl3_config::Store,
     records_root: PathBuf,
@@ -148,7 +151,7 @@ impl Supervisor {
         for delivery in watched_deliveries(&mut store)? {
             let root = run_root(&config.workers.runs, &delivery.key);
             match latest(&root).and_then(|attempt| match attempt {
-                Some((_, path)) => inspect(&path, &delivery),
+                Some((_, path)) => inspect_recorded(&path, &delivery, &mut store),
                 None => Ok(Reconciliation::Absent),
             }) {
                 Ok(Reconciliation::Pending) => {
@@ -167,6 +170,7 @@ impl Supervisor {
             models: config.models.clone(),
             planning: config.planning.clone(),
             protected_paths: crate::scope::ProtectedPaths::new(&config.github.repos),
+            repositories: config.github.repos.clone(),
             limits: config.limits.clone(),
             store: config.store.clone(),
             records_root: records_root.to_owned(),
@@ -291,6 +295,9 @@ impl Supervisor {
                     if let Some(forcing) = c.get("forcing") {
                         check["forcing"] = forcing.clone();
                     }
+                    if let Some(evidence) = c.get("helper_evidence") {
+                        check["helper_evidence"] = evidence.clone();
+                    }
                     check
                 })
                 .collect::<Vec<_>>();
@@ -369,8 +376,13 @@ impl Supervisor {
             inputs["current_review_findings"] = current;
             inputs["plan"]["files"] = json!(delivery.paths);
             inputs["context_size"] = json!(self.limits.context_tokens);
-            inputs["fit_tokens"] = json!(self.limits.fit_tokens);
             inputs["tests"] = json!({"image": self.images.for_repository(&delivery.repository, &self.tests.container_image), "tools_path": self.tests.tools_dir});
+            let demand = self
+                .images
+                .test_demand(&delivery.repository)
+                .unwrap_or_default();
+            inputs["tests"]["cpus"] = json!(demand.cpus);
+            inputs["tests"]["mem_gb"] = json!(demand.mem_gb);
             if self.images.exec_scratch(&delivery.repository) {
                 inputs["tests"]["exec_scratch"] = json!(true);
             }
@@ -380,7 +392,28 @@ impl Supervisor {
         } else {
             self.root(&delivery.key).join("worktree")
         };
-        let forecast = json!({"fit_tokens": self.limits.fit_tokens, "context_tokens": self.limits.context_tokens, "overhead_tokens": self.planning.overhead_tokens});
+        let mut forecast = json!({"fit_tokens": self.limits.fit_tokens, "context_tokens": self.limits.context_tokens, "overhead_tokens": self.planning.overhead_tokens});
+        if let Some(repository) = self.repositories.iter().find(|repo| {
+            repo.owner.eq_ignore_ascii_case(&delivery.repository.owner)
+                && repo.name.eq_ignore_ascii_case(&delivery.repository.name)
+                && repo.installation_id == delivery.repository.installation
+        }) {
+            forecast["generated_files"] = json!(repository.generated_files);
+            forecast["generator_timeout_s"] = json!(repository.generator_timeout_s.unwrap_or(120));
+            if let Some(generator) = &repository.generator {
+                forecast["generator"] = json!(generator);
+            }
+            forecast["generator_available"] =
+                json!(repository.generator.is_some() && !repository.generated_files.is_empty());
+        }
+        let generator_available = forecast["generator_available"] == true;
+        if role == "maker" {
+            inputs["forecast"] = forecast.clone();
+            inputs["protected_paths"] = json!(
+                self.protected_paths
+                    .for_repository(&delivery.repository, &self.planning.protected_paths)?
+            );
+        }
         if role == "reviewer" {
             inputs = review::inputs(
                 delivery,
@@ -398,7 +431,21 @@ impl Supervisor {
             let findings = store
                 .worker_document(&node, "findings")?
                 .unwrap_or(json!([]));
-            inputs = json!({"ingest": ingest, "must_split": matches!(n.phase, tl3_kernel::Phase::Planning { must_split: true }), "findings": findings, "protected_paths": self.protected_paths.for_repository(&delivery.repository, &self.planning.protected_paths)?, "forecast": forecast});
+            inputs = json!({"always_tests": self.images.additional_tests(&delivery.repository).always, "ingest": ingest, "must_split": matches!(n.phase, tl3_kernel::Phase::Planning { must_split: true }), "findings": findings, "protected_paths": self.protected_paths.for_repository(&delivery.repository, &self.planning.protected_paths)?, "forecast": forecast});
+            if let Some(base) = materials.get("base_checkout") {
+                inputs["base_sha"] = base["commit"].clone();
+            }
+            let demand = self
+                .images
+                .test_demand(&delivery.repository)
+                .unwrap_or_default();
+            inputs["tests"] = json!({
+                "image": self.images.for_repository(&delivery.repository, &self.tests.container_image),
+                "tools_path": self.tests.tools_dir,
+                "cpus": demand.cpus,
+                "mem_gb": demand.mem_gb,
+                "exec_scratch": self.images.exec_scratch(&delivery.repository),
+            });
         } else if role == "audit" {
             inputs["ingest"] = store
                 .worker_document(&node, "briefs")?
@@ -412,6 +459,11 @@ impl Supervisor {
         if role == "ingest" {
             inputs["forecast"] = forecast;
         }
+        if matches!(role, "ingest" | "audit" | "planner" | "maker") {
+            inputs["decision_context"] =
+                json!(crate::decisions::Context::load(snapshot, delivery.node())?.applicable());
+        }
+
         if role != "reviewer" {
             inputs
                 .as_object_mut()
@@ -470,6 +522,29 @@ impl Supervisor {
                 repo.remove("materials");
             }
         }
+        let test_cpus = self
+            .images
+            .test_demand(&delivery.repository)
+            .unwrap_or_default()
+            .cpus;
+        if matches!(role, "ingest" | "audit" | "planner") {
+            inputs["tool_capabilities"] =
+                json!(self.planning.effective_tool_capabilities(test_cpus));
+            if generator_available {
+                inputs["tool_capabilities"].as_array_mut().unwrap().push(json!({
+                    "tool": "run_generator", "executor": "prismabuild_generator",
+                    "runner_features": ["git_index", "scoped_outputs", "idempotent_import"],
+                    "artifacts": ["action_key", "cas_receipt", "input_tree", "output_tree", "artifact_sha256", "logs", "terminal_verdict"],
+                    "methods": ["configured_generation"], "protected_files": [],
+                }));
+            }
+        }
+        if role == "planner" {
+            inputs["audit_evidence_contract"] = store
+                .worker_document(&node, "audits")?
+                .and_then(|audit| audit.get("evidence_contract").cloned())
+                .unwrap_or(json!([]));
+        }
         protocol::validate_inputs(role, &inputs)?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -484,7 +559,7 @@ impl Supervisor {
         let mut request = json!({
             "protocol": 1,
             "operation": {"node": delivery.node().0, "generation": delivery.generation, "kind": role},
-            "role": role, "model": self.models.worker_model(model), "key_file": self.models.key_file,
+            "role": role, "test_cpus": test_cpus, "model": self.models.worker_model(model), "key_file": self.models.key_file,
             "inputs": inputs, "worktree": worktree,
             "hindsight_key_file": self.hindsight.api_key_file,
             "trace": {
@@ -693,6 +768,7 @@ impl Supervisor {
             return Err(Error::Invalid("worker stop epoch is fenced"));
         }
         if let Some(attempt) = stop_attempt(&self.root(key))? {
+            facts::record(&mut Store::open(&self.store)?, key, &attempt)?;
             trace::flush(&attempt, &self.flusher());
         }
         Ok(())
@@ -758,6 +834,9 @@ impl Supervisor {
                     .to_str()
                     .is_some_and(|name| name.starts_with("attempt-"))
                 {
+                    if facts::record(store, key, &entry.path()).is_err() {
+                        eprintln!("worker completion facts unavailable; retirement continues");
+                    }
                     match crate::memory::queue_attempt(store, key, &entry.path()) {
                         Ok(()) => {}
                         Err(Error::Invalid(_) | Error::Json(_)) => {
@@ -811,11 +890,7 @@ fn stop_attempt(root: &Path) -> Result<Option<PathBuf>> {
     if let Some((_, attempt)) = latest(root)? {
         // Q49: stopping a live worker is deliberate, so its trace closes as
         // stopped rather than crashed (#430).
-        if attempt.join(trace::LOG).try_exists()?
-            && (alive(&attempt.join("claim.json"))? || alive(&attempt.join("process.json"))?)
-        {
-            write(&attempt.join("stopped.json"), &json!({}))?;
-        }
+        let stopping = alive(&attempt.join("claim.json"))? || alive(&attempt.join("process.json"))?;
         // #372: the supervisor's own scope also holds every process the worker started.
         let scope = process::own_scope(&attempt.join("claim.json"))?;
         cancel(&attempt.join("claim.json"))?;
@@ -825,6 +900,13 @@ fn stop_attempt(root: &Path) -> Result<Option<PathBuf>> {
         }
         process::kill_and_wait(&attempt.join("process.json"))?;
         process::kill_and_wait(&attempt.join("claim.json"))?;
+        if stopping {
+            write(
+                &attempt.join("stopped.json"),
+                &json!({"finished_ms": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64}),
+            )?;
+        }
         return Ok(Some(attempt));
     }
     Ok(None)
@@ -863,7 +945,7 @@ impl Supervisor {
         let root = self.root(&delivery.key);
         let previous = latest(&root)?;
         let result = match &previous {
-            Some((_, attempt)) => inspect(attempt, delivery)?,
+            Some((_, attempt)) => inspect_recorded(attempt, delivery, &mut store)?,
             None => Reconciliation::Absent,
         };
         match result {
@@ -936,6 +1018,14 @@ impl Supervisor {
         request["trace"]["log"] = json!(attempt.join(trace::LOG));
         request["trace"]["wake"] = json!(self.settings.runs.join(trace::HELD).join(trace::WAKE));
         let python = release_python(&self.settings.python)?;
+        request["trace"]["completion"] = json!(attempt.join("facts.json"));
+        request["trace"]["release"] = python
+            .ancestors()
+            .find(|path| path.file_name().is_some_and(|name| name == "workers"))
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            .map(|name| json!(name.to_string_lossy()))
+            .unwrap_or(Value::Null);
         // #372: the launcher moves the supervisor out of tl3d's cgroup, so a
         // restart or deploy leaves the run alive. A launcher failure fails the
         // launch; it never falls back to a supervisor tl3d's stop would kill.
@@ -1090,7 +1180,9 @@ impl Executor for Supervisor {
             self.active.remove(delivery, number);
         }
         let result = match latest(&self.root(&delivery.key))? {
-            Some((_, attempt)) => inspect(&attempt, delivery)?,
+            Some((_, attempt)) => {
+                inspect_recorded(&attempt, delivery, &mut Store::open(&self.store)?)?
+            }
             None => Reconciliation::Absent,
         };
         Ok(match result {
@@ -1153,7 +1245,9 @@ impl Supervisor {
         }
 
         let result = match latest(&self.root(&delivery.key))? {
-            Some((_, attempt)) => inspect(&attempt, delivery)?,
+            Some((_, attempt)) => {
+                inspect_recorded(&attempt, delivery, &mut Store::open(&self.store)?)?
+            }
             None => Reconciliation::Absent,
         };
         if !matches!(result, Reconciliation::Pending)
@@ -1232,6 +1326,18 @@ fn failed_with(delivery: &Delivery, class: &str) -> Completion {
         generation: delivery.generation,
         reply: Reply::RunFailed,
     })])
+}
+
+fn inspect_recorded(
+    attempt: &Path,
+    delivery: &Delivery,
+    store: &mut Store,
+) -> Result<Reconciliation> {
+    let result = inspect(attempt, delivery)?;
+    if !matches!(result, Reconciliation::Pending) {
+        facts::record(store, &delivery.key, attempt)?;
+    }
+    Ok(result)
 }
 
 /// Inspect one attempt directory, rather than the run root or historical attempts.

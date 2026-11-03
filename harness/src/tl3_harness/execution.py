@@ -1,5 +1,6 @@
 from dataclasses import asdict, dataclass, replace
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -10,23 +11,23 @@ import time
 from typing import Protocol
 
 from .limits import MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, validate_check_plan
-from .model import (Check, FailureNotes, Forcing, HarnessInputError, Kind, Outcome, Result, TestResult, Verdict,
-                    judge)
-from .node_ids import selects
+from .model import (ALWAYS_CHECK, Check, FailureNotes, Forcing, HarnessInputError, Kind, Outcome, Result, TestResult, Verdict,
+                    NATIVE_THREAD_ENVIRONMENT, judge)
+from .node_ids import selects, validate_always_tests
 from .report import InvalidReport, decode, parse
 from . import selection
 from .trees import (UnsupportedEntry, added_names, changed_configuration, changed_existing_tests,
                     changed_files, changed_protected, commit, configuration, export, is_test, own_base,
-                    test_edits)
+                    test_edits, helper_test_edits)
 
 
 TMPFS_MIB = 512
-# The one check the harness adds to a plan: existing tests that import the change (#359).
+# Existing tests that import the change (#359), and configured repo-wide rules (#498).
 SELECTED_CHECK = "Existing tests that import the change"
 MAX_SELECTED_TESTS = 1000
 
 
-_BASE_RESULTS: dict[tuple, dict[str, Outcome]] = {}
+_BASE_RESULTS: dict[tuple, tuple[dict[str, Outcome], dict[str, str]]] = {}
 # Selected candidates' base outcomes, per test, apart from the plan's base cache.
 _SELECTED_BASE: dict[tuple, Outcome] = {}
 
@@ -53,8 +54,9 @@ def container_command(tree: Path, container: Container, tests: tuple[str, ...]) 
         "--mount", f"type=bind,src={harness},dst=/harness,readonly",
         "--tmpfs", f"/tmp:rw,nosuid,nodev,{'exec' if container.exec_scratch else 'noexec'},size={TMPFS_MIB}m,mode=1777",
         "--env", "HOME=/tmp", "--env", "TMPDIR=/tmp", "--env", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1",
-        "--env", "OMP_NUM_THREADS=1", "--env", "MKL_NUM_THREADS=1",
-        "--env", "OPENBLAS_NUM_THREADS=1", "--entrypoint=python3",
+        *[arg for name in NATIVE_THREAD_ENVIRONMENT
+          for arg in ("--env", f"{name}={os.environ.get(name, '1')}")],
+        "--entrypoint=python3",
         container.image, "-I", "-B", "/harness/runner.py", "-",
     ]
 
@@ -316,13 +318,27 @@ def selected_head(tool: TestTool, new: Path, container: Container, kept: tuple[s
                                        if test.passed and test.test in notes else test for test in result.tests))
 
 
+def stale_result(result: Result, stale: set[str]) -> Result:
+    if result.name != ALWAYS_CHECK:
+        return result
+    tests = tuple(replace(test, passed=True, message=(
+        f"Ignored stale always_tests entry `{test.test}`: missing on both the base and the head. "
+        "The repository owner should update or remove it.")[:MAX_MESSAGE_CHARS])
+        if test.test in stale else test for test in result.tests)
+    verdict = (Verdict.INFRASTRUCTURE_FAILURE if result.verdict == Verdict.INFRASTRUCTURE_FAILURE else
+               Verdict.PASS if all(test.passed for test in tests) else Verdict.FAIL)
+    return replace(result, tests=tests, verdict=verdict)
+
+
 def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                container: Container, reviewed: str | None = None, tool: TestTool = PYTEST,
-               protected: tuple[str, ...] = (), selected_tests: int | None = None) -> tuple[Result, ...]:
+               protected: tuple[str, ...] = (), selected_tests: int | None = None,
+               always_tests: tuple[str, ...] = ()) -> tuple[Result, ...]:
     """Run one round inside one admitted PB action, from trusted installed code. `protected`
     holds the repository's protected path patterns; a change to any of them is refused.
     With `selected_tests`, up to that many existing tests whose imports reach the change,
-    and that pass on the base, run as one more regression check, `SELECTED_CHECK`."""
+    and that pass on the base, run as one more regression check, `SELECTED_CHECK`.
+    `always_tests` runs the configured files or node IDs as regression checks every round."""
     require_admission()
     if not plan or len({check.name for check in plan}) != len(plan):
         raise HarnessInputError("a plan needs uniquely named checks")
@@ -331,6 +347,14 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
     if selected_tests is not None and (type(selected_tests) is not int
                                        or not 1 <= selected_tests <= MAX_SELECTED_TESTS):
         raise HarnessInputError(f"selected_tests must be 1 to {MAX_SELECTED_TESTS}")
+    if any(check.name == ALWAYS_CHECK for check in plan):
+        raise HarnessInputError("a planned check may not use the harness's always-check name")
+    try:
+        validate_always_tests(always_tests)
+    except ValueError as error:
+        raise HarnessInputError(str(error)) from error
+    if always_tests:
+        plan += (Check(ALWAYS_CHECK, Kind.REGRESSION, tuple(dict.fromkeys(always_tests))),)
     tests = tuple(dict.fromkeys(test for check in plan for test in check.tests))
     try:
         validate_check_plan(plan)
@@ -357,31 +381,56 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             export(repo, head, new)
         except UnsupportedEntry as entry:
             return refused(plan, unsupported_entry_message(entry))
+        stale = {test for test in always_tests
+                 if not (old / test.split("::")[0]).is_file() and not (new / test.split("::")[0]).is_file()}
+        tests = tuple(test for test in tests if test not in stale)
         config = tool.configuration(old)
         if refusal := configuration_changes(repo, root, base, old, head, new, tool, protected):
-            return refused(plan, refusal)
+            return tuple(stale_result(result, stale) for result in refused(plan, refusal))
         invalid = {test for test in tests if not tool.is_test(test.split("::")[0], config)}
         if invalid:
             outcomes = dict.fromkeys(tests, Outcome.UNCOLLECTED)
+            outcomes.update(dict.fromkeys(stale, Outcome.MISSING))
             messages = dict.fromkeys(tests, "The plan names a test outside the configured test files.")
-            return tuple(judge(replace(check, forcing=None), outcomes, outcomes, messages=messages) for check in plan)
+            return tuple(stale_result(judge(replace(check, forcing=None), outcomes, outcomes, messages=messages), stale)
+                         for check in plan)
         ordinary = tuple(dict.fromkeys(test for check in plan
                                        if check.kind not in (Kind.DEMONSTRATING, Kind.REPRODUCING)
-                                       for test in check.tests))
+                                       for test in check.tests if test not in stale))
         changed = tool.changed_existing_tests(old, new, ordinary)
         demonstrating = tuple(dict.fromkeys(test for check in plan
-                                            if check.kind == Kind.DEMONSTRATING and check.forcing is None
+                                            if check.kind == Kind.DEMONSTRATING and check.forcing is None and check.helper_evidence is None
                                             for test in check.tests))
         candidates = (selected_candidates(repo, tool, old, new, config, base, head, plan, selected_tests)
                       if selected_tests else ())
+        helpers = [check for check in plan if check.helper_evidence is not None]
+        if len(helpers) > 1:
+            return refused(plan, "Helper evidence supports one target check per plan, with all its observers.")
+        helper_runs = {}
+        for check in helpers:
+            staged = root / "helper-observers"
+            shutil.copytree(old, staged)
+            try:
+                if tool is not PYTEST:
+                    raise ValueError("helper evidence requires the pytest tool")
+                if not check.helper_evidence.failure_cases:
+                    raise ValueError("helper evidence requires known-bad failure-preservation cases")
+                identity = helper_test_edits(old, new, staged, config["test-files"],
+                                             check.helper_evidence, check.tests)
+            except ValueError as error:
+                return refused(plan, str(error))
+            helper_runs[check.name] = staged, identity
         progress = Progress()
         base_notes = {Kind.DEMONSTRATING: FailureNotes(), Kind.REPRODUCING: FailureNotes()}
         cache_key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container, ordinary)
         if ordinary and cache_key not in _BASE_RESULTS:
-            observed = tool.run(old, container, ordinary, root / "base.jsonl", progress)
+            before_messages = {}
+            observed = tool.run(old, container, ordinary, root / "base.jsonl", progress, messages=before_messages)
             if Outcome.NO_REPORT not in observed.values():
-                _BASE_RESULTS[cache_key] = observed
-        before = _BASE_RESULTS.get(cache_key, dict.fromkeys(ordinary, Outcome.NO_REPORT)).copy()
+                _BASE_RESULTS[cache_key] = observed, before_messages
+        before, before_messages = _BASE_RESULTS.get(cache_key, (dict.fromkeys(ordinary, Outcome.NO_REPORT), {}))
+        before = before.copy()
+        before.update(dict.fromkeys(stale, Outcome.MISSING))
         # Candidates run apart, so one crashing there can't cost the plan its base evidence.
         selected_before = selected_base(tool, old, container, candidates, base, root, progress)
         # A test that doesn't pass on the base says nothing about the change: drop it, don't excuse it.
@@ -420,12 +469,58 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             forced_head = tool.run(new, container, check.tests, root / f"forced-head-{index}.jsonl", progress,
                                    messages=head_messages, forcing=check.forcing)
             forced[check.name] = forced_base, notes, forced_head, head_messages
+        helper_outcomes = {}
+        for check in helpers:
+            staged, identity = helper_runs[check.name]
+            existing_messages = {}
+            existing = tool.run(old, container, check.tests, root / "helper-original-base.jsonl", progress,
+                                messages=existing_messages)
+            if any(existing[test] not in (Outcome.MISSING, Outcome.UNCOLLECTED) or existing_messages.get(test)
+                   for test in check.tests):
+                results = refused(plan, "Helper observers must be absent from base collection; "
+                                  "existing or unavailable tests cannot be replaced by observers.")
+                if Outcome.NO_REPORT in existing.values():
+                    results = tuple(replace(result, verdict=Verdict.INFRASTRUCTURE_FAILURE) for result in results)
+                return results
+            notes = FailureNotes()
+            outcomes = tool.run(staged, container, check.tests, root / "helper-base.jsonl", progress, messages=notes)
+            try:
+                preservation = helper_failure_preservation(tool, staged, new, check.helper_evidence,
+                                                          container, root, progress)
+            except ValueError as error:
+                return refused(plan, f"Invalid helper failure preservation: {error}")
+            identity.update(preservation)
+            helper_outcomes[check.name] = outcomes, notes, identity
         messages = {}
         after = tool.run(new, container, tests, root / "head.jsonl", progress, messages=messages)
+        after.update(dict.fromkeys(stale, Outcome.MISSING))
+        # A collection/plan refusal is also UNCOLLECTED, but proves nothing about missing nodes.
+        stale.update(test for test in always_tests if "::" in test
+                     and before[test] in (Outcome.MISSING, Outcome.UNCOLLECTED)
+                     and after[test] in (Outcome.MISSING, Outcome.UNCOLLECTED)
+                     and not before_messages.get(test) and not messages.get(test))
         comparisons = {Kind.DEMONSTRATING: demonstrated, Kind.REPRODUCING: reproduced,
                        Kind.REGRESSION: before, Kind.BEHAVIOR_PRESERVING: before}
         results = []
         for check in plan:
+            if check.name in helper_outcomes:
+                outcomes, notes, identity = helper_outcomes[check.name]
+                result = judge(check, outcomes, after, messages=messages, base_notes=notes)
+                # This mode requires an actual assertion, never a missing-name substitute.
+                if any(outcomes[test] != Outcome.ASSERTION for test in check.tests):
+                    result = replace(result, verdict=(Verdict.INFRASTRUCTURE_FAILURE if result.verdict == Verdict.INFRASTRUCTURE_FAILURE else Verdict.FAIL), tests=tuple(
+                        replace(test, passed=False, message="Helper observers must fail by assertion on the old helper.")
+                        if outcomes[test.test] != Outcome.ASSERTION else test for test in result.tests))
+                if any(item[side] != Outcome.PASSED for item in identity["failure_preservation"]
+                       for side in ("base", "head")):
+                    infrastructure = any(item[side] == Outcome.NO_REPORT for item in identity["failure_preservation"]
+                                         for side in ("base", "head"))
+                    result = replace(result, verdict=Verdict.INFRASTRUCTURE_FAILURE if infrastructure else Verdict.FAIL, tests=tuple(
+                        replace(test, passed=False, message="Failure preservation requires every known-bad invocation "
+                                "to fail by assertion on both helpers; setup/runtime errors and successful returns do not count.")
+                        for test in result.tests))
+                results.append(replace(result, helper_evidence=identity))
+                continue
             if check.name in forced:
                 forced_base, notes, forced_head, head_messages = forced[check.name]
                 results.append(judge(check, forced_base, after, messages=messages, base_notes=notes,
@@ -439,17 +534,93 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                     if test.test in changed else test for test in result.tests)
                 if any(test.test in changed for test in result.tests):
                     result = replace(result, verdict=Verdict.FAIL, tests=restored)
-            results.append(result)
+            results.append(stale_result(result, stale))
         if kept:
             results.append(selected_head(tool, new, container, kept, selected_before, root, progress))
         return tuple(results)
 
 
+def helper_failure_preservation(tool, staged, head, evidence, container, root, progress):
+    """Call the real target with bounded data or existing setup, independently of observers."""
+    module, function = evidence.target.split("::")
+    source = """import json
+import pytest
+from pathlib import Path
+from types import SimpleNamespace
+
+
+def argument(value, module, witnesses):
+    if isinstance(value, dict) and '$setup' in value:
+        name = value['$setup']
+        try:
+            result = getattr(module, name)()
+            method = value['$call']
+            original = getattr(result, method)
+            if not callable(original):
+                raise TypeError('declared method is not callable')
+            witness = {'returned': False}
+            def observed(*args, **kwargs):
+                outcome = original(*args, **kwargs)
+                witness['returned'] = True
+                return outcome
+            setattr(result, method, observed)
+            witnesses.append((result, method, original, witness))
+            return result
+        except Exception as error:
+            raise RuntimeError(f'Helper setup {name} failed: {type(error).__name__}') from error
+    if isinstance(value, dict) and '$attributes' in value:
+        return SimpleNamespace(**value['$attributes'])
+    return value
+"""
+    for index, encoded in enumerate(evidence.failure_cases):
+        source += f"""
+
+def test_failure_{index}(request):
+    module = pytest.Module.from_parent(request.session, path=Path({module!r}).resolve()).obj
+    target = getattr(module, {function!r})
+    case = json.loads({encoded!r})
+    witnesses = []
+    try:
+        args = [argument(value, module, witnesses) for value in case['args']]
+        kwargs = {{key: argument(value, module, witnesses) for key, value in case['kwargs'].items()}}
+        try:
+            target(*args, **kwargs)
+        except AssertionError:
+            if any(not witness['returned'] for _, _, _, witness in witnesses):
+                raise RuntimeError('Helper setup did not reach the declared method return')
+            return
+        raise AssertionError('The known-bad helper invocation no longer fails by assertion')
+    finally:
+        for value, method, original, _ in reversed(witnesses):
+            setattr(value, method, original)
+"""
+    name = '_tl3_helper_failure_preservation.py'
+    tests = tuple(f'{name}::test_failure_{index}' for index in range(len(evidence.failure_cases)))
+    outcomes = []
+    for label, tree in (("base", staged), ("head", head)):
+        path = tree / name
+        if path.exists():
+            raise ValueError("reserved helper failure-preservation driver path exists")
+        path.write_text(source)
+        try:
+            observed = tool.run(tree, container, tests, root / f"helper-failure-{label}.jsonl", progress)
+            outcomes.append([observed[test] for test in tests])
+        finally:
+            path.unlink()
+    return {"failure_cases": [json.loads(case) for case in evidence.failure_cases],
+            "failure_driver_sha256": hashlib.sha256(source.encode()).hexdigest(),
+            "failure_preservation": [{"base": before, "head": after}
+                                     for before, after in zip(*outcomes)]}
+
+
 def result_json(results: tuple[Result, ...]) -> str:
     reports = [asdict(result) for result in results]
     detailed = 0
-    for result, report in zip(results, reports):
+    # Owner-configured rule notes must survive even when planned failures fill the message budget.
+    for result, report in sorted(zip(results, reports), key=lambda pair: pair[0].name != ALWAYS_CHECK):
         # Unforced results keep their earlier shape; a forced one carries its forcing for review (#393).
+        if result.helper_evidence is None:
+            del report["helper_evidence"]
         if result.forcing is None:
             del report['forcing']
         else:
@@ -457,7 +628,7 @@ def result_json(results: tuple[Result, ...]) -> str:
         for test in report['tests']:
             if test['head_forced'] is None:
                 del test['head_forced']
-            # A passing test carries a message only when a selected rerun found it flaky.
+            # Passing messages include stale rule notes and selected reruns that found a flake.
             if (not test['passed'] or test['message']) and detailed < MAX_DETAILED_FAILURES:
                 test['message'] = test['message'][:MAX_MESSAGE_CHARS].encode(errors='backslashreplace').decode()[:MAX_MESSAGE_CHARS]
                 detailed += 1

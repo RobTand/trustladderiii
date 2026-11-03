@@ -153,7 +153,43 @@ impl Adapter {
                 kind: EffectKind::OpenPr,
                 ..
             } => {
+                let branch = self.branches.branch(delivery)?;
+                let issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+                let request = delivery
+                    .request_text
+                    .as_deref()
+                    .or(issue.body.as_deref())
+                    .unwrap_or("");
+                let evidence = crate::evidence::publication(delivery, request)?;
+                let rules = self.body_lines(&delivery.repository);
                 if let Some(mut pull) = self.branch_pr(&client, &repo, delivery)? {
+                    let body = pull.body.as_deref().unwrap_or_default();
+                    let healed =
+                        crate::pr_body::healed(body, rules, Some(request), &delivery.paths)
+                            .unwrap_or_else(|| body.to_owned());
+                    let healed = crate::evidence::publication_lines(delivery, &healed);
+                    let healed = crate::redaction::text(&healed)?;
+                    let body = crate::evidence::with_publication(&healed, &evidence);
+                    crate::evidence::validate_body(&body)?;
+                    crate::evidence::validate_publication(
+                        delivery,
+                        &pull.head.branch,
+                        pull.draft,
+                        &body,
+                    )?;
+                    if pull.body.as_deref().unwrap_or_default() != body {
+                        pull = self.runtime.block_on(client.update_pull_request_body(
+                            &repo,
+                            pull.number,
+                            &body,
+                        ))?;
+                        crate::evidence::validate_publication(
+                            delivery,
+                            &pull.head.branch,
+                            pull.draft,
+                            pull.body.as_deref().unwrap_or_default(),
+                        )?;
+                    }
                     if pull.state == "closed" && pull.merged_at.is_none() {
                         pull = self
                             .runtime
@@ -161,8 +197,6 @@ impl Adapter {
                     }
                     return Ok(binding(delivery, &pull));
                 }
-                let issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
-                let branch = self.branches.branch(delivery)?;
                 let rules = self.body_lines(&delivery.repository);
                 // Policy lines follow `Refs #N.`, where a self-heal also puts them.
                 // The issue's own instruction, such as PrismaBuild's `## PR rules`,
@@ -187,6 +221,11 @@ impl Adapter {
                         .unwrap_or_default(),
                     GitHub::marker(&delivery.key)
                 );
+                let body = crate::evidence::publication_lines(delivery, &body);
+                let body = crate::redaction::text(&body)?;
+                let body = crate::evidence::with_publication(&body, &evidence);
+                crate::evidence::validate_body(&body)?;
+                crate::evidence::validate_publication(delivery, branch.as_str(), false, &body)?;
                 // #447: a body the served repository's policy refuses is TL3's
                 // own failure. A permanent failure stops for review (#440's seam).
                 if !crate::pr_body::gaps(&body, rules).is_empty() {
@@ -198,12 +237,18 @@ impl Adapter {
                 let pull = self.runtime.block_on(client.open_pull_request(
                     &repo,
                     &NewPullRequest {
-                        title: issue.title,
+                        title: crate::redaction::text(&issue.title)?,
                         head: branch.as_str().into(),
                         base: self.branches.base(&delivery.repository)?.into(),
                         body,
                     },
                 ))?;
+                crate::evidence::validate_publication(
+                    delivery,
+                    &pull.head.branch,
+                    pull.draft,
+                    pull.body.as_deref().unwrap_or_default(),
+                )?;
                 Ok(binding(delivery, &pull))
             }
             Out::Effect {
@@ -246,10 +291,29 @@ impl Adapter {
             Out::Effect {
                 kind: EffectKind::OpenPr,
                 ..
-            } => self
-                .branch_pr(&client, &repo, delivery)?
-                .filter(|pr| pr.state == "open" || pr.merged_at.is_some())
-                .map(|pr| binding(delivery, &pr)),
+            } => {
+                let evidence = crate::evidence::publication(
+                    delivery,
+                    delivery.request_text.as_deref().unwrap_or(""),
+                )?;
+                self.branch_pr(&client, &repo, delivery)?
+                    .filter(|pr| pr.state == "open" || pr.merged_at.is_some())
+                    .filter(|pr| {
+                        let body = pr.body.as_deref().unwrap_or_default();
+                        crate::evidence::validate_body(body).is_ok()
+                            && crate::evidence::validate_publication(
+                                delivery,
+                                &pr.head.branch,
+                                pr.draft,
+                                body,
+                            )
+                            .is_ok()
+                            && crate::pr_body::gaps(body, self.body_lines(&delivery.repository))
+                                .is_empty()
+                            && crate::evidence::with_publication(body, &evidence) == body
+                    })
+                    .map(|pr| binding(delivery, &pr))
+            }
             Out::Effect {
                 kind: EffectKind::ClosePr,
                 ..

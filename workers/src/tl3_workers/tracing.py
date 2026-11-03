@@ -16,6 +16,8 @@ import tomllib
 
 
 active = ContextVar('tl3_trace_capture', default=None)
+
+
 PAYLOAD_BYTES = 65536
 TRACE_BYTES = 1024 * 1024
 STRING_CHARS = 8192
@@ -1216,9 +1218,39 @@ def safe_span(span, redactor=None, role="unknown", model="unknown", payload_limi
     return entry.proto
 
 
+class WorkerStageError(ValueError):
+    """A fixed stage name, with optional schema diagnostics and no provider text."""
+
+    STAGES = frozenset({"grade judge failure", "postmortem judge failure",
+                        "postmortem repair failure", "postmortem JSON parse failure",
+                        "postmortem recommendation contract failure",
+                        "postmortem cached reply failure", "postmortem cached judged failure",
+                        "postmortem assessment cache failure",
+                        "postmortem assessment lookup failure",
+                        "postmortem assessment write failure",
+                        "postmortem assessment outcome unknown"})
+
+    def __init__(self, stage, error=None):
+        self.stage = stage if stage in self.STAGES else "worker run failed"
+        self.validation = error
+        super().__init__(self.stage)
+
+
 def failure_tags(error):
+    from tl3_workers.roles.planner import PlanConsistencyError
     from tl3_workers.turns import InvalidReply, Unrepairable
 
+    if isinstance(error, PlanConsistencyError):
+        # Node IDs are model text. Redact before retaining each draft's diagnostic.
+        message = 'planner check inconsistency: ' + ', '.join(error.node_ids)
+        return {"failure_class": "PlanConsistencyError",
+                "failure_message": Redactor(None).text(message)[:220]}
+    if isinstance(error, WorkerStageError):
+        from jsonschema import ValidationError
+        message = error.stage
+        if isinstance(error.validation, ValidationError):
+            message += ": " + failure_tags(error.validation)["failure_message"]
+        return {"failure_class": "WorkerStageError", "failure_message": message[:512]}
     if isinstance(error, InvalidReply):
         first, second = (failure_tags(item)["failure_message"] for item in error.errors)
         return {"failure_class": "InvalidReply",
@@ -1284,6 +1316,9 @@ def observe(request):
             logger.handlers = [logging.NullHandler()]
             logger.propagate = False
             capture = Capture(request)
+            from tl3_workers.facts import current as current_facts
+            if facts := current_facts.get():
+                facts.trace_id = capture.root.trace_id
         except Exception:
             failure()
     token = active.set(capture)

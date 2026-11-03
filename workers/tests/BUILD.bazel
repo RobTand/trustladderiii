@@ -85,6 +85,7 @@ tl3_py_test(
         ":conftest",
         "//harness/src/tl3_harness",
         "//workers/src",
+        "@tl3_pip//langchain_core",
         "@tl3_pip//pytest",
     ],
 )
@@ -98,6 +99,7 @@ tl3_py_test(
         ":worker_process",
         "//workers/src",
         "@tl3_pip//jsonschema",
+        "@tl3_pip//langchain_core",
         "@tl3_pip//pytest",
         "@tl3_pip//tiktoken",
     ],
@@ -185,8 +187,10 @@ tl3_py_test(
         ":conftest",
         ":worker_process",
         "//workers/src",
+        "@tl3_pip//httpx",
         "@tl3_pip//jsonschema",
         "@tl3_pip//langchain_core",
+        "@tl3_pip//openai",
         "@tl3_pip//pytest",
     ],
 )
@@ -251,6 +255,8 @@ tl3_py_test(
         "//workers/src",
         "@tl3_pip//httpx",
         "@tl3_pip//langchain_core",
+        "@tl3_pip//langchain_openai",
+        "@tl3_pip//openai",
         "@tl3_pip//pytest",
     ],
 )
@@ -380,7 +386,20 @@ tl3_py_test(
         ":conftest",
         "//workers/src",
         "@tl3_pip//jsonschema",
+        "@tl3_pip//langchain_core",
         "@tl3_pip//mlflow_skinny",
         "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_scope",
+    srcs = ["test_scope.py"],
+    deps = [
+        ":conftest",
+        "//workers/src",
+        "@tl3_pip//jsonschema",
+        "@tl3_pip//pytest",
+        "@tl3_pip//tiktoken",
     ],
 )

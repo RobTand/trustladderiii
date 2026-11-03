@@ -188,6 +188,22 @@ Rob will often just comment rather than answer a question. An agent reads each o
 
 Restart is how Rob starts a request over after something went wrong (Q49). It reads the issue's current title and body from GitHub when it applies, so he can edit the issue first. On an open request, it works like changing the request: the request stops as replaced, and a new one linked to the same issue starts on its own. On a request that closed without merging, it files a new linked request and reopens the issue if TL3 closed it. Merged and Done work isn't restarted; a complaint files a correction. A restart that arrives while a stop is finishing waits for the close. If the issue is gone (404 or 410), nothing is filed and Rob gets a note on the operations issue; any other failed read raises an incident, and clearing it retries. A stop no longer closes the issue: the summary says to comment `restart` to start again.
 
+Decided by Rob, 2026-11-03: restart comments posted by the TL3 build coordinator
+under Rob's standing approval count as Rob's own. Code requires Rob's configured
+numeric GitHub account ID, an unedited comment (`updated_at <= created_at`),
+and one exact whole line from
+`operations.delegated_attributions`. That line must be the final nonempty plain
+Markdown line, outside quotes (including lazy continuations), fenced or indented
+code, and HTML blocks or comments. Edited comments, including those first seen by
+catch-up, keep their original body and normal classification. The matching line
+identifies the delegate
+in the request's durable provenance. Code removes that attribution before
+classifying the remaining operator command as Rob's own. Exact `restart` uses
+the existing restart state check directly, without a classification model call.
+Answers and change requests retain their existing semantic classification and
+state checks. Other accounts and non-matching attributions retain their behavior.
+This decision adds no kernel transition or state-table rule.
+
 Incidents often span several requests, so until Discord exists they go to one pinned "TL3 operations" issue in TL3's own repo. Questions about a request stay on that request's issue (Q17).
 
 ### Escalation reports
@@ -730,3 +746,25 @@ missing test IDs, unavailable plans or incomplete evidence do not justify an out
 requeue. The controller journals the decision and test IDs with the queue fact,
 so restart and redelivery retain the retry bound. The kernel and state table
 are unchanged.
+
+## Q27: helper target and observer evidence (#549)
+
+"Approved" (Rob, 2026-11-03). For deterministic fixes to helpers inside test
+files, a demonstrating check may identify an existing helper target and new
+observer tests. Trusted staging keeps the real old helper on base and adds only
+the new observers; head uses the new helper with those same assertions. Every
+observer must fail by assertion on base and pass on head. The plan also declares
+bounded known-bad arguments as failure-preservation evidence. A trusted driver
+invokes the real helper through pytest's module importer, preserving the observer's
+module name and package context, independently of the observers. It requires
+AssertionError on both versions. The receipt retains these cases, the driver
+hash and both verdicts. Removing a helper assertion cannot pass by making a
+previously failing call succeed. Observer names already bound on base, including
+assignment aliases, are rejected. The harness also probes untouched base
+collection to reject dynamically collected names. Trusted receipts retain
+both helper source hashes, observer hashes and staged tree hashes for review.
+The bounded Python mode accepts an undecorated top-level helper with unchanged
+signature and dependencies. It rejects ambiguous targets and undeclared test
+edits. The existing evidence capability preflight advertises and checks method
+`helper_target_observer`. Regression and behavior-preserving definitions remain
+frozen; Q55 forcings keep their existing semantics. No kernel transition changes.

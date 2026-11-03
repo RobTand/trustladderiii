@@ -114,7 +114,40 @@ pub(crate) fn question(kind: QKind) -> (&'static str, Vec<&'static str>) {
     }
 }
 
+fn delegated_comment(
+    author: u64,
+    rob: u64,
+    body: &str,
+    configured: &[String],
+) -> Option<(String, String)> {
+    if author != rob {
+        return None;
+    }
+    let matches: Vec<_> = body
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| configured.iter().any(|entry| entry == line))
+        .collect();
+    let [(index, attribution)] = matches.as_slice() else {
+        return None;
+    };
+    if tl3_github::message::trailing_plain_line(body) != Some(*attribution) {
+        return None;
+    }
+    let command = body
+        .lines()
+        .enumerate()
+        .filter(|(i, _)| i != index)
+        .map(|(_, line)| line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(((*attribution).into(), command.trim().into()))
+}
+
 impl Controller {
+    pub fn set_delegated_attributions(&mut self, attributions: &[String]) {
+        self.delegated_attributions = attributions.to_vec();
+    }
     pub(crate) fn close_replacement(
         &self,
         snapshot: &Snapshot,
@@ -185,6 +218,7 @@ impl Controller {
                     scope_removals: None,
                     question_context: None,
                     request_text: binding.source,
+                    evidence: None,
                     proposed: None,
                     steering: Some(Task::ReplacementDropped { text, outcome }),
                 },
@@ -240,12 +274,43 @@ impl Controller {
         let n = &world.nodes[node.0 as usize];
         let mut inputs = json!({"comment": {"author": row.value["comment"]["user"]["login"], "body": row.value["comment"]["body"]},
                 "state": state(n)});
+        let comment: tl3_github::Comment = crate::decode_stored(row.value["comment"].clone())?;
+        let delegation = if comment.updated_at > comment.created_at {
+            None
+        } else {
+            delegated_comment(
+                comment.user.id,
+                self.bootstrap.rob,
+                &comment.body,
+                &self.delegated_attributions,
+            )
+        };
+        if let Some((attribution, body)) = &delegation {
+            inputs["comment"]["body"] = json!(body);
+            inputs["comment"]["delegated_by"] = json!(attribution);
+        }
+        let deterministic_restart = delegation
+            .as_ref()
+            .is_some_and(|(_, body)| body.eq_ignore_ascii_case("restart"))
+            && inputs["state"]["restartable"] == true;
         if let Some(pending) = snapshot
             .rows
             .iter()
             .find(|r| r.table == "comment_questions" && r.value["node"] == json!(node))
         {
             inputs["conversation"] = json!({"comment_id": pending.id, "comment": pending.value["comment"], "question": pending.value["question"]});
+        }
+        inputs["decision_context"] =
+            json!(crate::decisions::Context::load(snapshot, node)?.applicable());
+        if let Some(open) = n.question {
+            inputs["question_context"] =
+                answered_question(snapshot, n.question, open.id).unwrap_or_default();
+        }
+        let comment_id = row.value["comment"]["id"].to_string();
+        if let Some(selected) = snapshot.rows.iter().find(|selected| {
+            selected.table == "console_selected_answers" && selected.id == comment_id
+        }) {
+            inputs["selected_answer"] = selected.value.clone();
         }
         let binding: Request = crate::decode_stored(binding.value.clone())?;
         let key = format!("classify:{}", row.id);
@@ -273,6 +338,7 @@ impl Controller {
             scope_removals: None,
             question_context: None,
             request_text: binding.source,
+            evidence: None,
             proposed: None,
             steering: Some(Task::Classify {
                 comment_key: row.id.clone(),
@@ -284,7 +350,27 @@ impl Controller {
             json!({"classify": row.id}),
             snapshot,
         );
-        queue_classifier(self, &mut commit, delivery);
+        if let Some((attribution, _)) = &delegation {
+            commit.rows.push(put("request_delegations", row.id.clone(), json!({
+                "node":node, "comment_key":row.id, "comment_id":row.value["comment"]["id"], "actor_id":self.bootstrap.rob, "attribution":attribution})));
+        }
+        if deterministic_restart {
+            commit
+                .rows
+                .push(put("comment_jobs", delivery.key.clone(), json!(delivery)));
+            self.queue_observation(
+                snapshot,
+                &mut commit,
+                &key,
+                0,
+                &crate::executor::Observation::Classified {
+                    key: delivery.key.clone(),
+                    reply: Some(json!({"kind":"restart"})),
+                },
+            )?;
+        } else {
+            queue_classifier(self, &mut commit, delivery);
+        }
         self.store.commit(&commit)?;
         Ok(true)
     }
@@ -399,6 +485,52 @@ impl Controller {
             queue_classifier(self, commit, retry);
             return Ok(None);
         }
+        if inputs.get("reconcile_issue").is_some() {
+            for table in ["comment_jobs", "watches"] {
+                commit.rows.push(RowChange::Delete {
+                    table: table.into(),
+                    id: key.into(),
+                });
+            }
+            let mut context = crate::decisions::Context::load(snapshot, node)?;
+            let issue: tl3_github::Issue = crate::decode_stored(inputs["reconcile_issue"].clone())?;
+            let source = format!("issue:{}@{}", issue.number, issue.updated_at);
+            for decision in &mut context.decisions {
+                let assessment = reply
+                    .as_ref()
+                    .and_then(|r| r["assessments"].as_array())
+                    .and_then(|items| items.iter().find(|a| a["id"] == decision.id));
+                // An unavailable assessment cannot authorize an exception. The
+                // restarted worker can ask for renewed approval from current text.
+                if assessment.is_none_or(|a| a["contradicted"] == true) {
+                    decision.superseded_by = Some(source.clone());
+                    decision.supersession_reason = Some(
+                        assessment
+                            .and_then(|a| a["reason"].as_str())
+                            .unwrap_or(
+                                "Current issue reconciliation failed; renewed approval is required",
+                            )
+                            .into(),
+                    );
+                }
+            }
+            context.store(snapshot, commit)?;
+            let pending = snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "restart_reconciliation" && r.id == node.0.to_string())
+                .ok_or(Error::Invalid("restart reconciliation missing"))?;
+            commit.rows.push(put(
+                "replacement_pending",
+                pending.id.clone(),
+                pending.value.clone(),
+            ));
+            commit.rows.push(RowChange::Delete {
+                table: "restart_reconciliation".into(),
+                id: pending.id.clone(),
+            });
+            return Ok(None);
+        }
         let reply = reply.unwrap_or(json!({"kind": "unsure", "question": "I couldn't act on your comment. Could you rephrase it?"}));
         for (table, id) in [
             ("comment_jobs", key),
@@ -419,9 +551,18 @@ impl Controller {
         let mut recorded = comment.value.clone();
         recorded["classification"] = reply.clone();
         recorded["node"] = json!(node);
+        if let Some(delegate) = inputs["comment"].get("delegated_by") {
+            recorded["delegated_by"] = delegate.clone();
+        }
         commit
             .rows
             .push(put("github_comments", comment_key.clone(), recorded));
+        if inputs.get("selected_answer").is_some() {
+            commit.rows.push(RowChange::Delete {
+                table: "console_selected_answers".into(),
+                id: comment.value["comment"]["id"].to_string(),
+            });
+        }
         let kind: String = crate::adapters::workers::protocol::reply_field(&reply, "kind")?;
         if let Some(previous) = inputs["conversation"]["comment_id"].as_str() {
             commit.rows.push(RowChange::Delete {
@@ -568,6 +709,88 @@ impl Controller {
         if !current_answer {
             return Ok(None);
         }
+        let changes_request = !matches!(n.phase, Phase::Stopping(_))
+            && matches!(
+                command,
+                Command::ChangeRequest
+                    | Command::Answer {
+                        answer: Answer::ChangeRequest,
+                        ..
+                    }
+            );
+        let accepted_answer =
+            matches!(command, Command::Answer { answer, .. } if !matches!(answer, Answer::Unclear));
+        if changes_request || accepted_answer {
+            let binding = request(snapshot, node)?;
+            let source = (origin.comment != 0 && origin.comment < (1u64 << 53)).then(|| {
+                format!(
+                    "https://github.com/{}/{}/issues/{}#issuecomment-{}",
+                    binding.repo.owner, binding.repo.name, origin.issue, origin.comment
+                )
+            });
+            let mut context = crate::decisions::Context::load(snapshot, node)?;
+            if changes_request {
+                for id in reply["supersedes"].as_array().into_iter().flatten() {
+                    let decision = context
+                        .decisions
+                        .iter_mut()
+                        .find(|decision| {
+                            decision.superseded_by.is_none()
+                                && id.as_str() == Some(decision.id.as_str())
+                        })
+                        .ok_or(Error::Invalid(
+                            "superseded decision is no longer applicable",
+                        ))?;
+                    decision.superseded_by =
+                        Some(source.clone().unwrap_or_else(|| origin.key.into()));
+                    decision.supersession_reason = Some(format!(
+                        "Replacement request contradicts this approval: {}",
+                        reply["new_text"].as_str().unwrap_or(origin.text)
+                    ));
+                }
+            }
+            if let Command::Answer { question, .. } = command
+                && accepted_answer
+            {
+                let scope = reply["decision"]["allowed_scope"]
+                    .as_array()
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_else(|| {
+                        reply["new_text"]
+                            .as_str()
+                            .or_else(|| reply["guidance"].as_str())
+                            .map(str::to_owned)
+                            .into_iter()
+                            .collect()
+                    });
+                let restrictions = reply["decision"]["restrictions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect();
+                context.decisions.push(crate::decisions::Decision {
+                    id: origin.key.into(),
+                    source_comment: source,
+                    question: answered_question(snapshot, n.question, question)
+                        .ok_or(Error::Invalid("accepted answer has no question"))?,
+                    answer: origin.text.into(),
+                    allowed_scope: scope,
+                    restrictions,
+                    origin_request_version: node.0,
+                    superseded_by: None,
+                    supersession_reason: None,
+                });
+            }
+            context.store(snapshot, commit)?;
+        }
         // #422: Rob's answer, with the question and his reason, is a decision later
         // requests recall. An unclear answer decides nothing.
         if let Command::Answer { question, answer } = &command
@@ -708,6 +931,7 @@ impl Controller {
                 scope_removals: None,
                 question_context: None,
                 request_text: binding.source,
+                evidence: None,
                 proposed: None,
                 steering: Some(restart),
             },
@@ -827,15 +1051,59 @@ impl Controller {
                     issue: None,
                 } = crate::decode_stored(row.value.clone())?
             {
-                commit.rows.push(put(
-                    "replacement_pending",
-                    id,
-                    json!(Task::Restart {
-                        comment_key,
-                        text,
-                        issue: Some(issue),
-                    }),
-                ));
+                let context = crate::decisions::Context::load(snapshot, original)?.applicable();
+                let restart = json!(Task::Restart {
+                    comment_key: comment_key.clone(),
+                    text: text.clone(),
+                    issue: Some(issue.clone())
+                });
+                if context.decisions.is_empty() {
+                    commit.rows.push(put("replacement_pending", id, restart));
+                } else if !snapshot
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "restart_reconciliation" && r.id == id)
+                {
+                    commit.rows.push(put("restart_reconciliation", id, restart));
+                    let n = &snapshot::decode(snapshot)?.nodes[original.0 as usize];
+                    let binding = request(snapshot, original)?;
+                    queue_classifier(
+                        self,
+                        commit,
+                        Delivery {
+                            key: format!("restart-decisions:{comment_key}"),
+                            epoch: snapshot.epoch.get(),
+                            output: Output::Comment {
+                                node: original,
+                                kind: CommentKind::Classify,
+                            },
+                            generation: n.generation,
+                            head_sha: None,
+                            repository: binding.repo,
+                            issue: binding.issue,
+                            pull_request: None,
+                            paths: vec![],
+                            attempt: 1,
+                            round: 0,
+                            replanned: n.replanned,
+                            checks: None,
+                            evidence: None,
+                            job_generation: None,
+                            question: None,
+                            marker_key: None,
+                            note: None,
+                            scope_removals: None,
+                            question_context: None,
+                            request_text: binding.source,
+                            proposed: None,
+                            steering: Some(Task::Classify {
+                                comment_key: format!("restart-decisions:{comment_key}"),
+                                inputs: json!({"comment":{"author":"requester", "body":text}, "state":state(n),
+                                "decision_context":context, "reconcile_issue":issue}),
+                            }),
+                        },
+                    );
+                }
             }
             return Ok(None);
         }
@@ -881,13 +1149,34 @@ impl Controller {
             binding.source = issue.body.clone();
             commit.rows.push(put("requests", node.0.to_string(), json!(binding)));
         }
-        commit.rows.push(put(
-            "request_links",
-            node.0.to_string(),
-            json!({"original": original, "authorized_by": self.bootstrap.rob, "issue": issue}),
-        ));
+        let mut link =
+            json!({"original": original, "authorized_by": self.bootstrap.rob, "issue": issue});
+        if let Some(delegate) = replacement_delegate(snapshot, original) {
+            link["delegated_by"] = delegate.clone();
+        }
+        commit
+            .rows
+            .push(put("request_links", node.0.to_string(), link));
         Ok(event)
     }
+}
+
+pub(crate) fn replacement_delegate(snapshot: &Snapshot, original: NodeId) -> Option<&Value> {
+    let pending = snapshot.rows.iter().find(|r| {
+        r.id == original.0.to_string()
+            && matches!(r.table.as_str(), "replacement_pending" | "replacement")
+    })?;
+    let key = pending.value["Restart"]["comment_key"].as_str();
+    let comment = pending.value["FileRequest"]["comment"].as_u64();
+    snapshot
+        .rows
+        .iter()
+        .find(|r| {
+            r.table == "request_delegations"
+                && (key.is_some_and(|key| r.id == key)
+                    || comment.is_some_and(|id| r.value["comment_id"] == id))
+        })
+        .map(|r| &r.value["attribution"])
 }
 
 pub(crate) fn replacement_issue(
@@ -1047,5 +1336,95 @@ mod reply_defects {
             ));
         }
         assert_eq!(credit_amount(&json!({"amount":100})).unwrap(), 100);
+    }
+}
+
+#[cfg(test)]
+mod delegation_tests {
+    use super::*;
+    const LINE: &str = "(Posted by the TL3 build coordinator under Rob's standing approval.)";
+
+    #[test]
+    fn exact_attributed_restart_is_deterministic_and_preserves_delegate() {
+        let configured = vec![LINE.into()];
+        for _ in 0..9 {
+            let (delegate, body) =
+                delegated_comment(42, 42, &format!("restart\n\n{LINE}"), &configured).unwrap();
+            assert_eq!(delegate, LINE);
+            assert_eq!(body, "restart");
+        }
+        for command in [
+            "continue",
+            "Return goodbye instead.",
+            "pause",
+            "resume",
+            "stop",
+        ] {
+            assert_eq!(
+                delegated_comment(42, 42, &format!("{command}\n\n{LINE}"), &configured)
+                    .unwrap()
+                    .1,
+                command
+            );
+        }
+    }
+
+    #[test]
+    fn attribution_requires_the_rob_account_and_one_exact_configured_line() {
+        let configured = vec![LINE.into()];
+        assert!(delegated_comment(7, 42, &format!("restart\n\n{LINE}"), &configured).is_none());
+        for body in [
+            format!("restart\n\n{LINE} "),
+            format!("restart\n\n>{LINE}"),
+            format!("restart\n\n{}", LINE.replace("coordinator", "co-ordinator")),
+            format!("restart\n{LINE}\n{LINE}"),
+            "restart".into(),
+        ] {
+            assert!(
+                delegated_comment(42, 42, &body, &configured).is_none(),
+                "{body}"
+            );
+        }
+        assert!(delegated_comment(42, 42, &format!("restart\n{LINE}"), &[]).is_none());
+        assert!(
+            delegated_comment(
+                42,
+                42,
+                &format!("restart\n{LINE}\n(Another delegate.)"),
+                &[LINE.into(), "(Another delegate.)".into()]
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn attribution_must_be_trailing_plain_markdown() {
+        for body in [
+            format!("restart\n```\n{LINE}\n```"),
+            format!("restart\n~~~\n{LINE}\n~~~"),
+            format!("restart\n\n```\n{LINE}"),
+            format!("restart\n\n~~~\n{LINE}"),
+            format!("restart\n\n    {LINE}"),
+            format!("restart\n\n\t{LINE}"),
+            format!("restart\n\n> {LINE}"),
+            format!("restart\n\n> quoted attribution\n{LINE}"),
+            format!("restart\n\n<!--\n{LINE}\n-->"),
+            format!("restart\n\n<!--\n{LINE}"),
+            format!("restart\n\n<div>\n{LINE}\n</div>"),
+            format!("restart\n\n{LINE}\nmore text"),
+        ] {
+            assert!(
+                delegated_comment(42, 42, &body, &[LINE.into()]).is_none(),
+                "Markdown content must not grant delegation: {body}"
+            );
+        }
+        for body in [
+            format!("restart\n{LINE}"),
+            format!("restart\n\n{LINE}\n\n"),
+            format!("restart\n\n> a quote\n\n{LINE}"),
+            format!("restart\n\n```\nexample\n```\n\n{LINE}"),
+        ] {
+            assert!(delegated_comment(42, 42, &body, &[LINE.into()]).is_some());
+        }
     }
 }

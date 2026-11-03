@@ -114,6 +114,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
         scope_removals: None,
         steering: None,
         request_text: None,
+        evidence: None,
         proposed: None,
         question_context: None,
         question: None,
@@ -129,6 +130,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
                 kind: Kind::Demonstrating,
                 tests: vec!["test_value.py::test_value".into()],
                 forcing: None,
+                helper_evidence: None,
             }],
         }),
     }
@@ -188,6 +190,25 @@ fn recorded_endings() {
         );
     }
 }
+fn memory_oom_is_retained_in_check_evidence() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture(root.path(), "memory_limit_oom");
+    adapter.execute(&delivery).unwrap();
+    let ended = completion(&mut adapter, &delivery);
+    let encoded = serde_json::to_string(&ended).unwrap();
+    assert!(
+        encoded.contains("memory_limit_oom"),
+        "retain the PB termination reason: {encoded}"
+    );
+    assert!(encoded.contains("2147483648"), "retain the scope peak");
+    assert!(encoded.contains("137"), "retain the return code");
+    assert!(
+        !observed(ended).0,
+        "OOM is infrastructure evidence, not a test report"
+    );
+}
+
 fn harness_error_is_named_tl3_side() {
     // #326: the trusted harness rejected TL3's own check input inside the action.
     let root = tempfile::tempdir().unwrap();
@@ -406,6 +427,100 @@ fn staged_request_carries_the_repository_protected_paths() {
         .collect();
     for expected in [".github/**", "**/conftest.py", "GLOBAL.md", "release/**"] {
         assert!(protected.contains(expected), "{expected} in {protected:?}");
+    }
+}
+
+fn always_tests_are_staged_required_and_reported_in_every_round() {
+    const ALWAYS: &str = "Repository always tests";
+    for round in [0, 1] {
+        for pre_existing in [false, true] {
+            for omitted in [false, true] {
+                let root = tempfile::tempdir().unwrap();
+                let mut delivery = run(root.path(), false);
+                delivery.round = round;
+                let mut config =
+                    tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+                config.github.repos[0].always_tests = vec!["test_rules.py".into()];
+                let mut adapter =
+                    fixture(root.path(), "done").with_repositories(&config.github.repos);
+                let planned = &delivery.checks.as_ref().unwrap().plan[0];
+                let mut results = vec![
+                    serde_json::json!({"name": planned.name, "kind": "demonstrating", "custody": "in-process",
+                    "verdict": "pass", "tests": [{"test": planned.tests[0], "base": "assertion", "head": "passed", "pre_existing": false, "passed": true}]}),
+                ];
+                if !omitted {
+                    results.push(serde_json::json!({"name": ALWAYS, "kind": "regression", "custody": "in-process",
+                        "verdict": if pre_existing { "pass" } else { "fail" }, "tests": [{"test": "test_rules.py", "base": if pre_existing { "assertion" } else { "passed" },
+                        "head": "assertion", "pre_existing": pre_existing, "passed": pre_existing, "message": "Tests must not sleep"}]}));
+                }
+                fs::write(
+                    root.path().join("queue/recorded_results.json"),
+                    serde_json::to_vec(&results).unwrap(),
+                )
+                .unwrap();
+                adapter.execute(&delivery).unwrap();
+                let staged = fs::read_dir(root.path().join("queue"))
+                    .unwrap()
+                    .map(|p| p.unwrap().path())
+                    .find(|p| p.extension().is_some_and(|e| e == "request"))
+                    .unwrap();
+                let request: serde_json::Value =
+                    serde_json::from_slice(&fs::read(staged).unwrap()).unwrap();
+                assert_eq!(
+                    request["always_tests"],
+                    serde_json::json!(["test_rules.py"])
+                );
+                match &completion(&mut adapter, &delivery).observations[..] {
+                    [
+                        Observation::Checks {
+                            report,
+                            pass,
+                            failed_tests,
+                            ..
+                        },
+                    ] => {
+                        assert_eq!(*report, !omitted);
+                        assert_eq!(*pass, pre_existing && !omitted);
+                        if !pre_existing && !omitted {
+                            assert_eq!(failed_tests[0].test, "test_rules.py");
+                            assert_eq!(failed_tests[0].message, "Tests must not sleep");
+                        }
+                    }
+                    other => panic!("expected check feedback: {other:?}"),
+                }
+            }
+        }
+    }
+}
+
+fn stale_always_test_notes_survive_controller_evidence() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+    config.github.repos[0].always_tests = vec!["test_removed.py".into()];
+    let mut adapter = fixture(root.path(), "done").with_repositories(&config.github.repos);
+    let planned = &delivery.checks.as_ref().unwrap().plan[0];
+    let note = "Ignored stale always_tests entry `test_removed.py`: missing on both the base and the head.";
+    fs::write(root.path().join("queue/recorded_results.json"), serde_json::to_vec(&serde_json::json!([
+        {"name": planned.name, "kind": "demonstrating", "custody": "in-process", "verdict": "pass", "tests": [{"test": planned.tests[0], "base": "assertion", "head": "passed", "pre_existing": false, "passed": true}]},
+        {"name": "Repository always tests", "kind": "regression", "custody": "in-process", "verdict": "pass", "tests": [{"test": "test_removed.py", "base": "missing", "head": "missing", "pre_existing": false, "passed": true, "message": note}]}
+    ])).unwrap()).unwrap();
+    adapter.execute(&delivery).unwrap();
+    match &completion(&mut adapter, &delivery).observations[..] {
+        [
+            Observation::Checks {
+                report,
+                pass,
+                failed_tests,
+                results,
+                ..
+            },
+        ] => {
+            assert!(*report && *pass);
+            assert!(failed_tests.is_empty());
+            assert_eq!(results[1]["tests"][0]["message"], note);
+        }
+        other => panic!("expected nonblocking evidence: {other:?}"),
     }
 }
 
@@ -633,6 +748,105 @@ fn forced_check_is_staged_and_reaches_review() {
         ),
         "a forced check needs its forced head outcome"
     );
+}
+
+fn helper_target_identity_is_staged_and_reaches_review() {
+    let declaration = serde_json::json!({"target":"test_value.py::_execute",
+        "failure_cases":[{"args":[{"$setup":"_failed_queue","$call":"execute"}, false],"kwargs":{}}]});
+    for tamper in [
+        "none",
+        "target",
+        "old_identity",
+        "observer",
+        "base_passed",
+        "missing_preservation",
+        "changed_cases",
+        "changed_setup",
+        "changed_call",
+        "failure_lost",
+        "missing",
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let mut delivery = run(root.path(), false);
+        let mut value = serde_json::to_value(delivery.checks.as_ref().unwrap()).unwrap();
+        value["plan"][0]["helper_evidence"] = declaration.clone();
+        delivery.checks = Some(serde_json::from_value::<CheckRun>(value).unwrap());
+        let planned = &delivery.checks.as_ref().unwrap().plan[0];
+        let mut observers = serde_json::Map::new();
+        observers.insert(planned.tests[0].clone(), "c".repeat(64).into());
+        let mut identity = serde_json::json!({"target":declaration["target"],
+            "base_target_sha256":"a".repeat(64), "head_target_sha256":"b".repeat(64),
+            "base_tree_sha256":"d".repeat(64), "head_tree_sha256":"e".repeat(64), "observers":observers,
+            "failure_cases":declaration["failure_cases"], "failure_driver_sha256":"f".repeat(64),
+            "failure_preservation":[{"base":"passed", "head":"passed"}]});
+        if tamper == "target" {
+            identity["target"] = "test_value.py::fake_old".into();
+        }
+        if tamper == "old_identity" {
+            identity["base_target_sha256"] = identity["head_target_sha256"].clone();
+        }
+        if tamper == "observer" {
+            identity["observers"] = serde_json::json!({});
+        }
+        if tamper == "missing_preservation" {
+            identity
+                .as_object_mut()
+                .unwrap()
+                .remove("failure_preservation");
+        }
+        if tamper == "changed_cases" {
+            identity["failure_cases"][0]["args"] = serde_json::json!([true]);
+        }
+        if tamper == "changed_setup" {
+            identity["failure_cases"][0]["args"][0]["$setup"] = "_different_queue".into();
+        }
+        if tamper == "changed_call" {
+            identity["failure_cases"][0]["args"][0]["$call"] = "different_method".into();
+        }
+        if tamper == "failure_lost" {
+            identity["failure_preservation"][0]["head"] = "assertion".into();
+        }
+        let mut result = serde_json::json!({"name":planned.name,"kind":"demonstrating","custody":"in-process",
+            "verdict":"pass","helper_evidence":identity,"tests":[{"test":planned.tests[0],
+            "base":if tamper == "base_passed" {"passed"} else {"assertion"},"head":"passed","pre_existing":false,"passed":true}]});
+        if tamper == "missing" {
+            result.as_object_mut().unwrap().remove("helper_evidence");
+        }
+        let mut adapter = fixture(root.path(), "done");
+        fs::write(
+            root.path().join("queue/recorded_results.json"),
+            serde_json::to_vec(&serde_json::json!([result])).unwrap(),
+        )
+        .unwrap();
+        adapter.execute(&delivery).unwrap();
+        let staged = fs::read_dir(root.path().join("queue"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.extension().is_some_and(|e| e == "request"))
+            .unwrap();
+        let request: serde_json::Value =
+            serde_json::from_slice(&fs::read(staged).unwrap()).unwrap();
+        assert_eq!(request["plan"][0]["helper_evidence"], declaration);
+        let ended = completion(&mut adapter, &delivery);
+        match &ended.observations[..] {
+            [
+                Observation::Checks {
+                    report,
+                    pass,
+                    results,
+                    ..
+                },
+            ] => {
+                assert_eq!(*report && *pass, tamper == "none", "{tamper}");
+                if tamper == "none" {
+                    assert_eq!(results[0]["helper_evidence"], identity);
+                    assert_eq!(results[0]["tests"][0]["base"], "assertion");
+                    assert_eq!(results[0]["tests"][0]["head"], "passed");
+                }
+            }
+            other => panic!("expected check observation, got {other:?}"),
+        }
+    }
 }
 
 fn pending_and_withdrawal() {
@@ -2107,6 +2321,15 @@ fn main() {
     }
 
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).is_some_and(|arg| arg == "--repository-demand") {
+        repository_test_demand_is_sealed_with_default_and_identity_fallback();
+        return;
+    }
+    if args.get(1).is_some_and(|arg| arg == "--always-tests") {
+        always_tests_are_staged_required_and_reported_in_every_round();
+        stale_always_test_notes_survive_controller_evidence();
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--r5") {
         let mut failures = 0;
         for (name, test) in [
@@ -2202,6 +2425,10 @@ fn main() {
             oversized_plan_is_refused_before_submission as fn(),
         ),
         (
+            "repository_test_demand_is_sealed_with_default_and_identity_fallback",
+            repository_test_demand_is_sealed_with_default_and_identity_fallback as fn(),
+        ),
+        (
             "repository_image_is_sealed_and_staged_with_global_fallback",
             repository_image_is_sealed_and_staged_with_global_fallback as fn(),
         ),
@@ -2222,18 +2449,34 @@ fn main() {
             "forced_check_is_staged_and_reaches_review",
             forced_check_is_staged_and_reaches_review,
         ),
+        (
+            "helper_target_identity_is_staged_and_reaches_review",
+            helper_target_identity_is_staged_and_reaches_review as fn(),
+        ),
         ("source_skips_bad_waits", source_skips_bad_waits as fn()),
         (
             "live_waits_do_not_look_on_bell_reset",
             live_waits_do_not_look_on_bell_reset,
         ),
         ("declared_wait_uses_bell", declared_wait_uses_bell as fn()),
+        (
+            "memory_oom_is_retained_in_check_evidence",
+            memory_oom_is_retained_in_check_evidence as fn(),
+        ),
         ("recorded_endings", recorded_endings as fn()),
         (
             "retirement_refuses_active_or_unreadable_jobs",
             retirement_refuses_active_or_unreadable_jobs,
         ),
         ("bounded_failure_details", bounded_failure_details),
+        (
+            "stale_always_test_notes_survive_controller_evidence",
+            stale_always_test_notes_survive_controller_evidence,
+        ),
+        (
+            "always_tests_are_staged_required_and_reported_in_every_round",
+            always_tests_are_staged_required_and_reported_in_every_round,
+        ),
         (
             "selected_tests_are_staged_and_their_check_accepted",
             selected_tests_are_staged_and_their_check_accepted,
@@ -2321,7 +2564,7 @@ fn main() {
     quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
     println!("test unreadable_job_record_is_a_failed_read ... ok");
     database.stop();
-    println!("45 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("50 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
@@ -2636,6 +2879,61 @@ fn moving_job_reconcile_is_pending() {
     );
 }
 
+fn repository_test_demand_is_sealed_with_default_and_identity_fallback() {
+    for (owner, name, installation, configured, cpus, mem_gb) in [
+        ("robtand", "TL3-SANDBOX", 1, true, 4, 12),
+        ("RobTand", "tl3-sandbox", 1, false, 1, 2),
+        ("RobTand", "other", 1, true, 1, 2),
+        ("Other", "tl3-sandbox", 1, true, 1, 2),
+        ("RobTand", "tl3-sandbox", 2, true, 1, 2),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let mut delivery = run(root.path(), false);
+        delivery.repository = Repository {
+            owner: owner.into(),
+            name: name.into(),
+            installation,
+        };
+        let text = include_str!("../../config/example.toml");
+        let text = if configured {
+            text.replace(
+                "installation_id = 1",
+                "installation_id = 1\ntest_demand = { cpus = 4, mem_gb = 12 }",
+            )
+        } else {
+            text.to_owned()
+        };
+        let config = tl3_config::Config::parse(&text).unwrap();
+        let mut adapter = fixture(root.path(), "pending").with_repositories(&config.github.repos);
+        adapter.execute(&delivery).unwrap();
+        let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let seal = calls
+            .iter()
+            .find(|args| args.iter().any(|arg| arg == "--seal-only"))
+            .unwrap();
+        assert!(
+            seal.windows(2)
+                .any(|pair| pair == ["--cpus", &cpus.to_string()]),
+            "expected {cpus} CPUs in {seal:?}"
+        );
+        assert!(
+            seal.windows(2)
+                .any(|pair| pair == ["--demand", &format!("mem_gb={mem_gb},gpu=0")]),
+            "expected {mem_gb} GiB in {seal:?}"
+        );
+        for name in ["OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"] {
+            assert!(
+                seal.windows(2)
+                    .any(|pair| pair == ["--env", &format!("{name}={cpus}")])
+            );
+        }
+    }
+}
+
 fn repository_image_is_sealed_and_staged_with_global_fallback() {
     for (owner, name, installation, expected) in [
         ("robtand", "TL3-SANDBOX", 1, "b"),
@@ -2721,6 +3019,7 @@ fn result_budget_rejects_repeated_checks() {
             kind: Kind::Regression,
             tests: vec!["test_value.py::test_value".into()],
             forcing: None,
+            helper_evidence: None,
         })
         .collect();
     let mut adapter = fixture(root.path(), "pending");

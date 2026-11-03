@@ -12,6 +12,8 @@ def test_executable_scratch_is_explicit_and_keeps_the_boundary(enabled):
     assert 'exec_scratch' in {field.name for field in fields(Container)}, 'scratch needs an explicit opt-in'
     container = Container('sha256:' + '1' * 64, exec_scratch=enabled)
     command = container_command(Path('/served'), container, ())
+    environment = [command[index + 1] for index, arg in enumerate(command) if arg == '--env']
+    assert {'OMP_NUM_THREADS=1', 'MKL_NUM_THREADS=1', 'OPENBLAS_NUM_THREADS=1'} <= set(environment)
     mount = command[command.index('--tmpfs') + 1]
     assert ('exec' if enabled else 'noexec') in mount.split(':', 1)[1].split(',')
     assert f'size={TMPFS_MIB}m' in mount and TMPFS_MIB == 512

@@ -1,9 +1,11 @@
 """Turn supplied issue material into a brief or an early end."""
 
 from tl3_workers.roles.base import Role
+from tl3_workers.evidence import preflight
 from tl3_workers.contracts import schema
 from tl3_workers.exploration import ExplorationBudget
 from tl3_workers.recall import check_citations
+from tl3_workers.scope import goal_errors
 
 # The brief's maxLength, which the controller validates.
 BRIEF_CHARACTERS = next(
@@ -15,8 +17,12 @@ BRIEF_CHARACTERS = next(
 def check_memory_ids(inputs, reply):
     if "forecast" in reply:
         raise ValueError("only code may supply a forecast")
+    preflight(inputs, reply)
     if reply["kind"] == "brief":
         check_citations(inputs, reply)
+        errors = goal_errors(inputs, reply["goals"])
+        if errors:
+            raise ValueError("\n".join(errors))
 
         if "forecast" in inputs:
             from tl3_workers.forecast import Forecaster
@@ -39,7 +45,7 @@ ROLE = Role(
     prompt="ingest.md",
     input_schema="ingest-input",
     reply_schema="ingest-reply",
-    code_only_fields=("forecast",),
+    code_only_fields=("forecast", "evidence_errors"),
     exploration_budget=ExplorationBudget(),
     tools={
         "list": "List repository directories to locate evidence for the request.",

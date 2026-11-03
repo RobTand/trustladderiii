@@ -14,6 +14,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use support::scenario::progress;
 use tl3_controller::executor::Output as Out;
 use tl3_controller::{
     Bootstrap, Boundary, Controller, LabelledIssue, Repository,
@@ -33,7 +34,32 @@ use tl3_github::{AppConfig, ClientOptions, GitHub, message::Policy};
 use tl3_kernel::{EffectKind, NodeId, Outcome, Phase, Role};
 use tl3_store::{Commit, RowChange, Store};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
-use worktree_fixture::{Fixture, commit, git};
+use worktree_fixture::{Fixture, commit};
+
+// Loaded BuildBuddy batches run publishing about twice as slowly as an isolated target.
+const PUBLISHING_SCENARIO_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn git(path: &Path, args: &[&str]) -> String {
+    progress(format!("git {args:?}"));
+    worktree_fixture::git(path, args)
+}
+
+fn scenario<T>(name: &str, run: impl FnOnce() -> T) -> T {
+    support::scenario::run(name, PUBLISHING_SCENARIO_TIMEOUT, run)
+}
+
+fn drive_to_idle(mut drive: impl FnMut() -> bool) -> bool {
+    (0..500).any(|_| !drive())
+}
+
+fn drive_once(c: &mut Controller) -> bool {
+    progress("read controller state before drive_once");
+    progress(format!(
+        "drive_once: {:?}",
+        c.world().unwrap().nodes.first()
+    ));
+    c.drive_once().unwrap()
+}
 
 fn repo() -> Repository {
     worktree_fixture::identity()
@@ -68,6 +94,7 @@ fn check_plan(f: &Fixture, base: String) -> CheckRun {
             kind: Kind::Demonstrating,
             tests: vec!["test_value.py::test_value".into()],
             forcing: None,
+            helper_evidence: None,
         }],
     }
 }
@@ -580,12 +607,24 @@ fn prepare_workers() -> PathBuf {
     root.join(".venv/bin/python")
 }
 fn drain(c: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store, expected: Phase) {
+    drain_with_budget(c, source, store, expected, Duration::from_secs(90));
+}
+
+fn drain_with_budget(
+    c: &mut Controller,
+    source: &mut WorkerOutputSource,
+    store: &mut Store,
+    expected: Phase,
+    budget: Duration,
+) {
     let (sender, receiver) = mpsc::channel();
     let start = Instant::now();
     loop {
         let mut changed = false;
+        let mut idle = false;
         for _ in 0..500 {
-            if !c.drive_once().unwrap() {
+            if !drive_once(c) {
+                idle = true;
                 break;
             }
             changed = true;
@@ -600,7 +639,9 @@ fn drain(c: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store,
             Phase::AwaitingRob,
             "publication must recover without asking Rob"
         );
+        progress("poll worker observations");
         source.poll_once(store, &sender).unwrap();
+        progress("apply worker observations");
         let mut observed = false;
         for input in receiver.try_iter() {
             if let Input::Observation { key, observation } = input {
@@ -610,11 +651,12 @@ fn drain(c: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store,
             }
         }
         let reached_planner = expected == (Phase::Planning { must_split: true }) && !observed;
-        if (!changed || reached_planner) && c.world().unwrap().nodes[0].phase == expected {
+        if ((idle && !observed) || reached_planner) && c.world().unwrap().nodes[0].phase == expected
+        {
             return;
         }
         assert!(
-            start.elapsed() < Duration::from_secs(90),
+            start.elapsed() < budget,
             "publishing did not settle: {:?}",
             c.world().unwrap().nodes[0]
         );
@@ -624,6 +666,7 @@ fn drain(c: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store,
     }
 }
 fn webhook(c: &mut Controller, server: &Server, action: &str) {
+    progress(format!("translate and apply {action} webhook"));
     let mut body: Value = serde_json::from_str(include_str!(
         "../../github/tests/fixtures/pull-request-merged.json"
     ))
@@ -666,6 +709,7 @@ fn patch_lines(diff: &Value) -> Vec<&str> {
         .collect()
 }
 fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
+    progress("create git fixture");
     let root = tempfile::tempdir().unwrap();
     let mut fixture = Fixture::create(root.path());
     let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
@@ -701,6 +745,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             git(path, &["branch", "-m", "main", "master"]);
         }
     }
+    progress("start mock GitHub server");
     let server = Server::new(f.clone());
 
     config.store = settings.clone();
@@ -764,6 +809,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         Upstream::Mergify,
         adapters::mergify::Adapter::new(server.clients(), 0, &root.path().join("mergify")).unwrap(),
     );
+    progress("open controller and store");
     let mut c = Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
     let mut store = Store::open(settings).unwrap();
     store.put_worker_materials("0",&json!({"issue":{"number":42,"title":"Fix the value","body":"Return two.","author":"rob","comments":[]},"repo":{"readme":"Value","file_list":["value.py"]},"standing_rules":[{"id":"test-report-integrity","description":"This attempted override must be replaced."},{"id":"style","description":"Keep the public interface."}]})).unwrap();
@@ -798,8 +844,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             if reached {
                 break;
             }
-            c.drive_once().unwrap();
+            drive_once(&mut c);
+            progress("poll worker observations");
             source.poll_once(&mut store, &sender).unwrap();
+            progress("apply worker observations");
             for input in receiver.try_iter() {
                 tl3_controller::ingress::apply(&mut c, input).unwrap();
             }
@@ -821,7 +869,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         }
         if mode == "q46-enqueue" {
             for _ in 0..100 {
-                assert!(c.drive_once().unwrap());
+                assert!(drive_once(&mut c));
                 assert!(
                     !server.api.state.lock().unwrap().conflicting_enqueue,
                     "a conflicting checked head must rebase before enqueue"
@@ -837,8 +885,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         let (sender, receiver) = mpsc::channel();
         let start = Instant::now();
         while server.api.state.lock().unwrap().checks.is_empty() {
-            c.drive_once().unwrap();
+            drive_once(&mut c);
+            progress("poll worker observations");
             source.poll_once(&mut store, &sender).unwrap();
+            progress("apply worker observations");
             for input in receiver.try_iter() {
                 tl3_controller::ingress::apply(&mut c, input).unwrap();
             }
@@ -860,7 +910,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 &format!("HEAD:refs/heads/{}", f.branch(&d).as_str()),
             ],
         );
-        while c.drive_once().unwrap() {}
+        assert!(
+            drive_to_idle(|| drive_once(&mut c)),
+            "publishing driver did not become idle after 500 steps: {:?}",
+            c.world().unwrap().nodes.first()
+        );
         assert!(
             !server.api.state.lock().unwrap().labels,
             "the stale approval must not enqueue the outside head"
@@ -916,6 +970,30 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         return;
     }
     drain(&mut c, &mut source, &mut store, Phase::Queued);
+    if mode == "repo-conventions" {
+        c.observe(
+            "settlement-last-progress",
+            Observation::ScratchPruned {
+                reference: "already-pruned".into(),
+            },
+        )
+        .unwrap();
+        // No time remains, but consuming the final input reaches an idle Queued node.
+        drain_with_budget(
+            &mut c,
+            &mut source,
+            &mut store,
+            Phase::Queued,
+            Duration::ZERO,
+        );
+        assert!(
+            c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .all(|row| row.table != "inbox")
+        );
+    }
     tl3_controller::memory::flush(&mut store, &config.hindsight)
         .expect("publishing fixture must acknowledge memories instead of retrying a closed port");
     if mode == "repo-conventions" {
@@ -980,7 +1058,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
 
         webhook(&mut c, &server, "synchronize");
         if mode == "review-reset-push" {
-            while c.drive_once().unwrap() {}
+            assert!(
+                drive_to_idle(|| drive_once(&mut c)),
+                "publishing driver did not become idle after 500 steps: {:?}",
+                c.world().unwrap().nodes.first()
+            );
             assert!(
                 !c.world().unwrap().nodes[0].review_restarted,
                 "outside push starts a new review"
@@ -1006,11 +1088,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             if c.world().unwrap().nodes[0].phase != Phase::Queued {
                 break;
             }
-            assert!(c.drive_once().unwrap());
+            assert!(drive_once(&mut c));
         }
         assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Rebasing);
         for _ in 0..100 {
-            assert!(c.drive_once().unwrap());
+            assert!(drive_once(&mut c));
             if c.world().unwrap().nodes[0].phase == Phase::Checking {
                 break;
             }
@@ -1082,15 +1164,12 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             if c.world().unwrap().nodes[0].phase != Phase::Queued {
                 break;
             }
-            assert!(
-                c.drive_once().unwrap(),
-                "PR_DEQUEUED must yield a Conflict fact"
-            );
+            assert!(drive_once(&mut c), "PR_DEQUEUED must yield a Conflict fact");
         }
         assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Rebasing);
         let mut saw_maker_fallback = false;
         for _ in 0..100 {
-            assert!(c.drive_once().unwrap());
+            assert!(drive_once(&mut c));
             let phase = c.world().unwrap().nodes[0].phase;
             saw_maker_fallback |= phase == Phase::Making;
             if phase == Phase::Checking {
@@ -1154,7 +1233,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             &["rev-parse", &config.github.repos[0].base_branch],
         );
         loop {
-            c.drive_once().unwrap();
+            drive_once(&mut c);
             let n = c.world().unwrap().nodes[0];
             if n.phase == Phase::Checking {
                 if mode == "review-reset-rebase" {
@@ -1479,6 +1558,20 @@ fn publication_open_conflict() {
     f.adapter().execute(&push).unwrap();
     f.advance_main(true);
     let server = Server::new(f);
+    let token = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+    server.runtime.block_on(async {
+        Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(
+                "/repos/RobTand/tl3-sandbox/issues/42",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "number":42, "title":format!("Fix the value {token}"), "body":"Return two.",
+                "state":"open", "updated_at":"2026-10-30T00:00:00Z"
+            })))
+            .with_priority(1)
+            .mount(&server.server)
+            .await;
+    });
     let mut open = push.clone();
     open.key = "open-conflict".into();
     open.output = Out::Effect {
@@ -1487,6 +1580,10 @@ fn publication_open_conflict() {
         kind: EffectKind::OpenPr,
         head: None,
     };
+    open.evidence = Some(tl3_controller::evidence::Evidence {
+        checks: vec![json!({"head_sha":open.head_sha, "results":[]})],
+        ..Default::default()
+    });
     let mut adapter = server.adapter(&root.path().join("github"), 1);
     let result = adapter.execute(&open).unwrap();
     assert!(
@@ -1511,6 +1608,43 @@ fn publication_open_conflict() {
         if c.observations.iter().any(|o| matches!(o, Observation::Kernel(tl3_kernel::Event::Fact { fact: tl3_kernel::Fact::Conflict, .. }))))
     );
     assert!(!server.api.state.lock().unwrap().labels);
+    let posted = server
+        .runtime
+        .block_on(server.server.received_requests())
+        .unwrap()
+        .into_iter()
+        .find(|r| r.method == "POST" && r.url.path().ends_with("/pulls"))
+        .unwrap();
+    let posted: Value = serde_json::from_slice(&posted.body).unwrap();
+    server.api.state.lock().unwrap().pull.as_mut().unwrap()["body"] =
+        json!(format!("Human-written introduction {token}\n"));
+    adapter.execute(&open).unwrap();
+    let patched = server
+        .runtime
+        .block_on(server.server.received_requests())
+        .unwrap()
+        .into_iter()
+        .find(|r| r.method == "PATCH" && r.url.path().ends_with("/pulls/100"))
+        .unwrap();
+    let patched: Value = serde_json::from_slice(&patched.body).unwrap();
+    let leaks: Vec<_> = [
+        ("new PR title", &posted["title"]),
+        ("retained PR prose", &patched["body"]),
+    ]
+    .into_iter()
+    .filter(|(_, text)| text.as_str().unwrap().contains(token))
+    .map(|(label, _)| label)
+    .collect();
+    assert!(
+        leaks.is_empty(),
+        "secrets leaked in actual GitHub payloads: {leaks:?}"
+    );
+    assert!(
+        patched["body"]
+            .as_str()
+            .unwrap()
+            .contains("Human-written introduction [REDACTED]")
+    );
 }
 fn publication_requires_conventions() {
     let root = tempfile::tempdir().unwrap();
@@ -1754,7 +1888,7 @@ fn publication_404_look(settings: &tl3_config::Store, case: &str) {
     );
     for _ in 0..5 {
         assert!(
-            !controller.drive_once().unwrap(),
+            !drive_once(&mut controller),
             "persistent publication 404 must not loop"
         );
     }
@@ -1762,14 +1896,129 @@ fn publication_404_look(settings: &tl3_config::Store, case: &str) {
     println!("test publication_404_look_{case} ... ok");
 }
 
+fn stage_obligations_block_publication() {
+    for case in [
+        "wrong-branch",
+        "missing-proof",
+        "draft",
+        "duplicate-line",
+        "stale-proof",
+        "missing-review",
+        "base-passes",
+        "forced-head-fails",
+        "pass",
+        "pre-existing",
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let f = Arc::new(Fixture::create(root.path()));
+        let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+        f.adapter().execute(&prepare).unwrap();
+        let mut push = f.delivery(EffectKind::Push, 2);
+        push.head_sha = Some(f.head(&prepare));
+        f.adapter().execute(&push).unwrap();
+        let server = Server::new(f.clone());
+        let mut open = push.clone();
+        open.key = format!("stage-{case}");
+        open.output = Out::Effect {
+            node: NodeId(0),
+            seq: 3,
+            kind: EffectKind::OpenPr,
+            head: None,
+        };
+        let mut adapter = server.adapter(&root.path().join("github"), 1);
+        if matches!(case, "draft" | "duplicate-line") {
+            adapter.execute(&open).unwrap();
+            let mut state = server.api.state.lock().unwrap();
+            let pull = state.pull.as_mut().unwrap();
+            if case == "draft" {
+                pull["draft"] = json!(true);
+            } else {
+                pull["body"] = json!("Change type: test\nChange type: test\n");
+            }
+            open.key.push_str("-revisit");
+        }
+        let mut value = serde_json::to_value(&open).unwrap();
+        value["evidence"] = json!({"checks":[],"reviews":[],"audit":null,"queue":[],"scratch":[],
+            "remaining_failures":[],"artifacts":[],"goals":[{"id":"publication", "stage":"publishing",
+                "description":"Stable branch, non-draft PR and before/after proof.",
+                "publication":{"branch_prefix":if case == "wrong-branch" { "unavailable/" } else { "" },
+                    "non_draft":true,"body_lines":["Change type: test"],"proof":!matches!(case, "wrong-branch" | "draft" | "duplicate-line")}}]});
+        if !matches!(
+            case,
+            "missing-proof" | "wrong-branch" | "draft" | "duplicate-line"
+        ) {
+            let mut result = json!({"name":"forced-deep-path", "kind":"demonstrating", "verdict":"pass",
+                "forcing":{"patches":[{"target":"example.RESIDENCY", "value":"private-forcing-value"}]},
+                "tests":[{"test":"test_deep.py::test_deep_path", "base":"assertion", "head":"passed",
+                    "head_forced":"passed", "passed":true}]});
+            if case == "base-passes" {
+                result["tests"][0]["base"] = json!("passed");
+            } else if case == "forced-head-fails" {
+                result["tests"][0]["head_forced"] = json!("assertion");
+            } else if case == "pre-existing" {
+                result["kind"] = json!("regression");
+                result.as_object_mut().unwrap().remove("forcing");
+                result["tests"][0]["head"] = json!("assertion");
+                result["tests"][0]["pre_existing"] = json!(true);
+            }
+            value["evidence"]["checks"] = json!([{"head_sha":if case == "stale-proof" {Some("a".repeat(40))} else {open.head_sha.clone()},
+                "base_sha":"a".repeat(40), "action_key":"c".repeat(64), "report":true, "pass":true, "results":[result]}]);
+            if case != "missing-review" {
+                value["evidence"]["reviews"] =
+                    json!([{"head_sha":open.head_sha, "verdict":"approve"}]);
+            }
+        }
+        let open: Delivery = serde_json::from_value(value).unwrap();
+        let result = adapter.execute(&open);
+        if matches!(case, "pass" | "pre-existing") {
+            result.unwrap();
+            let state = server.api.state.lock().unwrap();
+            let body = state.pull.as_ref().unwrap()["body"].as_str().unwrap();
+            assert!(body.contains("<!-- tl3:recorded-evidence:start -->"));
+            assert!(body.contains(open.head_sha.as_ref().unwrap()));
+            assert!(!body.contains("private-forcing-value"));
+            assert_eq!(
+                body.lines()
+                    .filter(|line| *line == "Change type: test")
+                    .count(),
+                1
+            );
+            continue;
+        }
+        assert!(
+            matches!(result, Err(tl3_controller::Error::Permanent { .. })),
+            "{case} must fail at Publishing, got {result:?}"
+        );
+        if !matches!(case, "draft" | "duplicate-line") {
+            assert_eq!(
+                server.api.state.lock().unwrap().opens,
+                0,
+                "validate before writing a PR"
+            );
+        }
+    }
+}
+
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--stage-obligations") {
+        scenario(
+            "stage_obligations_block_publication",
+            stage_obligations_block_publication,
+        );
+        println!("test stage_obligations_block_publication ... ok");
+        println!("1 publishing scenarios passed; no skips");
+        return;
+    }
     if env::args().nth(1).as_deref() == Some("q46-open") {
-        publication_open_conflict();
+        scenario("publication_open_conflict", publication_open_conflict);
         println!("test publication_open_conflict ... ok");
         return;
     }
     if env::args().nth(1).as_deref() == Some("--require-conventions") {
-        publication_requires_conventions();
+        scenario(
+            "publication_requires_conventions",
+            publication_requires_conventions,
+        );
         println!("test publication_requires_conventions ... ok");
         return;
     }
@@ -1777,20 +2026,32 @@ fn main() {
         .nth(1)
         .and_then(|arg| arg.strip_prefix("--effect-404=").map(str::to_owned))
     {
-        let mut database = support::Database::start();
-        publication_404_look(&database.create("publication_404"), &case);
-        database.stop();
+        let mut database = scenario("publishing_database_setup", support::Database::start);
+        scenario(&format!("publication_404_look_{case}"), || {
+            publication_404_look(&database.create("publication_404"), &case);
+        });
+        scenario("publishing_database_stop", || database.stop());
         return;
     }
     if env::args().len() == 1 || env::args().nth(1).as_deref() == Some("--router-regression") {
-        let root = tempfile::tempdir().unwrap();
-        let mut router = workers(
-            support::executor_probe::Probe,
-            support::executor_probe::Probe,
-            Arc::new(Fixture::create(root.path())),
-            "merged".into(),
-        );
-        support::executor_probe::assert_retire_delivery(&mut router);
+        scenario("router_retire_delivery", || {
+            let root = tempfile::tempdir().unwrap();
+            let mut router = workers(
+                support::executor_probe::Probe,
+                support::executor_probe::Probe,
+                Arc::new(Fixture::create(root.path())),
+                "merged".into(),
+            );
+            support::executor_probe::assert_retire_delivery(&mut router);
+            assert!(
+                !drive_to_idle(|| true),
+                "a continuously active publishing driver must exhaust its burst"
+            );
+            let mut progress = [true, true, false].into_iter();
+            assert!(drive_to_idle(|| progress
+                .next()
+                .expect("an idle publishing driver must not be driven again")));
+        });
         println!("test router_retire_delivery ... ok");
         if std::env::args().len() > 1 {
             return;
@@ -1798,27 +2059,39 @@ fn main() {
     }
 
     if let Some(mode) = env::args().nth(1) {
-        let python = prepare_workers();
-        let mut database = support::Database::start();
-        if mode.starts_with("adoption-") {
-            publishing_adoption::run(&database.create("adoption"), &python, &mode);
-        } else {
-            lifecycle(&database.create("publishing_regression"), &python, &mode);
-        }
-        database.stop();
+        let python = scenario("publishing_worker_setup", prepare_workers);
+        let mut database = scenario("publishing_database_setup", support::Database::start);
+        scenario(&format!("publishing_{mode}"), || {
+            if mode.starts_with("adoption-") {
+                publishing_adoption::run(&database.create("adoption"), &python, &mode);
+            } else {
+                lifecycle(&database.create("publishing_regression"), &python, &mode);
+            }
+        });
+        scenario("publishing_database_stop", || database.stop());
         println!("test publishing_{mode} ... ok");
         return;
     }
-    publication_open_conflict();
+    scenario(
+        "stage_obligations_block_publication",
+        stage_obligations_block_publication,
+    );
+    println!("test stage_obligations_block_publication ... ok");
+    scenario("publication_open_conflict", publication_open_conflict);
     println!("test publication_open_conflict ... ok");
-    publication_requires_conventions();
+    scenario(
+        "publication_requires_conventions",
+        publication_requires_conventions,
+    );
     println!("test publication_requires_conventions ... ok");
-    publication_recovery();
+    scenario("publication_lost_response_recovery", publication_recovery);
     println!("test publication_lost_response_recovery ... ok");
-    let python = prepare_workers();
-    let mut database = support::Database::start();
+    let python = scenario("publishing_worker_setup", prepare_workers);
+    let mut database = scenario("publishing_database_setup", support::Database::start);
     for case in ["open", "approval", "open-restart"] {
-        publication_404_look(&database.create(&format!("publication_404_{case}")), case);
+        scenario(&format!("publication_404_look_{case}"), || {
+            publication_404_look(&database.create(&format!("publication_404_{case}")), case);
+        });
     }
     for mode in [
         "repo-conventions",
@@ -1846,11 +2119,13 @@ fn main() {
         "reports-latest",
         "reports-closed",
     ] {
-        lifecycle(
-            &database.create(&format!("publishing_{mode}")),
-            &python,
-            mode,
-        );
+        scenario(&format!("publishing_{mode}"), || {
+            lifecycle(
+                &database.create(&format!("publishing_{mode}")),
+                &python,
+                mode,
+            );
+        });
         println!("test publishing_{mode} ... ok");
     }
     for mode in [
@@ -1859,9 +2134,11 @@ fn main() {
         "adoption-extras",
         "adoption-negative",
     ] {
-        publishing_adoption::run(&database.create(&mode.replace('-', "_")), &python, mode);
+        scenario(mode, || {
+            publishing_adoption::run(&database.create(&mode.replace('-', "_")), &python, mode);
+        });
         println!("test {mode} ... ok");
     }
-    database.stop();
-    println!("35 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
+    scenario("publishing_database_stop", || database.stop());
+    println!("36 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }

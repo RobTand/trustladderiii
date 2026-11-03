@@ -281,6 +281,12 @@ pub fn daemon() -> Result<()> {
     controller.set_allowances(config.allowances.clone());
     controller.set_priority_credit_reserve(&config.limits);
     controller.set_request_protection(&config);
+    controller.set_delegated_attributions(
+        config
+            .operations
+            .as_ref()
+            .map_or(&[], |o| o.delegated_attributions.as_slice()),
+    );
     controller.start_release(&crate::release::id())?;
     controller.run_postmortems(crate::PostmortemPace::from_config(&config));
     crate::ingress::drain(&mut controller)?;
@@ -305,6 +311,12 @@ fn production(config: tl3_config::Config) -> Result<()> {
     controller.set_allowances(config.allowances.clone());
     controller.set_priority_credit_reserve(&config.limits);
     controller.set_request_protection(&config);
+    controller.set_delegated_attributions(
+        config
+            .operations
+            .as_ref()
+            .map_or(&[], |o| o.delegated_attributions.as_slice()),
+    );
     controller.start_release(&crate::release::id())?;
     controller.run_postmortems(crate::PostmortemPace::from_config(&config));
     controller.register_github_translator("mergify", registration.mergify);

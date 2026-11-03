@@ -60,6 +60,8 @@ pub struct Operations {
     pub owner: String,
     pub repo: String,
     pub issue: u64,
+    #[serde(default)]
+    pub delegated_attributions: Vec<String>,
 }
 
 /// The protected paths in force for one repository (#388): the slice-one
@@ -92,6 +94,8 @@ pub fn path_is_protected(path: &str, patterns: &[String]) -> bool {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Planning {
+    #[serde(default = "evidence_tools")]
+    pub tool_capabilities: Vec<ToolCapability>,
     /// Calibration seam: replace these named estimates with measured overheads later.
     pub overhead_tokens: BTreeMap<String, u32>,
     pub protected_paths: Vec<String>,
@@ -101,6 +105,21 @@ impl Planning {
     /// The defaults plus this file's additions. Nothing removes a default.
     pub fn effective_protected_paths(&self) -> Vec<String> {
         protected_paths(&self.protected_paths, &[])
+    }
+
+    /// Native-thread support follows the repository's effective runner CPU demand.
+    pub fn effective_tool_capabilities(&self, cpus: u32) -> Vec<ToolCapability> {
+        let mut tools = self.tool_capabilities.clone();
+        for tool in &mut tools {
+            if tool.tool == "run_tests" && tool.executor == "prismabuild_pytest" {
+                for feature in &mut tool.runner_features {
+                    if feature.starts_with("native_threads_") {
+                        *feature = format!("native_threads_{cpus}");
+                    }
+                }
+            }
+        }
+        tools
     }
 
     /// Defaults this file doesn't list. They stay protected; a newer release can
@@ -114,9 +133,59 @@ impl Planning {
     }
 }
 
+/// Evidence one installed tool can produce in a single execution protocol.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolCapability {
+    pub tool: String,
+    pub executor: String,
+    pub runner_features: Vec<String>,
+    pub artifacts: Vec<String>,
+    pub methods: Vec<String>,
+    pub protected_files: Vec<String>,
+}
+
+fn evidence_tools() -> Vec<ToolCapability> {
+    vec![ToolCapability {
+        tool: "run_tests".into(),
+        executor: "prismabuild_pytest".into(),
+        runner_features: [
+            "base_head",
+            "repeat",
+            "parallel",
+            "always_tests",
+            "native_threads_1",
+        ]
+        .map(String::from)
+        .to_vec(),
+        artifacts: [
+            "action_key",
+            "cas_receipt",
+            "sha",
+            "logs",
+            "terminal_verdict",
+        ]
+        .map(String::from)
+        .to_vec(),
+        methods: [
+            "red_green",
+            "head",
+            "base_head",
+            "helper_target_observer",
+            "helper_target_observer.setup_function",
+            "forced_reproduction.environment",
+            "forced_reproduction.patches",
+        ]
+        .map(String::from)
+        .to_vec(),
+        protected_files: Vec::new(),
+    }]
+}
+
 impl Default for Planning {
     fn default() -> Self {
         Self {
+            tool_capabilities: evidence_tools(),
             overhead_tokens: [
                 ("prompt".into(), 5_000),
                 ("making".into(), 20_000),
@@ -302,19 +371,41 @@ pub struct Identity {
     pub id: u64,
 }
 
+fn generator_timeout_setting<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u32>, D::Error> {
+    Option::<u32>::deserialize(deserializer).map_err(|_| {
+        serde::de::Error::custom("generator_timeout_s must be a whole number from 1 to 600 seconds")
+    })
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Repository {
     #[serde(default)]
     pub protected_paths: Vec<String>,
+    /// Generated outputs cost a regeneration allowance rather than a source edit.
+    #[serde(default)]
+    pub generated_files: Vec<String>,
+    /// Fixed argv command for the admitted generator action; never model-selected.
+    #[serde(default)]
+    pub generator: Option<String>,
+    /// Container startup plus command deadline. Unset keeps 120 seconds.
+    #[serde(default, deserialize_with = "generator_timeout_setting")]
+    pub generator_timeout_s: Option<u32>,
     #[serde(default)]
     pub container_image: Option<String>,
+    /// CPU and memory reservation for this repository's PrismaBuild tests and generators.
+    #[serde(default)]
+    pub test_demand: Option<TestDemand>,
     #[serde(default)]
     pub exec_scratch: bool,
     /// Run up to this many existing tests that import the change, and pass on the base,
     /// as one more regression check (#359). Absent means off.
     #[serde(default)]
     pub selected_tests: Option<u32>,
+    #[serde(default)]
+    pub always_tests: Vec<String>,
     pub owner: String,
     pub name: String,
     pub installation_id: u64,
@@ -343,8 +434,22 @@ pub struct BodyLine {
     pub default: String,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TestDemand {
+    pub cpus: u32,
+    pub mem_gb: u32,
+}
+
+impl Default for TestDemand {
+    fn default() -> Self {
+        Self { cpus: 1, mem_gb: 2 }
+    }
+}
+
 /// The harness's `MAX_SELECTED_TESTS`.
 pub const MAX_SELECTED_TESTS: u32 = 1000;
+pub const MAX_ALWAYS_TESTS: usize = 20;
 
 fn default_branch_template() -> String {
     tl3_worktrees::branch_template::DEFAULT_TEMPLATE.into()
@@ -616,10 +721,53 @@ impl Config {
         if let Some(operations) = &self.operations {
             github_name("operations.owner", &operations.owner, false)?;
             github_name("operations.repo", &operations.repo, true)?;
+            if operations.delegated_attributions.len() > 32
+                || operations.delegated_attributions.iter().any(|line| {
+                    line.is_empty()
+                        || line.len() > 1000
+                        || line.trim() != line
+                        || line.chars().any(char::is_control)
+                })
+                || operations
+                    .delegated_attributions
+                    .iter()
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    != operations.delegated_attributions.len()
+            {
+                return Err(invalid(
+                    "operations.delegated_attributions",
+                    "needs at most 32 unique, nonempty single lines of at most 1000 bytes without surrounding whitespace",
+                ));
+            }
             if operations.issue == 0 {
                 return Err(invalid(
                     "operations.issue",
                     "must be a positive issue number",
+                ));
+            }
+        }
+        let installed = evidence_tools().remove(0);
+        for capability in &self.planning.tool_capabilities {
+            if capability.tool != installed.tool
+                || capability.executor != installed.executor
+                || !capability
+                    .runner_features
+                    .iter()
+                    .all(|v| installed.runner_features.contains(v))
+                || !capability
+                    .artifacts
+                    .iter()
+                    .all(|v| installed.artifacts.contains(v))
+                || !capability
+                    .methods
+                    .iter()
+                    .all(|v| installed.methods.contains(v))
+                || !capability.protected_files.is_empty()
+            {
+                return Err(invalid(
+                    "planning.tool_capabilities",
+                    "must describe installed run_tests capabilities; configure a subset or disable with []",
                 ));
             }
         }
@@ -716,7 +864,38 @@ impl Config {
             let field = format!("github.repos[{index}]");
             github_name(&format!("{field}.owner"), &repo.owner, false)?;
             github_name(&format!("{field}.name"), &repo.name, true)?;
+            if let Some(demand) = repo.test_demand {
+                if !(1..=16).contains(&demand.cpus) {
+                    return Err(invalid(
+                        format!("{field}.test_demand.cpus"),
+                        "use 1 to 16 CPUs",
+                    ));
+                }
+                if !(1..=64).contains(&demand.mem_gb) {
+                    return Err(invalid(
+                        format!("{field}.test_demand.mem_gb"),
+                        "use 1 to 64 GiB",
+                    ));
+                }
+            }
+            if let Some(timeout) = repo.generator_timeout_s
+                && !(1..=600).contains(&timeout)
+            {
+                return Err(invalid(
+                    format!("{field}.generator_timeout_s"),
+                    "use 1 to 600 seconds; unset keeps 120 seconds",
+                ));
+            }
             validate_protected_paths(&format!("{field}.protected_paths"), &repo.protected_paths)?;
+            validate_protected_paths(&format!("{field}.generated_files"), &repo.generated_files)?;
+            if let Some(command) = &repo.generator
+                && (command.trim().is_empty() || command.chars().any(char::is_control))
+            {
+                return Err(invalid(
+                    format!("{field}.generator"),
+                    "use a nonempty single-line generator command",
+                ));
+            }
             for (line, rule) in repo.pr_body_lines.iter().enumerate() {
                 let label = &rule.label;
                 if label.trim().is_empty()
@@ -769,6 +948,28 @@ impl Config {
                     format!("{field}.selected_tests"),
                     format!("must be 1 to {MAX_SELECTED_TESTS}, the harness's limit"),
                 ));
+            }
+            if repo.always_tests.len() > MAX_ALWAYS_TESTS {
+                return Err(invalid(
+                    format!("{field}.always_tests"),
+                    format!("always_tests accepts at most {MAX_ALWAYS_TESTS} entries"),
+                ));
+            }
+            for (entry, test) in repo.always_tests.iter().enumerate() {
+                let mut parts = test.split("::");
+                let path = parts.next().unwrap_or_default();
+                if !path.ends_with(".py")
+                    || path.starts_with(['/', '-'])
+                    || path.contains(['\\', ':', '*', '?', '[', ']'])
+                    || path.split('/').any(|part| matches!(part, "" | "." | ".."))
+                    || parts.any(str::is_empty)
+                    || test.chars().any(char::is_control)
+                {
+                    return Err(invalid(
+                        format!("{field}.always_tests[{entry}]"),
+                        "use a repo-relative pytest file or node ID without globs or parent traversal",
+                    ));
+                }
             }
             if repo.installation_id == 0 {
                 return Err(invalid(
