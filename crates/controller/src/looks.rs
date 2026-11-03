@@ -432,9 +432,10 @@ impl Controller {
     /// One timer for the earliest outstanding allowance, including outage probes.
     pub fn next_look_in(&mut self) -> Result<Option<Duration>> {
         let now = self.now_ms();
-        Ok(self
-            .store
-            .load()?
+        let snapshot = self.store.load()?;
+        // Same-second priority rereads share the timer (Q39).
+        let reread = crate::priority::next_reread_ms(&snapshot)?;
+        Ok(snapshot
             .rows
             .iter()
             .filter(|r| r.table == "allowances")
@@ -442,6 +443,7 @@ impl Controller {
             .collect::<std::result::Result<Vec<_>, _>>()?
             .iter()
             .filter_map(|s| s.due_ms)
+            .chain(reread)
             .min()
             .map(|due| Duration::from_millis(due.saturating_sub(now))))
     }
@@ -461,6 +463,9 @@ impl Controller {
 
     fn looks(&mut self, force: bool, key: Option<&str>) -> Result<()> {
         self.retry_input_incident_posts()?;
+        if key.is_none() {
+            self.reconcile_due()?;
+        }
         let snapshot = self.store.load()?;
         let states = snapshot
             .rows

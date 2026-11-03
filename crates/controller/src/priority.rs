@@ -43,9 +43,147 @@ pub(crate) const MAX_REREADS: u32 = 6;
 /// Rereads per timer tick, oldest due first.
 pub(crate) const REREADS_PER_TICK: usize = 8;
 
+/// When the next same-second reread is due, in Unix milliseconds.
+pub(crate) fn next_reread_ms(snapshot: &tl3_store::Snapshot) -> crate::Result<Option<u64>> {
+    Ok(reconciles(snapshot)?
+        .into_iter()
+        .map(|(_, row)| row.next_due_ms)
+        .min())
+}
+
+fn reconciles(snapshot: &tl3_store::Snapshot) -> crate::Result<Vec<(String, crate::Reconcile)>> {
+    snapshot
+        .rows
+        .iter()
+        .filter(|row| row.table == crate::PRIORITY_RECONCILE)
+        .map(|row| Ok((row.id.clone(), crate::decode_stored(row.value.clone())?)))
+        .collect()
+}
+
 impl crate::Controller {
-    /// Reread the issues whose same-second edits disagreed and are due.
+    /// Reread the issues whose same-second edits disagreed and are due:
+    /// oldest due first, at most REREADS_PER_TICK.
     pub(crate) fn reconcile_due(&mut self) -> crate::Result<()> {
+        let now = self.now_ms();
+        let mut due: Vec<_> = reconciles(&self.store.load()?)?
+            .into_iter()
+            .filter(|(_, row)| row.next_due_ms <= now)
+            .collect();
+        due.sort_by_key(|(id, row)| (row.next_due_ms, id.parse::<u64>().unwrap_or(u64::MAX)));
+        for (id, row) in due.into_iter().take(REREADS_PER_TICK) {
+            self.reread(&id, row, now)?;
+        }
+        Ok(())
+    }
+
+    fn reread(&mut self, id: &str, mut row: crate::Reconcile, now: u64) -> crate::Result<()> {
+        use serde_json::json;
+        let read = self
+            .adapters
+            .get(crate::executor::Upstream::GitHub)
+            .and_then(|github| github.issue(&row.repository, row.number));
+        let attempt = row.attempts + 1;
+        let name = format!(
+            "{}/{}#{}",
+            row.repository.owner, row.repository.name, row.number
+        );
+        let mut key = format!("priority-read:{name}:{}:{attempt}", row.generation);
+        let observed = match &read {
+            Ok(issue) => {
+                let (labels, digest) = crate::ingress::canonical_issue(issue);
+                key.push_str(&format!(":{}:{digest}", issue.updated_at.to_rfc3339()));
+                Some((
+                    issue.updated_at,
+                    pool_priority(&issue.title, &labels),
+                    labels,
+                ))
+            }
+            Err(error) => {
+                key.push_str(":failed");
+                eprintln!("issue {name} not reread for its priority (attempt {attempt}): {error}");
+                None
+            }
+        };
+        // A same-second read may be the intermediate state, so it is trusted
+        // only once the quiet period after the edits has passed.
+        let quiet = now >= (row.updated_at.timestamp_millis().max(0) as u64) + QUIET_MS;
+        let settled = observed.as_ref().filter(|(updated_at, ..)| {
+            *updated_at > row.updated_at || (*updated_at == row.updated_at && quiet)
+        });
+        let gave_up = settled.is_none() && attempt >= MAX_REREADS;
+        let snapshot = self.store.load()?;
+        let mut commit = tl3_store::Commit::new(
+            key,
+            json!({"priority_reread": {
+                "issue": name,
+                "generation": row.generation,
+                "attempt": attempt,
+                "read": observed.as_ref().map(|(updated_at, _, labels)| json!({"updated_at": updated_at, "labels": labels})),
+                "gave_up": gave_up,
+            }}),
+            &snapshot,
+        );
+        let world = crate::snapshot::decode(&snapshot)?;
+        let node = tl3_kernel::NodeId(
+            id.parse()
+                .map_err(|_| crate::Error::Invalid("invalid request node"))?,
+        );
+        let open = world
+            .nodes
+            .get(node.0 as usize)
+            .is_some_and(|n| !n.phase.is_closed());
+        let delete = tl3_store::RowChange::Delete {
+            table: crate::PRIORITY_RECONCILE.into(),
+            id: id.into(),
+        };
+        if !open || settled.is_some() || gave_up {
+            commit.rows.push(delete);
+        } else {
+            row.attempts = attempt;
+            // 60 s, 2 min, 4 min, ...
+            row.next_due_ms = now + QUIET_MS * (1 << (attempt - 1).min(16));
+            commit
+                .rows
+                .push(crate::put(crate::PRIORITY_RECONCILE, id.into(), json!(row)));
+        }
+        if gave_up {
+            eprintln!(
+                "issue {name}: priority not settled after {MAX_REREADS} rereads; keeping the last applied priority"
+            );
+        }
+        if open && let Some((updated_at, priority, _)) = settled {
+            let edit = snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == crate::ISSUE_EDITS && r.id == id)
+                .map(|r| crate::decode_stored::<crate::IssueEdit>(r.value.clone()))
+                .transpose()?;
+            if edit
+                .as_ref()
+                .is_none_or(|edit| *updated_at > edit.updated_at)
+            {
+                commit.rows.push(crate::put(
+                    crate::ISSUE_EDITS,
+                    id.into(),
+                    json!(crate::IssueEdit {
+                        updated_at: *updated_at,
+                        reconciliations: edit.map_or(0, |edit| edit.reconciliations),
+                    }),
+                ));
+            }
+            if world.nodes[node.0 as usize].priority != *priority {
+                self.apply(
+                    &snapshot,
+                    world,
+                    tl3_kernel::Event::Fact {
+                        node,
+                        fact: tl3_kernel::Fact::Priority(*priority),
+                    },
+                    &mut commit,
+                )?;
+            }
+        }
+        self.store.commit(&commit)?;
         Ok(())
     }
 }
