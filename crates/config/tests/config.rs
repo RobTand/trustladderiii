@@ -11,24 +11,45 @@ fn repository_generated_files_and_generator_are_optional() {
     assert!(config.github.repos[0].generator.is_none());
     let mut document: Value = EXAMPLE.parse().unwrap();
     let repo = document["github"]["repos"][0].as_table_mut().unwrap();
-    repo.insert("generated_files".into(), Value::Array(vec![Value::String("**/BUILD.bazel".into())]));
-    repo.insert("generator".into(), Value::String("tools/bazel/generate.sh".into()));
+    repo.insert(
+        "generated_files".into(),
+        Value::Array(vec![Value::String("**/BUILD.bazel".into())]),
+    );
+    repo.insert(
+        "generator".into(),
+        Value::String("tools/bazel/generate.sh".into()),
+    );
     let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
     assert_eq!(config.github.repos[0].generated_files, ["**/BUILD.bazel"]);
-    assert_eq!(config.github.repos[0].generator.as_deref(), Some("tools/bazel/generate.sh"));
+    assert_eq!(
+        config.github.repos[0].generator.as_deref(),
+        Some("tools/bazel/generate.sh")
+    );
 }
 
 #[test]
 fn repository_generated_files_and_generator_reject_invalid_settings() {
-    for pattern in ["", "/absolute", "../escape", "nested/../escape", "[unclosed", "bad\\path", "bad\npath"] {
+    for pattern in [
+        "",
+        "/absolute",
+        "../escape",
+        "nested/../escape",
+        "[unclosed",
+        "bad\\path",
+        "bad\npath",
+    ] {
         let mut config = Config::parse(EXAMPLE).unwrap();
         config.github.repos[0].generated_files.push(pattern.into());
-        assert!(matches!(config.validate(), Err(tl3_config::Error::Invalid { field, .. }) if field == "github.repos[0].generated_files"));
+        assert!(
+            matches!(config.validate(), Err(tl3_config::Error::Invalid { field, .. }) if field == "github.repos[0].generated_files")
+        );
     }
     for command in ["", "  ", "generate\nleak", "generate\0"] {
         let mut config = Config::parse(EXAMPLE).unwrap();
         config.github.repos[0].generator = Some(command.into());
-        assert!(matches!(config.validate(), Err(tl3_config::Error::Invalid { field, .. }) if field == "github.repos[0].generator"));
+        assert!(
+            matches!(config.validate(), Err(tl3_config::Error::Invalid { field, .. }) if field == "github.repos[0].generator")
+        );
     }
 }
 
