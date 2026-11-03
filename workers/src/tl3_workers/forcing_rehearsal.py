@@ -27,13 +27,35 @@ GUIDANCE = (
     'After budget exhaustion return cant_meet once with the recorded evidence. No final cant_meet '
     'is retried. Code binds verified receipts to the immutable base, selectors and exact forcing. '
     'Eligibility uses the resolved module or class, never a repository-looking alias prefix. '
-    'Static preflight imports no served code; unresolved dynamic owners are an explicit capability limit. '
+    'Static preflight imports no served code and refuses definite external owners. '
+    'Uncertain owners pass to admitted rehearsal and its authoritative runtime ownership guard. '
     'Independent Checking remains required.'
 )
 
 
 def identity(base_sha, selectors, forcing):
     return {'base_sha': base_sha, 'selectors': list(selectors), 'forcing': forcing.as_json()}
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False)
+
+
+def bound_identity(candidate):
+    return canonical({key: candidate[key] for key in ('base_sha', 'selectors', 'forcing')})
+
+
+def execution_identity(candidate):
+    forcing = candidate['forcing']
+    patches = forcing['patches']
+    targets = [patch['target'] for patch in patches]
+    # Repeated attributes may alias, and a parent patch can change a later owner.
+    independent = all(left.rsplit('.', 1)[-1] != right.rsplit('.', 1)[-1]
+                      and not left.startswith(right + '.') and not right.startswith(left + '.')
+                      for index, left in enumerate(targets) for right in targets[index + 1:])
+    return canonical({'base_sha': candidate['base_sha'], 'selectors': sorted(set(candidate['selectors'])),
+                      'forcing': {'environment': forcing['environment'],
+                                  'patches': sorted(patches, key=canonical) if independent else patches}})
 
 
 def unusable(result, selectors, outcome):
@@ -152,12 +174,13 @@ class ForcingRehearsals:
         wanted = identity(self.base_sha, selected, parsed)
         if self.infrastructure or self.failure:
             return deepcopy(self.infrastructure or self.failure)
+        execution = execution_identity(wanted)
         cached = next((candidate for candidate in self.candidates
-                       if all(candidate[key] == value for key, value in wanted.items())), None)
+                       if execution_identity(candidate) == execution), None)
         if cached:
             return deepcopy(cached)
         if self.active is not None:
-            if any(self.active['result'][key] != value for key, value in wanted.items()):
+            if bound_identity(self.active['result']) != bound_identity(wanted):
                 # Recovery must settle the known action before exploring another proposal.
                 pending = self.active['result']
                 stage = self.active['stage']
@@ -250,7 +273,7 @@ class ForcingRehearsals:
             if 'forcing' not in check:
                 continue
             wanted = identity(base_sha, check['node_ids'], Forcing.parse(check['forcing']))
-            if not any(all(receipt[key] == value for key, value in wanted.items()) for receipt in self.receipts):
+            if not any(bound_identity(receipt) == bound_identity(wanted) for receipt in self.receipts):
                 errors.append('Q55 check lacks a matching forcing rehearsal receipt for the exact base, '
                               'selectors and forcing: ' + ', '.join(check['node_ids']))
         return errors
