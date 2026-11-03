@@ -356,9 +356,6 @@
       ],
       "additionalProperties": false
     },
-    "forecast": {
-      "$ref": "planner-input.json#/properties/forecast"
-    },
     "protected_paths": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "forecast": {"$ref": "planner-input.json#/properties/forecast"},
     "context_size": {"type": "integer", "minimum": 1}
