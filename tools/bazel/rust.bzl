@@ -93,6 +93,7 @@ _CONTROLLER_RUNTIME = {
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
     "tests/hindsight.rs": ["README.md"],
+    "tests/fail_fast.rs": ["tests/support/**"],
     "tests/fixture_contracts.rs": ["tests/support/**"],
     "tests/mergify.rs": ["tests/support/**", "tests/fixtures/mergify/**"],
     "tests/core_defects.rs": ["tests/worktree_fixture/**"],
