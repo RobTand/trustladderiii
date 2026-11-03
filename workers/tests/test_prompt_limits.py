@@ -29,6 +29,24 @@ def test_planner_states_the_current_declared_file_limits():
     assert f"{forecast.RANGED_FILE_TOKENS:,} tokens" in prompt
 
 
+def test_planner_states_every_execution_forecast_component():
+    terms = {
+        "exploration_operations": "Code adds declared exploration to the structural floor",
+        "file_operations": "nine operations per file",
+        "check_operations": "four per check",
+        "scope_operations": "two for scope review",
+        "generation_operations": "one for configured generation",
+        "generated_inspection_operations": "one inspection per generator-owned output",
+    }
+    execution = forecast.execution_forecast(
+        ["source.py", "BUILD.bazel"], 1, exploration=4,
+        config={"generator": "python3 tools/generate.py", "generated_files": ["BUILD.bazel"]})
+    assert execution["components"].keys() == terms.keys(), "Map every code component to a prompt term"
+    prompt = prompt_text("planner.md")
+    for component, term in terms.items():
+        assert term in prompt, f"Planner prompt omits {component}: {term}"
+
+
 @pytest.mark.parametrize("name", PROMPTS)
 def test_every_stated_byte_limit_is_one_the_code_enforces(name):
     enforced = {f"{limit:,}" for limit in (forecast.LARGE_FILE_BYTES, forecast.HARD_CAP_BYTES)}
