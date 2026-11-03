@@ -331,6 +331,7 @@ def test_review662_inferred_proof_cannot_skip_assertion_reason(repository):
 @pytest.mark.parametrize('support', [
     'TOKEN = globals(); TOKEN["helper"] = lambda: ("new", VERSION)',
     'TOKEN = "context"; globals().__ior__({"helper": lambda: ("new", VERSION)})',
+    'TOKEN = setattr(__import__("sys").modules[__name__], "helper", lambda: ("new", VERSION))',
     'TOKEN = globals()',
     'TOKEN = locals()',
     'TOKEN = vars()',
