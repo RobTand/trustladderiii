@@ -263,6 +263,7 @@ pub struct Controller {
     /// Starting credit reserve by priority, P0 first (#416). Empty keeps the kernel's.
     priority_reserve: BTreeMap<u8, u8>,
     request_protection: Vec<(Repository, Vec<String>)>,
+    delegated_attributions: Vec<String>,
 }
 impl Controller {
     pub fn open(store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
@@ -333,6 +334,7 @@ impl Controller {
             postmortem_paused: false,
             priority_reserve: BTreeMap::new(),
             request_protection: Vec::new(),
+            delegated_attributions: Vec::new(),
         };
         controller.reconcile_capacity()?;
         controller.cleanup_ended_looks()?;
@@ -619,6 +621,9 @@ impl Controller {
                 let mut link = json!({
                     "original": original, "authorized_by": self.bootstrap.rob, "issue": replacement
                 });
+                if let Some(delegate) = steering::replacement_delegate(snapshot, original) {
+                    link["delegated_by"] = delegate.clone();
+                }
                 // #449: Rob's answer is the scope; ingest reads the original issue as context.
                 if let steering::Task::FileRequest { question, .. } =
                     decode_stored(pending.value.clone())?

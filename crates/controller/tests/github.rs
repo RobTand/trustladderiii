@@ -612,6 +612,7 @@ fn main() {
             "credit" => steering::credit(&settings),
             "answer_replacement" => steering::answer_replacement(&settings),
             "restart_open" => restart::open_request(&settings),
+            "restart_delegated" => restart::delegated_restart(&settings),
             "restart_revoked" => restart::revoked_issue(&settings),
             "restart_stopped" => restart::stopped_request(&settings),
             "restart_merged" => restart::merged_request(&settings),
@@ -630,6 +631,7 @@ fn main() {
         println!("test message_reconciliation ... ok");
         restart::reopens_issue_tl3_closed();
         restart::open_request(&database.create("restart_open"));
+        restart::delegated_restart(&database.create("restart_delegated"));
         restart::revoked_issue(&database.create("restart_revoked"));
         restart::stopped_request(&database.create("restart_stopped"));
         restart::merged_request(&database.create("restart_merged"));
@@ -739,6 +741,7 @@ fn main() {
     steering::dropped_change_quote();
     steering::second_replacement(&database.create("second_replacement"));
     restart::open_request(&database.create("restart_open"));
+    restart::delegated_restart(&database.create("restart_delegated"));
     restart::revoked_issue(&database.create("restart_revoked"));
     restart::stopped_request(&database.create("restart_stopped"));
     restart::merged_request(&database.create("restart_merged"));

@@ -1568,6 +1568,14 @@ fn delegated_attributions_accept_exact_standing_approval_line() {
         Config::parse(&source).is_ok(),
         "exact delegated attribution must be configurable"
     );
+    assert_eq!(
+        Config::parse(&source)
+            .unwrap()
+            .operations
+            .unwrap()
+            .delegated_attributions,
+        [line]
+    );
 }
 
 #[test]

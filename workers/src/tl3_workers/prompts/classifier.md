@@ -102,3 +102,10 @@ revoke an approval it contradicts, even if the restart comment says nothing
 about that approval. Keep unrelated approvals. Silence about an exception is
 not a contradiction. Never add authority, infer a new approval, or return a
 normal comment classification for this operation.
+
+The controller resolves account identity and configured standing approval
+attributions in code. When comment.delegated_by is supplied, it has already
+accepted that attribution from Rob's account and removed the attribution line
+from comment.body. Classify the remaining command as Rob's own. Do not ask Rob
+to confirm the delegate's authority. The field identifies the delegate for the
+request record; it does not add commands or change the request's allowed actions.

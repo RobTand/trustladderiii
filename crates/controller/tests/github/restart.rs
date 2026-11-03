@@ -674,3 +674,100 @@ pub(super) fn revoked_issue(settings: &tl3_config::Store) {
     );
     println!("test restart_current_issue_revokes_approval ... ok");
 }
+
+pub(super) fn delegated_restart(settings: &tl3_config::Store) {
+    const LINE: &str = "(Posted by the TL3 build coordinator under Rob's standing approval.)";
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("hold-merges"), "hold").unwrap();
+    let api = Server::new();
+    // Any classifier call would return unsure and prevent the restart.
+    let mut controller = steering::race_controller(
+        settings,
+        root.path(),
+        &api,
+        json!({"kind":"unsure", "question":"Confirm the delegate?"}),
+    );
+    controller.set_delegated_attributions(&[LINE.into()]);
+    controller.intake(labelled()).unwrap();
+    drain(&mut controller);
+    edit_issue(&api);
+    let observe = |controller: &mut Controller, id: u64, actor: u64, body: String| {
+        let mut comment = fixture(true)["comment"].clone();
+        comment["id"] = json!(id);
+        comment["user"]["id"] = json!(actor);
+        comment["body"] = json!(body);
+        controller
+            .observe(
+                &format!("delegated-{id}"),
+                Observation::GitHubComment {
+                    repository: bootstrap().repos.remove(0),
+                    issue: 12,
+                    comment: serde_json::from_value(comment).unwrap(),
+                },
+            )
+            .unwrap();
+        drain(controller);
+    };
+    observe(&mut controller, 29001, 42, format!("restart\n\n{LINE}"));
+    assert_eq!(controller.world().unwrap().nodes.len(), 2);
+    assert_restarted(&mut controller, &api, "1", 0);
+    assert!(
+        controller
+            .effect("classify:owner/sandbox/3/29001")
+            .unwrap()
+            .is_none(),
+        "no classifier effect or model call"
+    );
+    let snapshot = controller.snapshot().unwrap();
+    let provenance = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "request_delegations" && r.id.ends_with("/29001"))
+        .unwrap();
+    assert_eq!(provenance.value["attribution"], LINE);
+    let link = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "request_links" && r.id == "1")
+        .unwrap();
+    assert_eq!(link.value["delegated_by"], LINE);
+    observe(&mut controller, 29001, 42, format!("restart\n\n{LINE}"));
+    assert_eq!(
+        controller.world().unwrap().nodes.len(),
+        2,
+        "redelivery is idempotent"
+    );
+    observe(
+        &mut controller,
+        29002,
+        42,
+        format!("restart\n\n{}", LINE.replace("coordinator", "co-ordinator")),
+    );
+    assert!(
+        controller
+            .effect("classify:owner/sandbox/3/29002")
+            .unwrap()
+            .is_some(),
+        "near miss retains model classification"
+    );
+    observe(&mut controller, 29003, 7, format!("restart\n\n{LINE}"));
+    assert!(
+        controller
+            .effect("classify:owner/sandbox/3/29003")
+            .unwrap()
+            .is_none(),
+        "another account remains ignored"
+    );
+    assert_eq!(controller.world().unwrap().nodes.len(), 2);
+    drop(controller);
+    let mut store = Store::open(settings).unwrap();
+    assert!(
+        store
+            .load()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "request_delegations" && r.value["attribution"] == LINE)
+    );
+    println!("test delegated_restart_is_deterministic_with_provenance_and_negatives ... ok");
+}

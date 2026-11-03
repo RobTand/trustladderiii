@@ -114,7 +114,37 @@ pub(crate) fn question(kind: QKind) -> (&'static str, Vec<&'static str>) {
     }
 }
 
+fn delegated_comment(
+    author: u64,
+    rob: u64,
+    body: &str,
+    configured: &[String],
+) -> Option<(String, String)> {
+    if author != rob {
+        return None;
+    }
+    let matches: Vec<_> = body
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| configured.iter().any(|entry| entry == line))
+        .collect();
+    let [(index, attribution)] = matches.as_slice() else {
+        return None;
+    };
+    let command = body
+        .lines()
+        .enumerate()
+        .filter(|(i, _)| i != index)
+        .map(|(_, line)| line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(((*attribution).into(), command.trim().into()))
+}
+
 impl Controller {
+    pub fn set_delegated_attributions(&mut self, attributions: &[String]) {
+        self.delegated_attributions = attributions.to_vec();
+    }
     pub(crate) fn close_replacement(
         &self,
         snapshot: &Snapshot,
@@ -240,6 +270,20 @@ impl Controller {
         let n = &world.nodes[node.0 as usize];
         let mut inputs = json!({"comment": {"author": row.value["comment"]["user"]["login"], "body": row.value["comment"]["body"]},
                 "state": state(n)});
+        let delegation = delegated_comment(
+            row.value["comment"]["user"]["id"].as_u64().unwrap(),
+            self.bootstrap.rob,
+            row.value["comment"]["body"].as_str().unwrap(),
+            &self.delegated_attributions,
+        );
+        if let Some((attribution, body)) = &delegation {
+            inputs["comment"]["body"] = json!(body);
+            inputs["comment"]["delegated_by"] = json!(attribution);
+        }
+        let deterministic_restart = delegation
+            .as_ref()
+            .is_some_and(|(_, body)| body.eq_ignore_ascii_case("restart"))
+            && inputs["state"]["restartable"] == true;
         if let Some(pending) = snapshot
             .rows
             .iter()
@@ -296,7 +340,27 @@ impl Controller {
             json!({"classify": row.id}),
             snapshot,
         );
-        queue_classifier(self, &mut commit, delivery);
+        if let Some((attribution, _)) = &delegation {
+            commit.rows.push(put("request_delegations", row.id.clone(), json!({
+                "node":node, "comment_key":row.id, "comment_id":row.value["comment"]["id"], "actor_id":self.bootstrap.rob, "attribution":attribution})));
+        }
+        if deterministic_restart {
+            commit
+                .rows
+                .push(put("comment_jobs", delivery.key.clone(), json!(delivery)));
+            self.queue_observation(
+                snapshot,
+                &mut commit,
+                &key,
+                0,
+                &crate::executor::Observation::Classified {
+                    key: delivery.key.clone(),
+                    reply: Some(json!({"kind":"restart"})),
+                },
+            )?;
+        } else {
+            queue_classifier(self, &mut commit, delivery);
+        }
         self.store.commit(&commit)?;
         Ok(true)
     }
@@ -477,6 +541,9 @@ impl Controller {
         let mut recorded = comment.value.clone();
         recorded["classification"] = reply.clone();
         recorded["node"] = json!(node);
+        if let Some(delegate) = inputs["comment"].get("delegated_by") {
+            recorded["delegated_by"] = delegate.clone();
+        }
         commit
             .rows
             .push(put("github_comments", comment_key.clone(), recorded));
@@ -1070,13 +1137,34 @@ impl Controller {
             binding.source = issue.body.clone();
             commit.rows.push(put("requests", node.0.to_string(), json!(binding)));
         }
-        commit.rows.push(put(
-            "request_links",
-            node.0.to_string(),
-            json!({"original": original, "authorized_by": self.bootstrap.rob, "issue": issue}),
-        ));
+        let mut link =
+            json!({"original": original, "authorized_by": self.bootstrap.rob, "issue": issue});
+        if let Some(delegate) = replacement_delegate(snapshot, original) {
+            link["delegated_by"] = delegate.clone();
+        }
+        commit
+            .rows
+            .push(put("request_links", node.0.to_string(), link));
         Ok(event)
     }
+}
+
+pub(crate) fn replacement_delegate(snapshot: &Snapshot, original: NodeId) -> Option<&Value> {
+    let pending = snapshot.rows.iter().find(|r| {
+        r.id == original.0.to_string()
+            && matches!(r.table.as_str(), "replacement_pending" | "replacement")
+    })?;
+    let key = pending.value["Restart"]["comment_key"].as_str();
+    let comment = pending.value["FileRequest"]["comment"].as_u64();
+    snapshot
+        .rows
+        .iter()
+        .find(|r| {
+            r.table == "request_delegations"
+                && (key.is_some_and(|key| r.id == key)
+                    || comment.is_some_and(|id| r.value["comment_id"] == id))
+        })
+        .map(|r| &r.value["attribution"])
 }
 
 pub(crate) fn replacement_issue(
@@ -1236,5 +1324,64 @@ mod reply_defects {
             ));
         }
         assert_eq!(credit_amount(&json!({"amount":100})).unwrap(), 100);
+    }
+}
+
+#[cfg(test)]
+mod delegation_tests {
+    use super::*;
+    const LINE: &str = "(Posted by the TL3 build coordinator under Rob's standing approval.)";
+
+    #[test]
+    fn exact_attributed_restart_is_deterministic_and_preserves_delegate() {
+        let configured = vec![LINE.into()];
+        for _ in 0..9 {
+            let (delegate, body) =
+                delegated_comment(42, 42, &format!("restart\n\n{LINE}"), &configured).unwrap();
+            assert_eq!(delegate, LINE);
+            assert_eq!(body, "restart");
+        }
+        for command in [
+            "continue",
+            "Return goodbye instead.",
+            "pause",
+            "resume",
+            "stop",
+        ] {
+            assert_eq!(
+                delegated_comment(42, 42, &format!("{command}\n\n{LINE}"), &configured)
+                    .unwrap()
+                    .1,
+                command
+            );
+        }
+    }
+
+    #[test]
+    fn attribution_requires_the_rob_account_and_one_exact_configured_line() {
+        let configured = vec![LINE.into()];
+        assert!(delegated_comment(7, 42, &format!("restart\n\n{LINE}"), &configured).is_none());
+        for body in [
+            format!("restart\n\n{LINE} "),
+            format!("restart\n\n>{LINE}"),
+            format!("restart\n\n{}", LINE.replace("coordinator", "co-ordinator")),
+            format!("restart\n{LINE}\n{LINE}"),
+            "restart".into(),
+        ] {
+            assert!(
+                delegated_comment(42, 42, &body, &configured).is_none(),
+                "{body}"
+            );
+        }
+        assert!(delegated_comment(42, 42, &format!("restart\n{LINE}"), &[]).is_none());
+        assert!(
+            delegated_comment(
+                42,
+                42,
+                &format!("restart\n{LINE}\n(Another delegate.)"),
+                &[LINE.into(), "(Another delegate.)".into()]
+            )
+            .is_none()
+        );
     }
 }

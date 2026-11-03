@@ -8,6 +8,8 @@ worktrees_root = "/srv/tl3/worktrees"
 # owner = "RobTand"
 # repo = "trustladderiii"
 # issue = 123
+# Exact whole lines from Rob's account. Omit or [] to disable delegated attribution.
+# delegated_attributions = ["(Posted by the TL3 build coordinator under Rob's standing approval.)"]
 
 [store]
 host = "127.0.0.1"

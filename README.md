@@ -52,3 +52,12 @@ If Mergify posts no check or comment on the first PR, open
 choose `RobTand`, choose **Only select repositories**, select `trustladderiii`,
 and click **Install** or **Save** for an existing installation. The coordinator
 must land `.mergify.yml` on `main` before the queue can use this configuration.
+
+`[operations].delegated_attributions` lists exact standing-approval attribution
+lines, for example `"(Posted by the TL3 build coordinator under Rob's standing approval.)"`.
+The default is `[]`. Only comments authored by the configured Rob account qualify.
+TL3 records the matching line as the delegate and classifies the remaining text as
+Rob's command. Exact attributed `restart` commands use code directly when restart
+is allowed. Other authors and non-matching lines keep their existing behavior.
+Entries must be unique nonempty single lines without surrounding whitespace,
+with at most 32 entries and 1000 bytes per entry. See `crates/config/example.toml`.
