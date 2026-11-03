@@ -58,47 +58,13 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result
     if role == "planner"
         && reply["checks"]
             .as_array()
-            .is_some_and(|checks| checks.iter().any(|c| c.get("helper_evidence").is_some()))
+            .is_some_and(|checks| checks.iter().any(|check| check.get("proof").is_some()))
     {
         let requirement = json!({
-            "requirement":"Observe the real old and new test helper with identical new regression assertions.",
-            "provenance":{"kind":"method"},
-            "tool":"run_tests", "executor":"prismabuild_pytest", "runner_features":["base_head"],
-            "artifacts":["cas_receipt", "terminal_verdict"], "methods":["helper_target_observer"], "protected_files":[]});
-        if !contract.contains(&requirement) {
-            contract.push(requirement);
-        }
-    }
-    if role == "planner"
-        && reply["checks"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|check| {
-                check["helper_evidence"]["failure_cases"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .any(|case| {
-                        case["args"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .chain(
-                                case["kwargs"]
-                                    .as_object()
-                                    .into_iter()
-                                    .flat_map(|o| o.values()),
-                            )
-                            .any(|argument| argument.get("$setup").is_some())
-                    })
-            })
-    {
-        let requirement = json!({
-            "requirement":"Construct helper arguments with unchanged existing repository setup functions.",
-            "provenance":{"kind":"method"},
-            "tool":"run_tests", "executor":"prismabuild_pytest", "runner_features":["base_head"],
-            "artifacts":["cas_receipt", "terminal_verdict"], "methods":["helper_target_observer.setup_function"], "protected_files":[]});
+            "requirement":"Run the head observer against the base subject and the head subject.",
+            "provenance":{"kind":"method"}, "tool":"run_tests", "executor":"prismabuild_pytest",
+            "runner_features":["base_head"], "artifacts":["cas_receipt", "terminal_verdict"],
+            "methods":["subject_observer"], "protected_files":[]});
         if !contract.contains(&requirement) {
             contract.push(requirement);
         }
@@ -108,22 +74,14 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result
         return Err(Error::Invalid("worker evidence contract is missing"));
     }
     for requirement in &contract {
-        if role == "planner"
-            && reply["kind"] == "leaf"
-            && requirement["provenance"]["kind"] == "source"
-            && requirement["methods"]
-                .as_array()
-                .is_some_and(|methods| methods.contains(&json!("helper_target_observer")))
-            && !reply["checks"].as_array().is_some_and(|checks| {
-                checks
-                    .iter()
-                    .any(|check| check.get("helper_evidence").is_some())
-            })
-        {
-            errors.push(format!(
-                "Source proof obligation: {} Explicit source method helper_target_observer requires a compatible helper check.",
-                requirement["requirement"].as_str().unwrap_or("missing")
-            ));
+        for method in requirement["methods"].as_array().into_iter().flatten() {
+            if matches!(
+                method.as_str(),
+                Some("helper_target_observer" | "helper_target_observer.setup_function")
+            ) {
+                errors.push(format!("Unsupported evidence requirement: {} (removed proof encoding {}; source obligation retained).",
+                    requirement["requirement"].as_str().unwrap_or("missing"), method.as_str().unwrap_or("missing")));
+            }
         }
         let candidates: Vec<Vec<String>> = capabilities
             .iter()
@@ -362,7 +320,7 @@ mod proof_obligation_tests {
             alternative["report"]
                 .as_str()
                 .unwrap()
-                .contains("Explicit source method helper_target_observer")
+                .contains("removed proof encoding helper_target_observer")
         );
     }
 }

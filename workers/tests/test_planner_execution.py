@@ -155,7 +155,8 @@ def request236(planner_request, monkeypatch):
             forcing = {"symptom": f"The mover stops at document {index + 1}.", "environment": {},
                        "patches": [{"target": "mover.document", "value": index + 1}]}
             check = {"kind": "demonstrating", "goal_ids": [index],
-                     "node_ids": [f"{REQUEST236_TEST}::{name}"], "forcing": forcing}
+                     "node_ids": [f"{REQUEST236_TEST}::{name}"], "forcing": forcing,
+                     "proof": {"subjects": [], "observer_support": [], "red_message": forcing["symptom"]}}
             proposal["checks"].append(check)
             ledger.receipts.append(identity(inputs["base_sha"], check["node_ids"], Forcing.parse(forcing)))
         proposal["checks"].append({"kind": "regression", "goal_ids": [0, 1],

@@ -305,7 +305,7 @@ fn put_quota(f: &mut Fixture, model: &str, reset: u64) {
 fn pending_success(settings: &tl3_config::Store) -> (Fixture, Observation) {
     let mut f = fixture(settings, &["default-model"], json!({}));
     let mut ending = None;
-    wait(|| {
+    wait_for_signal(|| {
         ending = f
             .controller
             .snapshot()
@@ -337,7 +337,7 @@ fn pending_success(settings: &tl3_config::Store) -> (Fixture, Observation) {
 }
 
 fn consume_success(f: &mut Fixture) {
-    wait(|| {
+    wait_for_signal(|| {
         if f.controller.world().unwrap().nodes[0].phase != Phase::Ingesting {
             return true;
         }

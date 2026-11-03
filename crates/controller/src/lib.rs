@@ -75,6 +75,8 @@ pub enum Error {
     StoredJson(#[source] serde_json::Error),
     #[error("controller I/O failed")]
     Io(#[from] std::io::Error),
+    #[error("{0}")]
+    WorkerSource(#[from] adapters::workers::SourceError),
     #[error("upstream adapter failed: {0}")]
     Adapter(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
@@ -3077,7 +3079,7 @@ impl Controller {
                                 kind: serde_json::from_value(check["kind"].clone())?,
                                 tests: adapters::workers::protocol::reply_field(check, "node_ids")?,
                                 forcing: check.get("forcing").cloned(),
-                                helper_evidence: check.get("helper_evidence").cloned(),
+                                proof: check.get("proof").cloned(),
                                 declared_symptom: check.get("declared_symptom").cloned(),
                             })
                         })

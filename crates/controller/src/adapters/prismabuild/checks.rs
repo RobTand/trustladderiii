@@ -31,7 +31,7 @@ pub struct Check {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forcing: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub helper_evidence: Option<serde_json::Value>,
+    pub proof: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declared_symptom: Option<serde_json::Value>,
 }
@@ -72,15 +72,11 @@ pub(crate) fn validate_plan_size(plan: &[Check]) -> Result<()> {
             // A forced check's result echoes its forcing, and each test gains head_forced (#393).
             header["forcing"] = forcing.clone();
         }
-        if let Some(evidence) = &check.helper_evidence {
-            let observers: std::collections::BTreeMap<_, _> =
-                check.tests.iter().map(|t| (t, "0".repeat(64))).collect();
-            header["helper_evidence"] = serde_json::json!({"target": evidence["target"],
-                "base_target_sha256":"0".repeat(64), "head_target_sha256":"0".repeat(64),
-                "base_tree_sha256":"0".repeat(64), "head_tree_sha256":"0".repeat(64), "observers":observers,
-                "failure_cases":evidence["failure_cases"], "failure_driver_sha256":"0".repeat(64),
-                "failure_preservation":evidence["failure_cases"].as_array().ok_or(Error::Invalid("helper evidence requires failure cases"))?.iter().map(|_| serde_json::json!({
-                    "base":"infrastructure-failure", "head":"infrastructure-failure"})).collect::<Vec<_>>()});
+        if matches!(check.kind, Kind::Demonstrating | Kind::Reproducing) {
+            result_bytes += 65536;
+            if let Some(proof) = &check.proof {
+                result_bytes += ascii_json_bytes(proof)?;
+            }
         }
         if let Some(symptom) = &check.declared_symptom {
             header["declared_symptom"] = symptom.clone();

@@ -28,7 +28,9 @@
             "minimum": 0
           }
         },
-        "exploration_declared": {"type": "boolean"},
+        "exploration_declared": {
+          "type": "boolean"
+        },
         "fits": {
           "type": "boolean"
         },
@@ -168,83 +170,43 @@
       ],
       "additionalProperties": false
     },
-    "helper_evidence": {
+    "proof": {
       "type": "object",
+      "additionalProperties": false,
       "properties": {
-        "target": {
+        "subjects": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|::|$))[^\\\\\\u0000\\r\\n]+\\.py(?:::[A-Za-z_][A-Za-z_0-9]*)*$"
+          }
+        },
+        "observer_support": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|::|$))[^\\\\\\u0000\\r\\n]+\\.py(?:::[A-Za-z_][A-Za-z_0-9]*)*$"
+          }
+        },
+        "red_message": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 1000
-        },
-        "failure_cases": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 8,
-          "items": {
-            "type": "object",
-            "properties": {
-              "args": {
-                "type": "array",
-                "maxItems": 16,
-                "items": {
-                  "$ref": "#/$defs/helper_argument"
-                }
-              },
-              "kwargs": {
-                "type": "object",
-                "maxProperties": 16,
-                "additionalProperties": {
-                  "$ref": "#/$defs/helper_argument"
-                }
-              }
-            },
-            "required": [
-              "args",
-              "kwargs"
-            ],
-            "additionalProperties": false
-          }
+          "maxLength": 160
         }
       },
       "required": [
-        "target",
-        "failure_cases"
-      ],
-      "additionalProperties": false
-    },
-    "helper_argument": {
-      "anyOf": [
-        {
-          "type": "object",
-          "properties": {
-            "$setup": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 128,
-              "pattern": "^(?!test_|__)[A-Za-z_][A-Za-z0-9_]*$",
-              "description": "Existing unchanged module-level factory. TL3 injects tmp_path and tmp_path_factory by parameter name; other required parameters, classes, decorators, generators and variadics are unsupported. The model supplies no factory arguments. Existing optional defaults are retained."
-            },
-            "$call": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 128,
-              "pattern": "^(?!__)[A-Za-z_][A-Za-z0-9_]*$"
-            }
-          },
-          "required": [
-            "$setup",
-            "$call"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "not": {
-            "type": "object",
-            "required": [
-              "$setup"
-            ]
-          }
-        }
+        "subjects",
+        "observer_support",
+        "red_message"
       ]
     },
     "declared_symptom": {
@@ -292,9 +254,20 @@
     {
       "type": "object",
       "properties": {
-        "estimated_exploration_turns": {"type": "integer", "minimum": 0, "description": "Required for accepted leaves and splits. Estimate orientation reads, searches, globs and recall separately from implementation and proof. Zero must be explicit."},
-        "estimated_tool_turns": {"type": "integer", "minimum": 0, "description": "Estimate all required tool work, including proof, metadata and final verification. Code may increase this estimate."},
-        "execution": {"$ref": "#/$defs/execution", "description": "Appended by worker code. The model must omit this field."},
+        "estimated_exploration_turns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Required for accepted leaves and splits. Estimate orientation reads, searches, globs and recall separately from implementation and proof. Zero must be explicit."
+        },
+        "estimated_tool_turns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Estimate all required tool work, including proof, metadata and final verification. Code may increase this estimate."
+        },
+        "execution": {
+          "$ref": "#/$defs/execution",
+          "description": "Appended by worker code. The model must omit this field."
+        },
         "kind": {
           "const": "leaf"
         },
@@ -341,8 +314,8 @@
               "forcing": {
                 "$ref": "#/$defs/forcing"
               },
-              "helper_evidence": {
-                "$ref": "#/$defs/helper_evidence"
+              "proof": {
+                "$ref": "#/$defs/proof"
               },
               "declared_symptom": {
                 "$ref": "#/$defs/declared_symptom"
@@ -547,9 +520,20 @@
     {
       "type": "object",
       "properties": {
-        "estimated_exploration_turns": {"type": "integer", "minimum": 0, "description": "Required for accepted leaves and splits. Estimate orientation reads, searches, globs and recall separately from implementation and proof. Zero must be explicit."},
-        "estimated_tool_turns": {"type": "integer", "minimum": 0, "description": "Estimate all required tool work, including proof, metadata and final verification. Code may increase this estimate."},
-        "execution": {"$ref": "#/$defs/execution", "description": "Appended by worker code. The model must omit this field."},
+        "estimated_exploration_turns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Required for accepted leaves and splits. Estimate orientation reads, searches, globs and recall separately from implementation and proof. Zero must be explicit."
+        },
+        "estimated_tool_turns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Estimate all required tool work, including proof, metadata and final verification. Code may increase this estimate."
+        },
+        "execution": {
+          "$ref": "#/$defs/execution",
+          "description": "Appended by worker code. The model must omit this field."
+        },
         "kind": {
           "const": "split"
         },
@@ -566,8 +550,14 @@
           "items": {
             "type": "object",
             "properties": {
-              "estimated_exploration_turns": {"type": "integer", "minimum": 0},
-              "estimated_tool_turns": {"type": "integer", "minimum": 0},
+              "estimated_exploration_turns": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "estimated_tool_turns": {
+                "type": "integer",
+                "minimum": 0
+              },
               "brief": {
                 "type": "string",
                 "minLength": 1
@@ -773,9 +763,20 @@
     {
       "type": "object",
       "properties": {
-        "estimated_exploration_turns": {"type": "integer", "minimum": 0, "description": "Required for accepted leaves and splits. Estimate orientation reads, searches, globs and recall separately from implementation and proof. Zero must be explicit."},
-        "estimated_tool_turns": {"type": "integer", "minimum": 0, "description": "Estimate all required tool work, including proof, metadata and final verification. Code may increase this estimate."},
-        "execution": {"$ref": "#/$defs/execution", "description": "Appended by worker code. The model must omit this field."},
+        "estimated_exploration_turns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Required for accepted leaves and splits. Estimate orientation reads, searches, globs and recall separately from implementation and proof. Zero must be explicit."
+        },
+        "estimated_tool_turns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Estimate all required tool work, including proof, metadata and final verification. Code may increase this estimate."
+        },
+        "execution": {
+          "$ref": "#/$defs/execution",
+          "description": "Appended by worker code. The model must omit this field."
+        },
         "kind": {
           "const": "cant_meet"
         },

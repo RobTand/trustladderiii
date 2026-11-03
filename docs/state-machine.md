@@ -721,7 +721,7 @@ A pending or missing required check is a legitimate wait, not a stall. The held 
 
 ## Q55: forced reproduction
 
-Rob, 2026-11-02, answering #393: "yes, agreed." This is a reading of Q40 for deflakes. A flaky test passes on the base most of the time, and the demonstrating base run applies the change's test edits, so a fix inside the test already exists there. Neither can show red.
+Rob, 2026-11-02, answering #393: "yes, agreed." This is a reading of Q40 for deflakes. A flaky test passes on the base most of the time, so stress alone cannot establish RED. The approved subject/observer rule below permits separate assertion observers for test subjects.
 
 > For a change whose goal is to make a named flaky test deterministic, a **forced reproduction** counts as the red:
 > - The plan names a **forcing**: a patch, fixture or environment setting the harness applies. It deterministically recreates the flake's condition, for example "a real process holds PID 4242".
@@ -732,7 +732,9 @@ Rob, 2026-11-02, answering #393: "yes, agreed." This is a reading of Q40 for def
 
 The forcing is a field on a demonstrating check. It is declarative: a symptom, environment variables, and patches of attributes inside the served repository with a JSON value, a returned value, a builtin exception other than `AssertionError`, or a bounded delay. The planner writes it, so it is untrusted model output. The harness's host process only bounds it; the runner applies it inside the test container, under the same sandbox as the tests. The maker's edits can't reach it. The check's result echoes the forcing and the head's outcome under it, for review. The kernel is unchanged: it still sees a check pass or fail.
 
-A leaf that changes only tests (#444's `edits_tests` rule) is valid when every demonstrating check carries a valid forcing or an explicit declared-symptom contract. Otherwise the planner reports that a change to tests alone needs a forced reproduction, or can't meet.
+A leaf that changes only tests may use separate assertion observers against base
+subjects, a supported forcing, or an exact declared-symptom campaign. The shared
+assembler preserves the original base subject in all three cases.
 
 ### Declared non-assertion symptoms
 
@@ -790,27 +792,43 @@ requeue. The controller journals the decision and test IDs with the queue fact,
 so restart and redelivery retain the retry bound. The kernel and state table
 are unchanged.
 
-## Q27: helper target and observer evidence (#549)
+## Q27: subject and observer proof (#645)
 
-"Approved" (Rob, 2026-11-03). For deterministic fixes to helpers inside test
-files, a demonstrating check may identify an existing helper target and new
-observer tests. Trusted staging keeps the real old helper on base and adds only
-the new observers; head uses the new helper with those same assertions. Every
-observer must fail by assertion on base and pass on head. The plan also declares
-bounded known-bad arguments as failure-preservation evidence. A trusted driver
-invokes the real helper through pytest's module importer, preserving the observer's
-module name and package context, independently of the observers. It requires
-AssertionError on both versions. The receipt retains these cases, the driver
-hash and both verdicts. Removing a helper assertion cannot pass by making a
-previously failing call succeed. Observer names already bound on base, including
-assignment aliases, are rejected. The harness also probes untouched base
-collection to reject dynamically collected names. Trusted receipts retain
-both helper source hashes, observer hashes and staged tree hashes for review.
-The bounded Python mode accepts an undecorated top-level helper with unchanged
-signature and dependencies. It rejects ambiguous targets and undeclared test
-edits. The existing evidence capability preflight advertises and checks method
-`helper_target_observer`. Regression and behavior-preserving definitions remain
-frozen; Q55 forcings keep their existing semantics. No kernel transition changes.
+Approved by [Rob, 2026-11-03](https://github.com/RobTand/trustladderiii/issues/645):
+"You may update the proof rule accordingly so that fixes to flaky tests are allowed."
+
+A subject is the code whose behavior changes. It may be production code, a test,
+a helper or a fixture. Observers are the assertions that demonstrate the bug.
+RED runs the head observer against the base subject and fails for the declared
+reason. GREEN runs the same observer against the head subject and passes.
+Unchanged tests remain regression controls. A source partition may explicitly
+name subjects and new observer support; check selectors name observers. Starting
+from base, trusted assembly grafts only named observers and new support, carrying
+needed missing head imports. It never overlays complete existing test files.
+Decorators, class context and repository fixtures use ordinary Python source,
+not model-written invocation recipes. Missing dependencies name the module and
+symbol in a repairable refusal. Subject/support overlap is refused. Observer support may add names only;
+a graft cannot write an existing base binding or a declared subject.
+
+Planner rehearsal, maker base runs and independent Checking use one assembler.
+Receipts bind the source trees, staged tree, subjects, observers and declaration.
+Every assertion proof declares the exact call-phase assertion message in
+proof.red_message, including inferred partitions with subjects: []. A missing
+declaration or different failure cannot supply RED. Each check keeps its own
+source partition and execution settings when maker runs multiple checks. Forcing and declared-symptom checks
+without a source partition retain the original base test as their subject and
+the trusted pytest outcome as observer. Existing declared-symptom campaigns keep
+their fixed bounds and exact exception/node/phase requirements.
+
+Forcing may replace a subject module's local stdlib reference with a private
+proxy for the duration of the check. It cannot patch shared stdlib state or an
+owner outside the served repository. The planner receives the authoritative
+5-second per-call and 10-second per-test delay limits, shared across targets and
+forks and reset each pytest test. Receipts report applied delay and exhaustion
+separately from invocation counts. Frozen regression controls, protected paths
+and configuration review guards remain. No kernel transition, fail-fast, retry,
+credit or incident rule changes. This replaces the helper target/observer,
+literal argument, setup-function and fixture-injection encodings of #549.
 
 ## Q27: execution-budget feasibility (#614)
 

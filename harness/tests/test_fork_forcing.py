@@ -137,6 +137,7 @@ def test_killed_child_counts_at_entry_and_still_requires_an_outer_assertion(repo
     assert 'outer assertion after child target entry' in killed['message']
     assert killed['target_hits'] == {TARGET: 1, 'product.other': 0}
     assert zero['target_hits'] == {TARGET: 0, 'product.other': 0}
+    assert zero['delay_budget'] == {'applied_seconds': 0, 'exhausted': False}
 
 
 def test_child_closing_inherited_descriptors_keeps_hits_and_original_result(repo):
@@ -155,6 +156,8 @@ def test_concurrent_children_share_budget_across_targets_and_keep_exact_hits(rep
     assert budget['outcome'] == 'passed', budget
     assert budget['target_hits'] == {TARGET: 3, 'product.other': 3}
     assert zero['target_hits'] == {TARGET: 0, 'product.other': 0}
+    assert budget['delay_budget'] == {'applied_seconds': 10, 'exhausted': True}
+    assert zero['delay_budget'] == {'applied_seconds': 0, 'exhausted': False}
 
 
 def test_spawned_interpreter_without_forcing_supplies_no_hit(repo):
@@ -323,6 +326,7 @@ def test_100k_calls_have_bounded_journal_io_and_finish_with_exact_count(tmp_path
     try:
         assert sum(accounting.enter(TARGET, 4) for _ in range(calls)) == 10
         assert accounting.finish() == {TARGET: calls}
+        assert accounting.budget == {'applied_seconds': 10, 'exhausted': True}
         assert time.monotonic() - started < 20
     finally:
         signal.alarm(0)

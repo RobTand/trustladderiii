@@ -3,7 +3,7 @@ import product
 
 
 def test_demonstrates():
-    assert product.value() == 2
+    assert product.value() == 2, "old product value"
 
 
 def test_does_not_demonstrate():

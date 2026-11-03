@@ -7,6 +7,7 @@ import tempfile
 from .execution import Container, Progress, container_command, require_admission
 from .report import decode
 from .model import Forcing
+from .forcing_ownership import valid_delay_budget
 from .supervision import ExecutionFailure, ExecutionOutcome, Supervised
 
 
@@ -73,7 +74,7 @@ class Summary:
         self.outcomes = {}
 
     def add(self, test, outcome, message="", truncated=False, target_hits=None, forcing_refusal=None,
-            forcing_tampered=False, failures=None):
+            forcing_tampered=False, failures=None, delay_budget=None):
         self.result["totals"][outcome] += 1
         item = {"test": test, "outcome": outcome, "message": message[:MESSAGE_CHARS]}
         if target_hits is not None:
@@ -84,6 +85,8 @@ class Summary:
             item['forcing_tampered'] = True
         if failures is not None:
             item['failures'] = failures
+        if delay_budget is not None:
+            item['delay_budget'] = delay_budget
         self.outcomes[test] = item
         clipped = truncated or len(message) > MESSAGE_CHARS
         self.result["tests"].append(item)
@@ -150,6 +153,12 @@ def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=No
                                     or set(hits) - {target for target, mode, _ in forcing.patches
                                                     if mode == "delay_seconds"}):
                                 raise ValueError("invalid target invocation counts")
+                        budget = record.get('delay_budget')
+                        if budget is not None:
+                            expected.add('delay_budget')
+                            if (not valid_delay_budget(budget) or forcing is None
+                                    or not any(mode == 'delay_seconds' for _, mode, _ in forcing.patches)):
+                                raise ValueError('invalid delay budget')
                         refusal = record.get('forcing_refusal')
                         if refusal is not None:
                             expected.add('forcing_refusal')
@@ -173,7 +182,7 @@ def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=No
                             raise ValueError("invalid test result")
                         seen.add(record["test"])
                         summary.add(record["test"], record["outcome"], record["message"], record["truncated"], hits, refusal,
-                                    tampered, failures)
+                                    tampered, failures, budget)
                         progress.commit(record["test"])
                     elif record.get("event") == "collection-error":
                         collection_error = True
@@ -322,6 +331,8 @@ def main():
                 del receipt['records']
     except (OSError, RuntimeError, ValueError):
         result = infrastructure("Test infrastructure failed before a complete report was available.")
+    if Path('proof.json').is_file():
+        result['proof'] = json.loads(Path('proof.json').read_text())
     result = bounded(result)
     print(PREFIX + json.dumps(result), flush=True)
 

@@ -133,6 +133,8 @@ def prepare_base_submission(submission, base_value="base", head_value="head"):
         ], cwd=root, text=True).strip()
 
     git("init", "--quiet", "--template=")
+    (root / "pyproject.toml").write_text(
+        '[tool.tl3.harness]\ncommand=["python", "-m", "pytest"]\ntest-files=["test_*.py"]\n')
     (root / "example_module.py").write_text(f"value = {base_value!r}\n")
     test_source = ("from example_module import value\ndef test_value():\n"
                    "    if value == 'error': raise RuntimeError('fixture error')\n"
@@ -167,6 +169,8 @@ for line in run.stdout.splitlines():
     record = json.loads(line)
     if record["event"] == "result":
         summary.add(record["test"], record["outcome"], record["message"])
+if (root / 'proof.json').is_file():
+    summary.result['proof'] = json.loads((root / 'proof.json').read_text())
 (here / "response.json").write_text(json.dumps(summary.result))
 record = here / "submissions.json"
 submissions = json.loads(record.read_text()) if record.exists() else []
@@ -329,7 +333,7 @@ test_tool.main()
 def plan(forcing=FORCING):
     return {'kind': 'leaf', 'estimated_exploration_turns': 0,
             'files': ['tests/test_adoption.py'], 'edits_tests': [NODE],
-            'checks': [{'kind': 'demonstrating', 'node_ids': [NODE], 'goal_ids': [0],
+            'checks': [{'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [NODE], 'goal_ids': [0],
                         'forcing': deepcopy(forcing)}], 'no_design_questions': True, 'lands_on_its_own': True}
 
 

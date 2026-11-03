@@ -5,7 +5,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "trusted"))
-from tl3_harness import Check, Container, Forcing, HelperEvidence, HarnessInputError, Kind, run_checks
+from tl3_harness import Check, Container, Forcing, Proof, HarnessInputError, Kind, run_checks
 from tl3_harness.execution import require_admission, result_json
 from tl3_harness.trees import git
 
@@ -15,7 +15,7 @@ def decode(request):
     try:
         plan = tuple(Check(check["name"], Kind(check["kind"]), tuple(check["tests"]),
                            None if check.get("forcing") is None else Forcing.parse(check["forcing"]),
-                           None if check.get("helper_evidence") is None else HelperEvidence.parse(check["helper_evidence"]),
+                           None if check.get("proof") is None else Proof.parse(check["proof"]),
                            check.get("declared_symptom"))
                      for check in request["plan"])
         protected = request.get("protected_paths", [])

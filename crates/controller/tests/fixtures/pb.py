@@ -51,6 +51,17 @@ def finish(key, request):
             test["message"] = (root / "failure_message").read_text() if (root / "failure_message").exists() else "assert 'goodbye' == 'hello'" if mode == "check_fail" else "No test report."
     if (root / "recorded_results.json").exists():
         report["results"] = json.loads((root / "recorded_results.json").read_text())
+    for check in request["plan"]:
+        declaration = check.get("proof")
+        if declaration is None or declaration["subjects"]:
+            continue
+        for result in report["results"]:
+            if result["name"] == check["name"] and "proof" not in result:
+                result["proof"] = {"rule": "subject-observer-v1", "declaration": declaration,
+                    "mode": "pytest-outcome" if check.get("forcing") or check.get("declared_symptom") else "head-observer",
+                    "subjects": {"value.py": {"base": "a" * 64, "head": "b" * 64}},
+                    "source_base_tree_sha256": "c" * 64, "base_tree_sha256": "d" * 64, "head_tree_sha256": "e" * 64,
+                    "observer_sha256": {test: "f" * 64 for test in check["tests"]}, "support_sha256": {}}
     if mode == "wrong_head":
         report["head"] = "a" * 40
     if mode == "bad_report":

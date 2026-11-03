@@ -37,9 +37,6 @@ def test_inherited_repository_method_reaches_rehearsal(rehearsal):
 @pytest.mark.parametrize('binding', ['conditional_repository', 'dynamic_repository', 'dynamic_external',
                                      'class_global_repository'])
 def test_uncertain_owner_uses_runtime_guard_and_preserves_typed_stop(rehearsal, monkeypatch, binding):
-    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-    from langchain_core.messages import AIMessage
-    from tl3_workers import runtime
     ledger, root, inputs, calls = rehearsal
     (root / 'pkg').mkdir()
     (root / 'pkg/__init__.py').write_text('')
@@ -63,31 +60,13 @@ def test_uncertain_owner_uses_runtime_guard_and_preserves_typed_stop(rehearsal, 
                'patches': [{'target': target, 'returns': 0}]}
     result = ledger.run([NODE], forcing)
     assert len(calls) == 2, 'uncertain static owners must reach the admitted runtime guard'
-    if binding != 'dynamic_external':
+    if binding == 'dynamic_external':
+        # The observer imported the original shared module before forcing. A
+        # private proxy on pkg.mod must leave that independent alias alone.
+        assert result['status'] == 'refused', result
+        assert 'ended passed; expected failed' in result['message']
+    else:
         assert result['status'] == 'validated', result
-        return
-    refusal = {'phase': 'forcing_validation', 'target': target, 'resolved_module': 'time',
-               'owner_category': 'external_module', 'reason': 'outside_served_repository'}
-    assert result['status'] == 'refused' and result['refusal'] == refusal
-    assert result['forced']['tests'][0]['forcing_refusal'] == refusal
-    assert result['forced']['tests'][0]['outcome'] == 'error'
-    assert 'time' in result['message'] and 'outside_served_repository' in result['message']
-    model = FakeMessagesListChatModel(responses=[
-        AIMessage(content='', tool_calls=[{'name': 'rehearse_forcing', 'id': 'dynamic',
-                                          'args': {'tests': [NODE], 'forcing': forcing}}]),
-        AIMessage(content='malformed final after runtime ownership refusal'),
-    ])
-    monkeypatch.setattr(runtime, 'create_model', lambda _: model)
-    request = {'role': 'planner', 'worktree': str(root), 'inputs': inputs,
-               'operation': {'node': 1, 'generation': 0, 'kind': 'planning'},
-               'model': {'name': 'fixture', 'effort': 'high', 'budget_tokens': 32000}}
-    events = []
-    runtime.run(request, events.append)
-    reply = events[-1]['reply']
-    assert reply['kind'] == 'cant_meet' and target in reply['report']
-    assert 'outside_served_repository' in reply['report'] and 'time' in reply['report']
-    assert reply['forcing_rehearsals'][0]['refusal'] == refusal
-    assert len(calls) == 4, 'a new planner ledger runs once; the guard still refuses the global owner'
 
 
 def test_declared_symptom_rehearsal_binds_declaration_and_fixed_campaign(rehearsal):
@@ -124,7 +103,7 @@ def test_adopt():
 def test_t613_ac3_rehearsed_forcing_replaces_audit_helper_and_proves_real_assertion(rehearsal, monkeypatch, mode):
     from tl3_harness import execution, Forcing
     from tl3_harness.execution import Container, Progress, run_checks
-    from tl3_harness.model import Check, Kind, Outcome, Verdict
+    from tl3_harness.model import Check, Kind, Outcome, Verdict, Proof
     ledger, root, inputs, calls = rehearsal
     (root / 'publisher.py').write_text(
         'import os\ndef holder():\n    return os.environ.get("HOLDER_PATH", "tiny")\n')
@@ -140,7 +119,7 @@ def _eio():
 def test_adopt(limit):
     pathname = publisher.holder()
     actual = pathname[:limit]
-    assert actual == pathname
+    assert actual == pathname, 'bounded holder pathname'
 '''
     (root / 'tests/test_adoption.py').write_text(old)
     git(root, 'add', '.')
@@ -181,7 +160,8 @@ def test_adopt(limit):
     runner = Path(execution.__file__).with_name('runner.py')
     monkeypatch.setattr(execution, 'container_command',
         lambda tree, container, tests: [sys.executable, '-I', '-B', str(runner), '-', str(tree)])
-    check = Check('bounded evidence', Kind.DEMONSTRATING, (NODE,), Forcing.parse(forcing))
+    check = Check('bounded evidence', Kind.DEMONSTRATING, (NODE,), Forcing.parse(forcing),
+                  proof=Proof((), (), 'bounded holder pathname'))
     result, = run_checks(root, inputs['base_sha'], head, (check,), container=Container(IMAGE))
     assert result.verdict == Verdict.PASS, result
     assert all(t.base == Outcome.ASSERTION and t.head == Outcome.PASSED for t in result.tests)

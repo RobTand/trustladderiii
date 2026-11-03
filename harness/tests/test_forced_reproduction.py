@@ -7,7 +7,7 @@ import sys
 import pytest
 
 from tl3_harness import execution
-from tl3_harness.model import Check, Forcing, HarnessInputError, Kind, Outcome, Verdict
+from tl3_harness.model import Check, Forcing, HarnessInputError, Kind, Outcome, Verdict, Proof
 from tl3_harness.report import decode, parse
 from tl3_harness.trees import git
 
@@ -46,7 +46,7 @@ import sampler
 
 
 def test_departed_process_is_not_live():
-    assert sampler.live_after([4242], [], "/fake/cgroup") == 0
+    assert sampler.live_after([4242], [], "/fake/cgroup") == 0, "departed process remains live"
 '''
 FIXED_TEST = '''\
 import os
@@ -57,7 +57,7 @@ import sampler
 def test_departed_process_is_not_live(monkeypatch):
     # The departure is the test's premise; it must not depend on PID 4242 being free.
     monkeypatch.setattr(sampler, "process_in_scope", lambda pid, cgroup: False)
-    assert sampler.live_after([os.getpid()], [], "/fake/cgroup") == 0
+    assert sampler.live_after([os.getpid()], [], "/fake/cgroup") == 0, "departed process remains live"
 '''
 PID_REUSE = {
     'symptom': 'A real, unrelated process holds PID 4242, so the sampler cannot decide whether it left.',
@@ -98,8 +98,8 @@ def pid_repo(tmp_path, monkeypatch):
     return repo, base
 
 
-def forced(forcing=PID_REUSE, tests=(TEST,)):
-    return Check('deflake', Kind.DEMONSTRATING, tests, forcing=Forcing.parse(forcing))
+def forced(forcing=PID_REUSE, tests=(TEST,), *, red_message='departed process remains live'):
+    return Check('deflake', Kind.DEMONSTRATING, tests, forcing=Forcing.parse(forcing), proof=Proof((), (), red_message))
 
 
 def head_with(repo, test_source):
@@ -258,7 +258,7 @@ import clock
 
 
 def test_on_time():
-    assert not clock.late()
+    assert not clock.late(), 'clock sampled late'
 '''
 ON_TIME_FIXED = '''\
 import clock
@@ -268,7 +268,7 @@ def test_on_time(monkeypatch):
     # The premise is stated: the clock reads 0 against a limit of 3.
     monkeypatch.setattr(clock, "LIMIT", 3)
     monkeypatch.setattr(clock.Clock, "now", lambda self: 0)
-    assert not clock.late()
+    assert not clock.late(), 'clock sampled late'
 '''
 
 
@@ -284,7 +284,7 @@ def test_value_and_returns_forcings_including_a_class_owner(pid_repo, patch):
     (repo / 'tests/test_clock.py').write_text(ON_TIME_FIXED)
     head = save(repo, 'head')
     forcing = {'symptom': 'The sampler reads the clock late.', 'environment': {}, 'patches': [patch]}
-    result, = execution.run_checks(repo, base, head, (forced(forcing, ('tests/test_clock.py::test_on_time',)),),
+    result, = execution.run_checks(repo, base, head, (forced(forcing, ('tests/test_clock.py::test_on_time',), red_message='clock sampled late'),),
                                    container=CONTAINER)
     assert result.verdict == Verdict.PASS, result.tests[0].message
     assert (result.tests[0].base, result.tests[0].head_forced) == (Outcome.ASSERTION, Outcome.PASSED)
@@ -321,6 +321,7 @@ def test_delays_are_capped_per_test(tmp_path):
     assert sum(slept) == runner.MAX_TOTAL_DELAY_SECONDS == 10
     assert slept[:3] == [4, 4, 2]
     assert accounting.finish() == {'Owner.call': 5}
+    assert accounting.budget == {'applied_seconds': 10, 'exhausted': True}
 
 
 @pytest.mark.parametrize('reference', [

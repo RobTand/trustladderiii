@@ -67,9 +67,8 @@ def test_runs_before_a_later_edit_are_not_evidence_for_the_head(maker_request, m
     assert reply["checking_handoff"]["status"] == "pending"
 
 
-@pytest.mark.parametrize("special", [{"forcing": {"symptom": "Q55"}},
-                                   {"helper_evidence": {"target": "test_greeting.py::helper"}}])
-def test_ordinary_handoff_never_substitutes_for_forced_or_helper_proof(maker_request, special):
+@pytest.mark.parametrize("special", [{"forcing": {"symptom": "Q55"}}])
+def test_ordinary_handoff_never_substitutes_for_forced_proof(maker_request, special):
     inputs = maker_request["inputs"]
     inputs["check_base_sha"] = "a" * 40
     inputs["plan"]["checks"][0].update(special)
