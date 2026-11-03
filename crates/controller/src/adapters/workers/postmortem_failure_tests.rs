@@ -113,7 +113,7 @@ fn boundary_case(class: &str, status: Value, expected: &str) {
         .unwrap();
     let failed = client
         .query(
-            "SELECT id FROM tl3_postmortems WHERE failed_at IS NOT NULL",
+            "SELECT p.id, count(c.run_key) FROM tl3_postmortems p JOIN tl3_postmortem_claims c ON c.postmortem_id = p.id WHERE p.failed_at IS NOT NULL GROUP BY p.id",
             &[],
         )
         .unwrap();
@@ -121,11 +121,17 @@ fn boundary_case(class: &str, status: Value, expected: &str) {
     for row in failed {
         let detail = store.postmortem(row.get(0)).unwrap().unwrap();
         assert_eq!(detail.failure.as_deref(), Some(expected));
+        let claims: i64 = row.get(1);
+        assert!((1..=3).contains(&claims));
         assert_eq!(
-            detail.record.attempts, 2,
-            "diagnostics must retain the two-retry allowance"
+            i64::from(detail.record.attempts),
+            claims.min(2),
+            "each failed claim retains the existing two-retry allowance"
         );
-        assert_eq!(detail.record.status, "failed");
+        assert_eq!(
+            detail.record.status,
+            if claims < 3 { "owed" } else { "failed" }
+        );
     }
     let snapshot = controller.snapshot().unwrap();
     let incident = snapshot
