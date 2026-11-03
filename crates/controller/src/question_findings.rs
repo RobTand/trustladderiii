@@ -170,11 +170,22 @@ fn split(plan: &Value) -> Option<Value> {
     }
     let reason = match plan["reason"].as_str()? {
         "does_not_fit" => "is too large to make as one change",
+        "execution_budget" => "exceeds the maker's usable execution budget before work starts",
         "multiple_repos" => "spans more than one repository",
         _ => "ran out of room in a single attempt",
     };
-    let report =
+    let mut report =
         format!("The planned change {reason}.") + &size(&plan["forecast"]).unwrap_or_default();
+    if plan["reason"] == "execution_budget"
+        && let (Some(estimate), Some(usable)) = (
+            plan["execution"]["estimated_tool_turns"].as_u64(),
+            plan["execution"]["usable_tool_turns"].as_u64(),
+        )
+    {
+        report.push_str(&format!(
+            " Its execution estimate is {estimate} tool turns against {usable} usable turns."
+        ));
+    }
     let pieces: Vec<_> = plan["pieces"]
         .as_array()?
         .iter()
