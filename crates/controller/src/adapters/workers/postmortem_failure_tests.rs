@@ -45,11 +45,11 @@ fn boundary_case(class: &str, status: Value, expected: &str) {
     let mut config =
         tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
     config.store = db.create("judge_failure");
-    let mut registry = crate::adapters::simulation(&root.path().join("fakes")).unwrap();
+    let mut registry = crate::adapters::simulation(root.path()).unwrap();
     registry.register(
         crate::executor::Upstream::Workers,
         RecordedJudge {
-            fake: Fake::new(&root.path().join("workers")),
+            fake: Fake::new(root.path()),
             reason: json!({"failure_class": class, "failure_http_status": status,
                 "failure_stage": "postmortem judge failure", "failure_message": PRIVATE}),
         },
@@ -60,6 +60,19 @@ fn boundary_case(class: &str, status: Value, expected: &str) {
         crate::Bootstrap::from_config(&config).unwrap(),
     )
     .unwrap();
+    postgres::Config::new()
+        .host(&config.store.host)
+        .port(config.store.port)
+        .user(&config.store.user)
+        .dbname(&config.store.database)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap()
+        .execute(
+            "UPDATE tl3_settings SET value = '1'::jsonb WHERE key = 'postmortem_sample_share'",
+            &[],
+        )
+        .unwrap();
     for number in 42..46 {
         controller
             .intake(crate::LabelledIssue {
