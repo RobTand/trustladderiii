@@ -350,6 +350,9 @@ goals and forecast settings:
 - `findings`: everything learned before a re-plan, including failed checks and
   review findings, as a list of text reports. It is empty for initial planning.
   The planner uses these findings when choosing its next plan.
+- `repair_plan_consistency`: true in production, enabling the bounded draft
+  correction Rob approved on 2026-11-03 under Q27/Q54 in
+  [#573](https://github.com/RobTand/trustladderiii/issues/573#issuecomment-6602791857).
 - `protected_paths`: repo-relative glob patterns for files a leaf or split may
   not declare. Code rejects matching declarations. The controller's defaults
   include `.github/**`, `.mergify.yml`, `**/conftest.py`, `pytest.ini`, `.pytest.ini`,
@@ -357,12 +360,31 @@ goals and forecast settings:
   check harness refuses to run changed. `**` matches zero or more path
   segments, including a root `conftest.py`.
 
+Before completing a leaf reply, the planner may use its existing single
+tool-free correction when its only defects are an edited test absent from
+demonstrating checks or a forced demonstrating check naming tests absent from
+the base. This is the Q27/Q54 exception Rob approved on 2026-11-03, linked above.
+The correction stays in the same worker run and accounting limits and uses
+only already-read facts. It stays bound to the original draft's files, goals,
+existing check kinds and forcings. It may only add missing demonstrating
+coverage, swap forced non-base selections for base nodes, or drop an uncovered
+unnecessary edit. An appended demonstrating check may carry no forcing or
+reuse a draft forcing unchanged. It may honestly return can't meet.
+
+Added files, a wider footprint, unrelated checks or edits, changed forcings
+and new goals remain plan violations and therefore PlanCantMeet. Substantive
+plan failures, unsupported requirements, protected-path conflicts, out-of-room
+conditions and actual work failures do not enter this correction. A second
+inconsistent reply ends correction with both named diagnostics. Existing
+format-validation failure handling is unchanged. The harness and reviewer
+still judge actual Q55 proof.
+
 | Event | Condition | Next | Effects |
 |---|---|---|---|
 | Plan: can't meet, with required protected paths (Q57) | Controller verifies concrete paths against defaults plus global and repository lists | Stopping(NotActionable) | No retry, credit spent or Rob question, regardless of `fail_fast` |
 | Plan: leaf | The leaf rules hold | Ready(fresh) | |
 | Plan: split | Slice one | AwaitingRob(needs splitting) | Ask Rob to narrow the request, showing the proposed pieces |
-| Plan: can't meet, with a report | `fail_fast` (Q54) | Stop for TL3 review | See "Failures". The planner worker reports a plan that breaks a rule as can't meet, so a rule-breaking plan arrives here and stops at once. |
+| Plan: can't meet, with a report | `fail_fast` (Q54) | Stop for TL3 review | See "Failures". The planner worker reports a completed plan that breaks a rule as can't meet, so a rule-breaking completed plan arrives here and stops at once. Only the bounded draft correction described above may precede completion. |
 | Plan: can't meet, with a report | First time | Planning | Re-run with the next model on the planner's ladder, in a new generation |
 | Plan: can't meet, with a report | Second time | AwaitingRob(can't meet, continue to Planning) | |
 | Plan breaks a rule | First time | Planning | Re-run with the reason, in a new generation |

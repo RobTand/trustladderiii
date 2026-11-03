@@ -19,6 +19,7 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
     materials(&mut store);
     let mut inputs = store.worker_materials("0").unwrap().unwrap();
     if mode == "normal" {
+        fs::write(root.path().join("entered.consistency-fixture"), "").unwrap();
         inputs["repo"]["file_list"]
             .as_array_mut()
             .unwrap()

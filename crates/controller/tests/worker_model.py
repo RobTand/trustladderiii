@@ -36,7 +36,7 @@ def create_model(request):
                 for goal in request["inputs"]["goals"]
             ]})),
         ])
-    if mode == "normal" and request["role"] == "planner":
+    if mode == "normal" and request["role"] == "planner" and marker.with_suffix(".consistency-fixture").exists():
         draft = copy.deepcopy(reply)
         draft["edits_tests"] = ["tests/test_greeting.py::test_control"]
         reply["edits_tests"] = []
