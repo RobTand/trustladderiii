@@ -499,13 +499,6 @@ mod reply_defects {
                 .unwrap(),
             ),
             (
-                "ingest-input.json".into(),
-                serde_json::from_str(include_str!(
-                    "../../../../../workers/src/tl3_workers/schemas/ingest-input.json"
-                ))
-                .unwrap(),
-            ),
-            (
                 "new-input.json".into(),
                 json!({"$id":"https://trustladderiii.invalid/workers/protocol-1/new-input.json", "$ref":"maker-input.json#/properties/goals/items"}),
             ),
