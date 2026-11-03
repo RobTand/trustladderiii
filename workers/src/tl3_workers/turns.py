@@ -50,12 +50,22 @@ class RepairUnavailable(Exception):
     """The run's input allowance has no room for a repair turn."""
 
 
+def _tool_name(tool):
+    if isinstance(tool, dict):
+        return tool.get("name") or tool.get("function", {}).get("name")
+    return getattr(tool, "name", None)
+
+
 class TurnControl(AgentMiddleware):
     """Retry a dropped model call once, and make repair turns tool-free."""
 
     def __init__(self):
         self.allowance = None
         self.repairing = False
+        # The last model call as sent, its result and its tools: a later turn reuses its cached prefix.
+        self.last_exchange = None
+        # Tools the harness profile removes after this middleware, before the model sees them.
+        self.hidden_tools = frozenset()
 
     @contextmanager
     def repair(self, history, error):
@@ -89,6 +99,8 @@ class TurnControl(AgentMiddleware):
                                           if key != "tool_calls"}})
                 if isinstance(message, AIMessage) else message
                 for message in response.result]
+        shown = [tool for tool in request.tools if _tool_name(tool) not in self.hidden_tools]
+        self.last_exchange = (request.system_message, list(request.messages), list(response.result), shown)
         return response
 
     def wrap_tool_call(self, request, handler):

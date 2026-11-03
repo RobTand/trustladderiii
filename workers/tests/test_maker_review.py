@@ -10,6 +10,7 @@ from tl3_workers.contracts import validate
 from tl3_workers.roles import maker
 from worker_process import start_worker
 from message_invariants import DONE as DONE
+from message_invariants import agent_calls
 from message_invariants import ToolModel as ToolModel
 from message_invariants import git as git
 from message_invariants import maker_request as maker_request
@@ -140,7 +141,7 @@ def test_no_change_done_gets_one_feedback_turn(tmp_path, maker_request, monkeypa
     else:
         assert reply == {'kind': 'cant_meet', 'report': report if response == 'cant_meet' else 'no code change was made'}
         assert git(root, 'rev-parse', 'HEAD') == before
-    assert len(seen) == len(turns)
+    assert len(agent_calls(seen)) == len(turns)
     saved = json.loads(Path(maker_request['session_file']).read_text())
     assert any(message['data']['content'] == feedback for message in saved)
 

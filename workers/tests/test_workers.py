@@ -182,7 +182,8 @@ def test_only_tl3_prompt_and_read_tools_reach_model(request_doc, role, monkeypat
     if role == "ingest":
         del proposal["oneOf"][0]["properties"]["forecast"]
         del proposal["$defs"]["forecast"]
-    assert system == expected + "\n\nReply with one JSON object only: no prose, no code fences. It must match this schema:\n" + json.dumps(proposal, ensure_ascii=False)
+    from tl3_workers.contracts import model_facing
+    assert system == expected + "\n\nReply with one JSON object only: no prose, no code fences. It must match this schema:\n" + json.dumps(model_facing(proposal), ensure_ascii=False)
     assert request_doc["key_file"] not in system
     assert "key_file" not in messages[1].text.replace(request_doc["inputs"]["issue"]["body"], "")
     assert json.loads(messages[1].text) == {**request_doc["inputs"],
@@ -561,13 +562,21 @@ def test_context_only_buildbuddy_prompt_fixture(request_doc, monkeypatch):
     reply = events[-1]["reply"]
     assert reply["evidence_contract"] == []
     assert reply["evidence_errors"] == []
-    for role in ("ingest", "audit", "planner"):
-        prompt = files("tl3_workers").joinpath("prompts", role + ".md").read_text()
-        assert "Only evidence the request requires belongs in evidence_contract." in prompt, role
-        assert "history, context, non-goals or examples" in prompt, role
-        assert "the earlier BuildBuddy run showed" in prompt, role
-        assert "always_tests" in prompt, role
-    assert "Only evidence the request requires belongs in evidence_contract." in observed[0][0].text
+    # #648 condensed ingest and audit; the planner keeps its wording until it is condensed. The
+    # executor's features, always_tests among them, reach ingest and audit in tool_capabilities.
+    statements = {
+        "planner": ("Only evidence the request requires belongs in evidence_contract.",
+                    "history, context, non-goals or examples", "the earlier BuildBuddy run showed", "always_tests"),
+        "ingest": ("Include only evidence that the request requires.",
+                   "history, context, a non-goal or an example", '"The earlier BuildBuddy run showed a failure" is context'),
+        "audit": ("Include only evidence that the request requires.",
+                  "history, context, a non-goal or an example", '"The earlier BuildBuddy run showed a failure" is context'),
+    }
+    for role, expected in statements.items():
+        prompt = " ".join(files("tl3_workers").joinpath("prompts", role + ".md").read_text().split())
+        for statement in expected:
+            assert statement in prompt, (role, statement)
+    assert "Include only evidence that the request requires." in observed[0][0].text
 
 
 @pytest.mark.parametrize("source,goal,fragment", [

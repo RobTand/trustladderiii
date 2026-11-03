@@ -7,6 +7,7 @@ from tl3_workers.roles import ROLES
 from tl3_workers.tools import READ_TOOLS, WRITE_TOOLS
 from worker_process import start_worker
 from message_invariants import DONE as DONE
+from message_invariants import RETRO_TURN as RETRO_TURN
 from message_invariants import git as git
 from message_invariants import maker_request as maker_request
 from message_invariants import tool_capable_process_model as tool_capable_process_model
@@ -48,6 +49,7 @@ def test_non_done_replies_through_protocol_do_not_commit(tmp_path, maker_request
     assert result.exit_code == 0, result.stderr
     assert result.events == [
         {"event": "progress", "unit": "model_turn"},
+        *([] if reply["kind"] == "out_of_room" else [RETRO_TURN]),
         {"event": "reply", "role": "maker", "reply": reply},
     ]
     assert git(root, "rev-parse", "HEAD") == before
@@ -72,7 +74,7 @@ def test_done_commits_real_changes_and_reports_head(tmp_path, maker_request):
         "TL3 <tl3@example.invalid>\nTL3 <tl3@example.invalid>"
     )
     assert [event["unit"] for event in result.events[:-1]] == [
-        "model_turn", "tool_result", "model_turn", "tool_result", "model_turn",
+        "model_turn", "tool_result", "model_turn", "tool_result", "model_turn", RETRO_TURN["unit"],
     ]
 
 

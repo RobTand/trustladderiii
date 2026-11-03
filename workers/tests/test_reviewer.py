@@ -208,8 +208,8 @@ def test_model_receives_review_material_and_confined_read_results(review_request
 def test_prompt_blocks_test_report_tampering():
     from importlib.resources import files
     prompt = files("tl3_workers").joinpath("prompts", "reviewer.md").read_text()
-    assert "breaks the standing\nrule that protects test reports" in prompt
-    assert "is not\ntampering" in prompt
+    assert "block a change that tampers with how tests report results" in prompt
+    assert "Ordinary output from the program under test is not tampering" in prompt
 
 
 @pytest.fixture
@@ -538,10 +538,10 @@ def test_prompt_judges_the_forcing_against_the_symptom():
     from importlib.resources import files
     prompt = " ".join(files("tl3_workers").joinpath("prompts", "reviewer.md").read_text().split())
     assert "forcing" in prompt
-    assert "models the symptom the issue describes" in prompt
+    assert "Decide whether the forcing models the symptom in the issue's own title and body" in prompt
     # The PB #2625 fix replaces the forced target in the test itself; the reviewer must say why it passes.
-    assert ("the code or test handles the forced condition, or only because the new test replaces "
-            "the forced target with its own patch") in prompt
+    assert ("the code or the test handles the forced condition, or only because the new test replaces "
+            "the forced target") in prompt
 
 
 def test_review_receives_helper_identities_and_both_verdicts(review_request):

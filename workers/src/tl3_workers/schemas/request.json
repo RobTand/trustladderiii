@@ -73,6 +73,8 @@
       "pattern": "^/"
     },
     "test_cpus": {"type": "integer", "minimum": 1},
+    "silence_secs": {"type": "integer", "minimum": 1, "description": "The agent worker silence allowance in seconds; the maker retro stays inside half of it."},
+    "no_progress_secs": {"type": "integer", "minimum": 1, "description": "The agent worker no-progress allowance in seconds; the maker retro stays inside half of it."},
     "inputs": {
       "type": "object"
     },

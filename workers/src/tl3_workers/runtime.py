@@ -23,7 +23,7 @@ from langchain_openai import ChatOpenAI
 from jsonschema import ValidationError
 
 from tl3_workers.evidence import forcing_capabilities, forcing_guidance
-from tl3_workers.contracts import read_json, read_reply, schema, validate
+from tl3_workers.contracts import model_facing, read_json, read_reply, schema, validate
 from tl3_workers.roles import ROLES
 from tl3_workers.roles.planner import EXPLORATION_DECLARATION, PlanConsistencyError
 from tl3_workers.forcing_rehearsal import ForcingRehearsals
@@ -221,7 +221,7 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None,
             variant["properties"].pop(name, None)
     for name in role.code_only_fields:
         proposal.get("$defs", {}).pop(name, None)
-    prompt += json.dumps(proposal, ensure_ascii=False)
+    prompt += json.dumps(model_facing(proposal), ensure_ascii=False)
     # Deep Agents requires read_file in its filesystem middleware. The profile
     # excludes it at both model and dispatch boundaries; StateBackend holds no host files.
     filesystem = FilesystemMiddleware(
@@ -233,6 +233,7 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None,
     )
     middleware = [filesystem]
     control = TurnControl() if control is None else control
+    control.hidden_tools = profile.excluded_tools
     if role.exploration_budget is not None:
         # The allowance wraps the turn control, so it charges dropped calls and repairs.
         control.allowance = ExplorationMiddleware(role.exploration_budget, role.name, context_size)
@@ -281,6 +282,7 @@ def _run(request, emit):
     with Worktree(request["worktree"], generated_files=forecast.get("generated_files", ()),
                   generator=forecast.get("generator")) if role.tools else nullcontext() as worktree:
         if worktree is not None:
+            worktree.environment_errors_end_run = role.environment_errors_end_run
             worktree.hindsight_key_file = request.get("hindsight_key_file")
             worktree.progress_emit = emit
         if role.name == 'planner':

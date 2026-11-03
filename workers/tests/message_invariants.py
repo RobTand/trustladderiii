@@ -258,3 +258,23 @@ def request_123_handover(maker_request):
         {"goal_id": "publication", "status": "pending", "why": "Publishing owns Git and PR creation."},
     ]}
     return request, reply
+
+
+# The retro (#648) reports one model turn before the reply, except after out_of_room.
+RETRO_TURN = {"event": "progress", "unit": "model_turn"}
+
+
+def is_retro(call):
+    """Whether a recorded model call is the maker's retro turn (#648).
+
+    A call is a message list, a (messages, ...) tuple or a Chat Completions payload."""
+    from tl3_workers.retro import PROMPT
+
+    messages = call["messages"] if isinstance(call, dict) else call[0] if isinstance(call, tuple) else call
+    last = messages[-1] if messages else None
+    return (last.get("content") if isinstance(last, dict) else getattr(last, "content", None)) == PROMPT
+
+
+def agent_calls(calls):
+    """Recorded model calls without the retro, which follows the accepted reply and has its own tests."""
+    return [call for call in calls if not is_retro(call)]

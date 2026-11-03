@@ -15,7 +15,7 @@ import pytest
 from tl3_workers import runtime
 from tl3_workers.contracts import validate
 from tl3_workers.roles import maker
-from message_invariants import assert_tool_pairs
+from message_invariants import agent_calls, assert_tool_pairs
 
 
 DONE = {
@@ -117,7 +117,7 @@ def install(monkeypatch, request, *, turns=4, reserve=2, tokens=6_000_000, **mod
 def snapshots(model):
     return [json.loads(next((m.text.removeprefix("TL3 execution budget: ")
                             for m in reversed(messages) if m.text.startswith("TL3 execution budget: ")), "{}"))
-            for messages, _ in model.calls]
+            for messages, _ in agent_calls(model.calls)]
 
 
 def test_each_turn_exposes_remaining_allowance(maker_request, monkeypatch):
@@ -128,7 +128,7 @@ def test_each_turn_exposes_remaining_allowance(maker_request, monkeypatch):
     assert [b["input_tokens"]["remaining"] for b in budgets] == [6_000_000 - n * 100 for n in range(5)]
     assert [b["phase"] for b in budgets] == ["working", "working", "finalizing", "finalizing", "final"]
     assert all(b["finalization_turns"] == 2 for b in budgets)
-    for messages, _ in model.calls:
+    for messages, _ in agent_calls(model.calls):
         assert_tool_pairs(messages)
 
 
@@ -140,10 +140,10 @@ def test_reserve_blocks_edits_even_when_model_calls_a_hidden_tool(maker_request,
     model = install(monkeypatch, maker_request, actions=actions)
     runtime.run(maker_request, lambda _: None)
     assert Path(maker_request["worktree"], "greeting.py").read_text() == "preserved\n"
-    assert {"read", "diff", "run_tests"} <= model.calls[2][1]
-    assert model.calls[2][1] == model.calls[0][1], "finalization retains the full tool list"
-    assert any("finalization reserve" in m.text for m in model.calls[-1][0] if m.type == "tool")
-    assert len(model.calls) == 5, "four bounded tool turns and one tools-free final reply"
+    assert {"read", "diff", "run_tests"} <= agent_calls(model.calls)[2][1]
+    assert agent_calls(model.calls)[2][1] == agent_calls(model.calls)[0][1], "finalization retains the full tool list"
+    assert any("finalization reserve" in m.text for m in agent_calls(model.calls)[-1][0] if m.type == "tool")
+    assert len(agent_calls(model.calls)) == 5, "four bounded tool turns and one tools-free final reply"
 
 
 def test_exploration_without_implementation_warns_halfway_and_keeps_the_reserve(maker_request, monkeypatch):
@@ -157,9 +157,9 @@ def test_exploration_without_implementation_warns_halfway_and_keeps_the_reserve(
     assert "Stop broad exploration" in budgets[4].get("warning", ""), budgets[4]
     assert budgets[4]["tool_turns"]["remaining"] == 4
     assert budgets[4]["implementation_started"] is False, "a test edit is not implementation progress"
-    assert "write" in model.calls[4][1], "the warning must leave implementation capacity"
-    assert model.calls[6][1] == model.calls[0][1], "dispatch enforces the finalization restriction"
-    assert len(model.calls) == 9
+    assert "write" in agent_calls(model.calls)[4][1], "the warning must leave implementation capacity"
+    assert agent_calls(model.calls)[6][1] == agent_calls(model.calls)[0][1], "dispatch enforces the finalization restriction"
+    assert len(agent_calls(model.calls)) == 9
     assert events[-1]["reply"]["budget_exhaustion"]["tool_turns"] == {"used": 8, "allowed": 8}
     assert Path(maker_request["worktree"], "greeting.py").read_text().startswith("def greet")
 
@@ -204,7 +204,7 @@ def test_cap_with_unfinished_work_produces_typed_preserved_diagnostic(maker_requ
     assert diagnostic["preserved_work"]["tree"] == git(root, "write-tree")
     assert "CHANGELOG" in json.dumps(diagnostic["unfinished_obligations"])
     assert "execution_budget_exhausted" in reply["report"]
-    assert not model.calls[-1][1]
+    assert not agent_calls(model.calls)[-1][1]
     validate("maker-reply", reply)
 
 
@@ -217,7 +217,7 @@ def test_input_exhaustion_is_distinct_from_tool_turn_exhaustion(maker_request, m
     assert diagnostic.get("dimension") == "input_tokens", events[-1]
     assert diagnostic["tool_turns"]["used"] < 64
     assert diagnostic["input_tokens"]["used"] <= 300_000
-    assert len(model.calls) <= 2
+    assert len(agent_calls(model.calls)) <= 2
 
 
 def test_restoring_allowance_does_not_restore_edit_capacity(maker_request, monkeypatch):
@@ -239,8 +239,8 @@ def test_restoring_allowance_does_not_restore_edit_capacity(maker_request, monke
     monkeypatch.setattr(runtime, "create_model", lambda _: model)
     events = []
     runtime.run(maker_request, events.append)
-    assert len(model.calls) == 2
-    assert "write" in model.calls[0][1], "restored finalization still advertises stable definitions"
+    assert len(agent_calls(model.calls)) == 2
+    assert "write" in agent_calls(model.calls)[0][1], "restored finalization still advertises stable definitions"
     assert snapshots(model)[0]["tool_turns"]["remaining"] == 1
     assert events[-1]["reply"]["budget_exhaustion"]["input_tokens"]["used"] == 500
     assert Path(maker_request["worktree"], "greeting.py").read_text().startswith("def greet")

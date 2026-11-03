@@ -8,6 +8,7 @@ from message_invariants import assert_tool_pairs
 from tl3_workers import runtime
 from tl3_workers.roles import ROLES
 from message_invariants import DONE as DONE
+from message_invariants import agent_calls
 from message_invariants import ToolModel as ToolModel
 from message_invariants import git as git
 from message_invariants import maker_request as maker_request
@@ -52,7 +53,7 @@ def test_long_maker_session_bounds_context_and_commits(tmp_path, maker_request, 
     runtime.run(maker_request, events.append)
     for messages in observed:
         assert_tool_pairs(messages)
-    assert len(observed) == 51, 'a long maker session can finish its planned edits'
+    assert len(agent_calls(observed)) == 51, 'a long maker session can finish its planned edits'
     assert max(sum(len(json.dumps(m.model_dump(), ensure_ascii=False).encode())
                    for m in messages if isinstance(m, (AIMessage, ToolMessage)))
                for messages in observed) > 65_536, 'history grows beyond the former rolling window'
@@ -99,7 +100,7 @@ def test_maker_budget_exhaustion_finishes_without_claiming_unmade_changes(maker_
     monkeypatch.setattr(runtime, 'create_model', lambda _: EndlessMaker(responses=[]))
     events = []
     runtime.run(maker_request, events.append)
-    assert len(observed) == 65, 'maker allows 64 tool turns and one final answer'
+    assert len(agent_calls(observed)) == 65, 'maker allows 64 tool turns and one final answer'
     reply = events[-1]['reply']
     assert reply['kind'] == 'cant_meet'
     assert reply['budget_exhaustion']['dimension'] == 'tool_turns'

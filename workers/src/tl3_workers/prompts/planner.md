@@ -178,6 +178,10 @@ those marked for review. Return exactly one of these proposals:
 - Can't meet, kind cant_meet, with a report explaining the obstacle and files
   already identified, or an empty files list if none are known.
 
+Abort when a missing capability greatly impedes planning: missing tools, no
+disk access, an unreadable worktree or an absent executor. Do not work around
+it. Reply cant_meet and name the missing capability in the report.
+
 Code reports rule violations to the controller, which gives the kernel the evidence for its next step. After your reply, code counts the brief and
 the base contents of declared files once each with o200k_base as a
 model-agnostic estimate. New files contribute zero base tokens. It sums the

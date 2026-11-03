@@ -1,5 +1,6 @@
 """Load the same JSON Schemas that the controller consumes."""
 
+from copy import deepcopy
 from functools import cache
 from importlib.resources import files
 import json
@@ -91,3 +92,57 @@ def registry():
 
 def validate(name, value):
     Draft202012Validator(schema(name), registry=registry()).validate(value)
+
+
+def _refs(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key == "$ref" and isinstance(item, str):
+                yield value
+            else:
+                yield from _refs(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _refs(item)
+
+
+def model_facing(reply_schema):
+    """The reply schema as the model sees it in its prompt (#648).
+
+    The model cannot follow a $ref into another schema file, so each one is
+    copied into $defs. A $defs entry that nothing references is dropped. Worker
+    code still validates replies against the full schema and its registry."""
+    result = deepcopy(reply_schema)
+    defs = result.setdefault("$defs", {})
+    pending = list(_refs(result))
+    bundled = {}
+    while pending:
+        node = pending.pop()
+        source, _, pointer = node["$ref"].partition("#")
+        if not source or not pointer.startswith("/$defs/"):
+            continue
+        key = (source, pointer)
+        if key not in bundled:
+            name = pointer.removeprefix("/$defs/")
+            if name in defs:
+                name = source.removesuffix(".json").replace("-", "_") + "_" + name
+            bundled[key] = name
+            copied = deepcopy(schema(source.removesuffix(".json"))["$defs"][pointer.removeprefix("/$defs/")])
+            for inner in _refs(copied):
+                # The copied definition's own local references point into its source file.
+                if inner["$ref"].startswith("#"):
+                    inner["$ref"] = source + inner["$ref"]
+            defs[name] = copied
+            pending.extend(_refs(copied))
+        node["$ref"] = "#/$defs/" + bundled[key]
+    used, frontier = set(), [result[key] for key in result if key != "$defs"]
+    while frontier:
+        for node in _refs(frontier.pop()):
+            name = node["$ref"].removeprefix("#/$defs/")
+            if node["$ref"].startswith("#/$defs/") and name not in used and name in defs:
+                used.add(name)
+                frontier.append(defs[name])
+    result["$defs"] = {name: value for name, value in defs.items() if name in used}
+    if not result["$defs"]:
+        del result["$defs"]
+    return result

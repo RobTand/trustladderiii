@@ -79,3 +79,13 @@ py_binary(
     srcs = ["cant_meet_audit.py"],
     visibility = ["//visibility:public"],
 )
+
+py_binary(
+    name = "measure_prompts",
+    srcs = ["measure_prompts.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+    ],
+)

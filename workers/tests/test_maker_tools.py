@@ -12,6 +12,7 @@ from tl3_workers.roles import ROLES
 from tl3_workers.roles import maker
 from tl3_workers.tools import TOOL_FACTORIES
 from message_invariants import DONE as DONE
+from message_invariants import is_retro
 from message_invariants import DONE_TOKENS as DONE_TOKENS
 from message_invariants import ToolModel as ToolModel
 from message_invariants import git as git
@@ -124,13 +125,21 @@ def test_mutations_and_tests_from_one_turn_do_not_overlap(maker_request, monkeyp
 def test_proxy_stream_requests_usage_and_serial_tools_and_uses_usage(
     maker_request, monkeypatch, input_tokens, output_tokens, kind,
 ):
-    requests = []
+    requests, retros = [], []
     root = Path(maker_request["worktree"])
     before = git(root, "rev-parse", "HEAD")
     Path(maker_request["key_file"]).write_text("fixture-key")
 
     def respond(request):
         body = json.loads(request.content)
+        if is_retro(body):
+            retros.append(body)
+            frame = {"id": "fixture-retro", "object": "chat.completion.chunk", "created": 0,
+                     "model": "fixture-model", "choices": [{"index": 0, "finish_reason": "stop", "delta": {
+                         "role": "assistant", "content": json.dumps(dict.fromkeys(
+                             ("slowed_by", "missing", "checks", "noise"), []))}}]}
+            return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                                  content="data: " + json.dumps(frame) + "\n\ndata: [DONE]\n\n")
         requests.append(body)
         assert request.url == "http://model.invalid/v1/chat/completions"
         assert body["stream"] is True
@@ -172,7 +181,15 @@ def test_proxy_stream_requests_usage_and_serial_tools_and_uses_usage(
         events = []
         runtime.run(maker_request, events.append)
     assert len(requests) == 2
-    assert [event["unit"] for event in events[:-1]] == ["model_turn", "tool_result", "model_turn"]
+    assert len(retros) == (0 if kind == "out_of_room" else 1), "a full context ends without a retro"
+    for retro in retros:
+        # The retro (#648) keeps the cached prefix: the same tools, which it may not call.
+        assert json.dumps(retro.get("tools")) == json.dumps(requests[-1]["tools"])
+        assert retro.get("tool_choice") == "none"
+        assert retro.get("parallel_tool_calls") == requests[-1]["parallel_tool_calls"]
+    # The retro reports its model turn before the reply, except after out_of_room.
+    retro_turn = [] if kind == "out_of_room" else ["model_turn"]
+    assert [event["unit"] for event in events[:-1]] == ["model_turn", "tool_result", "model_turn", *retro_turn]
     assert events[-1]["reply"]["kind"] == kind
     if kind == "done":
         assert events[-1]["reply"] == {**DONE, "head": git(root, "rev-parse", "HEAD")}

@@ -845,3 +845,51 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_abort_rule",
+    srcs = ["test_abort_rule.py"],
+    deps = [
+        ":conftest",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_maker_retro",
+    srcs = ["test_maker_retro.py"],
+    deps = [
+        ":conftest",
+        "//workers/src",
+        "@tl3_pip//httpx",
+        "@tl3_pip//jsonschema",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//mlflow_skinny",
+        "@tl3_pip//openai",
+        "@tl3_pip//opentelemetry_proto",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_reply_contracts",
+    srcs = ["test_reply_contracts.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_prompt_style",
+    srcs = ["test_prompt_style.py"],
+    deps = [
+        ":conftest",
+        "@tl3_pip//pytest",
+    ],
+)

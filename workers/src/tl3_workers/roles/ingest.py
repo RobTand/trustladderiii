@@ -44,6 +44,7 @@ ROLE = Role(
     input_schema="ingest-input",
     reply_schema="ingest-reply",
     code_only_fields=("forecast", "evidence_errors"),
+    environment_errors_end_run=True,
     exploration_budget=ExplorationBudget(),
     tools={
         "list": "List repository directories to locate evidence for the request.",

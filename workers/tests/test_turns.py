@@ -11,7 +11,7 @@ import pytest
 
 from tl3_workers import runtime
 from tl3_workers.turns import InvalidReply
-from message_invariants import assert_tool_pairs
+from message_invariants import agent_calls, assert_tool_pairs
 import message_invariants as test_maker
 from pb_fixtures import machine_cli, supported_fake_runtime as supported_fake_runtime
 import test_prompt_cache
@@ -121,10 +121,10 @@ def test_dropped_turn_retries_once_with_the_same_history(role, request, tmp_path
     events = []
     runtime.run(doc, events.append)
     assert events[-1]["event"] == "reply" and events[-1]["role"] == role
-    failed, retried = model.calls[-2][0], model.calls[-1][0]
+    failed, retried = agent_calls(model.calls)[-2][0], agent_calls(model.calls)[-1][0]
     assert payload(failed) == payload(retried), "the retry resends the turn with its history"
     assert len(tool_results(retried)) == (1 if tool else 0), "earlier tool calls are not repeated"
-    for messages, _ in model.calls:
+    for messages, _ in agent_calls(model.calls):
         assert_tool_pairs(messages)
 
 
@@ -199,15 +199,15 @@ def test_invalid_reply_gets_one_tool_free_repair_turn(role, request, tmp_path, m
     events = []
     runtime.run(doc, events.append)
     assert events[-1]["event"] == "reply"
-    repair, offered = model.calls[-1]
+    repair, offered = agent_calls(model.calls)[-1]
     # A code-owned budget notice may follow the repair instruction.
     instruction = instructions(repair)[-1]
     assert message in instruction.text
     assert not offered, "the repair turn disables tool calls"
     if tool:
-        assert model.calls[0][1], "earlier turns keep their tools"
+        assert agent_calls(model.calls)[0][1], "earlier turns keep their tools"
     assert len(tool_results(repair)) == (1 if tool else 0), "earlier tool calls are not repeated"
-    assert len(model.calls) == (3 if tool else 2)
+    assert len(agent_calls(model.calls)) == (3 if tool else 2)
 
 
 @pytest.mark.parametrize("role", ROLES)
@@ -527,7 +527,7 @@ def test_resume_keeps_an_exhausted_budget(maker_request, tmp_path, monkeypatch):
     model, events = rerun(maker_request, monkeypatch, [reply(test_maker.DONE), reply(test_maker.DONE)])
     assert events[-1]["reply"]["kind"] == "cant_meet"
     assert events[-1]["reply"]["budget_exhaustion"]["tool_turns"] == {"used": 0, "allowed": 0}
-    assert len(model.calls) == 1
+    assert len(agent_calls(model.calls)) == 1
 
 
 def test_dropped_call_retry_keeps_the_final_answer_reserve(request_doc, monkeypatch):

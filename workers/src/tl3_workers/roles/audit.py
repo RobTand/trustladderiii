@@ -18,6 +18,7 @@ ROLE = Role(
     prompt="audit.md",
     input_schema="audit-input",
     reply_schema="audit-reply",
+    environment_errors_end_run=True,
     exploration_budget=ExplorationBudget(),
     tools={
         "list": "List repository directories to locate evidence for the request.",

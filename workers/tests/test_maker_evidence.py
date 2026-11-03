@@ -115,7 +115,7 @@ def test_maker_input_carries_a_forced_check(maker_request):
 def test_maker_prompt_explains_forced_checks():
     prompt = " ".join((Path(__file__).parents[1] / "src/tl3_workers/prompts/maker.md").read_text().split())
     assert "forcing" in prompt
-    assert "both with and without the forcing" in prompt
+    assert "Make your fix pass with and without that forcing" in prompt
 
 
 def test_request_123_honest_handover_with_downstream_pending(request_123_handover):

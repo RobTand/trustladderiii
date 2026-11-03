@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage
 import pytest
 
 from tl3_workers import runtime
-from message_invariants import assert_tool_pairs
+from message_invariants import assert_tool_pairs, is_retro
 import message_invariants as test_maker
 import worker_process as test_workers
 from worker_process import response_frames
@@ -49,7 +49,8 @@ def evidence_explorer(maker_request, seen, usage):
 
     class Explorer(ToolModel):
         def _generate(self, messages, **kwargs):
-            seen.append(deepcopy(messages))
+            if not is_retro(messages):  # the retro (#648) has its own tests
+                seen.append(deepcopy(messages))
             index = len(seen)
             final = index == 10
             tokens = usage.get(index, 10_000)
@@ -99,7 +100,8 @@ def scripted_maker(seen, usage):
 
     class Scripted(ToolModel):
         def _generate(self, messages, **kwargs):
-            seen.append(deepcopy(messages))
+            if not is_retro(messages):  # the retro (#648) has its own tests
+                seen.append(deepcopy(messages))
             index = len(seen)
             if index > len(calls):
                 content, tool_calls = json.dumps(test_maker.DONE), []
@@ -181,9 +183,13 @@ def test_maker_budget_notices_preserve_the_proxy_system_prefix(maker_request, tm
     maker_request["session_file"] = str(tmp_path / "session.json")
     sent = []
     offered = []
+    retros = []
 
     def respond(request):
         body = json.loads(request.content)
+        if is_retro(body):
+            retros.append((len(sent), body["messages"]))
+            return response_frames(json.dumps(dict.fromkeys(("slowed_by", "missing", "checks", "noise"), [])))
         sent.append(body["messages"])
         offered.append(bool(body.get('tools')) and body.get('tool_choice') != 'none')
         if len(sent) <= 2:
@@ -213,6 +219,9 @@ def test_maker_budget_notices_preserve_the_proxy_system_prefix(maker_request, tm
 
     assert len(sent) == 5
     assert offered == [True, True, True, False, True]
+    assert [after for after, _ in retros] == [4, 5], "each run ends with one retro"
+    for after, messages in retros:
+        assert messages[:len(sent[after - 1])] == sent[after - 1], "the retro reuses the last call's wire prefix"
     system = sent[0][0]["content"].encode("utf-8")
     for index, messages in enumerate(sent):
         assert messages[0]["role"] == "system"

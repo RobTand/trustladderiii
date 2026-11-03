@@ -93,6 +93,7 @@ py_library(
         "tl3_workers/pb_tests.py",
         "tl3_workers/quota.py",
         "tl3_workers/recall.py",
+        "tl3_workers/retro.py",
         "tl3_workers/roles/__init__.py",
         "tl3_workers/roles/audit.py",
         "tl3_workers/roles/base.py",
