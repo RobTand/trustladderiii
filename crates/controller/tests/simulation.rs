@@ -375,7 +375,7 @@ fn main() {
         ("postmortem_failures_are_fixed_classes", 1, 3),
         ("postmortem_failed_runs_retry_then_pause", 1, 5),
         ("postmortem_quota_on_a_postmortem_model_stops_claims", 1, 4),
-        ("postmortem_claims_per_day", 1, 4),
+        ("postmortem_claims_without_daily_limit", 1, 4),
         ("postmortem_stalls_fail_with_no_progress", 1, 4),
         ("postmortem_result_in_the_inbox_survives_a_restart", 1, 2),
         ("status_requires_initialized_database", 1, 2),
