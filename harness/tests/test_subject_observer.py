@@ -402,7 +402,7 @@ def test_review662_reason_binding_preserves_the_original_message(repository, act
 
 @pytest.mark.parametrize('existing', [False, True], ids=['new-module', 'existing-module'])
 @pytest.mark.parametrize('observer', [
-    'import app\ndef test_observer():\n    assert globals()["app"].helper() == "new", "old helper"\n',
+    'import app\ndef test_observer():\n    assert globals().get("__name__") and app.helper() == "new", "old helper"\n',
     'import importlib\ndef test_observer():\n    assert importlib.import_module("app").helper() == "new", "old helper"\n',
 ], ids=['globals', 'importlib'])
 def test_review662_namespace_apis_remain_available_to_observers(repository, existing, observer):

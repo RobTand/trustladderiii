@@ -157,7 +157,7 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         requested = [item for item in (*observers, *support) if item.split('::')[0] == name]
         for statement in ast.parse(new).body:
             if (isinstance(statement, (ast.Import, ast.ImportFrom))
-                    and bound_names(ast.unparse(statement)) & {item.split('::')[-1] for item in support}):
+                    and bound_names(ast.unparse(statement)) & {item.split('::')[-1] for item in requested if item in support}):
                 deny_namespace_apis(ast.unparse(statement), name)
         support_required = set()
         for item in requested:
