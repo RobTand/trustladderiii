@@ -343,7 +343,7 @@ impl Session<'_> {
                         json!({"invocation_id":id,"target_label":target.label,
                     "target_id":target.id.target_id}),
                         "action",
-                        MAX_ACTIONS,
+                        MAX_ACTIONS + 1,
                     )
                     .await?;
                 if actions.is_empty() {
@@ -356,6 +356,17 @@ impl Session<'_> {
                         || action.target_label != target.label
                     {
                         return Err(Gap::WrongTarget);
+                    }
+                    // GetAction also returns the target's build output. Run and attempt
+                    // are populated only for tests; build output has no test artifacts.
+                    if action.run == 0
+                        && action.attempt == 0
+                        && !action
+                            .file
+                            .iter()
+                            .any(|file| matches!(file.name.as_str(), "test.xml" | "test.log"))
+                    {
+                        continue;
                     }
                     if !identifier(&action.id.action_id)
                         || !identifier(&action.id.configuration_id)

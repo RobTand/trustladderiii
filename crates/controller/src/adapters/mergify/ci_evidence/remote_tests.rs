@@ -55,13 +55,18 @@ async fn evidence(mode: &str) -> (QueueCiEvidence, Vec<Request>) {
                         return ResponseTemplate::new(503).set_body_string(format!("x-buildbuddy-api-key: {KEY}"));
                     }
                     if mode == "missing-artifacts" { return ResponseTemplate::new(200).set_body_json(json!({"action":[]})); }
-                    json!({"action":(0..4).map(|shard| json!({
+                    let mut actions: Vec<_> = (0..4).map(|shard| json!({
                         "id":{"invocationId":CHILD,"targetId":"target-id","configurationId":"config", "actionId":format!("action-{shard}")},
                         "targetLabel":if mode == "wrong-target" {"//tests:other"} else {TARGET},
-                        "shard":shard,"run":1,"attempt":1,
+                        "shard":shard.to_string(),"run":"1","attempt":"1",
                         "file":[{"name":"test.xml","uri":format!("bytestream://remote.buildbuddy.io/blobs/xml-{shard}/123")},
                                 {"name":"test.log","uri":format!("bytestream://remote.buildbuddy.io/blobs/log-{shard}/123")}]
-                    })).collect::<Vec<_>>()})
+                    })).collect();
+                    actions.push(json!({
+                        "id":{"invocationId":CHILD,"targetId":"target-id","configurationId":"config","actionId":"build"},
+                        "targetLabel":TARGET,"file":[]
+                    }));
+                    json!({"action":actions})
                 }
                 "/api/v1/GetFile" => {
                     let uri = body["uri"].as_str().unwrap();
