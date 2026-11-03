@@ -1,4 +1,5 @@
 //! A served repository's PR-body policy (#447): the lines its PR checks require.
+use crate::publication_failure::{LocalRefusal, Reason, RuleCategory, RuleFailure};
 use tl3_config::BodyLine;
 
 fn is_test(path: &str) -> bool {
@@ -304,5 +305,220 @@ mod tests {
             super::healed("Refs #1.\nChange type: mystery\n", &rules, None, &files).unwrap();
         assert!(gaps(&fixed, &rules).is_empty(), "{fixed}");
         assert!(!fixed.contains("mystery"), "{fixed}");
+    }
+}
+
+/// Validate the repository contract on the final publication body.
+pub fn validate(body: &str, rules: &[BodyLine]) -> crate::Result<()> {
+    let failures: Vec<_> = rules
+        .iter()
+        .filter_map(|rule| {
+            let values: Vec<_> = body
+                .lines()
+                .filter_map(|line| declared(line, rule))
+                .collect();
+            let category = match values.as_slice() {
+                [] => RuleCategory::Missing,
+                [value] if allowed(rule, value) => return None,
+                [_] => RuleCategory::InvalidValue,
+                _ if values
+                    .iter()
+                    .all(|value| value.eq_ignore_ascii_case(values[0])) =>
+                {
+                    RuleCategory::Duplicate
+                }
+                _ => RuleCategory::Conflicting,
+            };
+            Some(failure(rule, &values, category))
+        })
+        .collect();
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(refused(failures))
+    }
+}
+
+fn allowed(rule: &BodyLine, value: &str) -> bool {
+    rule.values
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(value))
+}
+
+fn failure(rule: &BodyLine, values: &[&str], category: RuleCategory) -> RuleFailure {
+    RuleFailure {
+        label: rule.label.clone(),
+        category,
+        expected_count: 1,
+        found_count: values.len(),
+        distinct_count: values
+            .iter()
+            .map(|value| value.to_lowercase())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        invalid_count: values.iter().filter(|value| !allowed(rule, value)).count(),
+        allowed_value_count: rule.values.len(),
+    }
+}
+
+fn refused(mut rules: Vec<RuleFailure>) -> crate::Error {
+    let omitted_rules = rules.len().saturating_sub(16);
+    rules.truncate(16);
+    LocalRefusal::error(
+        "pr_policy",
+        Reason::BodyPolicy {
+            rules,
+            omitted_rules,
+        },
+    )
+}
+
+/// Resolve the exact typed lines before choosing any heuristic values. One
+/// pass replaces only configured declarations; other prose and proof stay put.
+pub(crate) fn compose(
+    body: &str,
+    rules: &[BodyLine],
+    request: Option<&str>,
+    paths: &[String],
+    required: &[&str],
+) -> crate::Result<String> {
+    let mut replacements = Vec::new();
+    for rule in rules {
+        let mut explicit: Vec<_> = required
+            .iter()
+            .copied()
+            .filter(|line| declared(line, rule).is_some())
+            .collect();
+        explicit.sort_unstable();
+        explicit.dedup();
+        let values: Vec<_> = explicit
+            .iter()
+            .filter_map(|line| declared(line, rule))
+            .collect();
+        if explicit.len() > 1 {
+            return Err(refused(vec![failure(
+                rule,
+                &values,
+                RuleCategory::IncompatibleObligations,
+            )]));
+        }
+        if values.iter().any(|value| !allowed(rule, value)) {
+            return Err(refused(vec![failure(
+                rule,
+                &values,
+                RuleCategory::InvalidValue,
+            )]));
+        }
+        let declarations: Vec<_> = body
+            .lines()
+            .filter_map(|line| declared(line, rule))
+            .collect();
+        let compliant = declarations.len() == 1 && allowed(rule, declarations[0]);
+        if compliant
+            && explicit
+                .first()
+                .is_none_or(|required| body.lines().any(|line| line == *required))
+        {
+            continue;
+        }
+        let line = explicit.first().map_or_else(
+            || format!("{}: {}", rule.label, value(rule, request, paths)),
+            |line| (*line).to_owned(),
+        );
+        replacements.push((rule, line));
+    }
+    if replacements.is_empty() {
+        return Ok(body.to_owned());
+    }
+    let kept: String = body
+        .split_inclusive('\n')
+        .filter(|line| {
+            !replacements
+                .iter()
+                .any(|(rule, _)| declared(line, rule).is_some())
+        })
+        .collect();
+    let added = replacements
+        .iter()
+        .map(|(_, line)| line.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut text = String::new();
+    let mut inserted = false;
+    for line in kept.split_inclusive('\n') {
+        text.push_str(line);
+        if !inserted && line.trim_start().starts_with("Refs #") {
+            if !line.ends_with('\n') {
+                text.push('\n');
+            }
+            text.push_str(&added);
+            text.push('\n');
+            inserted = true;
+        }
+    }
+    if !inserted {
+        text = format!("{added}\n{text}");
+    }
+    Ok(text)
+}
+
+#[cfg(test)]
+mod t629 {
+    use super::*;
+    use crate::publication_failure::Diagnostic;
+
+    fn check(body: &str, category: &str, found: u64, distinct: u64, invalid: u64) {
+        let rule = BodyLine {
+            label: "Change type".into(),
+            values: vec!["test".into(), "fix".into()],
+            default: "test".into(),
+        };
+        let error = validate(body, &[rule]).expect_err("invalid body must carry rule details");
+        let fixture = crate::git_tests::Repo::new();
+        let diagnostic =
+            Diagnostic::capture(&fixture.delivery(), Some(&error), "pr_policy").unwrap();
+        let value = serde_json::json!(diagnostic);
+        let failure = &value["reason"]["rules"][0];
+        assert_eq!(failure["label"], "Change type");
+        assert_eq!(failure["category"], category);
+        assert_eq!(failure["expected_count"], 1);
+        assert_eq!(failure["found_count"], found);
+        assert_eq!(failure["distinct_count"], distinct);
+        assert_eq!(failure["invalid_count"], invalid);
+        assert!(value["status"].is_null() && value["endpoint"].is_null());
+        assert_eq!(value["effect_key"], "hostile");
+        assert_eq!(value["head"], fixture.head);
+        let rendered = diagnostic.render();
+        assert!(rendered.contains("Change type"));
+        assert!(!rendered.contains("synthetic-secret"));
+        assert!(rendered.len() < 2048);
+    }
+    #[test]
+    fn t629_missing_rule_diagnostic() {
+        check("Human text synthetic-secret", "missing", 0, 0, 0);
+    }
+    #[test]
+    fn t629_duplicate_rule_diagnostic() {
+        check(
+            "Change type: test\nChange type: test\nHuman text synthetic-secret",
+            "duplicate",
+            2,
+            1,
+            0,
+        );
+    }
+    #[test]
+    fn t629_conflicting_rule_diagnostic() {
+        check(
+            "Change type: test\nChange type: fix\nHuman text synthetic-secret",
+            "conflicting",
+            2,
+            2,
+            0,
+        );
+    }
+    #[test]
+    fn t629_invalid_rule_diagnostic() {
+        check("Change type: synthetic-secret", "invalid_value", 1, 1, 1);
     }
 }

@@ -25,6 +25,7 @@ pub(crate) fn step_name(step: ReviewStop) -> &'static str {
         ReviewStop::MakerOutOfRoom => "maker_out_of_room",
         ReviewStop::ReviewerOutOfRoom => "reviewer_out_of_room",
         ReviewStop::PlanCantMeet => "plan_cant_meet",
+        ReviewStop::PublicationBody => "publication_body",
     }
 }
 
@@ -39,6 +40,9 @@ fn step_text(step: ReviewStop) -> &'static str {
         ReviewStop::MakerOutOfRoom => "the change was too large to make in one go",
         ReviewStop::ReviewerOutOfRoom => "the change was too large to review in one go",
         ReviewStop::PlanCantMeet => "planning found no way to meet the request",
+        ReviewStop::PublicationBody => {
+            "TL3 generated a pull request body that violates its publication contract"
+        }
     }
 }
 
@@ -127,15 +131,32 @@ impl Controller {
                 .nodes
                 .get(index)
                 .map_or(tl3_kernel::Phase::Ingesting, |old| old.phase);
-            let found = question_findings::review_stop(
-                step,
-                &Sources {
-                    fresh: &written,
-                    previous: &before,
-                    incidents: &[],
-                    prior,
-                },
-            );
+            let diagnostic = if step == ReviewStop::PublicationBody {
+                let effect = previous.nodes[index]
+                    .effect
+                    .ok_or(crate::Error::Invalid("body refusal has no effect"))?;
+                crate::publication_failure::retained(
+                    snapshot,
+                    commit,
+                    &format!("effect:{index}:{}", effect.seq),
+                )?
+            } else {
+                None
+            };
+            let found = diagnostic
+                .as_ref()
+                .map(|diagnostic| json!({"source":"publication", "diagnostic":diagnostic}))
+                .or_else(|| {
+                    question_findings::review_stop(
+                        step,
+                        &Sources {
+                            fresh: &written,
+                            previous: &before,
+                            incidents: &[],
+                            prior,
+                        },
+                    )
+                });
             let mut record = json!({"step": step_name(step), "text": step_text(step),
                 "attempt": n.attempt, "round": n.round});
             if let Some(found) = found {
@@ -148,7 +169,7 @@ impl Controller {
                 continue;
             };
             let request = crate::request(snapshot, node)?;
-            let line = format!(
+            let mut line = format!(
                 "Stopped for TL3 review (tl3_review): {}/{}#{} at step {}, attempt {}, round {}. Restart it once the fix ships.",
                 request.repo.owner,
                 request.repo.name,
@@ -157,6 +178,10 @@ impl Controller {
                 n.attempt,
                 n.round
             );
+            if let Some(diagnostic) = diagnostic {
+                line.push(' ');
+                line.push_str(&diagnostic.render());
+            }
             let repository = Repository {
                 owner: operations.owner.clone(),
                 name: operations.name.clone(),

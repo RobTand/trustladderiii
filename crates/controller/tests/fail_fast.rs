@@ -991,3 +991,117 @@ fn stage_owned_handover_keeps_fail_fast_and_independent_checking() {
     }
     database.stop();
 }
+
+#[test]
+fn t629_local_body_defect_stops_for_tl3_review_without_owner_question() {
+    struct BodyRefusal {
+        fake: adapters::github::Fake,
+        posted: Posted,
+    }
+    impl Executor for BodyRefusal {
+        fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+            self.posted.lock().unwrap().push(delivery.clone());
+            if matches!(
+                delivery.output,
+                Output::Effect {
+                    kind: EffectKind::OpenPr,
+                    ..
+                }
+            ) {
+                tl3_controller::pr_body::validate(
+                    "Change type: test\nChange type: fix\nprivate synthetic-secret body",
+                    &[tl3_config::BodyLine {
+                        label: "Change type".into(),
+                        values: vec!["test".into(), "fix".into()],
+                        default: "test".into(),
+                    }],
+                )?;
+                panic!("conflicting body must be refused");
+            }
+            self.fake.execute(delivery)
+        }
+        fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            self.fake.reconcile(delivery)
+        }
+    }
+    let mut database = support::Database::start();
+    let settings = database.create("t629_body_refusal");
+    let root = tempfile::tempdir().unwrap();
+    let posted = Arc::new(Mutex::new(Vec::new()));
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::GitHub,
+        BodyRefusal {
+            fake: adapters::github::Fake::new(root.path()),
+            posted: posted.clone(),
+        },
+    );
+    let mut controller =
+        Controller::open(Store::open(&settings).unwrap(), registry, bootstrap(true)).unwrap();
+    controller.intake(labelled()).unwrap();
+    drain(&mut controller);
+    let node = controller.world().unwrap().nodes[0];
+    assert_eq!(
+        node.phase,
+        Phase::Closed(Outcome::Stopped),
+        "TL3's body refusal must use its review stop"
+    );
+    assert!(node.question.is_none());
+    assert_eq!(node.credit.spent, 0);
+    let posted = posted.lock().unwrap();
+    assert!(
+        !posted.iter().any(|d| matches!(
+            d.output,
+            Output::Notice {
+                notice: Notice::Ask { .. },
+                ..
+            }
+        )),
+        "no owner question may be dispatched"
+    );
+    assert_eq!(
+        posted
+            .iter()
+            .filter(|d| matches!(
+                d.output,
+                Output::Effect {
+                    kind: EffectKind::OpenPr,
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    let note = posted
+        .iter()
+        .find(|d| {
+            d.issue == OPERATIONS
+                && d.note
+                    .as_deref()
+                    .is_some_and(|text| text.contains("tl3_review"))
+        })
+        .expect("operations review note");
+    for required in [
+        "pr_policy",
+        "Change type",
+        "expected_count",
+        "found_count",
+        "conflicting",
+    ] {
+        assert!(note.note.as_ref().unwrap().contains(required));
+    }
+    assert!(!format!("{posted:?}").contains("synthetic-secret"));
+    let snapshot = controller.snapshot().unwrap();
+    assert!(
+        snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == "publication_failures" && r.value["class"] == "pr_policy")
+    );
+    assert!(
+        !snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents" && r.value["open"] == true)
+    );
+}

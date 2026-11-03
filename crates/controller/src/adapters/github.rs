@@ -97,7 +97,7 @@ pub struct Adapter {
     records: Records,
     operations: Option<tl3_config::OperationsIssue>,
     /// Each served repository's PR-body policy (#447).
-    body_lines: Vec<(crate::Repository, Vec<tl3_config::BodyLine>)>,
+    body_lines: Vec<(crate::Repository, Vec<tl3_config::BodyLine>, Vec<String>)>,
 }
 impl Adapter {
     pub fn with_repositories(mut self, repos: &[tl3_config::Repository]) -> Result<Self> {
@@ -112,6 +112,7 @@ impl Adapter {
                         installation: repo.installation_id,
                     },
                     repo.pr_body_lines.clone(),
+                    repo.generated_files.clone(),
                 )
             })
             .collect();
@@ -122,8 +123,22 @@ impl Adapter {
     pub(crate) fn body_lines(&self, repo: &crate::Repository) -> &[tl3_config::BodyLine] {
         self.body_lines
             .iter()
-            .find(|(served, _)| served == repo)
-            .map_or(&[], |(_, rules)| rules)
+            .find(|(served, _, _)| served == repo)
+            .map_or(&[], |(_, rules, _)| rules)
+    }
+
+    fn semantic_paths(&self, delivery: &Delivery) -> Vec<String> {
+        let generated = self
+            .body_lines
+            .iter()
+            .find(|(repo, _, _)| *repo == delivery.repository)
+            .map_or(&[][..], |(_, _, generated)| generated.as_slice());
+        delivery
+            .paths
+            .iter()
+            .filter(|path| !tl3_config::path_is_protected(path, generated))
+            .cloned()
+            .collect()
     }
 
     pub fn new(
