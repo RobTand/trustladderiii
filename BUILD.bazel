@@ -25,6 +25,20 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+filegroup(
+    name = "instruction_docs",
+    srcs = glob(
+        [
+            "docs/**",
+            "AGENTS.md",
+            "CLAUDE.md",
+            ".agents/**/*.md",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
 gazelle_binary(
     name = "gazelle_bin",
     languages = ["@rules_python_gazelle_plugin//python"],
