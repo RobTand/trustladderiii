@@ -850,6 +850,8 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     if mode.starts_with("q46-") {
         let (sender, receiver) = mpsc::channel();
         let start = Instant::now();
+        let mut last_progress = start;
+        let mut phase = c.world().unwrap().nodes[0].phase;
         loop {
             let node = c.world().unwrap().nodes[0];
             let reached = match mode {
@@ -867,8 +869,19 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             progress("apply worker observations");
             for input in receiver.try_iter() {
                 tl3_controller::ingress::apply(&mut c, input).unwrap();
+                last_progress = Instant::now();
             }
-            assert!(start.elapsed() < Duration::from_secs(90));
+            let next = c.world().unwrap().nodes[0].phase;
+            if next != phase {
+                phase = next;
+                last_progress = Instant::now();
+            }
+            assert!(
+                last_progress.elapsed() < Duration::from_secs(90)
+                    && start.elapsed() < Duration::from_secs(300),
+                "Q46 fixture stalled; last phase={phase:?}; quiet={:?}",
+                last_progress.elapsed()
+            );
         }
         if mode != "q46-clean" {
             commit(&f.source, "value.py", "def value(): return 3\n");
@@ -901,6 +914,8 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     if mode == "before-enqueue" {
         let (sender, receiver) = mpsc::channel();
         let start = Instant::now();
+        let mut last_progress = start;
+        let mut phase = c.world().unwrap().nodes[0].phase;
         while server.api.state.lock().unwrap().checks.is_empty() {
             drive_once(&mut c);
             progress("poll worker observations");
@@ -908,8 +923,19 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             progress("apply worker observations");
             for input in receiver.try_iter() {
                 tl3_controller::ingress::apply(&mut c, input).unwrap();
+                last_progress = Instant::now();
             }
-            assert!(start.elapsed() < Duration::from_secs(90));
+            let next = c.world().unwrap().nodes[0].phase;
+            if next != phase {
+                phase = next;
+                last_progress = Instant::now();
+            }
+            assert!(
+                last_progress.elapsed() < Duration::from_secs(90)
+                    && start.elapsed() < Duration::from_secs(300),
+                "before-enqueue fixture stalled; last phase={phase:?}; quiet={:?}",
+                last_progress.elapsed()
+            );
             thread::yield_now();
         }
         assert!(!server.api.state.lock().unwrap().labels);

@@ -118,13 +118,11 @@ fn stalled_fixture_wait_exits_with_last_progress() {
             "planted-fixture-wait",
             Duration::from_millis(200),
             Duration::from_secs(2),
-            || {
+            || -> Option<()> {
                 scenario::progress("planner reply applied");
                 loop {
                     thread::park();
                 }
-                #[allow(unreachable_code)]
-                None::<()>
             },
         );
     }
@@ -139,6 +137,7 @@ fn stalled_fixture_wait_exits_with_last_progress() {
         "{diagnostic}"
     );
     assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+    eprintln!("{diagnostic}");
 }
 
 #[test]

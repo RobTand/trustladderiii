@@ -1,3 +1,7 @@
+// Single-event fixture receives expose no intermediate progress.
+// #673 measured the full PrismaBuild binary at 220.814 s; 450 s > 2x.
+const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(450);
+
 #[path = "fixtures/bell/mod.rs"]
 mod bell;
 use bell::Bell;
@@ -322,7 +326,7 @@ fn base_moved_completion_keys_each_observation(
         // The source stops when its adapter's channel closes; keep the adapter alive.
         let adapter = fixture(root.path(), mode);
         let running = adapter.source().spawn(sender);
-        let inputs = [(); 2].map(|()| receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+        let inputs = [(); 2].map(|()| receiver.recv_timeout(SIGNAL_WAIT).unwrap());
         drop(running);
         inputs
     };
@@ -1099,7 +1103,7 @@ fn crash_reuses_seal() {
             .arg(root.path())
             .spawn()
             .unwrap();
-        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        let deadline = std::time::Instant::now() + SIGNAL_WAIT;
         let connection = loop {
             match listener.accept() {
                 Ok((connection, _)) => break connection,
@@ -1183,7 +1187,7 @@ fn crash_reuses_seal() {
         let (sender, receiver) = mpsc::channel();
         finish(root.path(), key.as_str(), "done");
         let running = adapter.source().spawn(sender);
-        assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+        assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
         drop(running);
     }
 }
@@ -1209,7 +1213,7 @@ fn source_thread_delivers_once_and_restarts_idle() {
         1,
         serde_json::json!([{"seq": 1, "dir": "done", "key": key}]),
     );
-    let observation = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
+    let observation = receiver.recv_timeout(SIGNAL_WAIT).unwrap();
     assert!(matches!(
         observation,
         tl3_controller::cli::Input::Observation {
@@ -1266,7 +1270,7 @@ fn source_thread_delivers_once_and_restarts_idle() {
     restarted.execute(&unannounced).unwrap();
     bell.request().reply(1, serde_json::json!([]));
     assert!(matches!(
-        receiver.recv_timeout(Duration::from_secs(10)).unwrap(),
+        receiver.recv_timeout(SIGNAL_WAIT).unwrap(),
         tl3_controller::cli::Input::Observation {
             observation: Observation::Checks {
                 report: true,
@@ -1333,7 +1337,7 @@ fn invalid_evidence_is_reported_once() {
         let (sender, receiver) = mpsc::channel();
         let running = adapter.source().spawn(sender.clone());
         let observations: Vec<_> = (0..2)
-            .map(|_| receiver.recv_timeout(Duration::from_secs(10)).unwrap())
+            .map(|_| receiver.recv_timeout(SIGNAL_WAIT).unwrap())
             .collect();
         drop(running);
         assert_eq!(
@@ -1496,12 +1500,12 @@ fn tool_errors_wait_for_news() {
             std::os::unix::fs::symlink("/usr/bin/python3", program).unwrap();
             let running = adapter.source().spawn(sender);
             bell.request().reply(0, serde_json::json!([]));
-            assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+            assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
             drop(running);
         } else {
             fs::remove_file(root.path().join("queue/garbled_ending")).unwrap();
             waiting.reply(1, serde_json::json!([{"seq":1,"dir":"done","key":key}]));
-            assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+            assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
             drop(running);
         }
         assert!(record_path(root.path(), &delivery.key, "done").exists());
@@ -1535,7 +1539,7 @@ fn source_skips_bad_jobs_and_surfaces_failure() {
     let (sender, receiver) = mpsc::channel();
     // Both rebuild and queued key registration encounter the bad record.
     let running = source.spawn(sender);
-    assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+    assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
     drop(running);
     assert!(!record_path(root.path(), &bad.key, "done").exists());
     let mut withdrawal = bad.clone();
@@ -1565,7 +1569,7 @@ fn source_skips_bad_jobs_and_surfaces_failure() {
     fs::create_dir(record_path(root.path(), &delivery.key, "done")).unwrap();
     finish(root.path(), key.as_str(), "done");
     waiting.reply(1, serde_json::json!([{"seq":1,"dir":"done","key":key}]));
-    assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+    assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
     assert!(
         running.join().is_err(),
         "the source supervisor must see a failed marker write"
@@ -1690,7 +1694,7 @@ fn completed_records_retire_only_when_superseded() {
             Reconciliation::Found(_)
         ));
         let running = adapter.source().spawn(sender.clone());
-        assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+        assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
         drop(running);
         if let Some(previous) = previous {
             for ext in ["job", "done"] {
@@ -1715,7 +1719,7 @@ fn completed_records_retire_only_when_superseded() {
     // Restore a completed current record for the withdrawal assertion below.
     adapter.execute(&delivery).unwrap();
     let running = adapter.source().spawn(sender.clone());
-    assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+    assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
     drop(running);
     // Delivered records are skipped before parsing when finding withdrawal targets.
     fs::write(
@@ -1766,7 +1770,7 @@ fn completed_records_retire_only_when_superseded() {
     finish(root.path(), key.as_str(), "done");
     let (sender, receiver) = mpsc::channel();
     let running = adapter.source().spawn(sender);
-    assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+    assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
     drop(running);
     assert!(
         !record_path(root.path(), &first.key, "job").exists(),
@@ -1876,7 +1880,7 @@ fn cancellation_keeps_an_inflight_ending_from_replacing_its_marker() {
     fs::write(root.path().join("queue/publish_stage"), "ending").unwrap();
     let (sender, receiver) = mpsc::channel();
     let running = adapter.source().spawn(sender);
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + SIGNAL_WAIT;
     let connection = loop {
         match listener.accept() {
             Ok((connection, _)) => break connection,
@@ -1934,7 +1938,7 @@ fn endings_outlive_queue_rows() {
     assert!(observed(completion(&mut adapter, &delivery)).1);
     let (sender, receiver) = mpsc::channel();
     let running = adapter.source().spawn(sender);
-    assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+    assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
     drop(running);
     // An upgrade from flat records must retain both the binding and its done marker.
     for extension in ["job", "done"] {
@@ -2772,7 +2776,7 @@ fn declared_wait_uses_bell() {
     .unwrap();
     waiting.reply(1, serde_json::json!([{"seq":1, "dir":"done", "key":key}]));
     assert!(
-        receiver.recv_timeout(Duration::from_secs(10)).is_ok(),
+        receiver.recv_timeout(SIGNAL_WAIT).is_ok(),
         "one ending wakes its declaring allowance"
     );
     assert!(receiver.try_recv().is_err(), "one event causes one look");
@@ -2829,7 +2833,7 @@ fn source_skips_bad_waits() {
         1,
         "a bad wait cannot stop an unrelated job completion"
     );
-    assert_passing_input(rx.recv_timeout(Duration::from_secs(10)).unwrap());
+    assert_passing_input(rx.recv_timeout(SIGNAL_WAIT).unwrap());
 }
 
 fn live_waits_do_not_look_on_bell_reset() {

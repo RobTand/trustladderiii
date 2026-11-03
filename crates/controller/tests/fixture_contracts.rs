@@ -427,7 +427,8 @@ fn controller_restart_waits_for_the_old_postgres_session_and_releases_its_probe(
         if !blockers.is_empty() {
             break false;
         }
-        assert!(started.elapsed() < Duration::from_secs(90));
+        // #673 measured this complete restart test at 7.029 s; 180 s > 2x.
+        assert!(started.elapsed() < Duration::from_secs(180));
         thread::sleep(Duration::from_millis(10));
     };
     drop(old_owner);

@@ -128,18 +128,16 @@ pub fn progress(marker: impl Into<String>) {
 pub fn wait<T>(
     name: &str,
     inactivity: Duration,
-    _absolute: Duration,
+    absolute: Duration,
     mut condition: impl FnMut() -> Option<T>,
 ) -> T {
-    let started = Instant::now();
-    loop {
-        if let Some(value) = condition() {
-            return value;
+    run_with_limits(name, inactivity, absolute, || {
+        progress(format!("waiting for {name}"));
+        loop {
+            if let Some(value) = condition() {
+                return value;
+            }
+            thread::sleep(Duration::from_millis(10));
         }
-        assert!(
-            started.elapsed() < inactivity,
-            "{name}: fixture did not complete"
-        );
-        thread::sleep(Duration::from_millis(10));
-    }
+    })
 }

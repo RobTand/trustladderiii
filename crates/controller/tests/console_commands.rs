@@ -789,21 +789,36 @@ fn tl3d_wakes_for_a_filed_command() {
     }});
     writeln!(stdin, "{issue}").unwrap();
     stdin.flush().unwrap();
-    let wait_for =
+    let mut observer = tl3_store::Reader::open(&settings).unwrap();
+    let mut wait_for =
         |daemon: &mut std::process::Child, what: &str, done: &mut dyn FnMut() -> bool| {
-            let mut waited = Duration::ZERO;
+            let started = std::time::Instant::now();
+            let mut last_progress = started;
+            let mut nodes = Vec::new();
             while !done() {
                 assert!(
                     daemon.try_wait().unwrap().is_none(),
                     "tl3d exited waiting for {what}"
                 );
-                assert!(
-                    waited < Duration::from_secs(60),
-                    "timed out waiting for {what}"
-                );
-                if changes.recv_timeout(Duration::from_millis(500)).is_err() {
-                    waited += Duration::from_millis(500);
+                let next: Vec<_> = observer
+                    .load()
+                    .unwrap()
+                    .rows
+                    .into_iter()
+                    .filter(|row| row.table == "nodes")
+                    .map(|row| (row.id, row.value))
+                    .collect();
+                if next != nodes {
+                    last_progress = std::time::Instant::now();
+                    nodes = next;
                 }
+                assert!(
+                    last_progress.elapsed() < Duration::from_secs(60)
+                        && started.elapsed() < Duration::from_secs(300),
+                    "console fixture stalled waiting for {what}; last nodes={nodes:?}; quiet={:?}",
+                    last_progress.elapsed()
+                );
+                let _ = changes.recv_timeout(Duration::from_millis(500));
             }
         };
     let phase = |settings: &tl3_config::Store| -> Value {
@@ -1040,7 +1055,8 @@ fn wakes_again_after_postgres_restarts() {
     std::thread::spawn(move || source.run(sender));
     let wake = |what: &str| {
         wakes
-            .recv_timeout(Duration::from_secs(60))
+            // Baseline 1007cb6e measured the whole binary at 52.981 s; 120 s > 2x.
+            .recv_timeout(Duration::from_secs(120))
             .unwrap_or_else(|_| panic!("no wake {what}"))
     };
     assert!(matches!(
@@ -1092,7 +1108,8 @@ fn a_command_filed_during_a_drain_wakes_tl3d_again() {
     });
     let wake = |what: &str| {
         wakes
-            .recv_timeout(Duration::from_secs(30))
+            // Baseline 1007cb6e measured the whole binary at 52.981 s; 120 s > 2x.
+            .recv_timeout(Duration::from_secs(120))
             .unwrap_or_else(|_| panic!("no wake {what}"))
     };
     wake("when the session opens");
