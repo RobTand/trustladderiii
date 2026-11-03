@@ -343,7 +343,11 @@ pub(super) fn running_rows_recover_at_startup(settings: &tl3_config::Store) {
     share(settings, "0");
     controller.intake(issue(42)).unwrap();
     drain(&mut controller);
-    assert!(status(settings, "0").is_empty(), "a clean merge at share 0");
+    assert_eq!(
+        status(settings, "0")[0].0,
+        "done",
+        "even a clean merge at share 0 is judged"
+    );
     restart(controller, settings);
     raw(settings)
         .execute(
@@ -353,10 +357,20 @@ pub(super) fn running_rows_recover_at_startup(settings: &tl3_config::Store) {
         )
         .unwrap();
     let mut controller = start(settings, root.path(), &judge);
-    assert_eq!(status(settings, "0"), [("owed".to_string(), None)]);
+    let recovered = status(settings, "0");
+    assert_eq!(
+        recovered.len(),
+        2,
+        "the completed close and the orphan claim"
+    );
+    assert_eq!(recovered[1], ("owed".to_string(), None));
     drain(&mut controller);
-    assert_eq!(status(settings, "0")[0].0, "done");
-    assert_eq!(judge.borrow().launched.len(), 1);
+    assert!(
+        status(settings, "0")
+            .iter()
+            .all(|(state, _)| state == "done")
+    );
+    assert_eq!(judge.borrow().launched.len(), 2);
 }
 
 /// A launch refused for good, or a reply with four recommendations, fails the
