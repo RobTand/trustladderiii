@@ -34,6 +34,11 @@ w = 1
 agent_pool = 1
 # Q54, docs/state-machine.md: stop for TL3 review instead of retrying the work.
 fail_fast = false
+# #486: postmortems on spare capacity claim at most this many a UTC day (0
+# claims none), and each run gets this many seconds of wall clock in all.
+# These are the defaults.
+# postmortems_per_day = 10
+# postmortem_deadline_secs = 1200
 
 [github]
 # deploy/github-app/README.md: existing JSON with id, slug, pem, webhook_secret.

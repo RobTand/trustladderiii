@@ -6,6 +6,7 @@
 ---
 manifest:
   modules_mapping:
+    annotated_doc: annotated_doc
     annotated_types: annotated_types
     anthropic: anthropic
     anyio: anyio
@@ -16,13 +17,20 @@ manifest:
     certifi: certifi
     cffi: cffi
     charset_normalizer: charset_normalizer
+    click: click
+    cloudpickle: cloudpickle
     cryptography: cryptography
     databricks: databricks_sdk
+    dateutil: python_dateutil
     deepagents: deepagents
     distro: distro
     docstring_parser: docstring_parser
+    dotenv: python_dotenv
     execnet: execnet
+    fastapi: fastapi
     filetype: filetype
+    git: gitpython
+    gitdb: gitdb
     google.auth: google_auth
     google.genai: google_genai
     google.oauth2: google_auth
@@ -33,6 +41,7 @@ manifest:
     httpx: httpx
     httpx2: httpx2
     idna: idna
+    importlib_metadata: importlib_metadata
     iniconfig: iniconfig
     jiter: jiter
     jsonpatch: jsonpatch
@@ -73,7 +82,8 @@ manifest:
     langgraph.warnings: langgraph
     langgraph_sdk: langgraph_sdk
     langsmith: langsmith
-    mlflow: mlflow_tracing
+    mlflow: mlflow_skinny
+    numpy: numpy
     openai: openai
     opentelemetry.attributes: opentelemetry_api
     opentelemetry.baggage: opentelemetry_api
@@ -99,6 +109,7 @@ manifest:
     orjson: orjson
     ormsgpack: ormsgpack
     packaging: packaging
+    pandas: pandas
     pluggy: pluggy
     py: pytest
     pyasn1: pyasn1
@@ -114,22 +125,27 @@ manifest:
     requests: requests
     requests_toolbelt: requests_toolbelt
     rpds: rpds_py
+    smmap: smmap
     sniffio: sniffio
     sqlparse: sqlparse
+    starlette: starlette
     tenacity: tenacity
     tiktoken: tiktoken
     tiktoken_ext.openai_public: tiktoken
     truststore: truststore
     typing_extensions: typing_extensions
     typing_inspection: typing_inspection
+    tzdata: tzdata
     urllib3: urllib3
     uuid_utils: uuid_utils
+    uvicorn: uvicorn
     wcmatch: wcmatch
     websockets: websockets
     xdist: pytest_xdist
     xxhash: xxhash
     yaml: pyyaml
+    zipp: zipp
     zstandard: zstandard
   pip_repository:
     name: tl3_pip
-integrity: 046355b9c6191a2011fa7fb5b6402634236726cf619b8044b922c9c14841da83
+integrity: d332b146c0e5964191070cf105758be9c09285f1d7469130602f4a78a11c59c1

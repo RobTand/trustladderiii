@@ -29,6 +29,7 @@ pub mod memory;
 mod narrowing;
 mod notices;
 mod postmortems;
+pub use postmortems::PostmortemPace;
 pub mod pr_body;
 pub mod priority;
 pub mod production;
@@ -251,6 +252,13 @@ pub struct Controller {
     clock: Box<dyn clock::Clock>,
     held_effects: BTreeMap<executor::Upstream, BTreeMap<String, String>>,
     allowances: tl3_config::Allowances,
+    /// tl3d judges owed postmortems at this pace (#403); see `run_postmortems`.
+    postmortems: Option<PostmortemPace>,
+    /// The revision tl3d started at: failed postmortem runs before it never
+    /// pause the runner (#486).
+    postmortem_since: i64,
+    /// The runner paused after failed runs and said so once in the journal.
+    postmortem_paused: bool,
     /// Starting credit reserve by priority, P0 first (#416). Empty keeps the kernel's.
     priority_reserve: BTreeMap<u8, u8>,
     request_protection: Vec<(Repository, Vec<String>)>,
@@ -319,11 +327,15 @@ impl Controller {
             clock: Box::new(clock),
             held_effects: BTreeMap::new(),
             allowances: tl3_config::Allowances::default(),
+            postmortems: None,
+            postmortem_since: 0,
+            postmortem_paused: false,
             priority_reserve: BTreeMap::new(),
             request_protection: Vec::new(),
         };
         controller.reconcile_capacity()?;
         controller.cleanup_ended_looks()?;
+        controller.recover_postmortems()?;
         Ok(controller)
     }
 
@@ -933,6 +945,7 @@ impl Controller {
         if self.start_replacement(&snapshot)?
             || self.retire_comment(&snapshot)?
             || self.schedule_comment(&snapshot)?
+            || self.start_postmortem(&snapshot)?
         {
             return Ok(true);
         }
@@ -1123,11 +1136,11 @@ impl Controller {
                 continue;
             }
             let active = effect.state == EffectState::Confirmed
-                && if delivery.is_classifier() {
+                && if let Some(jobs) = delivery.job_table() {
                     snapshot
                         .rows
                         .iter()
-                        .any(|r| r.table == "comment_jobs" && r.id == delivery.key)
+                        .any(|r| r.table == jobs && r.id == delivery.key)
                 } else {
                     match delivery.output {
                         DeliveryOutput::Effect { kind, .. } => {
@@ -1388,7 +1401,10 @@ impl Controller {
                 &mut commit,
             )?;
         }
-        if completion.ack == Ack::Permanent
+        if completion.ack == Ack::Permanent && delivery.is_postmortem() {
+            // #403: a postmortem never posts or raises an incident; it fails.
+            self.postmortem_failed(&snapshot, &delivery, "launch_failed", &mut commit)?;
+        } else if completion.ack == Ack::Permanent
             && !matches!(delivery.output, DeliveryOutput::Effect { .. })
         {
             self.failed_notice(
@@ -2188,6 +2204,14 @@ impl Controller {
             }
             Observation::Classified { key, reply } => {
                 return self.classified(snapshot, world, &key, reply, commit);
+            }
+            Observation::Postmortem {
+                key,
+                reply,
+                failure,
+            } => {
+                self.postmortem_finished(snapshot, &key, reply, failure, commit)?;
+                return Ok(None);
             }
             Observation::LinkedRequest {
                 repository,
@@ -3303,6 +3327,7 @@ fn observation_upstream(
         | Observation::LinkedRequest { .. }
         | Observation::PullRequest { .. } => Some(Upstream::GitHub),
         Observation::Classified { .. }
+        | Observation::Postmortem { .. }
         | Observation::WorkerReply { .. }
         | Observation::WorkerFailed { .. }
         | Observation::Plan { .. }

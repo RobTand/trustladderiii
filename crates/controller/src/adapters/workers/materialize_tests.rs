@@ -166,3 +166,38 @@ fn failed_attempt_preserves_diagnostic_before_retirement() {
         "reply cites a memory it was not given"
     );
 }
+
+/// #486: a postmortem run its own deadline stopped fails with the `deadline`
+/// class; any other failed run is a worker failure.
+#[test]
+fn a_postmortem_past_its_deadline_fails_with_the_deadline_class() {
+    let f = crate::git_tests::Repo::new();
+    let mut delivery = f.delivery();
+    delivery.output = Out::Comment {
+        node: delivery.node(),
+        kind: CommentKind::Postmortem,
+    };
+    delivery.steering = Some(crate::steering::Task::Postmortem {
+        id: 1,
+        run_key: delivery.key.clone(),
+    });
+    for (class, expected) in [
+        ("PostmortemDeadline", "deadline"),
+        ("ValueError", "worker_failed"),
+    ] {
+        let attempt = tempfile::tempdir().unwrap();
+        fs::write(attempt.path().join("exit.json"), r#"{"code":1}"#).unwrap();
+        fs::write(
+            attempt.path().join("memory.json"),
+            json!({"outcome": "failed", "reason": {"failure_class": class,
+                "failure_message": "worker run failed"}})
+            .to_string(),
+        )
+        .unwrap();
+        let Reconciliation::Found(completion) = inspect(attempt.path(), &delivery).unwrap() else {
+            panic!("a failed exit must be terminal");
+        };
+        let value = json!(completion.observations);
+        assert_eq!(value[0]["Postmortem"]["failure"], expected, "{class}");
+    }
+}

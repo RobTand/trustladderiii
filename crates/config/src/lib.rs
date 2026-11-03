@@ -239,6 +239,13 @@ pub struct Limits {
     /// Q54 (#440): stop for TL3 review instead of retrying the work.
     #[serde(default, deserialize_with = "fail_fast_setting")]
     pub fail_fast: bool,
+    /// #486: postmortems the spare-capacity runner may claim per UTC day.
+    #[serde(default = "default_postmortems_per_day")]
+    pub postmortems_per_day: u32,
+    /// #486: one postmortem run's whole wall-clock allowance, in seconds. A run
+    /// past it fails with the `deadline` class.
+    #[serde(default = "default_postmortem_deadline_secs")]
+    pub postmortem_deadline_secs: u32,
 }
 
 impl Limits {
@@ -257,6 +264,14 @@ fn default_agent_pool() -> u8 {
 fn fail_fast_setting<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
     bool::deserialize(deserializer)
         .map_err(|_| serde::de::Error::custom("limits.fail_fast must be true or false"))
+}
+
+fn default_postmortems_per_day() -> u32 {
+    10
+}
+
+fn default_postmortem_deadline_secs() -> u32 {
+    20 * 60
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -371,6 +386,10 @@ pub struct Models {
     pub comment_classifier: Vec<Model>,
     #[serde(default)]
     pub writer: Vec<Model>,
+    /// #403: the first model writes postmortems; the second, if any, runs the
+    /// rubric's grade judges. Defaults to the reviewer's and the writer's first.
+    #[serde(default)]
+    pub postmortem: Vec<Model>,
 }
 
 /// Rob, 2026-11-02: Fable is not used. TL3's models are limited to these.
@@ -569,6 +588,12 @@ impl Config {
         if config.models.writer.is_empty() {
             config.models.writer = config.models.ingest.clone();
         }
+        if config.models.postmortem.is_empty() {
+            config.models.postmortem = (config.models.reviewer.first().into_iter())
+                .chain(config.models.writer.first())
+                .cloned()
+                .collect();
+        }
         config.validate()?;
         Ok(config)
     }
@@ -648,6 +673,12 @@ impl Config {
         }
         if !(1..=3).contains(&limits.w) {
             return Err(invalid("limits.w", "must be in 1..=3"));
+        }
+        if limits.postmortem_deadline_secs == 0 {
+            return Err(invalid(
+                "limits.postmortem_deadline_secs",
+                "must be greater than zero",
+            ));
         }
         if limits.agent_pool == 0 {
             return Err(invalid("limits.agent_pool", "must be greater than zero"));
@@ -790,6 +821,7 @@ impl Config {
             ("rebaser", &self.models.rebaser),
             ("comment_classifier", &self.models.comment_classifier),
             ("writer", &self.models.writer),
+            ("postmortem", &self.models.postmortem),
         ] {
             if ladder.is_empty() {
                 return Err(invalid(
@@ -811,6 +843,12 @@ impl Config {
                     ));
                 }
             }
+        }
+        if self.models.postmortem.len() > 2 {
+            return Err(invalid(
+                "models.postmortem",
+                "name at most two models: the postmortem's, then the grade judges' (#403)",
+            ));
         }
         if self.models.planner.len() < 2 {
             return Err(invalid(
