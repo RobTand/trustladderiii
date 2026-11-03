@@ -231,7 +231,8 @@ def test_maker_needs_files_fit_counts_a_large_plan_file_as_a_ranged_edit(maker_r
     (root / "helper.py").write_text("def helper():\n    return 1\n")
     inputs = maker_request["inputs"]
     inputs["plan"]["files"].append("pool.py")
-    inputs["fit_tokens"] = 100_000
+    inputs["forecast"] = {"fit_tokens": 100_000, "context_tokens": 150_000,
+                          "overhead_tokens": {"prompt": 5000, "making": 20000}}
     reply = {"kind": "needs_files", "files": [{"path": "helper.py", "why": "The pool calls it."}]}
     model = FakeMessagesListChatModel(responses=[AIMessage(**turn(reply))])
     monkeypatch.setattr(runtime, "create_model", lambda request: model)

@@ -134,6 +134,12 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
         .request(&delivery, "maker", &mut store, &snapshot)
         .unwrap();
     let inputs = &request["inputs"];
+    assert_eq!(
+        inputs["forecast"],
+        json!({"fit_tokens": config.limits.fit_tokens,
+            "context_tokens": config.limits.context_tokens,
+            "overhead_tokens": config.planning.overhead_tokens})
+    );
     let sent = serde_json::to_string(inputs).unwrap().len();
     let limit = config.limits.context_tokens as usize;
     assert!(

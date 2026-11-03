@@ -486,7 +486,11 @@ mod reply_defects {
 
     #[test]
     fn registry_resolves_a_new_cross_schema_reference() {
-        let schemas = vec![
+        let mut schemas = PACKAGED_SCHEMAS
+            .iter()
+            .map(|(name, source)| ((*name).to_owned(), serde_json::from_str(source).unwrap()))
+            .collect::<Vec<_>>();
+        schemas.extend([
             (
                 "decision-context.json".into(),
                 serde_json::from_str(include_str!(
@@ -499,27 +503,21 @@ mod reply_defects {
                 json!({"$id":"https://trustladderiii.invalid/workers/protocol-1/new-input.json", "$ref":"maker-input.json#/properties/goals/items"}),
             ),
             (
-                "maker-input.json".into(),
-                serde_json::from_str(include_str!(
-                    "../../../../../workers/src/tl3_workers/schemas/maker-input.json"
-                ))
-                .unwrap(),
+                "new-forecast.json".into(),
+                json!({"$id":"https://trustladderiii.invalid/workers/protocol-1/new-forecast.json", "$ref":"maker-input.json#/properties/forecast"}),
             ),
-            (
-                // maker-input.json takes a forced check's forcing from here (#393).
-                "planner-reply.json".into(),
-                serde_json::from_str(include_str!(
-                    "../../../../../workers/src/tl3_workers/schemas/planner-reply.json"
-                ))
-                .unwrap(),
-            ),
-        ];
+        ]);
         let validators = schemas_from(schemas).unwrap();
         assert!(
             validators["new-input.json"]
                 .is_valid(&json!({"id":"g", "description":"Hello", "verification":"test"}))
         );
         assert!(!validators["new-input.json"].is_valid(&json!({})));
+        let mut forecast = json!({"fit_tokens":100000, "context_tokens":150000,
+            "overhead_tokens":{"prompt":5000, "making":20000}});
+        assert!(validators["new-forecast.json"].is_valid(&forecast));
+        forecast["overhead_tokens"]["making"] = json!(-1);
+        assert!(!validators["new-forecast.json"].is_valid(&forecast));
     }
 
     #[test]
