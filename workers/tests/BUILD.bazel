@@ -408,8 +408,6 @@ tl3_py_test(
     deps = [
         ":conftest",
         ":message_invariants",
-        ":test_maker",
-        ":test_planner",
         "//workers/src",
         "@tl3_pip//langchain_core",
         "@tl3_pip//pytest",

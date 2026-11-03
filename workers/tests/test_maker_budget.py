@@ -3,7 +3,9 @@
 from copy import deepcopy
 from dataclasses import asdict, replace
 import json
+import os
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -14,10 +16,65 @@ from tl3_workers import runtime
 from tl3_workers.contracts import validate
 from tl3_workers.roles import maker
 from message_invariants import assert_tool_pairs
-import test_maker
-from test_maker import DONE, git
 
-maker_request = test_maker.maker_request
+
+DONE = {
+    "kind": "done",
+    "self_check": [
+        {"goal_id": "greeting", "status": "met", "evidence": "Greeting now returns hello."},
+        {"goal_id": "interface", "status": "met", "evidence": "The greet() signature is unchanged."},
+    ],
+}
+
+
+def git(root, *args):
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env.update({
+        "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_AUTHOR_NAME": "Fixture", "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+        "GIT_COMMITTER_NAME": "Fixture", "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+    })
+    return subprocess.run(
+        ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", *args],
+        cwd=root, env=env, check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+
+@pytest.fixture
+def maker_request(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    git(root, "init", "--quiet", "--template=")
+    (root / "greeting.py").write_text("def greet(): return 'goodbye'\n")
+    git(root, "add", ".")
+    git(root, "commit", "--quiet", "-m", "Base")
+    return {
+        "protocol": 1,
+        "operation": {"node": 1, "generation": 0, "kind": "make"},
+        "role": "maker",
+        "model": {"base_url": "http://model.invalid/v1", "name": "fixture-model",
+                  "effort": "high", "budget_tokens": 32000},
+        "key_file": str(tmp_path / "unused-key"),
+        "worktree": str(root),
+        "inputs": {
+            "brief": "Return hello without changing greet's interface.",
+            "goals": [{"id": "greeting", "description": "Return hello.", "verification": "test"},
+                      {"id": "interface", "description": "Keep greet's interface.", "verification": "review"}],
+            "plan": {
+                "files": ["greeting.py", "test_greeting.py"],
+                "checks": [
+                    {"name": "hello", "kind": "demonstrating",
+                     "tests": ["test_greeting.py::test_hello"], "goal_ids": ["greeting"]},
+                    {"name": "signature", "kind": "behavior-preserving",
+                     "tests": ["test_greeting.py::test_signature"], "goal_ids": ["interface"]},
+                ],
+            },
+            "attempt": 1, "round": 0,
+            "tests": {"image": "sha256:" + "a" * 64,
+                      "tools_path": "/mnt/shared/prismabuild-fleet/repo/tools"},
+            "context_size": 1000,
+        },
+    }
 
 
 class BudgetModel(FakeMessagesListChatModel):
@@ -200,18 +257,26 @@ def test_final_done_cannot_hide_unverified_final_files(maker_request, monkeypatc
 
 
 def test_planner_receives_actual_budget_and_approved_split_guidance(monkeypatch, tmp_path):
-    from test_planner import CANT_MEET, planner_model
     from tl3_workers.roles import ROLES
 
-    model = planner_model(monkeypatch, CANT_MEET)
+    class PromptModel(FakeMessagesListChatModel):
+        calls: list = []
+
+        def _generate(self, messages, **kwargs):
+            self.calls.append(deepcopy(messages))
+            return super()._generate(messages, **kwargs)
+
+    model = PromptModel(responses=[AIMessage(content=json.dumps({
+        "kind": "cant_meet", "report": "The required API decision is unresolved.", "files": []}))], calls=[])
+    monkeypatch.setattr(runtime, "create_model", lambda _: model)
     # build_agent exposes code-owned maker capacity even when old inputs lack it.
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(runtime, "_checked", lambda role, inputs, reply, **kwargs: reply)
         runtime.run({"role": "planner", "worktree": str(tmp_path), "inputs": {}}, lambda _: None)
-    text = "\n".join(m.text for m in model.calls[0][0] if isinstance(m, HumanMessage))
+    text = "\n".join(m.text for m in model.calls[0] if isinstance(m, HumanMessage))
     assert '"maker_budget"' in text
     assert str(ROLES["maker"].exploration_budget.tool_turns) in text
-    system = "\n".join(m.text for m in model.calls[0][0] if m.type == "system")
+    system = "\n".join(m.text for m in model.calls[0] if m.type == "system")
     assert "finalization reserve" in system
     assert "new split reason" in system
     assert "Q54 is unchanged" in system
