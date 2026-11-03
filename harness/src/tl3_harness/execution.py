@@ -365,6 +365,12 @@ def selected_base(tool: TestTool, old: Path, container: Container, candidates: t
         observed = tool.run(old, container, tests, root / f"selected-base-{index}.jsonl", progress, selected=contract)
         if contract.refusal:
             raise HarnessInputError(contract.refusal)
+        if not contract.collected and any(value in (Outcome.NO_REPORT, Outcome.UNCOLLECTED)
+                                          for value in observed.values()):
+            saturation = {"unit": list(batch[0]), "cases": None, "remaining": remaining,
+                          "reason": "Base collection unverified; unknown consumed budget cannot be reused. "
+                                    "No checks of the remaining suffix were verified."}
+            break
         for candidate in batch:
             if contract.saturation and list(candidate) == contract.saturation['unit']:
                 saturation = {**contract.saturation,

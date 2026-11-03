@@ -187,7 +187,9 @@ The next unit's cost is null when collection was unnecessary because no budget
 remained. The receipt survives the failure-message allowance and controller
 serialization. If every admitted unit fails base filtering, the last planned
 result carries the receipt instead of adding an empty selected check. Receipt
-bytes remain within the existing result budget.
+bytes remain within the existing result budget. An unverified base collection
+also stops admission: unknown consumed cases cannot fund another batch. Its
+receipt identifies the unverified suffix without claiming it passed.
 
 Pytest deselection options are unsupported for automatic complete-module runs.
 An unreadable candidate source is skipped by static import selection; an
