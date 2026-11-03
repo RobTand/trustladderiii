@@ -1786,7 +1786,7 @@ fn event_source(settings: &tl3_config::Store) {
     ).unwrap();
     assert!(row.get::<_, i64>(1) >= row.get::<_, i64>(0));
     assert_eq!(row.get::<_, String>(2), "succeeded");
-    assert_eq!(row.get::<_, String>(3), "fixture-model");
+    assert_eq!(row.get::<_, String>(3), config.models.ingest[0].name);
 }
 
 fn partial_crash(settings: &tl3_config::Store) {

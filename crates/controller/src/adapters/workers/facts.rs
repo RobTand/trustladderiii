@@ -198,6 +198,17 @@ mod tests {
         let stopped = completed(root.path()).unwrap().unwrap();
         assert_eq!(stopped.outcome, "stopped");
         assert_eq!(stopped.finished_ms, Some(2000));
+        write(
+            &root.path().join("exit.json"),
+            &json!({"code": -9, "finished_ms": 1999}),
+        )
+        .unwrap();
+        let stopped = completed(root.path()).unwrap().unwrap();
+        assert_eq!(
+            stopped.outcome, "stopped",
+            "waitpid cannot erase a deliberate stop"
+        );
+        assert_eq!(stopped.finished_ms, Some(1999));
     }
 
     #[test]

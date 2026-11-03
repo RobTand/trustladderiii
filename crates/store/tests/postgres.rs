@@ -2080,6 +2080,13 @@ fn console_login_granted_before_migration(settings: &tl3_config::Store) {
     let (login, _) = console_login(settings, "tl3_console_early");
     let mut store = Store::open(settings).unwrap();
     store.seed_prompts(BUILTIN).unwrap();
+    assert_eq!(
+        raw(&login)
+            .query_one("SELECT count(*) FROM tl3_worker_runs", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
     let mut prompts = Prompts::open(&login).unwrap();
     let base = prompts.role("reviewer").unwrap().unwrap().active.id;
     prompts
@@ -2399,6 +2406,20 @@ fn worker_completion_facts(settings: &tl3_config::Store) {
     )
     .unwrap();
     assert!(client.query_one("SELECT has_table_privilege('tl3_worker_facts_reader', 'tl3_worker_runs', 'SELECT') AND NOT has_table_privilege('tl3_worker_facts_reader', 'tl3_worker_runs', 'INSERT,UPDATE,DELETE')", &[]).unwrap().get::<_, bool>(0));
+    let login = tl3_config::Store {
+        user: "tl3_worker_facts_reader".into(),
+        ..settings.clone()
+    };
+    assert_eq!(
+        raw(&login)
+            .query_one(
+                "SELECT count(*) FROM tl3_worker_runs WHERE model = 'fixture-model'",
+                &[]
+            )
+            .unwrap()
+            .get::<_, i64>(0),
+        2
+    );
 }
 
 fn recommendation(rank: i16) -> Recommendation {
