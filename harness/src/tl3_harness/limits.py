@@ -24,14 +24,10 @@ def validate_check_plan(plan):
         if getattr(check, 'forcing', None) is not None:
             # A forced check's result echoes its forcing, and each test gains head_forced (#393).
             header['forcing'] = check.forcing.as_json()
-        if getattr(check, 'helper_evidence', None) is not None:
-            header['helper_evidence'] = {'target': check.helper_evidence.target,
-                **dict.fromkeys(('base_target_sha256', 'head_target_sha256', 'base_tree_sha256', 'head_tree_sha256'), '0' * 64),
-                'observers': dict.fromkeys(check.tests, '0' * 64),
-                'failure_cases': check.helper_evidence.as_json()['failure_cases'],
-                'failure_driver_sha256': '0' * 64,
-                'failure_preservation': [{'base': 'infrastructure-failure', 'head': 'infrastructure-failure'}
-                                         for _ in check.helper_evidence.failure_cases]}
+        if check.kind in ('demonstrating', 'reproducing'):
+            # Source units are bounded at the declaration boundary; implicit subjects
+            # and tree hashes share the existing bounded result envelope.
+            size += 65536 + len(json.dumps(check.proof.as_json() if check.proof else None))
         if getattr(check, 'declared_symptom', None) is not None:
             header['declared_symptom'] = check.declared_symptom
             size += 384 * 1024

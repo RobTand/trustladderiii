@@ -1,7 +1,7 @@
 use super::{
-    ActiveRuns, inspect_recorded, latest,
-    process::{self, read},
-    protocol, remove_ready, run_root, trace, watched_deliveries,
+    ActiveRuns, inspect_recorded, latest, process, protocol, remove_ready, run_root,
+    source_error::{at, cause},
+    trace, watched_deliveries,
 };
 use crate::sync::mpsc::Sender;
 use crate::{
@@ -59,8 +59,21 @@ impl crate::ingress::Source for WorkerOutputSource {
     }
 }
 
-fn io<T>(result: rustix::io::Result<T>) -> Result<T> {
-    result.map_err(|error| std::io::Error::from(error).into())
+fn io<T>(boundary: &'static str, result: rustix::io::Result<T>) -> Result<T> {
+    at(boundary, result.map_err(std::io::Error::from))
+}
+
+fn read(path: &std::path::Path) -> Result<Option<Value>> {
+    at("read", process::read(path))
+}
+
+fn send(sender: &Sender<Input>, input: Input) -> Result<()> {
+    at(
+        "ingress",
+        sender
+            .send(input)
+            .map_err(|_| Error::Invalid("worker ingress receiver closed")),
+    )
 }
 
 impl WorkerOutputSource {
@@ -98,14 +111,17 @@ impl WorkerOutputSource {
     }
 
     fn watch(&self, path: &std::path::Path) -> Result<i32> {
-        io(inotify::add_watch(
-            self.inotify.as_ref().unwrap(),
-            path,
-            inotify::WatchFlags::CREATE
-                | inotify::WatchFlags::MOVED_TO
-                | inotify::WatchFlags::MODIFY
-                | inotify::WatchFlags::CLOSE_WRITE,
-        ))
+        io(
+            "inotify_add_watch",
+            inotify::add_watch(
+                self.inotify.as_ref().unwrap(),
+                path,
+                inotify::WatchFlags::CREATE
+                    | inotify::WatchFlags::MOVED_TO
+                    | inotify::WatchFlags::MODIFY
+                    | inotify::WatchFlags::CLOSE_WRITE,
+            ),
+        )
     }
 
     fn add(&mut self, root: PathBuf, delivery: Delivery) -> Result<()> {
@@ -133,9 +149,15 @@ impl WorkerOutputSource {
         }
         for wd in run.watches {
             self.watches.remove(&wd);
-            match inotify::remove_watch(self.inotify.as_ref().unwrap(), wd) {
-                Ok(()) | Err(rustix::io::Errno::INVAL) => {}
-                Err(error) => return Err(std::io::Error::from(error).into()),
+            match io(
+                "inotify_remove_watch",
+                inotify::remove_watch(self.inotify.as_ref().unwrap(), wd),
+            ) {
+                Ok(()) => {}
+                Err(error)
+                    if matches!(cause(&error), Error::Io(io)
+                    if io.raw_os_error() == Some(rustix::io::Errno::INVAL.raw_os_error())) => {}
+                Err(error) => return Err(error),
             }
         }
         Ok(())
@@ -145,11 +167,12 @@ impl WorkerOutputSource {
         if self.inotify.is_some() {
             return Ok(BTreeSet::new());
         }
-        self.inotify = Some(io(inotify::init(
-            inotify::CreateFlags::CLOEXEC | inotify::CreateFlags::NONBLOCK,
-        ))?);
+        self.inotify = Some(io(
+            "inotify_init",
+            inotify::init(inotify::CreateFlags::CLOEXEC | inotify::CreateFlags::NONBLOCK),
+        )?);
         self.root_watch = self.watch(&self.root.join(".ready"))?;
-        fs::create_dir_all(self.root.join(trace::HELD))?;
+        at("mkdir", fs::create_dir_all(self.root.join(trace::HELD)))?;
         self.held_watch = self.watch(&self.root.join(trace::HELD))?;
         self.held_dirty = true;
         self.rescan(store, true)?;
@@ -175,10 +198,15 @@ impl WorkerOutputSource {
             }
         }
         loop {
-            match poll(&mut descriptors, timeout) {
+            match io("ppoll", poll(&mut descriptors, timeout)) {
                 Ok(_) => break,
-                Err(rustix::io::Errno::INTR) => continue,
-                Err(error) => return Err(std::io::Error::from(error).into()),
+                Err(error)
+                    if matches!(cause(&error), Error::Io(io)
+                    if io.kind() == std::io::ErrorKind::Interrupted) =>
+                {
+                    continue;
+                }
+                Err(error) => return Err(error),
             }
         }
         Ok(owners
@@ -191,6 +219,10 @@ impl WorkerOutputSource {
 
     /// Nonblocking event drain for simulations which drive Controller directly.
     pub fn poll_once(&mut self, store: &mut Store, sender: &Sender<Input>) -> Result<()> {
+        at("poll_once", self.poll_once_inner(store, sender))
+    }
+
+    fn poll_once_inner(&mut self, store: &mut Store, sender: &Sender<Input>) -> Result<()> {
         let startup = self.inotify.is_none();
         let mut dirty = self.initialize(store)?;
         dirty.extend(self.wait(Some(&rustix::event::Timespec {
@@ -202,7 +234,7 @@ impl WorkerOutputSource {
         let mut buffer = [MaybeUninit::uninit(); 16384];
         let mut reader = inotify::Reader::new(self.inotify.as_ref().unwrap(), &mut buffer);
         loop {
-            match reader.next() {
+            match io("inotify read", reader.next()) {
                 Ok(event) => {
                     overflow |= event.events().contains(inotify::ReadFlags::QUEUE_OVERFLOW);
                     if event.events().contains(inotify::ReadFlags::IGNORED)
@@ -228,9 +260,19 @@ impl WorkerOutputSource {
                         dirty.insert(root.clone());
                     }
                 }
-                Err(rustix::io::Errno::AGAIN) => break,
-                Err(rustix::io::Errno::INTR) => continue,
-                Err(error) => return Err(std::io::Error::from(error).into()),
+                Err(error)
+                    if matches!(cause(&error), Error::Io(io)
+                    if io.raw_os_error() == Some(rustix::io::Errno::AGAIN.raw_os_error())) =>
+                {
+                    break;
+                }
+                Err(error)
+                    if matches!(cause(&error), Error::Io(io)
+                    if io.kind() == std::io::ErrorKind::Interrupted) =>
+                {
+                    continue;
+                }
+                Err(error) => return Err(error),
             }
         }
         if overflow {
@@ -250,10 +292,19 @@ impl WorkerOutputSource {
             };
             let keep = match self.refresh(&mut run, store, sender) {
                 Ok(keep) => keep,
-                Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => false,
-                Err(error @ Error::Json(_))
-                | Err(error @ Error::Invalid("worker record belongs to another machine"))
-                    if startup =>
+                Err(error)
+                    if matches!(cause(&error), Error::Io(io)
+                    if io.kind() == std::io::ErrorKind::NotFound) =>
+                {
+                    false
+                }
+                Err(error)
+                    if startup
+                        && matches!(
+                            cause(&error),
+                            Error::Json(_)
+                                | Error::Invalid("worker record belongs to another machine")
+                        ) =>
                 {
                     eprintln!("worker source skipped {}: {error}", root.display());
                     false
@@ -281,8 +332,9 @@ impl WorkerOutputSource {
         };
         match trace::sweep(&self.root, &flusher, &ended, trace::HELD_BYTES) {
             Ok(0) => {}
-            Ok(evicted) => sender
-                .send(Input::Observation {
+            Ok(evicted) => send(
+                sender,
+                Input::Observation {
                     key: format!(
                         "trace-logs-capped:{}",
                         std::time::SystemTime::now()
@@ -291,8 +343,8 @@ impl WorkerOutputSource {
                             .as_nanos()
                     ),
                     observation: Observation::TraceLogsCapped { evicted },
-                })
-                .map_err(|_| Error::Invalid("worker ingress receiver closed"))?,
+                },
+            )?,
             // Tracing never stops the source; the next event sweeps again.
             Err(error) => eprintln!("held span logs were not swept: {error}"),
         }
@@ -308,12 +360,12 @@ impl WorkerOutputSource {
             let Some(value) = read(&path)? else {
                 return Ok(None);
             };
-            let delivery: Delivery = serde_json::from_value(value)?;
-            if !store.worker_reconcilable(&delivery.key)? {
+            let delivery: Delivery = at("read", serde_json::from_value(value))?;
+            if !at("store", store.worker_reconcilable(&delivery.key))? {
                 return Ok(None);
             }
             let root = run_root(&self.root, &delivery.key);
-            if !root.try_exists()? {
+            if !at("metadata/stat", root.try_exists())? {
                 return Ok(None);
             }
             if let Some(previous) = self.runs.remove(&root) {
@@ -323,27 +375,33 @@ impl WorkerOutputSource {
             Ok(Some(root))
         })();
         let root = result?;
-        remove_ready(&path)?;
+        at("ready_remove", remove_ready(&path))?;
         Ok(root)
     }
 
     fn rescan(&mut self, store: &mut Store, startup: bool) -> Result<()> {
-        for delivery in watched_deliveries(store)? {
+        for delivery in at("store", watched_deliveries(store))? {
             let root = run_root(&self.root, &delivery.key);
             let name = root.file_name().unwrap().to_string_lossy();
-            remove_ready(&self.root.join(format!(".ready-{name}")))?;
-            if root.try_exists()? {
+            at(
+                "ready_remove",
+                remove_ready(&self.root.join(format!(".ready-{name}"))),
+            )?;
+            if at("metadata/stat", root.try_exists())? {
                 self.add(root, delivery)?;
             }
         }
         // Read only the notification inbox, never the historical run directories.
-        for entry in fs::read_dir(self.root.join(".ready"))? {
-            let name = entry?.file_name();
+        for entry in at("metadata/stat", fs::read_dir(self.root.join(".ready")))? {
+            let name = at("metadata/stat", entry)?.file_name();
             let name = name.to_string_lossy();
             match self.ready(&name, store) {
-                Err(error @ Error::Json(_)) if startup => {
+                Err(error) if startup && matches!(cause(&error), Error::Json(_)) => {
                     eprintln!("worker source skipped notification {name}: {error}");
-                    remove_ready(&self.root.join(".ready").join(name.as_ref()))?;
+                    at(
+                        "ready_remove",
+                        remove_ready(&self.root.join(".ready").join(name.as_ref())),
+                    )?;
                 }
                 result => {
                     result?;
@@ -359,11 +417,11 @@ impl WorkerOutputSource {
         store: &mut Store,
         sender: &Sender<Input>,
     ) -> Result<bool> {
-        if !store.worker_reconcilable(&run.delivery.key)? {
+        if !at("store", store.worker_reconcilable(&run.delivery.key))? {
             return Ok(false);
         }
         if run.attempt.is_none() {
-            run.attempt = latest(&run.root)?;
+            run.attempt = at("metadata/stat", latest(&run.root))?;
             if let Some((_, attempt)) = &run.attempt {
                 let wd = self.watch(attempt)?;
                 self.watches.insert(wd, run.root.clone());
@@ -390,23 +448,27 @@ impl WorkerOutputSource {
                 run.processes.remove(name);
             }
         }
-        let stdout = match File::open(attempt.join("stdout.jsonl")) {
+        let stdout = match at("read", File::open(attempt.join("stdout.jsonl"))) {
             Ok(file) => Some(file),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error.into()),
+            Err(error) if matches!(cause(&error), Error::Io(io) if io.kind() == std::io::ErrorKind::NotFound) => {
+                None
+            }
+            Err(error) => return Err(error),
         };
-        let prior = store
-            .worker_progress(Some(&delivery.node().0.to_string()))?
-            .into_iter()
-            .find(|row| row.key == delivery.key && row.attempt == *number);
+        let prior = at(
+            "store",
+            store.worker_progress(Some(&delivery.node().0.to_string())),
+        )?
+        .into_iter()
+        .find(|row| row.key == delivery.key && row.attempt == *number);
         let recorded = prior.as_ref().map_or(0, |row| row.output_offset as u64);
         let mut previous_wait = prior.and_then(|row| row.external_wait);
         if let Some(file) = stdout {
             let mut reader = BufReader::new(file);
-            reader.seek(SeekFrom::Start(run.offset))?;
+            at("seek", reader.seek(SeekFrom::Start(run.offset)))?;
             loop {
                 let mut line = Vec::new();
-                let n = reader.read_until(b'\n', &mut line)?;
+                let n = at("read", reader.read_until(b'\n', &mut line))?;
                 if n == 0 || !line.ends_with(b"\n") {
                     break;
                 }
@@ -417,52 +479,61 @@ impl WorkerOutputSource {
                 {
                     let wait = external_wait(&value);
                     let changed = previous_wait != wait;
-                    store.record_worker_progress(
-                        &delivery.key,
-                        *number,
-                        run.offset
-                            .try_into()
-                            .map_err(|_| Error::Invalid("worker output offset overflow"))?,
-                        value["unit"].as_str().unwrap(),
-                        wait.as_ref(),
+                    at(
+                        "store",
+                        store.record_worker_progress(
+                            &delivery.key,
+                            *number,
+                            run.offset
+                                .try_into()
+                                .map_err(|_| Error::Invalid("worker output offset overflow"))?,
+                            value["unit"].as_str().unwrap(),
+                            wait.as_ref(),
+                        ),
                     )?;
                     previous_wait = wait.clone();
                     // Reattachments declare liveness, not new agent work.
                     if wait.is_some() {
                         if changed {
-                            sender
-                                .send(Input::Look {
+                            send(
+                                sender,
+                                Input::Look {
                                     key: delivery.key.clone(),
-                                })
-                                .map_err(|_| Error::Invalid("worker ingress receiver closed"))?;
+                                },
+                            )?;
                         }
                         continue;
                     }
-                    sender
-                        .send(Input::Observation {
+                    send(
+                        sender,
+                        Input::Observation {
                             key: format!("{}:progress:{number}:{}", delivery.key, run.offset),
                             observation: Observation::Progress {
                                 key: delivery.key.clone(),
                                 checkpoint: format!("{number}:{}", run.offset),
                             },
-                        })
-                        .map_err(|_| Error::Invalid("worker ingress receiver closed"))?;
+                        },
+                    )?;
                 }
             }
         }
-        let ended = inspect_recorded(attempt, delivery, store)?;
+        let ended = at(
+            "inspect_recorded",
+            inspect_recorded(attempt, delivery, store),
+        )?;
         if !matches!(ended, Reconciliation::Pending) {
             self.ended.push(attempt.clone());
         }
         match ended {
             Reconciliation::Found(completion) => {
                 for (index, observation) in completion.observations.into_iter().enumerate() {
-                    sender
-                        .send(Input::Observation {
+                    send(
+                        sender,
+                        Input::Observation {
                             key: format!("{}:worker:{number}:{index}", delivery.key),
                             observation,
-                        })
-                        .map_err(|_| Error::Invalid("worker ingress receiver closed"))?;
+                        },
+                    )?;
                 }
                 Ok(false)
             }
@@ -602,6 +673,118 @@ fn ready_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn boundary_failure(boundary: &'static str) {
+        use crate::adapters::workers::source_error::fail_next;
+        use crate::git_tests::support::Database;
+
+        let root = tempfile::tempdir().unwrap();
+        let mut database = Database::start();
+        let settings = database.create("source_boundary");
+        let mut store = Store::open(&settings).unwrap();
+        let delivery: Delivery = serde_json::from_value(serde_json::json!({
+            "key":"source-boundary", "epoch":1, "generation":0,
+            "output":{"Effect":{"node":0,"kind":{"StartRun":"Ingest"},"seq":1,"head":null}},
+            "head_sha":null,"repository":{"owner":"RobTand","name":"tl3-sandbox","installation":1},
+            "issue":42,"pull_request":null,"paths":[],"attempt":1,"round":0,"checks":null
+        }))
+        .unwrap();
+        let run = run_root(root.path(), &delivery.key);
+        let attempt = run.join("attempt-00000000");
+        fs::create_dir_all(&attempt).unwrap();
+        fs::create_dir(root.path().join(".ready")).unwrap();
+        let stat = fs::read_to_string("/proc/self/stat").unwrap();
+        let start = stat
+            .rsplit_once(')')
+            .unwrap()
+            .1
+            .split_whitespace()
+            .nth(19)
+            .unwrap();
+        let claim = if boundary == "inotify_remove_watch" {
+            serde_json::json!({"cancelled":true})
+        } else {
+            serde_json::json!({"pid":std::process::id(), "start":start.parse::<u64>().unwrap(),
+                "machine":fs::read_to_string("/etc/machine-id").unwrap().trim(),
+                "boot":fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap().trim()})
+        };
+        fs::write(attempt.join("claim.json"), claim.to_string()).unwrap();
+        fs::write(
+            attempt.join("stdout.jsonl"),
+            b"{\"event\":\"progress\",\"unit\":\"model_turn\"}\n",
+        )
+        .unwrap();
+        let name = format!(".ready-{}", run.file_name().unwrap().to_str().unwrap());
+        fs::write(
+            root.path().join(".ready").join(name),
+            serde_json::to_vec(&delivery).unwrap(),
+        )
+        .unwrap();
+        let mut source =
+            WorkerOutputSource::new(root.path().into(), settings, ActiveRuns::default());
+        let (sender, _receiver) = crate::sync::mpsc::channel();
+        let _failure = fail_next(boundary, 5);
+        let error = source.poll_once(&mut store, &sender).unwrap_err();
+        let Error::WorkerSource(context) = &error else {
+            panic!("{boundary} lost its typed context: {error:?}");
+        };
+        assert_eq!(context.boundary, boundary);
+        assert_eq!(context.raw_os_error(), Some(5));
+        assert!(error.to_string().contains(boundary));
+        assert!(error.to_string().contains("errno Some(5)"));
+        assert!(matches!(cause(&error), Error::Io(io) if io.raw_os_error() == Some(5)));
+        drop(source);
+        drop(store);
+        database.stop();
+    }
+
+    macro_rules! boundary_test {
+        ($name:ident, $boundary:literal) => {
+            #[test]
+            fn $name() {
+                boundary_failure($boundary);
+            }
+        };
+    }
+
+    boundary_test!(source_names_inotify_init_failure, "inotify_init");
+    boundary_test!(source_names_inotify_add_watch_failure, "inotify_add_watch");
+    boundary_test!(
+        source_names_inotify_remove_watch_failure,
+        "inotify_remove_watch"
+    );
+    boundary_test!(source_names_directory_creation_failure, "mkdir");
+    boundary_test!(source_names_store_failure, "store");
+    boundary_test!(source_names_metadata_failure, "metadata/stat");
+    boundary_test!(source_names_ppoll_failure, "ppoll");
+    boundary_test!(source_names_inotify_read_failure, "inotify read");
+    boundary_test!(source_names_read_failure, "read");
+    boundary_test!(source_names_identity_read_failure, "identity_read");
+    boundary_test!(source_names_pidfd_open_failure, "pidfd_open");
+    boundary_test!(source_names_seek_failure, "seek");
+    boundary_test!(source_names_reconciliation_failure, "inspect_recorded");
+    boundary_test!(source_names_ready_remove_failure, "ready_remove");
+    boundary_test!(source_names_ingress_failure, "ingress");
+
+    #[test]
+    fn source_names_real_ppoll_invalid_timeout() {
+        let config =
+            tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+        let mut source =
+            WorkerOutputSource::new(PathBuf::new(), config.store, ActiveRuns::default());
+        source.inotify = Some(inotify::init(inotify::CreateFlags::NONBLOCK).unwrap());
+        let error = source
+            .wait(Some(&rustix::event::Timespec {
+                tv_sec: 0,
+                tv_nsec: 1_000_000_000,
+            }))
+            .unwrap_err();
+        let Error::WorkerSource(context) = &error else {
+            panic!("ppoll lost its typed context: {error:?}");
+        };
+        assert_eq!(context.boundary, "ppoll");
+        assert_eq!(context.raw_os_error(), Some(22));
+    }
 
     #[test]
     fn declared_wait_protocol_accepts_only_readable_owners() {

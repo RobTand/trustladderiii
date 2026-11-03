@@ -1,3 +1,7 @@
+// Single-event fixture receives expose no intermediate progress.
+// #673 measured the full looks binary at 61.957 s; 125 s > 2x.
+const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(125);
+
 use tl3_controller::executor::Output as Out;
 #[path = "fixtures/bell/mod.rs"]
 mod bell;
@@ -2530,7 +2534,7 @@ fn r3(settings: &tl3_config::Store, case: &str) {
             1,
             serde_json::json!([{"seq":1,"dir":"done","key":waits::key()}]),
         );
-        let input = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        let input = rx.recv_timeout(SIGNAL_WAIT).unwrap();
         assert!(matches!(&input, tl3_controller::cli::Input::Look { .. }));
         let before_end = c.snapshot().unwrap().revision;
         tl3_controller::ingress::apply(&mut c, input).unwrap();

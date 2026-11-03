@@ -1,0 +1,43 @@
+[
+  {
+    "artifacts": [
+      "action_key",
+      "cas_receipt",
+      "sha",
+      "logs",
+      "terminal_verdict"
+    ],
+    "executor": "prismabuild_pytest",
+    "methods": [
+      "red_green",
+      "base_head"
+    ],
+    "protected_files": [],
+    "requirement": "Run the focused tests/test_paced_exports_share_a_tier.py RED at the base and GREEN at the head through TL3's normal PrismaBuild admission (run_tests), one admitted action at a time, with each run's own result (status, exit, receipt and log hashes) read. Source: issue #2648 Acceptance, Red base / Green.",
+    "runner_features": [
+      "base_head"
+    ],
+    "tool": "run_tests"
+  },
+  {
+    "artifacts": [
+      "action_key",
+      "cas_receipt",
+      "sha",
+      "logs",
+      "terminal_verdict"
+    ],
+    "executor": "prismabuild_pytest",
+    "methods": [
+      "base_head"
+    ],
+    "protected_files": [],
+    "requirement": "Contention evidence: run_tests on the focused tests with repeat=10 and parallel=4, run twice at base (red where the flake reproduces) and twice at head (all green), i.e. 20 repetitions each, through TL3's normal PrismaBuild admission, with no pinned CPU, no CPU-limited reservation and no external wrapper. Source: issue #2648 Acceptance, Contention evidence.",
+    "runner_features": [
+      "base_head",
+      "repeat",
+      "parallel"
+    ],
+    "tool": "run_tests"
+  }
+]

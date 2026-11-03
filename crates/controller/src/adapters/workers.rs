@@ -18,6 +18,7 @@ pub(crate) mod reproducing;
 mod restart_base_tests;
 pub(crate) mod review;
 mod source;
+mod source_error;
 #[cfg(test)]
 mod startup_tests;
 mod trace;
@@ -25,6 +26,7 @@ mod trace;
 mod trace_tests;
 pub use fake::Fake;
 pub use source::WorkerOutputSource;
+pub use source_error::SourceError;
 
 use crate::{
     Error, Result,
@@ -328,8 +330,8 @@ impl Supervisor {
                     if let Some(symptom) = c.get("declared_symptom") {
                         check["declared_symptom"] = symptom.clone();
                     }
-                    if let Some(evidence) = c.get("helper_evidence") {
-                        check["helper_evidence"] = evidence.clone();
+                    if let Some(evidence) = c.get("proof") {
+                        check["proof"] = evidence.clone();
                     }
                     check
                 })

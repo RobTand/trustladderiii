@@ -1,3 +1,7 @@
+// Single-event fixture receives expose no intermediate progress.
+// #673 measured a complete worker case at 215.423 s; 450 s > 2x.
+const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(450);
+
 use super::*;
 use tl3_store::Reader;
 
@@ -257,7 +261,7 @@ pub(super) fn io_child(settings: &tl3_config::Store, root: &Path) {
     drop(files);
     setrlimit(Resource::Nofile, original).unwrap();
     assert!(
-        matches!(result, Err(tl3_controller::Error::Io(error)) if error.raw_os_error() == Some(24)),
+        matches!(result, Err(tl3_controller::Error::WorkerSource(error)) if error.raw_os_error() == Some(24)),
         "EMFILE must fail the source loudly"
     );
     let mut restarted = supervisor.source();
@@ -278,7 +282,7 @@ pub(super) fn transient_io(settings: &tl3_config::Store) {
     watch_run(&mut store, &run);
     let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     supervisor.execute(&run).unwrap();
-    wait(|| root.path().join("entered").exists());
+    wait_for_signal(|| root.path().join("entered").exists());
     let path = root.path().join("settings.json");
     fs::write(&path, serde_json::to_vec(&json!({"host":settings.host,"port":settings.port,"database":settings.database,"user":settings.user,"password_file":settings.password_file,"connect_timeout_secs":settings.connect_timeout_secs})).unwrap()).unwrap();
     let result = Command::new(env::current_exe().unwrap())
@@ -523,7 +527,7 @@ pub(super) fn feed_retirement_end_to_end(settings: &tl3_config::Store) {
     supervisor.retire(&mut store).unwrap();
     assert!(!root_for(&config, &run.key).exists());
     let sent = received
-        .recv_timeout(Duration::from_secs(30))
+        .recv_timeout(SIGNAL_WAIT)
         .expect("retire wakes the authenticated Feed");
     let record: Value =
         serde_json::from_str(sent["items"][0]["content"].as_str().unwrap()).unwrap();

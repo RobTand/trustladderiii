@@ -5,6 +5,9 @@ import sys
 import types
 
 
+MAX_TOTAL_DELAY_SECONDS = 10
+
+
 class ForcingError(Exception):
     """An unsupported forcing, never an assertion verdict."""
 
@@ -125,5 +128,13 @@ def preflight_owner(target, source):
 
     parts = target.split('.')
     module = resolve(parts[:-1])
-    if module is not None:
+    if module is not None and not any(source('.'.join(parts[:i])) is not None for i in range(1, len(parts) - 1)):
         reject(module, 'external_module', 'outside_served_repository')
+
+
+def valid_delay_budget(value):
+    return (isinstance(value, dict) and set(value) == {'applied_seconds', 'exhausted'}
+            and type(value['applied_seconds']) in (int, float)
+            and 0 <= value['applied_seconds'] <= MAX_TOTAL_DELAY_SECONDS
+            and type(value['exhausted']) is bool
+            and value['exhausted'] == (value['applied_seconds'] == MAX_TOTAL_DELAY_SECONDS))

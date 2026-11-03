@@ -19,10 +19,14 @@ def test_each_role_writes_its_own_text_in_asd_ste100(role):
 
 
 @pytest.mark.parametrize("role", ["maker", "reviewer"])
-def test_helper_evidence_keeps_its_semantic_checks_while_helper_mode_is_live(role):
-    # Structural preservation receipts cannot show that a setup factory exercised the
-    # failed execution: an empty queue lets the target raise without it.
+def test_subject_observer_proof_keeps_its_approved_semantics(role):
     prompt = prompt_text(role)
-    assert "A queue factory must claim the required row" in prompt
-    assert "an empty queue alone cannot prove the failed execution" in prompt
-    assert "the actual helper call and observer assertions" in prompt
+    assert "RED runs head observers against base subjects" in prompt
+    assert "node_ids name the observers" in prompt
+    assert "Every other base definition stays on base" in prompt
+    assert "red_message (the exact call assertion message required on base)" in prompt
+    assert (
+        "Planned demonstrating runs with named head observers use base_semantics "
+        "base_subject_head_observer and carry a proof receipt."
+    ) in prompt
+    assert "Outcome checks and unplanned base runs use untouched_base." in prompt

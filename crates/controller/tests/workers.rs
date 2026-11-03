@@ -1,3 +1,7 @@
+// Single-event fixture receives expose no intermediate progress.
+// #673 measured a complete worker case at 215.423 s; 450 s > 2x.
+const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(450);
+
 mod maker;
 use support::scenario_shard::{self, WorkerGroup};
 use tl3_controller::executor::Output as Out;
@@ -19,7 +23,7 @@ use std::{
     process::{Command, Stdio},
     sync::mpsc,
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use support::Database;
 use tl3_controller::{
@@ -159,21 +163,32 @@ fn root_for(config: &tl3_config::Config, key: &str) -> PathBuf {
 }
 #[track_caller]
 fn wait(mut condition: impl FnMut() -> bool) {
-    let start = Instant::now();
-    while !condition() {
-        assert!(
-            start.elapsed() < Duration::from_secs(90),
-            "fixture did not complete"
-        );
-        thread::sleep(Duration::from_millis(10));
-    }
+    support::scenario::wait(
+        &format!("worker fixture at {}", std::panic::Location::caller()),
+        Duration::from_secs(90),
+        Duration::from_secs(300),
+        || condition().then_some(()),
+    );
 }
+
+#[track_caller]
+fn wait_for_signal(mut condition: impl FnMut() -> bool) {
+    // #673's loaded workers receipt measured 215.423 s for a complete case.
+    // A single file/process signal exposes no intermediate progress. 450 s > 2x.
+    support::scenario::wait(
+        &format!("worker signal at {}", std::panic::Location::caller()),
+        Duration::from_secs(450),
+        Duration::from_secs(600),
+        || condition().then_some(()),
+    );
+}
+
 fn terminal(
     supervisor: &mut Supervisor,
     delivery: &Delivery,
 ) -> tl3_controller::executor::Completion {
     let mut result = None;
-    wait(|| match supervisor.reconcile(delivery).unwrap() {
+    wait_for_signal(|| match supervisor.reconcile(delivery).unwrap() {
         Reconciliation::Found(completion) => {
             result = Some(*completion);
             true
@@ -887,8 +902,28 @@ fn drive(controller: &mut Controller, source: &mut WorkerOutputSource, store: &m
     source.poll_once(store, &tx).unwrap();
     while let Ok(Input::Observation { key, observation }) = rx.try_recv() {
         controller.observe(&key, observation).unwrap();
+        support::scenario::progress(format!("applied worker observation: {key}"));
     }
-    while controller.drive_once().unwrap() {}
+    let mut phases: Vec<_> = controller
+        .world()
+        .unwrap()
+        .nodes
+        .iter()
+        .map(|n| n.phase)
+        .collect();
+    while controller.drive_once().unwrap() {
+        let next: Vec<_> = controller
+            .world()
+            .unwrap()
+            .nodes
+            .iter()
+            .map(|n| n.phase)
+            .collect();
+        if next != phases {
+            support::scenario::progress(format!("controller phases: {next:?}"));
+            phases = next;
+        }
+    }
 }
 
 fn simulation(settings: &tl3_config::Store) {
@@ -926,9 +961,16 @@ fn simulation(settings: &tl3_config::Store) {
         drive(&mut controller, &mut source, &mut store);
         controller.world().unwrap().nodes[0].phase == Phase::Auditing
     });
+    let mut requests = 0;
     wait(|| {
-        fs::read_to_string(root.path().join("entered.requests"))
-            .is_ok_and(|requests| requests.lines().count() == 2)
+        let next = fs::read_to_string(root.path().join("entered.requests"))
+            .map(|text| text.lines().count())
+            .unwrap_or(0);
+        if next > requests {
+            support::scenario::progress(format!("worker requests recorded: {next}"));
+            requests = next;
+        }
+        requests == 2
     });
     let robs_audit = prompts
         .save(
@@ -1101,7 +1143,7 @@ fn killed_worker(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(&config, root.path()).unwrap();
     let delivery = delivery();
     supervisor.execute(&delivery).unwrap();
-    wait(|| root.path().join("entered").exists());
+    wait_for_signal(|| root.path().join("entered").exists());
     let first =
         fs::read(root_for(&config, &delivery.key).join("attempt-00000000/process.json")).unwrap();
     for _ in 0..3 {
@@ -1155,7 +1197,7 @@ fn killed_controller(settings: &tl3_config::Store, mode: &str) {
         .stdin(Stdio::null())
         .spawn()
         .unwrap();
-    wait(|| root.path().join("entered").exists());
+    wait_for_signal(|| root.path().join("entered").exists());
     let config = config(settings, root.path(), mode);
     let worker_pid = fs::read_to_string(root.path().join("entered")).unwrap();
     child.kill().unwrap();
@@ -1275,7 +1317,7 @@ fn stop_and_exit_gate(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(&config, root.path()).unwrap();
     let mut run = delivery();
     supervisor.execute(&run).unwrap();
-    wait(|| root.path().join("entered").exists());
+    wait_for_signal(|| root.path().join("entered").exists());
     assert!(matches!(
         supervisor.reconcile(&run).unwrap(),
         Reconciliation::Pending
@@ -1368,7 +1410,7 @@ fn kernel_retries_killed_worker(settings: &tl3_config::Store) {
     .unwrap();
     controller.intake(labelled()).unwrap();
     while controller.drive_once().unwrap() {}
-    wait(|| root.path().join("entered").exists());
+    wait_for_signal(|| root.path().join("entered").exists());
     let pid = fs::read_to_string(root.path().join("entered")).unwrap();
     assert!(
         Command::new("kill")
@@ -1457,7 +1499,7 @@ fn never_started(settings: &tl3_config::Store) {
     supervisor.execute(&run).unwrap();
     supervisor.execute(&run).unwrap();
     assert!(!failed(&terminal(&mut supervisor, &run)));
-    wait(|| {
+    wait_for_signal(|| {
         source.poll_once(&mut store, &tx).unwrap();
         source.active_runs() == 0
     });
@@ -1510,7 +1552,7 @@ fn killed_reply(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     let run = delivery();
     supervisor.execute(&run).unwrap();
-    wait(|| root.path().join("entered").exists());
+    wait_for_signal(|| root.path().join("entered").exists());
     let row = &store.worker_progress(None).unwrap()[0];
     assert!(row.started_ms > 0);
     assert_eq!(row.last_progress_ms, None);
@@ -1527,7 +1569,7 @@ fn killed_reply(settings: &tl3_config::Store) {
     );
     kill_record(&attempt.join("process.json"));
     assert!(failed(&terminal(&mut supervisor, &run)));
-    wait(|| {
+    wait_for_signal(|| {
         source.poll_once(&mut store, &tx).unwrap();
         source.active_runs() == 0
     });
@@ -1551,7 +1593,7 @@ fn killed_supervisor(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     let run = delivery();
     supervisor.execute(&run).unwrap();
-    wait(|| root.path().join("entered").exists());
+    wait_for_signal(|| root.path().join("entered").exists());
     let attempt = root_for(&config, &run.key).join("attempt-00000000");
     kill_record(&attempt.join("claim.json"));
     // A dead supervisor does not make its still-live worker absent.
@@ -1564,7 +1606,7 @@ fn killed_supervisor(settings: &tl3_config::Store) {
     source.poll_once(&mut store, &tx).unwrap();
     assert!(rx.try_recv().is_err());
     fs::write(root.path().join("entered.release"), "go").unwrap();
-    wait(|| matches!(supervisor.reconcile(&run).unwrap(), Reconciliation::Absent));
+    wait_for_signal(|| matches!(supervisor.reconcile(&run).unwrap(), Reconciliation::Absent));
     assert!(!attempt.join("exit.json").exists());
     assert!(
         rx.try_recv().is_err(),
@@ -1573,7 +1615,7 @@ fn killed_supervisor(settings: &tl3_config::Store) {
     // The retry may start before the source drains the previous pidfd event.
     supervisor.execute(&run).unwrap();
     assert!(!failed(&terminal(&mut supervisor, &run)));
-    wait(|| {
+    wait_for_signal(|| {
         source.poll_once(&mut store, &tx).unwrap();
         source.active_runs() == 0
     });
@@ -1597,7 +1639,7 @@ fn fake_stop(settings: &tl3_config::Store) {
     materials(&mut Store::open(settings).unwrap());
     let mut run = delivery();
     supervisor.execute(&run).unwrap();
-    wait(|| root.path().join("entered").exists());
+    wait_for_signal(|| root.path().join("entered").exists());
     let attempt = root_for(&config, &run.key).join("attempt-00000000");
     let process: Value =
         serde_json::from_slice(&fs::read(attempt.join("process.json")).unwrap()).unwrap();
@@ -1655,7 +1697,7 @@ fn event_source(settings: &tl3_config::Store) {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    wait(|| root.path().join("source-ready").exists());
+    wait_for_signal(|| root.path().join("source-ready").exists());
     let stdout = child.stdout.take().unwrap();
     let (tx, rx) = mpsc::channel();
     let reader = thread::spawn(move || {
@@ -1672,7 +1714,7 @@ fn event_source(settings: &tl3_config::Store) {
     });
     let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     supervisor.execute(&delivery()).unwrap();
-    let events = rx.recv_timeout(Duration::from_secs(90));
+    let events = rx.recv_timeout(SIGNAL_WAIT);
     child.kill().unwrap();
     child.wait().unwrap();
     reader.join().unwrap();
@@ -1697,7 +1739,7 @@ fn partial_crash(settings: &tl3_config::Store) {
     let run = delivery();
     watch_run(&mut store, &run);
     supervisor.execute(&run).unwrap();
-    wait(|| root.path().join("entered").exists());
+    wait_for_signal(|| root.path().join("entered").exists());
     let attempt = root_for(&config, &run.key).join("attempt-00000000");
     let bytes = fs::read(attempt.join("stdout.jsonl")).unwrap();
     assert!(!bytes.ends_with(b"\n"));
@@ -1735,7 +1777,7 @@ fn partial_crash(settings: &tl3_config::Store) {
     assert!(rx.try_recv().is_err());
     kill_record(&attempt.join("process.json"));
     assert!(failed(&terminal(&mut supervisor, &run)));
-    wait(|| {
+    wait_for_signal(|| {
         source.poll_once(&mut store, &tx).unwrap();
         source.active_runs() == 0
     });
@@ -1786,7 +1828,7 @@ fn clock_stops_stalled_worker(settings: &tl3_config::Store) {
     controller.set_allowances(allowances);
     controller.intake(labelled()).unwrap();
     while controller.drive_once().unwrap() {}
-    wait(|| root.path().join("entered").exists());
+    wait_for_signal(|| root.path().join("entered").exists());
     let snapshot = controller.snapshot().unwrap();
     let original: Delivery = serde_json::from_value(
         snapshot
@@ -1913,7 +1955,7 @@ fn quota_resumes_same_operation(settings: &tl3_config::Store) {
             .attempt,
         1
     );
-    wait(|| {
+    wait_for_signal(|| {
         for iteration in 0..200 {
             if !controller.drive_once().unwrap() {
                 break;
@@ -2041,7 +2083,7 @@ fn bounded_startup(settings: &tl3_config::Store) {
     watch_run(&mut store, &run);
     let mut original = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     original.execute(&run).unwrap();
-    wait(|| root.path().join("entered").exists());
+    wait_for_signal(|| root.path().join("entered").exists());
     let observer = inotify::init(inotify::CreateFlags::NONBLOCK).unwrap();
     for n in 0..128 {
         let history = config.workers.runs.join(format!("history-{n}"));
@@ -2171,7 +2213,7 @@ fn retirement(settings: &tl3_config::Store) {
     watch_run(&mut store, &run);
     let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     supervisor.execute(&run).unwrap();
-    wait(|| root.path().join("entered").exists());
+    wait_for_signal(|| root.path().join("entered").exists());
     let mut source = supervisor.source();
     let (tx, rx) = mpsc::channel();
     source.poll_once(&mut store, &tx).unwrap();
@@ -2235,9 +2277,9 @@ fn retirement(settings: &tl3_config::Store) {
         .arg(root.path())
         .spawn()
         .unwrap();
-    wait(|| !run_root.exists());
+    wait_for_signal(|| !run_root.exists());
     let mut backend = None;
-    wait(|| {
+    wait_for_signal(|| {
         transaction
             .simple_query("SELECT pg_stat_clear_snapshot()")
             .unwrap();
@@ -2258,7 +2300,7 @@ fn retirement(settings: &tl3_config::Store) {
             &[&backend],
         )
         .unwrap();
-    wait(|| {
+    wait_for_signal(|| {
         transaction
             .simple_query("SELECT pg_stat_clear_snapshot()")
             .unwrap();
@@ -2353,7 +2395,7 @@ fn confirmed_absence(settings: &tl3_config::Store) {
     .unwrap();
     controller.intake(labelled()).unwrap();
     while controller.drive_once().unwrap() {}
-    wait(|| root.path().join("entered").exists());
+    wait_for_signal(|| root.path().join("entered").exists());
     let run = store_worker_run(settings);
     assert_eq!(
         store.effect(&run.key).unwrap().unwrap().state,
@@ -2364,7 +2406,7 @@ fn confirmed_absence(settings: &tl3_config::Store) {
     source.poll_once(&mut store, &tx).unwrap();
     kill_record_and_wait(&attempt.join("claim.json"));
     kill_record_and_wait(&attempt.join("process.json"));
-    wait(|| {
+    wait_for_signal(|| {
         source.poll_once(&mut store, &tx).unwrap();
         source.active_runs() == 0
     });
@@ -2410,7 +2452,7 @@ fn overflow(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     let mut run = delivery();
     supervisor.execute(&run).unwrap();
-    wait(|| root.path().join("entered").exists());
+    wait_for_signal(|| root.path().join("entered").exists());
     let mut source = supervisor.source();
     let (tx, rx) = mpsc::channel();
     source.poll_once(&mut store, &tx).unwrap();
@@ -2437,7 +2479,7 @@ fn overflow(settings: &tl3_config::Store) {
         "overflow rescan discovers a dropped ready event"
     );
     fs::write(root.path().join("entered.release"), "go").unwrap();
-    wait(|| {
+    wait_for_signal(|| {
         source.poll_once(&mut store, &tx).unwrap();
         source.active_runs() == 0
     });
@@ -2526,9 +2568,9 @@ fn external_wait_survives_restart(settings: &tl3_config::Store) {
     waits::record(root.path(), "claimed");
     c.intake(labelled()).unwrap();
     while c.drive_once().unwrap() {}
-    wait(|| root.path().join("entered").exists());
+    wait_for_signal(|| root.path().join("entered").exists());
     let (tx, rx) = mpsc::channel();
-    wait(|| {
+    wait_for_signal(|| {
         source.poll_once(&mut store, &tx).unwrap();
         store
             .worker_progress(None)
@@ -2557,7 +2599,7 @@ fn external_wait_survives_restart(settings: &tl3_config::Store) {
     c.look_now().unwrap();
     let before_repeat = c.snapshot().unwrap();
     fs::write(root.path().join("entered.repeat"), "repeat").unwrap();
-    wait(|| {
+    wait_for_signal(|| {
         source.poll_once(&mut store, &tx).unwrap();
         store.worker_progress(None).unwrap()[0].output_offset > before[0].output_offset
     });

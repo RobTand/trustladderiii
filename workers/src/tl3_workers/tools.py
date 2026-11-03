@@ -265,7 +265,9 @@ class Evidence:
             if "execution" in result:
                 entry["execution"] = result["execution"]
             if selectors[0]:
-                entry["base_semantics"] = "untouched_base"
+                entry["base_semantics"] = result.get("base_semantics", "untouched_base")
+                if result.get("proof"):
+                    entry["proof"] = result["proof"]
             if "runs" in result:
                 entry["runs"] = [{key: run[key] for key in ("run", "status", "totals")} for run in result["runs"]]
             selected = len(entry["tests"])

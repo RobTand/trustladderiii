@@ -26,6 +26,7 @@ py_library(
         "limits.py",
         "model.py",
         "node_ids.py",
+        "proof.py",
         "report.py",
         "runner.py",
         "scratch.py",

@@ -111,6 +111,17 @@ def test_audit_objects_to_goals_the_answer_excludes():
 @pytest.mark.parametrize('role', ['ingest', 'audit', 'planner'])
 def test_helper_location_alone_does_not_mandate_observer_evidence(role):
     prompt = prompt_text(role)
-    assert 'Do not require helper_target_observer solely because the target is in a test file.' in prompt
+    assert 'The subject/observer rule' in prompt
     assert 'ordinary failing test' in prompt
     assert 'For a fix to a helper inside configured test files, require method' not in prompt
+
+
+@pytest.mark.parametrize('role', ['maker', 'reviewer'])
+def test_base_receipts_describe_planned_subject_observer_and_untouched_modes(role):
+    prompt = prompt_text(role)
+    assert 'base_subject_head_observer' in prompt
+    assert 'untouched_base' in prompt
+    assert 'proof receipt' in prompt
+    assert 'Planned demonstrating runs with named head observers use base_semantics base_subject_head_observer' in prompt
+    assert 'Outcome checks and unplanned base runs use untouched_base' in prompt
+    assert 'Outcome checks include forcing with inferred subjects, declared-symptom checks and regression checks' in prompt

@@ -444,7 +444,6 @@ tl3_py_test(
         ":worker_process",
         "//harness/src/tl3_harness",
         "//workers/src",
-        "@tl3_pip//langchain_core",
         "@tl3_pip//pytest",
     ],
 )
@@ -728,6 +727,7 @@ tl3_py_test(
         ":conftest",
         ":message_invariants",
         ":worker_process",
+        "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//jsonschema",
         "@tl3_pip//langchain_core",
@@ -891,6 +891,17 @@ tl3_py_test(
     deps = [
         ":conftest",
         "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_subject_observer_contract",
+    srcs = ["test_subject_observer_contract.py"],
+    deps = [
+        ":conftest",
+        ":worker_process",
+        "//harness/src/tl3_harness",
+        "//workers/src",
     ],
 )
 

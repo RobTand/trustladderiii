@@ -1,3 +1,7 @@
+// Single-event fixture receives expose no intermediate progress.
+// #673 measured daemon_webhooks_worker_replies_and_source_failure at 169.274 s; 350 s > 2x.
+const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(350);
+
 use tl3_controller::executor::Output as Out;
 #[path = "github/catchup_heads.rs"]
 mod catchup_heads;
@@ -1042,11 +1046,11 @@ fn gap_catch_up(settings: &tl3_config::Store) {
     let mut other = fixture(false);
     other["sender"]["id"] = json!(7);
     assert_eq!(post(address, "wake-start", false, other, true), 202);
-    let _ = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
-    let _ = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
+    let _ = receiver.recv_timeout(SIGNAL_WAIT).unwrap();
+    let _ = receiver.recv_timeout(SIGNAL_WAIT).unwrap();
     api.state.lock().unwrap().gap = true;
     control.gap();
-    let _ = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
+    let _ = receiver.recv_timeout(SIGNAL_WAIT).unwrap();
     control.stop();
     handle.join().unwrap().unwrap();
     let mut store = Store::open(settings).unwrap();
@@ -1699,7 +1703,7 @@ fn source_failures(settings: &tl3_config::Store) {
             done.send(result.map_err(|error| error.to_string()))
                 .unwrap();
         });
-        let ending = result.recv_timeout(Duration::from_secs(10));
+        let ending = result.recv_timeout(SIGNAL_WAIT);
         release.send(()).unwrap();
         handle.join().unwrap();
         let error = ending
@@ -2112,26 +2116,46 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
             logs.send(line.unwrap()).unwrap();
         }
     });
-    let address = loop {
-        let line = received.recv_timeout(Duration::from_secs(90)).unwrap();
-        if let Some(address) = line.strip_prefix("GitHub webhooks listening on ") {
-            break address.parse().unwrap();
-        }
-    };
+    let address =
+        support::scenario::wait("GitHub daemon listener", SIGNAL_WAIT, SIGNAL_WAIT, || {
+            for line in received.try_iter() {
+                if let Some(address) = line.strip_prefix("GitHub webhooks listening on ") {
+                    return Some(address.parse().unwrap());
+                }
+            }
+            assert!(
+                daemon.0.try_wait().unwrap().is_none(),
+                "daemon exited before listening"
+            );
+            None
+        });
     assert_eq!(
         post(address, "daemon-labelled", false, fixture(false), true),
         202
     );
-    let wait = |condition: &mut dyn FnMut() -> bool| {
-        let started = Instant::now();
-        while !condition() {
-            assert!(
-                started.elapsed() < Duration::from_secs(90),
-                "daemon did not produce expected evidence: {:?}",
-                received.try_iter().collect::<Vec<_>>()
-            );
-            thread::sleep(Duration::from_millis(10));
-        }
+    let mut observer = Store::open(settings).unwrap();
+    let mut wait = |condition: &mut dyn FnMut() -> bool| {
+        let mut nodes = Vec::new();
+        support::scenario::wait(
+            "daemon worker evidence",
+            Duration::from_secs(90),
+            Duration::from_secs(300),
+            || {
+                let next: Vec<_> = observer
+                    .load()
+                    .unwrap()
+                    .rows
+                    .into_iter()
+                    .filter(|row| row.table == "nodes")
+                    .map(|row| (row.id, row.value))
+                    .collect();
+                if next != nodes {
+                    support::scenario::progress(format!("daemon nodes: {next:?}"));
+                    nodes = next;
+                }
+                condition().then_some(())
+            },
+        );
     };
     // The source's observation key proves ingress delivered the reply, even if a look also found it.
     wait(&mut || {

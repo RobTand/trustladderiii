@@ -35,15 +35,15 @@ def test_outside_path_feedback_schema_is_bounded(maker_request, paths):
 
 def test_review_fix_contract_accepts_named_tests_and_reasons(review_fix):
     inputs, reply = review_fix
-    from tl3_workers.contracts import schema
+    from tl3_workers.contracts import schema, registry
     from jsonschema import Draft202012Validator
-    assert Draft202012Validator(schema('maker-input')).is_valid(inputs), 'reviewed findings need identities'
-    assert Draft202012Validator(schema('maker-reply')).is_valid({**reply, 'head': 'c' * 40}), 'done must carry reproductions'
+    assert Draft202012Validator(schema('maker-input'), registry=registry()).is_valid(inputs), 'reviewed findings need identities'
+    assert Draft202012Validator(schema('maker-reply'), registry=registry()).is_valid({**reply, 'head': 'c' * 40}), 'done must carry reproductions'
     maker._check_reply(inputs, reply)
 
 
 def test_bounded_fix_round_contract_accepts_resolved_records_and_finding_refs(maker_request):
-    from tl3_workers.contracts import schema
+    from tl3_workers.contracts import schema, registry
     from jsonschema import Draft202012Validator
     inputs = maker_request['inputs']
     inputs.update(round=1, reviewed_sha='b' * 40, feedback=[
@@ -54,12 +54,12 @@ def test_bounded_fix_round_contract_accepts_resolved_records_and_finding_refs(ma
          'report': 'Describe the signature in full.', 'goal_ids': ['greeting']},
     ])
     inputs['current_review_findings'] = [{'id': 'review-3-0', 'reviewed_sha': 'b' * 40}]
-    assert Draft202012Validator(schema('maker-input')).is_valid(inputs), 'one-line records and finding refs'
+    assert Draft202012Validator(schema('maker-input'), registry=registry()).is_valid(inputs), 'one-line records and finding refs'
     maker._check_inputs(inputs)
     reply = {**DONE, 'reproductions': [{'finding_id': 'review-3-0', 'reason': 'A documentation fix.'}]}
     maker._check_reply(inputs, reply)
     inputs['feedback'][0]['resolved_round'] = 0
-    assert not Draft202012Validator(schema('maker-input')).is_valid(inputs), 'rounds start at 1'
+    assert not Draft202012Validator(schema('maker-input'), registry=registry()).is_valid(inputs), 'rounds start at 1'
 
 
 @pytest.mark.parametrize('invalid', ['omitted', 'partial', 'duplicate', 'unknown', 'old', 'selector'])
@@ -155,3 +155,20 @@ def test_no_change_done_recovers_through_protocol(tmp_path, maker_request):
     assert result.exit_code == 0, result.stderr
     assert result.events[-1] == {'event': 'reply', 'role': 'maker', 'reply': reply}
     assert git(maker_request['worktree'], 'rev-parse', 'HEAD') == before
+
+
+def test_review662_reproduction_cannot_omit_assertion_reason(review_fix):
+    from tl3_harness import HarnessInputError
+    inputs, reply = review_fix
+    reply['reproductions'][0].pop('proof', None)
+    with pytest.raises(HarnessInputError, match='proof|reason'):
+        maker._check_reply(inputs, reply)
+
+
+def test_review662_reproduction_contract_carries_assertion_reason(review_fix):
+    from tl3_workers.contracts import validate
+    inputs, reply = review_fix
+    reply['reproductions'][0]['proof'] = {
+        'subjects': [], 'observer_support': [], 'red_message': 'empty greeting'}
+    validate('maker-reply', {**reply, 'head': 'c' * 40})
+    maker._check_reply(inputs, reply)

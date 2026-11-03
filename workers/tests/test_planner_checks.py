@@ -81,7 +81,7 @@ def test_planner_checks_base_test_definitions(planner_request, monkeypatch, kind
     check_reply(planner_request['inputs'], reply)
     assert reply['violations'] == []
     reply = copy.deepcopy(LEAF)
-    reply['checks'] = [{'kind': 'demonstrating', 'node_ids': [missing], 'goal_ids': [0, 1]}]
+    reply['checks'] = [{'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [missing], 'goal_ids': [0, 1]}]
     check_reply(planner_request['inputs'], reply)
     assert reply['violations'] == []
 
@@ -120,7 +120,7 @@ def test_prompt_states_forced_reproduction_for_deflakes():
     assert "fails by assertion on the base under the forcing" in prompt
     assert "passes on the change both with and without the forcing" in prompt
     assert "Repeating a test until it fails does not count" in prompt
-    assert "A change to tests alone needs a forced reproduction (Q55, #393)" in prompt
+    assert "identify the subject separately from the named head observers" in prompt
 
 
 def test_missing_exploration_estimate_gets_one_tool_free_format_repair(planner_request, monkeypatch):

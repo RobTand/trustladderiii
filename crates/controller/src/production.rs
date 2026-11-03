@@ -258,8 +258,8 @@ pub(crate) fn maker_inputs(
         if let Some(symptom) = check.get("declared_symptom") {
             planned["declared_symptom"] = symptom.clone();
         }
-        if let Some(evidence) = check.get("helper_evidence") {
-            planned["helper_evidence"] = evidence.clone();
+        if let Some(evidence) = check.get("proof") {
+            planned["proof"] = evidence.clone();
         }
         Ok(planned)
     }).collect::<Result<Vec<Value>>>()?;
@@ -388,13 +388,13 @@ mod tests {
     }
 
     #[test]
-    fn helper_target_carries_to_the_maker() {
+    fn source_partition_carries_to_the_maker() {
         let brief = json!({"brief":"Improve diagnostics", "goals":[{"description":"Explain failure", "verification":"test"}]});
-        let declaration = json!({"target":"test_helper.py::_execute", "failure_cases":[{"args":[false],"kwargs":{}}]});
+        let declaration = json!({"subjects":["test_helper.py::_execute"], "observer_support":[], "red_message":"diagnostic missing"});
         let plan = json!({"kind":"leaf","files":["test_helper.py"],"checks":[
-            {"kind":"demonstrating","node_ids":["test_helper.py::test_diagnostic"],"goal_ids":[0],"helper_evidence":declaration}]});
+            {"kind":"demonstrating","node_ids":["test_helper.py::test_diagnostic"],"goal_ids":[0],"proof":declaration}]});
         assert_eq!(
-            maker_inputs(&brief, &plan).unwrap()["plan"]["checks"][0]["helper_evidence"],
+            maker_inputs(&brief, &plan).unwrap()["plan"]["checks"][0]["proof"],
             declaration
         );
     }

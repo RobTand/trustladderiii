@@ -123,3 +123,21 @@ pub fn progress(marker: impl Into<String>) {
         }
     });
 }
+
+#[track_caller]
+pub fn wait<T>(
+    name: &str,
+    inactivity: Duration,
+    absolute: Duration,
+    mut condition: impl FnMut() -> Option<T>,
+) -> T {
+    run_with_limits(name, inactivity, absolute, || {
+        progress(format!("waiting for {name}"));
+        loop {
+            if let Some(value) = condition() {
+                return value;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    })
+}

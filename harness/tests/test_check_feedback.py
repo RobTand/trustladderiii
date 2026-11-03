@@ -7,7 +7,7 @@ import sys
 import pytest
 
 from tl3_harness import execution
-from tl3_harness.model import Check, Kind, Outcome, Verdict
+from tl3_harness.model import Check, Proof, Kind, Outcome, Verdict
 from tl3_harness.report import decode, parse
 from tl3_harness.trees import git
 
@@ -42,7 +42,7 @@ def test_long_message():
 
 
 def test_assertion():
-    assert "default_repr" in __import__("product").PROFILES
+    assert "default_repr" in __import__("product").PROFILES, "old assertion"
 '''
 UNRELATED = '''\
 import product
@@ -140,7 +140,7 @@ def test_a_real_assertion_on_the_base_still_demonstrates(round_repo):
     repo, base, head = round_repo
     result, = execution.run_checks(
         repo, base, head,
-        (Check('check', Kind.DEMONSTRATING, ('tests/test_digest.py::test_assertion',)),),
+        (Check('check', Kind.DEMONSTRATING, ('tests/test_digest.py::test_assertion',), proof=Proof((), (), 'old assertion')),),
         container=execution.Container('sha256:' + '1' * 64))
     assert result.verdict == Verdict.PASS
     assert result.tests[0].message == ''

@@ -1,3 +1,7 @@
+// Single-event fixture receives expose no intermediate progress.
+// #673 measured the full PrismaBuild binary at 220.814 s; 450 s > 2x.
+const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(450);
+
 #[path = "fixtures/bell/mod.rs"]
 mod bell;
 use bell::Bell;
@@ -60,7 +64,7 @@ fn fixture_repo(root: &Path, outside: bool) -> (PathBuf, String, String) {
     fs::write(repo.join("value.py"), "def value(): return 1\n").unwrap();
     fs::write(
         repo.join("test_value.py"),
-        "from value import value\ndef test_value(): assert value() == 2\n",
+        "from value import value\ndef test_value(): assert value() == 2, 'old value'\n",
     )
     .unwrap();
     git(&repo, &["add", "."]);
@@ -131,7 +135,9 @@ fn run(root: &Path, outside: bool) -> Delivery {
                 kind: Kind::Demonstrating,
                 tests: vec!["test_value.py::test_value".into()],
                 forcing: None,
-                helper_evidence: None,
+                proof: Some(
+                    serde_json::json!({"subjects":[], "observer_support":[], "red_message":"old value"}),
+                ),
                 declared_symptom: None,
             }],
         }),
@@ -322,7 +328,7 @@ fn base_moved_completion_keys_each_observation(
         // The source stops when its adapter's channel closes; keep the adapter alive.
         let adapter = fixture(root.path(), mode);
         let running = adapter.source().spawn(sender);
-        let inputs = [(); 2].map(|()| receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+        let inputs = [(); 2].map(|()| receiver.recv_timeout(SIGNAL_WAIT).unwrap());
         drop(running);
         inputs
     };
@@ -839,6 +845,14 @@ fn forced_check_is_staged_and_reaches_review() {
 }
 
 fn declared_symptom_identity_is_staged_and_reaches_review() {
+    declared_symptom_identity(false);
+}
+
+fn review662_explicit_subject_symptom_keeps_receipt_bindings() {
+    declared_symptom_identity(true);
+}
+
+fn declared_symptom_identity(explicit_subject: bool) {
     use sha2::{Digest, Sha256};
     for tamper in [
         "none",
@@ -857,6 +871,11 @@ fn declared_symptom_identity_is_staged_and_reaches_review() {
         let declaration = serde_json::json!({"node":value["plan"][0]["tests"][0],
             "exception":"builtins.TimeoutError", "phase":"call", "repeat":1, "parallel":0});
         value["plan"][0]["declared_symptom"] = declaration.clone();
+        let proof = serde_json::json!({"subjects":["test_value.py::_git"],
+            "observer_support":[], "red_message":"not an assertion"});
+        if explicit_subject {
+            value["plan"][0]["proof"] = proof.clone();
+        }
         delivery.checks = Some(serde_json::from_value::<CheckRun>(value).unwrap());
         let planned = &delivery.checks.as_ref().unwrap().plan[0];
         let records = serde_json::json!([{"event":"start", "schema":1}]);
@@ -880,6 +899,14 @@ fn declared_symptom_identity_is_staged_and_reaches_review() {
         let mut result = serde_json::json!({"name":planned.name,"kind":"demonstrating","custody":"in-process",
             "verdict":"pass", "declared_symptom":declaration,"symptom_evidence":evidence,
             "tests":[{"test":planned.tests[0],"base":"error","head":"passed","pre_existing":false,"passed":true}]});
+        if explicit_subject {
+            let mut observers = serde_json::Map::new();
+            observers.insert(planned.tests[0].clone(), "c".repeat(64).into());
+            result["proof"] = serde_json::json!({"rule":"subject-observer-v1", "declaration":proof,
+                "mode":"pytest-outcome", "subjects":{"test_value.py::_git":{"base":"a".repeat(64),"head":"b".repeat(64)}},
+                "source_base_tree_sha256":"f".repeat(64), "base_tree_sha256":"d".repeat(64), "head_tree_sha256":"e".repeat(64),
+                "observer_sha256":observers, "support_sha256":{}});
+        }
         if tamper == "missing" {
             result.as_object_mut().unwrap().remove("symptom_evidence");
         }
@@ -910,67 +937,43 @@ fn declared_symptom_identity_is_staged_and_reaches_review() {
     }
 }
 
-fn helper_target_identity_is_staged_and_reaches_review() {
-    let declaration = serde_json::json!({"target":"test_value.py::_execute",
-        "failure_cases":[{"args":[{"$setup":"_failed_queue","$call":"execute"}, false],"kwargs":{}}]});
+fn subject_observer_identity_is_staged_and_reaches_review() {
+    let declaration = serde_json::json!({"subjects":["test_value.py::_execute"],
+        "observer_support":[], "red_message":"missing diagnostic"});
     for tamper in [
         "none",
-        "target",
+        "declaration",
         "old_identity",
         "observer",
         "base_passed",
-        "missing_preservation",
-        "changed_cases",
-        "changed_setup",
-        "changed_call",
-        "failure_lost",
         "missing",
     ] {
         let root = tempfile::tempdir().unwrap();
         let mut delivery = run(root.path(), false);
         let mut value = serde_json::to_value(delivery.checks.as_ref().unwrap()).unwrap();
-        value["plan"][0]["helper_evidence"] = declaration.clone();
+        value["plan"][0]["proof"] = declaration.clone();
         delivery.checks = Some(serde_json::from_value::<CheckRun>(value).unwrap());
         let planned = &delivery.checks.as_ref().unwrap().plan[0];
         let mut observers = serde_json::Map::new();
         observers.insert(planned.tests[0].clone(), "c".repeat(64).into());
-        let mut identity = serde_json::json!({"target":declaration["target"],
-            "base_target_sha256":"a".repeat(64), "head_target_sha256":"b".repeat(64),
-            "base_tree_sha256":"d".repeat(64), "head_tree_sha256":"e".repeat(64), "observers":observers,
-            "failure_cases":declaration["failure_cases"], "failure_driver_sha256":"f".repeat(64),
-            "failure_preservation":[{"base":"passed", "head":"passed"}]});
-        if tamper == "target" {
-            identity["target"] = "test_value.py::fake_old".into();
+        let mut identity = serde_json::json!({"rule":"subject-observer-v1", "declaration":declaration,
+            "mode":"head-observer", "subjects":{"test_value.py::_execute":{"base":"a".repeat(64),"head":"b".repeat(64)}},
+            "source_base_tree_sha256":"f".repeat(64), "base_tree_sha256":"d".repeat(64), "head_tree_sha256":"e".repeat(64),
+            "observer_sha256":observers, "support_sha256":{}});
+        if tamper == "declaration" {
+            identity["declaration"]["red_message"] = "different".into();
         }
         if tamper == "old_identity" {
-            identity["base_target_sha256"] = identity["head_target_sha256"].clone();
+            identity["subjects"]["test_value.py::_execute"]["base"] = "b".repeat(64).into();
         }
         if tamper == "observer" {
-            identity["observers"] = serde_json::json!({});
-        }
-        if tamper == "missing_preservation" {
-            identity
-                .as_object_mut()
-                .unwrap()
-                .remove("failure_preservation");
-        }
-        if tamper == "changed_cases" {
-            identity["failure_cases"][0]["args"] = serde_json::json!([true]);
-        }
-        if tamper == "changed_setup" {
-            identity["failure_cases"][0]["args"][0]["$setup"] = "_different_queue".into();
-        }
-        if tamper == "changed_call" {
-            identity["failure_cases"][0]["args"][0]["$call"] = "different_method".into();
-        }
-        if tamper == "failure_lost" {
-            identity["failure_preservation"][0]["head"] = "assertion".into();
+            identity["observer_sha256"] = serde_json::json!({});
         }
         let mut result = serde_json::json!({"name":planned.name,"kind":"demonstrating","custody":"in-process",
-            "verdict":"pass","helper_evidence":identity,"tests":[{"test":planned.tests[0],
+            "verdict":"pass","proof":identity,"tests":[{"test":planned.tests[0],
             "base":if tamper == "base_passed" {"passed"} else {"assertion"},"head":"passed","pre_existing":false,"passed":true}]});
         if tamper == "missing" {
-            result.as_object_mut().unwrap().remove("helper_evidence");
+            result.as_object_mut().unwrap().remove("proof");
         }
         let mut adapter = fixture(root.path(), "done");
         fs::write(
@@ -986,7 +989,7 @@ fn helper_target_identity_is_staged_and_reaches_review() {
             .unwrap();
         let request: serde_json::Value =
             serde_json::from_slice(&fs::read(staged).unwrap()).unwrap();
-        assert_eq!(request["plan"][0]["helper_evidence"], declaration);
+        assert_eq!(request["plan"][0]["proof"], declaration);
         let ended = completion(&mut adapter, &delivery);
         match &ended.observations[..] {
             [
@@ -999,7 +1002,7 @@ fn helper_target_identity_is_staged_and_reaches_review() {
             ] => {
                 assert_eq!(*report && *pass, tamper == "none", "{tamper}");
                 if tamper == "none" {
-                    assert_eq!(results[0]["helper_evidence"], identity);
+                    assert_eq!(results[0]["proof"], identity);
                     assert_eq!(results[0]["tests"][0]["base"], "assertion");
                     assert_eq!(results[0]["tests"][0]["head"], "passed");
                 }
@@ -1099,7 +1102,7 @@ fn crash_reuses_seal() {
             .arg(root.path())
             .spawn()
             .unwrap();
-        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        let deadline = std::time::Instant::now() + SIGNAL_WAIT;
         let connection = loop {
             match listener.accept() {
                 Ok((connection, _)) => break connection,
@@ -1183,7 +1186,7 @@ fn crash_reuses_seal() {
         let (sender, receiver) = mpsc::channel();
         finish(root.path(), key.as_str(), "done");
         let running = adapter.source().spawn(sender);
-        assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+        assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
         drop(running);
     }
 }
@@ -1209,7 +1212,7 @@ fn source_thread_delivers_once_and_restarts_idle() {
         1,
         serde_json::json!([{"seq": 1, "dir": "done", "key": key}]),
     );
-    let observation = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
+    let observation = receiver.recv_timeout(SIGNAL_WAIT).unwrap();
     assert!(matches!(
         observation,
         tl3_controller::cli::Input::Observation {
@@ -1266,7 +1269,7 @@ fn source_thread_delivers_once_and_restarts_idle() {
     restarted.execute(&unannounced).unwrap();
     bell.request().reply(1, serde_json::json!([]));
     assert!(matches!(
-        receiver.recv_timeout(Duration::from_secs(10)).unwrap(),
+        receiver.recv_timeout(SIGNAL_WAIT).unwrap(),
         tl3_controller::cli::Input::Observation {
             observation: Observation::Checks {
                 report: true,
@@ -1333,7 +1336,7 @@ fn invalid_evidence_is_reported_once() {
         let (sender, receiver) = mpsc::channel();
         let running = adapter.source().spawn(sender.clone());
         let observations: Vec<_> = (0..2)
-            .map(|_| receiver.recv_timeout(Duration::from_secs(10)).unwrap())
+            .map(|_| receiver.recv_timeout(SIGNAL_WAIT).unwrap())
             .collect();
         drop(running);
         assert_eq!(
@@ -1496,12 +1499,12 @@ fn tool_errors_wait_for_news() {
             std::os::unix::fs::symlink("/usr/bin/python3", program).unwrap();
             let running = adapter.source().spawn(sender);
             bell.request().reply(0, serde_json::json!([]));
-            assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+            assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
             drop(running);
         } else {
             fs::remove_file(root.path().join("queue/garbled_ending")).unwrap();
             waiting.reply(1, serde_json::json!([{"seq":1,"dir":"done","key":key}]));
-            assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+            assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
             drop(running);
         }
         assert!(record_path(root.path(), &delivery.key, "done").exists());
@@ -1535,7 +1538,7 @@ fn source_skips_bad_jobs_and_surfaces_failure() {
     let (sender, receiver) = mpsc::channel();
     // Both rebuild and queued key registration encounter the bad record.
     let running = source.spawn(sender);
-    assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+    assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
     drop(running);
     assert!(!record_path(root.path(), &bad.key, "done").exists());
     let mut withdrawal = bad.clone();
@@ -1565,7 +1568,7 @@ fn source_skips_bad_jobs_and_surfaces_failure() {
     fs::create_dir(record_path(root.path(), &delivery.key, "done")).unwrap();
     finish(root.path(), key.as_str(), "done");
     waiting.reply(1, serde_json::json!([{"seq":1,"dir":"done","key":key}]));
-    assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+    assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
     assert!(
         running.join().is_err(),
         "the source supervisor must see a failed marker write"
@@ -1690,7 +1693,7 @@ fn completed_records_retire_only_when_superseded() {
             Reconciliation::Found(_)
         ));
         let running = adapter.source().spawn(sender.clone());
-        assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+        assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
         drop(running);
         if let Some(previous) = previous {
             for ext in ["job", "done"] {
@@ -1715,7 +1718,7 @@ fn completed_records_retire_only_when_superseded() {
     // Restore a completed current record for the withdrawal assertion below.
     adapter.execute(&delivery).unwrap();
     let running = adapter.source().spawn(sender.clone());
-    assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+    assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
     drop(running);
     // Delivered records are skipped before parsing when finding withdrawal targets.
     fs::write(
@@ -1766,7 +1769,7 @@ fn completed_records_retire_only_when_superseded() {
     finish(root.path(), key.as_str(), "done");
     let (sender, receiver) = mpsc::channel();
     let running = adapter.source().spawn(sender);
-    assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+    assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
     drop(running);
     assert!(
         !record_path(root.path(), &first.key, "job").exists(),
@@ -1876,7 +1879,7 @@ fn cancellation_keeps_an_inflight_ending_from_replacing_its_marker() {
     fs::write(root.path().join("queue/publish_stage"), "ending").unwrap();
     let (sender, receiver) = mpsc::channel();
     let running = adapter.source().spawn(sender);
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + SIGNAL_WAIT;
     let connection = loop {
         match listener.accept() {
             Ok((connection, _)) => break connection,
@@ -1934,7 +1937,7 @@ fn endings_outlive_queue_rows() {
     assert!(observed(completion(&mut adapter, &delivery)).1);
     let (sender, receiver) = mpsc::channel();
     let running = adapter.source().spawn(sender);
-    assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+    assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
     drop(running);
     // An upgrade from flat records must retain both the binding and its done marker.
     for extension in ["job", "done"] {
@@ -2624,8 +2627,12 @@ fn main() {
             declared_symptom_identity_is_staged_and_reaches_review as fn(),
         ),
         (
-            "helper_target_identity_is_staged_and_reaches_review",
-            helper_target_identity_is_staged_and_reaches_review as fn(),
+            "review662_explicit_subject_symptom_keeps_receipt_bindings",
+            review662_explicit_subject_symptom_keeps_receipt_bindings as fn(),
+        ),
+        (
+            "subject_observer_identity_is_staged_and_reaches_review",
+            subject_observer_identity_is_staged_and_reaches_review as fn(),
         ),
         ("source_skips_bad_waits", source_skips_bad_waits as fn()),
         (
@@ -2738,7 +2745,7 @@ fn main() {
     quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
     println!("test unreadable_job_record_is_a_failed_read ... ok");
     database.stop();
-    println!("52 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("53 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
@@ -2772,7 +2779,7 @@ fn declared_wait_uses_bell() {
     .unwrap();
     waiting.reply(1, serde_json::json!([{"seq":1, "dir":"done", "key":key}]));
     assert!(
-        receiver.recv_timeout(Duration::from_secs(10)).is_ok(),
+        receiver.recv_timeout(SIGNAL_WAIT).is_ok(),
         "one ending wakes its declaring allowance"
     );
     assert!(receiver.try_recv().is_err(), "one event causes one look");
@@ -2829,7 +2836,7 @@ fn source_skips_bad_waits() {
         1,
         "a bad wait cannot stop an unrelated job completion"
     );
-    assert_passing_input(rx.recv_timeout(Duration::from_secs(10)).unwrap());
+    assert_passing_input(rx.recv_timeout(SIGNAL_WAIT).unwrap());
 }
 
 fn live_waits_do_not_look_on_bell_reset() {
@@ -3193,7 +3200,7 @@ fn result_budget_rejects_repeated_checks() {
             kind: Kind::Regression,
             tests: vec!["test_value.py::test_value".into()],
             forcing: None,
-            helper_evidence: None,
+            proof: None,
             declared_symptom: None,
         })
         .collect();

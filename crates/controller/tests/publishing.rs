@@ -96,7 +96,9 @@ fn check_plan(f: &Fixture, base: String) -> CheckRun {
             kind: Kind::Demonstrating,
             tests: vec!["test_value.py::test_value".into()],
             forcing: None,
-            helper_evidence: None,
+            proof: Some(
+                serde_json::json!({"subjects":[], "observer_support":[], "red_message":"old value"}),
+            ),
             declared_symptom: None,
         }],
     }
@@ -748,7 +750,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     commit(
         &f.source,
         "test_value.py",
-        "from value import value\ndef test_value(): assert value() == 2\n",
+        "from value import value\ndef test_value(): assert value() == 2, 'old value'\n",
     );
     assert_eq!(
         git(
@@ -851,27 +853,32 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     .unwrap();
     if mode.starts_with("q46-") {
         let (sender, receiver) = mpsc::channel();
-        let start = Instant::now();
-        loop {
-            let node = c.world().unwrap().nodes[0];
-            let reached = match mode {
-                "q46-checking" | "q46-clean" => node.phase == Phase::Checking,
-                "q46-reviewing" => node.phase == Phase::Reviewing,
-                "q46-enqueue" => node.effect.is_some_and(|e| e.kind == EffectKind::Enqueue),
-                _ => panic!("unknown Q46 mode"),
-            };
-            if reached {
-                break;
-            }
-            drive_once(&mut c);
-            progress("poll worker observations");
-            source.poll_once(&mut store, &sender).unwrap();
-            progress("apply worker observations");
-            for input in receiver.try_iter() {
-                tl3_controller::ingress::apply(&mut c, input).unwrap();
-            }
-            assert!(start.elapsed() < Duration::from_secs(90));
-        }
+        drain_deadline::lifecycle(
+            &mut (&mut c, &mut source, &mut store),
+            |state| {
+                let node = state.0.world().unwrap().nodes[0];
+                let reached = match mode {
+                    "q46-checking" | "q46-clean" => node.phase == Phase::Checking,
+                    "q46-reviewing" => node.phase == Phase::Reviewing,
+                    "q46-enqueue" => node.effect.is_some_and(|e| e.kind == EffectKind::Enqueue),
+                    _ => panic!("unknown Q46 mode"),
+                };
+                (node.phase, reached)
+            },
+            |state| {
+                drive_once(state.0);
+            },
+            |state| {
+                progress("poll worker observations");
+                state.1.poll_once(state.2, &sender).unwrap();
+                progress("apply worker observations");
+                receiver.try_iter().collect()
+            },
+            |state, input| {
+                tl3_controller::ingress::apply(state.0, input).unwrap();
+            },
+            Instant::now,
+        );
         if mode != "q46-clean" {
             commit(&f.source, "value.py", "def value(): return 3\n");
         }
@@ -902,18 +909,27 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     }
     if mode == "before-enqueue" {
         let (sender, receiver) = mpsc::channel();
-        let start = Instant::now();
-        while server.api.state.lock().unwrap().checks.is_empty() {
-            drive_once(&mut c);
-            progress("poll worker observations");
-            source.poll_once(&mut store, &sender).unwrap();
-            progress("apply worker observations");
-            for input in receiver.try_iter() {
-                tl3_controller::ingress::apply(&mut c, input).unwrap();
-            }
-            assert!(start.elapsed() < Duration::from_secs(90));
-            thread::yield_now();
-        }
+        drain_deadline::lifecycle(
+            &mut (&mut c, &mut source, &mut store),
+            |state| {
+                let node = state.0.world().unwrap().nodes[0];
+                let reached = !server.api.state.lock().unwrap().checks.is_empty();
+                (node.phase, reached)
+            },
+            |state| {
+                drive_once(state.0);
+            },
+            |state| {
+                progress("poll worker observations");
+                state.1.poll_once(state.2, &sender).unwrap();
+                progress("apply worker observations");
+                receiver.try_iter().collect()
+            },
+            |state, input| {
+                tl3_controller::ingress::apply(state.0, input).unwrap();
+            },
+            Instant::now,
+        );
         assert!(!server.api.state.lock().unwrap().labels);
         let d = f.delivery(EffectKind::Push, 100);
         let checkout = f.adapter().checkout(&d);

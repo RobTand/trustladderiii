@@ -63,9 +63,9 @@ def test_invalid_inputs_fail_at_request_boundary(maker_request, field, value):
 
 def test_check_base_schema_accepts_only_commit_ids(maker_request):
     from jsonschema import Draft202012Validator
-    from tl3_workers.contracts import schema
+    from tl3_workers.contracts import schema, registry
 
-    validator = Draft202012Validator(schema("maker-input"))
+    validator = Draft202012Validator(schema("maker-input"), registry=registry())
     inputs = maker_request["inputs"]
     for value in ("a" * 40, "b" * 64):
         assert validator.is_valid({**inputs, "check_base_sha": value})

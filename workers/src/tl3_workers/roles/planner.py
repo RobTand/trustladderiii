@@ -2,19 +2,20 @@
 
 from copy import deepcopy
 import ast
+import tomllib
 from pathlib import PurePosixPath
 import re
-import tomllib
 
 from jsonschema import Draft202012Validator
 
 from tl3_workers.roles.base import Role
 from tl3_workers.evidence import preflight
 from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES, MAX_EXECUTION_PIECES, execution_forecast
-from tl3_harness import Check, Forcing, HarnessInputError, Kind, HelperEvidence
+from tl3_harness import Check, Forcing, HarnessInputError, Kind, Proof
+from tl3_harness.proof import overlaps
 from tl3_harness.limits import validate_check_plan
 from tl3_harness.node_ids import validate_always_tests
-from tl3_harness.trees import is_test, test_function_source, bound_names, validate_helper_setup
+from tl3_harness.trees import is_test, test_function_source
 from tl3_workers.tools import Worktree
 from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.recall import check_citations
@@ -148,33 +149,17 @@ def check_reply(inputs, reply, *, rehearsals=None, read_sources=None):
             violations.append("A leaf must resolve every design question.")
         if not reply["lands_on_its_own"]:
             violations.append("A leaf must land on its own.")
-        helper_checks = [check for check in reply["checks"] if "helper_evidence" in check]
-        if len(helper_checks) > 1:
-            violations.append("helper evidence supports one target check per plan")
-        for check in helper_checks:
-            try:
-                evidence = HelperEvidence.parse(check["helper_evidence"])
-                Check("helper", Kind(check["kind"]), tuple(check["node_ids"]),
-                      Forcing.parse(check["forcing"]) if "forcing" in check else None, evidence)
-                path = evidence.target.split("::")[0]
-                patterns = test_files()
-                oversized, exists = base_definition(evidence.target)
-                if oversized or not exists or patterns is None or not is_test(path, patterns) or path not in reply["files"]:
-                    raise ValueError("target must name an existing helper in a declared configured test file")
-                with Worktree(".") as tree, tree._file(path) as stream:
-                    source = stream.read(HARD_CAP_BYTES + 1)
-                problem = helper_target_problem(source, evidence.target)
-                if problem:
-                    violations.append(f"Invalid helper evidence: {problem}")
-                if evidence.setup_functions:
-                    validate_helper_setup(source, evidence)
-                for observer in check["node_ids"]:
-                    parts = observer.split("::")
-                    if (len(parts) != 2 or not parts[1].isidentifier() or not parts[1].startswith("test_")
-                            or base_definition(observer, binding=True)[1] or parts[0] not in reply["files"]):
-                        raise ValueError("observers must name new top-level tests in declared files")
-            except ValueError as error:
-                violations.append(f"Invalid helper evidence: {error}")
+        for check in reply["checks"]:
+            if check['kind'] in ('demonstrating', 'reproducing') and 'declared_symptom' not in check and 'proof' not in check:
+                violations.append('Assertion RED requires proof.red_message; use subjects: [] for an inferred partition.')
+            if 'proof' in check:
+                try:
+                    proof = Proof.parse(check['proof'])
+                    for unit in (*proof.subjects, *proof.observer_support):
+                        if unit.split('::')[0] not in reply['files']:
+                            violations.append(f'Proof source must be in declared files: {unit}')
+                except HarnessInputError as error:
+                    violations.append(str(error))
         covered = set()
         forcings = {}
         for index, check in enumerate(reply["checks"]):
@@ -205,7 +190,7 @@ def check_reply(inputs, reply, *, rehearsals=None, read_sources=None):
                         violations.append("Checks must name exact pytest node IDs.")
                     continue
                 # A forced check runs the old test on the base, so it must exist there too.
-                if check["kind"] in {"regression", "behavior-preserving"} or "forcing" in check or "declared_symptom" in check:
+                if check["kind"] in {"regression", "behavior-preserving"} or ("forcing" in check and not check.get("proof", {}).get("subjects")) or "declared_symptom" in check:
                     path = node_id.split("::")[0]
                     oversized, exists = base_definition(node_id)
                     if oversized:
@@ -225,7 +210,7 @@ def check_reply(inputs, reply, *, rehearsals=None, read_sources=None):
             try:
                 validate_check_plan(tuple(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']),
                                                 (forcings.get(i) if check['kind'] == 'demonstrating' else None),
-                                                HelperEvidence.parse(check['helper_evidence']) if 'helper_evidence' in check else None,
+                                                Proof.parse(check['proof']) if 'proof' in check else None,
                                                 check.get('declared_symptom'))
                                           for i, check in enumerate(reply['checks']) if check['node_ids']))
             except ValueError as error:
@@ -350,40 +335,14 @@ def check_reply(inputs, reply, *, rehearsals=None, read_sources=None):
     reply["violations"] = list(dict.fromkeys(violations))
 
 
-def helper_target_problem(source, target):
-    """Reject unsupported target shapes and data constructors without importing them.
-
-    Call chains may supply a failure contract. Independent execution still
-    establishes whether the declared cases reach the intended assertion.
-    """
-    name = target.split('::')[1]
-    definitions = [node for node in ast.parse(source).body
-                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-                   and node.name == name]
-    if (len(definitions) != 1 or not isinstance(definitions[0], ast.FunctionDef)
-            or definitions[0].decorator_list):
-        return 'helper target must be one existing undecorated synchronous top-level function'
-
-    def has_assertion(node):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
-            return False
-        if isinstance(node, ast.Assert):
-            return True
-        if isinstance(node, ast.Raise):
-            exception = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
-            if isinstance(exception, ast.Name) and exception.id == 'AssertionError':
-                return True
-        return any(has_assertion(child) for child in ast.iter_child_nodes(node))
-
-    returns_dictionary = any(isinstance(node, ast.Return) and isinstance(node.value, ast.Dict)
-                             for statement in definitions[0].body for node in ast.walk(statement))
-    calls_other_code = any(isinstance(node, ast.Call) for node in ast.walk(definitions[0]))
-    if (returns_dictionary and not calls_other_code
-            and not any(has_assertion(statement) for statement in definitions[0].body)):
-        return ('helper target constructs a dictionary without an assertion failure contract; this '
-                'helper cannot preserve the old test assertion. Consider an existing test with '
-                'a supported forcing, or report the remaining source obligation and unsupported target shape.')
-    return None
+def test_files():
+    """Configured base test patterns, read without importing served code."""
+    try:
+        with Worktree('.') as tree, tree._file('pyproject.toml') as stream:
+            patterns = tomllib.loads(stream.read(HARD_CAP_BYTES))['tool']['tl3']['harness']['test-files']
+    except (OSError, ValueError, UnicodeError, KeyError, TypeError):
+        return None
+    return patterns if isinstance(patterns, list) and all(isinstance(item, str) for item in patterns) else None
 
 
 def base_file_selection(path, read_sources):
@@ -472,7 +431,7 @@ def base_file_selection(path, read_sources):
     return tuple(nodes), None
 
 
-def base_definition(node_id, *, binding=False):
+def base_definition(node_id):
     """Whether the base defines the test, after whether its file is over the hard cap."""
     # The whole module is parsed to find the test, so the
     # declared-file hard cap bounds it, not a page size.
@@ -483,25 +442,7 @@ def base_definition(node_id, *, binding=False):
         return False, False
     if len(source.encode("utf-8")) > HARD_CAP_BYTES:
         return True, False
-    if binding:
-        try:
-            names = bound_names(source)
-        except SyntaxError:
-            return False, True
-        return False, node_id.split("::", 1)[1] in names or "*" in names
     return False, test_function_source(source, node_id) is not None
-
-
-def test_files():
-    """The repository's harness test-file patterns, or None when the base doesn't configure them."""
-    try:
-        with Worktree(".") as tree, tree._file("pyproject.toml") as stream:
-            patterns = tomllib.loads(stream.read(HARD_CAP_BYTES))["tool"]["tl3"]["harness"]["test-files"]
-    except (OSError, ValueError, UnicodeError, KeyError, TypeError):
-        return None
-    if not isinstance(patterns, list) or not all(isinstance(pattern, str) for pattern in patterns):
-        return None
-    return patterns
 
 
 EDIT_VERBS = frozenset(("extend", "extends", "extending", "patch", "patches", "patching", "update", "updates",
@@ -560,6 +501,8 @@ def edit_violations(goals, reply):
                 demonstrated.add(function(node_id))
             else:
                 frozen.setdefault(function(node_id), (f"check-{index + 1}", check["kind"], node_id))
+    subjects = [unit for check in reply['checks'] if check['kind'] == 'demonstrating'
+                for unit in check.get('proof', {}).get('subjects', [])]
     edits = reply.get("edits_tests", [])
     edited = set()
     for node_id in edits:
@@ -582,34 +525,20 @@ def edit_violations(goals, reply):
             violations.append(f"`{node_id}` is in edits_tests, so a regression or behavior-preserving check "
                               "can't name it: those checks run tests exactly as the base wrote them. "
                               "Name it only in a demonstrating check.")
-        if function(node_id) not in demonstrated:
+        if function(node_id) not in demonstrated and not any(overlaps(function(node_id), unit) for unit in subjects):
             uncovered.append(node_id)
-    patterns = test_files()
-    # The base run applies every test-file edit, so a head that changes only test files is its own base.
-    test_only = bool(reply["files"]) and patterns is not None and all(
-        is_test(path, patterns) for path in reply["files"])
-    names_frozen = False
     for goal_id, goal in enumerate(goals):
         for key, (name, kind, node_id) in frozen.items():
             if key in edited or node_id.split("::")[0] not in reply["files"]:
                 continue
             test = key.rsplit("::", 1)[-1]
             found = list(mentions(goal["description"], test))
-            names_frozen = names_frozen or bool(found)
             # A heuristic: an edit verb governing the name says the goal edits the test.
             if any(asks_to_edit(before, after) for before, after in found):
                 violations.append(f"Goal {goal_id} names `{test}`, and {name} freezes `{node_id}` as a {kind} "
                                   "check. If the change edits that test, list it in edits_tests and name it only "
                                   "in a demonstrating check. If it leaves the test as written there, guard that "
                                   "behavior with other existing tests.")
-    # Q55: a forced reproduction recreates the flake outside the test, so it can show a test-only change.
-    demonstrating = [check for check in reply["checks"] if check["kind"] == "demonstrating"]
-    forced = bool(demonstrating) and all(valid_forcing(check) or "helper_evidence" in check or "declared_symptom" in check for check in demonstrating)
-    if test_only and (edited or demonstrated or names_frozen) and not forced:
-        violations.append("This leaf changes only tests, so an ordinary demonstrating check can't show it: the "
-                          "base run applies the leaf's test edits, so base and head run the same test. A change "
-                          "to tests alone needs a forced reproduction (Q55) on its demonstrating check; if no "
-                          "forcing can be written, return can't meet.")
     return violations, uncovered
 
 
