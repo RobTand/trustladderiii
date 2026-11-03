@@ -149,8 +149,9 @@ def _machine_record_supported(runtime: str) -> bool:
 
 def _json_command(command):
     if not _machine_record_supported(str(Path(command[1]).resolve())):
-        raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_capability",
-                               "machine_record_unsupported")
+        from tl3_workers.facts import record_prismabuild_fallback
+        record_prismabuild_fallback(Path(command[1]).stem)
+        return _stdout_json_command(command)
     cause = "machine_record_io_failed"
     try:
         with tempfile.TemporaryFile(mode="w+b") as channel:
@@ -187,6 +188,32 @@ def _json_command(command):
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_channel", cause) from error
     raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_channel", cause)
+
+
+def _stdout_json_command(command):
+    """Pre-fd runtimes publish submission and terminal records on stdout."""
+    cause = "stdout_record_io_failed"
+    try:
+        with tempfile.TemporaryFile(mode="w+b") as output:
+            result = subprocess.run(command, stdout=output, stderr=subprocess.DEVNULL)
+            output.seek(0)
+            raw = output.read(2_097_153)
+        if result.returncode < 0:
+            cause = "stdout_record_command_killed"
+        elif not raw and result.returncode and "--detach" in command:
+            raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_submission",
+                                   f"submission_refused_exit_{result.returncode}")
+        elif len(raw) > 2_097_152:
+            cause = "stdout_record_too_large"
+        else:
+            cause = "stdout_record_invalid_json"
+            value = json.loads(raw)
+            if isinstance(value, dict):
+                return result.returncode, value
+            cause = "stdout_record_not_object"
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_stdout", cause) from error
+    raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_stdout", cause)
 
 
 def _summary(ending, key):
