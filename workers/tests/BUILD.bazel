@@ -773,3 +773,16 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_shared_prompt_cache",
+    srcs = ["test_shared_prompt_cache.py"],
+    deps = [
+        ":conftest",
+        ":test_prompt_cache",
+        ":test_workers",
+        "//workers/src",
+        "@tl3_pip//httpx",
+        "@tl3_pip//pytest",
+    ],
+)
