@@ -13,10 +13,12 @@ from tl3_workers.evidence import preflight
 from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES, MAX_EXECUTION_PIECES, execution_forecast
 from tl3_harness import Check, Forcing, HarnessInputError, Kind, HelperEvidence
 from tl3_harness.limits import validate_check_plan
+from tl3_harness.node_ids import validate_always_tests
 from tl3_harness.trees import is_test, test_function_source, bound_names, validate_helper_setup
 from tl3_workers.tools import Worktree
 from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.recall import check_citations
+from tl3_workers.turns import REPAIR_MESSAGE_BYTES
 
 
 # Fresh proposals require estimates; the transport still accepts workers that
@@ -29,23 +31,28 @@ EXPLORATION_DECLARATION = {
 
 
 class PlanConsistencyError(ValueError):
-    """A draft's checks disagree with its edit declarations or forced base selection."""
+    """A draft's checks disagree with its declarations or exact base selections."""
 
-    def __init__(self, uncovered, missing_forced=(), *, draft=None):
+    def __init__(self, uncovered, missing_forced=(), *, draft=None, file_selections=None):
         self.draft = deepcopy(draft)
         self.uncovered = set(uncovered)
         self.missing_forced = set(missing_forced)
-        self.node_ids = (*uncovered, *missing_forced)
+        self.file_selections = file_selections or {}
+        self.node_ids = (*uncovered, *missing_forced, *self.file_selections)
         self.violations = [
             f"`{node_id}` is in edits_tests but no demonstrating check names it. "
             "Name it in a demonstrating check that fails on the base by an assertion."
             for node_id in uncovered]
         self.violations.extend(f"Existing check must name a test defined at the base: {node_id}"
                                for node_id in missing_forced)
+        self.violations.extend(f"Checks must name exact pytest node IDs: {path}. "
+                               f"Replace the file with every already-read base definition: {', '.join(nodes)}"
+                               for path, nodes in self.file_selections.items())
         super().__init__("\n".join(self.violations) +
                          "\nReconcile the declaration and checks using already-read facts. "
                          "Keep the draft's files, goals, check kinds and forcings. Only add missing "
                          "demonstrating coverage, replace forced non-base selections with base tests, "
+                         "replace regression file selections with their complete base definitions, "
                          "or drop an uncovered unnecessary edit. Do not expand the draft. "
                          "Drop an edit only if it is unnecessary for the goals. "
                          "A forced check must name existing base tests and preserve every required goal, "
@@ -98,6 +105,13 @@ class PlanConsistencyError(ValueError):
                     != {key: value for key, value in original.items() if key != 'node_ids'}):
                 errors.append('Correction changes a draft check kind, goals or forcing.')
             old_nodes, new_nodes = set(original['node_ids']), set(check['node_ids'])
+            expanded = old_nodes & self.file_selections.keys()
+            if expanded:
+                expected = old_nodes - expanded
+                expected.update(node for path in expanded for node in self.file_selections[path])
+                if new_nodes != expected:
+                    errors.append('Correction must preserve the complete file selection without extra tests.')
+                continue
             replacing = original['kind'] == 'demonstrating' and 'forcing' in original
             removable = self.missing_forced if replacing else set()
             if (old_nodes - new_nodes) - removable:
@@ -109,7 +123,7 @@ class PlanConsistencyError(ValueError):
         reply['violations'].extend(dict.fromkeys(errors))
 
 
-def check_reply(inputs, reply, *, rehearsals=None):
+def check_reply(inputs, reply, *, rehearsals=None, read_sources=None):
     if rehearsals is not None:
         rehearsals.raise_infrastructure()
     Draft202012Validator(EXPLORATION_DECLARATION).validate(reply)
@@ -122,6 +136,8 @@ def check_reply(inputs, reply, *, rehearsals=None):
                   if reply.pop("execution", None) is not None else [])
     uncovered = []
     missing_forced = []
+    file_selections = {}
+    invalid_selectors = False
     paths = set()
     if reply["kind"] == "leaf":
         if inputs["must_split"]:
@@ -178,7 +194,15 @@ def check_reply(inputs, reply, *, rehearsals=None):
                 try:
                     Check("planned", Kind(check["kind"]), (node_id,))
                 except ValueError:
-                    violations.append("Checks must name exact pytest node IDs.")
+                    invalid_selectors = True
+                    if check['kind'] == 'regression' and '::' not in node_id:
+                        nodes, problem = base_file_selection(node_id, read_sources or {})
+                        if problem:
+                            violations.append(f"Checks must name exact pytest node IDs: {node_id}. {problem}")
+                        else:
+                            file_selections[node_id] = nodes
+                    else:
+                        violations.append("Checks must name exact pytest node IDs.")
                     continue
                 # A forced check runs the old test on the base, so it must exist there too.
                 if check["kind"] in {"regression", "behavior-preserving"} or "forcing" in check or "declared_symptom" in check:
@@ -197,7 +221,7 @@ def check_reply(inputs, reply, *, rehearsals=None):
             covered.update(cited)
         edit_errors, uncovered = edit_violations(inputs["ingest"]["goals"], reply)
         violations.extend(edit_errors)
-        if "Checks must name exact pytest node IDs." not in violations:
+        if not invalid_selectors:
             try:
                 validate_check_plan(tuple(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']),
                                                 (forcings.get(i) if check['kind'] == 'demonstrating' else None),
@@ -297,11 +321,18 @@ def check_reply(inputs, reply, *, rehearsals=None):
         rejected = next((item for item in reversed(rehearsals.candidates) if item['status'] == 'refused'), None)
         if rejected is not None:
             violations.append(rejected['message'])
-    if uncovered or missing_forced:
-        mismatch = PlanConsistencyError(uncovered, missing_forced, draft=reply)
+    if uncovered or missing_forced or file_selections:
+        mismatch = PlanConsistencyError(uncovered, missing_forced, draft=reply, file_selections=file_selections)
         # Only these intrinsic inconsistencies enter the existing tool-free repair.
         # Substantive plan failures still reach the controller under Q54.
-        if not violations and inputs.get('repair_plan_consistency', False):
+        proof_errors = (rehearsals.violations(inputs.get('base_sha'),
+                        [check for check in reply['checks'] if valid_forcing(check)])
+                        if file_selections and rehearsals is not None else [])
+        # File expansion must also fit the existing repair prompt; never send a partial list.
+        message_fits = not file_selections or len(str(mismatch).encode()) <= REPAIR_MESSAGE_BYTES
+        if not message_fits:
+            violations.append('Whole-file selection exceeds the existing correction message limit.')
+        if not violations and not proof_errors and inputs.get('repair_plan_consistency', False):
             raise mismatch
         violations.extend(mismatch.violations)
     if reply['kind'] == 'leaf':
@@ -353,6 +384,92 @@ def helper_target_problem(source, target):
                 'helper cannot preserve the old test assertion. Consider an existing test with '
                 'a supported forcing, or report the remaining source obligation and unsupported target shape.')
     return None
+
+
+def base_file_selection(path, read_sources):
+    """Enumerate only unambiguous static definitions already visible in the same run."""
+    try:
+        validate_always_tests([path])
+        patterns = test_files()
+        if patterns is None or not is_test(path, patterns):
+            return (), 'Base test definitions are unavailable for this configured path.'
+        with Worktree('.') as tree, tree._file(path) as stream:
+            source = stream.read(HARD_CAP_BYTES + 1)
+        if len(source.encode()) > HARD_CAP_BYTES:
+            return (), f'Base test discovery exceeds the {HARD_CAP_BYTES}-byte limit.'
+        module = ast.parse(source)
+    except (OSError, ValueError, UnicodeError, SyntaxError, RecursionError, MemoryError):
+        return (), 'Base test definitions are unavailable.'
+    nodes = []
+
+    def scan(body, prefix):
+        seen = set()
+        for node in body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names = [node.name]
+                if node.name.startswith('pytest_') or node.name in {'__getattr__', '__init__', '__new__'}:
+                    return 'dynamic collection hooks'
+                decorators = [ast.unparse(item.func if isinstance(item, ast.Call) else item)
+                              for item in node.decorator_list]
+                if any(not (item.startswith('pytest.mark.') or item == 'pytest.fixture') for item in decorators):
+                    return 'dynamic decorators'
+                if node.name.startswith('test_') and 'pytest.fixture' in decorators:
+                    return 'dynamic test fixture discovery'
+                if isinstance(node, ast.ClassDef):
+                    if prefix != path or node.bases or node.keywords or node.decorator_list:
+                        return 'dynamic class discovery'
+                    if node.name.startswith('Test'):
+                        problem = scan(node.body, prefix + '::' + node.name)
+                        if problem:
+                            return problem
+                elif node.name.startswith('test_'):
+                    selector = prefix + '::' + node.name
+                    Check('planned', Kind.REGRESSION, (selector,))
+                    if test_function_source(source, selector) is None:
+                        return 'ambiguous test definitions'
+                    nodes.append(selector)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                names = [alias.asname or alias.name.split('.')[0] for alias in node.names]
+                if any(name == '*' or name.startswith(('test_', 'Test')) for name in names):
+                    return 'dynamic imported tests'
+                if 'pytest' in names and not (isinstance(node, ast.Import)
+                        and any(alias.name == 'pytest' and alias.asname in (None, 'pytest') for alias in node.names)):
+                    return 'dynamic pytest binding'
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                if not all(isinstance(target, ast.Name) for target in targets):
+                    return 'dynamic bindings'
+                names = [target.id for target in targets]
+                if any(name.startswith(('test_', 'Test', 'pytest_')) or name == '__test__' for name in names):
+                    return 'dynamic test bindings'
+                try:
+                    ast.literal_eval(node.value)
+                except (ValueError, TypeError):
+                    return 'dynamic module initialization'
+            elif isinstance(node, ast.Pass) or (isinstance(node, ast.Expr)
+                    and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)):
+                names = []
+            else:
+                return 'dynamic module discovery'
+            if seen.intersection(names) or len(set(names)) != len(names):
+                return 'ambiguous definitions'
+            seen.update(names)
+        return None
+
+    try:
+        problem = scan(module.body, path)
+    except (ValueError, RecursionError, MemoryError):
+        problem = 'unavailable definitions'
+    if problem:
+        return (), f'Cannot establish complete base selection: {problem}.'
+    if not nodes:
+        return (), 'Base test definitions are unavailable.'
+    # Leave room for the existing 2 KiB repair message's instructions and diagnostics.
+    if sum(len(node.encode()) + 2 for node in nodes) > 1024:
+        return (), 'Base test discovery exceeds the bounded correction message limit.'
+    if read_sources.get(path) != source:
+        return (), 'Complete already-read base definitions are required for correction.'
+    return tuple(nodes), None
 
 
 def base_definition(node_id, *, binding=False):

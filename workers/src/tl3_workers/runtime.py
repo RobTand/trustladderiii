@@ -317,7 +317,8 @@ def _run(request, emit):
                     return _checked(role, request['inputs'], {
                         'kind': 'cant_meet', 'files': [], 'evidence_contract': [], 'report': ledger.failure['message']}, worktree=worktree)
                 try:
-                    result = _checked(role, request["inputs"], read_reply(text), worktree=worktree)
+                    result = _checked(role, request["inputs"], read_reply(text), worktree=worktree,
+                                      read_sources=planner_read_sources(history) if role.name == 'planner' else None)
                 except PlanConsistencyError as error:
                     if ledger is not None and any(item['status'] == 'refused' for item in ledger.candidates):
                         return refused_final()
@@ -348,11 +349,26 @@ def _run(request, emit):
     return reply
 
 
-def _checked(role, inputs, reply, *, worktree=None):
+def planner_read_sources(history):
+    """Successful complete reads, later compared with bounded base bytes by the planner."""
+    calls, sources = {}, {}
+    for message in history:
+        if isinstance(message, AIMessage):
+            for call in message.tool_calls:
+                args = call['args']
+                if call['name'] == 'read' and not args.get('offset', 0) and not args.get('column', 0):
+                    calls[call['id']] = args.get('path')
+        elif isinstance(message, ToolMessage) and message.tool_call_id in calls and message.status != 'error':
+            sources[calls[message.tool_call_id]] = message.text
+    return sources
+
+
+def _checked(role, inputs, reply, *, worktree=None, read_sources=None):
     validate(role.reply_schema, reply)
     if role.check_reply is not None:
         if role.name == 'planner':
-            role.check_reply(inputs, reply, rehearsals=getattr(worktree, 'forcing_rehearsals', None))
+            role.check_reply(inputs, reply, rehearsals=getattr(worktree, 'forcing_rehearsals', None),
+                             read_sources=read_sources)
         else:
             role.check_reply(inputs, reply)
     return reply

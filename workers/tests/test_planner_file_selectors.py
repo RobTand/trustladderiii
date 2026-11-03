@@ -1,4 +1,5 @@
 """Whole-file draft checks use the existing bounded consistency correction (#683)."""
+# ruff: noqa: F811
 import copy
 import json
 from pathlib import Path
@@ -114,7 +115,7 @@ def test_file_correction_cannot_change_obligations(planner_request, file_plan, m
     ('class TestInherited(Unknown):\n    pass\n', 'dynamic'),
     ('#' * (16 * 1048576 + 1), 'limit'),
     ('def test_broken(:\n', 'unavailable'),
-])
+], ids=['missing', 'ambiguous', 'generated', 'imported', 'inherited', 'oversized', 'syntax'])
 def test_file_discovery_refuses_without_guessing(planner_request, file_plan, monkeypatch, source, reason):
     from tl3_workers import runtime
     if source is None:
