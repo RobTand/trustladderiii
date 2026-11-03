@@ -1,3 +1,4 @@
+use super::source_error::at;
 use crate::{Error, Result};
 use rustix::process::{Pid, PidfdFlags, Signal, pidfd_open, pidfd_send_signal};
 use serde::{Deserialize, Serialize};
@@ -91,27 +92,35 @@ fn pidfd_with(
     path: &Path,
     open: impl FnOnce(Pid) -> rustix::io::Result<std::os::fd::OwnedFd>,
 ) -> Result<Option<std::os::fd::OwnedFd>> {
-    let Some(value) = read(path)? else {
+    let Some(value) = at("identity_read", read(path))? else {
         return Ok(None);
     };
     if value["cancelled"] == true {
         return Ok(None);
     }
-    let identity: Identity = serde_json::from_value(value)?;
-    if !matches(&identity)? {
+    let identity: Identity = at("identity_read", serde_json::from_value(value))?;
+    if !at("identity_read", matches(&identity))? {
         return Ok(None);
     }
-    let pid = Pid::from_raw(identity.pid).ok_or(Error::Invalid("invalid worker pid"))?;
-    let fd = match open(pid) {
-        Ok(fd) => fd,
-        Err(rustix::io::Errno::SRCH) => return Ok(None),
-        // Linux can reap the thread group between pidfd_open's PID lookup and
-        // pidfd_prepare. Only a mismatched identity proves this EINVAL is exit.
-        Err(rustix::io::Errno::INVAL) if !matches(&identity)? => return Ok(None),
-        Err(e) => return Err(std::io::Error::from(e).into()),
-    };
+    let pid = at(
+        "identity_read",
+        Pid::from_raw(identity.pid).ok_or(Error::Invalid("invalid worker pid")),
+    )?;
+    let fd = at(
+        "pidfd_open",
+        match open(pid) {
+            Ok(fd) => Ok(fd),
+            Err(rustix::io::Errno::SRCH) => return Ok(None),
+            // Linux can reap the thread group between pidfd_open's PID lookup and
+            // pidfd_prepare. Only a mismatched identity proves this EINVAL is exit.
+            Err(rustix::io::Errno::INVAL) if !at("identity_read", matches(&identity))? => {
+                return Ok(None);
+            }
+            Err(e) => Err(std::io::Error::from(e)),
+        },
+    )?;
     // Recheck after opening the pidfd, so PID reuse can never target another run.
-    if !matches(&identity)? {
+    if !at("identity_read", matches(&identity))? {
         return Ok(None);
     }
     Ok(Some(fd))
@@ -271,7 +280,8 @@ mod tests {
     fn source_pidfd_einval_for_live_process_still_errors() {
         assert!(
             matches!(source_pidfd_failure(rustix::io::Errno::INVAL, false),
-            Err(Error::Io(error)) if error.raw_os_error() == Some(22))
+            Err(error) if matches!(super::super::source_error::cause(&error),
+                Error::Io(io) if io.raw_os_error() == Some(22)))
         );
     }
 
@@ -288,7 +298,8 @@ mod tests {
     fn source_pidfd_other_errors_after_exit_still_error() {
         assert!(
             matches!(source_pidfd_failure(rustix::io::Errno::ACCESS, true),
-            Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::PermissionDenied)
+            Err(error) if matches!(super::super::source_error::cause(&error),
+                Error::Io(io) if io.kind() == std::io::ErrorKind::PermissionDenied))
         );
     }
 

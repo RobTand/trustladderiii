@@ -442,7 +442,7 @@ impl WorkerOutputSource {
             return Ok(true);
         }
         for name in ["claim.json", "process.json"] {
-            if let Some(fd) = at("process::pidfd", process::pidfd(&attempt.join(name)))? {
+            if let Some(fd) = process::pidfd(&attempt.join(name))? {
                 run.processes.insert(name, fd);
             } else {
                 run.processes.remove(name);
@@ -759,7 +759,6 @@ mod tests {
     boundary_test!(source_names_ppoll_failure, "ppoll");
     boundary_test!(source_names_inotify_read_failure, "inotify read");
     boundary_test!(source_names_read_failure, "read");
-    boundary_test!(source_names_pidfd_failure, "process::pidfd");
     boundary_test!(source_names_identity_read_failure, "identity_read");
     boundary_test!(source_names_pidfd_open_failure, "pidfd_open");
     boundary_test!(source_names_seek_failure, "seek");
