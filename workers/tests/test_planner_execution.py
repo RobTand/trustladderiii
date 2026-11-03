@@ -142,7 +142,7 @@ def request236(planner_request, monkeypatch):
     inputs = planner_request["inputs"]
     inputs["base_sha"] = "071094caa54922143398eb0397acb61bf3fed9f9"
     inputs["forecast"].update(generated_files=GENERATED_BUILDS.copy(),
-                                generator={"command": ["python3", "tools/bazel/build_files.py"]})
+                                generator="python3 tools/bazel/build_files.py")
     inputs["ingest"]["goals"] = [
         {"description": "Prove the first document remains safe.", "verification": "test"},
         {"description": "Prove the second document remains safe.", "verification": "test"}]
@@ -184,7 +184,7 @@ def test_request236_generated_builds_fit_with_inspection_and_all_source_checks(r
     validate("planner-reply", proposal)
     with Worktree(".", generated_files=inputs["forecast"]["generated_files"],
                   generator=inputs["forecast"]["generator"]) as tree:
-        assert tree.generator["command"] == ["python3", "tools/bazel/build_files.py"]
+        assert tree.generator == "python3 tools/bazel/build_files.py"
         for name in GENERATED_BUILDS:
             with pytest.raises(ValueError, match="Cannot hand-edit generated outputs"):
                 tree._check_write(name)
