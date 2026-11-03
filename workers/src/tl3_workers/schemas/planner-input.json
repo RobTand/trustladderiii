@@ -60,7 +60,10 @@
             "minimum": 0
           },
           "description": "Named overhead constants from controller config, summed by code."
-        }
+        },
+        "generated_files": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "generator": {"type": "string", "minLength": 1},
+        "generator_available": {"type": "boolean"}
       },
       "required": [
         "fit_tokens",

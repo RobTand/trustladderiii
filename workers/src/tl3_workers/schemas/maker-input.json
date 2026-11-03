@@ -89,6 +89,8 @@
       "properties": {"endpoint": {"type": "string", "pattern": "^https?://"}, "bank": {"$ref": "#/$defs/text"}},
       "required": ["endpoint", "bank"], "additionalProperties": false
     },
+    "protected_paths": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "forecast": {"$ref": "ingest-input.json#/properties/forecast"},
     "fit_tokens": {"type": "integer", "minimum": 1},
     "context_size": {"type": "integer", "minimum": 1}
   },

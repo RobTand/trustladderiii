@@ -746,3 +746,115 @@ def test_generated_outputs_cannot_be_hand_edited(generator_repo, tmp_path):
                              (tree.edit, ("tests/BUILD.bazel", "socket", "hand edit"))):
             with pytest.raises(ValueError, match="generated"):
                 method(*args)
+
+
+def test_generator_deadline_is_a_failure_not_a_hang(generator_repo, generator_backend, tmp_path):
+    from tl3_harness import generator
+    import shutil
+    staged = tmp_path / "staged"
+    shutil.copytree(generator_repo, staged, ignore=shutil.ignore_patterns(".git"))
+    result = generator.run(staged, generator.Container(IMAGE),
+                           "python3 -c 'import time; time.sleep(60)'", ["**/BUILD.bazel"], [],
+                           ["tests/BUILD.bazel"], timeout=0.05)
+    assert result["status"] == "failed" and result["exit_code"] == 124
+    assert "deadline" in result["message"]
+
+
+@pytest.mark.parametrize("corruption", ["log", "output", "incomplete", "stale"])
+def test_generator_refuses_unverified_or_stale_artifacts(
+        generator_repo, generator_backend, tmp_path, monkeypatch, corruption):
+    from tl3_workers import pb_generators
+    original = pb_generators._json_command
+
+    def command(args):
+        code, value = original(args)
+        if args[1].endswith("pbwait.py"):
+            ending = value["endings"][0]
+            log = ending["result"]["stdout"]
+            path = Path(log["path"])
+            if corruption == "log":
+                path.write_bytes(path.read_bytes() + b"corrupt")
+            elif corruption == "output":
+                from tl3_harness.generator import PREFIX
+                artifact = json.loads(path.read_text()[len(PREFIX):])
+                artifact["outputs"][0]["entry"]["sha256"] = "0" * 64
+                raw = (PREFIX + json.dumps(artifact) + "\n").encode()
+                path.write_bytes(raw)
+                log.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+            elif corruption == "incomplete":
+                ending.update(status="failed", succeeded=False, exit_code=137)
+            else:
+                (generator_repo / "tests/socket_support.py").write_text("concurrent source edit\n")
+        return code, value
+
+    monkeypatch.setattr(pb_generators, "_json_command", command)
+    before = (generator_repo / "tests/BUILD.bazel").read_bytes()
+    tree, generate = configured_generator(generator_repo, tmp_path)
+    with tree:
+        result = generate()
+    assert result["status"] != "completed", result
+    assert (generator_repo / "tests/BUILD.bazel").read_bytes() == before
+
+
+def test_generator_reattaches_after_interrupted_import(generator_repo, generator_backend, tmp_path, monkeypatch):
+    from tl3_workers import pb_generators
+    original = pb_generators._import
+
+    def interrupted(tree, outputs):
+        original(tree, outputs)
+        raise RuntimeError("fixture crash after atomic replacement")
+
+    tree, generate = configured_generator(generator_repo, tmp_path)
+    with tree:
+        monkeypatch.setattr(pb_generators, "_import", interrupted)
+        assert generate()["status"] == "failed"
+        monkeypatch.setattr(pb_generators, "_import", original)
+        assert generate()["status"] == "completed"
+    assert len(generator_backend[0]) == 1
+
+
+def test_request_132_maker_returns_only_the_generated_final_head(
+        generator_repo, generator_backend, tmp_path, monkeypatch):
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+    from tl3_workers import runtime
+    from tl3_workers.contracts import validate
+    for name in ("socket_support.py", "test_short_socket.py"):
+        (generator_repo / "tests" / name).unlink()
+    (generator_repo / "tests/test_wait.py").write_text("from socket import socket\n")
+    edits = [
+        ("tests/socket_support.py", "def short_socket(): return 'short'\n"),
+        ("tests/test_short_socket.py", "from tests.socket_support import short_socket\n"),
+        ("tests/test_wait.py", "from tests.socket_support import short_socket\n"),
+    ]
+    turns = [AIMessage(content="", tool_calls=[{"name": "write", "id": str(i),
+              "args": {"path": path, "content": content}}]) for i, (path, content) in enumerate(edits)]
+    turns.append(AIMessage(content=json.dumps({"kind": "done", "self_check": [
+        {"goal_id": "socket", "status": "met", "evidence": "Imports use shared support."}]})))
+    monkeypatch.setattr(runtime, "create_model", lambda request: FakeMessagesListChatModel(responses=turns))
+    request = {"protocol": 1, "role": "maker", "worktree": str(generator_repo),
+               "operation": {"node": 1, "generation": 0, "kind": "make"},
+               "inputs": {"brief": "Request 132: share short Unix socket support and migrate test imports.",
+                          "goals": [{"id": "socket", "description": "Use shared test support."}],
+                          "plan": {"files": [path for path, _ in edits] + ["tests/BUILD.bazel"],
+                                   "checks": [{"name": "support", "kind": "demonstrating",
+                                               "tests": ["tests/test_short_socket.py::test_short"],
+                                               "goal_ids": ["socket"]}]},
+                          "forecast": {"fit_tokens": 100000, "context_tokens": 150000,
+                                       "overhead_tokens": {"work": 30000},
+                                       "generated_files": ["**/BUILD.bazel"],
+                                       "generator": "python3 generate.py", "generator_available": True},
+                          "attempt": 1, "round": 0, "context_size": 150000, "fit_tokens": 100000,
+                          "tests": {"image": IMAGE, "tools_path": str(tmp_path / "tools")}}}
+    validate("maker-input", request["inputs"])
+    events = []
+    result = runtime.run(request, events.append)
+    assert result["kind"] == "done", result
+    validate("maker-reply", result)
+    tree = subprocess.check_output(["git", "rev-parse", result["head"] + "^{tree}"], cwd=generator_repo).decode().strip()
+    assert result["generation_evidence"]["output_tree"] == tree
+    assert result["generation_evidence"]["action_key"] == KEY
+    subprocess.run(["python3", "generate.py", "--check"], cwd=generator_repo, check=True)
+    assert "tests/socket_support.py:" in subprocess.check_output(
+        ["git", "show", result["head"] + ":tests/BUILD.bazel"], cwd=generator_repo).decode()
+    assert events[-1]["event"] == "reply"

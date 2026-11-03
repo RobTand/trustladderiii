@@ -123,6 +123,7 @@ pub struct Supervisor {
     models: tl3_config::Models,
     planning: tl3_config::Planning,
     protected_paths: crate::scope::ProtectedPaths,
+    repositories: Vec<tl3_config::Repository>,
     limits: tl3_config::Limits,
     store: tl3_config::Store,
     records_root: PathBuf,
@@ -167,6 +168,7 @@ impl Supervisor {
             models: config.models.clone(),
             planning: config.planning.clone(),
             protected_paths: crate::scope::ProtectedPaths::new(&config.github.repos),
+            repositories: config.github.repos.clone(),
             limits: config.limits.clone(),
             store: config.store.clone(),
             records_root: records_root.to_owned(),
@@ -380,7 +382,22 @@ impl Supervisor {
         } else {
             self.root(&delivery.key).join("worktree")
         };
-        let forecast = json!({"fit_tokens": self.limits.fit_tokens, "context_tokens": self.limits.context_tokens, "overhead_tokens": self.planning.overhead_tokens});
+        let mut forecast = json!({"fit_tokens": self.limits.fit_tokens, "context_tokens": self.limits.context_tokens, "overhead_tokens": self.planning.overhead_tokens});
+        if let Some(repository) = self.repositories.iter().find(|repo| {
+            repo.owner.eq_ignore_ascii_case(&delivery.repository.owner)
+                && repo.name.eq_ignore_ascii_case(&delivery.repository.name)
+                && repo.installation_id == delivery.repository.installation
+        }) {
+            forecast["generated_files"] = json!(repository.generated_files);
+            if let Some(generator) = &repository.generator {
+                forecast["generator"] = json!(generator);
+            }
+            forecast["generator_available"] = json!(repository.generator.is_some() && !repository.generated_files.is_empty());
+        }
+        if role == "maker" {
+            inputs["forecast"] = forecast.clone();
+            inputs["protected_paths"] = json!(self.protected_paths.for_repository(&delivery.repository, &self.planning.protected_paths)?);
+        }
         if role == "reviewer" {
             inputs = review::inputs(
                 delivery,
