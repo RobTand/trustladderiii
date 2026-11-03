@@ -140,12 +140,16 @@ omitted by ingest. Object when ingest loses an execution goal, required artifact
 executor, reproduction method or protected-file dependency. An unsupported
 contract remains unsupported even when its other goals can be implemented.
 
-For a fix to a helper inside configured test files, require method
-`helper_target_observer` in evidence_contract. The target is the real existing
-helper and the observers are new tests of its behavior, including diagnostic
-text from a deliberately failing inner test. If that capability is absent,
-report the missing method through the evidence preflight, without substituting
-review or a flaky-test forcing.
+Choose evidence from the issue's proof obligations. Do not require
+helper_target_observer solely because the target is in a test file. Use an
+ordinary failing test when it proves the requested change under ordinary
+staging. If that staging would copy the helper fix onto base and erase RED,
+select helper_target_observer to keep the real old helper and new observers
+separate. Preserve explicit evidence requirements from the issue. When selecting
+this mode, require method `helper_target_observer` in evidence_contract. If the
+capability is absent, report the missing method through evidence preflight.
+Do not substitute review or a flaky-test forcing for required red/green proof.
+Do not ask the issue owner to remove a proof method they never requested.
 
 
 A repository with a configured generator also supplies run_generator with executor

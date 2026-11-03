@@ -10,7 +10,7 @@ from tl3_workers.evidence import preflight
 from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES
 from tl3_harness import Check, Forcing, HarnessInputError, Kind, HelperEvidence
 from tl3_harness.limits import validate_check_plan
-from tl3_harness.trees import is_test, test_function_source, bound_names
+from tl3_harness.trees import is_test, test_function_source, bound_names, validate_helper_setup
 from tl3_workers.tools import Worktree
 from tl3_workers.recall import check_citations
 
@@ -125,6 +125,10 @@ def check_reply(inputs, reply, *, rehearsals=None):
                 oversized, exists = base_definition(evidence.target)
                 if oversized or not exists or patterns is None or not is_test(path, patterns) or path not in reply["files"]:
                     raise ValueError("target must name an existing helper in a declared configured test file")
+                if evidence.setup_functions:
+                    with Worktree(".") as tree, tree._file(path) as stream:
+                        source = stream.read(HARD_CAP_BYTES + 1)
+                    validate_helper_setup(source, evidence)
                 for observer in check["node_ids"]:
                     parts = observer.split("::")
                     if (len(parts) != 2 or not parts[1].isidentifier() or not parts[1].startswith("test_")

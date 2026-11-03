@@ -517,7 +517,8 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                                          for side in ("base", "head"))
                     result = replace(result, verdict=Verdict.INFRASTRUCTURE_FAILURE if infrastructure else Verdict.FAIL, tests=tuple(
                         replace(test, passed=False, message="Failure preservation requires every known-bad invocation "
-                                "to fail by assertion on both helpers.") for test in result.tests))
+                                "to fail by assertion on both helpers; setup/runtime errors and successful returns do not count.")
+                        for test in result.tests))
                 results.append(replace(result, helper_evidence=identity))
                 continue
             if check.name in forced:
@@ -540,7 +541,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
 
 
 def helper_failure_preservation(tool, staged, head, evidence, container, root, progress):
-    """Trusted driver calls the real target with data, independently of observers."""
+    """Call the real target with bounded data or existing setup, independently of observers."""
     module, function = evidence.target.split("::")
     source = """import json
 import pytest
@@ -548,7 +549,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
-def argument(value):
+def argument(value, module):
+    if isinstance(value, dict) and '$setup' in value:
+        name = value['$setup']
+        try:
+            return getattr(module, name)()
+        except Exception as error:
+            raise RuntimeError(f'Helper setup {name} failed: {type(error).__name__}') from error
     if isinstance(value, dict) and '$attributes' in value:
         return SimpleNamespace(**value['$attributes'])
     return value
@@ -560,8 +567,8 @@ def test_failure_{index}(request):
     module = pytest.Module.from_parent(request.session, path=Path({module!r}).resolve()).obj
     target = getattr(module, {function!r})
     case = json.loads({encoded!r})
-    args = [argument(value) for value in case['args']]
-    kwargs = {{key: argument(value) for key, value in case['kwargs'].items()}}
+    args = [argument(value, module) for value in case['args']]
+    kwargs = {{key: argument(value, module) for key, value in case['kwargs'].items()}}
     try:
         target(*args, **kwargs)
     except AssertionError:

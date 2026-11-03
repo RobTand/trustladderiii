@@ -129,11 +129,16 @@
               "args": {
                 "type": "array",
                 "maxItems": 16,
-                "items": {}
+                "items": {
+                  "$ref": "#/$defs/helper_argument"
+                }
               },
               "kwargs": {
                 "type": "object",
-                "maxProperties": 16
+                "maxProperties": 16,
+                "additionalProperties": {
+                  "$ref": "#/$defs/helper_argument"
+                }
               }
             },
             "required": [
@@ -149,6 +154,33 @@
         "failure_cases"
       ],
       "additionalProperties": false
+    },
+    "helper_argument": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "$setup": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^(?!test_|__)[A-Za-z_][A-Za-z0-9_]*$"
+            }
+          },
+          "required": [
+            "$setup"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "not": {
+            "type": "object",
+            "required": [
+              "$setup"
+            ]
+          }
+        }
+      ]
     }
   },
   "oneOf": [
