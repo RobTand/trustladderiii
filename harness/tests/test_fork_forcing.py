@@ -1,8 +1,11 @@
 """Real fork descendants must retain forcing evidence even after SIGKILL (#602)."""
 import json
+import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -208,3 +211,112 @@ def test_independent_checking_keeps_killed_child_assertion_classification(repo):
     from tl3_harness.model import Outcome
     outcomes = parse([decode(line) for line in child.stdout.splitlines()], selection['tests'], set(), child.returncode)
     assert outcomes == {'test_product.py::test_killed': Outcome.ASSERTION}
+
+
+@pytest.mark.parametrize('tamper', ['truncate', 'append', 'rewrite', 'replace'])
+def test_journal_tampering_is_a_sticky_error_without_hit_evidence(repo, tamper):
+    (repo / 'test_product.py').write_text('''
+from pathlib import Path
+import struct
+import product
+
+def test_tamper():
+    product.target(7, extra=2)
+    journal, = Path('/tmp').glob('tl3-forcing-*/node-*')
+    original = journal.read_bytes()
+    mode = MODE
+    if mode == 'truncate':
+        journal.write_bytes(b'')
+    elif mode == 'append':
+        with journal.open('ab') as stream:
+            stream.write(struct.pack('!Id', 1, 4))
+    elif mode == 'rewrite':
+        journal.write_bytes(b'x' * len(original))
+    else:
+        journal.unlink()
+        journal.write_bytes(original)
+    try:
+        product.target(7, extra=2)
+    except Exception:
+        # The test can swallow the call error; teardown must still reject it.
+        pass
+'''.replace('MODE', repr(tamper)))
+    forcing = Forcing.parse({'symptom': 'A slow callback.', 'patches': [
+        {'target': TARGET, 'delay_seconds': 0.001},
+        {'target': 'product.other', 'delay_seconds': 0.001}]})
+    result = summary(repo, ['tamper'], forcing)
+    assert result['status'] == 'completed', result
+    item, = result['tests']
+    assert item['outcome'] == 'error', item
+    assert item.get('forcing_tampered') is True, item
+    assert item['message'].startswith('forcing_tampered:'), item
+    assert item['target_hits'] == {}, item
+
+
+def test_truncating_a_fork_childs_entries_cannot_hide_them_from_parent(tmp_path):
+    accounting = runner.DelayAccounting(tmp_path, [TARGET])
+    child = os.fork()
+    if child == 0:
+        accounting.enter(TARGET, 4)
+        Path(accounting.path).write_bytes(b'')
+        os._exit(0)
+    assert os.waitpid(child, 0)[1] == 0
+    with pytest.raises(runner.ForcingError, match='forcing_tampered'):
+        accounting.finish()
+
+
+def test_100k_calls_have_bounded_journal_io_and_finish_with_exact_count(tmp_path, monkeypatch):
+    accounting = runner.DelayAccounting(tmp_path, [TARGET])
+    original = runner.os.pread
+    total_read = 0
+    calls = 100_000
+    byte_limit = 4 * calls * accounting.record.size
+
+    def bounded_read(descriptor, size, offset):
+        nonlocal total_read
+        total_read += size
+        assert total_read <= byte_limit, 'quadratic accounting re-read the journal beyond a linear I/O bound'
+        return original(descriptor, size, offset)
+
+    def deadline(*args):
+        raise AssertionError('100k forcing entries exceeded the 20-second bound')
+
+    monkeypatch.setattr(runner.os, 'pread', bounded_read)
+    previous = signal.signal(signal.SIGALRM, deadline)
+    signal.alarm(20)
+    started = time.monotonic()
+    try:
+        assert sum(accounting.enter(TARGET, 4) for _ in range(calls)) == 10
+        assert accounting.finish() == {TARGET: calls}
+        assert time.monotonic() - started < 20
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def test_killed_accounting_writer_cannot_strand_the_next_caller(tmp_path):
+    accounting = runner.DelayAccounting(tmp_path, [TARGET])
+    reader, writer = os.pipe()
+    child = os.fork()
+    if child == 0:
+        original = runner.os.write
+
+        def stop_after_append(descriptor, data):
+            result = original(descriptor, data)
+            if len(data) == accounting.record.size:
+                original(writer, b'appended')
+                signal.pause()
+            return result
+
+        runner.os.write = stop_after_append
+        accounting.enter(TARGET, 4)
+        os._exit(0)
+    os.close(writer)
+    try:
+        assert os.read(reader, 8) == b'appended'
+    finally:
+        os.close(reader)
+        os.kill(child, signal.SIGKILL)
+        os.waitpid(child, 0)
+    with pytest.raises(runner.ForcingError, match='forcing_tampered'):
+        accounting.finish()

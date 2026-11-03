@@ -321,3 +321,35 @@ def test_delays_are_capped_per_test(tmp_path):
     assert sum(slept) == runner.MAX_TOTAL_DELAY_SECONDS == 10
     assert slept[:3] == [4, 4, 2]
     assert accounting.finish() == {'Owner.call': 5}
+
+
+@pytest.mark.parametrize('reference', [
+    'tl3-forcing', '/tmp/*/node-*', 'tl3_harness.runner',
+    'from tl3_harness import runner', 'tl3_harness.forcing_ownership',
+])
+def test_forced_head_diff_cannot_reference_forcing_internals(pid_repo, monkeypatch, reference):
+    repo, base = pid_repo
+    head = head_with(repo, FIXED_TEST + '\n# ' + reference + '\n')
+    calls = []
+    original = execution.run_tree
+
+    def observed(*args, **kwargs):
+        calls.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(execution, 'run_tree', observed)
+    result, = execution.run_checks(repo, base, head, (forced(),), container=CONTAINER)
+    assert result.verdict == Verdict.FAIL
+    assert 'forcing_tampered' in result.tests[0].message
+    assert 'tests/test_sampler.py' in result.tests[0].message
+    assert 'forcing internals' in result.tests[0].message
+    assert calls == []
+
+
+def test_unchanged_base_references_do_not_trip_the_forced_head_guard(pid_repo):
+    repo, _ = pid_repo
+    (repo / 'sampler.py').write_text(SAMPLER + '\n# tl3-forcing is unrelated base documentation.\n')
+    base = save(repo, 'base documentation')
+    head = head_with(repo, FIXED_TEST)
+    result, = execution.run_checks(repo, base, head, (forced(),), container=CONTAINER)
+    assert result.verdict == Verdict.PASS, result.tests[0].message
