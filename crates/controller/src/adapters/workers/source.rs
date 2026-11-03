@@ -557,7 +557,7 @@ pub(super) fn parse_reply(
             protocol::validate_forecast_settings(&value["reply"], &inputs["forecast"])?;
         }
         let mut checked = value["reply"].clone();
-        super::evidence::preflight(role, inputs, &mut checked);
+        super::evidence::preflight(role, inputs, &mut checked)?;
         if !delivery.is_classifier() {
             protocol::map_reply(role, &checked)?;
         }

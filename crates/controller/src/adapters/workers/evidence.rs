@@ -1,13 +1,14 @@
 //! Recheck worker evidence against the capabilities saved with its request.
+use crate::{Error, Result};
 use serde_json::{Value, json};
 
-pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) {
+pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result<()> {
     let Some(capabilities) = inputs["tool_capabilities"].as_array() else {
         // #372: replies to requests started by the previous release still parse.
-        return;
+        return Ok(());
     };
     if !matches!(role, "ingest" | "audit" | "planner") {
-        return;
+        return Ok(());
     }
     let mut contract = Vec::new();
     for source in [
@@ -21,18 +22,9 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) {
             }
         }
     }
-    let mut errors: Vec<String> = inputs["ingest"]["evidence_errors"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(String::from)
-        .collect();
+    let mut errors = Vec::new();
     if role != "planner" && reply.get("evidence_contract").is_none() {
-        errors.push(
-            "Unsupported evidence requirement: evidence_contract is missing from intake or audit."
-                .into(),
-        );
+        return Err(Error::Invalid("worker evidence contract is missing"));
     }
     for requirement in &contract {
         let candidates: Vec<Vec<String>> = capabilities
@@ -87,6 +79,17 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) {
     reply["evidence_contract"] = json!(contract);
     reply["evidence_errors"] = json!(errors);
     if role == "planner" && !errors.is_empty() {
+        if reply["kind"] == "split" {
+            let mut files = Vec::new();
+            for piece in reply["pieces"].as_array().into_iter().flatten() {
+                for path in piece["files"].as_array().into_iter().flatten() {
+                    if !files.contains(path) {
+                        files.push(path.clone());
+                    }
+                }
+            }
+            reply["files"] = json!(files);
+        }
         reply.as_object_mut().unwrap().retain(|key, _| {
             matches!(
                 key.as_str(),
@@ -106,4 +109,5 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) {
         }
         reply["report"] = json!(errors.join("\n"));
     }
+    Ok(())
 }

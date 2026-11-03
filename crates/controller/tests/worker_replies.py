@@ -5,7 +5,7 @@ from pathlib import Path
 import time
 
 brief = {"kind": "brief", "brief": "Fix the greeting.", "goals": [
-    {"description": "Return hello.", "verification": "test"}], "memory_ids": [], "files": ["greeting.py"]}
+    {"description": "Return hello.", "verification": "test"}], "memory_ids": [], "files": ["greeting.py"], "evidence_contract": []}
 
 
 def publish_marker(path, text):

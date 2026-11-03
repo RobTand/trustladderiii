@@ -15,7 +15,7 @@ def preflight(inputs, reply, *, planning=False):
         for requirement in requirements:
             if requirement not in contract:
                 contract.append(requirement)
-    errors = list(inputs.get('ingest', {}).get('evidence_errors', []))
+    errors = []
     for requirement in contract:
         candidates = []
         for capability in inputs['tool_capabilities']:
@@ -33,6 +33,8 @@ def preflight(inputs, reply, *, planning=False):
     reply['evidence_contract'] = contract
     reply['evidence_errors'] = list(dict.fromkeys(errors))
     if planning and errors:
+        if reply.get('kind') == 'split':
+            reply['files'] = list(dict.fromkeys(path for piece in reply['pieces'] for path in piece['files']))
         kept = {key: value for key, value in reply.items()
                 if key in {'files', 'forecast', 'violations', 'evidence_contract',
                            'evidence_errors', 'protected_paths', 'memory_ids', 'memory_flags'}}
