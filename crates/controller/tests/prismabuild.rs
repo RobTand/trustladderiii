@@ -2202,6 +2202,10 @@ fn main() {
     }
 
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).is_some_and(|arg| arg == "--repository-demand") {
+        repository_test_demand_is_sealed_with_default_and_identity_fallback();
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--always-tests") {
         always_tests_are_staged_required_and_reported_in_every_round();
         stale_always_test_notes_survive_controller_evidence();
@@ -2300,6 +2304,10 @@ fn main() {
         (
             "oversized_plan_is_refused_before_submission",
             oversized_plan_is_refused_before_submission as fn(),
+        ),
+        (
+            "repository_test_demand_is_sealed_with_default_and_identity_fallback",
+            repository_test_demand_is_sealed_with_default_and_identity_fallback as fn(),
         ),
         (
             "repository_image_is_sealed_and_staged_with_global_fallback",
@@ -2742,6 +2750,35 @@ fn moving_job_reconcile_is_pending() {
         matches!(result, Ok(Reconciliation::Pending)),
         "moving reconcile must stay Pending"
     );
+}
+
+fn repository_test_demand_is_sealed_with_default_and_identity_fallback() {
+    for (owner, name, installation, configured, cpus, mem_gb) in [
+        ("robtand", "TL3-SANDBOX", 1, true, 4, 12),
+        ("RobTand", "tl3-sandbox", 1, false, 1, 2),
+        ("RobTand", "other", 1, true, 1, 2),
+        ("Other", "tl3-sandbox", 1, true, 1, 2),
+        ("RobTand", "tl3-sandbox", 2, true, 1, 2),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let mut delivery = run(root.path(), false);
+        delivery.repository = Repository { owner: owner.into(), name: name.into(), installation };
+        let text = include_str!("../../config/example.toml");
+        let text = if configured {
+            text.replace("installation_id = 1", "installation_id = 1\ntest_demand = { cpus = 4, mem_gb = 12 }")
+        } else { text.to_owned() };
+        let config = tl3_config::Config::parse(&text).unwrap();
+        let mut adapter = fixture(root.path(), "pending").with_repositories(&config.github.repos);
+        adapter.execute(&delivery).unwrap();
+        let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
+            .unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        let seal = calls.iter().find(|args| args.iter().any(|arg| arg == "--seal-only")).unwrap();
+        assert!(seal.windows(2).any(|pair| pair == ["--cpus", &cpus.to_string()]), "expected {cpus} CPUs in {seal:?}");
+        assert!(seal.windows(2).any(|pair| pair == ["--demand", &format!("mem_gb={mem_gb},gpu=0")]), "expected {mem_gb} GiB in {seal:?}");
+        for name in ["OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"] {
+            assert!(seal.windows(2).any(|pair| pair == ["--env", &format!("{name}={cpus}")]));
+        }
+    }
 }
 
 fn repository_image_is_sealed_and_staged_with_global_fallback() {

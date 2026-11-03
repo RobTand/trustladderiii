@@ -359,6 +359,9 @@ pub struct Repository {
     pub generator: Option<String>,
     #[serde(default)]
     pub container_image: Option<String>,
+    /// CPU and memory reservation for this repository's PrismaBuild tests.
+    #[serde(default)]
+    pub test_demand: Option<TestDemand>,
     #[serde(default)]
     pub exec_scratch: bool,
     /// Run up to this many existing tests that import the change, and pass on the base,
@@ -393,6 +396,13 @@ pub struct BodyLine {
     pub values: Vec<String>,
     /// Used when TL3 can't tell the kind of change from its files.
     pub default: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TestDemand {
+    pub cpus: u32,
+    pub mem_gb: u32,
 }
 
 /// The harness's `MAX_SELECTED_TESTS`.
@@ -793,6 +803,14 @@ impl Config {
             let field = format!("github.repos[{index}]");
             github_name(&format!("{field}.owner"), &repo.owner, false)?;
             github_name(&format!("{field}.name"), &repo.name, true)?;
+            if let Some(demand) = repo.test_demand {
+                if !(1..=16).contains(&demand.cpus) {
+                    return Err(invalid(format!("{field}.test_demand.cpus"), "use 1 to 16 CPUs"));
+                }
+                if !(1..=64).contains(&demand.mem_gb) {
+                    return Err(invalid(format!("{field}.test_demand.mem_gb"), "use 1 to 64 GiB"));
+                }
+            }
             validate_protected_paths(&format!("{field}.protected_paths"), &repo.protected_paths)?;
             validate_protected_paths(&format!("{field}.generated_files"), &repo.generated_files)?;
             if let Some(command) = &repo.generator
