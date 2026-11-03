@@ -1161,6 +1161,23 @@ def test_review_fix_contract_accepts_named_tests_and_reasons(review_fix):
     maker._check_reply(inputs, reply)
 
 
+def test_review662_reproduction_contract_carries_assertion_reason(review_fix):
+    from tl3_workers.contracts import validate
+    inputs, reply = review_fix
+    reply['reproductions'][0]['proof'] = {
+        'subjects': [], 'observer_support': [], 'red_message': 'empty greeting'}
+    validate('maker-reply', {**reply, 'head': 'c' * 40})
+    maker._check_reply(inputs, reply)
+
+
+def test_review662_reproduction_cannot_omit_assertion_reason(review_fix):
+    from tl3_harness import HarnessInputError
+    inputs, reply = review_fix
+    reply['reproductions'][0].pop('proof', None)
+    with pytest.raises(HarnessInputError, match='proof|reason'):
+        maker._check_reply(inputs, reply)
+
+
 def test_bounded_fix_round_contract_accepts_resolved_records_and_finding_refs(maker_request):
     from tl3_workers.contracts import schema, registry
     from jsonschema import Draft202012Validator

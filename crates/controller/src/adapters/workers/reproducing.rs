@@ -92,6 +92,26 @@ fn exact_pytest_node_id(test: &str) -> bool {
 mod reply_defects {
     use super::*;
     #[test]
+    fn reproduction_keeps_declared_assertion_reason() {
+        let feedback =
+            json!([{"kind":"review_finding", "id":"f", "reviewed_sha":"head", "report":"fix"}]);
+        let proof = json!({"subjects":[], "observer_support":[], "red_message":"empty greeting"});
+        let mut reply = json!({"reproductions":[{"finding_id":"f", "tests":["test_greeting.py::test_empty"], "proof":proof}]});
+        let current = || crate::findings::current_review(&feedback, 1, Some("head"));
+        let fixes = check(&reply, current()).unwrap();
+        assert_eq!(fixes.checks[0].proof.as_ref(), Some(&proof));
+        assert_eq!(fixes.evidence["findings"][0]["proof"], proof);
+        reply["reproductions"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("proof");
+        assert!(
+            check(&reply, current()).is_err(),
+            "an assertion reproducer needs a declared reason"
+        );
+    }
+
+    #[test]
     fn exact_node_ids_agree_with_harness_vectors() {
         let vectors: Value = serde_json::from_str(include_str!(
             "../../../../../harness/test-vectors/pytest-node-ids.json"

@@ -62,6 +62,7 @@ tl3_py_test(
         ":conftest",
         ":message_invariants",
         ":worker_process",
+        "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//httpx",
         "@tl3_pip//jsonschema",
