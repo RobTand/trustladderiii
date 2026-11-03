@@ -84,6 +84,7 @@ py_library(
         "tl3_workers/evidence.py",
         "tl3_workers/exploration.py",
         "tl3_workers/facts.py",
+        "tl3_workers/forcing_rehearsal.py",
         "tl3_workers/forecast.py",
         "tl3_workers/judges.py",
         "tl3_workers/memory.py",
