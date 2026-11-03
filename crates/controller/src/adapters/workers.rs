@@ -389,7 +389,7 @@ impl Supervisor {
             let findings = store
                 .worker_document(&node, "findings")?
                 .unwrap_or(json!([]));
-            inputs = json!({"ingest": ingest, "must_split": matches!(n.phase, tl3_kernel::Phase::Planning { must_split: true }), "findings": findings, "protected_paths": self.protected_paths.for_repository(&delivery.repository, &self.planning.protected_paths)?, "forecast": forecast});
+            inputs = json!({"always_tests": self.images.additional_tests(&delivery.repository).always, "ingest": ingest, "must_split": matches!(n.phase, tl3_kernel::Phase::Planning { must_split: true }), "findings": findings, "protected_paths": self.protected_paths.for_repository(&delivery.repository, &self.planning.protected_paths)?, "forecast": forecast});
         } else if role == "audit" {
             inputs["ingest"] = store
                 .worker_document(&node, "briefs")?
