@@ -1031,6 +1031,8 @@ def test_generator_uses_repository_demand_and_native_thread_budget(
     [args] = generator_backend[0]
     assert args[args.index("--cpus") + 1] == str(cpus)
     assert args[args.index("--demand") + 1] == f"mem_gb={mem_gb}"
+    assert tree.generation_receipt.get("budget", {}).get("cpus") == cpus
+    assert tree.generation_receipt["budget"]["mem_gb"] == mem_gb
     for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
         assert f"{name}={cpus}" in args
 
@@ -1055,3 +1057,132 @@ def test_generator_oom_retains_failure_receipt(generator_repo, tmp_path, monkeyp
     assert "memory_limit_oom" in result["message"]
     assert "private" not in json.dumps(result)
     assert tree.generation_receipt == result
+
+
+@pytest.mark.parametrize("timeout", [120, 300, 600])
+def test_generator_repository_deadline_reaches_inner_and_outer_budgets(
+        generator_repo, generator_backend, tmp_path, timeout):
+    tree, generate = configured_generator(generator_repo, tmp_path)
+    tree.generator_timeout_s = timeout
+    with tree:
+        result = generate()
+    assert result["status"] == "completed", result
+    [args] = generator_backend[0]
+    assert args[args.index("--timeout-s") + 1] == str(timeout + 60)
+    assert args[args.index("--progress-phase") + 1] == f"tests={timeout + 60}"
+    assert result.get("budget", {}).get("timeout_s") == timeout
+
+
+@pytest.mark.parametrize("change", ["cpus", "mem_gb", "deadline"])
+def test_generator_budget_change_cannot_reuse_a_checkpoint(
+        generator_repo, generator_backend, tmp_path, change):
+    tree, generate = configured_generator(generator_repo, tmp_path)
+    with tree:
+        first = generate()
+        assert first["status"] == "completed", first
+        if change == "deadline":
+            tree.generator_timeout_s = 300
+        else:
+            tree.test_settings = TestSettings(IMAGE, tmp_path / "tools",
+                                             cpus=4 if change == "cpus" else 1,
+                                             mem_gb=12 if change == "mem_gb" else 2)
+        second = generate()
+    assert second["status"] == "completed", second
+    assert len(generator_backend[0]) == 2, "changed budgets must submit a fresh sealed action"
+    assert first["identity"] != second["identity"]
+    assert second["output_count"] == 0
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_generator_trusted_phase_receipts_include_timeout_and_cleanup(
+        generator_repo, generator_backend, tmp_path, monkeypatch, fail):
+    import shutil
+    from tl3_harness import generator
+    staged = tmp_path / "staged"
+    shutil.copytree(generator_repo, staged, ignore=shutil.ignore_patterns(".git"))
+    if fail:
+        def timeout(*args, **kwargs):
+            raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+        monkeypatch.setattr(generator, "container_command", lambda *args: ["generator-fixture"])
+        original = generator.subprocess.run
+        def launch(args, **kwargs):
+            return timeout(args, **kwargs) if args == ["generator-fixture"] else original(args, **kwargs)
+        monkeypatch.setattr(generator.subprocess, "run", launch)
+    result = generator.run(staged, generator.Container(IMAGE), "python3 generate.py",
+                           ["**/BUILD.bazel"], [], ["tests/BUILD.bazel"])
+    assert result["status"] == ("failed" if fail else "completed"), result
+    assert "timings" in result, "trusted stages must survive both success and inner timeout"
+    phases = result["timings"]
+    for phase in ("preparation", "container", "validation", "cleanup"):
+        assert phases[phase]["seconds"] >= 0
+        assert phases[phase]["outcome"] in ("completed", "timeout", "skipped")
+    assert phases["total_seconds"] >= sum(phases[p]["seconds"] for p in
+                                              ("preparation", "container", "validation", "cleanup"))
+    assert phases["container"]["scope"] == "startup_and_command"
+    if fail:
+        assert result["phase"] == "container"
+        assert result["exit_code"] == 124
+        assert phases["container"]["outcome"] == "timeout"
+        assert phases["validation"]["outcome"] == "skipped"
+
+
+def test_request_163_implicit_generator_failure_retains_safe_causal_receipt(
+        generator_repo, generator_backend, tmp_path, monkeypatch):
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+    from tl3_workers import runtime
+    from tl3_workers.contracts import validate
+    (generator_repo / "generate.py").write_text("raise SystemExit(124)\n")
+    turn = AIMessage(content=json.dumps({"kind": "done", "self_check": [
+        {"goal_id": "build", "status": "met", "evidence": "Model work finished."}]}))
+    monkeypatch.setattr(runtime, "create_model", lambda request: FakeMessagesListChatModel(responses=[turn]))
+    request = {"protocol": 1, "role": "maker", "worktree": str(generator_repo),
+               "operation": {"node": 163, "generation": 0, "kind": "make"},
+               "inputs": {"brief": "Regenerate BUILD files after model work.",
+                          "goals": [{"id": "build", "description": "Update BUILD files."}],
+                          "plan": {"files": ["tests/BUILD.bazel"], "checks": [
+                              {"name": "build", "kind": "demonstrating",
+                               "tests": ["tests/test_wait.py::test_wait"], "goal_ids": ["build"]}]},
+                          "forecast": {"fit_tokens": 100000, "context_tokens": 150000,
+                                       "overhead_tokens": {"work": 30000},
+                                       "generated_files": ["**/BUILD.bazel"],
+                                       "generator": "python3 generate.py", "generator_available": True},
+                          "attempt": 1, "round": 0, "context_size": 150000,
+                          "tests": {"image": IMAGE, "tools_path": str(tmp_path / "tools"),
+                                    "cpus": 4, "mem_gb": 12}}}
+    events = []
+    runtime.run(request, events.append)
+    reply = events[-1]["reply"]
+    assert reply["kind"] == "cant_meet" and "head" not in reply
+    assert KEY in reply["report"], "implicit failure must keep the failed action identity"
+    assert "b" * 64 in reply["report"], "implicit failure must keep the verified receipt"
+    assert '"exit_code": 124' in reply["report"]
+    assert '"exit_code": 0' in reply["report"], "outer success must remain distinct from inner failure"
+    assert '"timeout_s": 120' in reply["report"]
+    assert "container" in reply["report"]
+    assert len(generator_backend[0]) == 1, "fail_fast must not retry work"
+    validate("maker-reply", reply)
+
+
+@pytest.mark.parametrize("timeout", [0, -1, 601, True, "300", 1.5])
+def test_generator_rejects_invalid_repository_deadline_before_submission(
+        generator_repo, generator_backend, tmp_path, timeout):
+    tree, generate = configured_generator(generator_repo, tmp_path)
+    tree.generator_timeout_s = timeout
+    with tree:
+        result = generate()
+    assert result["status"] == "failed", result
+    assert not generator_backend[0], "invalid trusted input must fail before PB submission"
+
+
+def test_failed_inner_generator_receipt_is_journaled_without_work_retry(
+        generator_repo, generator_backend, tmp_path):
+    (generator_repo / "generate.py").write_text("raise SystemExit(124)\n")
+    tree, generate = configured_generator(generator_repo, tmp_path)
+    with tree:
+        result = generate()
+        assert result["status"] == "failed", result
+        assert tree.generator_checkpoint.get("receipt") == result
+        assert tree.generation_receipt == result
+        assert generate() == result
+    assert len(generator_backend[0]) == 1

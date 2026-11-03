@@ -1737,3 +1737,26 @@ fn delegated_attributions_reject_empty_duplicate_and_multiline_entries() {
         assert!(Config::parse(&source).is_err(), "{entries}");
     }
 }
+
+#[test]
+fn repository_generator_deadline_is_optional_and_bounded() {
+    assert!(Config::parse(EXAMPLE).is_ok());
+    for value in ["1", "120", "300", "600"] {
+        let source = EXAMPLE.replace(
+            "installation_id = 1",
+            &format!("installation_id = 1\ngenerator_timeout_s = {value}"),
+        );
+        assert!(
+            Config::parse(&source).is_ok(),
+            "must accept bounded deadline {value}"
+        );
+    }
+    for value in ["0", "601", "-1", "1.5", "true", "'300'"] {
+        let source = EXAMPLE.replace(
+            "installation_id = 1",
+            &format!("installation_id = 1\ngenerator_timeout_s = {value}"),
+        );
+        let error = Config::parse(&source).expect_err(value);
+        assert!(error.to_string().contains("generator_timeout_s"), "{error}");
+    }
+}

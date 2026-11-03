@@ -79,6 +79,7 @@ fn planner_protected_paths_follow_the_request_repository() {
         let forecast = &request["inputs"]["forecast"];
         assert_eq!(forecast["generated_files"], json!(["**/BUILD.bazel"]));
         assert_eq!(forecast["generator_available"], name == "TL3-SANDBOX");
+        assert_eq!(forecast["generator_timeout_s"], 120);
         if name == "TL3-SANDBOX" {
             assert_eq!(forecast["generator"], "bash tools/bazel/generate.sh");
         } else {
