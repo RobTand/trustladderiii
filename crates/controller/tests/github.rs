@@ -615,13 +615,13 @@ fn main() {
         ]
         .to_vec()
     };
-    // Main, eight- and sixteen-shard solo receipts, rounded up to keep slow groups apart.
+    // Main and completed sharded solo receipts, rounded up to keep slow groups apart.
     // Intake regressions share the vocabulary group and emit status lines, not
     // timing markers. The group weight includes its measured post-marker tail.
     let seconds = [
-        205, 87, 41, 23, 59, 7, 2, 8, 47, 8, 1, 6, 2, 80, 3, 23, 163, 1, 142, 16, 111, 72, 59, 25,
-        18, 141, 41, 222, 61, 7, 7, 104, 45, 63, 1, 8, 6, 76, 59, 28, 42, 3, 49, 7, 35, 14, 37, 16,
-        9, 64, 39, 54, 16, 12, 41, 5, 8, 38,
+        205, 87, 41, 23, 59, 7, 4, 8, 47, 10, 1, 6, 2, 95, 3, 23, 163, 11, 142, 16, 111, 114, 59,
+        166, 98, 141, 41, 222, 61, 7, 7, 104, 45, 63, 1, 8, 6, 76, 59, 28, 42, 3, 49, 7, 35, 14,
+        37, 16, 9, 64, 39, 54, 56, 12, 41, 5, 66, 38,
     ];
     // Successful main notice receipt 50fdb6d4 and completed eight- and sixteen-shard receipts.
     let notice_seconds = [
