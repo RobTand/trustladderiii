@@ -790,6 +790,8 @@ The waitpid owner records worker start and exit times separately from the launch
 acknowledgement. The controller imports the completion before reporting its
 observation and before deleting the attempt. If the waitpid owner died, a missing
 finish time stays unknown. A deliberate stop uses the confirmed stop boundary.
+Retirement continues if completion facts cannot be read or stored. That attempt
+may have no measurement; the diagnostic contains no file contents or error text.
 
 Failure records contain only the observed boundary, exception class, HTTP status
 and a redacted request ID capped at 128 characters. They retain no error text,

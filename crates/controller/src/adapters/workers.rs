@@ -760,7 +760,9 @@ impl Supervisor {
                     .to_str()
                     .is_some_and(|name| name.starts_with("attempt-"))
                 {
-                    facts::record(store, key, &entry.path())?;
+                    if facts::record(store, key, &entry.path()).is_err() {
+                        eprintln!("worker completion facts unavailable; retirement continues");
+                    }
                     match crate::memory::queue_attempt(store, key, &entry.path()) {
                         Ok(()) => {}
                         Err(Error::Invalid(_) | Error::Json(_)) => {
