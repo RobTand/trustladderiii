@@ -12,7 +12,7 @@ import httpx
 from jsonschema import ValidationError
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 import pytest
 from message_invariants import assert_tool_pairs
 
@@ -753,7 +753,8 @@ def test_fix_round_inputs_and_test_settings_reach_their_destinations(tmp_path, m
     system = observed[0][0].text
     assert system.startswith(files("tl3_workers").joinpath("prompts/maker.md").read_text())
     assert maker_request["key_file"] not in system
-    assert "fixture-key" in observed[-1][-1].text
+    assert "fixture-key" in next(message.text for message in reversed(observed[-1])
+                                 if isinstance(message, ToolMessage))
     assert events[-1]["reply"] == response
     validate("maker-input", inputs)
 
@@ -1455,7 +1456,8 @@ def test_long_maker_session_bounds_context_and_commits(tmp_path, maker_request, 
     request_text = json.dumps(maker_request['inputs'], ensure_ascii=False)
     assert all(any(m.content == request_text for m in messages if isinstance(m, HumanMessage))
                for messages in observed), 'the current request survives across resumed visits'
-    assert observed[-1][-1].text == "def greet(): return 'hello'\n", 'the newest read stays whole'
+    assert next(message.text for message in reversed(observed[-1])
+                if isinstance(message, ToolMessage)) == "def greet(): return 'hello'\n", 'the newest read stays whole'
     reply = events[-1]['reply']
     assert reply == {**DONE, 'head': git(root, 'rev-parse', 'HEAD')}
     assert reply['head'] != before
@@ -1471,6 +1473,13 @@ def test_maker_budget_exhaustion_finishes_without_claiming_unmade_changes(maker_
     final = DONE if final_done else {'kind': 'cant_meet', 'report': 'The work is incomplete.'}
 
     class EndlessMaker(ToolModel):
+        def bind_tools(self, tools, **kwargs):
+            offered = {tool.name: tool.description for tool in tools}
+            expected = ROLES["maker"].tools
+            verification = {name: expected[name] for name in {"list", "read", "glob", "grep", "diff", "run_tests"}}
+            assert offered in (expected, verification)
+            return self
+
         def _generate(self, messages, **kwargs):
             observed.append(list(messages))
             exhausted = any('budget is exhausted' in m.text for m in messages if m.type == 'human')
@@ -1484,9 +1493,13 @@ def test_maker_budget_exhaustion_finishes_without_claiming_unmade_changes(maker_
     monkeypatch.setattr(runtime, 'create_model', lambda _: EndlessMaker(responses=[]))
     events = []
     runtime.run(maker_request, events.append)
-    assert len(observed) <= 65, 'maker allows at most 64 tool turns and one final answer'
-    assert events[-1]['reply'] == {'kind': 'cant_meet', 'report':
-                                  'no code change was made' if final_done else 'The work is incomplete.'}
+    assert len(observed) == 65, 'maker allows 64 tool turns and one final answer'
+    reply = events[-1]['reply']
+    assert reply['kind'] == 'cant_meet'
+    assert reply['budget_exhaustion']['dimension'] == 'tool_turns'
+    assert reply['budget_exhaustion']['tool_turns'] == {'used': 64, 'allowed': 64}
+    assert reply['budget_exhaustion']['unfinished_obligations']
+    assert 'execution_budget_exhausted' in reply['report']
 
 
 RECEIPT = {"action_key": "a" * 64, "status": "executed", "exit_code": 0,
