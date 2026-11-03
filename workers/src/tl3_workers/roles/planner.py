@@ -1,6 +1,7 @@
 """Report plan measurements and rule violations to the controller."""
 
 from copy import deepcopy
+import ast
 from pathlib import PurePosixPath
 import re
 import tomllib
@@ -128,9 +129,12 @@ def check_reply(inputs, reply, *, rehearsals=None):
                 oversized, exists = base_definition(evidence.target)
                 if oversized or not exists or patterns is None or not is_test(path, patterns) or path not in reply["files"]:
                     raise ValueError("target must name an existing helper in a declared configured test file")
+                with Worktree(".") as tree, tree._file(path) as stream:
+                    source = stream.read(HARD_CAP_BYTES + 1)
+                problem = helper_target_problem(source, evidence.target)
+                if problem:
+                    violations.append(f"Invalid helper evidence: {problem}")
                 if evidence.setup_functions:
-                    with Worktree(".") as tree, tree._file(path) as stream:
-                        source = stream.read(HARD_CAP_BYTES + 1)
                     validate_helper_setup(source, evidence)
                 for observer in check["node_ids"]:
                     parts = observer.split("::")
@@ -263,6 +267,42 @@ def check_reply(inputs, reply, *, rehearsals=None):
         reply["decision_context"] = inputs["decision_context"]
     reply["forecast"] = forecast
     reply["violations"] = list(dict.fromkeys(violations))
+
+
+def helper_target_problem(source, target):
+    """Reject unsupported target shapes and data constructors without importing them.
+
+    Call chains may supply a failure contract. Independent execution still
+    establishes whether the declared cases reach the intended assertion.
+    """
+    name = target.split('::')[1]
+    definitions = [node for node in ast.parse(source).body
+                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                   and node.name == name]
+    if (len(definitions) != 1 or not isinstance(definitions[0], ast.FunctionDef)
+            or definitions[0].decorator_list):
+        return 'helper target must be one existing undecorated synchronous top-level function'
+
+    def has_assertion(node):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            return False
+        if isinstance(node, ast.Assert):
+            return True
+        if isinstance(node, ast.Raise):
+            exception = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
+            if isinstance(exception, ast.Name) and exception.id == 'AssertionError':
+                return True
+        return any(has_assertion(child) for child in ast.iter_child_nodes(node))
+
+    returns_dictionary = any(isinstance(node, ast.Return) and isinstance(node.value, ast.Dict)
+                             for statement in definitions[0].body for node in ast.walk(statement))
+    calls_other_code = any(isinstance(node, ast.Call) for node in ast.walk(definitions[0]))
+    if (returns_dictionary and not calls_other_code
+            and not any(has_assertion(statement) for statement in definitions[0].body)):
+        return ('helper target constructs a dictionary without an assertion failure contract; this '
+                'helper cannot preserve the old test assertion. Consider an existing test with '
+                'a supported forcing, or report the remaining source obligation and unsupported target shape.')
+    return None
 
 
 def base_definition(node_id, *, binding=False):
