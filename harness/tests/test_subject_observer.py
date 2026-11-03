@@ -410,3 +410,15 @@ def test_rereview662_parallel_maker_checks_integrity_after_fixtures(repository, 
     result = test_tool.run_current(staged, Container(IMAGE), check.tests, parallel=2)
     assert result['totals']['error'] == 1, result
     assert 'proof_subject_integrity' in result['tests'][0]['message'], result
+
+
+def test_rereview662_old_subject_can_update_its_own_runtime_state(repository):
+    path = 'tests/test_counter.py'
+    before = 'COUNT = 0\ndef helper():\n    global COUNT\n    COUNT += 1\n    return "old"\n'
+    after = before.replace('"old"', '"new"') + (
+        'def test_observer():\n    assert helper() == "new", "declared result"\n    assert COUNT == 1\n')
+    check = Check('stateful subject', Kind.DEMONSTRATING, (path + '::test_observer',),
+                  proof=model.Proof((path + '::helper',), (), 'declared result'))
+    results, _, _ = round_result(repository, {path: before}, {path: after}, check)
+    assert results[0].verdict == Verdict.PASS, results
+    assert results[0].tests[0].base == Outcome.ASSERTION, results
