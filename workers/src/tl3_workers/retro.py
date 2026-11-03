@@ -71,15 +71,21 @@ def _status(error):
 
 def _messages(control):
     """The last call's messages and result, as sent, so the retro reads its cached prefix."""
-    system, sent, result = control.last_exchange
+    system, sent, result, _ = control.last_exchange
     answer = [message.model_copy(update={"tool_calls": [], "invalid_tool_calls": []})
               if isinstance(message, AIMessage) else message for message in result]
     return [*([system] if system is not None else []), *sent, *answer, HumanMessage(content=PROMPT)]
 
 
-def _model(model):
+def _model(model, tools):
+    """The maker's model with the last call's tools bound but uncallable.
+
+    The same tool definitions keep the provider's cached prefix, as repair and
+    final turns do (#652). Without tools, the call is plain."""
     from langchain_openai import ChatOpenAI
 
+    if tools:
+        return model.bind_tools(tools, tool_choice="none")
     if isinstance(model, ChatOpenAI):
         # parallel_tool_calls is only valid with tools.
         kwargs = {key: value for key, value in model.model_kwargs.items() if key != "parallel_tool_calls"}
@@ -90,7 +96,7 @@ def _model(model):
 def _ask(model, control, limit):
     record = {"status": "failed"}
     try:
-        message = _model(model).invoke(_messages(control), timeout=limit)
+        message = _model(model, control.last_exchange[3]).invoke(_messages(control), timeout=limit)
         record.update(_usage(message))
         result = read_reply(message.text)
         Draft202012Validator(SCHEMA).validate(result)
