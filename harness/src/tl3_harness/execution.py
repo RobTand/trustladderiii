@@ -300,20 +300,22 @@ PYTEST = Pytest()
 
 
 def selected_candidates(repo: Path, tool: TestTool, old: Path, new: Path, config: dict, base: str,
-                        head: str, plan: tuple[Check, ...], limit: int) -> tuple[tuple[str, ...], ...]:
+                        head: str, plan: tuple[Check, ...], limit: int, failures: tuple[str, ...] = ()) -> tuple[tuple[str, ...], ...]:
     """Closest complete modules, or owner-declared groups of modules. Planned functions
-    stay in their owning unit. An edited unit is excluded whole, never cut into pieces."""
+    stay in their owning unit. Historical failures precede import candidates, even
+    outside the current import closure. An edited unit is excluded whole for review."""
     declared = {name: tuple(group) for group in config.get("selection-groups", []) for name in group}
     named_files = {test for check in plan for test in check.tests if "::" not in test}
     candidates, seen = [], set()
     try:
-        for test in tool.select(old, changed_files(repo, own_base(repo, base, head), head), config):
+        for test in (*failures, *tool.select(old, changed_files(repo, own_base(repo, base, head), head), config)):
             name = test.split("::", 1)[0]
             group = declared.get(name, (name,))
             if name in seen:
                 continue
             seen.update(group)
-            if set(group) <= named_files or tool.changed_existing_tests(old, new, group):
+            known_failure = any(test.split("::", 1)[0] in group for test in failures)
+            if (set(group) <= named_files and not known_failure) or tool.changed_existing_tests(old, new, group):
                 continue
             candidates.append(group)
         if candidates:
@@ -327,9 +329,11 @@ def selected_candidates(repo: Path, tool: TestTool, old: Path, new: Path, config
 
 
 def selected_base(tool: TestTool, old: Path, container: Container, candidates: tuple[tuple[str, ...], ...], base: str,
-                  root: Path, progress: Progress, limit: int, config: dict) -> tuple[dict, dict | None]:
+                  root: Path, progress: Progress, limit: int, config: dict,
+                  required: tuple[tuple[str, ...], ...] = ()) -> tuple[dict, dict | None]:
     """Admit a priority prefix at actual collected costs. Cached units consume budget
-    only when their turn arrives; base failures do not refund their collection cost."""
+    only when their turn arrives; base failures do not refund their collection cost.
+    Required historical units must fit before any ordinary candidate is admitted."""
     key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container, id(tool),
            json.dumps(config, sort_keys=True), "complete-prefix-v2", limit,
            tuple((name, os.environ.get(name, default)) for name, default in NATIVE_THREAD_ENVIRONMENT.items()))
@@ -338,7 +342,11 @@ def selected_base(tool: TestTool, old: Path, container: Container, candidates: t
         group = candidates[index]
         remaining = limit - charged
         cached = _SELECTED_BASE.get((*key, group))
-        if remaining == 0 or cached is not None and len(cached.collection) > remaining:
+        if (remaining == 0 and group not in required) or (cached is not None and len(cached.collection) > remaining):
+            if group in required:
+                cost = charged + len(cached.collection)
+                raise HarnessInputError(f"Previously failing execution units need at least {cost} tests; "
+                                        f"selected-test budget is {limit}. Cannot skip {group}.")
             saturation = {"unit": list(group), "cases": len(cached.collection) if cached else None,
                           "remaining": remaining, "reason": "Next complete unit cannot fit; lower-priority units were not checked."}
             break
@@ -351,6 +359,8 @@ def selected_base(tool: TestTool, old: Path, container: Container, candidates: t
         # The runner admits the actual complete prefix before executing any item.
         batch, lower_bound = [], 0
         for candidate in candidates[index:]:
+            if batch and (candidate in required) != (group in required):
+                break
             if (*key, candidate) in _SELECTED_BASE:
                 break
             batch.append(candidate)
@@ -364,7 +374,8 @@ def selected_base(tool: TestTool, old: Path, container: Container, candidates: t
         tests = tuple(member for unit in batch for member in unit)
         observed = tool.run(old, container, tests, root / f"selected-base-{index}.jsonl", progress, selected=contract)
         if contract.refusal:
-            raise HarnessInputError(contract.refusal)
+            prefix = f"Previously failing execution units cannot fit the {limit}-test budget: " if group in required else ""
+            raise HarnessInputError(prefix + contract.refusal)
         if contract.saturation is None and not contract.collected and any(value in (Outcome.NO_REPORT, Outcome.UNCOLLECTED)
                                           for value in observed.values()):
             saturation = {"unit": list(batch[0]), "cases": None, "remaining": remaining,
@@ -373,6 +384,10 @@ def selected_base(tool: TestTool, old: Path, container: Container, candidates: t
             break
         for candidate in batch:
             if contract.saturation and list(candidate) == contract.saturation['unit']:
+                if candidate in required:
+                    cost = charged + contract.saturation['cases']
+                    raise HarnessInputError(f"Previously failing execution units need at least {cost} tests; "
+                                            f"selected-test budget is {limit}. Cannot skip {candidate}.")
                 saturation = {**contract.saturation,
                               "reason": "Next complete unit cannot fit; lower-priority units were not checked."}
                 break
@@ -388,7 +403,7 @@ def selected_base(tool: TestTool, old: Path, container: Container, candidates: t
             break
     receipt = None
     if saturation:
-        receipt = {"policy": "complete-unit prefix by import distance, path, and declaration order",
+        receipt = {"policy": "historical failures first, then complete-unit prefix by import distance, path, and declaration order",
                    "limit": limit, "charged_cases": charged,
                    "base_units": [{"members": group, "cases": len(observation.collection),
                                    "outcomes": observation.outcomes} for group, observation in before.items()],
@@ -478,7 +493,8 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
     holds the repository's protected path patterns; a change to any of them is refused.
     With `selected_tests`, complete execution groups whose imports reach the change
     run as one more regression check, `SELECTED_CHECK`. The limit counts collected cases.
-    `always_tests` runs the configured files or node IDs as regression checks every round."""
+    `always_tests` runs the configured files or node IDs as regression checks every round.
+    `selected_failures` is controller-owned history; complete historical units run first."""
     require_admission()
     if not plan or len({check.name for check in plan}) != len(plan):
         raise HarnessInputError("a plan needs uniquely named checks")
@@ -491,6 +507,10 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         raise HarnessInputError("a planned check may not use the harness's always-check name")
     try:
         validate_always_tests(always_tests)
+        if not isinstance(selected_failures, (tuple, list)):
+            raise ValueError("selected_failures must list previous selected test identities")
+        for failure in selected_failures:
+            validate_always_tests((failure,))
     except ValueError as error:
         raise HarnessInputError(str(error)) from error
     if always_tests:
@@ -541,7 +561,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         demonstrating = tuple(dict.fromkeys(test for check in plan
                                             if check.kind == Kind.DEMONSTRATING and check.forcing is None and check.helper_evidence is None
                                             for test in check.tests))
-        candidates = (selected_candidates(repo, tool, old, new, config, base, head, plan, selected_tests)
+        candidates = (selected_candidates(repo, tool, old, new, config, base, head, plan, selected_tests, selected_failures)
                       if selected_tests else ())
         helpers = [check for check in plan if check.helper_evidence is not None]
         if len(helpers) > 1:
@@ -572,7 +592,9 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         before = before.copy()
         before.update(dict.fromkeys(stale, Outcome.MISSING))
         # Candidates run apart, so one crashing there can't cost the plan its base evidence.
-        selected_before, selection_receipt = selected_base(tool, old, container, candidates, base, root, progress, selected_tests, config)
+        selected_before, selection_receipt = selected_base(tool, old, container, candidates, base, root, progress, selected_tests, config,
+                                                          tuple(group for group in candidates if any(
+                                                              test.split("::", 1)[0] in group for test in selected_failures)))
         # Filter complete units: no head run may lose a fixture companion.
         kept = tuple(group for group in selected_before
                      if all(outcome == Outcome.PASSED for outcome in selected_before[group].outcomes.values()))

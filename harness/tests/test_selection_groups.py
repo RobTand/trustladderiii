@@ -426,7 +426,8 @@ def test_selection_displacement_rechecks_historical_failure_before_new_imports(f
     assert all(tests == (MODULE,) for tree, tests in runs if tree == 'head' and tests != (OTHER,))
 
 
-def test_selection_displacement_refuses_when_known_failed_units_alone_exceed_budget(frozen_repo):
+@pytest.mark.parametrize("cached", [False, True])
+def test_selection_displacement_refuses_when_known_failed_units_alone_exceed_budget(frozen_repo, cached):
     repo, _ = frozen_repo
     earlier = 'tests/test_aaa.py'
     (repo / 'extra.py').write_text('VALUE = 1\n')
@@ -434,6 +435,8 @@ def test_selection_displacement_refuses_when_known_failed_units_alone_exceed_bud
         '@pytest.mark.parametrize("row", range(150))\ndef test_extra(row):\n    assert extra.VALUE\n')
     base = save(repo, 'historically failing units cost 544 in total')
     (repo / 'extra.py').write_text('VALUE = 2\n')
+    if cached:
+        selected(repo, base, save(repo, 'cache the later required unit'), limit=500)
     commit = head(repo, 0)
     with pytest.raises(HarnessInputError, match='Previously failing.*544.*500'):
         selected(repo, base, commit, limit=500, failures=(MODULE, earlier))

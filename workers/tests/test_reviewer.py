@@ -577,3 +577,10 @@ def test_review_input_carries_the_issue_for_a_forcing(review_request):
     review_request["inputs"]["issue"]["body"] = "x" * 16_001
     with pytest.raises(ValidationError):
         validate("reviewer-input", review_request["inputs"])
+
+
+def test_review_input_retains_unresolved_displaced_failures(review_request):
+    from tl3_workers.contracts import validate
+
+    review_request["inputs"]["unresolved_displaced_failures"] = ["tests/test_old.py", "tests/test_companion.py"]
+    validate("reviewer-input", review_request["inputs"])

@@ -3499,12 +3499,24 @@ fn check_run(
     let Some(sha) = sha else {
         return Ok(None);
     };
-    snapshot
+    let mut run: Option<adapters::prismabuild::CheckRun> = snapshot
         .rows
         .iter()
         .find(|r| r.table == "check_plans" && r.id == format!("{}:{sha}", node.0))
         .map(|r| decode_stored(r.value.clone()))
-        .transpose()
+        .transpose()?;
+    if let Some(run) = &mut run {
+        let prefix = format!("{}:", node.0);
+        run.selected_failures = adapters::prismabuild::selected_failures(
+            snapshot
+                .rows
+                .iter()
+                .filter(|r| r.table == "check_reports" && r.id.starts_with(&prefix))
+                .map(|r| &r.value),
+            &[],
+        );
+    }
+    Ok(run)
 }
 
 fn commit_sha(snapshot: &Snapshot, head: Option<HeadId>) -> Option<&str> {

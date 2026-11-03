@@ -10,6 +10,8 @@ diff shows the change from base_sha to head_sha, a page at a time, when the supp
 diff is not enough. diff's path may be a file or a directory; offset continues a
 truncated page.
 
+A saturation receipt means "PASS covers only the checked prefix"; skipped units were not checked, and unresolved_displaced_failures remain unresolved.
+
 On a fix round, your earlier conversation contains your findings and reasoning.
 base_sha then names the last reviewed state, or its rebased equivalent after a
 clean rebase, so the diff shows the fix. If a rebase moved the check base past

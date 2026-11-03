@@ -16,6 +16,7 @@ pub struct CheckRun {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reproducing_unavailable: Option<String>,
     pub plan: Vec<Check>,
+    /// Controller-owned membership of selected units that failed in any earlier round.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub selected_failures: Vec<String>,
 }
@@ -207,6 +208,7 @@ pub(super) fn stage(
         "plan": run.plan, "image": image, "exec_scratch": exec_scratch,
         "protected_paths": protected_paths,
     });
+    request["selected_failures"] = serde_json::json!(run.selected_failures);
     request["always_tests"] = serde_json::json!(tests.always);
     if let Some(limit) = tests.selected {
         request["selected_tests"] = limit.into();

@@ -147,7 +147,10 @@ imports an affected one is affected too, through production modules and test
 helpers alike. The owning module is the default execution unit, including every
 collected test and parameter case. This preserves module fixture teardown guards
 and module-owned session fixtures without guessing which functions use rows.
-Modules are ordered by import distance and path. A planned function stays in
+Previously failing units from any earlier round of the request are admitted first,
+even outside the current import closure. Remaining modules are ordered by import
+distance and path. Historical units alone exceeding the budget cause a precise
+refusal; they cannot be displaced into the unchecked suffix. A planned function stays in
 its selected module as a companion. A unit already covered by whole-file plan
 entries needs no additional run. A unit with any edited or missing module is
 excluded whole, for review, rather than narrowed to its unchanged functions.
@@ -218,7 +221,10 @@ action it staged with a limit.
 The controller carries each round's failed selected tests forward in its
 check report. When the change under review edits the file of one of them,
 review receives its name in `edited_selected_tests`: an edited test is no
-longer selected, so review judges the edit.
+longer selected, so review judges the edit. Any historical unit without a verified
+complete-unit head outcome also appears in `unresolved_displaced_failures`,
+whether or not a test file was edited. A saturation receipt means "PASS covers
+only the checked prefix".
 
 ## Verdict rules
 

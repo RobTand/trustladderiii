@@ -99,6 +99,36 @@ pub(super) fn inputs(
         if !edited.is_empty() {
             inputs["edited_selected_tests"] = json!(edited);
         }
+        // Missing head evidence cannot resolve a historical failure, even when no
+        // test file changed. This also covers edited, filtered and unverified units.
+        let displaced: Vec<_> = failures
+            .iter()
+            .filter_map(|test| test.as_str())
+            .filter(|test| {
+                let file = test.split("::").next().unwrap_or_default();
+                !report["results"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|result| result["name"] == "Existing tests that import the change")
+                    .any(|result| {
+                        result["tests"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .any(|current| {
+                                current["test"].as_str() == Some(file)
+                                    && matches!(
+                                        current["head"].as_str(),
+                                        Some("passed" | "assertion" | "error")
+                                    )
+                            })
+                    })
+            })
+            .collect();
+        if !displaced.is_empty() {
+            inputs["unresolved_displaced_failures"] = json!(displaced);
+        }
     }
     if base != run.base_sha {
         let scope_base = repository.merge_base(&run.base_sha, &head_id)?;
