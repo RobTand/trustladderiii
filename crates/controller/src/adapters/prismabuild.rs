@@ -56,7 +56,6 @@ pub use source::{RunningSource, Source};
 
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
     ffi::OsString,
     fs::{self, File},
     io::Write,
