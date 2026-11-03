@@ -38,6 +38,16 @@ impl Respond for Bank {
         if *self.hung.lock().unwrap() {
             return ResponseTemplate::new(200).set_delay(Duration::from_secs(60));
         }
+        let body: Value = request.body_json().unwrap();
+        if request.url.path().ends_with("/recall") {
+            // Regression fixtures use space-separated single-letter tokens.
+            let tokens = body["query"].as_str().unwrap().split_whitespace().count();
+            if tokens > 500 {
+                return ResponseTemplate::new(400).set_body_json(json!({
+                    "detail": format!("Query too long: {tokens} tokens exceeds maximum of 500. Please shorten your query.")
+                }));
+            }
+        }
         if request.headers.get("authorization").map(|v| v.as_bytes())
             != Some(format!("Bearer {KEY}").as_bytes())
         {
@@ -48,7 +58,6 @@ impl Respond for Bank {
             1 => return ResponseTemplate::new(200).set_body_string("{\"results\": [oops"),
             status => return ResponseTemplate::new(status),
         }
-        let body: Value = request.body_json().unwrap();
         if request.method.as_str() == "PATCH" {
             let id = request.url.path().rsplit('/').next().unwrap().to_owned();
             self.curations.lock().unwrap().push((id, body));
@@ -245,6 +254,127 @@ fn context<'a>() -> Recall<'a> {
     Recall::Context {
         repo: "RobTand/tl3-sandbox",
         query: "Fix greeting\nReturn hello.",
+    }
+}
+
+#[test]
+fn fake_hindsight_rejects_over_500_tokens_with_the_live_error() {
+    let f = Fixture::new();
+    let response = f._runtime.block_on(async {
+        reqwest::Client::new()
+            .post(format!(
+                "{}/v1/default/banks/tl3/memories/recall",
+                f.server.uri()
+            ))
+            .json(&json!({"query": vec!["x"; 1449].join(" ")}))
+            .send()
+            .await
+            .unwrap()
+    });
+    assert_eq!(response.status(), 400);
+    let body: Value = f._runtime.block_on(response.json()).unwrap();
+    assert_eq!(
+        body,
+        json!({"detail": "Query too long: 1449 tokens exceeds maximum of 500. Please shorten your query."})
+    );
+}
+
+#[test]
+fn long_issue_recall_keeps_repo_title_and_body_start_within_the_query_limit() {
+    let f = Fixture::new();
+    *f.bank.curated.lock().unwrap() =
+        vec![result("lesson-1", "Keep greeting tests.", &["kind:lesson"])];
+    for body in ["x ".repeat(2000), "界🦀 ".repeat(2000)] {
+        let query = format!("Fix greeting\nReturn hello. {body} END-OF-ISSUE");
+        for recall in [
+            Recall::Context {
+                repo: REPO,
+                query: &query,
+            },
+            Recall::Conventions {
+                repo: REPO,
+                query: &query,
+            },
+        ] {
+            let value = f.recall(recall);
+            assert!(
+                value.get("memory_note").is_none(),
+                "long issue must recall memories: {value}"
+            );
+            assert_eq!(value["memories"][0]["id"], "lesson-1");
+        }
+    }
+    let recalls = f.bank.recalls.lock().unwrap();
+    assert_eq!(recalls.len(), 6);
+    for body in recalls.iter() {
+        let query = body["query"].as_str().unwrap();
+        assert!(
+            query.starts_with(&format!("Repository {REPO}\nFix greeting\nReturn hello.")),
+            "{query}"
+        );
+        assert!(
+            query.len() <= 400,
+            "query must leave margin under 500 tokens: {} bytes",
+            query.len()
+        );
+        assert!(!query.contains("END-OF-ISSUE"));
+    }
+}
+
+#[test]
+fn recall_bad_request_does_not_pause_the_next_request() {
+    let f = Fixture::new();
+    let breaker = Breaker::default();
+    *f.bank.status.lock().unwrap() = 400;
+    let value = memory::recall(&mut f.store(), &f.hindsight(), &breaker, context()).unwrap();
+    assert_eq!(value["memories"], json!([]));
+    assert!(
+        value["memory_note"]
+            .as_str()
+            .unwrap()
+            .contains("unavailable")
+    );
+    assert_eq!(*f.bank.hits.lock().unwrap(), 1);
+    *f.bank.status.lock().unwrap() = 0;
+    *f.bank.general.lock().unwrap() = vec![result("run-1", "text", &[])];
+    let value = memory::recall(&mut f.store(), &f.hindsight(), &breaker, context()).unwrap();
+    assert!(
+        value.get("memory_note").is_none(),
+        "a 400 must not open the breaker: {value}"
+    );
+    assert_eq!(value["memories"][0]["id"], "run-1");
+    assert_eq!(*f.bank.hits.lock().unwrap(), 3);
+}
+
+#[test]
+fn recall_connection_failure_and_server_errors_pause_the_next_request() {
+    let f = Fixture::new();
+    for status in [0, 500, 503] {
+        let breaker = Breaker::default();
+        let mut down = f.hindsight();
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        if status == 0 {
+            down.endpoint = format!("http://{}", closed.local_addr().unwrap())
+                .parse()
+                .unwrap();
+        }
+        drop(closed);
+        *f.bank.status.lock().unwrap() = status;
+        let value = memory::recall(&mut f.store(), &down, &breaker, context()).unwrap();
+        assert!(
+            value["memory_note"]
+                .as_str()
+                .unwrap()
+                .contains("unavailable")
+        );
+        let hits = *f.bank.hits.lock().unwrap();
+        *f.bank.status.lock().unwrap() = 0;
+        let value = memory::recall(&mut f.store(), &f.hindsight(), &breaker, context()).unwrap();
+        assert!(
+            value["memory_note"].as_str().unwrap().contains("paused"),
+            "status {status}: {value}"
+        );
+        assert_eq!(*f.bank.hits.lock().unwrap(), hits);
     }
 }
 

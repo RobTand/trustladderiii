@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import shlex
+import signal
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -67,6 +69,97 @@ class WaitTests(unittest.TestCase):
         self.assertEqual(invocation['invocationStatus'], remote_gate.DONE)
         with self.assertRaisesRegex(remote_gate.RemoteError, '503'):
             remote_gate.wait(Flaky(10), 'id', 10, clock=lambda: 0, sleep=lambda _: None)
+
+
+class CancellationTests(unittest.TestCase):
+    def test_cancel_uses_the_service_rpc_with_an_in_process_key(self):
+        with patch.object(remote_gate.urllib.request, 'urlopen',
+                          return_value=io.BytesIO(b'{}')) as request:
+            remote_gate.BuildBuddy('synthetic-fixture').call(
+                'CancelExecutions', {'invocation_id': 'recorded-id'}, timeout=2)
+        sent = request.call_args.args[0]
+        self.assertEqual(sent.full_url,
+                         'https://app.buildbuddy.io/rpc/BuildBuddyService/CancelExecutions')
+        self.assertEqual(json.loads(sent.data), {'invocation_id': 'recorded-id'})
+        self.assertEqual(sent.get_header('X-buildbuddy-api-key'), 'synthetic-fixture')
+        self.assertNotIn('synthetic-fixture', sent.full_url + sent.data.decode())
+
+    def test_wait_cancels_on_sigint_and_sigterm_then_exits(self):
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(signum=signum):
+                client = FakeClient(['PARTIAL_INVOCATION_STATUS'])
+                calls = []
+                original_call = client.call
+
+                def call(method, body, **kwargs):
+                    calls.append((method, body))
+                    if method == 'CancelExecutions':
+                        return {}
+                    return original_call(method, body, **kwargs)
+
+                client.call = call
+                original_handler = signal.signal(signum, lambda *_: None)
+                self.addCleanup(signal.signal, signum, original_handler)
+                previous = signal.getsignal(signum)
+
+                def cancel(_):
+                    signal.raise_signal(signum)
+                    self.fail('wait continued after cancellation')
+
+                with self.assertRaises(SystemExit) as stopped:
+                    remote_gate.wait(client, 'recorded-id', 10, clock=lambda: 0,
+                                     sleep=cancel)
+                self.assertEqual(stopped.exception.code, 128 + signum)
+                self.assertIn(('CancelExecutions', {'invocation_id': 'recorded-id'}), calls)
+                self.assertEqual(signal.getsignal(signum), previous)
+
+    def test_run_records_invocation_before_waiting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            invocation_file = Path(directory) / 'tl3-buildbuddy-invocation'
+            client = unittest.mock.Mock()
+            client.call.return_value = {'invocationId': 'recorded-id'}
+
+            def wait(*_):
+                self.assertTrue(invocation_file.is_file(), 'invocation must survive step termination')
+                self.assertEqual(invocation_file.read_text().strip(), 'recorded-id')
+                raise remote_gate.RemoteError('stop after checking the record')
+
+            with patch.dict(os.environ, {'RUNNER_TEMP': directory,
+                                         'BUILDBUDDY_API_KEY': 'synthetic-fixture'}), \
+                 patch('sys.argv', ['remote_gate.py', 'pr', '--base', 'a' * 40,
+                                    '--head', HEAD, '--branch', 'feature',
+                                    '--output-dir', directory]), \
+                 patch.object(remote_gate, 'BuildBuddy', return_value=client), \
+                 patch.object(remote_gate, 'wait', side_effect=wait):
+                self.assertEqual(remote_gate.main(), 1)
+
+    def test_cancelled_step_cancels_recorded_invocation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / 'tl3-buildbuddy-invocation').write_text('recorded-id\n')
+            client = unittest.mock.Mock()
+            with patch.dict(os.environ, {'RUNNER_TEMP': directory,
+                                         'BUILDBUDDY_API_KEY': 'synthetic-fixture'}), \
+                 patch('sys.argv', ['remote_gate.py', 'cancel']), \
+                 patch.object(remote_gate, 'BuildBuddy', return_value=client):
+                try:
+                    code = remote_gate.main()
+                except SystemExit as error:
+                    self.fail(f'cancel command is unavailable: {error}')
+                self.assertEqual(code, 0)
+            client.call.assert_called_once_with('CancelExecutions',
+                                                {'invocation_id': 'recorded-id'}, timeout=5)
+
+    def test_cancelled_before_submission_needs_no_key_or_api(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.dict(os.environ, {'RUNNER_TEMP': directory}), \
+             patch('sys.argv', ['remote_gate.py', 'cancel']), \
+             patch.object(remote_gate, 'BuildBuddy') as client:
+            try:
+                code = remote_gate.main()
+            except SystemExit as error:
+                self.fail(f'cancel command is unavailable: {error}')
+            self.assertEqual(code, 0)
+        client.assert_not_called()
 
 
 class ResultTests(unittest.TestCase):
@@ -161,6 +254,16 @@ class ResultTests(unittest.TestCase):
 
 class WorkflowTests(unittest.TestCase):
     workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/gate.yml').read_text()
+
+    def test_cancellation_cleanup_covers_prs_and_mergify_queue_drafts(self):
+        bazel = self.workflow.split('  bazel:', 1)[1].split('  rust-lint:', 1)[0]
+        self.assertIn("if: github.event_name == 'pull_request'", bazel)
+        self.assertNotIn('github.event.pull_request.draft', bazel)
+        self.assertIn('- name: Cancel BuildBuddy run\n        if: cancelled()\n', bazel)
+        cleanup = bazel.split('- name: Cancel BuildBuddy run', 1)[1].split('      - ', 1)[0]
+        self.assertIn('BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}', cleanup)
+        self.assertIn('run: python3 tools/ci/remote_gate.py cancel', cleanup)
+        self.assertLess(bazel.index('remote_gate.py cancel'), bazel.index('- id: token'))
 
     def test_an_empty_mergify_token_fails_before_the_upload_is_skipped(self):
         # gha-mergify-ci skips scopes-upload and only warns when its token is empty.

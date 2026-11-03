@@ -8,11 +8,13 @@ import argparse
 import json
 import os
 import shlex
+import signal
 import subprocess
 from pathlib import Path
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from child_env import child_env
@@ -50,8 +52,11 @@ class BuildBuddy:
 
     def call(self, method, body, timeout=120, raw=False):
         """JSON in; JSON out, or the raw body for GetFile."""
+        # CancelExecutions belongs to the service RPC, not the public v1 API.
+        url = (urllib.parse.urljoin(self.api, '/rpc/BuildBuddyService/CancelExecutions')
+               if method == 'CancelExecutions' else self.api + method)
         request = urllib.request.Request(
-            self.api + method, data=json.dumps(body).encode(),
+            url, data=json.dumps(body).encode(),
             headers={'x-buildbuddy-api-key': self.key, 'Content-Type': 'application/json'})
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -63,14 +68,18 @@ class BuildBuddy:
 def run_request(args):
     if not args.base or not args.head:
         raise RemoteError('empty base or head: the queue-aware refs were unavailable')
-    command = ['python3', 'tools/ci/bazel_gate.py', args.mode, '--base', args.base,
+    command = ['tools/ci/bazel_gate.py', args.mode, '--base', args.base,
                '--head', args.head, '--branch', args.branch]
     return {
         'repo': args.repo,
         'branch': args.branch,
         'commit_sha': args.head,
         'steps': [{'run': 'python3 tools/ci/child_env.py bash -c ' + shlex.quote(INSTALL_UV)},
-                  {'run': 'export PATH="$HOME/.local/bin:$PATH" && python3 tools/ci/child_env.py ' + shlex.join(command)}],
+                  # The gate's scan supervisor retains the runner key and starts
+                  # the gate logic with child_env(); only its scanner gets auth.
+                  {'run': 'export PATH="$HOME/.local/bin:$PATH" && '
+                          'scanner_python=$(python3 tools/ci/child_env.py uv python find 3.14) && '
+                          '"$scanner_python" ' + shlex.join(command)}],
         'env': {'GIT_REPO_DEFAULT_BRANCH': 'main'},
         'platform_properties': {
             # The runner hosts only the Bazel client; actions go to remote execution.
@@ -86,31 +95,61 @@ def run_request(args):
     }
 
 
+def invocation_path():
+    return Path(os.environ.get('RUNNER_TEMP', '.')) / 'tl3-buildbuddy-invocation'
+
+
+def cancel_recorded():
+    path = invocation_path()
+    if not path.exists():
+        return
+    invocation_id = path.read_text().strip()
+    if invocation_id:
+        BuildBuddy(os.environ['BUILDBUDDY_API_KEY']).call(
+            'CancelExecutions', {'invocation_id': invocation_id}, timeout=5)
+
+
 def wait(client, invocation_id, deadline, interval=15, clock=time.monotonic, sleep=time.sleep,
          retries=3):
     """Wait for the run's own terminal status. Returns the invocation record."""
-    errors = 0
-    while True:
+    def interrupted(signum, _frame):
+        # GitHub sends SIGINT, then SIGTERM after 7.5 s, then kills after 2.5 s.
+        # Leave time for the cancelled() cleanup step to retry a failed request.
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            signal.signal(sig, signal.SIG_IGN)
         try:
-            found = client.call('GetInvocation', {'selector': {'invocation_id': invocation_id},
-                                                  'include_artifacts': True}).get('invocation', [])
-            errors = 0
-        except RemoteError:
-            # One API blip must not fail a whole merge-queue batch.
-            errors += 1
-            if errors > retries or clock() > deadline:
-                raise
+            client.call('CancelExecutions', {'invocation_id': invocation_id}, timeout=2)
+        except RemoteError as error:
+            print(f'::warning::Remote cancellation failed: {error}', flush=True)
+        raise SystemExit(128 + signum)
+
+    previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        errors = 0
+        while True:
+            try:
+                found = client.call('GetInvocation', {'selector': {'invocation_id': invocation_id},
+                                                      'include_artifacts': True}).get('invocation', [])
+                errors = 0
+            except RemoteError:
+                # One API blip must not fail a whole merge-queue batch.
+                errors += 1
+                if errors > retries or clock() > deadline:
+                    raise
+                sleep(interval)
+                continue
+            invocation = found[0] if found else {}
+            status = invocation.get('invocationStatus')
+            if status == DONE:
+                return invocation
+            if status == LOST:
+                raise RemoteError(f'remote run {invocation_id} disconnected')
+            if clock() > deadline:
+                raise RemoteError(f'remote run {invocation_id} did not finish in time')
             sleep(interval)
-            continue
-        invocation = found[0] if found else {}
-        status = invocation.get('invocationStatus')
-        if status == DONE:
-            return invocation
-        if status == LOST:
-            raise RemoteError(f'remote run {invocation_id} disconnected')
-        if clock() > deadline:
-            raise RemoteError(f'remote run {invocation_id} did not finish in time')
-        sleep(interval)
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
 def diagnostics(client, invocation):
@@ -184,6 +223,19 @@ def explain(result, prs):
     if result.get('inputs'):
         lines.append('Stale generated inputs or parity drift; fix with tools/bazel/generate.sh: '
                      + '; '.join(result['inputs']))
+    graph = result.get('graph_impact', {})
+    if graph:
+        lines.append(graph['summary'])
+        if graph.get('head'):
+            measured = graph['head']
+            lines.append(f'LOC U {measured["loc_u_pct"]:.3f}%, reach median/p90/max '
+                         f'{measured["reach_median"]}/{measured["reach_p90"]}/{measured["reach_max"]}')
+        if graph.get('crates'):
+            crates = graph['crates']
+            lines.append('Largest crate cycle: ' + (', '.join(crates['largest_cycle']) or 'none'))
+            lines.append('Crate fan-out: ' + ', '.join(f'{label} {count}' for label, count in
+                         sorted(crates['fanout'].items(), key=lambda item: (-item[1], item[0]))))
+        lines.extend(graph.get('errors', []))
     if result['mode'] == 'pr':
         lines.append(f"Selection: {result.get('selection')}, {len(result.get('selected', []))} tests")
         for language, labels in result.get('failed', {}).items():
@@ -240,6 +292,13 @@ def merged_prs():
 
 
 def main():
+    if sys.argv[1:] == ['cancel']:
+        try:
+            cancel_recorded()
+        except RemoteError as error:
+            print(f'::error::{error}', flush=True)
+            return 1
+        return 0
     if sys.argv[1:2] == ['merged-prs']:
         merged_prs()
         return 0
@@ -269,6 +328,7 @@ def main():
         invocation_id = client.call('Run', run_request(args), timeout=600).get('invocationId')
         if not invocation_id:
             raise RemoteError('BuildBuddy Run returned no invocation id')
+        invocation_path().write_text(invocation_id + '\n')
         print(f'Remote Bazel run: https://app.buildbuddy.io/invocation/{invocation_id}', flush=True)
         invocation = wait(client, invocation_id, started + (args.timeout + 10) * 60)
         for name, data in diagnostics(client, invocation):
@@ -282,6 +342,8 @@ def main():
     summary = explain(result, prs)
     print(summary, flush=True)
     write_github('GITHUB_STEP_SUMMARY', '```\n' + summary + '\n```\n')
+    for target, mermaid in result.get('graph_impact', {}).get('mermaid', {}).items():
+        write_github('GITHUB_STEP_SUMMARY', f'\n{target}\n\n```mermaid\n{mermaid}\n```\n')
     write_github('GITHUB_OUTPUT', ''.join(f'{k}={v}\n' for k, v in outputs(result).items()))
     ok = invocation.get('success') and not result.get('error') and not result.get('inputs')
     if args.mode == 'main':
