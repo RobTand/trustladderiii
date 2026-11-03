@@ -1542,6 +1542,10 @@ fn publication_open_conflict() {
         kind: EffectKind::OpenPr,
         head: None,
     };
+    open.evidence = Some(tl3_controller::evidence::Evidence {
+        checks: vec![json!({"head_sha":open.head_sha, "results":[]})],
+        ..Default::default()
+    });
     let mut adapter = server.adapter(&root.path().join("github"), 1);
     let result = adapter.execute(&open).unwrap();
     assert!(

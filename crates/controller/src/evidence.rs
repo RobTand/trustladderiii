@@ -1311,7 +1311,7 @@ mod tests {
                     .find(|row| row.table == "check_reports")
                     .unwrap()
                     .value;
-                report["results"][0]["name"] = json!(name);
+                report["results"][0]["name"] = json!(format!("check-1 {name}"));
                 *report = check_record(report);
                 delivery.evidence = Some(
                     capture(
