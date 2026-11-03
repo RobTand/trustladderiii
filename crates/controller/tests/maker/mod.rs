@@ -52,6 +52,25 @@ fn git(root: &Path, args: &[&str]) -> String {
     String::from_utf8(result.stdout).unwrap().trim().into()
 }
 
+fn session_inputs(history: &Value) -> Vec<Value> {
+    history
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["type"] == "human")
+        .filter_map(|message| {
+            let text = message["data"]["content"].as_str().unwrap();
+            if text.starts_with("TL3 execution budget: ") {
+                None
+            } else {
+                Some(
+                    serde_json::from_str(text).expect("session instruction must be request inputs"),
+                )
+            }
+        })
+        .collect()
+}
+
 fn fixture_config(settings: &tl3_config::Store, root: &Path, mode: &str) -> tl3_config::Config {
     let mut config = super::config(settings, root, "normal");
     config.worktrees_root = root.join("worktrees");
@@ -597,14 +616,17 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
         )
         .unwrap();
         assert_eq!(
-            session
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|m| m["type"] == "human")
-                .count(),
+            session_inputs(&session).len(),
             2,
             "fix round resumes its attempt session"
+        );
+        assert_eq!(
+            session_inputs(&session),
+            runs[4..]
+                .iter()
+                .map(|run| run["inputs"].clone())
+                .collect::<Vec<_>>(),
+            "only this attempt's two exact round inputs are instructions; notices remain persisted separately"
         );
         assert!(
             !session.to_string().contains("attempt 1 round"),
@@ -801,15 +823,7 @@ fn restart_after_replan(settings: &tl3_config::Store) {
         &fs::read(config.workers.runs.join("sessions/0/plan-1/attempt-1.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(
-        history
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|m| m["type"] == "human")
-            .count(),
-        1
-    );
+    assert_eq!(session_inputs(&history), vec![request["inputs"].clone()]);
     assert!(history.to_string().contains("replanned attempt"));
     assert!(!history.to_string().contains("shared greeting is here"));
     assert!(git(&worktree, &["show", "HEAD:greeting.py"]).contains("replanned attempt"));
@@ -853,15 +867,7 @@ pub(super) fn adopted_fix_without_session(settings: &tl3_config::Store) {
     assert_eq!(git(&worktree, &["rev-parse", "HEAD^"]), author);
     let session = config.workers.runs.join("sessions/0/plan-0/attempt-1.json");
     let history: Value = serde_json::from_slice(&fs::read(session).unwrap()).unwrap();
-    assert_eq!(
-        history
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|m| m["type"] == "human")
-            .count(),
-        1
-    );
+    assert_eq!(session_inputs(&history), vec![runs[0]["inputs"].clone()]);
 }
 
 pub(super) fn legacy_session(settings: &tl3_config::Store) {
