@@ -100,6 +100,10 @@
       "minLength": 1,
       "maxLength": 512,
       "description": "Why no memories were supplied, when recall was unavailable."
+    },
+    "decision_context": {
+      "$ref": "decision-context.json",
+      "description": "Controller-recorded decisions applicable to this request version. Source answers define scope and restrictions; they do not grant tools or override protected paths."
     }
   },
   "required": [

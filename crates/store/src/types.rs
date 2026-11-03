@@ -470,3 +470,78 @@ pub struct MemoryCuration {
     pub reason: String,
     pub evidence: serde_json::Value,
 }
+
+/// One worker process attempt. Missing measurements stay unknown.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerRunFacts {
+    pub started_ms: i64,
+    pub finished_ms: Option<i64>,
+    pub outcome: String,
+    pub release: Option<String>,
+    pub model: String,
+    pub input_tokens: Option<i64>,
+    pub cached_tokens: Option<i64>,
+    #[serde(default)]
+    pub usage_complete: bool,
+    pub output_tokens: Option<i64>,
+    pub trace_id: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    pub failure: Option<WorkerBoundaryFailure>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerBoundaryFailure {
+    pub origin: String,
+    pub class: String,
+    pub status: Option<i32>,
+    pub request_id: Option<String>,
+}
+
+impl WorkerRunFacts {
+    pub fn validate(&self) -> crate::Result<()> {
+        let bounded = |value: &str, max: usize| {
+            !value.is_empty() && value.len() <= max && !value.chars().any(char::is_control)
+        };
+        let identifier = |value: &str, max: usize| {
+            bounded(value, max)
+                && value
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"_.:-".contains(&b))
+        };
+        if self.started_ms < 0
+            || self.finished_ms.is_some_and(|v| v < 0)
+            || !matches!(
+                self.outcome.as_str(),
+                "succeeded" | "failed" | "quota" | "stopped" | "crashed"
+            )
+            || !bounded(&self.model, 256)
+            || self.release.as_ref().is_some_and(|v| !identifier(v, 256))
+            || self.trace_id.as_ref().is_some_and(|v| !identifier(v, 128))
+            || self
+                .session_id
+                .as_ref()
+                .is_some_and(|v| !identifier(v, 128))
+            || [self.input_tokens, self.cached_tokens, self.output_tokens]
+                .iter()
+                .flatten()
+                .any(|v| *v < 0)
+            || self.failure.as_ref().is_some_and(|failure| {
+                !matches!(
+                    failure.origin.as_str(),
+                    "provider" | "proxy" | "worker" | "unknown"
+                ) || !identifier(&failure.class, 64)
+                    || failure.status.is_some_and(|v| !(100..=599).contains(&v))
+                    || failure
+                        .request_id
+                        .as_ref()
+                        .is_some_and(|v| !identifier(v, 128))
+            })
+        {
+            return Err(crate::Error::Invalid("invalid worker completion facts"));
+        }
+        Ok(())
+    }
+}

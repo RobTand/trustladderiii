@@ -1284,6 +1284,9 @@ def observe(request):
             logger.handlers = [logging.NullHandler()]
             logger.propagate = False
             capture = Capture(request)
+            from tl3_workers.facts import current as current_facts
+            if facts := current_facts.get():
+                facts.trace_id = capture.root.trace_id
         except Exception:
             failure()
     token = active.set(capture)

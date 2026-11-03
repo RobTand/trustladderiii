@@ -248,6 +248,18 @@ impl Controller {
         {
             inputs["conversation"] = json!({"comment_id": pending.id, "comment": pending.value["comment"], "question": pending.value["question"]});
         }
+        inputs["decision_context"] =
+            json!(crate::decisions::Context::load(snapshot, node)?.applicable());
+        if let Some(open) = n.question {
+            inputs["question_context"] =
+                answered_question(snapshot, n.question, open.id).unwrap_or_default();
+        }
+        let comment_id = row.value["comment"]["id"].to_string();
+        if let Some(selected) = snapshot.rows.iter().find(|selected| {
+            selected.table == "console_selected_answers" && selected.id == comment_id
+        }) {
+            inputs["selected_answer"] = selected.value.clone();
+        }
         let binding: Request = crate::decode_stored(binding.value.clone())?;
         let key = format!("classify:{}", row.id);
         let delivery = Delivery {
@@ -401,6 +413,52 @@ impl Controller {
             queue_classifier(self, commit, retry);
             return Ok(None);
         }
+        if inputs.get("reconcile_issue").is_some() {
+            for table in ["comment_jobs", "watches"] {
+                commit.rows.push(RowChange::Delete {
+                    table: table.into(),
+                    id: key.into(),
+                });
+            }
+            let mut context = crate::decisions::Context::load(snapshot, node)?;
+            let issue: tl3_github::Issue = crate::decode_stored(inputs["reconcile_issue"].clone())?;
+            let source = format!("issue:{}@{}", issue.number, issue.updated_at);
+            for decision in &mut context.decisions {
+                let assessment = reply
+                    .as_ref()
+                    .and_then(|r| r["assessments"].as_array())
+                    .and_then(|items| items.iter().find(|a| a["id"] == decision.id));
+                // An unavailable assessment cannot authorize an exception. The
+                // restarted worker can ask for renewed approval from current text.
+                if assessment.is_none_or(|a| a["contradicted"] == true) {
+                    decision.superseded_by = Some(source.clone());
+                    decision.supersession_reason = Some(
+                        assessment
+                            .and_then(|a| a["reason"].as_str())
+                            .unwrap_or(
+                                "Current issue reconciliation failed; renewed approval is required",
+                            )
+                            .into(),
+                    );
+                }
+            }
+            context.store(snapshot, commit)?;
+            let pending = snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "restart_reconciliation" && r.id == node.0.to_string())
+                .ok_or(Error::Invalid("restart reconciliation missing"))?;
+            commit.rows.push(put(
+                "replacement_pending",
+                pending.id.clone(),
+                pending.value.clone(),
+            ));
+            commit.rows.push(RowChange::Delete {
+                table: "restart_reconciliation".into(),
+                id: pending.id.clone(),
+            });
+            return Ok(None);
+        }
         let reply = reply.unwrap_or(json!({"kind": "unsure", "question": "I couldn't act on your comment. Could you rephrase it?"}));
         for (table, id) in [
             ("comment_jobs", key),
@@ -424,6 +482,12 @@ impl Controller {
         commit
             .rows
             .push(put("github_comments", comment_key.clone(), recorded));
+        if inputs.get("selected_answer").is_some() {
+            commit.rows.push(RowChange::Delete {
+                table: "console_selected_answers".into(),
+                id: comment.value["comment"]["id"].to_string(),
+            });
+        }
         let kind: String = crate::adapters::workers::protocol::reply_field(&reply, "kind")?;
         if let Some(previous) = inputs["conversation"]["comment_id"].as_str() {
             commit.rows.push(RowChange::Delete {
@@ -569,6 +633,88 @@ impl Controller {
         };
         if !current_answer {
             return Ok(None);
+        }
+        let changes_request = !matches!(n.phase, Phase::Stopping(_))
+            && matches!(
+                command,
+                Command::ChangeRequest
+                    | Command::Answer {
+                        answer: Answer::ChangeRequest,
+                        ..
+                    }
+            );
+        let accepted_answer =
+            matches!(command, Command::Answer { answer, .. } if !matches!(answer, Answer::Unclear));
+        if changes_request || accepted_answer {
+            let binding = request(snapshot, node)?;
+            let source = (origin.comment != 0 && origin.comment < (1u64 << 53)).then(|| {
+                format!(
+                    "https://github.com/{}/{}/issues/{}#issuecomment-{}",
+                    binding.repo.owner, binding.repo.name, origin.issue, origin.comment
+                )
+            });
+            let mut context = crate::decisions::Context::load(snapshot, node)?;
+            if changes_request {
+                for id in reply["supersedes"].as_array().into_iter().flatten() {
+                    let decision = context
+                        .decisions
+                        .iter_mut()
+                        .find(|decision| {
+                            decision.superseded_by.is_none()
+                                && id.as_str() == Some(decision.id.as_str())
+                        })
+                        .ok_or(Error::Invalid(
+                            "superseded decision is no longer applicable",
+                        ))?;
+                    decision.superseded_by =
+                        Some(source.clone().unwrap_or_else(|| origin.key.into()));
+                    decision.supersession_reason = Some(format!(
+                        "Replacement request contradicts this approval: {}",
+                        reply["new_text"].as_str().unwrap_or(origin.text)
+                    ));
+                }
+            }
+            if let Command::Answer { question, .. } = command
+                && accepted_answer
+            {
+                let scope = reply["decision"]["allowed_scope"]
+                    .as_array()
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_else(|| {
+                        reply["new_text"]
+                            .as_str()
+                            .or_else(|| reply["guidance"].as_str())
+                            .map(str::to_owned)
+                            .into_iter()
+                            .collect()
+                    });
+                let restrictions = reply["decision"]["restrictions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect();
+                context.decisions.push(crate::decisions::Decision {
+                    id: origin.key.into(),
+                    source_comment: source,
+                    question: answered_question(snapshot, n.question, question)
+                        .ok_or(Error::Invalid("accepted answer has no question"))?,
+                    answer: origin.text.into(),
+                    allowed_scope: scope,
+                    restrictions,
+                    origin_request_version: node.0,
+                    superseded_by: None,
+                    supersession_reason: None,
+                });
+            }
+            context.store(snapshot, commit)?;
         }
         // #422: Rob's answer, with the question and his reason, is a decision later
         // requests recall. An unclear answer decides nothing.
@@ -830,15 +976,58 @@ impl Controller {
                     issue: None,
                 } = crate::decode_stored(row.value.clone())?
             {
-                commit.rows.push(put(
-                    "replacement_pending",
-                    id,
-                    json!(Task::Restart {
-                        comment_key,
-                        text,
-                        issue: Some(issue),
-                    }),
-                ));
+                let context = crate::decisions::Context::load(snapshot, original)?.applicable();
+                let restart = json!(Task::Restart {
+                    comment_key: comment_key.clone(),
+                    text: text.clone(),
+                    issue: Some(issue.clone())
+                });
+                if context.decisions.is_empty() {
+                    commit.rows.push(put("replacement_pending", id, restart));
+                } else if !snapshot
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "restart_reconciliation" && r.id == id)
+                {
+                    commit.rows.push(put("restart_reconciliation", id, restart));
+                    let n = &snapshot::decode(snapshot)?.nodes[original.0 as usize];
+                    let binding = request(snapshot, original)?;
+                    queue_classifier(
+                        self,
+                        commit,
+                        Delivery {
+                            key: format!("restart-decisions:{comment_key}"),
+                            epoch: snapshot.epoch.get(),
+                            output: Output::Comment {
+                                node: original,
+                                kind: CommentKind::Classify,
+                            },
+                            generation: n.generation,
+                            head_sha: None,
+                            repository: binding.repo,
+                            issue: binding.issue,
+                            pull_request: None,
+                            paths: vec![],
+                            attempt: 1,
+                            round: 0,
+                            replanned: n.replanned,
+                            checks: None,
+                            job_generation: None,
+                            question: None,
+                            marker_key: None,
+                            note: None,
+                            scope_removals: None,
+                            question_context: None,
+                            request_text: binding.source,
+                            proposed: None,
+                            steering: Some(Task::Classify {
+                                comment_key: format!("restart-decisions:{comment_key}"),
+                                inputs: json!({"comment":{"author":"requester", "body":text}, "state":state(n),
+                                "decision_context":context, "reconcile_issue":issue}),
+                            }),
+                        },
+                    );
+                }
             }
             return Ok(None);
         }

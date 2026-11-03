@@ -206,7 +206,11 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
         );
         server.api.state.lock().unwrap().proposed.as_mut().unwrap()["body"] = json!("Almost done.");
         label(&mut c, &server, settings, 1, "no-keyword");
-        while c.drive_once().unwrap() {}
+        assert!(
+            drive_to_idle(|| drive_once(&mut c)),
+            "adoption driver did not become idle after 500 steps: {:?}",
+            c.world().unwrap().nodes.first()
+        );
         assert!(
             c.snapshot()
                 .unwrap()
@@ -216,7 +220,11 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
             "sent clarification payloads must leave the active snapshot"
         );
         label(&mut c, &server, settings, 1, "no-keyword-again");
-        while c.drive_once().unwrap() {}
+        assert!(
+            drive_to_idle(|| drive_once(&mut c)),
+            "adoption driver did not become idle after 500 steps: {:?}",
+            c.world().unwrap().nodes.first()
+        );
         assert!(c.world().unwrap().nodes.is_empty());
         let state = server.api.state.lock().unwrap();
         assert_eq!(state.proposed_comments.len(), 1);

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 import uuid
 
 
@@ -47,6 +48,7 @@ def main():
         # The exec keeps this identity, including across the parent dying.
         if not publish(root / "process.json", identity(), exclusive=True):
             return
+        publish(root / "worker-started.json", {"started_ms": time.time_ns() // 1_000_000})
         command = json.loads((root / "command.json").read_text())
         os.execv(sys.executable, [sys.executable, *command])
     if not publish(root / "claim.json", identity(), exclusive=True):
@@ -71,7 +73,7 @@ def main():
         code = worker.wait()
         os.fsync(output.fileno())
         os.fsync(errors.fileno())
-    publish(root / "exit.json", {"code": code})
+    publish(root / "exit.json", {"code": code, "finished_ms": time.time_ns() // 1_000_000})
 
 
 if __name__ == "__main__":

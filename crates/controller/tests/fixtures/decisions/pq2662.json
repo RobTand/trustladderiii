@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "request_version": 0,
+  "decisions": [
+    {
+      "id": "pq2662-q10",
+      "source_comment": "https://github.com/RobTand/prismaquant/issues/2662#issuecomment-6580255177",
+      "question": {
+        "id": 10,
+        "kind": "cant_meet",
+        "findings": {
+          "decision": "May the current-source retention pin be updated?"
+        }
+      },
+      "answer": "Allow tests/test_guarded_read_digest_retention_2637.py, restricted to CURRENT_SOURCE_BLOBS and preserving historical manifest material.",
+      "allowed_scope": [
+        "tests/test_guarded_read_digest_retention_2637.py"
+      ],
+      "restrictions": [
+        "Change CURRENT_SOURCE_BLOBS only.",
+        "Preserve historical manifest material."
+      ],
+      "origin_request_version": 0,
+      "superseded_by": null
+    }
+  ]
+}

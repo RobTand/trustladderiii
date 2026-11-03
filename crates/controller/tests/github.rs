@@ -620,6 +620,7 @@ fn main() {
             "credit" => steering::credit(&settings),
             "answer_replacement" => steering::answer_replacement(&settings),
             "restart_open" => restart::open_request(&settings),
+            "restart_revoked" => restart::revoked_issue(&settings),
             "restart_stopped" => restart::stopped_request(&settings),
             "restart_merged" => restart::merged_request(&settings),
             "restart_reopen" => restart::reopens_issue_tl3_closed(),
@@ -637,6 +638,7 @@ fn main() {
         println!("test message_reconciliation ... ok");
         restart::reopens_issue_tl3_closed();
         restart::open_request(&database.create("restart_open"));
+        restart::revoked_issue(&database.create("restart_revoked"));
         restart::stopped_request(&database.create("restart_stopped"));
         restart::merged_request(&database.create("restart_merged"));
         restart::stopping_request(&database.create("restart_stopping"));
@@ -745,6 +747,7 @@ fn main() {
     steering::dropped_change_quote();
     steering::second_replacement(&database.create("second_replacement"));
     restart::open_request(&database.create("restart_open"));
+    restart::revoked_issue(&database.create("restart_revoked"));
     restart::stopped_request(&database.create("restart_stopped"));
     restart::merged_request(&database.create("restart_merged"));
     restart::reopens_issue_tl3_closed();
@@ -769,7 +772,7 @@ fn main() {
         steering::merge_pending(&database.create(&format!("pending_{point}")), point);
     }
     database.stop();
-    let scenario_count = if group == Some("flow") { 82 } else { 200 };
+    let scenario_count = if group == Some("flow") { 83 } else { 201 };
     println!(
         "{scenario_count} GitHub integration scenarios passed; no skips; no live GitHub calls"
     );

@@ -247,3 +247,33 @@ def test_session_identity_reaches_header_and_body_across_turns_and_resume(reques
     assert sent[3][0] == sent[3][1] and sent[3][0] != expected
     assert all(options == {"include_usage": True} for options in stream_options)
     assert "fixture-only-key" not in json.dumps(sent)
+
+
+def test_interrupted_stream_keeps_last_usage_once(request_doc, tmp_path, monkeypatch):
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import AIMessageChunk
+    from langchain_core.outputs import ChatGenerationChunk
+    from openai import APIConnectionError
+    from tl3_workers.facts import observe
+
+    completion = tmp_path / 'facts.json'
+    request_doc['trace'] = {'completion': str(completion)}
+    request_doc['key_file'] = str(tmp_path / 'fixture-key')
+    Path(request_doc['key_file']).write_text('fixture-key-value')
+    usage = {'input_tokens': 1000, 'output_tokens': 5, 'total_tokens': 1005,
+             'input_token_details': {'cache_read': 800}}
+
+    def interrupted(self, *args, **kwargs):
+        yield ChatGenerationChunk(message=AIMessageChunk(content='piece', usage_metadata=usage))
+        yield ChatGenerationChunk(message=AIMessageChunk(content='', usage_metadata=usage))
+        raise APIConnectionError(message='secret response body', request=httpx.Request(
+            'POST', 'http://model.invalid/v1'))
+
+    monkeypatch.setattr(ChatOpenAI, '_stream', interrupted)
+    with pytest.raises(APIConnectionError), observe(request_doc):
+        list(runtime.create_model(request_doc).stream('fixture'))
+    row = json.loads(completion.read_text())
+    assert (row['input_tokens'], row['cached_tokens'], row['output_tokens']) == (1000, 800, 5)
+    assert row['session_id'] == runtime.session_identity(request_doc)
+    assert row['failure']['origin'] == 'proxy'
+    assert 'secret response body' not in completion.read_text()
