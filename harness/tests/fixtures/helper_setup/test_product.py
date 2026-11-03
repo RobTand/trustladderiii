@@ -51,8 +51,7 @@ def _wrong_exception():
 
 def _execute_mover(q, mover):
     row = q.records.item('CLAIMED', mover)
-    if not isinstance(row, dict):
-        raise ValueError('missing claimed row')
+    assert isinstance(row, dict), 'missing claimed row'
     outcome = q.execute(row, timeout_s=240)
     assert outcome.returncode == 0, 'mover failed'
     return outcome
