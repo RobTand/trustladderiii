@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 
 import pytest
+import xdist  # noqa: F401
 
 from tl3_harness import execution, model
 from tl3_harness.execution import Container, Progress, run_checks
