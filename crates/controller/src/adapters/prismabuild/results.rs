@@ -74,6 +74,9 @@ struct CheckResult {
     forcing: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     helper_evidence: Option<serde_json::Value>,
+    /// Complete-unit admission and the unchecked suffix, retained for review (#591).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    selection: Option<serde_json::Value>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -511,6 +514,24 @@ pub(crate) fn selected_failures<'a>(
 #[cfg(test)]
 mod selected_failure_tests {
     use serde_json::json;
+
+    #[test]
+    fn saturation_receipt_survives_controller_report_serialization() {
+        let receipt = json!({"limit": 2, "charged_cases": 1,
+            "head_units": [["tests/test_a.py"]], "skipped_units": [["tests/test_b.py"]],
+            "skipped_checked": false,
+            "saturation": {"unit": ["tests/test_b.py"], "cases": 2, "remaining": 1}});
+        let result: super::CheckResult = serde_json::from_value(json!({
+            "name": super::SELECTED_CHECK, "kind": "regression", "verdict": "pass",
+            "custody": "in-process", "tests": [], "selection": receipt
+        }))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(result).unwrap()["selection"],
+            receipt,
+            "review must see that the skipped suffix was not checked"
+        );
+    }
 
     #[test]
     fn selected_failures_accumulate_across_rounds() {

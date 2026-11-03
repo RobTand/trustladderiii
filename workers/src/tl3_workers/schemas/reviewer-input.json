@@ -171,6 +171,12 @@
     "scope_diff": {
       "type": "string"
     },
+    "unresolved_displaced_failures": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "minItems": 1,
+      "description": "Historical selected failures without verified complete-unit head outcomes. These remain unresolved even when no test file was edited."
+    },
     "edited_selected_tests": {
       "type": "array",
       "items": {
@@ -292,6 +298,10 @@
           "custody": {
             "const": "in-process"
           },
+          "selection": {
+            "type": "object",
+            "description": "The trusted harness's bounded complete-unit admission and unchecked-suffix receipt."
+          },
           "forcing": {
             "$ref": "planner-reply.json#/$defs/forcing"
           },
@@ -392,6 +402,40 @@
                   "required": [
                     "base",
                     "head"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "setup_functions": {
+                "type": "object",
+                "maxProperties": 256,
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 128,
+                  "pattern": "^(?!test_|__)[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "fixtures": {
+                      "type": "array",
+                      "maxItems": 2,
+                      "uniqueItems": true,
+                      "items": {
+                        "enum": [
+                          "tmp_path",
+                          "tmp_path_factory"
+                        ]
+                      }
+                    },
+                    "source_sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "fixtures",
+                    "source_sha256"
                   ],
                   "additionalProperties": false
                 }
