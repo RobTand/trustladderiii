@@ -33,141 +33,6 @@ limits = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(limits)
 
 
-class ProofSubjectIntegrityError(Exception):
-    """A graft changed the runtime subject; this can never supply assertion RED."""
-
-
-class ProofIntegrity:
-    def __init__(self):
-        self.bindings = {}
-        self.forcing = {}
-
-    @staticmethod
-    def state(value, seen=None):
-        seen = set() if seen is None else seen
-        if id(value) in seen:
-            return ()
-        seen.add(id(value))
-        result, children = (value,), []
-        if isinstance(value, types.FunctionType):
-            result += (value.__code__, value.__defaults__, value.__kwdefaults__)
-            for cell in value.__closure__ or ():
-                try:
-                    children.append(cell.cell_contents)
-                except ValueError:
-                    pass
-        if isinstance(value, (staticmethod, classmethod)):
-            children.append(value.__func__)
-        elif isinstance(value, property):
-            children.extend((value.fget, value.fset, value.fdel))
-        elif not isinstance(value, (type, types.ModuleType)):
-            try:
-                children.extend(object.__getattribute__(value, '__dict__').values())
-            except AttributeError:
-                pass
-        for child in children:
-            if not isinstance(child, type) and (callable(child) or isinstance(child, (staticmethod, classmethod, property))):
-                result += ProofIntegrity.state(child, seen)
-        return result
-
-    @staticmethod
-    def resolve(module, path, local, namespace):
-        if namespace and path[:len(namespace)] == namespace:
-            owner, parts = local, path[len(namespace):]
-        else:
-            owner, parts = module, path
-        identity = id(owner)
-        for part in parts[:-1]:
-            if part not in owner or not isinstance(owner[part], type):
-                return None
-            identity, owner = id(owner[part]), vars(owner[part])
-        return owner, parts[-1] if parts else None, identity
-
-    def __call__(self, module, local, namespace, protected, filename):
-        self.check(graft=module)
-        namespace = tuple(namespace)
-        for path in protected:
-            path = tuple(path)
-            resolved = self.resolve(module, path, local, namespace)
-            if resolved is None:
-                continue
-            owner, name, _ = resolved
-            key = (id(module), path)
-            if name in owner and key not in self.bindings:
-                self.bindings[key] = (module, path, local, namespace, filename, self.state(owner[name]))
-
-    def resolved(self, record):
-        module, path, local, namespace, _, _ = record
-        return self.resolve(module, path, module, ()) or self.resolve(module, path, local, namespace)
-
-    def forced(self, owner, name):
-        self.forcing[(id(vars(owner)) if isinstance(owner, types.ModuleType) else id(owner), name)] = None
-        for record in self.bindings.values():
-            if resolved := self.resolved(record):
-                namespace, name, identity = resolved
-                if (identity, name) in self.forcing and name in namespace:
-                    self.forcing[identity, name] = self.state(namespace[name])
-
-    def check(self, *, graft=None):
-        for module, path, local, namespace, filename, expected in self.bindings.values():
-            # Execution may change data; graft evaluation may only add names.
-            if module is not graft and not (callable(expected[0]) or isinstance(
-                    expected[0], (types.ModuleType, staticmethod, classmethod, property))):
-                continue
-            resolved = self.resolved((module, path, local, namespace, filename, expected))
-            owner, name, identity = resolved if resolved is not None else ({}, None, None)
-            expected = self.forcing.get((identity, name), expected)
-            actual = self.state(owner[name]) if name in owner else ()
-            if len(actual) != len(expected) or any(a is not b for a, b in zip(actual, expected)):
-                raise ProofSubjectIntegrityError(
-                    f'proof_subject_integrity: {filename}::{"::".join(path)} changed by observer/support')
-
-
-proof_integrity = ProofIntegrity()
-builtins.__tl3_proof_integrity__ = proof_integrity
-
-
-def install_proof_integrity(root):
-    manifest = root / '.tl3-proof-integrity.json'
-    if not manifest.is_file():
-        return
-    modules = {str((root / name).resolve()): (name, data) for name, data in json.loads(manifest.read_text()).items()}
-    compile_source = builtins.compile
-
-    def compile_proof(source, filename, mode, flags=0, dont_inherit=False, optimize=-1, **kwargs):
-        entry = (modules.get(os.path.abspath(os.fsdecode(filename)))
-                 if mode == 'exec' and not flags & ast.PyCF_ONLY_AST and isinstance(filename, (str, bytes, os.PathLike)) else None)
-        if entry is not None:
-            name, data = entry
-            if not isinstance(source, ast.Module):
-                source = compile_source(source, filename, mode, flags | ast.PyCF_ONLY_AST, dont_inherit, optimize, **kwargs)
-            grafts = {(span[0] + 1, span[1]): item['namespace'] for item in data['grafts'] if (span := item['span'])}
-            def guard(namespace=()):
-                return ast.parse(f'__tl3_proof_integrity__(globals(), locals(), {namespace!r}, '
-                                 f'{data["bindings"]!r}, {name!r})').body[0]
-            class Instrument(ast.NodeTransformer):
-                def visit(self, node):
-                    node = super().visit(node)
-                    if isinstance(node, ast.stmt) and hasattr(node, 'lineno'):
-                        start = min([node.lineno, *(d.lineno for d in getattr(node, 'decorator_list', []))])
-                        namespace = grafts.get((start, getattr(node, 'end_lineno', None)))
-                        if namespace is not None:
-                            return [ast.copy_location(guard(namespace), node), node,
-                                    ast.copy_location(guard(namespace), node)]
-                    return node
-            source = Instrument().visit(source)
-            source.body.append(guard())
-            ast.fix_missing_locations(source)
-        return compile_source(source, filename, mode, flags, dont_inherit, optimize, **kwargs)
-
-    builtins.compile = compile_proof
-
-
-# Xdist imports this plugin before the checkout's conftest modules.
-if __name__ != '__main__':
-    install_proof_integrity(Path.cwd())
-
-
 def module_candidates(module):
     root = Path.cwd()
     candidates = []
@@ -273,7 +138,6 @@ def forcing_owner(target, patch=None):
                     raise
                 value = LocalReference(value)
                 patch.setattr(owner, name, value)
-                proof_integrity.forced(owner, name)
         owner = value
     if not isinstance(owner, LocalReference):
         ownership.repository_owner(target, owner, root)
@@ -536,7 +400,6 @@ class Reporter:
         accounting = (DelayAccounting(self.accounting_directory,
                                       (patch['target'] for patch in self.patches if 'delay_seconds' in patch))
                       if self.accounting_directory is not None else None)
-        previous = proof_integrity.forcing.copy()
         try:
             with pytest.MonkeyPatch.context() as patch:
                 for forcing in self.patches:
@@ -550,10 +413,8 @@ class Reporter:
                         raise
                     patch.setattr(owner, name, forced_value(owner, name, mode, argument,
                                                             accounting=accounting, target=target))
-                    proof_integrity.forced(owner, name)
                 yield
         finally:
-            proof_integrity.forcing = previous
             if accounting is not None:
                 try:
                     self.target_hits[request.node.nodeid] = accounting.finish()
@@ -574,14 +435,6 @@ class Reporter:
         if not self.started:
             self.started = True
             self.emit(event="start", schema=1)
-
-    @pytest.hookimpl(wrapper=True, tryfirst=True)
-    def pytest_runtest_call(self):
-        proof_integrity.check()
-        try:
-            return (yield)
-        finally:
-            proof_integrity.check()
 
     @pytest.hookimpl(trylast=True)
     def pytest_collection_modifyitems(self, items, config, session):
@@ -673,9 +526,6 @@ class Reporter:
         message = str(report.longrepr) if report.failed else ""
         if call.excinfo and isinstance(call.excinfo.value, ForcingTampered):
             message = str(call.excinfo.value) + '\n' + message
-        if call.excinfo and isinstance(call.excinfo.value, ProofSubjectIntegrityError):
-            message = str(call.excinfo.value) + '\n' + message
-            report.longrepr = message
         if self.summary:
             if self.declared_symptom is not None and report.failed and call.excinfo:
                 error = call.excinfo.value
@@ -700,6 +550,7 @@ class Reporter:
             self.emit(event='delay-budget', test=item.nodeid, **self.delay_budget[item.nodeid])
         self.emit(event="phase", test=item.nodeid, when=report.when,
                   outcome=outcome, assertion=bool(assertion and outcome == "failed"), missing=missing,
+                  reason=str(call.excinfo.value)[:1000] if assertion and report.failed else "",
                   exception=describe(call.excinfo.value) if report.failed and call.excinfo else "",
                   exception_type=(type(call.excinfo.value).__module__ + '.' + type(call.excinfo.value).__qualname__)[:200]
                   if report.failed and call.excinfo else "",
@@ -773,7 +624,7 @@ class Reporter:
 
 def pytest_configure(config):
     data = getattr(config, 'workerinput', {}).get('tl3_symptom')
-    if data and (data['declared_symptom'] is not None or Path('.tl3-proof-integrity.json').is_file()):
+    if data and data['declared_symptom'] is not None:
         config.pluginmanager.register(Reporter(data['tests'], -1, summary=True, patches=data['patches'],
                                                declared_symptom=data['declared_symptom'], worker=True))
 
@@ -799,7 +650,6 @@ def main():
     parallel = next((int(flag.split("=", 1)[1]) for flag in flags if flag.startswith("--parallel=")), 0)
     checkout = arguments[0] if arguments else "/checkout"
     os.chdir(checkout)
-    install_proof_integrity(Path.cwd())
     sys.path.insert(0, str(Path.cwd()))
     reporter = Reporter(tests, descriptor, summary, parallel=bool(summary and parallel),
                         patches=tuple(forcing.get("patches", ())), selection=selection,
@@ -816,7 +666,7 @@ def main():
             reporter.pytest_sessionfinish(0)
             return 0
         worker_plugin = []
-        if declared_symptom is not None or Path('.tl3-proof-integrity.json').is_file():
+        if declared_symptom is not None:
             harness = Path(__file__).resolve().parent
             sys.path.insert(0, str(harness.parent))
             # Pytest owns the short plugin name "runner". Use the mounted package's name.

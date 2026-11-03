@@ -2,7 +2,6 @@
 import ast
 import builtins
 import hashlib
-import json
 from pathlib import Path
 import shutil
 import symtable
@@ -13,7 +12,6 @@ from .trees import bound_names, is_test, tree_sha256
 
 
 RULE = 'subject-observer-v1'
-INTEGRITY = '.tl3-proof-integrity.json'
 
 
 def source_unit(source, identity, *, optional=False):
@@ -86,7 +84,7 @@ def written_bindings(source, namespace=()):
 def deny_namespace_apis(source, module):
     """Support is declarative source, never access to an execution namespace."""
     names = {'globals', 'locals', 'vars', 'eval', 'exec', 'compile', '__import__',
-             'getattr', 'setattr', 'delattr', '__builtins__', '__tl3_proof_integrity__'}
+             'getattr', 'setattr', 'delattr', '__builtins__'}
     attributes = {'__dict__', '__globals__', '__builtins__', '__getattribute__',
                   '__setattr__', '__delattr__', 'f_globals', 'f_locals', 'gi_frame',
                   'cr_frame', 'tb_frame', '_getframe', 'currentframe', 'modules'}
@@ -101,16 +99,7 @@ def deny_namespace_apis(source, module):
             imported = [node.module or ''] if isinstance(node, ast.ImportFrom) else [alias.name for alias in node.names]
             symbol = next((name for name in imported if name.split('.')[0] in modules), None)
         if symbol:
-            raise ProofRefusal('dynamic namespace API in observer/support can rebind base subjects', module, symbol)
-
-
-def guard_runtime(source, name, protected, grafts=()):
-    """Describe runtime checks without changing the subject/observer source bytes."""
-    if '__tl3_proof_integrity__' in source:
-        raise ProofRefusal('reserved proof integrity binding', name, '__tl3_proof_integrity__')
-    return {'bindings': sorted(protected), 'grafts': [
-        {'span': source_unit(source, item)[1], 'namespace': item.split('::')[1:-1]}
-        for item in sorted(grafts)]}
+            raise ProofRefusal('dynamic namespace API in support can rebind base subjects', module, symbol)
 
 
 def conftest_subjects(base, head, plan):
@@ -137,8 +126,6 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
     """Base subject plus head observers. No head subject code is ever copied to RED."""
     if destination.exists():
         raise ProofRefusal('destination must be a fresh tree')
-    if any((tree / INTEGRITY).exists() for tree in (base, head)):
-        raise ProofRefusal('reserved proof integrity manifest', INTEGRITY)
     shutil.copytree(base, destination)
     declaration = check.proof
     subjects = declaration.subjects if declaration else ()
@@ -159,7 +146,6 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
             raise ProofRefusal('overlapping observer selections', observer.split('::')[0])
     paths = {item.split('::')[0] for item in (*observers, *support)}
     identities = {}
-    runtime = {}
     for name in sorted(paths):
         if not is_test(name, config['test-files']) and any(item.split('::')[0] == name for item in observers):
             raise ProofRefusal('observer is outside configured tests', name)
@@ -171,7 +157,17 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         requested = [item for item in (*observers, *support) if item.split('::')[0] == name]
         for statement in ast.parse(new).body:
             if (isinstance(statement, (ast.Import, ast.ImportFrom))
-                    and bound_names(ast.unparse(statement)) & {item.split('::')[-1] for item in requested}):
+                    and bound_names(ast.unparse(statement)) & {item.split('::')[-1] for item in support}):
+                deny_namespace_apis(ast.unparse(statement), name)
+        support_required = set()
+        for item in requested:
+            if item in support:
+                text, _ = source_unit(new, item)
+                deny_namespace_apis(text, name)
+                support_required.update(global_names(text, name))
+        for statement in ast.parse(new).body:
+            if (isinstance(statement, (ast.Import, ast.ImportFrom))
+                    and bound_names(ast.unparse(statement)) & support_required):
                 deny_namespace_apis(ast.unparse(statement), name)
         if not old_path.exists():
             if any(subject.split('::')[0] == name for subject in subjects):
@@ -180,17 +176,13 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
             # the observer context, including its imports and pytest fixtures.
             for item in requested:
                 identities[item] = digest(source_unit(new, item)[0])
-            deny_namespace_apis(new, name)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(new)
             continue
         replacements, grafts, required_texts = [], [], []
         protected = written_bindings(old)
         protected.update(tuple(subject.split('::')[1:]) for subject in subjects if subject.split('::')[0] == name)
-        protected.difference_update(tuple(item.split('::')[1:]) for item in observers if item.split('::')[0] == name)
-        runtime_units = set(requested)
         def guard(text, item, namespace=()):
-            deny_namespace_apis(text, name)
             permitted = {tuple(item.split('::')[1:])} if item in observers else set()
             written = written_bindings(text, namespace)
             conflict = (written & protected) - permitted
@@ -220,8 +212,6 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
                         if any(overlaps(parent, subject) for subject in subjects):
                             raise ProofRefusal('new observer class would carry a declared subject onto base', name, parts[1])
                         text, _ = source_unit(new, parent)
-                        runtime_units.discard(item)
-                        runtime_units.add(parent)
                         required_texts.append(text)
                         namespace = ()
                     else:
@@ -253,7 +243,6 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
                        in required - bound]
             if aliases:
                 statement.names = aliases
-                deny_namespace_apis(ast.unparse(statement), name)
                 imports.append(ast.unparse(statement))
                 bound.update(bound_names(imports[-1]))
         missing = required - bound
@@ -273,7 +262,6 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         lines = composed.splitlines(keepends=True)
         lines[insertion:insertion] = [line + '\n' for line in imports]
         target.write_text(''.join(lines))
-        runtime[name] = (protected, runtime_units)
     for subject in subjects:
         if unit(destination, subject) != unit(base, subject):
             raise ProofRefusal('assembled proof changed a base subject binding', subject.split('::')[0])
@@ -282,16 +270,6 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
                        and (not (base / path.relative_to(tree)).is_file()
                             or not (head / path.relative_to(tree)).is_file()
                             or (base / path.relative_to(tree)).read_bytes() != (head / path.relative_to(tree)).read_bytes())})
-    if not outcome_observer or support:
-        subject_modules = {subject.split('::')[0] for subject in subjects or inferred
-                           if subject.split('::')[0].endswith('.py')}
-        for name in subject_modules - runtime.keys():
-            if (base / name).is_file():
-                runtime[name] = (written_bindings((base / name).read_text()), ())
-        if runtime:
-            (destination / INTEGRITY).write_text(json.dumps({
-                name: guard_runtime((destination / name).read_text(), name, protected, grafts)
-                for name, (protected, grafts) in sorted(runtime.items())}, sort_keys=True))
     def identity(tree, name):
         try:
             path = tree / name

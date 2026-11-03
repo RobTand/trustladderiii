@@ -51,7 +51,10 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
         exception_type = record.get('exception_type', '')
         if not isinstance(exception_type, str) or len(exception_type) > 200:
             raise InvalidReport('invalid phase exception type')
-        ignored = ('message', 'exception', 'exception_type') if record.get('event') == 'phase' else ('message', 'exception')
+        reason = record.get('reason', '')
+        if not isinstance(reason, str) or len(reason) > 1000:
+            raise InvalidReport('invalid assertion reason')
+        ignored = ('message', 'exception', 'exception_type', 'reason') if record.get('event') == 'phase' else ('message', 'exception')
         record = {key: value for key, value in record.items() if key not in ignored}
         match record:
             case {'event': 'delay-budget', 'test': str(test), 'applied_seconds': _, 'exhausted': _} if len(record) == 4:
@@ -100,7 +103,7 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
                     messages[test] = (messages.get(test, "") + "\n" + message).strip()[:1000]
                 if details is not None and outcome == "failed":
                     if test not in details or when in ('setup', 'teardown'):
-                        details[test] = Failure(when, exception, message)
+                        details[test] = Failure(when, exception, message, reason)
             case _:
                 raise InvalidReport("unknown report event")
     def case_outcome(test):

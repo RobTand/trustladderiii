@@ -62,6 +62,7 @@ class Failure:
     phase: str
     exception: str
     message: str
+    reason: str = ''
 
 
 class FailureNotes(dict):
@@ -364,9 +365,11 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
             passed = False
         if passed and before == Outcome.ASSERTION and check.proof is not None and check.declared_symptom is None:
             failure = (base_notes.details if base_notes is not None else {}).get(test)
+            # Pytest appends its rewritten expression after the original assertion message.
             wrong_reason = (failure is None or failure.phase != 'call'
-                            or failure.exception not in (f'AssertionError: {check.proof.red_message}',
-                                                         f'Failed: {check.proof.red_message}'))
+                            or not (failure.reason == check.proof.red_message
+                                    or failure.exception.startswith('AssertionError:')
+                                    and failure.reason.startswith(check.proof.red_message + '\nassert ')))
             passed = not wrong_reason
         message = "" if passed else (messages or {}).get(test, "")
         if not passed and check.forcing is not None:
