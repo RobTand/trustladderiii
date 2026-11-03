@@ -167,6 +167,15 @@ tl3_py_test(
 )
 
 tl3_py_test(
+    name = "test_fork_forcing",
+    srcs = ["test_fork_forcing.py"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
     name = "test_selection_groups",
     srcs = ["test_selection_groups.py"],
     deps = [

@@ -2,11 +2,16 @@
 import ast
 import builtins
 import copy
+import ctypes
+import errno
+import hashlib
 import importlib
 import importlib.util
 import json
+import mmap
 import os
 import shutil
+import struct
 from pathlib import Path
 import sys
 import tempfile
@@ -124,7 +129,166 @@ def forcing_owner(target):
 MAX_TOTAL_DELAY_SECONDS = 10
 
 
-def forced_value(owner, name, mode, argument, sleep=time.sleep, budget=None, counter=None):
+class ForcingTampered(ForcingError):
+    def __init__(self, reason):
+        super().__init__('forcing_tampered: ' + reason)
+
+
+class ProcessLock:
+    """Linux/glibc robust mutex: owner death is observable, not a stuck lock."""
+
+    def __init__(self, memory):
+        self.memory = memory
+        self.pointer = ctypes.c_void_p(ctypes.addressof(ctypes.c_char.from_buffer(memory)))
+        self.native = ctypes.CDLL(None)
+        signatures = {
+            'pthread_mutexattr_init': [ctypes.c_void_p],
+            'pthread_mutexattr_setpshared': [ctypes.c_void_p, ctypes.c_int],
+            'pthread_mutexattr_setrobust': [ctypes.c_void_p, ctypes.c_int],
+            'pthread_mutexattr_destroy': [ctypes.c_void_p],
+            'pthread_mutex_init': [ctypes.c_void_p, ctypes.c_void_p],
+            'pthread_mutex_lock': [ctypes.c_void_p],
+            'pthread_mutex_consistent': [ctypes.c_void_p],
+            'pthread_mutex_unlock': [ctypes.c_void_p],
+        }
+        for name, arguments in signatures.items():
+            function = getattr(self.native, name)
+            function.argtypes, function.restype = arguments, ctypes.c_int
+        # Opaque storage exceeds glibc's mutex/attribute sizes on amd64 and arm64.
+        # The mutex uses the first 128 aligned bytes of the shared mapping.
+        attributes = (ctypes.c_long * 8)()
+        if self.native.pthread_mutexattr_init(attributes):
+            raise ForcingError('cannot initialize delay accounting mutex attributes')
+        try:
+            if (self.native.pthread_mutexattr_setpshared(attributes, 1)
+                    or self.native.pthread_mutexattr_setrobust(attributes, 1)
+                    or self.native.pthread_mutex_init(self.pointer, attributes)):
+                raise ForcingError('delay accounting requires a Linux/glibc process-shared robust mutex')
+        finally:
+            self.native.pthread_mutexattr_destroy(attributes)
+
+    def __enter__(self):
+        result = self.native.pthread_mutex_lock(self.pointer)
+        if result == errno.EOWNERDEAD:
+            if self.native.pthread_mutex_consistent(self.pointer):
+                self.native.pthread_mutex_unlock(self.pointer)
+                raise ForcingTampered('cannot recover an abandoned accounting mutex')
+            return True
+        if result:
+            raise ForcingTampered(f'cannot acquire accounting mutex: {result}')
+        return False
+
+    def __exit__(self, *exception):
+        if self.native.pthread_mutex_unlock(self.pointer):
+            raise ForcingTampered('cannot release accounting mutex')
+
+
+class DelayAccounting:
+    """Fork-shared counts, budget, expected journal offset and content digest.
+
+    Entry does constant work and never reads the journal, including after budget
+    exhaustion. Teardown verifies its content once, reading only new chunks. The
+    mutex is released before sleeping; death during an update invalidates proof.
+    The mapping survives descriptor closure. Spawn/exec supplies no evidence.
+    This detects file edits, not deliberate mutation of the interpreter itself.
+    """
+
+    record = struct.Struct('!Id')
+
+    def __init__(self, directory, targets):
+        self.targets = tuple(dict.fromkeys(targets))
+        self.state = struct.Struct('!QdB' + 'Q' * len(self.targets) + '32s')
+        self.memory = mmap.mmap(-1, 128 + self.state.size)
+        self.lock = ProcessLock(self.memory)
+        self.state.pack_into(self.memory, 128, 0, MAX_TOTAL_DELAY_SECONDS, 0,
+                             *([0] * len(self.targets)), bytes(32))
+        # The reporter keeps this inode alive even if a descendant closes all
+        # inherited descriptors. Otherwise unlink/recreate can reuse its number.
+        self.descriptor, self.path = tempfile.mkstemp(prefix='node-', dir=directory)
+        info = os.fstat(self.descriptor)
+        self.identity = info.st_dev, info.st_ino
+
+    def tampered(self, reason):
+        self.memory[128 + 16] = 1
+        raise ForcingTampered(reason)
+
+    def load(self, abandoned):
+        if abandoned:
+            self.tampered('accounting writer died during an update')
+        size, remaining, status, *tail = self.state.unpack_from(self.memory, 128)
+        if status == 1:
+            raise ForcingTampered('accounting was previously invalidated')
+        if status == 2:
+            raise FileNotFoundError(self.path)
+        return size, remaining, tail[:-1], tail[-1]
+
+    def validate(self, descriptor, expected):
+        info = os.fstat(descriptor)
+        path_info = os.stat(self.path, follow_symlinks=False)
+        if ((info.st_dev, info.st_ino) != self.identity
+                or (path_info.st_dev, path_info.st_ino) != self.identity):
+            self.tampered('journal was replaced')
+        if info.st_size != expected:
+            reason = 'incomplete' if info.st_size % self.record.size else 'invalid'
+            self.tampered(f'{reason} journal size: expected {expected}, observed {info.st_size}')
+
+    def enter(self, target, argument):
+        with self.lock as abandoned:
+            size, remaining, counts, digest = self.load(abandoned)
+            try:
+                descriptor = os.open(self.path, os.O_RDWR | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC)
+                try:
+                    self.validate(descriptor, size)
+                    index = self.targets.index(target)
+                    entry = self.record.pack(index, argument)
+                    if os.write(descriptor, entry) != len(entry) or os.lseek(descriptor, 0, os.SEEK_CUR) != size + len(entry):
+                        self.tampered('incomplete or unexpected journal append')
+                    self.validate(descriptor, size + len(entry))
+                    wait = min(argument, remaining)
+                    counts[index] += 1
+                    self.state.pack_into(self.memory, 128, size + len(entry), remaining - wait, 0,
+                                         *counts, hashlib.sha256(digest + entry).digest())
+                    return wait
+                finally:
+                    os.close(descriptor)
+            except OSError as error:
+                self.tampered(f'journal I/O failed: {type(error).__name__}')
+
+    def finish(self):
+        try:
+            with self.lock as abandoned:
+                size, remaining, counts, expected_digest = self.load(abandoned)
+                try:
+                    self.validate(self.descriptor, size)
+                    offset, digest = 0, bytes(32)
+                    while offset < size:
+                        length = min(self.record.size * 4096, size - offset)
+                        data = os.pread(self.descriptor, length, offset)
+                        if len(data) != length:
+                            self.tampered('incomplete journal read')
+                        for start in range(0, length, self.record.size):
+                            digest = hashlib.sha256(digest + data[start:start + self.record.size]).digest()
+                        offset += length
+                    self.validate(self.descriptor, size)
+                    if digest != expected_digest:
+                        self.tampered('journal content differs from runner-written entries')
+                    self.state.pack_into(self.memory, 128, size, remaining, 2, *counts, digest)
+                    return dict(zip(self.targets, counts))
+                except OSError as error:
+                    self.tampered(f'journal I/O failed: {type(error).__name__}')
+        finally:
+            # Cleanup must not replace a tamper error before the reporter sees it.
+            try:
+                os.close(self.descriptor)
+            except OSError:
+                pass
+            try:
+                os.unlink(self.path)
+            except OSError:
+                pass
+
+
+def forced_value(owner, name, mode, argument, sleep=time.sleep, *, accounting=None, target=None):
     if mode == "value":
         return argument
     if mode == "returns":
@@ -141,13 +305,11 @@ def forced_value(owner, name, mode, argument, sleep=time.sleep, budget=None, cou
     if not callable(original):
         raise ForcingError(f"delay_seconds needs a callable target, not {type(original).__name__}")
 
-    budget = [MAX_TOTAL_DELAY_SECONDS] if budget is None else budget
+    if accounting is None:
+        raise ForcingError('delay accounting is unavailable')
 
     def delayed(*args, **kwargs):
-        if counter is not None:
-            counter[0] += 1
-        wait = min(argument, budget[0])
-        budget[0] -= wait
+        wait = accounting.enter(target, argument)
         if wait:
             sleep(wait)
         return original(*args, **kwargs)
@@ -172,11 +334,17 @@ class Reporter:
         self.patches = patches
         self.selection = selection
         self.target_hits = {}
+        self.forcing_tampered = {}
         self.forcing_refusals = {}
         self.phases = {}
         self.collection_errors = []
         self.reported = set()
         self.started = False
+        # Keep journals outside the checkout and pytest's writable scratch tree.
+        # Explicit /tmp also avoids TMPDIR values supplied by the served repository.
+        self.accounting_owner = os.getpid()
+        self.accounting_directory = (tempfile.mkdtemp(prefix='tl3-forcing-', dir='/tmp')
+                                     if any('delay_seconds' in patch for patch in patches) else None)
 
     @pytest.fixture(autouse=True)
     def _tl3_scratch(self, tmp_path):
@@ -201,21 +369,31 @@ class Reporter:
     def _tl3_forcing(self, request):
         # Applied before the test's own fixtures and undone after them, so the test's own
         # monkeypatches take precedence while it runs (#393).
-        budget = [MAX_TOTAL_DELAY_SECONDS]
-        hits = self.target_hits.setdefault(request.node.nodeid, {})
-        with pytest.MonkeyPatch.context() as patch:
-            for forcing in self.patches:
-                target = forcing["target"]
-                (mode, argument), = ((key, value) for key, value in forcing.items() if key != "target")
+        accounting = (DelayAccounting(self.accounting_directory,
+                                      (patch['target'] for patch in self.patches if 'delay_seconds' in patch))
+                      if self.accounting_directory is not None else None)
+        try:
+            with pytest.MonkeyPatch.context() as patch:
+                for forcing in self.patches:
+                    target = forcing["target"]
+                    (mode, argument), = ((key, value) for key, value in forcing.items() if key != "target")
+                    try:
+                        owner, name = forcing_owner(target)
+                    except ForcingError as error:
+                        if error.refusal is not None:
+                            self.forcing_refusals[request.node.nodeid] = error.refusal
+                        raise
+                    patch.setattr(owner, name, forced_value(owner, name, mode, argument,
+                                                            accounting=accounting, target=target))
+                yield
+        finally:
+            if accounting is not None:
                 try:
-                    owner, name = forcing_owner(target)
-                except ForcingError as error:
-                    if error.refusal is not None:
-                        self.forcing_refusals[request.node.nodeid] = error.refusal
+                    self.target_hits[request.node.nodeid] = accounting.finish()
+                except ForcingTampered as error:
+                    self.target_hits[request.node.nodeid] = {}
+                    self.forcing_tampered[request.node.nodeid] = str(error)
                     raise
-                counter = hits.setdefault(target, [0]) if mode == "delay_seconds" else None
-                patch.setattr(owner, name, forced_value(owner, name, mode, argument, budget=budget, counter=counter))
-            yield
 
     def emit(self, **record):
         data = (json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n").encode(errors='backslashreplace')
@@ -310,15 +488,17 @@ class Reporter:
         # Xfail and xpass cannot supply evidence for a named test.
         outcome = "skipped" if hasattr(report, "wasxfail") else report.outcome
         missing = missing_name(call.excinfo.value) if call.when == "call" and call.excinfo else None
+        message = str(report.longrepr) if report.failed else ""
+        if call.excinfo and isinstance(call.excinfo.value, ForcingTampered):
+            message = str(call.excinfo.value) + '\n' + message
         if self.summary:
-            message = str(report.longrepr) if report.failed else ""
             self.phases.setdefault(item.nodeid, []).append(
                 (report.when, outcome, message[:1000], len(message) > 1000, assertion))
             return report
         self.emit(event="phase", test=item.nodeid, when=report.when,
                   outcome=outcome, assertion=bool(assertion and outcome == "failed"), missing=missing,
                   exception=describe(call.excinfo.value) if report.failed and call.excinfo else "",
-                  message=str(report.longrepr)[:1000] if report.failed else "")
+                  message=message[:1000])
         return report
 
     def pytest_runtest_logreport(self, report):
@@ -345,7 +525,12 @@ class Reporter:
             outcome = "skipped" if any(p[1] == "skipped" for p in phases) else "passed"
         message = "\n".join(p[2] for p in failures)
         hits = self.target_hits.pop(report.nodeid, {})
-        extra = {"target_hits": {target: count[0] for target, count in hits.items()}} if self.patches else {}
+        extra = {"target_hits": hits} if self.patches else {}
+        tampered = self.forcing_tampered.pop(report.nodeid, None)
+        if tampered is not None:
+            outcome = 'error'
+            message = tampered + '\n' + message
+            extra.update(forcing_tampered=True, target_hits={})
         refusal = self.forcing_refusals.pop(report.nodeid, None)
         if refusal is not None:
             extra['forcing_refusal'] = refusal
@@ -355,6 +540,8 @@ class Reporter:
     def pytest_sessionfinish(self, exitstatus):
         self.emit_collection_errors()
         self.emit(event="finish", exit_code=int(exitstatus))
+        if self.accounting_directory is not None and os.getpid() == self.accounting_owner:
+            shutil.rmtree(self.accounting_directory)
 
 
 def main():
