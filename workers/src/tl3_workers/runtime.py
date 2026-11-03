@@ -4,6 +4,7 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from contextvars import ContextVar
 from copy import deepcopy
+from hashlib import sha256
 from importlib.resources import files
 import json
 from pathlib import Path
@@ -112,7 +113,7 @@ def create_model(request) -> BaseChatModel:
         streaming=True,
         stream_usage=True,
         default_headers={"X-Session-ID": identity},
-        model_kwargs={"prompt_cache_key": identity},
+        model_kwargs={"prompt_cache_key": prompt_cache_identity(request)},
         max_retries=0,
     )
 
@@ -123,15 +124,54 @@ run_prompt = ContextVar("run_prompt", default=None)
 run_test_cpus = ContextVar("run_test_cpus", default=1)
 
 
-def role_prompt(role):
-    supplied = run_prompt.get()
+def role_prompt(role, *, text=None, test_cpus=None):
+    supplied = run_prompt.get() if text is None else text
     prompt = supplied if supplied is not None else files("tl3_workers").joinpath("prompts", role.prompt).read_text()
     if role.name in {"ingest", "audit", "planner"}:
-        prompt += "\n\n" + forcing_guidance(run_test_cpus.get())
+        prompt += "\n\n" + forcing_guidance(run_test_cpus.get() if test_cpus is None else test_cpus)
     if role.name == 'planner':
         from tl3_workers.forcing_rehearsal import GUIDANCE
         prompt += "\n\n" + GUIDANCE
     return prompt
+
+
+def shared_inputs(inputs):
+    # Intake has bounded orientation; planning has the immutable base SHA instead.
+    return {name: inputs[name] for name in ("repo", "base_sha") if name in inputs}
+
+
+def prompt_cache_identity(request):
+    role = ROLES[request["role"]]
+    if role.name not in {"ingest", "audit", "planner"}:
+        return session_identity(request)
+    prompt = request.get("prompt", {})
+    shared = {
+        "role": role.name,
+        "version": prompt.get("version"),
+        "prompt": role_prompt(role, text=prompt.get("text"), test_cpus=request.get("test_cpus", 1)),
+        "schema": schema(role.reply_schema),
+        "planner_schema": EXPLORATION_DECLARATION if role.name == "planner" else None,
+        "format": ONLY_JSON,
+        "repository": request.get("trace", {}).get("repo", request.get("memory", {}).get("repo")),
+        "orientation": shared_inputs(request["inputs"]),
+    }
+    digest = sha256(json.dumps(shared, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    return "tl3-cache-" + digest[:48]
+
+
+def initial_message(request, inputs):
+    shared = shared_inputs(inputs) if request["role"] in {"ingest", "audit", "planner"} else {}
+    if not shared:
+        return HumanMessage(content=json.dumps(inputs, ensure_ascii=False))
+    specific = {name: value for name, value in inputs.items() if name not in shared}
+    # Two text blocks retain one JSON object and the orientation's user priority.
+    # CLIProxyAPI preserves Claude cache_control on ChatOpenAI text blocks.
+    prefix = {"type": "text", "text": json.dumps(shared, sort_keys=True, ensure_ascii=False)[:-1] + ", "}
+    if request.get("model", {}).get("name", "").startswith("claude"):
+        prefix["cache_control"] = {"type": "ephemeral"}
+    return HumanMessage(content=[prefix, {
+        "type": "text", "text": json.dumps(specific, ensure_ascii=False)[1:],
+    }])
 
 
 def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None, context_size=150_000,
@@ -250,7 +290,7 @@ def _run(request, emit):
                 model_inputs = {**model_inputs, 'forcing_rehearsal_state': {
                     'candidates': ledger.candidates, 'pending': ledger.active,
                     'remaining_candidates': 8 - ledger.attempts}}
-            history = [HumanMessage(content=json.dumps(model_inputs, ensure_ascii=False))]
+            history = [initial_message(request, model_inputs)]
             draft_error = None
 
             def checked(text):
