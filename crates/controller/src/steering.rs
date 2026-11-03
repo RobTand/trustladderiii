@@ -1012,6 +1012,7 @@ impl Controller {
                             round: 0,
                             replanned: n.replanned,
                             checks: None,
+                            evidence: None,
                             job_generation: None,
                             question: None,
                             marker_key: None,
