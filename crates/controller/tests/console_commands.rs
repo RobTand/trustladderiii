@@ -1199,3 +1199,63 @@ fn postmortem_button_files_once_on_closed_or_waiting_requests() {
         "the button posts nothing on the issue"
     );
 }
+
+#[test]
+fn changed_console_request_reconciles_existing_decisions() {
+    let mut db = support::Database::start();
+    let mut world = World::new(&mut db, "console_decision_change", &[12], false);
+    let question = world.ask(0, QKind::CantMeet);
+    let context: Value =
+        serde_json::from_str(include_str!("fixtures/decisions/pq2662.json")).unwrap();
+    let mut store = Store::open(&world.settings).unwrap();
+    let mut commit = tl3_store::Commit::new(
+        "reviewed-console-fixture",
+        json!({}),
+        &store.load().unwrap(),
+    );
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "request_decisions".into(),
+        id: "0".into(),
+        value: context,
+    });
+    store.commit(&commit).unwrap();
+    let id = uuid(2500);
+    assert!(world.console(
+        &id,
+        0,
+        json!({"kind": "answer", "question": question,
+        "choice": {"answer": "change_request", "text": "Leave the retention pin alone."}})
+    ));
+    assert_eq!(
+        world.node(0).phase,
+        Phase::AwaitingRob,
+        "scope contradictions must be classified before replacement"
+    );
+    let (key, delivery) = world.rows("comment_jobs").remove(0);
+    let inputs = &delivery["steering"]["Classify"]["inputs"];
+    assert_eq!(
+        inputs["decision_context"]["decisions"][0]["id"],
+        "pq2662-q10"
+    );
+    let mut reply = inputs["selected_answer"].clone();
+    reply["supersedes"] = json!(["pq2662-q10"]);
+    world
+        .controller
+        .observe(
+            "console-contradiction-classified",
+            Observation::Classified {
+                key,
+                reply: Some(reply),
+            },
+        )
+        .unwrap();
+    world.settle();
+    let contexts = world.rows("request_decisions");
+    let latest = contexts
+        .iter()
+        .max_by_key(|(id, _)| id.parse::<u64>().unwrap())
+        .unwrap();
+    assert!(!latest.1["decisions"][0]["superseded_by"].is_null());
+    assert!(world.rows("console_selected_answers").is_empty());
+    db.stop();
+}
