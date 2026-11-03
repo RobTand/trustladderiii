@@ -108,6 +108,15 @@ those marked for review. Return exactly one of these proposals:
   or behavior-preserving, pytest node_ids and the goal_ids it confirms. Every
   goal needs at least one check. Demonstrating checks may name tests the maker
   will add; they must fail by assertion on the base and pass on the change.
+  A goal's proof_obligation is a source requirement. Bind the check's goal_ids,
+  proof.subjects and proof.red_message to it. For observer new, choose a new
+  deterministic assertion, including for helpers inside test files. An old-node
+  probabilistic exception campaign cannot discharge that obligation. Supply
+  goal_ids to rehearse_forcing before it admits any action. A supplemental
+  campaign may bind a separate compatible goal; zero occurrences remain no RED.
+  Regression and behavior-preserving selectors must exist on the selected base.
+  A head-only observer belongs in a demonstrating check, because regression
+  always executes the untouched original base.
   For work that makes something deterministic, a demonstrating check must name
   a test that reproduces the race deterministically, for example with an
   injected clock, event or barrier; a flaky test can pass on the base. When the
