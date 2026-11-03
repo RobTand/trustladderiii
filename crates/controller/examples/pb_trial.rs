@@ -102,6 +102,7 @@ fn fixture(root: &Path) -> Delivery {
                 tests: vec!["test_value.py::test_value".into()],
                 forcing: None,
                 helper_evidence: None,
+                declared_symptom: None,
             }],
         }),
     }

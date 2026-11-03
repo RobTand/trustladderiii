@@ -45,10 +45,6 @@ class WaitTests(unittest.TestCase):
         self.assertEqual(invocation['invocationStatus'], remote_gate.DONE)
         self.assertEqual(len(sleeps), 2)
 
-    def test_disconnect_fails(self):
-        with self.assertRaisesRegex(remote_gate.RemoteError, 'disconnected'):
-            remote_gate.wait(FakeClient([remote_gate.LOST]), 'id', 10, clock=lambda: 0, sleep=print)
-
     def test_timeout_fails(self):
         with self.assertRaisesRegex(remote_gate.RemoteError, 'in time'):
             remote_gate.wait(FakeClient(['PARTIAL_INVOCATION_STATUS']), 'id', 10,
@@ -160,6 +156,265 @@ class CancellationTests(unittest.TestCase):
                 self.fail(f'cancel command is unavailable: {error}')
             self.assertEqual(code, 0)
         client.assert_not_called()
+
+
+class ObservationClock:
+    def __init__(self):
+        self.now = 0
+        self.sleeps = []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        assert seconds > 0
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+def disconnected(**fields):
+    return {'invocation': [{'invocationStatus': remote_gate.LOST, 'success': False, **fields}]}
+
+
+def execution(**fields):
+    return {'execution': [{'executionId': 'runner-execution', 'stage': 4,
+                           'status': {'code': 0}, 'exitCode': 0, **fields}]}
+
+
+class RecoveryClient:
+    def __init__(self, answers):
+        self.answers = list(answers)
+        self.calls = []
+
+    def call(self, method, body, timeout=120, raw=False):
+        self.calls.append((method, body, timeout))
+        expected, answer = self.answers.pop(0)
+        assert method == expected, f'expected {expected}, got {method}'
+        if method == 'GetInvocation':
+            assert body == {'selector': {'invocation_id': 'original-id'}, 'include_artifacts': True}
+        elif method == 'GetExecution':
+            assert body == {'execution_lookup': {'invocation_id': 'original-id'}}
+        elif method == 'GetFile':
+            assert raw and body == {'uri': 'fresh-result'}
+        if isinstance(answer, Exception):
+            raise answer
+        return answer() if callable(answer) else answer
+
+
+class DisconnectRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = ObservationClock()
+        self.enterContext(patch.object(remote_gate.urllib.request, 'urlopen',
+                                       side_effect=AssertionError('live API call forbidden')))
+
+    def observe(self, client, deadline=5):
+        return remote_gate.wait(client, 'original-id', deadline, interval=1,
+                                clock=self.clock, sleep=self.clock.sleep)
+
+    def run_main(self, answers):
+        client = RecoveryClient(answers)
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        wait = remote_gate.wait
+        with patch.object(remote_gate, 'BuildBuddy', return_value=client), \
+             patch.object(remote_gate.time, 'monotonic', self.clock), \
+             patch.object(remote_gate, 'wait', side_effect=lambda client, invocation_id, deadline:
+                          wait(client, invocation_id, deadline, interval=1,
+                               clock=self.clock, sleep=self.clock.sleep)), \
+             patch.dict(os.environ, {'BUILDBUDDY_API_KEY': 'synthetic-only', 'RUNNER_TEMP': str(directory)}), \
+             patch.object(remote_gate.sys, 'argv', ['remote_gate.py', 'pr', '--base', 'a' * 40,
+                          '--head', HEAD, '--branch', 'feature', '--output-dir', str(directory)]), \
+             patch.object(remote_gate, 'write_github') as write:
+            code = remote_gate.main()
+        output = ''.join(call.args[1] for call in write.call_args_list if call.args[0] == 'GITHUB_OUTPUT')
+        self.assertEqual(sum(method == 'Run' for method, _, _ in client.calls), 1)
+        self.assertFalse(client.answers, 'must observe the original execution and refreshed artifacts')
+        return code, output, directory
+
+    def recovery_answers(self, payload, **fields):
+        answers = [('Run', {'invocationId': 'original-id'}),
+                   ('GetInvocation', disconnected(artifacts=[])),
+                   ('GetExecution', execution(**fields))]
+        if fields.get('exitCode', 0) == 0:
+            artifacts = [] if payload is None else [{'name': remote_gate.RESULT, 'uri': 'fresh-result'}]
+            answers.append(('GetInvocation', disconnected(artifacts=artifacts)))
+            if payload is not None:
+                answers.append(('GetFile', payload))
+        return answers
+
+    def test_disconnect_recovers_completed_execution_and_validates_refreshed_result(self):
+        answers = self.recovery_answers(json.dumps(result()).encode())
+        answers[2:2] = [('GetExecution', execution(stage='EXECUTING')),
+                        ('GetInvocation', disconnected(artifacts=[]))]
+        code, output, directory = self.run_main(answers)
+        self.assertEqual(code, 0)
+        self.assertIn('scopes_ready=true\nscopes=//crates/kernel\n', output)
+        self.assertIn('rust=success\npython=success\n', output)
+        self.assertEqual(json.loads((directory / remote_gate.RESULT).read_text()), result())
+        self.assertEqual(self.clock.sleeps, [1])
+
+    def test_nonzero_exit_including_scanner_failure_fails_closed(self):
+        for exit_code in [1, 75]:
+            with self.subTest(exit_code=exit_code):
+                code, output, directory = self.run_main(self.recovery_answers(None, exitCode=exit_code))
+                self.assertEqual(code, 1)
+                self.assertIn('scopes_ready=false', output)
+                self.assertFalse((directory / remote_gate.RESULT).exists())
+
+    def test_hard_timeout_and_nonzero_status_fail_closed(self):
+        for status_code in [4, 14]:
+            with self.subTest(status_code=status_code):
+                client = RecoveryClient([('GetInvocation', disconnected()),
+                                         ('GetExecution', execution(status={'code': status_code}))])
+                with self.assertRaisesRegex(remote_gate.RemoteError, 'original-id.*execution failed'):
+                    self.observe(client)
+                self.assertFalse(client.answers)
+
+    def test_ambiguous_executions_fail_closed(self):
+        records = execution()['execution'] * 2
+        client = RecoveryClient([('GetInvocation', disconnected()),
+                                 ('GetExecution', {'execution': records})])
+        with self.assertRaisesRegex(remote_gate.RemoteError, 'original-id.*ambiguous'):
+            self.observe(client)
+        self.assertFalse(client.answers)
+
+    def test_absent_status_fails_closed(self):
+        record = execution()['execution'][0]
+        del record['status']
+        client = RecoveryClient([('GetInvocation', disconnected()),
+                                 ('GetExecution', {'execution': [record]})])
+        with self.assertRaisesRegex(remote_gate.RemoteError, 'original-id.*no execution status'):
+            self.observe(client)
+        self.assertFalse(client.answers)
+
+    def test_wrong_head_fails_after_recovery(self):
+        code, output, directory = self.run_main(
+            self.recovery_answers(json.dumps(result(head='c' * 40)).encode()))
+        self.assertEqual(code, 1)
+        self.assertIn('scopes_ready=false', output)
+        self.assertFalse((directory / remote_gate.RESULT).exists())
+
+    def test_missing_malformed_and_wrong_schema_results_fail_after_recovery(self):
+        for payload in [None, b'{bad json', json.dumps(result(schema='wrong')).encode()]:
+            with self.subTest(payload=payload):
+                code, output, directory = self.run_main(self.recovery_answers(payload))
+                self.assertEqual(code, 1)
+                self.assertIn('scopes_ready=false', output)
+                self.assertFalse((directory / remote_gate.RESULT).exists())
+
+    def test_failed_test_verdict_cannot_become_success_after_recovery(self):
+        payload = json.dumps(result(verdicts={'rust': 'fail', 'python': 'skipped'})).encode()
+        code, output, _ = self.run_main(self.recovery_answers(payload))
+        self.assertEqual(code, 1)
+        self.assertIn('rust=failure', output)
+
+    def test_persistent_disconnect_or_missing_execution_expires_at_original_deadline(self):
+        for observed in [execution(stage='EXECUTING'), {'execution': []}]:
+            with self.subTest(observed=observed):
+                self.clock = ObservationClock()
+                client = RecoveryClient([('GetInvocation', disconnected()),
+                                         ('GetExecution', observed)] * 3)
+                with self.assertRaisesRegex(remote_gate.RemoteError, 'original-id.*did not finish in time'):
+                    self.observe(client, deadline=2.5)
+                self.assertEqual(self.clock.now, 2.5)
+                self.assertEqual(self.clock.sleeps, [1, 1, 0.5])
+                self.assertFalse(client.answers)
+                for _, _, timeout in client.calls:
+                    self.assertGreater(timeout, 0)
+                    self.assertLessEqual(timeout, 2.5)
+                self.assertEqual([timeout for _, _, timeout in client.calls], [2.5, 2.5, 1.5, 1.5, 0.5, 0.5])
+
+    def test_three_consecutive_execution_api_error_retries_are_the_limit(self):
+        client = RecoveryClient([('GetInvocation', disconnected()),
+                                 ('GetExecution', remote_gate.RemoteError('execution API unavailable'))] * 4)
+        with self.assertRaisesRegex(remote_gate.RemoteError, 'execution API unavailable'):
+            self.observe(client, deadline=20)
+        self.assertFalse(client.answers)
+        self.assertEqual(self.clock.sleeps, [1, 1, 1])
+
+    def test_execution_api_blip_recovers_without_a_second_run(self):
+        answers = self.recovery_answers(json.dumps(result()).encode())
+        answers[2:2] = [('GetExecution', remote_gate.RemoteError('temporary execution API failure')),
+                        ('GetInvocation', disconnected())]
+        code, _, _ = self.run_main(answers)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.clock.sleeps, [1])
+
+    def test_complete_uses_the_existing_result_path_with_one_run(self):
+        for success in [True, False]:
+            with self.subTest(success=success):
+                answers = [('Run', {'invocationId': 'original-id'}),
+                           ('GetInvocation', {'invocation': [{'invocationStatus': remote_gate.DONE,
+                            'success': success, 'artifacts': [{'name': remote_gate.RESULT, 'uri': 'fresh-result'}]}]}),
+                           ('GetFile', json.dumps(result()).encode())]
+                code, output, directory = self.run_main(answers)
+                self.assertEqual(code, 0 if success else 1)
+                self.assertIn('scopes_ready=true', output)
+                self.assertTrue((directory / remote_gate.RESULT).exists())
+
+    def test_get_execution_uses_authenticated_json_rpc(self):
+        body = {'execution_lookup': {'invocation_id': 'original-id'}}
+        with patch.object(remote_gate.urllib.request, 'urlopen', return_value=io.BytesIO(b'{"execution": []}')) as request:
+            self.assertEqual(remote_gate.BuildBuddy('synthetic-only').call('GetExecution', body, timeout=2),
+                             {'execution': []})
+        sent = request.call_args.args[0]
+        self.assertEqual(sent.full_url, 'https://app.buildbuddy.io/rpc/BuildBuddyService/GetExecution')
+        self.assertEqual(sent.get_method(), 'POST')
+        self.assertEqual(sent.get_header('Content-type'), 'application/json')
+        self.assertEqual(sent.get_header('X-buildbuddy-api-key'), 'synthetic-only')
+        self.assertEqual(json.loads(sent.data), body)
+        self.assertEqual(request.call_args.kwargs['timeout'], 2)
+
+    def test_omitted_zero_defaults_apply_only_to_completed_typed_records(self):
+        for stage in [4, 'COMPLETED']:
+            with self.subTest(stage=stage):
+                client = RecoveryClient([('GetInvocation', disconnected()),
+                    ('GetExecution', {'execution': [{'executionId': 'runner-execution', 'stage': stage, 'status': {}}]}),
+                    ('GetInvocation', disconnected())])
+                try:
+                    observed = self.observe(client)
+                except remote_gate.RemoteError as error:
+                    self.fail(str(error))
+                self.assertTrue(observed['runner_execution_success'])
+                self.assertFalse(client.answers)
+        for fields in [{'status': {'code': False}}, {'status': {'code': '0'}},
+                       {'exitCode': None}, {'exitCode': False}, {'exitCode': '0'}]:
+            with self.subTest(fields=fields):
+                client = RecoveryClient([('GetInvocation', disconnected()), ('GetExecution', execution(**fields))])
+                with self.assertRaisesRegex(remote_gate.RemoteError, 'execution failed'):
+                    self.observe(client)
+
+    def test_unbound_execution_fails_closed(self):
+        client = RecoveryClient([('GetInvocation', disconnected()),
+                                 ('GetExecution', execution(executionId=''))])
+        with self.assertRaisesRegex(remote_gate.RemoteError, 'original-id.*unbound'):
+            self.observe(client)
+
+    def test_successful_responses_cannot_cross_the_absolute_deadline(self):
+        for phase in ['invocation', 'execution', 'refresh']:
+            with self.subTest(phase=phase):
+                self.clock = ObservationClock()
+                def late():
+                    self.clock.now = 5
+                    return execution() if phase == 'execution' else {
+                        'invocation': [{'invocationStatus': remote_gate.DONE, 'success': True}]}
+                answers = [('GetInvocation', late)] if phase == 'invocation' else [
+                    ('GetInvocation', disconnected()),
+                    ('GetExecution', late if phase == 'execution' else execution())]
+                if phase == 'refresh':
+                    answers.append(('GetInvocation', late))
+                client = RecoveryClient(answers)
+                with self.assertRaisesRegex(remote_gate.RemoteError, 'original-id.*did not finish in time'):
+                    self.observe(client)
+                self.assertFalse(client.answers)
+
+    def test_observation_requests_are_capped_at_120_seconds(self):
+        client = RecoveryClient([('GetInvocation', disconnected()), ('GetExecution', execution()),
+                                 ('GetInvocation', disconnected())])
+        try:
+            self.observe(client, deadline=1000)
+        except remote_gate.RemoteError as error:
+            self.fail(str(error))
+        self.assertEqual([timeout for _, _, timeout in client.calls], [120, 120, 120])
 
 
 class ResultTests(unittest.TestCase):

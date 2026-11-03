@@ -3008,6 +3008,7 @@ impl Controller {
                                 tests: adapters::workers::protocol::reply_field(check, "node_ids")?,
                                 forcing: check.get("forcing").cloned(),
                                 helper_evidence: check.get("helper_evidence").cloned(),
+                                declared_symptom: check.get("declared_symptom").cloned(),
                             })
                         })
                         .collect::<Result<Vec<_>>>()?;

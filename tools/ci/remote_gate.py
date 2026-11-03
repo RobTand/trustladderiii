@@ -2,7 +2,7 @@
 
 Runs in the GitHub job. The runner executes tools/ci/bazel_gate.py and leaves
 gate-result.json as a BuildBuddy artifact; this script fetches it. A failed,
-timed-out or disconnected run, or a missing or malformed result, fails here.
+timed-out run, unrecoverable disconnect, or missing/malformed result fails here.
 """
 import argparse
 import json
@@ -52,9 +52,9 @@ class BuildBuddy:
 
     def call(self, method, body, timeout=120, raw=False):
         """JSON in; JSON out, or the raw body for GetFile."""
-        # CancelExecutions belongs to the service RPC, not the public v1 API.
-        url = (urllib.parse.urljoin(self.api, '/rpc/BuildBuddyService/CancelExecutions')
-               if method == 'CancelExecutions' else self.api + method)
+        # Execution observation and cancellation use the service RPC.
+        url = (urllib.parse.urljoin(self.api, '/rpc/BuildBuddyService/' + method)
+               if method in ('CancelExecutions', 'GetExecution') else self.api + method)
         request = urllib.request.Request(
             url, data=json.dumps(body).encode(),
             headers={'x-buildbuddy-api-key': self.key, 'Content-Type': 'application/json'})
@@ -111,7 +111,7 @@ def cancel_recorded():
 
 def wait(client, invocation_id, deadline, interval=15, clock=time.monotonic, sleep=time.sleep,
          retries=3):
-    """Wait for the run's own terminal status. Returns the invocation record."""
+    """Observe one run: BES disconnects do not establish execution completion."""
     def interrupted(signum, _frame):
         # GitHub sends SIGINT, then SIGTERM after 7.5 s, then kills after 2.5 s.
         # Leave time for the cancelled() cleanup step to retry a failed request.
@@ -126,27 +126,66 @@ def wait(client, invocation_id, deadline, interval=15, clock=time.monotonic, sle
     previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
         errors = 0
+        recovering = False
+        execution_complete = False
         while True:
+            remaining = deadline - clock()
+            if remaining <= 0:
+                raise RemoteError(f'remote run {invocation_id} did not finish in time')
             try:
                 found = client.call('GetInvocation', {'selector': {'invocation_id': invocation_id},
-                                                      'include_artifacts': True}).get('invocation', [])
+                                    'include_artifacts': True}, timeout=min(120, remaining)).get('invocation', [])
+                if clock() >= deadline:
+                    raise RemoteError(f'remote run {invocation_id} did not finish in time')
+                invocation = found[0] if found else {}
+                if execution_complete and found:
+                    return {**invocation, 'runner_execution_success': True}
+                if invocation.get('invocationStatus') == DONE:
+                    return invocation
+                recovering = recovering or invocation.get('invocationStatus') == LOST
+                if recovering:
+                    remaining = deadline - clock()
+                    if remaining <= 0:
+                        raise RemoteError(f'remote run {invocation_id} did not finish in time')
+                    observed = client.call('GetExecution', {'execution_lookup': {'invocation_id': invocation_id}},
+                                           timeout=min(120, remaining))
+                    if clock() >= deadline:
+                        raise RemoteError(f'remote run {invocation_id} did not finish in time')
                 errors = 0
             except RemoteError:
-                # One API blip must not fail a whole merge-queue batch.
                 errors += 1
-                if errors > retries or clock() > deadline:
+                if errors > retries or clock() >= deadline:
                     raise
-                sleep(interval)
+                sleep(min(interval, deadline - clock()))
                 continue
-            invocation = found[0] if found else {}
-            status = invocation.get('invocationStatus')
-            if status == DONE:
-                return invocation
-            if status == LOST:
-                raise RemoteError(f'remote run {invocation_id} disconnected')
-            if clock() > deadline:
+            if recovering:
+                executions = observed.get('execution', [])
+                # Run supplies this invocation ID as its RemoteBazelRun execution's
+                # ToolInvocationId. Multiple records cannot identify one runner.
+                if not isinstance(executions, list) or len(executions) > 1:
+                    raise RemoteError(f'remote run {invocation_id} has ambiguous execution evidence')
+                if executions:
+                    execution = executions[0]
+                    if not isinstance(execution, dict) or not execution.get('executionId'):
+                        raise RemoteError(f'remote run {invocation_id} has unbound execution evidence')
+                    if execution.get('stage') in ('COMPLETED', 4):
+                        status = execution.get('status')
+                        if not isinstance(status, dict):
+                            raise RemoteError(f'remote run {invocation_id} has no execution status')
+                        # Proto3 JSON omits scalar zeros. Only read exitCode once
+                        # COMPLETED and status OK have established its meaning.
+                        code = status.get('code', 0)
+                        exit_code = execution.get('exitCode', 0)
+                        if type(code) is not int or type(exit_code) is not int or code or exit_code:
+                            raise RemoteError(f'remote run {invocation_id} execution failed')
+                        # Final scanning may have uploaded artifacts after our
+                        # last BES lookup. Refresh metadata on the next iteration.
+                        execution_complete = True
+                        continue
+            remaining = deadline - clock()
+            if remaining <= 0:
                 raise RemoteError(f'remote run {invocation_id} did not finish in time')
-            sleep(interval)
+            sleep(min(interval, remaining))
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
@@ -354,7 +393,8 @@ def main():
     for target, mermaid in result.get('graph_impact', {}).get('mermaid', {}).items():
         write_github('GITHUB_STEP_SUMMARY', f'\n{target}\n\n```mermaid\n{mermaid}\n```\n')
     write_github('GITHUB_OUTPUT', ''.join(f'{k}={v}\n' for k, v in outputs(result).items()))
-    ok = invocation.get('success') and not result.get('error') and not result.get('inputs')
+    completed_ok = invocation.get('success') or invocation.get('runner_execution_success')
+    ok = completed_ok and not result.get('error') and not result.get('inputs')
     if args.mode == 'main':
         record = post_merge_record(result, prs, time.monotonic() - started)
         line = json.dumps(record, sort_keys=True)

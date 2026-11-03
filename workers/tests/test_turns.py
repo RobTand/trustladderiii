@@ -228,6 +228,107 @@ def test_ingest_diagnostic_keeps_both_safe_messages(request_doc, tmp_path, monke
                                          "repaired reply: reply cites a memory it was not given")
 
 
+SCOPE_REPAIR = "Remove the generated-output prohibition: the source restricts hand edits only"
+
+
+def generated_scope_request(doc):
+    doc["inputs"]["issue"]["body"] = (
+        "Do not hand-edit generated BUILD files; configured regeneration is permitted.")
+    doc["inputs"]["tool_capabilities"] = [{
+        "tool": "run_generator", "executor": "prismabuild_generator", "runner_features": [],
+        "artifacts": [], "methods": [], "protected_files": []}]
+    return doc
+
+
+def frozen_brief(field):
+    invalid = copy.deepcopy(test_workers.BRIEF)
+    invalid["evidence_contract"] = []
+    freeze = "Leave generated BUILD files untouched. private-request-canary"
+    if field == "brief":
+        invalid["brief"] = freeze
+    else:
+        invalid["goals"][0]["description"] = freeze
+    return invalid
+
+
+@pytest.mark.parametrize("field", ["brief", "goal"])
+def test_generated_freeze_repaired_before_audit_once(request_doc, monkeypatch, field):
+    from tl3_workers.roles.audit import ROLE as AUDIT
+    generated_scope_request(request_doc)
+    corrected = copy.deepcopy(test_workers.BRIEF)
+    corrected["evidence_contract"] = []
+    corrected["brief"] = test_workers.REJECTED_FREEZES[0]
+    model = install(monkeypatch, [reply(frozen_brief(field)), reply(corrected)])
+    events = []
+    runtime.run(request_doc, events.append)
+    accepted = events[-1]["reply"]
+    assert len(model.calls) == 2
+    repair, offered = model.calls[-1]
+    assert repair[-1].text == (
+        f"Your reply failed validation: {SCOPE_REPAIR}\nTools are unavailable for this turn. Return one "
+        "corrected JSON object matching your reply schema and nothing else.")
+    assert not offered
+    assert accepted == {**corrected, "evidence_errors": []}
+    assert [event for event in events if event["event"] == "reply"] == [
+        {"event": "reply", "role": "ingest", "reply": accepted}]
+    audit = {**copy.deepcopy(test_workers.AGREE), "evidence_contract": []}
+    AUDIT.check_reply({**request_doc["inputs"], "ingest": accepted}, audit)
+    assert audit == {**test_workers.AGREE, "evidence_contract": [], "evidence_errors": []}
+
+
+def test_generated_freeze_second_invalid_reply_is_bounded_and_safe(request_doc, tmp_path, monkeypatch):
+    generated_scope_request(request_doc)
+    request_doc["memory"] = {"summary_file": str(tmp_path / "scope-summary.json")}
+    model = install(monkeypatch, [reply(frozen_brief("brief")), reply(frozen_brief("goal"))])
+    events = []
+    with pytest.raises(InvalidReply) as raised:
+        runtime.run(request_doc, events.append)
+    assert len(model.calls) == 2
+    assert not model.calls[-1][1]
+    assert all(type(error) is not ValueError and str(error) == SCOPE_REPAIR for error in raised.value.errors)
+    assert not any(event["event"] == "reply" for event in events)
+    reason = json.loads(Path(request_doc["memory"]["summary_file"]).read_text())["reason"]
+    assert reason == {"failure_class": "InvalidReply", "failure_message": (
+        f"invalid reply: {SCOPE_REPAIR}; repaired reply: {SCOPE_REPAIR}")}
+    assert "private-request-canary" not in json.dumps(reason)
+
+
+def test_generated_freeze_without_repair_budget_keeps_safe_cause(request_doc, monkeypatch):
+    from tl3_workers.tracing import failure_tags
+    generated_scope_request(request_doc)
+    model = install(monkeypatch, [reply(frozen_brief("brief"), input_tokens=160_000)])
+    with pytest.raises(ValueError) as raised:
+        runtime.run(request_doc, lambda _: None)
+    assert len(model.calls) == 1
+    assert type(raised.value) is not ValueError
+    assert failure_tags(raised.value)["failure_message"] == SCOPE_REPAIR
+    assert failure_tags(ValueError(SCOPE_REPAIR + " private-request-canary"))["failure_message"] == "invalid worker data"
+
+
+@pytest.mark.parametrize("source,capability,conflict", [
+    ("Never regenerate generated files.", True, True),
+    ("Do not hand-edit generated files.", False, False),
+])
+def test_generated_scope_source_and_capability_controls(request_doc, monkeypatch, source, capability, conflict):
+    from tl3_workers.roles.audit import ROLE as AUDIT
+    generated_scope_request(request_doc)
+    request_doc["inputs"]["issue"]["body"] = source
+    if not capability:
+        request_doc["inputs"].pop("tool_capabilities")
+    invalid = frozen_brief("brief")
+    model = install(monkeypatch, [reply(invalid)])
+    events = []
+    runtime.run(request_doc, events.append)
+    accepted = events[-1]["reply"]
+    expected = {**invalid, "evidence_errors": []} if capability else invalid
+    assert accepted == expected and len(model.calls) == 1
+    audit = {**copy.deepcopy(test_workers.AGREE), "evidence_contract": []}
+    AUDIT.check_reply({**request_doc["inputs"], "ingest": accepted}, audit)
+    assert audit["verdict"] == ("disagree" if conflict else "agree")
+    if conflict:
+        assert any(source in objection and "issue.body" in objection for objection in audit["objections"])
+
+
 def test_tool_call_in_a_repair_turn_is_never_executed(maker_request, monkeypatch):
     maker_request["inputs"]["context_size"] = 150_000
     install(monkeypatch, [ROLES["maker"][1], reply({"kind": "done"}),

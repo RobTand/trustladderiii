@@ -30,6 +30,9 @@ def validate_check_plan(plan):
                 'failure_driver_sha256': '0' * 64,
                 'failure_preservation': [{'base': 'infrastructure-failure', 'head': 'infrastructure-failure'}
                                          for _ in check.helper_evidence.failure_cases]}
+        if getattr(check, 'declared_symptom', None) is not None:
+            header['declared_symptom'] = check.declared_symptom
+            size += 384 * 1024
         size += len(json.dumps(header, separators=(',', ':'))) + 1
         for test in check.tests:
             case = {'test': test, 'base': 'uncollected', 'head': 'uncollected',

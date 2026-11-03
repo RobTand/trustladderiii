@@ -1,6 +1,6 @@
 # TL3 state table
 
-Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47, Q48, Q50 and Q51, and on 2026-11-02 with Q54. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
+Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47, Q48, Q50 and Q51, and on 2026-11-02 with Q54, and on 2026-11-03 with the Q27 declared-symptom RED approval (#592). Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
 
 **Changing the rules.** Any change to a rule in this file needs Rob's approval. That includes a new rule that comes from a bug Kani or a test finds. A clarification that changes no rule doesn't need it (Q27).
 
@@ -227,10 +227,10 @@ Each leaf's plan lists checks of three kinds, which Rob confirmed on 2026-10-30 
 
 | Kind | Used for | Passes when |
 |---|---|---|
-| **Demonstrating** | A measure that changes behavior | Each named test fails on the base and passes on the leaf's commit. The base run applies only the leaf's test changes. On the base, the failure must be an assertion, or a missing name the leaf adds. |
+| **Demonstrating** | A measure that changes behavior | Each named test fails on the base and passes on the leaf's commit. The base run applies only the leaf's test changes. On the base, the failure must be an assertion, a missing name the leaf adds, or the explicitly declared symptom below. |
 | **Demonstrating, helper target/observer** | A deterministic fix to an existing helper in a configured Python test file (#549) | Only the named new observers overlay the real base. Every observer fails by assertion there and passes with the head helper. Named known-bad data invocations use pytest's module import context and must still raise AssertionError with both helpers. See Q27 below. |
 | **Regression** | Showing that nothing which worked is now broken | It passes on the leaf's commit. A test already failing on the base is recorded as pre-existing and excused. Base results are cached per base commit. |
-| **Demonstrating, forced** | Making a named flaky test deterministic (Q55) | The check carries the plan's forcing, which the harness applies outside the test. Each named test fails by assertion on the base, running the old test as the base wrote it under the forcing. On the leaf's commit it passes both under the forcing and without it. Review judges whether the forcing models the flake's symptom. |
+| **Demonstrating, forced** | Making a named flaky test deterministic (Q55) | The check carries the plan's forcing, which the harness applies outside the test. Each named test fails by assertion or its explicitly declared symptom on the base, running the old test as the base wrote it under the forcing. On the leaf's commit it passes both under the forcing and without it. Review judges whether the forcing models the flake's symptom. |
 | **Behavior-preserving** | A measure that changes no behavior, such as a refactor | It passes on both trees. Review judges the rest. |
 | **Reproducing** | A review finding about behavior, fixed in a fix round | Each named test fails on the commit that was reviewed and passes on the fixed commit. The run on the reviewed commit applies only the round's test changes. On the reviewed commit, the failure must be an assertion, or a missing name the round adds. |
 
@@ -246,9 +246,15 @@ TL3 owns the check harness, and the code under test can't change it:
 - A forcing is data from the plan: environment variables, and patches that give a module or class attribute inside the served repository a JSON value, a returned JSON value, a raised builtin exception other than `AssertionError`, or a delay of up to 5 seconds per call and 10 seconds per test. It reaches the read-only runner with the test selection, and only the test container applies it.
 - The harness commits progress to PrismaBuild after each test, so a long suite stays visibly alive.
 
-A job that produces no report never ran its tests, so it is an infrastructure failure. A demonstrating test that errors on the base for any other reason shows nothing, so the round fails.
+A job that produces no report never ran its tests, so it is an infrastructure failure. A demonstrating test that errors on the base for any reason outside its declared symptom shows nothing, so the round fails.
 
 A forced test that passes on the base under its forcing shows the forcing doesn't reproduce the flake, so the round fails. So does a head that fails under the forcing, or fails without it. A forcing the harness can't apply fails the round with a message naming the forcing. Repeating a test until it fails is not evidence (Q55).
+
+**Declared symptom RED,** approved by [Rob's Q27 approval, 2026-11-03](https://github.com/RobTand/trustladderiii/issues/592#issuecomment-6602790849), is an additional mode for demonstrating checks and Q55 forced reproductions. Assertion RED remains the default. The plan declares the exact exception class, exact test node, and `call` or `setup` phase in advance. The exception must arise from the original test's own code or fixture. An unrelated setup error, import failure, infrastructure failure, missing report, or outer hang never counts.
+
+The declared check runs the unchanged base test and fixture, then the edited head. It declares a fixed repeat count from 1 to 10 and parallel setting of 0 or 2 to 4, within `run_tests` limits. All runs use identical forcing, repeat, and parallel settings. RED requires at least one matching base occurrence and no unrelated failures. GREEN requires zero matching occurrences and successful completion of every head run. Q55 also requires ordinary head success. Zero base occurrences is not RED; report the observed numerator and declared denominator precisely. Never retry until failure.
+
+Keep every run's report and receipt bound to the exact base, head, selectors, declaration, and forcing. Preserve pre-maker forcing rehearsal and reachability, independent checking, frozen forcing, and final review. This approval changes no fail-fast, retry, incident, or restart rule.
 
 ## Failures
 
@@ -350,6 +356,9 @@ goals and forecast settings:
 - `findings`: everything learned before a re-plan, including failed checks and
   review findings, as a list of text reports. It is empty for initial planning.
   The planner uses these findings when choosing its next plan.
+- `repair_plan_consistency`: true in production, enabling the bounded draft
+  correction Rob approved on 2026-11-03 under Q27/Q54 in
+  [#573](https://github.com/RobTand/trustladderiii/issues/573#issuecomment-6602791857).
 - `protected_paths`: repo-relative glob patterns for files a leaf or split may
   not declare. Code rejects matching declarations. The controller's defaults
   include `.github/**`, `.mergify.yml`, `**/conftest.py`, `pytest.ini`, `.pytest.ini`,
@@ -357,12 +366,31 @@ goals and forecast settings:
   check harness refuses to run changed. `**` matches zero or more path
   segments, including a root `conftest.py`.
 
+Before completing a leaf reply, the planner may use its existing single
+tool-free correction when its only defects are an edited test absent from
+demonstrating checks or a forced demonstrating check naming tests absent from
+the base. This is the Q27/Q54 exception Rob approved on 2026-11-03, linked above.
+The correction stays in the same worker run and accounting limits and uses
+only already-read facts. It stays bound to the original draft's files, goals,
+existing check kinds and forcings. It may only add missing demonstrating
+coverage, swap forced non-base selections for base nodes, or drop an uncovered
+unnecessary edit. An appended demonstrating check may carry no forcing or
+reuse a draft forcing unchanged. It may honestly return can't meet.
+
+Added files, a wider footprint, unrelated checks or edits, changed forcings
+and new goals remain plan violations and therefore PlanCantMeet. Substantive
+plan failures, unsupported requirements, protected-path conflicts, out-of-room
+conditions and actual work failures do not enter this correction. A second
+inconsistent reply ends correction with both named diagnostics. Existing
+format-validation failure handling is unchanged. The harness and reviewer
+still judge actual Q55 proof.
+
 | Event | Condition | Next | Effects |
 |---|---|---|---|
 | Plan: can't meet, with required protected paths (Q57) | Controller verifies concrete paths against defaults plus global and repository lists | Stopping(NotActionable) | No retry, credit spent or Rob question, regardless of `fail_fast` |
 | Plan: leaf | The leaf rules hold | Ready(fresh) | |
 | Plan: split | Slice one | AwaitingRob(needs splitting) | Ask Rob to narrow the request, showing the proposed pieces |
-| Plan: can't meet, with a report | `fail_fast` (Q54) | Stop for TL3 review | See "Failures". The planner worker reports a plan that breaks a rule as can't meet, so a rule-breaking plan arrives here and stops at once. |
+| Plan: can't meet, with a report | `fail_fast` (Q54) | Stop for TL3 review | See "Failures". The planner worker reports a completed plan that breaks a rule as can't meet, so a rule-breaking completed plan arrives here and stops at once. Only the bounded draft correction described above may precede completion. |
 | Plan: can't meet, with a report | First time | Planning | Re-run with the next model on the planner's ladder, in a new generation |
 | Plan: can't meet, with a report | Second time | AwaitingRob(can't meet, continue to Planning) | |
 | Plan breaks a rule | First time | Planning | Re-run with the reason, in a new generation |

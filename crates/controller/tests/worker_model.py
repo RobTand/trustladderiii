@@ -1,5 +1,6 @@
 """Replace model construction only, as in workers/tests/worker_process.py."""
 import json
+import copy
 import os
 import tempfile
 from pathlib import Path
@@ -35,6 +36,12 @@ def create_model(request):
                 for goal in request["inputs"]["goals"]
             ]})),
         ])
+    if mode == "normal" and request["role"] == "planner" and marker.with_suffix(".consistency-fixture").exists():
+        draft = copy.deepcopy(reply)
+        draft["edits_tests"] = ["tests/test_greeting.py::test_control"]
+        reply["edits_tests"] = []
+        return ConsistencyModel(responses=[AIMessage(content=json.dumps(item))
+                                           for item in (draft, reply)])
     return FakeMessagesListChatModel(responses=[AIMessage(content=json.dumps(reply))])
 
 if mode == "external-wait":
@@ -91,6 +98,28 @@ if mode in {"bad-schema", "nonzero", "missing", "reply-before-exit", "duplicate"
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 from tl3_workers import runtime
+
+
+class ConsistencyModel(FakeMessagesListChatModel):
+    offered: bool = False
+    turns: int = 0
+
+    def bind_tools(self, tools, **kwargs):
+        self.offered = bool(tools)
+        return self
+
+    def _generate(self, messages, **kwargs):
+        self.turns += 1
+        assert self.turns <= 2, "consistency correction must stay within one turn"
+        if self.turns == 2:
+            assert not self.offered
+            assert "test_control" in messages[-1].content
+            assert "no demonstrating check" in messages[-1].content
+        with marker.with_suffix(".consistency-turns").open("a") as output:
+            output.write(json.dumps({"tools": self.offered}) + "\n")
+        self.offered = False
+        return super()._generate(messages, **kwargs)
+
 
 with patch.object(FakeMessagesListChatModel, "bind_tools", lambda self, tools, **kwargs: self, create=True), \
      patch.object(runtime, "create_model", create_model), \
