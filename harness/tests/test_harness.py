@@ -475,6 +475,42 @@ def test_helper_assertion_removal_cannot_pass_without_failure_preservation(tmp_p
     assert 'failure' in result.tests[0].message.lower(), result
 
 
+@pytest.mark.parametrize('packaged', [False, True])
+@pytest.mark.parametrize('import_mode', ['prepend', 'append', 'importlib'])
+def test_helper_preservation_uses_pytest_module_context(tmp_path, monkeypatch, packaged, import_mode):
+    from tl3_harness import execution, HelperEvidence
+    repo = tmp_path / 'repo'
+    (repo / 'tests').mkdir(parents=True)
+    (repo / 'pytest.ini').write_text(f'[pytest]\naddopts = --import-mode={import_mode}\n')
+    if packaged:
+        (repo / 'tests/__init__.py').write_text('')
+    path = repo / 'tests/test_product.py'
+    path.write_text('def _check(x):\n    assert x\n    return x\n')
+    (repo / 'pyproject.toml').write_text(
+        '[tool.tl3.harness]\ncommand=["python", "-m", "pytest"]\ntest-files=["tests/*.py"]\n')
+    git(repo, 'init', '-q')
+    def save():
+        git(repo, 'add', '.')
+        git(repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture')
+        return git(repo, 'rev-parse', 'HEAD').decode().strip()
+    base = save()
+    path.write_text('def _check(x):\n    if __name__ == "<run_path>":\n        assert x\n    return x\n'
+                    '\ndef test_observer():\n    _check(False)\n')
+    head = save()
+    monkeypatch.setattr(execution, 'require_admission', lambda: None)
+    monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(repo))
+    monkeypatch.setattr(Progress, 'commit', lambda *_: None)
+    monkeypatch.setattr(execution, 'container_command',
+        lambda tree, container, tests: [sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)])
+    check = Check('module context weakening', Kind.DEMONSTRATING, ('tests/test_product.py::test_observer',),
+                  helper_evidence=HelperEvidence('tests/test_product.py::_check',
+                      (json.dumps({'args': [False], 'kwargs': {}}),)))
+    result, = run_checks(repo, base, head, (check,), container=Container(IMAGE))
+    assert (result.tests[0].base, result.tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED), result
+    assert result.verdict == Verdict.FAIL, result
+    assert result.helper_evidence['failure_preservation'] == [{'base': 'passed', 'head': 'assertion'}]
+
+
 @pytest.mark.parametrize('cases', [[], [{}], [{'args': [], 'kwargs': {}, 'code': 'assert False'}],
     [{'args': 'bad', 'kwargs': {}}], [{'args': [{'$attributes': 4}], 'kwargs': {}}]])
 def test_helper_failure_cases_are_bounded_data(cases):
