@@ -624,7 +624,7 @@ pub fn summary(delivery: &Delivery) -> String {
 }
 
 pub(crate) fn label(text: &str) -> String {
-    let text: String = crate::memory::redact_text(text)
+    let text: String = crate::redaction::text(text)
         .chars()
         .take(512)
         .map(|ch| if ch.is_control() { ' ' } else { ch })
@@ -772,7 +772,7 @@ pub(crate) fn validate_body(body: &str) -> Result<()> {
 }
 
 // Redact values before serializing. Redacting JSON text can consume its quotes,
-// and memory's generic hash filter also removes the IDs needed to verify proof.
+// and the generic token filter also removes IDs needed to verify proof.
 fn public_value(value: &Value, field: Option<&str>) -> Value {
     if let (Some(field), Some(text)) = (field, value.as_str())
         && matches!(
@@ -789,7 +789,7 @@ fn public_value(value: &Value, field: Option<&str>) -> Value {
     }
     match value {
         Value::String(text) => json!(
-            crate::memory::redact_text(text)
+            crate::redaction::text(text)
                 .chars()
                 .take(512)
                 .collect::<String>()
@@ -805,7 +805,7 @@ fn public_value(value: &Value, field: Option<&str>) -> Value {
             values
                 .iter()
                 .take(MAX_ITEMS)
-                .map(|(k, v)| (crate::memory::redact_text(k), public_value(v, Some(k))))
+                .map(|(k, v)| (crate::redaction::text(k), public_value(v, Some(k))))
                 .collect(),
         ),
         _ => value.clone(),

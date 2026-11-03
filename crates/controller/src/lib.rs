@@ -36,6 +36,7 @@ pub mod production;
 pub mod prompts;
 mod protected_requests;
 mod question_findings;
+mod redaction;
 pub mod release;
 mod scope;
 mod snapshot;

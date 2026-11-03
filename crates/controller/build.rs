@@ -44,6 +44,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     source.push_str("];\n");
     fs::write(out.join("worker_prompts.rs"), source)?;
+    let redactor = workers.join("tracing.py");
+    println!("cargo:rerun-if-changed={}", redactor.display());
+    fs::write(
+        out.join("worker_redactor.rs"),
+        format!(
+            "const REDACTOR_SOURCE: &str = {:?};\n",
+            fs::read_to_string(redactor)?,
+        ),
+    )?;
     release_tree()?;
     Ok(())
 }
