@@ -52,9 +52,10 @@ pub(crate) fn sensitive_key(key: &str) -> bool {
 }
 
 pub(crate) fn redact_text(text: &str) -> String {
+    // Like #302's Redactor, accept quotes and whitespace escaped by nested JSON.
     static SECRET: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
-        r#"(?is)(?:bearer\s+\S+|-----BEGIN[^\r\n]*PRIVATE KEY-----.*?(?:-----END[^\r\n]*PRIVATE KEY-----|$)|\b(?:sk-|gh[pousr]_|github_pat_|hf_|glpat-|xox[a-z]-)[a-zA-Z0-9_-]+|AKIA[A-Z0-9]{16}|\b[a-fA-F0-9]{32,}\b|eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+|(?:https?|postgres(?:ql)?)://[^/\s:@]+:[^/\s@]+@|(?:[a-z0-9_]*_api_key|[a-z0-9_]*_secret[a-z0-9_]*|[a-z0-9_]*_token|api[_-]?key|password|passwd|secret|authorization|cookie)["']?\s*[=:]\s*(?:(?:bearer|basic)\s+)?(?:"[^"]*"|'[^']*'|\S+)|\btoken["']?\s*=\s*(?:(?:bearer|basic)\s+)?(?:"[^"]*"|'[^']*'|\S+)|\btoken["']?\s*:\s*(?:["'][^"']+["']|[a-zA-Z0-9_-]*[0-9_-][a-zA-Z0-9_-]*))"#
+        r#"(?is)(?:bearer\s+\S+|-----BEGIN[^\r\n]*PRIVATE KEY-----.*?(?:-----END[^\r\n]*PRIVATE KEY-----|$)|\b(?:sk-|gh[pousr]_|github_pat_|hf_|glpat-|xox[a-z]-)[a-zA-Z0-9_-]+|AKIA[A-Z0-9]{16}|\b[a-fA-F0-9]{32,}\b|eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+|(?:https?|postgres(?:ql)?)://[^/\s:@]+:[^/\s@]+@|(?:[a-z0-9_]*_api_key|[a-z0-9_]*_secret[a-z0-9_]*|[a-z0-9_]*_token|api[_-]?key|password|passwd|secret|authorization|cookie)\\*["']?(?:\s|\\+[nrt])*[=:](?:\s|\\+[nrt])*(?:(?:bearer|basic)\s+)?(?:\\+"[^"\r\n]*"|"[^"]*"|\\*'[^']*'|\S+)|\btoken\\*["']?(?:\s|\\+[nrt])*=(?:\s|\\+[nrt])*(?:(?:bearer|basic)\s+)?(?:\\+"[^"\r\n]*"|"[^"]*"|\\*'[^']*'|\S+)|\btoken\\*["']?(?:\s|\\+[nrt])*:(?:\s|\\+[nrt])*(?:\\*["'][^"']+["']|[a-zA-Z0-9_-]*[0-9_-][a-zA-Z0-9_-]*))"#
     ).expect("memory secret pattern")
     });
     let text = text.replace('\0', "");
