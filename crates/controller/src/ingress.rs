@@ -167,7 +167,7 @@ pub(crate) struct Translation {
     pub(crate) translator: Box<dyn GitHubTranslator>,
 }
 
-fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<Input> {
+pub(crate) fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<Input> {
     match delivery {
         GitHubDelivery::Webhook(delivery) => inputs(&delivery.id, delivery.event, bootstrap),
         GitHubDelivery::CatchUp {

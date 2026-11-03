@@ -369,6 +369,14 @@ pub trait Executor {
     fn app_login(&self, _installation: u64) -> Option<String> {
         None
     }
+    /// The issue as GitHub has it now, read fresh (Q39).
+    fn issue(
+        &mut self,
+        _repository: &crate::Repository,
+        _number: u64,
+    ) -> Result<tl3_github::Issue> {
+        Err(crate::Error::Invalid("adapter cannot read issues"))
+    }
     fn implementation(&self) -> &'static str {
         std::any::type_name::<Self>()
     }

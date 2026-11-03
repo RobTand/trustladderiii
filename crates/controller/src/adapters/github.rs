@@ -10,13 +10,30 @@ use tl3_kernel::EffectKind;
 mod publishing;
 pub use publishing::APPROVAL_CHECK;
 
-pub struct Fake(Records);
+pub struct Fake(Records, std::path::PathBuf);
 impl Fake {
     pub fn new(root: &Path) -> Self {
-        Self(Records::new(root))
+        Self(Records::new(root), root.to_path_buf())
     }
 }
+
+fn fake_issue_path(root: &Path, number: u64) -> std::path::PathBuf {
+    root.join("github-issues").join(format!("{number}.json"))
+}
+
+/// Set the issue the fake GitHub reports as current.
+pub fn set_fake_issue(root: &Path, issue: &tl3_github::Issue) {
+    let path = fake_issue_path(root, issue.number);
+    std::fs::create_dir_all(path.parent().expect("issue directory"))
+        .expect("create issue directory");
+    std::fs::write(path, serde_json::to_vec(issue).expect("encode issue")).expect("write issue");
+}
+
 impl Executor for Fake {
+    fn issue(&mut self, _repository: &crate::Repository, number: u64) -> Result<tl3_github::Issue> {
+        let bytes = std::fs::read(fake_issue_path(&self.1, number))?;
+        Ok(serde_json::from_slice(&bytes)?)
+    }
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         let node = delivery.node();
         let observations = match delivery.output {
