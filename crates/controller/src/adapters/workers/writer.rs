@@ -289,8 +289,9 @@ pub fn checked_draft(
                 .unwrap_or("Details of checks and review were not captured in this summary.")
         );
         if let Some(removed) = input.facts["removed_changes"].as_str() {
+            let removed = crate::redaction::text(removed)?;
             text.push_str("\n\n");
-            text.push_str(removed);
+            text.push_str(&removed);
         }
         return Ok(text);
     }

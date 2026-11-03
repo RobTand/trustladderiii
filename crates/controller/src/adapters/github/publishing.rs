@@ -167,6 +167,7 @@ impl Adapter {
                     let healed =
                         crate::pr_body::healed(body, rules, Some(request), &delivery.paths)
                             .unwrap_or_else(|| body.to_owned());
+                    let healed = crate::redaction::text(&healed)?;
                     let body = crate::evidence::with_publication(&healed, &evidence);
                     crate::evidence::validate_body(&body)?;
                     if pull.body.as_deref().unwrap_or_default() != body {
@@ -207,6 +208,7 @@ impl Adapter {
                         .unwrap_or_default(),
                     GitHub::marker(&delivery.key)
                 );
+                let body = crate::redaction::text(&body)?;
                 let body = crate::evidence::with_publication(&body, &evidence);
                 crate::evidence::validate_body(&body)?;
                 // #447: a body the served repository's policy refuses is TL3's
@@ -220,7 +222,7 @@ impl Adapter {
                 let pull = self.runtime.block_on(client.open_pull_request(
                     &repo,
                     &NewPullRequest {
-                        title: issue.title,
+                        title: crate::redaction::text(&issue.title)?,
                         head: branch.as_str().into(),
                         base: self.branches.base(&delivery.repository)?.into(),
                         body,

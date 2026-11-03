@@ -14,13 +14,177 @@ fn policy() -> Result<&'static Value> {
     });
     POLICY.as_ref().map_err(Clone::clone)
 }
+
+struct Characters {
+    alnum: Vec<[u32; 2]>,
+    alpha: Vec<[u32; 2]>,
+    digit: Vec<[u32; 2]>,
+    decimal: Vec<[u32; 2]>,
+    upper: Vec<[u32; 2]>,
+    lower: Vec<[u32; 2]>,
+    space: Vec<[u32; 2]>,
+}
+fn characters() -> Result<&'static Characters> {
+    static CHARACTERS: LazyLock<Result<Characters>> = LazyLock::new(|| {
+        let ranges = |name: &str| -> Result<Vec<[u32; 2]>> {
+            let mut ranges = Vec::new();
+            for range in policy()?["characters"][name]
+                .as_str()
+                .ok_or("missing Python character ranges")?
+                .split(',')
+            {
+                let (start, end) = range.split_once('-').ok_or("invalid character range")?;
+                let start = u32::from_str_radix(start, 16).map_err(|e| e.to_string())?;
+                let end = u32::from_str_radix(end, 16).map_err(|e| e.to_string())?;
+                if start > end
+                    || end > 0x10ffff
+                    || ranges
+                        .last()
+                        .is_some_and(|previous: &[u32; 2]| previous[1] >= start)
+                {
+                    return Err("invalid Python character ranges".into());
+                }
+                ranges.push([start, end]);
+            }
+            Ok(ranges)
+        };
+        Ok(Characters {
+            alnum: ranges("alnum")?,
+            alpha: ranges("alpha")?,
+            digit: ranges("digit")?,
+            decimal: ranges("decimal")?,
+            upper: ranges("upper")?,
+            lower: ranges("lower")?,
+            space: ranges("space")?,
+        })
+    });
+    CHARACTERS.as_ref().map_err(Clone::clone)
+}
+fn member(ranges: &[[u32; 2]], character: char) -> bool {
+    let codepoint = character as u32;
+    ranges
+        .binary_search_by(|[start, end]| {
+            if codepoint < *start {
+                std::cmp::Ordering::Greater
+            } else if codepoint > *end {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .is_ok()
+}
+impl Characters {
+    fn trim<'a>(&self, text: &'a str) -> &'a str {
+        text.trim_matches(|c| member(&self.space, c))
+    }
+}
+
+fn python_pattern(pattern: &str) -> Result<String> {
+    fn class(ranges: &[[u32; 2]], word: bool) -> String {
+        let mut body = if word { "_".to_owned() } else { String::new() };
+        for [start, end] in ranges {
+            body.push_str(&format!(r"\x{{{start:x}}}-\x{{{end:x}}}"));
+        }
+        body
+    }
+    static CLASSES: LazyLock<Result<[String; 3]>> = LazyLock::new(|| {
+        let chars = characters()?;
+        Ok([
+            class(&chars.alnum, true),
+            class(&chars.decimal, false),
+            class(&chars.space, false),
+        ])
+    });
+    fn shorthand(code: char, classes: &[String; 3], invert: bool) -> String {
+        let index = match code {
+            'w' | 'W' => 0,
+            'd' | 'D' => 1,
+            _ => 2,
+        };
+        let negate = if code.is_ascii_uppercase() ^ invert {
+            "^"
+        } else {
+            ""
+        };
+        format!("(?-i:[{negate}{}])", classes[index])
+    }
+    fn bracket(
+        source: &mut std::iter::Peekable<std::str::Chars<'_>>,
+        classes: &[String; 3],
+    ) -> Result<String> {
+        let negate = source.next_if_eq(&'^').is_some();
+        let mut literal = String::new();
+        let mut codes = Vec::new();
+        loop {
+            match source.next().ok_or("unfinished regex class")? {
+                ']' => break,
+                '\\' => match source.next().ok_or("unfinished class escape")? {
+                    code @ ('w' | 'W' | 'd' | 'D' | 's' | 'S') => codes.push(code),
+                    'b' => literal.push_str(r"\x08"),
+                    code => {
+                        literal.push('\\');
+                        literal.push(code);
+                    }
+                },
+                '[' => literal.push_str(r"\["),
+                c => literal.push(c),
+            }
+        }
+        if codes.is_empty() {
+            return Ok(format!("[{}{literal}]", if negate { "^" } else { "" }));
+        }
+        if literal.is_empty() && codes.len() == 1 {
+            return Ok(shorthand(codes[0], classes, negate));
+        }
+        let mut parts = codes
+            .into_iter()
+            .map(|c| shorthand(c, classes, false))
+            .collect::<Vec<_>>();
+        if !literal.is_empty() {
+            parts.push(format!("[{literal}]"));
+        }
+        let union = parts.join("|");
+        Ok(if negate {
+            format!("(?!(?:{union}))(?s:.)")
+        } else {
+            format!("(?:{union})")
+        })
+    }
+    let classes = CLASSES.as_ref().map_err(Clone::clone)?;
+    let word = shorthand('w', classes, false);
+    let mut out = String::new();
+    let mut source = pattern.chars().peekable();
+    while let Some(c) = source.next() {
+        if c == '[' {
+            out.push_str(&bracket(&mut source, classes)?);
+            continue;
+        }
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        let escape = source.next().ok_or("unfinished regex escape")?;
+        match escape {
+            'w' | 'W' | 'd' | 'D' | 's' | 'S' => out.push_str(&shorthand(escape, classes, false)),
+            'b' => out.push_str(&format!(r"(?:(?<!{word})(?={word})|(?<={word})(?!{word}))")),
+            'B' => out.push_str(&format!(r"(?:(?<!{word})(?!{word})|(?<={word})(?={word}))")),
+            other => {
+                out.push('\\');
+                out.push(other);
+            }
+        }
+    }
+    Ok(out)
+}
+
 fn rx(pattern: &str) -> Result<Arc<Regex>> {
     static CACHE: LazyLock<Mutex<HashMap<String, Arc<Regex>>>> = LazyLock::new(Mutex::default);
     let mut cache = CACHE.lock().map_err(|_| "redaction cache poisoned")?;
     if let Some(regex) = cache.get(pattern) {
         return Ok(regex.clone());
     }
-    let regex = Arc::new(Regex::new(pattern).map_err(|e| e.to_string())?);
+    let regex = Arc::new(Regex::new(&python_pattern(pattern)?).map_err(|e| e.to_string())?);
     cache.insert(pattern.into(), regex.clone());
     Ok(regex)
 }
@@ -161,7 +325,8 @@ fn before(text: &str, position: usize, count: usize) -> usize {
         .map_or(0, |(i, _)| i)
 }
 fn random_like(token: &str, minimum: usize) -> Result<bool> {
-    if full_rule("SAFE_TOKEN", token)? || token.chars().any(char::is_whitespace) {
+    let chars = characters()?;
+    if full_rule("SAFE_TOKEN", token)? || token.chars().any(|c| member(&chars.space, c)) {
         return Ok(false);
     }
     let parts = token.split(['-', '_']).collect::<Vec<_>>();
@@ -181,12 +346,12 @@ fn random_like(token: &str, minimum: usize) -> Result<bool> {
     }
     let classes = token
         .chars()
-        .filter(|c| c.is_alphanumeric())
+        .filter(|c| member(&chars.alnum, *c))
         .map(|c| {
-            if c.is_numeric() {
+            if member(&chars.digit, c) {
                 2
             } else {
-                u8::from(c.is_uppercase())
+                u8::from(member(&chars.upper, c))
             }
         })
         .collect::<Vec<_>>();
@@ -201,7 +366,7 @@ fn random_like(token: &str, minimum: usize) -> Result<bool> {
                 .map_err(|e| e.to_string())
         })
         .sum::<Result<usize>>()?;
-    let letters = token.chars().filter(|c| c.is_alphabetic()).count();
+    let letters = token.chars().filter(|c| member(&chars.alpha, *c)).count();
     let vowels = token.chars().filter(|c| "aeiouAEIOU".contains(*c)).count();
     Ok((5 * switches >= 2 * classes.len()
         && (10 * words < 7 * classes.len() || 4 * vowels < letters))
@@ -215,9 +380,10 @@ fn plausible(
     assign: &str,
     code: bool,
 ) -> Result<bool> {
+    let chars = characters()?;
     let (inner, quoted) = unquote(value)?;
     if kind.is_none()
-        || inner.trim().is_empty()
+        || chars.trim(&inner).is_empty()
         || start_rule("REFERENCE", &inner)?
         || full_rule("PATHLIKE", &inner)?
         || rule("TEMPLATE")?
@@ -225,13 +391,16 @@ fn plausible(
             .map_err(|e| e.to_string())?
         || full_rule("VERSION", &inner)?
         || inner.to_lowercase() == label.to_lowercase()
-        || full_rule("SCHEME_NAME", inner.trim())?
+        || full_rule("SCHEME_NAME", chars.trim(&inner))?
         || placeholder(prefix(&inner, 64))?
     {
         return Ok(false);
     }
     if quoted
-        && (tail.trim_start().starts_with(['*', '+']) || search(r"\A(?:\s*\+|.*\+\s*$)", &inner)?)
+        && (tail
+            .trim_start_matches(|c| member(&chars.space, c))
+            .starts_with(['*', '+'])
+            || search(r"\A(?:\s*\+|.*\+\s*$)", &inner)?)
     {
         return Ok(false);
     }
@@ -266,9 +435,9 @@ fn plausible(
         let sample = prefix(&inner, 64);
         return Ok(random_like(sample, 12)?
             || (full(r"[A-Za-z0-9]{12,}", sample)?
-                && sample.chars().any(char::is_uppercase)
-                && sample.chars().any(char::is_lowercase)
-                && sample.chars().any(char::is_numeric)));
+                && sample.chars().any(|c| member(&chars.upper, c))
+                && sample.chars().any(|c| member(&chars.lower, c))
+                && sample.chars().any(|c| member(&chars.digit, c))));
     }
     Ok(true)
 }
@@ -277,13 +446,15 @@ fn readable(value: &str) -> Result<bool> {
     Ok(full(r"[A-Za-z][A-Za-z:/._ -]*", &inner)? && !random_like(&inner, 8)?)
 }
 fn token_shaped(value: &str) -> Result<bool> {
+    let chars = characters()?;
     Ok(!full_rule("WORD", value)?
-        && (value.chars().any(char::is_numeric)
+        && (value.chars().any(|c| member(&chars.digit, c))
             || value.contains(['.', '_', '~', '+', '/', '=', '-'])
-            || value.chars().skip(1).any(char::is_uppercase)))
+            || value.chars().skip(1).any(|c| member(&chars.upper, c))))
 }
 
 fn secretish(value: &str, quoted: bool) -> Result<bool> {
+    let chars = characters()?;
     let core = if quoted {
         value
     } else {
@@ -291,7 +462,7 @@ fn secretish(value: &str, quoted: bool) -> Result<bool> {
     }
     .trim_matches(['*', '_']);
     if core.chars().count() < 8
-        || core.chars().any(char::is_whitespace)
+        || core.chars().any(|c| member(&chars.space, c))
         || start_rule("REFERENCE", core)?
         || rule("TEMPLATE")?
             .is_match(core)
@@ -311,15 +482,16 @@ fn secretish(value: &str, quoted: bool) -> Result<bool> {
     if core.contains('/') {
         return Ok(false);
     }
-    let upper = core.chars().any(char::is_uppercase);
-    let lower = core.chars().any(char::is_lowercase);
-    let digit = core.chars().any(char::is_numeric);
+    let upper = core.chars().any(|c| member(&chars.upper, c));
+    let lower = core.chars().any(|c| member(&chars.lower, c));
+    let digit = core.chars().any(|c| member(&chars.digit, c));
     let special = core.chars().filter(|c| "!#%^*~@$&+?".contains(*c)).count();
     Ok((upper && lower && digit)
         || (special >= 2 && (upper || digit))
         || (quoted && digit && (upper || lower) && special >= 1))
 }
 fn checked(check: &str, cap: &Captures<'_>, text: &str) -> Result<Option<Span>> {
+    let chars = characters()?;
     let label = get(cap, "l");
     let value = get(cap, "v");
     let keep = match check {
@@ -359,8 +531,8 @@ fn checked(check: &str, cap: &Captures<'_>, text: &str) -> Result<Option<Span>> 
                     && (text[..assign.start()]
                         .chars()
                         .next_back()
-                        .is_some_and(char::is_whitespace)
-                        || gap.chars().next().is_some_and(char::is_whitespace)));
+                        .is_some_and(|c| member(&chars.space, c))
+                        || gap.chars().next().is_some_and(|c| member(&chars.space, c))));
             plausible(
                 label_kind(label)?,
                 label,
@@ -377,7 +549,7 @@ fn checked(check: &str, cap: &Captures<'_>, text: &str) -> Result<Option<Span>> 
                 && !start_rule("REFERENCE", value)?
                 && value.chars().count() >= 8
                 && token_shaped(value)?
-                && !value.chars().any(char::is_whitespace)
+                && !value.chars().any(|c| member(&chars.space, c))
         }
         "check_block" => label_kind(label)? == Some(Kind::Strong),
         "check_name_value" => plausible(label_kind(label)?, label, value, "", "", false)?,
@@ -421,7 +593,7 @@ fn checked(check: &str, cap: &Captures<'_>, text: &str) -> Result<Option<Span>> 
                 && !placeholder(value)?
         }
         "check_user" => {
-            !value.chars().all(char::is_numeric)
+            !value.chars().all(|c| member(&chars.digit, c))
                 && !rule("TEMPLATE")?
                     .is_match(value)
                     .map_err(|e| e.to_string())?
@@ -429,7 +601,7 @@ fn checked(check: &str, cap: &Captures<'_>, text: &str) -> Result<Option<Span>> 
         "check_aws" => label_kind(label)?.is_some(),
         "check_ssh_keygen" => !unquote(value)?.0.is_empty(),
         "check_xml" => {
-            value.trim().chars().count() >= 4
+            chars.trim(value).chars().count() >= 4
                 && label_kind(label)? == Some(Kind::Strong)
                 && plausible(Some(Kind::Strong), label, value, "", "=", false)?
         }
@@ -443,6 +615,7 @@ fn checked(check: &str, cap: &Captures<'_>, text: &str) -> Result<Option<Span>> 
     Ok(if keep { span(cap, "v") } else { None })
 }
 fn spans(text: &str) -> Result<Vec<Span>> {
+    let chars = characters()?;
     let mut found = Vec::new();
     let ends = matches(&rule("PRIVATE_END")?, text)?
         .iter()
@@ -522,7 +695,7 @@ fn spans(text: &str) -> Result<Vec<Span>> {
     }
     let sections = matches(&rule("SECTION")?, text)?;
     for (index, section) in sections.iter().enumerate() {
-        if label_kind(get(section, "l").trim())? == Some(Kind::Strong) {
+        if label_kind(chars.trim(get(section, "l")))? == Some(Kind::Strong) {
             let start = section.get(0).ok_or("missing section")?.end();
             let end = sections
                 .get(index + 1)
@@ -546,8 +719,8 @@ fn spans(text: &str) -> Result<Vec<Span>> {
                 let mut offset = position;
                 for (index, cell) in cells.iter().enumerate() {
                     if indices.contains(&index)
-                        && !cell.trim().is_empty()
-                        && label_kind(cell.trim())? != Some(Kind::Strong)
+                        && !chars.trim(cell).is_empty()
+                        && label_kind(chars.trim(cell))? != Some(Kind::Strong)
                     {
                         found.push((offset, offset + cell.len()));
                     }
@@ -561,7 +734,7 @@ fn spans(text: &str) -> Result<Vec<Span>> {
                 columns = if header {
                     let mut indices = Vec::new();
                     for (index, cell) in cells.iter().enumerate() {
-                        if label_kind(cell.trim())? == Some(Kind::Strong) {
+                        if label_kind(chars.trim(cell))? == Some(Kind::Strong) {
                             indices.push(index);
                         }
                     }
@@ -680,6 +853,74 @@ fn python_command() -> std::process::Command {
 }
 #[cfg(test)]
 mod parity_tests {
+    #[test]
+    fn character_predicates_and_regex_classes_match_python_for_every_scalar() {
+        use sha2::{Digest, Sha256};
+        let output = super::python_command()
+            .args([
+                "-I",
+                "-c",
+                r#"
+import hashlib,json,re,sys
+text = ''.join(chr(n) for n in range(sys.maxunicode + 1) if not 0xd800 <= n <= 0xdfff)
+predicates = [str.isalnum,str.isalpha,str.isdigit,str.isdecimal,str.isupper,str.islower,str.isspace]
+flags = bytes(sum(1 << i for i,predicate in enumerate(predicates) if predicate(c)) for c in text)
+patterns = [r'\w',r'\W',r'\d',r'\D',r'\s',r'\S',r'(?i)[\w-]',r'(?i)[^\w-]']
+out = {'flags':hashlib.sha256(flags).hexdigest()}
+for pattern in patterns:
+    digest = hashlib.sha256()
+    for match in re.finditer(pattern,text):
+        digest.update(match[0].encode())
+    out[pattern] = digest.hexdigest()
+print(json.dumps(out))
+"#,
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let expected: std::collections::BTreeMap<String, String> =
+            serde_json::from_slice(&output.stdout).unwrap();
+        let text = (0..=0x10ffff)
+            .filter_map(char::from_u32)
+            .collect::<String>();
+        let chars = super::characters().unwrap();
+        let mut flags = Sha256::new();
+        for c in text.chars() {
+            let properties = [
+                &chars.alnum,
+                &chars.alpha,
+                &chars.digit,
+                &chars.decimal,
+                &chars.upper,
+                &chars.lower,
+                &chars.space,
+            ];
+            let bits = properties
+                .into_iter()
+                .enumerate()
+                .fold(0u8, |bits, (i, ranges)| {
+                    bits | (u8::from(super::member(ranges, c)) << i)
+                });
+            flags.update([bits]);
+        }
+        assert_eq!(format!("{:x}", flags.finalize()), expected["flags"]);
+        for (pattern, expected) in expected.into_iter().filter(|(p, _)| p != "flags") {
+            let mut digest = Sha256::new();
+            for matched in super::rx(&pattern).unwrap().find_iter(&text) {
+                digest.update(matched.unwrap().as_str().as_bytes());
+            }
+            assert_eq!(format!("{:x}", digest.finalize()), expected, "{pattern}");
+        }
+        for (pattern, input, expected) in [
+            (r"\b", "", false),
+            (r"\B", "", true),
+            (r"\bpassword", "\u{301}password", true),
+            (r"\bpassword", "\u{200c}password", true),
+        ] {
+            assert_eq!(super::search(pattern, input).unwrap(), expected);
+        }
+    }
+
     #[test]
     fn oversized_input_fails_closed() {
         assert!(matches!(

@@ -1,13 +1,14 @@
 """Generate the Rust text policy from #302's authoritative Python definitions.
 
-Run from any directory with Python 3.11+: python redaction_policy.py [--check].
-No worker module is executed; only literal policy expressions are read.
+Run with the workers' Python 3.14: python redaction_policy.py [--check].
+No worker module is executed. Literal rules and Python character properties are read.
 """
 import ast
 import hashlib
 import json
 from pathlib import Path
 import sys
+import unicodedata
 
 ROOT = Path(__file__).resolve().parents[3]
 SOURCE = ROOT / 'workers/src/tl3_workers/tracing.py'
@@ -17,6 +18,18 @@ OUTPUT = ROOT / 'crates/controller/src/redaction/policy.json'
 class Pattern:
     def __init__(self, value):
         self.value = value
+
+
+def character_ranges(predicate):
+    ranges, start = [], None
+    for codepoint in range(sys.maxunicode + 2):
+        present = codepoint <= sys.maxunicode and predicate(chr(codepoint))
+        if present and start is None:
+            start = codepoint
+        elif not present and start is not None:
+            ranges.append(f'{start:x}-{codepoint - 1:x}')
+            start = None
+    return ','.join(ranges)
 
 
 def policy():
@@ -50,6 +63,12 @@ def policy():
                 names[target.id] = value(node.value)
     return {
         'source_sha256': hashlib.sha256(raw).hexdigest(),
+        'unicode_version': unicodedata.unidata_version,
+        'characters': {name: character_ranges(predicate) for name, predicate in {
+            'alnum': str.isalnum, 'alpha': str.isalpha, 'digit': str.isdigit,
+            'decimal': str.isdecimal, 'upper': str.isupper, 'lower': str.islower,
+            'space': str.isspace,
+        }.items()},
         'regex': {key: item.value for key, item in names.items() if isinstance(item, Pattern)},
         'words': {key: item for key, item in names.items()
                   if isinstance(item, list) and all(isinstance(word, str) for word in item)},
