@@ -2604,7 +2604,7 @@ impl Controller {
                         evidence::check_record(
                             &json!({"head_sha":sha,"base_sha":base_sha,"action_key":action_key,
                             "report":report,"pass":pass,"results":results}),
-                        )?,
+                        ),
                     ));
                     let mut report = json!({"base_sha": base_sha, "results": results});
                     if !selected.is_empty() {
@@ -2767,7 +2767,7 @@ impl Controller {
                         evidence::review_record(
                             &json!({"head_sha":criteria["head_sha"],"verdict":reply["verdict"],
                             "blocking_findings":reply["blocking_findings"]}),
-                        )?,
+                        ),
                     ));
                     if reply["verdict"] == "approve" {
                         mapped =
