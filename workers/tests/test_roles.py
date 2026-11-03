@@ -25,7 +25,8 @@ def test_discovered_roles_have_prompts_and_schemas_without_orphans():
                if path.name.endswith(".py") and not path.name.startswith("_")
                and path.name != "base.py"}
     assert set(ROLES) == modules
-    expected_schemas = {"request.json"}
+    expected_schemas = {"request.json", "decision-context.json"}
+    Draft202012Validator.check_schema(schema("decision-context"))
     role_pattern = schema("request")["properties"]["role"]
     assert "enum" not in role_pattern
     for name, role in ROLES.items():

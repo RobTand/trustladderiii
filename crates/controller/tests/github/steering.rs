@@ -917,6 +917,53 @@ pub(super) fn answer_replacement(settings: &tl3_config::Store) {
     d.send(21001, "Use a smaller request");
     d.classified(21001);
     replacement_assertions(&mut d);
+    let snapshot = d.store.load().unwrap();
+    let context = &snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "request_decisions" && r.id == "0")
+        .expect("accepted answer must have durable decision context")
+        .value;
+    assert_eq!(context["schema_version"], 2);
+    assert!(context.get("decisions").is_none());
+    let decision = &snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "decisions" && r.id == context["decision_ids"][0].as_str().unwrap())
+        .unwrap()
+        .value;
+    assert_eq!(context["request_version"], 0);
+    assert_eq!(decision["answer"], "Use a smaller request");
+    assert_eq!(
+        decision["source_comment"],
+        "https://github.com/owner/sandbox/issues/12#issuecomment-21001"
+    );
+    assert!(decision["question"]["id"].is_u64());
+    let inherited = &snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "request_decisions" && r.id == "1")
+        .unwrap()
+        .value;
+    assert_eq!(inherited["request_version"], 1);
+    assert_eq!(inherited["decision_ids"], context["decision_ids"]);
+    let requests = d.requests();
+    let input = &requests
+        .iter()
+        .find(|r| r["role"] == "ingest" && r["operation"]["node"] == 1)
+        .unwrap()["inputs"];
+    assert_eq!(
+        input["decision_context"],
+        json!({"schema_version":1,"request_version":1,"decisions":[decision]})
+    );
+    assert_eq!(
+        snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "decisions")
+            .count(),
+        1
+    );
     let body = d
         .requests()
         .iter()
@@ -1128,7 +1175,27 @@ impl Executor for RaceWorkers {
             return Ok(tl3_controller::executor::Completion::confirmed(vec![
                 Observation::Classified {
                     key: delivery.key.clone(),
-                    reply: Some(self.reply.clone()),
+                    reply: Some(
+                        if let Some(inputs) = delivery
+                            .steering
+                            .as_ref()
+                            .and_then(|task| match task {
+                                tl3_controller::steering::Task::Classify { inputs, .. } => {
+                                    Some(inputs)
+                                }
+                                _ => None,
+                            })
+                            .filter(|inputs| inputs.get("reconcile_issue").is_some())
+                        {
+                            let forbid = inputs["reconcile_issue"]["body"]
+                                .as_str()
+                                .unwrap_or("")
+                                .contains("Do not update");
+                            json!({"kind":"reconcile_decisions", "assessments": inputs["decision_context"]["decisions"].as_array().unwrap().iter().map(|d| json!({"id":d["id"], "contradicted":forbid, "reason":if forbid {"current issue forbids the pin update"} else {"current issue does not contradict this approval"}})).collect::<Vec<_>>()})
+                        } else {
+                            self.reply.clone()
+                        },
+                    ),
                 },
             ]));
         }

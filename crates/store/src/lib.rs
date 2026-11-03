@@ -113,6 +113,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
         15,
         include_str!("../migrations/0015_postmortem_results.sql"),
     ),
+    (17, include_str!("../migrations/0017_worker_facts.sql")),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1034,6 +1035,41 @@ impl Store {
                 &[&question.to_string()],
             )?
             .map(|row| row.get(0)))
+    }
+
+    pub fn worker_facts_recorded(&mut self, key: &str, attempt: i64) -> Result<bool> {
+        Ok(self
+            .client
+            .query_opt(
+                "SELECT 1 FROM tl3_worker_runs WHERE run_key = $1 AND attempt = $2",
+                &[&key, &attempt],
+            )?
+            .is_some())
+    }
+
+    /// Import a worker-owned terminal record before retiring its attempt files.
+    /// A replay is harmless; changing an already imported attempt is refused.
+    pub fn record_worker_facts(
+        &mut self,
+        key: &str,
+        node: &str,
+        attempt: i64,
+        role: &str,
+        facts: &WorkerRunFacts,
+    ) -> Result<()> {
+        facts.validate()?;
+        let value = serde_json::to_value(facts).expect("worker facts are JSON values");
+        self.client.execute(
+            "INSERT INTO tl3_worker_runs (run_key, node_id, attempt, role, facts) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (run_key, attempt) DO NOTHING",
+            &[&key, &node, &attempt, &role, &value],
+        )?;
+        if self.client.query_opt(
+            "SELECT 1 FROM tl3_worker_runs WHERE run_key = $1 AND node_id = $2 AND attempt = $3 AND role = $4 AND facts = $5",
+            &[&key, &node, &attempt, &role, &value],
+        )?.is_none() {
+            return Err(Error::Invalid("worker completion record changed"));
+        }
+        Ok(())
     }
 
     /// Claim time exists even if the worker never emits progress.

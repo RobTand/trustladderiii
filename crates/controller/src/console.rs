@@ -465,36 +465,28 @@ fn translate(
             if text.chars().count() > MAX_TEXT_CHARS {
                 return Ok(refuse("Answers can be at most 20,000 characters."));
             }
-            // GitHub's comment ids fit in 53 bits, so these never collide with one.
-            let id = (1u64 << 62) | sequence as u64;
-            let now = chrono::DateTime::<chrono::Utc>::from(controller.clock.now());
-            let observation = Observation::GitHubComment {
-                repository: binding.repo.clone(),
-                issue: binding.issue,
-                comment: tl3_github::Comment {
-                    id,
-                    body: text.clone(),
-                    user: tl3_github::Actor {
-                        id: controller.bootstrap.rob,
-                        login: "console".into(),
-                    },
-                    created_at: now,
-                    updated_at: now,
-                    issue_url: format!(
-                        "https://api.github.com/repos/{}/{}/issues/{}",
-                        binding.repo.owner, binding.repo.name, binding.issue
-                    ),
-                },
+            file_comment(controller, command, sequence, &binding, text, commit)
+        }
+        Action::Answer {
+            choice: Choice::ChangeRequest { .. },
+            ..
+        } if !crate::decisions::Context::load(snapshot, node)?
+            .applicable()
+            .decisions
+            .is_empty() =>
+        {
+            let (reply, note) = match steering_reply(&n, &command.action) {
+                Ok(steering) => steering,
+                Err(refused) => return Ok(Err(refused)),
             };
+            let id = (1u64 << 62) | sequence as u64;
             commit.rows.push(crate::put(
-                "inbox",
-                format!("external:console-comment:{}", command.id),
-                json!(observation),
+                "console_selected_answers",
+                id.to_string(),
+                reply,
             ));
-            format!(
-                "Rob answered from the TL3 console. TL3 reads it as a comment{}",
-                quoted(text)
-            )
+            file_comment(controller, command, sequence, &binding, &note, commit);
+            note
         }
         action => {
             let (reply, note) = match steering_reply(&n, action) {
@@ -566,6 +558,46 @@ fn translate(
     commit.rows.push(controller.allowance_row(delivery.clone()));
     commit.effects.push(delivery.into_effect());
     Ok(Ok(()))
+}
+
+fn file_comment(
+    controller: &Controller,
+    command: &Command,
+    sequence: i64,
+    binding: &crate::Request,
+    text: &str,
+    commit: &mut Commit,
+) -> String {
+    // GitHub's comment ids fit in 53 bits, so these never collide with one.
+    let id = (1u64 << 62) | sequence as u64;
+    let now = chrono::DateTime::<chrono::Utc>::from(controller.clock.now());
+    let observation = Observation::GitHubComment {
+        repository: binding.repo.clone(),
+        issue: binding.issue,
+        comment: tl3_github::Comment {
+            id,
+            body: text.into(),
+            user: tl3_github::Actor {
+                id: controller.bootstrap.rob,
+                login: "console".into(),
+            },
+            created_at: now,
+            updated_at: now,
+            issue_url: format!(
+                "https://api.github.com/repos/{}/{}/issues/{}",
+                binding.repo.owner, binding.repo.name, binding.issue
+            ),
+        },
+    };
+    commit.rows.push(crate::put(
+        "inbox",
+        format!("external:console-comment:{}", command.id),
+        json!(observation),
+    ));
+    format!(
+        "Rob answered from the TL3 console. TL3 reads it as a comment{}",
+        quoted(text)
+    )
 }
 
 /// The classifier reply Rob's equivalent comment would get, and the audit note.

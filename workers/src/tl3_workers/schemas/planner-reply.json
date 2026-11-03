@@ -322,6 +322,10 @@
             "additionalProperties": false
           },
           "description": "Repository conventions the checkout shows, each with evidence, kept for later requests. Code checks the quote."
+        },
+        "decision_context": {
+          "$ref": "decision-context.json",
+          "description": "Code supplies the applicable approvals and restrictions from the planner inputs."
         }
       },
       "required": [
@@ -518,6 +522,10 @@
             "additionalProperties": false
           },
           "description": "Repository conventions the checkout shows, each with evidence, kept for later requests. Code checks the quote."
+        },
+        "decision_context": {
+          "$ref": "decision-context.json",
+          "description": "Code supplies the applicable approvals and restrictions from the planner inputs."
         }
       },
       "required": [
@@ -690,6 +698,10 @@
             "additionalProperties": false
           },
           "description": "Repository conventions the checkout shows, each with evidence, kept for later requests. Code checks the quote."
+        },
+        "decision_context": {
+          "$ref": "decision-context.json",
+          "description": "Code supplies the applicable approvals and restrictions from the planner inputs."
         }
       },
       "required": [
