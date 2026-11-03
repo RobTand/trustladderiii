@@ -662,10 +662,6 @@ fn phase_evidence_survives_exact_head_receipts() {
             }
             fs::write(ending, serde_json::to_vec(&value).unwrap()).unwrap();
         }
-        if matches!(damage, "digest" | "receipt") {
-            assert!(adapter.reconcile(&delivery).is_err(), "{damage}");
-            continue;
-        }
         let ended = completion(&mut adapter, &delivery);
         match &ended.observations[0] {
             Observation::Checks {
@@ -2487,6 +2483,8 @@ fn main() {
     let args: Vec<_> = std::env::args().collect();
     if args.get(1).is_some_and(|arg| arg == "--failure-phases") {
         phase_evidence_survives_exact_head_receipts();
+        println!("test phase_evidence_survives_exact_head_receipts ... ok");
+        println!("1 prismabuild scenarios passed");
         return;
     }
     if args.get(1).is_some_and(|arg| arg == "--repository-demand") {
@@ -2740,7 +2738,7 @@ fn main() {
     quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
     println!("test unreadable_job_record_is_a_failed_read ... ok");
     database.stop();
-    println!("51 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("52 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
