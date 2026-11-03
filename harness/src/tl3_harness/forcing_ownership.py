@@ -52,6 +52,13 @@ def preflight_owner(target, source):
                 return []
             if isinstance(node, ast.ImportFrom) and any(alias.name == '*' for alias in node.names):
                 return []
+            # Class bodies and decorators execute at import time; a `global` or
+            # `nonlocal` there can rebind any module name. Leave those to the runner.
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.decorator_list:
+                return []
+            if isinstance(node, ast.ClassDef) and any(isinstance(item, (ast.Global, ast.Nonlocal))
+                                                      for item in ast.walk(node)):
+                return []
             if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
                 found.append(node)
             elif isinstance(node, (ast.Import, ast.ImportFrom)):
