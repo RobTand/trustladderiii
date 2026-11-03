@@ -750,6 +750,14 @@ pub(super) fn delegated_restart(settings: &tl3_config::Store) {
             .is_some(),
         "near miss retains model classification"
     );
+    observe(&mut controller, 29004, 42, format!("pause\n\n{LINE}"));
+    let classified = controller
+        .effect("classify:owner/sandbox/3/29004")
+        .unwrap()
+        .unwrap();
+    let inputs = &classified.payload["steering"]["Classify"]["inputs"];
+    assert_eq!(inputs["comment"]["body"], "pause");
+    assert_eq!(inputs["comment"]["delegated_by"], LINE);
     observe(&mut controller, 29003, 7, format!("restart\n\n{LINE}"));
     assert!(
         controller

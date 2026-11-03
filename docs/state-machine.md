@@ -188,6 +188,17 @@ Rob will often just comment rather than answer a question. An agent reads each o
 
 Restart is how Rob starts a request over after something went wrong (Q49). It reads the issue's current title and body from GitHub when it applies, so he can edit the issue first. On an open request, it works like changing the request: the request stops as replaced, and a new one linked to the same issue starts on its own. On a request that closed without merging, it files a new linked request and reopens the issue if TL3 closed it. Merged and Done work isn't restarted; a complaint files a correction. A restart that arrives while a stop is finishing waits for the close. If the issue is gone (404 or 410), nothing is filed and Rob gets a note on the operations issue; any other failed read raises an incident, and clearing it retries. A stop no longer closes the issue: the summary says to comment `restart` to start again.
 
+Decided by Rob, 2026-11-03: restart comments posted by the TL3 build coordinator
+under Rob's standing approval count as Rob's own. Code requires Rob's configured
+numeric GitHub account ID and one exact whole line from
+`operations.delegated_attributions`. The matching line identifies the delegate
+in the request's durable provenance. Code removes that attribution before
+classifying the remaining operator command as Rob's own. Exact `restart` uses
+the existing restart state check directly, without a classification model call.
+Answers and change requests retain their existing semantic classification and
+state checks. Other accounts and non-matching attributions retain their behavior.
+This decision adds no kernel transition or state-table rule.
+
 Incidents often span several requests, so until Discord exists they go to one pinned "TL3 operations" issue in TL3's own repo. Questions about a request stay on that request's issue (Q17).
 
 ### Escalation reports
@@ -718,16 +729,3 @@ missing test IDs, unavailable plans or incomplete evidence do not justify an out
 requeue. The controller journals the decision and test IDs with the queue fact,
 so restart and redelivery retain the retry bound. The kernel and state table
 are unchanged.
-
-## Delegated command provenance (#560)
-
-Decided by Rob, 2026-11-03: restart comments posted by the TL3 build coordinator
-under Rob's standing approval count as Rob's own. Code requires Rob's configured
-numeric GitHub account ID and one exact whole line from
-`operations.delegated_attributions`. The matching line identifies the delegate
-in the request's durable provenance. Code removes that attribution before
-classifying the remaining operator command as Rob's own. Exact `restart` uses
-the existing restart state check directly, without a classification model call.
-Answers and change requests retain their existing semantic classification and
-state checks. Other accounts and non-matching attributions retain their behavior.
-This decision adds no kernel transition or state-table rule.
