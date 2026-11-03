@@ -302,3 +302,65 @@ def test_twenty_passing_receipts_do_not_displace_failure_diagnostics(frozen_repo
     assert 'unresolved assertion' in failure['message']
     assert 'sha256 ' in failure['message'] and 'retry unit:' in failure['message']
     assert sum(bool(test['message']) for test in serialized) <= execution.MAX_DETAILED_FAILURES
+
+
+@pytest.mark.parametrize('cached', ['none', 'prefix', 'suffix'])
+def test_actual_cost_saturation_keeps_a_complete_priority_prefix(frozen_repo, cached):
+    repo, runs = frozen_repo
+    extra = 'tests/test_extra.py'
+    tail = 'tests/test_tail.py'
+    (repo / 'extra.py').write_text('VALUE = 1\n')
+    (repo / extra).write_text('import pytest\nimport extra\n'
+        '@pytest.mark.parametrize("row", range(7))\ndef test_extra(row):\n    assert extra.VALUE\n')
+    (repo / tail).write_text('from product import value\ndef test_tail():\n    assert value() > 0\n')
+    base = save(repo, '394-case guarded module, seven-case unit, one-case tail')
+    if cached == 'prefix':
+        selected(repo, base, head(repo))
+    elif cached == 'suffix':
+        (repo / 'extra.py').write_text('VALUE = 2\n')
+        selected(repo, base, save(repo, 'cache the later seven-case unit only'))
+    (repo / 'extra.py').write_text('VALUE = 3\n')
+    commit = head(repo, 2)
+    runs.clear()
+    result = selected(repo, base, commit)[-1]
+    assert result.verdict == Verdict.PASS, result
+    assert [test.test for test in result.tests] == [MODULE]
+    receipt = json.loads(execution.result_json((result,)))[0]['selection']
+    assert receipt['limit'] == 400 and receipt['charged_cases'] == 394
+    assert receipt['head_units'] == [[MODULE]]
+    assert receipt['skipped_units'] == [[extra], [tail]]
+    assert receipt['saturation']['unit'] == [extra]
+    assert receipt['saturation']['cases'] == 7 and receipt['saturation']['remaining'] == 6
+    assert receipt['skipped_checked'] is False
+    assert all(tests == (MODULE,) for tree, tests in runs if tree == 'head' and tests != (OTHER,))
+    assert 'retry unit:' in result.tests[0].message
+
+
+def test_static_saturation_names_the_entire_unchecked_suffix(frozen_repo):
+    repo, runs = frozen_repo
+    (repo / MODULE).write_text('from product import value\ndef test_a():\n    assert value() > 0\n')
+    names = [f'tests/test_{letter}.py' for letter in ('d', 'e', 'f')]
+    for name in names:
+        (repo / name).write_text('from product import value\ndef test_other():\n    assert value() > 0\n')
+    base = save(repo, 'four ordered singleton units')
+    result = selected(repo, base, head(repo), limit=2)[-1]
+    receipt = json.loads(execution.result_json((result,)))[0]['selection']
+    assert result.verdict == Verdict.PASS
+    assert receipt['head_units'] == [[MODULE], [names[0]]]
+    assert receipt['skipped_units'] == [[names[1]], [names[2]]]
+    assert receipt['charged_cases'] == 2 and receipt['saturation']['remaining'] == 0
+    assert receipt['skipped_checked'] is False
+    assert all(names[1] not in tests and names[2] not in tests for tree, tests in runs if tree == 'head')
+
+
+def test_saturation_is_reported_even_when_no_admitted_unit_passes_base(frozen_repo):
+    repo, _ = frozen_repo
+    (repo / MODULE).write_text('from product import value\ndef test_a():\n    assert value() != 1\n')
+    (repo / 'tests/test_z.py').write_text('from product import value\ndef test_z():\n    assert value() > 0\n')
+    base = save(repo, 'first complete unit fails on base')
+    results = selected(repo, base, head(repo, 2), limit=1)
+    assert [result.name for result in results] == ['other']
+    receipt = json.loads(execution.result_json(results))[0]['selection']
+    assert receipt['charged_cases'] == 1 and receipt['head_units'] == []
+    assert receipt['skipped_units'] == [['tests/test_z.py']]
+    assert receipt['skipped_checked'] is False
