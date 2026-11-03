@@ -247,6 +247,27 @@ def test_request233_supplemental_campaign_keeps_zero_of_ten_refusal(request233):
     assert len(result['forced']['symptom_runs']) == 10
 
 
+@pytest.mark.parametrize('symptom', [False, True], ids=['assertion-campaign', 'exception-campaign'])
+def test_assertion_obligation_can_use_an_existing_observer_but_not_an_exception(request233, symptom):
+    from tl3_workers.forcing_rehearsal import ForcingRehearsals
+    ledger, _, inputs, calls, path = request233
+    obligation = inputs['ingest']['goals'][0]['proof_obligation']
+    obligation.update(observer='any', quote='RED needs a reliable assertion failure on base.')
+    ledger = ForcingRehearsals(ledger.worktree, inputs)
+    node = path + '::test_wrong_head'
+    declared = {'node': node, 'exception': 'builtins.FileNotFoundError', 'phase': 'call',
+                'repeat': 10, 'parallel': 4} if symptom else None
+    result = ledger.run([node], {'symptom': 'The archive race.', 'environment': {'CASE': 'race'}},
+                        declared_symptom=declared, goal_ids=[0])
+    assert result['status'] == 'refused', result
+    if symptom:
+        assert calls == []
+        assert 'source assertion proof' in result['message']
+    else:
+        assert len(calls) == 2, 'an assertion obligation that permits an old observer can be rehearsed'
+        assert 'expected assertion' in result['message'], 'a passing campaign still supplies no RED'
+
+
 def test_request233_rehearsal_tool_exposes_goal_binding(request233):
     from tl3_workers.forcing_rehearsal import make_rehearsal_tool
     ledger, _, _, calls, path = request233
