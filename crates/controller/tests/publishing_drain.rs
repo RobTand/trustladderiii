@@ -53,3 +53,40 @@ fn timely_progress_and_immediate_settlement_are_accepted() {
         deadline.check(now);
     }
 }
+
+#[test]
+#[should_panic(expected = "publishing")]
+fn lifecycle_late_observation_cannot_revive_expired_inactivity() {
+    let start = Instant::now();
+    let elapsed = std::cell::Cell::new(0);
+    let mut applied = false;
+    drain_deadline::lifecycle(
+        &mut applied,
+        |applied| (false, *applied),
+        |_| elapsed.set(elapsed.get() + 40),
+        |_| {
+            if elapsed.get() == 120 {
+                vec![()]
+            } else {
+                vec![]
+            }
+        },
+        |applied, ()| *applied = true,
+        || start + Duration::from_secs(elapsed.get()),
+    );
+}
+
+#[test]
+#[should_panic(expected = "publishing")]
+fn lifecycle_late_phase_cannot_revive_expired_inactivity() {
+    let start = Instant::now();
+    let elapsed = std::cell::Cell::new(0);
+    drain_deadline::lifecycle(
+        &mut (),
+        |_| (elapsed.get() >= 120, elapsed.get() >= 120),
+        |_| elapsed.set(elapsed.get() + 40),
+        |_| Vec::<()>::new(),
+        |_, ()| {},
+        || start + Duration::from_secs(elapsed.get()),
+    );
+}

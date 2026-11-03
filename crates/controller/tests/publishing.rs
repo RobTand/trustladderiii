@@ -851,40 +851,32 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     .unwrap();
     if mode.starts_with("q46-") {
         let (sender, receiver) = mpsc::channel();
-        let start = Instant::now();
-        let mut last_progress = start;
-        let mut phase = c.world().unwrap().nodes[0].phase;
-        loop {
-            let node = c.world().unwrap().nodes[0];
-            let reached = match mode {
-                "q46-checking" | "q46-clean" => node.phase == Phase::Checking,
-                "q46-reviewing" => node.phase == Phase::Reviewing,
-                "q46-enqueue" => node.effect.is_some_and(|e| e.kind == EffectKind::Enqueue),
-                _ => panic!("unknown Q46 mode"),
-            };
-            if reached {
-                break;
-            }
-            drive_once(&mut c);
-            progress("poll worker observations");
-            source.poll_once(&mut store, &sender).unwrap();
-            progress("apply worker observations");
-            for input in receiver.try_iter() {
-                tl3_controller::ingress::apply(&mut c, input).unwrap();
-                last_progress = Instant::now();
-            }
-            let next = c.world().unwrap().nodes[0].phase;
-            if next != phase {
-                phase = next;
-                last_progress = Instant::now();
-            }
-            assert!(
-                last_progress.elapsed() < Duration::from_secs(90)
-                    && start.elapsed() < Duration::from_secs(300),
-                "Q46 fixture stalled; last phase={phase:?}; quiet={:?}",
-                last_progress.elapsed()
-            );
-        }
+        drain_deadline::lifecycle(
+            &mut (&mut c, &mut source, &mut store),
+            |state| {
+                let node = state.0.world().unwrap().nodes[0];
+                let reached = match mode {
+                    "q46-checking" | "q46-clean" => node.phase == Phase::Checking,
+                    "q46-reviewing" => node.phase == Phase::Reviewing,
+                    "q46-enqueue" => node.effect.is_some_and(|e| e.kind == EffectKind::Enqueue),
+                    _ => panic!("unknown Q46 mode"),
+                };
+                (node.phase, reached)
+            },
+            |state| {
+                drive_once(state.0);
+            },
+            |state| {
+                progress("poll worker observations");
+                state.1.poll_once(state.2, &sender).unwrap();
+                progress("apply worker observations");
+                receiver.try_iter().collect()
+            },
+            |state, input| {
+                tl3_controller::ingress::apply(state.0, input).unwrap();
+            },
+            Instant::now,
+        );
         if mode != "q46-clean" {
             commit(&f.source, "value.py", "def value(): return 3\n");
         }
@@ -915,31 +907,27 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     }
     if mode == "before-enqueue" {
         let (sender, receiver) = mpsc::channel();
-        let start = Instant::now();
-        let mut last_progress = start;
-        let mut phase = c.world().unwrap().nodes[0].phase;
-        while server.api.state.lock().unwrap().checks.is_empty() {
-            drive_once(&mut c);
-            progress("poll worker observations");
-            source.poll_once(&mut store, &sender).unwrap();
-            progress("apply worker observations");
-            for input in receiver.try_iter() {
-                tl3_controller::ingress::apply(&mut c, input).unwrap();
-                last_progress = Instant::now();
-            }
-            let next = c.world().unwrap().nodes[0].phase;
-            if next != phase {
-                phase = next;
-                last_progress = Instant::now();
-            }
-            assert!(
-                last_progress.elapsed() < Duration::from_secs(90)
-                    && start.elapsed() < Duration::from_secs(300),
-                "before-enqueue fixture stalled; last phase={phase:?}; quiet={:?}",
-                last_progress.elapsed()
-            );
-            thread::yield_now();
-        }
+        drain_deadline::lifecycle(
+            &mut (&mut c, &mut source, &mut store),
+            |state| {
+                let node = state.0.world().unwrap().nodes[0];
+                let reached = !server.api.state.lock().unwrap().checks.is_empty();
+                (node.phase, reached)
+            },
+            |state| {
+                drive_once(state.0);
+            },
+            |state| {
+                progress("poll worker observations");
+                state.1.poll_once(state.2, &sender).unwrap();
+                progress("apply worker observations");
+                receiver.try_iter().collect()
+            },
+            |state, input| {
+                tl3_controller::ingress::apply(state.0, input).unwrap();
+            },
+            Instant::now,
+        );
         assert!(!server.api.state.lock().unwrap().labels);
         let d = f.delivery(EffectKind::Push, 100);
         let checkout = f.adapter().checkout(&d);
