@@ -3,6 +3,7 @@ import ast
 import builtins
 import copy
 import ctypes
+import dis
 import errno
 import hashlib
 import importlib
@@ -97,6 +98,31 @@ def missing_name(error):
             except (SyntaxError, OSError, ImportError, ValueError):
                 pass
     return None
+
+
+def assertion_reason(error):
+    reason = str(error)
+    trace = error.__traceback__
+    if isinstance(error, AssertionError) and trace is not None:
+        while trace.tb_next is not None:
+            trace = trace.tb_next
+        code = trace.tb_frame.f_code
+        instruction = next((item for item in dis.get_instructions(code) if item.offset == trace.tb_lasti), None)
+        if instruction is not None and instruction.opname == 'RAISE_VARARGS' and '@pytest_ar' in code.co_names:
+            try:
+                source = ast.parse(Path(code.co_filename).read_bytes())
+                position = instruction.positions
+                if any(isinstance(node, ast.Assert) and node.msg is not None
+                       and (node.lineno, node.col_offset) == (position.lineno, position.col_offset)
+                       for node in ast.walk(source)):
+                    # Only a rewritten assert has pytest's explanation boundary.
+                    # A manual AssertionError keeps its entire message verbatim.
+                    message, boundary, _ = reason.partition('\nassert ')
+                    if boundary:
+                        reason = message.replace('\n  ', '\n')
+            except (OSError, SyntaxError, UnicodeError):
+                pass
+    return reason[:1000]
 
 
 class LocalReference:
@@ -550,7 +576,7 @@ class Reporter:
             self.emit(event='delay-budget', test=item.nodeid, **self.delay_budget[item.nodeid])
         self.emit(event="phase", test=item.nodeid, when=report.when,
                   outcome=outcome, assertion=bool(assertion and outcome == "failed"), missing=missing,
-                  reason=str(call.excinfo.value)[:1000] if assertion and report.failed else "",
+                  reason=assertion_reason(call.excinfo.value) if assertion and report.failed else "",
                   exception=describe(call.excinfo.value) if report.failed and call.excinfo else "",
                   exception_type=(type(call.excinfo.value).__module__ + '.' + type(call.excinfo.value).__qualname__)[:200]
                   if report.failed and call.excinfo else "",

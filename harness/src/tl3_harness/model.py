@@ -365,11 +365,8 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
             passed = False
         if passed and before == Outcome.ASSERTION and check.proof is not None and check.declared_symptom is None:
             failure = (base_notes.details if base_notes is not None else {}).get(test)
-            # Pytest indents message continuations and appends its rewritten expression.
             wrong_reason = (failure is None or failure.phase != 'call'
-                            or not (failure.reason == check.proof.red_message
-                                    or failure.exception.startswith('AssertionError:')
-                                    and failure.reason.startswith(check.proof.red_message.replace('\n', '\n  ') + '\nassert ')))
+                            or failure.reason != check.proof.red_message)
             passed = not wrong_reason
         message = "" if passed else (messages or {}).get(test, "")
         if not passed and check.forcing is not None:

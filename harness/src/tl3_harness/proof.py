@@ -45,7 +45,7 @@ def unit(tree, identity):
     path = tree / identity.split('::')[0]
     if not path.is_file():
         return None
-    return source_unit(path.read_text(), identity, optional=True)[0]
+    return source_unit(path.read_bytes().decode(), identity, optional=True)[0]
 
 
 def global_names(source, filename):
@@ -81,15 +81,16 @@ def written_bindings(source, namespace=()):
     return writes
 
 
-def deny_namespace_apis(source, module):
-    """Support is declarative source, never access to an execution namespace."""
+def validate_support(source, module):
+    """Support adds plain bindings, never writes to existing objects or namespaces."""
     names = {'globals', 'locals', 'vars', 'eval', 'exec', 'compile', '__import__',
              'getattr', 'setattr', 'delattr', '__builtins__'}
     attributes = {'__dict__', '__globals__', '__builtins__', '__getattribute__',
                   '__setattr__', '__delattr__', 'f_globals', 'f_locals', 'gi_frame',
                   'cr_frame', 'tb_frame', '_getframe', 'currentframe', 'modules'}
     modules = {'builtins', 'sys', 'inspect', 'importlib', '__main__'}
-    for node in ast.walk(ast.parse(textwrap.dedent(source))):
+    nodes = list(ast.walk(ast.parse(textwrap.dedent(source))))
+    for node in nodes:
         symbol = None
         if isinstance(node, ast.Name) and node.id in names:
             symbol = node.id
@@ -100,6 +101,13 @@ def deny_namespace_apis(source, module):
             symbol = next((name for name in imported if name.split('.')[0] in modules), None)
         if symbol:
             raise ProofRefusal('dynamic namespace API in support can rebind base subjects', module, symbol)
+    for node in nodes:
+        if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            root = node
+            while isinstance(root, (ast.Attribute, ast.Subscript)):
+                root = root.value
+            symbol = root.id if isinstance(root, ast.Name) else ast.unparse(root)
+            raise ProofRefusal('support may bind only brand-new plain names, never members or subscripts', module, symbol)
 
 
 def conftest_subjects(base, head, plan):
@@ -152,23 +160,23 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         target, old_path, new_path = destination / name, base / name, head / name
         if not new_path.is_file():
             raise ProofRefusal('missing head observer module', name)
-        old = old_path.read_text() if old_path.is_file() else ''
-        new = new_path.read_text()
+        old = old_path.read_bytes().decode() if old_path.is_file() else ''
+        new = new_path.read_bytes().decode()
         requested = [item for item in (*observers, *support) if item.split('::')[0] == name]
         for statement in ast.parse(new).body:
             if (isinstance(statement, (ast.Import, ast.ImportFrom))
                     and bound_names(ast.unparse(statement)) & {item.split('::')[-1] for item in requested if item in support}):
-                deny_namespace_apis(ast.unparse(statement), name)
+                validate_support(ast.unparse(statement), name)
         support_required = set()
         for item in requested:
             if item in support:
                 text, _ = source_unit(new, item)
-                deny_namespace_apis(text, name)
+                validate_support(text, name)
                 support_required.update(global_names(text, name))
         for statement in ast.parse(new).body:
             if (isinstance(statement, (ast.Import, ast.ImportFrom))
                     and bound_names(ast.unparse(statement)) & support_required):
-                deny_namespace_apis(ast.unparse(statement), name)
+                validate_support(ast.unparse(statement), name)
         if not old_path.exists():
             if any(subject.split('::')[0] == name for subject in subjects):
                 raise ProofRefusal('new observer module would carry a declared subject onto base', name)
@@ -177,18 +185,19 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
             for item in requested:
                 identities[item] = digest(source_unit(new, item)[0])
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(new)
+            target.write_bytes(new.encode())
             continue
         replacements, grafts, required_texts = [], [], []
         protected = written_bindings(old)
         protected.update(tuple(subject.split('::')[1:]) for subject in subjects if subject.split('::')[0] == name)
         def guard(text, item, namespace=()):
-            permitted = {tuple(item.split('::')[1:])} if item in observers else set()
+            if item in observers:
+                return
             written = written_bindings(text, namespace)
-            conflict = (written & protected) - permitted
+            conflict = written & protected
             if conflict or ('*',) in written:
                 symbol = '::'.join(sorted(conflict)[0]) if conflict else 'globals'
-                raise ProofRefusal('observer/support graft would rebind a base or subject binding', name, symbol)
+                raise ProofRefusal('support graft would rebind a base or subject binding', name, symbol)
         for item in requested:
             text, _ = source_unit(new, item)
             required_texts.append(text)
@@ -261,7 +270,7 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
                 break
         lines = composed.splitlines(keepends=True)
         lines[insertion:insertion] = [line + '\n' for line in imports]
-        target.write_text(''.join(lines))
+        target.write_bytes(''.join(lines).encode())
     for subject in subjects:
         if unit(destination, subject) != unit(base, subject):
             raise ProofRefusal('assembled proof changed a base subject binding', subject.split('::')[0])

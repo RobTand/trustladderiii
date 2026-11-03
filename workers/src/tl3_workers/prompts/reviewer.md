@@ -82,10 +82,11 @@ not supplied. fresh is false when PrismaBuild replayed a stored result instead
 of running the tests. Use test_evidence to judge a claim the maker cites, such
 as passing every repeated run, and to see whether a cited action key matches a
 receipt.
-Base receipts run the untouched base, including its original tests. Their
-base_semantics is untouched_base; they neither prove nor disprove an ordinary
-demonstrating RED. Use Checking's independent head-tests-on-base result for
-that verdict, and its proof receipts and forced outcomes.
+Planned maker base runs use base_semantics base_subject_head_observer and carry
+a proof receipt for the base subjects and named head observers. Unplanned base
+runs use untouched_base, including its original tests. Maker receipts are
+advisory; use Checking's independent proof receipts and forced outcomes for
+the RED verdict.
 
 Block only on a supplied goal or standing rule. Each blocking finding must
 cite its exact id and kind, explain the problem, and give concrete evidence
