@@ -6,7 +6,7 @@ use tl3_kernel::{Command as KernelCommand, Fact, NodeId, Notice, Phase, Priority
 // replan, rebase and pause/resume. No fixture invents an invalid kernel phase.
 fn worlds() -> Vec<(World, Vec<tl3_kernel::Out>)> {
     let mut cases = Vec::new();
-    for scenario in 0..7 {
+    for scenario in 0..8 {
         let (mut world, mut outputs) = tl3_kernel::step(
             World::new(&[1], 1),
             Event::NewRequest {
@@ -15,6 +15,7 @@ fn worlds() -> Vec<(World, Vec<tl3_kernel::Out>)> {
             },
         );
         let mut changed = false;
+        let mut paused_audit_reply = false;
         for _ in 0..120 {
             assert!(world.valid());
             cases.push((world.clone(), outputs));
@@ -22,6 +23,14 @@ fn worlds() -> Vec<(World, Vec<tl3_kernel::Out>)> {
                 break;
             };
             let n = world.nodes[0];
+            if paused_audit_reply {
+                event = Event::Reply {
+                    node: NodeId(0),
+                    generation: n.generation,
+                    reply: Reply::AuditAgrees,
+                };
+                paused_audit_reply = false;
+            }
             if !changed {
                 let reply = match (scenario, &event) {
                     (
@@ -71,6 +80,22 @@ fn worlds() -> Vec<(World, Vec<tl3_kernel::Out>)> {
                         generation: n.generation,
                         reply,
                     };
+                    changed = true;
+                } else if scenario == 7
+                    && matches!(
+                        event,
+                        Event::Reply {
+                            reply: Reply::AuditAgrees,
+                            ..
+                        }
+                    )
+                {
+                    event = Event::Command {
+                        node: NodeId(0),
+                        id: n.last_cmd + 1,
+                        command: KernelCommand::Pause,
+                    };
+                    paused_audit_reply = true;
                     changed = true;
                 } else if scenario == 6 && n.phase == Phase::Queued {
                     event = Event::Fact {
@@ -156,6 +181,10 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
             ("briefs", brief),
             ("plans", plan),
             (
+                "maker_findings",
+                json!([{"kind":"failed_check","goal_ids":["goal-1"],"report":"Independent checking requested a repair"}]),
+            ),
+            (
                 "goals",
                 json!([{"description":"Preserve evidence","verification":"test"}]),
             ),
@@ -224,8 +253,9 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
                         | Notice::Summary(_)
                         | Notice::MeasuresPosted
                         | Notice::Note(_)),
-                    ..
+                    node,
                 } => {
+                    delivery.output = Out::Notice { node, notice };
                     let input = crate::adapters::github::writer_input(
                         &delivery,
                         Some(notice),
@@ -263,6 +293,10 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
             .unwrap();
         protocol::validate_inputs("classifier", &request["inputs"]).unwrap();
         coverage.insert("classifier");
+        delivery.output = Out::Comment {
+            node: NodeId(0),
+            kind: CommentKind::Postmortem,
+        };
         delivery.steering = Some(crate::steering::Task::Postmortem {
             id: postmortem,
             run_key: "contract".into(),
@@ -291,13 +325,16 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
     for phase in [
         "Ingesting",
         "Auditing",
+        "Unplanned",
         "Planning",
+        "Ready",
         "Making",
         "Checking",
         "Reviewing",
         "Publishing",
         "Queued",
         "Rebasing",
+        "AwaitingRob",
         "Stopping",
         "Closed",
     ] {

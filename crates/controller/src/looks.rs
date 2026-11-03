@@ -101,7 +101,7 @@ pub(crate) struct AttachedIncident {
     pub upstream: Upstream,
     pub class: String,
     pub diagnostic: Option<crate::publication_failure::Diagnostic>,
-    pub input_failure: Option<crate::worker_inputs::Failure>,
+    pub input_failure: Option<crate::worker_inputs::Context>,
 }
 
 impl Cause {

@@ -50,30 +50,109 @@ pub(crate) fn of(error: &Error) -> Option<&Failure> {
     }
 }
 
-pub(crate) fn retained(snapshot: &Snapshot, commit: &Commit, key: &str) -> Result<Option<Failure>> {
-    let value = commit
-        .rows
-        .iter()
-        .rev()
-        .find_map(|row| match row {
-            RowChange::Put { table, id, value }
-                if table == "worker_input_failures" && id == key =>
-            {
-                Some(value)
-            }
-            _ => None,
-        })
-        .or_else(|| {
-            snapshot
-                .rows
-                .iter()
-                .find(|row| row.table == "worker_input_failures" && row.id == key)
-                .map(|row| &row.value)
-        });
-    value.cloned().map(crate::decode_stored).transpose()
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct Context {
+    #[serde(flatten)]
+    diagnostic: Failure,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    maker_head: Option<String>,
 }
 
-pub(crate) fn append(summary: &mut String, failure: Option<&Failure>) {
+impl Context {
+    pub(crate) fn capture(
+        failure: &Failure,
+        snapshot: &Snapshot,
+        delivery: &crate::executor::Delivery,
+    ) -> Self {
+        let node = delivery.node().0.to_string();
+        let preserved = snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "nodes" && row.id == node && row.value["worktree"] == true);
+        let maker_head = delivery
+            .head_sha
+            .as_ref()
+            .filter(|head| {
+                failure.role == "reviewer"
+                    && preserved
+                    && snapshot.rows.iter().any(|row| {
+                        row.table == "maker_replies"
+                            && row.id == node
+                            && row.value["kind"] == "done"
+                            && row.value["head"].as_str() == Some(head.as_str())
+                    })
+            })
+            .cloned();
+        Self {
+            diagnostic: failure.clone(),
+            maker_head,
+        }
+    }
+
+    pub(crate) fn description(&self) -> String {
+        let step = match self.diagnostic.role.as_str() {
+            "reviewer" => "Review",
+            "maker" => "Maker",
+            "planner" => "Planning",
+            "ingest" => "Request reading",
+            "audit" => "Independent request reading",
+            "classifier" => "Comment classification",
+            "writer" => "Message writing",
+            "postmortem" => "Postmortem",
+            _ => "Worker",
+        };
+        let mut description = format!("{step} setup failed.");
+        if self.maker_head.is_some() {
+            description.push_str(" The maker's change is complete and preserved.");
+        }
+        description
+    }
+}
+
+impl std::fmt::Display for Context {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {}", self.description(), self.diagnostic)
+    }
+}
+
+fn stored(snapshot: &Snapshot, commit: &Commit, table: &str, key: &str) -> Result<Option<Context>> {
+    for row in commit.rows.iter().rev() {
+        match row {
+            RowChange::Put {
+                table: t,
+                id,
+                value,
+            } if t == table && id == key => return crate::decode_stored(value.clone()).map(Some),
+            RowChange::Delete { table: t, id } if t == table && id == key => return Ok(None),
+            _ => {}
+        }
+    }
+    snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == table && row.id == key)
+        .map(|row| crate::decode_stored(row.value.clone()))
+        .transpose()
+}
+
+pub(crate) fn retained(snapshot: &Snapshot, commit: &Commit, key: &str) -> Result<Option<Context>> {
+    stored(snapshot, commit, "worker_input_failures", key)
+}
+
+pub(crate) fn current(
+    snapshot: &Snapshot,
+    commit: &Commit,
+    node: tl3_kernel::NodeId,
+) -> Result<Option<Context>> {
+    stored(
+        snapshot,
+        commit,
+        "worker_input_contexts",
+        &node.0.to_string(),
+    )
+}
+
+pub(crate) fn append(summary: &mut String, failure: Option<&impl std::fmt::Display>) {
     if let Some(failure) = failure {
         summary.push(' ');
         summary.push_str(&failure.to_string());

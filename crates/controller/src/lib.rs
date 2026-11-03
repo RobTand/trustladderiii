@@ -1211,10 +1211,17 @@ impl Controller {
                                 json!({"worker_input_failure":effect.key}),
                                 &snapshot,
                             );
+                            let context =
+                                worker_inputs::Context::capture(failure, &snapshot, &delivery);
                             commit.rows.push(put(
                                 "worker_input_failures",
                                 effect.key.clone(),
-                                json!(failure),
+                                json!(context),
+                            ));
+                            commit.rows.push(put(
+                                "worker_input_contexts",
+                                delivery.node().0.to_string(),
+                                json!(context),
                             ));
                             self.store.commit(&commit)?;
                             self.complete(
@@ -1700,6 +1707,18 @@ impl Controller {
             });
         }
         if completion.ack == Ack::Confirmed {
+            if matches!(
+                delivery.output,
+                DeliveryOutput::Effect {
+                    kind: tl3_kernel::EffectKind::StartRun(_),
+                    ..
+                }
+            ) {
+                commit.rows.push(RowChange::Delete {
+                    table: "worker_input_contexts".into(),
+                    id: delivery.node().0.to_string(),
+                });
+            }
             looks::resolve_effect_incidents(&snapshot, &mut commit, |_, effect| Ok(effect == key))?;
             if let Some(marker) = &delivery.marker_key {
                 commit.rows.push(RowChange::Delete {
@@ -2047,6 +2066,9 @@ impl Controller {
                 {
                     context["findings"] = findings;
                 }
+                if let Some(failure) = worker_inputs::current(snapshot, commit, node)? {
+                    context["worker_input_failure"] = json!(failure);
+                }
                 commit.rows.push(put(
                     "question_context",
                     question.to_string(),
@@ -2122,6 +2144,12 @@ impl Controller {
                 }
             ) {
                 protected_requests::closing_summary(self, snapshot, commit, &mut delivery)?;
+            }
+            if matches!(output, Out::Notice { .. })
+                && let Some(failure) = worker_inputs::current(snapshot, commit, node)?
+            {
+                delivery.question_context.get_or_insert_with(|| json!({}))["worker_input_failure"] =
+                    json!(failure);
             }
             if let Out::Notice {
                 notice: tl3_kernel::Notice::Incident { needs_rob },
@@ -2260,7 +2288,7 @@ impl Controller {
                 delivery.question_context = Some(json!({"issue_title":request.title,
                     "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title,
                         delivery.repository.owner, delivery.repository.name, delivery.issue),
-                    "signature":signature, "incident_id":id, "publication_diagnostic":diagnostic, "occurrences":occurrences}));
+                    "signature":signature, "incident_id":id, "publication_diagnostic":diagnostic, "occurrences":occurrences,"worker_input_failure":input_failure}));
                 if let Some(operations) = &self.bootstrap.operations {
                     delivery.repository = Repository {
                         owner: operations.owner.clone(),

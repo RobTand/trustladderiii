@@ -1,6 +1,6 @@
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::{collections::BTreeSet, sync::LazyLock};
 use tl3_github::message::{self, Draft, OptionDraft, Policy, Violation};
 
@@ -285,6 +285,32 @@ pub fn checked_draft(
         .as_str()
         .ok_or(Error::Invalid("writer needs the original issue title"))?
         .to_owned();
+    let input_failure = input
+        .facts
+        .get("worker_input_failure")
+        .cloned()
+        .map(crate::decode_stored::<crate::worker_inputs::Context>)
+        .transpose()?;
+    if let Some(failure) = &input_failure {
+        match input.kind {
+            MessageKind::Question => {
+                input.facts["obstacle"] = json!(failure.description());
+                return fixed_question(
+                    &input,
+                    crate::question_findings::fixed_decision(tl3_kernel::QKind::EffectFailed),
+                    policy,
+                );
+            }
+            MessageKind::Note => {
+                return Ok(format!(
+                    "Request {}.\n\n{}",
+                    crate::evidence::label(&title)?,
+                    failure.description()
+                ));
+            }
+            MessageKind::Summary | MessageKind::Clarification => {}
+        }
+    }
     if input.kind == MessageKind::Summary {
         let mut text = format!(
             "Request {}.\n\n{}\n\n{}",
@@ -296,6 +322,9 @@ pub fn checked_draft(
                 .as_str()
                 .unwrap_or("Details of checks and review were not captured in this summary.")
         );
+        if let Some(failure) = &input_failure {
+            text.push_str(&format!("\n\n{}", failure.description()));
+        }
         if let Some(removed) = input.facts["removed_changes"].as_str() {
             let removed = crate::redaction::text(removed)?;
             text.push_str("\n\n");

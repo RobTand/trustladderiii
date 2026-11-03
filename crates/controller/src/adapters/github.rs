@@ -598,6 +598,14 @@ pub fn writer_input(
         input.facts["publication_diagnostic"] = diagnostic.clone();
         input.facts["occurrences"] = context["occurrences"].clone();
     }
+    if let Some(failure) = delivery
+        .question_context
+        .as_ref()
+        .and_then(|context| context.get("worker_input_failure"))
+        .filter(|value| !value.is_null())
+    {
+        input.facts["worker_input_failure"] = failure.clone();
+    }
     // #427: the draft is written for this delivery's request.
     input.request = Some(super::workers::writer::WriteFor {
         node: delivery.node().0,
@@ -1034,10 +1042,20 @@ fn fixed_notice_text(delivery: &Delivery) -> Result<Option<String>> {
                 .and_then(|context| context["occurrences"].as_u64())
                 .map(|count| format!("Recorded occurrence {count}."))
                 .unwrap_or_else(|| "Occurrence count unavailable.".into());
-            let details = diagnostic
+            let input_failure = delivery
+                .question_context
+                .as_ref()
+                .and_then(|context| context.get("worker_input_failure"))
+                .filter(|value| !value.is_null())
+                .map(|value| crate::decode_stored::<crate::worker_inputs::Context>(value.clone()))
+                .transpose()?;
+            let mut details = diagnostic
                 .as_ref()
                 .map(|diagnostic| format!("{recurrence} {}\n\n", diagnostic.render()))
                 .unwrap_or_default();
+            if let Some(failure) = input_failure {
+                details.push_str(&format!("{failure}\n\n"));
+            }
             Ok(Some(format!(
                 "{details}Reply with \"clear incident {id}\" on {destination} or on the request's issue at {request} after fixing the cause."
             )))
