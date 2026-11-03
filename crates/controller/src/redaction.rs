@@ -146,7 +146,7 @@ fn python_pattern(pattern: &str) -> Result<String> {
         }
         let union = parts.join("|");
         Ok(if negate {
-            format!("(?!(?:{union}))(?s:.)")
+            format!("(?:(?!(?:{union}))(?s:.))")
         } else {
             format!("(?:{union})")
         })
