@@ -1,315 +1,695 @@
-//! Public evidence uses #302's Redactor in the installed worker runtime.
-use crate::{Error, Result};
+//! Rust execution of #302's text policy, generated from its Python definitions.
+use fancy_regex::{Captures, Regex};
+use serde_json::Value;
 use std::{
-    io::{self, BufRead, BufReader, Write},
-    os::{fd::OwnedFd, unix::net::UnixStream},
-    path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
-    sync::{Condvar, Mutex, OnceLock},
-    time::{Duration, Instant},
+    collections::HashMap,
+    sync::{Arc, LazyLock, Mutex},
 };
-
-const FRAME_BYTES: usize = 1024 * 1024;
-const CALL_TIMEOUT: Duration = Duration::from_secs(5);
-const BRIDGE: &str = r#"
-import json
-import sys
-from tl3_workers.tracing import Redactor
-
-redactor = Redactor(None)
-limit = 1024 * 1024
-while raw := sys.stdin.buffer.readline(limit + 1):
-    if len(raw) > limit or not raw.endswith(b'\n'):
-        raise SystemExit(1)
-    text = json.loads(raw)
-    response = json.dumps(redactor.text(text, limit=len(text)), ensure_ascii=False).encode()
-    if len(response) + 1 > limit:
-        raise SystemExit(1)
-    sys.stdout.buffer.write(response + b'\n')
-    sys.stdout.buffer.flush()
-    del raw, text, response
-"#;
-
-fn infra(error: impl Into<io::Error>) -> Error {
-    Error::RedactionInfra(error.into())
+type Result<T> = std::result::Result<T, String>;
+type Span = (usize, usize);
+const LIMIT: usize = 1024 * 1024;
+fn policy() -> Result<&'static Value> {
+    static POLICY: LazyLock<Result<Value>> = LazyLock::new(|| {
+        serde_json::from_str(include_str!("redaction/policy.json")).map_err(|e| e.to_string())
+    });
+    POLICY.as_ref().map_err(Clone::clone)
 }
-
-fn remaining(deadline: Instant) -> io::Result<Duration> {
-    deadline
-        .checked_duration_since(Instant::now())
-        .filter(|left| !left.is_zero())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "redaction deadline expired"))
+fn rx(pattern: &str) -> Result<Arc<Regex>> {
+    static CACHE: LazyLock<Mutex<HashMap<String, Arc<Regex>>>> = LazyLock::new(Mutex::default);
+    let mut cache = CACHE.lock().map_err(|_| "redaction cache poisoned")?;
+    if let Some(regex) = cache.get(pattern) {
+        return Ok(regex.clone());
+    }
+    let regex = Arc::new(Regex::new(pattern).map_err(|e| e.to_string())?);
+    cache.insert(pattern.into(), regex.clone());
+    Ok(regex)
 }
-
-fn worker_python() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../workers/.venv/bin/python")
+fn rule(name: &str) -> Result<Arc<Regex>> {
+    rx(policy()?["regex"][name]
+        .as_str()
+        .ok_or_else(|| format!("missing redaction rule {name}"))?)
 }
-
-struct Redactor {
-    child: Child,
-    socket: BufReader<UnixStream>,
+fn has(set: &str, word: &str) -> Result<bool> {
+    Ok(policy()?["words"][set]
+        .as_array()
+        .ok_or("missing redaction words")?
+        .iter()
+        .any(|v| v.as_str() == Some(word)))
 }
-
-impl Redactor {
-    fn start(python: &Path, script: &str) -> io::Result<Self> {
-        // Pin the venv's directory like worker launches, retaining its interpreter symlink.
-        let directory = python
-            .parent()
-            .ok_or_else(|| io::Error::other("missing worker runtime"))?;
-        let name = python
-            .file_name()
-            .ok_or_else(|| io::Error::other("missing worker interpreter"))?;
-        let python = directory.canonicalize()?.join(name);
-        let (controller, worker) = UnixStream::pair()?;
-        let mut command = Command::new(python);
-        command.env_clear();
-        // Bazel's existing worker launcher needs these runtime/runfiles locations.
-        for key in [
-            "PATH",
-            "HOME",
-            "TMPDIR",
-            "TEST_TMPDIR",
-            "TEST_SRCDIR",
-            "TEST_WORKSPACE",
-            "RUNFILES_DIR",
-            "RUNFILES_MANIFEST_FILE",
-            "JAVA_RUNFILES",
-            "PYTHON_RUNFILES",
-        ] {
-            if let Some(value) = std::env::var_os(key) {
-                command.env(key, value);
-            }
-        }
-        let child = command
-            .args(["-I", "-u", "-c", script])
-            .stdin(Stdio::from(OwnedFd::from(worker.try_clone()?)))
-            .stdout(Stdio::from(OwnedFd::from(worker)))
-            .stderr(Stdio::null())
-            .spawn()?;
-        Ok(Self {
-            child,
-            socket: BufReader::with_capacity(8192, controller),
+fn search(pattern: &str, text: &str) -> Result<bool> {
+    rx(pattern)?.is_match(text).map_err(|e| e.to_string())
+}
+fn full(pattern: &str, text: &str) -> Result<bool> {
+    search(&format!(r"\A(?:{pattern})\z"), text)
+}
+fn full_rule(name: &str, text: &str) -> Result<bool> {
+    full(
+        policy()?["regex"][name]
+            .as_str()
+            .ok_or("missing redaction rule")?,
+        text,
+    )
+}
+fn start_rule(name: &str, text: &str) -> Result<bool> {
+    Ok(rule(name)?
+        .find(text)
+        .map_err(|e| e.to_string())?
+        .is_some_and(|m| m.start() == 0))
+}
+fn matches<'a>(regex: &Regex, text: &'a str) -> Result<Vec<Captures<'a>>> {
+    regex
+        .captures_iter(text)
+        .map(|m| m.map_err(|e| e.to_string()))
+        .collect()
+}
+fn get<'a>(cap: &Captures<'a>, name: &str) -> &'a str {
+    cap.name(name).map_or("", |m| m.as_str())
+}
+fn span(cap: &Captures<'_>, name: &str) -> Option<Span> {
+    cap.name(name).map(|m| (m.start(), m.end()))
+}
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Strong,
+    Weak,
+}
+fn label_kind(label: &str) -> Result<Option<Kind>> {
+    if label.chars().count() > 128 {
+        return Ok(None);
+    }
+    let words = rule("LABEL_WORDS")?
+        .find_iter(label)
+        .map(|m| {
+            m.map(|m| m.as_str().to_lowercase())
+                .map_err(|e| e.to_string())
         })
+        .collect::<Result<Vec<_>>>()?;
+    if words.is_empty() {
+        return Ok(None);
     }
-
-    fn text(&mut self, text: &str, deadline: Instant) -> io::Result<String> {
-        if text.len() > FRAME_BYTES {
-            return Err(io::Error::other("redaction input exceeds frame limit"));
+    for word in &words {
+        if has("NOT_SECRET", word)? {
+            return Ok(None);
         }
-        let mut frame = serde_json::to_vec(&text.replace('\0', ""))?;
-        frame.push(b'\n');
-        if frame.len() > FRAME_BYTES {
-            return Err(io::Error::other("redaction input exceeds frame limit"));
+    }
+    let mut previous = "";
+    for word in &words {
+        let parts = policy()?["words"]["SECRET_PARTS"]
+            .as_array()
+            .ok_or("missing secret parts")?;
+        if has("SECRET_WORDS", word)?
+            || word.ends_with("token")
+            || parts
+                .iter()
+                .filter_map(Value::as_str)
+                .any(|part| word.contains(part))
+            || (word == "key" && has("KEY_QUALIFIERS", previous)?)
+            || matches!(
+                (previous, word.as_str()),
+                ("session", "id") | ("key", "value")
+            )
+        {
+            return Ok(Some(Kind::Strong));
         }
-        let mut pending = frame.as_slice();
-        while !pending.is_empty() {
-            self.socket
-                .get_ref()
-                .set_write_timeout(Some(remaining(deadline)?))?;
-            let sent = self.socket.get_mut().write(pending)?;
-            if sent == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::WriteZero,
-                    "redaction helper closed",
-                ));
+        previous = word;
+    }
+    for word in &words {
+        if has("WEAK_WORDS", word)? {
+            return Ok(Some(Kind::Weak));
+        }
+    }
+    Ok(None)
+}
+fn unquote(value: &str) -> Result<(String, bool)> {
+    let regex = rx(r#"^[rbfuRBFU]{1,2}(?=["'])"#)?;
+    let stripped = regex.replace(value, "");
+    let stripped = stripped.trim_start_matches('\\');
+    if stripped.chars().count() >= 2 && stripped.starts_with(['"', '\'', '`']) {
+        let end = stripped.char_indices().next_back().map_or(0, |(i, _)| i);
+        return Ok((stripped[1..end].trim_end_matches('\\').into(), true));
+    }
+    Ok((value.into(), false))
+}
+fn placeholder(value: &str) -> Result<bool> {
+    if !full(r"[A-Za-z]+(?:[-_ .:][A-Za-z]+)*", value)? {
+        return Ok(false);
+    }
+    for word in rule("LABEL_WORDS")?.find_iter(value) {
+        if has(
+            "PLACEHOLDERS",
+            &word.map_err(|e| e.to_string())?.as_str().to_lowercase(),
+        )? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+fn prefix(text: &str, count: usize) -> &str {
+    &text[..text
+        .char_indices()
+        .nth(count)
+        .map_or(text.len(), |(i, _)| i)]
+}
+fn after(text: &str, position: usize, count: usize) -> &str {
+    prefix(&text[position..], count)
+}
+fn before(text: &str, position: usize, count: usize) -> usize {
+    text[..position]
+        .char_indices()
+        .rev()
+        .nth(count.saturating_sub(1))
+        .map_or(0, |(i, _)| i)
+}
+fn random_like(token: &str, minimum: usize) -> Result<bool> {
+    if full_rule("SAFE_TOKEN", token)? || token.chars().any(char::is_whitespace) {
+        return Ok(false);
+    }
+    let parts = token.split(['-', '_']).collect::<Vec<_>>();
+    if parts.len() > 1 {
+        let mut ordinary = true;
+        for part in &parts {
+            ordinary &= full("[a-z0-9]*", part)? || part.chars().count() <= 2;
+        }
+        if ordinary {
+            for part in parts {
+                if part.chars().count() >= minimum.max(24) && random_like(part, minimum)? {
+                    return Ok(true);
+                }
             }
-            pending = &pending[sent..];
+            return Ok(false);
         }
-        frame.clear();
-        loop {
-            self.socket
-                .get_ref()
-                .set_read_timeout(Some(remaining(deadline)?))?;
-            let buffer = self.socket.fill_buf()?;
-            if buffer.is_empty() {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "redaction helper closed",
-                ));
+    }
+    let classes = token
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .map(|c| {
+            if c.is_numeric() {
+                2
+            } else {
+                u8::from(c.is_uppercase())
             }
-            let newline = buffer.iter().position(|byte| *byte == b'\n');
-            let count = newline.map_or(buffer.len(), |index| index + 1);
-            if frame.len() + count > FRAME_BYTES {
-                return Err(io::Error::other("redaction response exceeds frame limit"));
+        })
+        .collect::<Vec<_>>();
+    if classes.len() < minimum || classes.iter().all(|c| *c == classes[0]) {
+        return Ok(false);
+    }
+    let switches = classes.windows(2).filter(|pair| pair[0] != pair[1]).count();
+    let words = rule("WORDISH")?
+        .find_iter(token)
+        .map(|m| {
+            m.map(|m| m.as_str().chars().count())
+                .map_err(|e| e.to_string())
+        })
+        .sum::<Result<usize>>()?;
+    let letters = token.chars().filter(|c| c.is_alphabetic()).count();
+    let vowels = token.chars().filter(|c| "aeiouAEIOU".contains(*c)).count();
+    Ok((5 * switches >= 2 * classes.len()
+        && (10 * words < 7 * classes.len() || 4 * vowels < letters))
+        || (2 * words < classes.len() && 5 * switches >= classes.len()))
+}
+fn plausible(
+    kind: Option<Kind>,
+    label: &str,
+    value: &str,
+    tail: &str,
+    assign: &str,
+    code: bool,
+) -> Result<bool> {
+    let (inner, quoted) = unquote(value)?;
+    if kind.is_none()
+        || inner.trim().is_empty()
+        || start_rule("REFERENCE", &inner)?
+        || full_rule("PATHLIKE", &inner)?
+        || rule("TEMPLATE")?
+            .is_match(&inner)
+            .map_err(|e| e.to_string())?
+        || full_rule("VERSION", &inner)?
+        || inner.to_lowercase() == label.to_lowercase()
+        || full_rule("SCHEME_NAME", inner.trim())?
+        || placeholder(prefix(&inner, 64))?
+    {
+        return Ok(false);
+    }
+    if quoted
+        && (tail.trim_start().starts_with(['*', '+']) || search(r"\A(?:\s*\+|.*\+\s*$)", &inner)?)
+    {
+        return Ok(false);
+    }
+    if !quoted {
+        if has("KEYWORDS", &inner)?
+            || has("TYPE_NAMES", &inner)?
+            || inner.contains(['{', '(', '['])
+            || inner.starts_with(['&', '-'])
+            || tail.starts_with(['(', '['])
+            || full_rule("DOTTED", &inner)?
+            || full_rule("NUMBER", &inner)?
+        {
+            return Ok(false);
+        }
+        if assign == ":" && full(r"[A-Z]\w*", &inner)? && search(r"\A[ \t]*[<\[,)|=]", tail)? {
+            return Ok(false);
+        }
+        if full_rule("IDENTIFIER", &inner)? && label_kind(&inner)?.is_some() {
+            return Ok(false);
+        }
+        if full_rule("CODE_NAME", &inner)? && code {
+            return Ok(false);
+        }
+        if full_rule("WORD", &inner)? && search(r"\A[ \t]+[^\s#]", tail)? {
+            return Ok(false);
+        }
+        if full(r"[A-Za-z]{2,12}\d{0,3}", &inner)? && search(r"\A[ \t]+[a-z]{2,}", tail)? {
+            return Ok(false);
+        }
+    }
+    if kind == Some(Kind::Weak) {
+        let sample = prefix(&inner, 64);
+        return Ok(random_like(sample, 12)?
+            || (full(r"[A-Za-z0-9]{12,}", sample)?
+                && sample.chars().any(char::is_uppercase)
+                && sample.chars().any(char::is_lowercase)
+                && sample.chars().any(char::is_numeric)));
+    }
+    Ok(true)
+}
+fn readable(value: &str) -> Result<bool> {
+    let inner = unquote(value)?.0;
+    Ok(full(r"[A-Za-z][A-Za-z:/._ -]*", &inner)? && !random_like(&inner, 8)?)
+}
+fn token_shaped(value: &str) -> Result<bool> {
+    Ok(!full_rule("WORD", value)?
+        && (value.chars().any(char::is_numeric)
+            || value.contains(['.', '_', '~', '+', '/', '=', '-'])
+            || value.chars().skip(1).any(char::is_uppercase)))
+}
+
+fn secretish(value: &str, quoted: bool) -> Result<bool> {
+    let core = if quoted {
+        value
+    } else {
+        value.trim_end_matches(['.', ',', ':', ';', ')'])
+    }
+    .trim_matches(['*', '_']);
+    if core.chars().count() < 8
+        || core.chars().any(char::is_whitespace)
+        || start_rule("REFERENCE", core)?
+        || rule("TEMPLATE")?
+            .is_match(core)
+            .map_err(|e| e.to_string())?
+        || full_rule("SAFE_TOKEN", core)?
+        || full_rule("PATHLIKE", core)?
+        || core.contains("://")
+        || full_rule("DOTTED", core)?
+        || full(r"[\d.:,/+-]+", core)?
+        || placeholder(core)?
+    {
+        return Ok(false);
+    }
+    if random_like(core, 12)? {
+        return Ok(true);
+    }
+    if core.contains('/') {
+        return Ok(false);
+    }
+    let upper = core.chars().any(char::is_uppercase);
+    let lower = core.chars().any(char::is_lowercase);
+    let digit = core.chars().any(char::is_numeric);
+    let special = core.chars().filter(|c| "!#%^*~@$&+?".contains(*c)).count();
+    Ok((upper && lower && digit)
+        || (special >= 2 && (upper || digit))
+        || (quoted && digit && (upper || lower) && special >= 1))
+}
+fn checked(check: &str, cap: &Captures<'_>, text: &str) -> Result<Option<Span>> {
+    let label = get(cap, "l");
+    let value = get(cap, "v");
+    let keep = match check {
+        "check_labelled" => {
+            if label_kind(label)? == Some(Kind::Strong)
+                && matches!(label.to_lowercase().as_str(), "signature" | "sig")
+                && readable(value)?
+            {
+                return Ok(None);
             }
-            frame.extend_from_slice(&buffer[..count]);
-            self.socket.consume(count);
-            if newline.is_some() {
-                return Ok(serde_json::from_slice(&frame)?);
+            let assign = cap.name("a").ok_or("missing assignment")?;
+            let v = cap.name("v").ok_or("missing value")?;
+            let whole = cap.get(0).ok_or("missing match")?;
+            let gap = &text[assign.end()..v.start()];
+            if gap.contains('\n') {
+                let line = text[..whole.start()].rfind('\n').map_or(0, |i| i + 1);
+                let indent = text[line..whole.start()]
+                    .chars()
+                    .take_while(|c| matches!(c, ' ' | '\t'))
+                    .count();
+                let value_line = text[..v.start()].rfind('\n').map_or(0, |i| i + 1);
+                if text[value_line..v.start()].chars().count() <= indent {
+                    return Ok(None);
+                }
+            }
+            let low = before(text, whole.start(), 80);
+            let line = text[low..whole.start()]
+                .rfind('\n')
+                .map_or(low, |i| low + i + 1);
+            if full_rule("WORD", value)?
+                && rx(r"[A-Za-z]{2,}[ \t]")?
+                    .find_iter(&text[line..whole.start()])
+                    .count()
+                    >= 2
+            {
+                return Ok(None);
+            }
+            let code = get(cap, "q").ends_with(['"', '\'', '`'])
+                || (assign.as_str() == "="
+                    && (text[..assign.start()]
+                        .chars()
+                        .next_back()
+                        .is_some_and(char::is_whitespace)
+                        || gap.chars().next().is_some_and(char::is_whitespace)));
+            plausible(
+                label_kind(label)?,
+                label,
+                value,
+                after(text, v.end(), 8),
+                assign.as_str(),
+                code,
+            )?
+        }
+        "check_flag" => plausible(label_kind(label)?, label, value, "", "=", false)?,
+        "check_table" => {
+            let value = value.trim_matches('`');
+            label_kind(label.trim_matches(['`', '*', ' ']))?.is_some()
+                && !start_rule("REFERENCE", value)?
+                && value.chars().count() >= 8
+                && token_shaped(value)?
+                && !value.chars().any(char::is_whitespace)
+        }
+        "check_block" => label_kind(label)? == Some(Kind::Strong),
+        "check_name_value" => plausible(label_kind(label)?, label, value, "", "", false)?,
+        "check_header" => {
+            let group = if cap.name("v").is_some() { "v" } else { "c" };
+            let value = get(cap, group);
+            let inner = unquote(value)?.0;
+            if start_rule("REFERENCE", &inner)?
+                || rule("TEMPLATE")?
+                    .is_match(&inner)
+                    .map_err(|e| e.to_string())?
+                || placeholder(&inner)?
+                || search(r"\A[A-Za-z_][\w.]*+[ \t]*+(?:[,)}]|$)", value)?
+            {
+                return Ok(None);
+            }
+            if let Some(scheme) = rule("SCHEME")?.captures(value).map_err(|e| e.to_string())?
+                && scheme.get(0).is_some_and(|m| m.start() == 0)
+            {
+                let token = scheme.get(1).ok_or("missing scheme token")?;
+                if token.as_str().is_empty()
+                    || start_rule("REFERENCE", token.as_str())?
+                    || rule("TEMPLATE")?
+                        .is_match(token.as_str())
+                        .map_err(|e| e.to_string())?
+                    || placeholder(token.as_str())?
+                {
+                    return Ok(None);
+                }
+                let start = cap.name(group).ok_or("missing header")?.start();
+                return Ok(Some((start, start + token.end())));
+            }
+            return Ok(span(cap, group));
+        }
+        "check_bearer" => token_shaped(value)? && !placeholder(value)?,
+        "check_url" => {
+            !start_rule("REFERENCE", value)?
+                && !rule("TEMPLATE")?
+                    .is_match(value)
+                    .map_err(|e| e.to_string())?
+                && !placeholder(value)?
+        }
+        "check_user" => {
+            !value.chars().all(char::is_numeric)
+                && !rule("TEMPLATE")?
+                    .is_match(value)
+                    .map_err(|e| e.to_string())?
+        }
+        "check_aws" => label_kind(label)?.is_some(),
+        "check_ssh_keygen" => !unquote(value)?.0.is_empty(),
+        "check_xml" => {
+            value.trim().chars().count() >= 4
+                && label_kind(label)? == Some(Kind::Strong)
+                && plausible(Some(Kind::Strong), label, value, "", "=", false)?
+        }
+        "check_json_pair" => {
+            unquote(value)?.0.chars().count() >= 4
+                && plausible(label_kind(label)?, label, value, "", ":", false)?
+        }
+        "check_pair" => secretish(value, false)?,
+        _ => return Err(format!("unknown redaction check {check}")),
+    };
+    Ok(if keep { span(cap, "v") } else { None })
+}
+fn spans(text: &str) -> Result<Vec<Span>> {
+    let mut found = Vec::new();
+    let ends = matches(&rule("PRIVATE_END")?, text)?
+        .iter()
+        .filter_map(|c| c.get(0).map(|m| m.end()))
+        .collect::<Vec<_>>();
+    let mut reach = 0;
+    for begin in matches(&rule("PRIVATE_HEADER")?, text)? {
+        let begin = begin.get(0).ok_or("missing private header")?;
+        if begin.start() < reach {
+            continue;
+        }
+        reach = ends
+            .iter()
+            .find(|end| **end > begin.end())
+            .copied()
+            .unwrap_or(begin.end());
+        if reach == begin.end() {
+            if let Some(lines) = rule("KEY_LINES")?
+                .find(&text[begin.end()..])
+                .map_err(|e| e.to_string())?
+                && lines.start() == 0
+            {
+                reach += lines.end();
+            }
+        }
+        found.push((begin.start(), reach));
+    }
+    for pattern in policy()?["patterns"].as_array().ok_or("missing patterns")? {
+        for cap in matches(&rx(pattern.as_str().ok_or("invalid pattern")?)?, text)? {
+            let value = cap
+                .name("v")
+                .or_else(|| cap.get(0))
+                .ok_or("missing redaction match")?;
+            found.push((value.start(), value.end()));
+        }
+    }
+    for pair in policy()?["checked"]
+        .as_array()
+        .ok_or("missing checked patterns")?
+    {
+        for cap in matches(&rx(pair[0].as_str().ok_or("invalid pattern")?)?, text)? {
+            if let Some(span) = checked(pair[1].as_str().ok_or("invalid check")?, &cap, text)? {
+                found.push(span);
             }
         }
     }
-}
-
-impl Drop for Redactor {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-struct Service {
-    python: PathBuf,
-    script: &'static str,
-    process: Option<Redactor>,
-}
-
-impl Default for Service {
-    fn default() -> Self {
-        Self {
-            python: worker_python(),
-            script: BRIDGE,
-            process: None,
+    for word in matches(&rule("NEAR_WORD")?, text)? {
+        let word = word.get(0).ok_or("missing nearby word")?;
+        let rest = &text[word.end()..];
+        let high = prefix(rest, 48 + 256).len();
+        let end = rest[..high].find('\n').unwrap_or(high);
+        let limit = prefix(&rest[..end], 48).len();
+        for token in matches(&rule("NEAR_TOKEN")?, &rest[..end])? {
+            if token.get(0).ok_or("missing nearby token")?.start() >= limit {
+                break;
+            }
+            let group = if token.name("qv").is_some() {
+                "qv"
+            } else {
+                "v"
+            };
+            if secretish(get(&token, group), group == "qv")?
+                && let Some((start, stop)) = span(&token, group)
+            {
+                found.push((word.end() + start, word.end() + stop));
+            }
         }
     }
-}
-
-impl Service {
-    fn text(&mut self, text: &str, deadline: Instant) -> io::Result<String> {
-        remaining(deadline)?;
-        if self.process.is_none() {
-            self.process = Some(Redactor::start(&self.python, self.script)?);
+    if text.contains("Secret") {
+        for block in matches(&rule("SECRET_DATA")?, text)? {
+            let body = block.name("b").ok_or("missing secret body")?;
+            for value in matches(&rule("SECTION_VALUE")?, body.as_str())? {
+                if let Some((start, end)) = span(&value, "v") {
+                    found.push((body.start() + start, body.start() + end));
+                }
+            }
         }
-        let result = self
-            .process
-            .as_mut()
-            .expect("started helper")
-            .text(text, deadline);
-        if result.is_err() {
-            // This call errors; the next call starts a fresh helper.
-            self.process = None;
-        }
-        result
     }
-}
-
-struct Shared {
-    service: Mutex<Option<Service>>,
-    available: Condvar,
-}
-
-impl Shared {
-    fn with<T>(&self, run: impl FnOnce(&mut Service, Instant) -> io::Result<T>) -> Result<T> {
-        let deadline = Instant::now() + CALL_TIMEOUT;
-        let mut state = self
-            .service
-            .lock()
-            .map_err(|_| infra(io::Error::other("redaction lock poisoned")))?;
-        while state.is_none() {
-            let (next, _) = self
-                .available
-                .wait_timeout(state, remaining(deadline).map_err(infra)?)
-                .map_err(|_| infra(io::Error::other("redaction lock poisoned")))?;
-            state = next;
+    let sections = matches(&rule("SECTION")?, text)?;
+    for (index, section) in sections.iter().enumerate() {
+        if label_kind(get(section, "l").trim())? == Some(Kind::Strong) {
+            let start = section.get(0).ok_or("missing section")?.end();
+            let end = sections
+                .get(index + 1)
+                .and_then(|c| c.get(0))
+                .map_or(text.len(), |m| m.start());
+            for value in matches(&rule("SECTION_VALUE")?, &text[start..end])? {
+                if let Some((a, b)) = span(&value, "v") {
+                    found.push((start + a, start + b));
+                }
+            }
         }
-        let mut service = state.take().expect("available helper");
-        drop(state);
-        let result = run(&mut service, deadline).map_err(infra);
-        let mut state = self
-            .service
-            .lock()
-            .map_err(|_| infra(io::Error::other("redaction lock poisoned")))?;
-        *state = Some(service);
-        self.available.notify_one();
-        result
     }
-}
-
-fn shared() -> &'static Shared {
-    static SHARED: OnceLock<Shared> = OnceLock::new();
-    SHARED.get_or_init(|| Shared {
-        service: Mutex::new(Some(Service::default())),
-        available: Condvar::new(),
-    })
-}
-
-pub(crate) fn configure(python: &Path) -> Result<()> {
-    shared().with(|service, _| {
-        if service.python != python {
-            service.process = None;
-            service.python = python.to_owned();
+    let mut columns: Option<(usize, Vec<usize>)> = None;
+    let mut position = 0;
+    if text.contains(',') {
+        for line in text.split('\n') {
+            let cells = line.split(',').collect::<Vec<_>>();
+            if let Some((width, indices)) = &columns
+                && cells.len() == *width
+            {
+                let mut offset = position;
+                for (index, cell) in cells.iter().enumerate() {
+                    if indices.contains(&index)
+                        && !cell.trim().is_empty()
+                        && label_kind(cell.trim())? != Some(Kind::Strong)
+                    {
+                        found.push((offset, offset + cell.len()));
+                    }
+                    offset += cell.len() + 1;
+                }
+            } else {
+                let mut header = (2..=64).contains(&cells.len());
+                for cell in &cells {
+                    header &= full(r"[\w .-]{1,40}", cell)?;
+                }
+                columns = if header {
+                    let mut indices = Vec::new();
+                    for (index, cell) in cells.iter().enumerate() {
+                        if label_kind(cell.trim())? == Some(Kind::Strong) {
+                            indices.push(index);
+                        }
+                    }
+                    if indices.is_empty() {
+                        None
+                    } else {
+                        Some((cells.len(), indices))
+                    }
+                } else {
+                    None
+                };
+            }
+            position += line.len() + 1;
         }
-        Ok(())
-    })
-}
-
-pub(crate) fn text(text: &str) -> Result<String> {
-    #[cfg(test)]
-    if let Some(result) = TEST_SERVICE.with(|slot| {
-        slot.borrow_mut()
-            .as_mut()
-            .map(|service| service.text(text, Instant::now() + Duration::from_millis(250)))
-    }) {
-        return result.map_err(infra);
     }
-    shared().with(|service, deadline| service.text(text, deadline))
+    for cap in matches(&rule("CANDIDATE")?, text)? {
+        let matched = cap.get(0).ok_or("missing candidate")?;
+        let token = matched.as_str();
+        let mut position = matched.start();
+        if (text[matched.end()..].starts_with("...") || text[matched.end()..].starts_with('…'))
+            && full("[0-9a-f]+", token)?
+        {
+            continue;
+        }
+        let segments = token.split('/').collect::<Vec<_>>();
+        let mut path = false;
+        for segment in &segments {
+            path |= full_rule("PATH_SEGMENT", segment)?;
+        }
+        if segments.len() > 1 && path {
+            for segment in segments {
+                if segment.chars().count() >= 24 && random_like(segment, 20)? {
+                    found.push((position, position + segment.len()));
+                }
+                position += segment.len() + 1;
+            }
+            continue;
+        }
+        if random_like(token, 20)? {
+            found.push((matched.start(), matched.end()));
+            continue;
+        }
+        if full_rule("SAFE_TOKEN", token)? {
+            continue;
+        }
+        for piece in token.split(['/', '_', '.', '-']) {
+            if piece.chars().count() >= 24 && random_like(piece, 20)? {
+                found.push((position, position + piece.len()));
+            }
+            position += piece.len() + 1;
+        }
+    }
+    found.sort_unstable();
+    let mut merged: Vec<Span> = Vec::new();
+    for (start, end) in found {
+        if end <= start {
+            continue;
+        }
+        if let Some(last) = merged.last_mut()
+            && start <= last.1
+        {
+            last.1 = last.1.max(end);
+            continue;
+        }
+        merged.push((start, end));
+    }
+    Ok(merged)
+}
+pub(crate) fn text(value: &str) -> crate::Result<String> {
+    let render = || -> Result<String> {
+        if value.len() > LIMIT {
+            return Err("redaction input exceeds one MiB".into());
+        }
+        let value = value.replace('\0', "");
+        let mut out = String::new();
+        let mut cursor = 0;
+        for (start, end) in spans(&value)? {
+            out.push_str(
+                value
+                    .get(cursor..start)
+                    .ok_or("invalid redaction boundary")?,
+            );
+            out.push_str("[REDACTED]");
+            cursor = end;
+        }
+        out.push_str(value.get(cursor..).ok_or("invalid redaction boundary")?);
+        Ok(out)
+    };
+    render().map_err(|error| crate::Error::RedactionInfra(std::io::Error::other(error)))
 }
 
 #[cfg(test)]
-thread_local! {
-    static TEST_SERVICE: std::cell::RefCell<Option<Service>> = const { std::cell::RefCell::new(None) };
+fn worker_python() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../workers/.venv/bin/python")
 }
-
-#[cfg(test)]
-#[derive(Clone, Copy)]
-pub(crate) enum Failure {
-    Missing,
-    Crash,
-    Timeout,
-    Oversized,
-}
-
-#[cfg(test)]
-pub(crate) fn with_failure<T>(failure: Failure, run: impl FnOnce() -> T) -> T {
-    let mut service = Service::default();
-    assert!(service.process.is_none(), "helper starts lazily");
-    match failure {
-        Failure::Missing => service.python = PathBuf::from("/nonexistent/tl3-redaction-python"),
-        Failure::Crash => service.script = "raise SystemExit(1)",
-        Failure::Timeout => service.script = "import threading; threading.Event().wait()",
-        Failure::Oversized => {
-            service.script = "import sys; sys.stdin.readline(); sys.stdout.write('x' * (1024 * 1024 + 1)); sys.stdout.flush()"
-        }
-    }
-    TEST_SERVICE.with(|slot| {
-        *slot.borrow_mut() = Some(service);
-    });
-    let result = run();
-    TEST_SERVICE.with(|slot| {
-        let mut service = slot.borrow_mut().take().unwrap();
-        assert!(service.process.is_none(), "failed helper must be discarded");
-        service.python = worker_python();
-        service.script = BRIDGE;
-        assert_eq!(
-            service
-                .text("check-1", Instant::now() + CALL_TIMEOUT)
-                .unwrap(),
-            "check-1"
-        );
-        let pid = service.process.as_ref().unwrap().child.id();
-        assert_eq!(
-            service
-                .text("check-2", Instant::now() + CALL_TIMEOUT)
-                .unwrap(),
-            "check-2"
-        );
-        assert_eq!(
-            service.process.as_ref().unwrap().child.id(),
-            pid,
-            "reuse the helper"
-        );
-    });
-    result
-}
-
 #[cfg(test)]
 mod parity_tests {
     #[test]
+    fn oversized_input_fails_closed() {
+        assert!(matches!(
+            super::text(&"x".repeat(super::LIMIT + 1)),
+            Err(crate::Error::RedactionInfra(_))
+        ));
+    }
+
+    #[test]
+    fn generated_policy_matches_the_authoritative_source() {
+        let status = std::process::Command::new(super::worker_python())
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/redaction_policy.py"))
+            .arg("--check")
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[test]
     fn matches_python_on_the_shared_matrix() {
         use std::io::Write;
-        let matrix: Vec<String> =
+        let mut matrix: Vec<String> =
             serde_json::from_str(include_str!("redaction/matrix.json")).unwrap();
         assert_eq!(matrix.len(), 192);
+        matrix.extend(
+            serde_json::from_str::<Vec<String>>(include_str!("redaction/corpus.json")).unwrap(),
+        );
         let mut child = std::process::Command::new(super::worker_python())
             .args(["-I", "-c", "import json,sys; from tl3_workers.tracing import Redactor; r=Redactor(None); print(json.dumps([r.text(s,limit=len(s)) for s in json.load(sys.stdin)]))"])
             .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped())
@@ -327,6 +707,8 @@ mod parity_tests {
             .iter()
             .map(|text| super::text(text).unwrap())
             .collect::<Vec<_>>();
-        assert_eq!(actual, expected);
+        for ((input, actual), expected) in matrix.iter().zip(actual).zip(expected) {
+            assert_eq!(actual, expected, "Python redaction parity for {input:?}");
+        }
     }
 }

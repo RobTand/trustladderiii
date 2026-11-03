@@ -125,9 +125,7 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     controller = package == "crates/controller"
     binaries = _CONTROLLER_BINARIES.get(name, []) if controller else []
     workers = controller and name in _CONTROLLER_WORKERS
-    # Every controller test may render public evidence. Reuse the worker launcher
-    # with only its stdlib Redactor when a test does not run model workers.
-    python = "//tools/bazel:worker_python" if workers else "//tools/bazel:redactor_python" if controller else None
+    python = "//tools/bazel:worker_python" if workers else None
     env = {"CARGO_MANIFEST_DIR": WORKSPACE + "/" + package}
     for binary in binaries:
         env["CARGO_BIN_EXE_" + binary[1:]] = WORKSPACE + "/$(rootpath " + binary + ")"

@@ -18,7 +18,6 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
     use tl3_store::Store;
 
     config.validate()?;
-    crate::redaction::configure(&config.workers.python)?;
     config.validate_secret_files()?;
     let bootstrap = Bootstrap::from_config(config)?;
     if bootstrap.operations.is_none() {
