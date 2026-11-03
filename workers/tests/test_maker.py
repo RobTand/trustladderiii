@@ -644,9 +644,9 @@ def test_invalid_inputs_fail_at_request_boundary(maker_request, field, value):
 
 def test_check_base_schema_accepts_only_commit_ids(maker_request):
     from jsonschema import Draft202012Validator
-    from tl3_workers.contracts import schema
+    from tl3_workers.contracts import schema, registry
 
-    validator = Draft202012Validator(schema("maker-input"))
+    validator = Draft202012Validator(schema("maker-input"), registry=registry())
     inputs = maker_request["inputs"]
     for value in ("a" * 40, "b" * 64):
         assert validator.is_valid({**inputs, "check_base_sha": value})
@@ -1154,15 +1154,15 @@ def review_fix(maker_request):
 
 def test_review_fix_contract_accepts_named_tests_and_reasons(review_fix):
     inputs, reply = review_fix
-    from tl3_workers.contracts import schema
+    from tl3_workers.contracts import schema, registry
     from jsonschema import Draft202012Validator
-    assert Draft202012Validator(schema('maker-input')).is_valid(inputs), 'reviewed findings need identities'
-    assert Draft202012Validator(schema('maker-reply')).is_valid({**reply, 'head': 'c' * 40}), 'done must carry reproductions'
+    assert Draft202012Validator(schema('maker-input'), registry=registry()).is_valid(inputs), 'reviewed findings need identities'
+    assert Draft202012Validator(schema('maker-reply'), registry=registry()).is_valid({**reply, 'head': 'c' * 40}), 'done must carry reproductions'
     maker._check_reply(inputs, reply)
 
 
 def test_bounded_fix_round_contract_accepts_resolved_records_and_finding_refs(maker_request):
-    from tl3_workers.contracts import schema
+    from tl3_workers.contracts import schema, registry
     from jsonschema import Draft202012Validator
     inputs = maker_request['inputs']
     inputs.update(round=1, reviewed_sha='b' * 40, feedback=[
@@ -1173,12 +1173,12 @@ def test_bounded_fix_round_contract_accepts_resolved_records_and_finding_refs(ma
          'report': 'Describe the signature in full.', 'goal_ids': ['greeting']},
     ])
     inputs['current_review_findings'] = [{'id': 'review-3-0', 'reviewed_sha': 'b' * 40}]
-    assert Draft202012Validator(schema('maker-input')).is_valid(inputs), 'one-line records and finding refs'
+    assert Draft202012Validator(schema('maker-input'), registry=registry()).is_valid(inputs), 'one-line records and finding refs'
     maker._check_inputs(inputs)
     reply = {**DONE, 'reproductions': [{'finding_id': 'review-3-0', 'reason': 'A documentation fix.'}]}
     maker._check_reply(inputs, reply)
     inputs['feedback'][0]['resolved_round'] = 0
-    assert not Draft202012Validator(schema('maker-input')).is_valid(inputs), 'rounds start at 1'
+    assert not Draft202012Validator(schema('maker-input'), registry=registry()).is_valid(inputs), 'rounds start at 1'
 
 
 @pytest.mark.parametrize('invalid', ['omitted', 'partial', 'duplicate', 'unknown', 'old', 'selector'])

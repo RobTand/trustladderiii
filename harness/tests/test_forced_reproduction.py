@@ -98,8 +98,8 @@ def pid_repo(tmp_path, monkeypatch):
     return repo, base
 
 
-def forced(forcing=PID_REUSE, tests=(TEST,)):
-    return Check('deflake', Kind.DEMONSTRATING, tests, forcing=Forcing.parse(forcing), proof=Proof((), (), 'departed process remains live'))
+def forced(forcing=PID_REUSE, tests=(TEST,), *, red_message='departed process remains live'):
+    return Check('deflake', Kind.DEMONSTRATING, tests, forcing=Forcing.parse(forcing), proof=Proof((), (), red_message))
 
 
 def head_with(repo, test_source):
@@ -258,7 +258,7 @@ import clock
 
 
 def test_on_time():
-    assert not clock.late()
+    assert not clock.late(), 'clock sampled late'
 '''
 ON_TIME_FIXED = '''\
 import clock
@@ -268,7 +268,7 @@ def test_on_time(monkeypatch):
     # The premise is stated: the clock reads 0 against a limit of 3.
     monkeypatch.setattr(clock, "LIMIT", 3)
     monkeypatch.setattr(clock.Clock, "now", lambda self: 0)
-    assert not clock.late()
+    assert not clock.late(), 'clock sampled late'
 '''
 
 
@@ -284,7 +284,7 @@ def test_value_and_returns_forcings_including_a_class_owner(pid_repo, patch):
     (repo / 'tests/test_clock.py').write_text(ON_TIME_FIXED)
     head = save(repo, 'head')
     forcing = {'symptom': 'The sampler reads the clock late.', 'environment': {}, 'patches': [patch]}
-    result, = execution.run_checks(repo, base, head, (forced(forcing, ('tests/test_clock.py::test_on_time',)),),
+    result, = execution.run_checks(repo, base, head, (forced(forcing, ('tests/test_clock.py::test_on_time',), red_message='clock sampled late'),),
                                    container=CONTAINER)
     assert result.verdict == Verdict.PASS, result.tests[0].message
     assert (result.tests[0].base, result.tests[0].head_forced) == (Outcome.ASSERTION, Outcome.PASSED)

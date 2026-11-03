@@ -21,7 +21,7 @@ def test_request_158_plain_base_is_advisory_and_checking_owns_overlay(
         submission, tmp_path, monkeypatch, case, expected):
     import sys
     from tl3_harness import execution
-    from tl3_harness.model import Check, Kind, Outcome
+    from tl3_harness.model import Check, Kind, Outcome, Proof
     from tl3_workers.pb_tests import _git
 
     root, scripts = submission
@@ -33,7 +33,7 @@ def test_request_158_plain_base_is_advisory_and_checking_owns_overlay(
     if case == "unchanged":
         (root / "example_module.py").write_text("value = 'head'\n")
     if case != "unchanged":
-        source = source.replace("assert value == 'head'", "assert value in ('head', 'fixed')\n    assert value == 'fixed'", 1)
+        source = source.replace("assert value == 'head'", "assert value in ('head', 'fixed')\n    assert value == 'fixed', 'fixed value'", 1)
     if case == "broken_head":
         (root / "example_module.py").write_text("value = 'broken'\n")
     elif case == "import_error":
@@ -77,7 +77,7 @@ def test_request_158_plain_base_is_advisory_and_checking_owns_overlay(
         return [sys.executable, "-I", "-B", str(runner), "-", str(staged)]
     monkeypatch.setattr(execution, "container_command", command)
     [result] = execution.run_checks(
-        root, base, head, (Check("fallback", Kind.DEMONSTRATING, (test,)),),
+        root, base, head, (Check("fallback", Kind.DEMONSTRATING, (test,), proof=Proof((), (), 'fixed value')),),
         container=execution.Container(IMAGE), protected=("example_module.py",) if case == "protected" else ())
     assert result.verdict == expected, result
     if case == "edited":

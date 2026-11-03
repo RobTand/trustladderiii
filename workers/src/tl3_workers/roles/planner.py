@@ -137,9 +137,6 @@ def check_reply(inputs, reply, *, rehearsals=None):
             if 'proof' in check:
                 try:
                     proof = Proof.parse(check['proof'])
-                    Check('proof', Kind(check['kind']), tuple(check['node_ids']),
-                          Forcing.parse(check['forcing']) if 'forcing' in check else None,
-                          proof, check.get('declared_symptom'))
                     for unit in (*proof.subjects, *proof.observer_support):
                         if unit.split('::')[0] not in reply['files']:
                             violations.append(f'Proof source must be in declared files: {unit}')

@@ -102,7 +102,7 @@ def test_adopt():
 def test_t613_ac3_rehearsed_forcing_replaces_audit_helper_and_proves_real_assertion(rehearsal, monkeypatch, mode):
     from tl3_harness import execution, Forcing
     from tl3_harness.execution import Container, Progress, run_checks
-    from tl3_harness.model import Check, Kind, Outcome, Verdict
+    from tl3_harness.model import Check, Kind, Outcome, Verdict, Proof
     ledger, root, inputs, calls = rehearsal
     (root / 'publisher.py').write_text(
         'import os\ndef holder():\n    return os.environ.get("HOLDER_PATH", "tiny")\n')
@@ -118,7 +118,7 @@ def _eio():
 def test_adopt(limit):
     pathname = publisher.holder()
     actual = pathname[:limit]
-    assert actual == pathname
+    assert actual == pathname, 'bounded holder pathname'
 '''
     (root / 'tests/test_adoption.py').write_text(old)
     git(root, 'add', '.')
@@ -159,7 +159,8 @@ def test_adopt(limit):
     runner = Path(execution.__file__).with_name('runner.py')
     monkeypatch.setattr(execution, 'container_command',
         lambda tree, container, tests: [sys.executable, '-I', '-B', str(runner), '-', str(tree)])
-    check = Check('bounded evidence', Kind.DEMONSTRATING, (NODE,), Forcing.parse(forcing))
+    check = Check('bounded evidence', Kind.DEMONSTRATING, (NODE,), Forcing.parse(forcing),
+                  proof=Proof((), (), 'bounded holder pathname'))
     result, = run_checks(root, inputs['base_sha'], head, (check,), container=Container(IMAGE))
     assert result.verdict == Verdict.PASS, result
     assert all(t.base == Outcome.ASSERTION and t.head == Outcome.PASSED for t in result.tests)
