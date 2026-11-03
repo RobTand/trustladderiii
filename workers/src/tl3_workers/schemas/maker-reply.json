@@ -515,11 +515,15 @@
               "items": {
                 "$ref": "#/$defs/text"
               }
+            },
+            "proof": {
+              "$ref": "planner-reply.json#/$defs/proof"
             }
           },
           "required": [
             "finding_id",
-            "tests"
+            "tests",
+            "proof"
           ],
           "additionalProperties": false
         },

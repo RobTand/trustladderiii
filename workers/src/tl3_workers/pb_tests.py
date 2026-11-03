@@ -411,7 +411,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
 
     def run_tests(tests: list[str] | None = None, base: bool = False, repeat: int = 1,
                   parallel: int = 0, priority: int | None = None) -> dict:
-        """Run pytest; compare failures with untouched base, never demonstrating proof."""
+        """Run pytest with each planned base partition; Checking owns the proof verdict."""
         if base and _checks is None:
             selected = _selectors([] if tests is None else tests)
             checks = [check for check in getattr(worktree, 'test_checks', ())

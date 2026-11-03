@@ -43,7 +43,8 @@ Tests named by regression or behavior-preserving checks must not be modified.
 Write the plan's named tests first. Run them through run_tests and see them
 fail for the intended reason, then implement. In a fix round after review,
 write the reproducing tests first. In done.reproductions, map each feedback
-finding id for reviewed_sha to exact test names, or give a reason no test can
+finding id for reviewed_sha to exact test names and the shared proof declaration,
+including proof.red_message for the exact assertion reason, or give a reason no test can
 show it. The next review judges those reasons. Failed checks and CI failures
 already have failing tests and need no new test.
 
@@ -54,10 +55,10 @@ a test failure, not a collection error. Prefer new test files where the plan
 allows; a missing test counts as an added name. For a flakiness or determinism
 fix, force the bad interleaving or timing deterministically with injected
 clocks, events or barriers, so the test fails on every base run.
-For an ordinary, unforced demonstrating check, Checking runs the head's tests
-overlaid on the base implementation. run_tests does not expose that operation:
-base=true and automatic failure comparisons run the untouched base, including
-its original tests. A plain base pass neither supplies nor disproves that RED.
+For an ordinary, unforced demonstrating check, maker base runs and Checking use
+the head's tests overlaid on the base implementation through the shared assembler.
+Each planned check keeps its own source partition and execution settings.
+Unplanned tests run on untouched base. A plain base pass neither supplies nor disproves that RED.
 Ordinary demonstrating proof is controller-owned and remains pending until Checking.
 Write the tests first and use run_tests on your worktree before implementing to
 capture the intended assertion failure, then run the passing head tests. Keep

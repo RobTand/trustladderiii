@@ -15,7 +15,7 @@ from jsonschema import Draft202012Validator
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from tl3_workers.contracts import read_json, read_reply, schema
+from tl3_workers.contracts import read_json, read_reply, registry, schema
 from tl3_workers.exploration import BudgetUnavailable, ExplorationBudget
 from tl3_workers.forecast import forecast_fit, measure_files, optional_encoding
 from tl3_workers.generated_scope import configured_outputs
@@ -61,10 +61,13 @@ def _check_reply(inputs, reply):
         mapped = [item["finding_id"] for item in reproductions]
         if len(mapped) != len(findings) or set(mapped) != findings:
             raise ValueError("reproductions must cover each current review finding exactly once")
-        from tl3_harness import Check, Kind
+        from tl3_harness import Check, HarnessInputError, Kind, Proof
         for item in reproductions:
             if "tests" in item:
-                Check(item["finding_id"], Kind.REPRODUCING, tuple(item["tests"]))
+                if 'proof' not in item:
+                    raise HarnessInputError('A reproduction needs proof.red_message for its assertion RED.')
+                Check(item["finding_id"], Kind.REPRODUCING, tuple(item["tests"]),
+                      proof=Proof.parse(item['proof']))
     elif reply["kind"] == "needs_files":
         for item in reply["files"]:
             if not _parts(item["path"]):
@@ -478,7 +481,7 @@ def run(model, request, worktree, emit):
 
     def check(text):
         reply = read_reply(text)
-        Draft202012Validator(proposal).validate(reply)
+        Draft202012Validator(proposal, registry=registry()).validate(reply)
         if reply["kind"] == "done" and any(check["status"] == "not_met" for check in reply["self_check"]):
             reply = {"kind": "cant_meet", "report": json.dumps(reply["self_check"], ensure_ascii=False)}
         if reply["kind"] == "blocked":

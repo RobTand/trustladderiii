@@ -1146,7 +1146,8 @@ def review_fix(maker_request):
     ])
     inputs['current_review_findings'] = inputs['feedback'][:2]
     reply = {**DONE, 'reproductions': [
-        {'finding_id': 'review-4-0', 'tests': ['test_greeting.py::test_empty_name']},
+        {'finding_id': 'review-4-0', 'tests': ['test_greeting.py::test_empty_name'],
+         'proof': {'subjects': [], 'observer_support': [], 'red_message': 'empty greeting'}},
         {'finding_id': 'review-4-1', 'reason': 'This is a documentation correction.'},
     ]}
     return inputs, reply

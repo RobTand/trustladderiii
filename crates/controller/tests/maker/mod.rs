@@ -122,7 +122,8 @@ fn repository_fixture(
         .join("726f6274616e64/746c332d73616e64626f78/issue-42-node-0");
     Store::open(settings).unwrap().put_worker_materials("0", &json!({"maker": {
         "brief": "Return hello.", "goals": [{"id": "greeting", "description": "Return hello.", "verification": "test"}],
-        "plan": {"files": ["not-authoritative.py"], "checks": [{"name": "hello", "kind": "demonstrating", "tests": ["test_greeting.py::test_hello"], "goal_ids": ["greeting"]}]},
+        "plan": {"files": ["not-authoritative.py"], "checks": [{"name": "hello", "kind": "demonstrating", "tests": ["test_greeting.py::test_hello"], "goal_ids": ["greeting"],
+            "proof": {"subjects": [], "observer_support": [], "red_message": "assert 'goodbye' == 'hello'"}}]},
         "attempt": 3, "round": 1
     }})).unwrap();
     (config, repository, worktree, base)
@@ -234,7 +235,7 @@ fn observe(
                             kind: adapters::prismabuild::Kind::Demonstrating,
                             tests: vec!["test_greeting.py::test_hello".into()],
                             forcing: None,
-                            proof: None,
+                            proof: Some(json!({"subjects": [], "observer_support": [], "red_message": "assert 'goodbye' == 'hello'"})),
                             declared_symptom: None,
                         }],
                     },

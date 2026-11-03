@@ -55,13 +55,22 @@ pub(crate) fn check(reply: &Value, current: crate::findings::CurrentReview<'_>) 
             if tests.is_empty() || tests.iter().collect::<BTreeSet<_>>().len() != tests.len() {
                 return Err(Error::Invalid("a reproduction needs distinct tests"));
             }
+            let proof = mapping
+                .get("proof")
+                .filter(|proof| {
+                    proof["red_message"]
+                        .as_str()
+                        .is_some_and(|reason| (1..=160).contains(&reason.chars().count()))
+                })
+                .ok_or(Error::Invalid("a reproduction needs proof.red_message"))?;
             item["tests"] = json!(tests);
+            item["proof"] = proof.clone();
             checks.push(Check {
                 name: format!("reproducing/{id}"),
                 kind: Kind::Reproducing,
                 tests,
                 forcing: None,
-                proof: None,
+                proof: Some(proof.clone()),
                 declared_symptom: None,
             });
         } else {
@@ -121,7 +130,8 @@ mod reply_defects {
             json!([{"kind":"review_finding", "id":"f", "reviewed_sha":"head", "report":"fix"}]);
         let mut mismatches = Vec::new();
         for vector in vectors.as_array().unwrap() {
-            let reply = json!({"reproductions":[{"finding_id":"f", "tests":[vector["node_id"]]}]});
+            let reply = json!({"reproductions":[{"finding_id":"f", "tests":[vector["node_id"]],
+                "proof":{"subjects":[], "observer_support":[], "red_message":"expected regression"}}]});
             let current = crate::findings::current_review(&feedback, 1, Some("head"));
             if check(&reply, current).is_ok() != vector["valid"].as_bool().unwrap() {
                 mismatches.push(vector.clone());
