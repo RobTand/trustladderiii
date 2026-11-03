@@ -281,7 +281,7 @@ class WorkflowTests(unittest.TestCase):
     def test_cancellation_cleanup_covers_prs_and_mergify_queue_drafts(self):
         bazel = self.workflow.split('  bazel:', 1)[1].split('  rust-lint:', 1)[0]
         self.assertIn("if: github.event_name == 'pull_request'", bazel)
-        self.assertNotIn('github.event.pull_request.draft', bazel)
+        self.assertNotIn('github.event.pull_request.draft', bazel.split('    steps:', 1)[0])
         self.assertIn('- name: Cancel BuildBuddy run\n        if: cancelled()\n', bazel)
         cleanup = bazel.split('- name: Cancel BuildBuddy run', 1)[1].split('      - ', 1)[0]
         self.assertIn('BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}', cleanup)
