@@ -5,7 +5,6 @@ from tl3_workers.evidence import preflight
 from tl3_workers.contracts import schema
 from tl3_workers.exploration import ExplorationBudget
 from tl3_workers.recall import check_citations
-from tl3_workers.scope import goal_errors
 
 # The brief's maxLength, which the controller validates.
 BRIEF_CHARACTERS = next(
@@ -20,9 +19,6 @@ def check_memory_ids(inputs, reply):
     preflight(inputs, reply)
     if reply["kind"] == "brief":
         check_citations(inputs, reply)
-        errors = goal_errors(inputs, reply["goals"])
-        if errors:
-            raise ValueError("\n".join(errors))
 
         if "forecast" in inputs:
             from tl3_workers.forecast import Forecaster

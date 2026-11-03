@@ -67,7 +67,6 @@
             "type": "string",
             "minLength": 1
           },
-          "scope": {"$ref": "ingest-reply.json#/$defs/goal_scope"},
           "verification": {
             "enum": [
               "test",
