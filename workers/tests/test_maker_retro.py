@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 import subprocess
 import threading
-import time
 from types import SimpleNamespace
 
 import httpx
@@ -154,6 +153,7 @@ class RetroModel(FakeMessagesListChatModel):
     work_turns: int = 1
     retro: object = RETRO
     hold: object = None  # an Event the retro turn waits on, for at most 8 seconds
+    holding: bool = False  # true while the retro turn waits on hold
 
     def bind_tools(self, tools, **kwargs):
         self.offered = {tool.name for tool in tools}
@@ -173,7 +173,9 @@ class RetroModel(FakeMessagesListChatModel):
                 "input_tokens": WORK_TOKENS, "output_tokens": 1, "total_tokens": WORK_TOKENS + 1})
         else:
             if self.hold is not None:
+                self.holding = True
                 self.hold.wait(8)
+                self.holding = False
             if isinstance(self.retro, BaseException):
                 raise self.retro
             text = self.retro if isinstance(self.retro, str) else json.dumps(self.retro)
@@ -268,20 +270,30 @@ def test_an_out_of_room_reply_gets_no_retro(maker_request, monkeypatch, tmp_path
     assert "retro" not in facts(tmp_path)
 
 
+def run_while_retro_holds(maker_request, monkeypatch, tmp_path):
+    """Run the maker; report whether the retro was still waiting when the reply went out."""
+    release = threading.Event()
+    model = install(monkeypatch, maker_request, tmp_path, hold=release)
+    events, waiting = [], []
+
+    def record(event):
+        if event["event"] == "reply":
+            waiting.append(model.holding)
+        events.append(event)
+
+    try:
+        runtime.run(maker_request, record)
+    finally:
+        release.set()
+    return events, waiting
+
+
 def test_a_slow_retro_cannot_delay_or_lose_the_reply(maker_request, monkeypatch, tmp_path):
     from tl3_workers import retro
     # The deadline keeps a slow retro well inside the worker's silence allowance.
     monkeypatch.setattr(retro, "DEADLINE_S", 0.5, raising=False)
-    release = threading.Event()
-    install(monkeypatch, maker_request, tmp_path, hold=release)
-    events = []
-    started = time.monotonic()
-    try:
-        runtime.run(maker_request, events.append)
-        elapsed = time.monotonic() - started
-    finally:
-        release.set()
-    assert elapsed < 5, "the retro deadline bounds the wait for the reply"
+    events, waiting = run_while_retro_holds(maker_request, monkeypatch, tmp_path)
+    assert waiting == [True], "the reply goes out while the slow retro still waits"
     assert events[-1] == {"event": "reply", "role": "maker", "reply": CANT_MEET}
     assert events[-2] == {"event": "progress", "unit": "model_turn"}, "the retro turn reports progress first"
     assert len([event for event in events if event.get("unit") == "model_turn"]) == 2
@@ -291,18 +303,11 @@ def test_a_slow_retro_cannot_delay_or_lose_the_reply(maker_request, monkeypatch,
 
 
 def test_the_retro_deadline_is_half_the_silence_allowance(maker_request, monkeypatch, tmp_path):
-    # A future, shorter allowance still leaves the reply time to go out.
+    # A future, shorter allowance still leaves the reply time to go out. The
+    # 60-second default would wait out the 8-second hold before replying.
     maker_request["silence_secs"] = 1
-    release = threading.Event()
-    install(monkeypatch, maker_request, tmp_path, hold=release)
-    events = []
-    started = time.monotonic()
-    try:
-        runtime.run(maker_request, events.append)
-        elapsed = time.monotonic() - started
-    finally:
-        release.set()
-    assert elapsed < 5, "a 1-second allowance gives the retro half a second"
+    events, waiting = run_while_retro_holds(maker_request, monkeypatch, tmp_path)
+    assert waiting == [True], "a 1-second allowance gives the retro half a second"
     assert events[-1] == {"event": "reply", "role": "maker", "reply": CANT_MEET}
     assert facts(tmp_path)["retro"]["status"] == "timeout"
 
