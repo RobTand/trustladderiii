@@ -174,18 +174,59 @@ def test_cached_intake_keeps_four_exploration_rounds(tmp_path, monkeypatch):
     assert budgets[0].spent == 95_000
 
 
-def response_frames(content, *, duplicate_usage=False, trailing_usage=None):
+def response_frames(content, *, duplicate_usage=False, trailing_usage=None, tool_calls=None):
     chunk = {"id": "fixture-completion", "object": "chat.completion.chunk", "created": 0,
              "model": "fixture-model"}
     usage = {"prompt_tokens": 1000, "completion_tokens": 5, "total_tokens": 1005,
              "prompt_tokens_details": {"cached_tokens": 800, "cache_write_tokens": 100}}
-    frames = [{**chunk, "choices": [{"index": 0, "delta": {"role": "assistant", "content": content},
+    delta = {"role": "assistant", "content": content}
+    if tool_calls is not None:
+        delta["tool_calls"] = tool_calls
+    frames = [{**chunk, "choices": [{"index": 0, "delta": delta,
                                     "finish_reason": None}]},
-              {**chunk, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}], "usage": usage}]
+              {**chunk, "choices": [{"index": 0, "delta": {},
+                                    "finish_reason": "tool_calls" if tool_calls else "stop"}], "usage": usage}]
     if duplicate_usage or trailing_usage is not None:
         frames.append({**chunk, "choices": [], "usage": trailing_usage or usage})
     stream = "".join("data: " + json.dumps(frame) + "\n\n" for frame in frames) + "data: [DONE]\n\n"
     return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=stream)
+
+
+def test_maker_budget_notices_preserve_the_proxy_system_prefix(maker_request, tmp_path, monkeypatch):
+    Path(maker_request["key_file"]).write_text("fixture-only-key")
+    maker_request["inputs"]["context_size"] = 150_000
+    maker_request["session_file"] = str(tmp_path / "session.json")
+    sent = []
+
+    def respond(request):
+        sent.append(json.loads(request.content)["messages"])
+        if len(sent) <= 2:
+            return response_frames("", tool_calls=[{
+                "index": 0, "id": f"read-{len(sent)}", "type": "function",
+                "function": {"name": "read", "arguments": json.dumps({"path": "greeting.py"})}}])
+        return response_frames(json.dumps({"kind": "cant_meet", "report": "More proof is needed."}))
+
+    proxy = runtime.ProxyChatOpenAI
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        monkeypatch.setattr(runtime, "ProxyChatOpenAI", lambda **kwargs: proxy(http_client=client, **kwargs))
+        runtime.run(maker_request, lambda _: None)
+
+    assert len(sent) == 3
+    system = sent[0][0]["content"].encode("utf-8")
+    for index, messages in enumerate(sent):
+        assert messages[0]["role"] == "system"
+        assert messages[0]["content"].encode("utf-8") == system
+        assert not any(m["role"] == "system" for m in messages[1:]), "the proxy must never hoist changing notices"
+        notice = messages[-1]
+        assert notice["role"] == "user" and notice["content"].startswith("TL3 execution budget: ")
+        assert json.loads(notice["content"].removeprefix("TL3 execution budget: "))["tool_turns"]["remaining"] == 64 - index
+        if index:
+            assert messages[-2]["role"] == "tool", "the user notice follows the completed tool result"
+            assert messages[:len(sent[index - 1])] == sent[index - 1], "previous wire content stays append-only"
+    saved = json.loads(Path(maker_request["session_file"]).read_text())
+    notices = [m for m in saved if m["data"]["content"].startswith("TL3 execution budget: ")]
+    assert [m["type"] for m in notices] == ["human"] * 3
+    assert [m["data"]["content"] for m in notices] == [messages[-1]["content"] for messages in sent]
 
 
 @pytest.mark.parametrize("corrected_total", [False, True])
