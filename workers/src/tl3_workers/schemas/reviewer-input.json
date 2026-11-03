@@ -298,6 +298,10 @@
           "custody": {
             "const": "in-process"
           },
+          "selection": {
+            "type": "object",
+            "description": "The trusted harness's bounded complete-unit admission and unchecked-suffix receipt."
+          },
           "forcing": {
             "$ref": "planner-reply.json#/$defs/forcing"
           },

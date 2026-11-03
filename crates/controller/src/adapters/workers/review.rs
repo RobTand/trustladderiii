@@ -433,9 +433,10 @@ mod hostile_tests {
         report.id = format!("0:{}", f.head);
         report.value = json!({"base_sha":f.base, "selected_failures":
             ["tests/test_old.py", "tests/test_rechecked.py", "tests/test_unverified.py"],
-            "results":[{"name":"Existing tests that import the change", "verdict":"pass",
-                "tests":[{"test":"tests/test_rechecked.py", "passed":true, "head":"passed"},
-                         {"test":"tests/test_unverified.py", "passed":false, "head":"no-report"}],
+            "results":[{"name":"Existing tests that import the change", "kind":"regression",
+                "custody":"in-process", "verdict":"pass",
+                "tests":[{"test":"tests/test_rechecked.py", "passed":true, "base":"passed", "head":"passed", "pre_existing":false},
+                         {"test":"tests/test_unverified.py", "passed":false, "base":"passed", "head":"no-report", "pre_existing":false}],
                 "selection":{"limit":500,"charged_cases":480,"head_units":[["tests/test_rechecked.py"]],
                     "skipped_units":[["tests/test_old.py"]], "skipped_checked":false}}]});
         let value = inputs(&f.delivery(), &mut store, &snapshot, None).unwrap();

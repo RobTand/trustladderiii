@@ -583,4 +583,8 @@ def test_review_input_retains_unresolved_displaced_failures(review_request):
     from tl3_workers.contracts import validate
 
     review_request["inputs"]["unresolved_displaced_failures"] = ["tests/test_old.py", "tests/test_companion.py"]
+    review_request["inputs"]["checks"][0]["selection"] = {
+        "limit": 500, "charged_cases": 480, "head_units": [["tests/test_greeting.py"]],
+        "skipped_units": [["tests/test_old.py", "tests/test_companion.py"]], "skipped_checked": False,
+    }
     validate("reviewer-input", review_request["inputs"])
