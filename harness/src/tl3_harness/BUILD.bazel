@@ -21,6 +21,7 @@ py_library(
     srcs = [
         "__init__.py",
         "execution.py",
+        "forcing_ownership.py",
         "generator.py",
         "limits.py",
         "model.py",

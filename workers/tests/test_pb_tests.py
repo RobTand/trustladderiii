@@ -1922,7 +1922,8 @@ def test_request199_complete_summary_envelope_keeps_exact_retained_evidence(subm
     assert result['forcing'] == response['forcing'] and result['selectors'] == [NODE]
     assert result['receipts'][0]['receipt_sha256'] == 'b' * 64
     assert result['tests'] and len(result['tests']) < len(retained)
-    assert all(item in retained for item in result['tests'])
+    assert all(any(all(item[key] == value for key, value in original.items())
+                   for original in retained) for item in result['tests'])
     assert 'Truncated' in result['note']
     from tl3_workers.forcing_rehearsal import unusable
     assert unusable(result, [NODE], 'failed') == 'incomplete node results'

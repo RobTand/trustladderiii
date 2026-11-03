@@ -94,6 +94,8 @@ class PlanConsistencyError(ValueError):
 
 
 def check_reply(inputs, reply, *, rehearsals=None):
+    if rehearsals is not None:
+        rehearsals.raise_infrastructure()
     if any(field in reply for field in ("forecast", "violations", "decision_context", "forcing_rehearsals")):
         raise ValueError("only code may supply planning evidence")
     preflight(inputs, reply, planning=True)
@@ -245,8 +247,8 @@ def check_reply(inputs, reply, *, rehearsals=None):
             violations.extend(rehearsals.violations(inputs.get('base_sha'), valid))
         elif valid:
             violations.append('Q55 check lacks a matching forcing rehearsal receipt for the exact base, selectors and forcing.')
-    if rehearsals is not None and (rehearsals.receipts or rehearsals.failure):
-        reply['forcing_rehearsals'] = deepcopy(rehearsals.receipts + ([rehearsals.failure] if rehearsals.failure else []))
+    if rehearsals is not None and (rehearsals.candidates or rehearsals.failure):
+        reply['forcing_rehearsals'] = deepcopy(rehearsals.candidates + ([rehearsals.failure] if rehearsals.failure else []))
     if "decision_context" in inputs:
         reply["decision_context"] = inputs["decision_context"]
     reply["forecast"] = forecast
@@ -401,7 +403,7 @@ ROLE = Role(
     reply_schema="planner-reply",
     code_only_fields=("forecast", "violations", "decision_context", "evidence_errors", "forcing_rehearsals"),
     tools={
-        "rehearse_forcing": "Rehearse exact existing base tests with a Q55 forcing through PrismaBuild before returning a forced leaf. No commands, repeats or head execution. A failed rehearsal stops planning; never retry it.",
+        "rehearse_forcing": "Rehearse exact existing base tests with a Q55 forcing through PrismaBuild before returning a forced leaf. Completed unusable candidates allow a distinct bounded proposal; identical candidates are cached. Infrastructure exits to controller recovery. Exhaustion or no usable final receipt requires cant_meet. No commands or head execution.",
         "list": "List worktree directories to locate material for the plan.",
         "read": "Read worktree text to identify files and checks for the goals.",
         "glob": "Find worktree paths using relative glob patterns for planning. The path must be a directory.",

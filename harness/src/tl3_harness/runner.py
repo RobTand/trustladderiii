@@ -19,6 +19,10 @@ spec = importlib.util.spec_from_file_location("tl3_node_ids", Path(__file__).wit
 node_ids = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(node_ids)
 selects = node_ids.selects
+spec = importlib.util.spec_from_file_location("tl3_forcing_ownership", Path(__file__).with_name("forcing_ownership.py"))
+ownership = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ownership)
+ForcingError = ownership.ForcingError
 spec = importlib.util.spec_from_file_location("tl3_limits", Path(__file__).with_name("limits.py"))
 limits = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(limits)
@@ -90,10 +94,6 @@ def missing_name(error):
     return None
 
 
-class ForcingError(Exception):
-    """The plan's forcing could not be applied (#393)."""
-
-
 def forcing_owner(target):
     """The object holding the target's attribute. It must be a module whose file is in the
     checkout, or a class defined in one, so a forcing can't patch pytest, the standard
@@ -103,21 +103,20 @@ def forcing_owner(target):
     for split in range(len(parts) - 1, 0, -1):
         try:
             owner = importlib.import_module(".".join(parts[:split]))
-        except ModuleNotFoundError:
-            continue
+        except ModuleNotFoundError as error:
+            if error.name and (error.name == ".".join(parts[:split]) or ".".join(parts[:split]).startswith(error.name + ".")):
+                continue
+            raise ForcingError(target=target, module=".".join(parts[:split]), reason="import_failure") from error
+        except Exception as error:
+            raise ForcingError(target=target, module=".".join(parts[:split]), reason="import_failure") from error
         break
     else:
-        raise ForcingError(f"no module in the checkout provides {target}")
+        raise ForcingError(target=target, reason="module_not_found")
     for name in parts[split:-1]:
         if not hasattr(owner, name):
-            raise ForcingError(f"{target}: {name} not found")
+            raise ForcingError(target=target, module=getattr(owner, "__name__", "unknown"), reason="missing_attribute")
         owner = getattr(owner, name)
-    module = owner if isinstance(owner, types.ModuleType) else sys.modules.get(getattr(owner, "__module__", ""))
-    source = getattr(module, "__file__", None) if isinstance(owner, (types.ModuleType, type)) else None
-    if not source or not Path(source).resolve().is_relative_to(root):
-        raise ForcingError(f"{target} is outside the served repository")
-    if not hasattr(owner, parts[-1]):
-        raise ForcingError(f"{target} does not exist")
+    ownership.repository_owner(target, owner, root)
     return owner, parts[-1]
 
 
@@ -172,6 +171,7 @@ class Reporter:
         self.parallel = parallel
         self.patches = patches
         self.target_hits = {}
+        self.forcing_refusals = {}
         self.phases = {}
         self.collection_errors = []
         self.reported = set()
@@ -206,7 +206,12 @@ class Reporter:
             for forcing in self.patches:
                 target = forcing["target"]
                 (mode, argument), = ((key, value) for key, value in forcing.items() if key != "target")
-                owner, name = forcing_owner(target)
+                try:
+                    owner, name = forcing_owner(target)
+                except ForcingError as error:
+                    if error.refusal is not None:
+                        self.forcing_refusals[request.node.nodeid] = error.refusal
+                    raise
                 counter = hits.setdefault(target, [0]) if mode == "delay_seconds" else None
                 patch.setattr(owner, name, forced_value(owner, name, mode, argument, budget=budget, counter=counter))
             yield
@@ -308,6 +313,9 @@ class Reporter:
         message = "\n".join(p[2] for p in failures)
         hits = self.target_hits.pop(report.nodeid, {})
         extra = {"target_hits": {target: count[0] for target, count in hits.items()}} if self.patches else {}
+        refusal = self.forcing_refusals.pop(report.nodeid, None)
+        if refusal is not None:
+            extra['forcing_refusal'] = refusal
         self.emit(event="result", test=report.nodeid, outcome=outcome, **extra,
                   message=message[:1000], truncated=len(message) > 1000 or any(p[3] for p in failures))
 
