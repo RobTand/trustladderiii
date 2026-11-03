@@ -55,6 +55,8 @@ pub struct Comment {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct PullRequest {
     #[serde(default)]
+    pub draft: bool,
+    #[serde(default)]
     pub title: String,
     #[serde(default)]
     pub body: Option<String>,

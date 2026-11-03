@@ -27,13 +27,83 @@
                   "test",
                   "review"
                 ]
+              },
+              "stage": {
+                "enum": [
+                  "maker",
+                  "checking",
+                  "publishing"
+                ]
+              },
+              "publication": {
+                "type": "object",
+                "properties": {
+                  "branch": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
+                  },
+                  "branch_prefix": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
+                  },
+                  "non_draft": {
+                    "const": true
+                  },
+                  "body_lines": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "pattern": "^[^\\r\\n]+$"
+                    }
+                  },
+                  "proof": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "non_draft",
+                  "body_lines",
+                  "proof"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
               "description",
               "verification"
             ],
-            "additionalProperties": false
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "stage"
+                  ],
+                  "properties": {
+                    "stage": {
+                      "const": "publishing"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "publication"
+                  ]
+                },
+                "else": {
+                  "not": {
+                    "required": [
+                      "publication"
+                    ]
+                  }
+                }
+              }
+            ]
           },
           "minItems": 1
         },

@@ -168,5 +168,8 @@ fn request_123_pending_is_a_handover_not_a_false_success() {
         {"goal_id":"repair", "status":"met", "evidence":"Normal head passed."},
         {"goal_id":"publication", "status":"pending", "why":"Publishing owns PR creation."}
     ]});
-    assert!(matches!(map_reply("maker", &reply).unwrap(), MappedReply::Made(_)));
+    assert!(matches!(
+        map_reply("maker", &reply).unwrap(),
+        MappedReply::Made(_)
+    ));
 }

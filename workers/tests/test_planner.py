@@ -947,3 +947,14 @@ def test_test_only_regression_plan_is_accepted(planner_request, digests_plan):
     digests_plan['files'] = [DIGESTS]
     digests_plan['checks'] = [{'kind': 'regression', 'node_ids': [FROZEN, SIBLING], 'goal_ids': [0, 1]}]
     assert planned(planner_request, digests_plan) == []
+
+
+def test_publication_obligations_have_guards_instead_of_pretend_tests(tmp_path, planner_request):
+    planner_request['inputs']['ingest']['goals'].append({
+        'description': 'Publish a non-draft PR with recorded independent proof.',
+        'verification': 'review', 'stage': 'publishing',
+        'publication': {'non_draft': True, 'body_lines': ['Change type: test'], 'proof': True},
+    })
+    result = run_reply(tmp_path, planner_request, LEAF)
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1]['reply']['violations'] == []

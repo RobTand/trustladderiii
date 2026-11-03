@@ -240,6 +240,7 @@ pub fn card_question(question: Question, context: Option<&Value>) -> CardQuestio
         question_context: context.cloned(),
         steering: None,
         request_text: None,
+        evidence: None,
     };
     let facts = crate::adapters::github::writer_input(&delivery, Some(ask), "", "")
         .expect("a question's own notice always has facts")
@@ -560,6 +561,7 @@ fn translate(
         scope_removals: None,
         question_context: None,
         request_text: binding.source,
+        evidence: None,
         proposed: None,
         steering: Some(Task::ConsoleNote { text: note }),
     };

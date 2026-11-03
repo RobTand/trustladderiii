@@ -1526,12 +1526,14 @@ def request_123_handover(maker_request):
         {"id": "forced-proof", "description": "Independently prove forced base red and head green.",
          "verification": "test", "stage": "checking"},
         {"id": "publication", "description": "Publish a stable branch and non-draft PR with proof.",
-         "verification": "review", "stage": "publishing"},
+         "verification": "review", "stage": "publishing",
+         "publication": {"non_draft": True, "body_lines": ["Change type: test"], "proof": True}},
     ]
     request["inputs"]["plan"]["checks"] = [{
         "name": "deep-path", "kind": "demonstrating", "tests": ["test_greeting.py::test_hello"],
         "goal_ids": ["repair", "scope", "forced-proof"],
-        "forcing": {"patches": [{"target": "greeting.RESIDENCY", "value": False}]},
+        "forcing": {"symptom": "The old test depends on residency.", "environment": {},
+                    "patches": [{"target": "greeting.RESIDENCY", "value": False}]},
     }]
     reply = {"kind": "done", "self_check": [
         {"goal_id": "repair", "status": "met", "evidence": "Normal head run passed; plain base is unforced."},

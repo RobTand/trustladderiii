@@ -1762,7 +1762,6 @@ fn publication_404_look(settings: &tl3_config::Store, case: &str) {
     println!("test publication_404_look_{case} ... ok");
 }
 
-
 fn stage_obligations_block_publication() {
     for case in ["wrong-branch", "missing-proof", "draft"] {
         let root = tempfile::tempdir().unwrap();
@@ -1775,7 +1774,12 @@ fn stage_obligations_block_publication() {
         let server = Server::new(f.clone());
         let mut open = push.clone();
         open.key = format!("stage-{case}");
-        open.output = Out::Effect { node: NodeId(0), seq: 3, kind: EffectKind::OpenPr, head: None };
+        open.output = Out::Effect {
+            node: NodeId(0),
+            seq: 3,
+            kind: EffectKind::OpenPr,
+            head: None,
+        };
         let mut adapter = server.adapter(&root.path().join("github"), 1);
         if case == "draft" {
             adapter.execute(&open).unwrap();
@@ -1790,10 +1794,16 @@ fn stage_obligations_block_publication() {
                     "non_draft":true,"body_lines":["Change type: test"],"proof":case == "missing-proof"}}]});
         let open: Delivery = serde_json::from_value(value).unwrap();
         let result = adapter.execute(&open);
-        assert!(matches!(result, Err(tl3_controller::Error::Permanent { .. })),
-            "{case} must fail at Publishing, got {result:?}");
+        assert!(
+            matches!(result, Err(tl3_controller::Error::Permanent { .. })),
+            "{case} must fail at Publishing, got {result:?}"
+        );
         if case != "draft" {
-            assert_eq!(server.api.state.lock().unwrap().opens, 0, "validate before writing a PR");
+            assert_eq!(
+                server.api.state.lock().unwrap().opens,
+                0,
+                "validate before writing a PR"
+            );
         }
     }
 }
@@ -1802,6 +1812,7 @@ fn main() {
     if env::args().nth(1).as_deref() == Some("--stage-obligations") {
         stage_obligations_block_publication();
         println!("test stage_obligations_block_publication ... ok");
+        println!("1 publishing scenarios passed; no skips");
         return;
     }
     if env::args().nth(1).as_deref() == Some("q46-open") {
@@ -1906,5 +1917,5 @@ fn main() {
         println!("test {mode} ... ok");
     }
     database.stop();
-    println!("35 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
+    println!("36 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }
