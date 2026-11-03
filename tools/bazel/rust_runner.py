@@ -58,6 +58,13 @@ def main():
     for repository in Path('..').glob('*postgres_linux_*'):
         os.environ['TL3_TEST_POSTGRES_DIR'] = str(repository.resolve())
     binary = {'name': name, 'command': [str(Path(executable).resolve())]}
+    shard = None
+    if int(os.environ.get('TEST_TOTAL_SHARDS', '1')) > 1:
+        shard = {'index': int(os.environ['TEST_SHARD_INDEX']),
+                 'total': int(os.environ['TEST_TOTAL_SHARDS'])}
+        if harness != 'custom' or name != 'tl3-controller/workers':
+            raise RuntimeError('scenario sharding requires a shard-aware custom harness')
+        Path(os.environ['TEST_SHARD_STATUS_FILE']).touch()
     cpu_seconds, cpu_details = {}, {}
     results = rust_gate.execute_binary(binary, harness == 'custom', arguments, cpu_seconds=cpu_seconds,
                                        cpu_details=cpu_details)
@@ -67,8 +74,9 @@ def main():
     names = [key.split('::', 1)[1] for key in results if not key.endswith('::__tail__')]
     # Written before the budget check so calibration also sees overruns.
     receipt = Path(os.environ['TEST_UNDECLARED_OUTPUTS_DIR'], 'inventory.json')
-    receipt.write_text(json.dumps({'rust': {name: names}, 'seconds': results, 'cpu_seconds': cpu_seconds, 'runner_class': runner,
-                                   'cpu_platform': sys.platform, 'cpu_sampling': 'proc-postmaster-v1', **cpu_details}))
+    receipt.write_text(json.dumps({'rust': {name: names}, 'seconds': results, 'cpu_seconds': cpu_seconds,
+                                   'runner_class': runner, 'shard': shard, 'cpu_platform': sys.platform,
+                                   'cpu_sampling': 'proc-postmaster-v1', **cpu_details}))
     if os.environ.get('TL3_BUDGETS') == 'record':
         # Uncalibrated executors (arm64) keep the seconds in the receipt only.
         return
