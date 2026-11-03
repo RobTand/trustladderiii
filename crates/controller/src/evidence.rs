@@ -1217,6 +1217,77 @@ mod tests {
         );
     }
 
+    fn escaped_field_deliveries() -> Vec<Delivery> {
+        let mut deliveries = Vec::new();
+        for key in ["cookie", "token", "apikey", "passwd"] {
+            for depth in [1, 2, 3] {
+                for quote in ['"', '\''] {
+                    for space in [" ", r"\n\t"] {
+                        let quote = format!("{}{quote}", "\\".repeat(depth));
+                        let name = format!(
+                            "check-1 out: {{{quote}{key}{quote}:{space}{quote}Z7vQ9mN4pR6xT8cL2hK5sD3f{quote}}}"
+                        );
+                        let (mut snapshot, mut delivery) = fixture();
+                        let report = &mut snapshot
+                            .rows
+                            .iter_mut()
+                            .find(|row| row.table == "check_reports")
+                            .unwrap()
+                            .value;
+                        report["results"][0]["name"] = json!(name);
+                        *report = check_record(report);
+                        delivery.evidence = Some(
+                            capture(
+                                &snapshot,
+                                &Commit::new("publish", json!({}), &snapshot),
+                                &delivery,
+                            )
+                            .unwrap(),
+                        );
+                        deliveries.push(delivery);
+                    }
+                }
+            }
+        }
+        deliveries
+    }
+
+    #[test]
+    fn escaped_fields_are_redacted_in_published_proof() {
+        let leaks = escaped_field_deliveries()
+            .iter()
+            .filter(|delivery| {
+                let proof = publication(delivery, "Publish red/green proof in the PR").unwrap();
+                assert!(proof.contains("check-1"));
+                assert!(proof.contains("test_departure"));
+                proof.contains("Z7vQ9mN4pR6xT8cL2hK5sD3f")
+            })
+            .count();
+        assert_eq!(leaks, 0, "escaped field values leaked in published proof");
+    }
+
+    #[test]
+    fn escaped_fields_are_redacted_in_closing_summary() {
+        let leaks = escaped_field_deliveries()
+            .iter()
+            .filter(|delivery| {
+                let input = writer_input(
+                    delivery,
+                    Some(Notice::Summary(Outcome::Stopped)),
+                    "Fix process departure",
+                    "Fix the test",
+                )
+                .unwrap();
+                let text =
+                    checked_draft(&mut FakeWriter, "summary", input, &Default::default()).unwrap();
+                assert!(text.contains("check-1"));
+                assert!(text.contains("checks passed"));
+                text.contains("Z7vQ9mN4pR6xT8cL2hK5sD3f")
+            })
+            .count();
+        assert_eq!(leaks, 0, "escaped field values leaked in closing summary");
+    }
+
     #[test]
     fn fix_round_eight_mib_report_publishes_bounded_proof_and_artifacts() {
         let (snapshot, mut delivery) = fixture();
