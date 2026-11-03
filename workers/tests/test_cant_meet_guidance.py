@@ -14,16 +14,15 @@ def text(*parts):
 
 def test_the_maker_prompt_says_when_cant_meet_applies():
     prompt = text("prompts", "maker.md")
-    assert ("Use cant_meet only when no change within the declared files and your own tools can meet "
-            "a goal: a plan defect, a rule conflict, tests that run and still fail after your best fix, "
-            "or a truly unsupported requirement named by evidence preflight") in prompt
-    assert ("Ordinary PR creation and independent controller checks are downstream work, "
-            "not missing system capabilities and not reasons for cant_meet") in prompt
-    assert "Forced-base proof is controller-owned (Q55) and remains pending until Checking" in prompt
-    assert "Unfinished steps that your own tools can do are not cant_meet: do them" in prompt
-    assert ("List items you think are met but could not re-verify in done's account, marked "
-            "unverified; the controller's checks and the independent review judge them after done") in prompt
-    assert "When your context is nearly full, finish the remaining tool steps first, then reply" in prompt
+    # #648 condensed the wording; each rule below is the one #434 pinned.
+    assert ("Reply cant_meet only when no change in the plan's files can meet a goal. Examples are a plan "
+            "defect, a rule conflict, tests that still fail after your best fix, or a requirement that "
+            "evidence preflight named unsupported") in prompt
+    assert "PR creation and later checks belong to downstream stages" in prompt
+    assert "Checking proves that RED after your reply" in prompt
+    assert "Steps that your own tools can do are not reasons: do them" in prompt
+    assert "Mark evidence that your tools cannot reach as unverified. Review decides" in prompt
+    assert "When the context is nearly full, finish the open tool steps, then reply" in prompt
 
 
 def test_the_maker_prompt_no_longer_offers_cant_meet_for_any_unmet_goal():

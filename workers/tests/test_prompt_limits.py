@@ -46,7 +46,9 @@ SHARED_TOOLS = ("grep", "glob")
 GREP_OPTIONS = sorted(set(inspect.signature(Worktree.grep).parameters) - {"self", "pattern", "path", "offset"})
 
 
-@pytest.mark.parametrize("name", ["maker.md", "planner.md", "reviewer.md"])
+# #648: the maker and reviewer prompts leave grep and glob to their tool descriptions, which
+# test_role_tool_descriptions_describe_the_path_argument checks.
+@pytest.mark.parametrize("name", ["planner.md"])
 def test_prompts_describe_the_path_argument_of_grep_and_glob(name):
     prompt = prompt_text(name)
     assert GREP_PATH in prompt
@@ -100,7 +102,6 @@ def test_run_tests_options_say_what_the_tool_enforces():
     description = ROLES["maker"].tools["run_tests"]
     for statement in ("repeat 1 to 10", "parallel 2 to 4", "priority -10 to 0"):
         assert statement in description, statement
-        assert statement in text("maker"), statement
     assert "receipts" in text("maker")
     assert "repeat" in text("planner") and "parallel" in text("planner") and "receipts" in text("planner")
     assert "test_evidence" in text("reviewer")

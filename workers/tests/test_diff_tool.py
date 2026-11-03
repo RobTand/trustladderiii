@@ -455,11 +455,11 @@ def prompt_text(name):
 def test_prompts_and_descriptions_state_what_the_diff_tool_shows():
     maker = prompt_text("maker.md")
     reviewer = prompt_text("reviewer.md")
-    assert ("diff shows every change in your worktree against check_base_sha, as a stat "
-            "and unified hunks, a page at a time; use it to check what you changed and the plan's scope") in maker
-    assert "diff's path may be a file or a directory; offset continues a truncated page" in maker
-    assert "diff shows the change from base_sha to head_sha, a page at a time" in reviewer
-    assert "diff's path may be a file or a directory; offset continues a truncated page" in reviewer
+    # #648: the prompts leave diff's arguments to its tool description.
+    assert "read the final diff" in maker
+    assert "Read the surrounding code when the diff alone does not prove a claim" in reviewer
+    assert "check_base_sha, as a stat and unified hunks, paged" in ROLES["maker"].tools["diff"]
+    assert "from base_sha to head_sha, as a stat and unified hunks, paged" in ROLES["reviewer"].tools["diff"]
     for role, said in (("maker", "against check_base_sha"), ("reviewer", "from base_sha to head_sha")):
         description = ROLES[role].tools["diff"]
         assert said in description and "Read-only" in description

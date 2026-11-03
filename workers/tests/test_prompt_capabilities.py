@@ -9,31 +9,40 @@ def prompt_text(role):
     )
 
 
-@pytest.mark.parametrize("role", ["ingest", "audit", "planner"])
+# #648 condensed ingest and audit; the planner keeps its wording until it is condensed.
+CAPABILITIES = {
+    "planner": ("the maker has TL3 worktree file tools, run_tests through PrismaBuild and read-only recall",
+                "the reviewer has read-only worktree tools, the supplied diff and check verdicts",
+                "Do not require another repo, a fetched page or a shell"),
+    "ingest": ("The maker has worktree file tools, run_tests through PrismaBuild and read-only recall",
+               "The reviewer has read-only worktree tools, the diff and the check verdicts",
+               "Never require another repository, a fetched page or a shell"),
+    "audit": ("The maker has worktree file tools, run_tests through PrismaBuild and read-only recall",
+              "The reviewer has read-only worktree tools, the diff and the check verdicts",
+              "The brief must not require another repository, a fetched page or a shell"),
+}
+OUTSIDE_FACTS = {
+    "planner": ("Preserve outside facts as the request gives them, name their source and mark them unverified",
+                "goals that tests or review can judge inside this repo without outside verification"),
+    "ingest": ("Keep each outside fact as the request states it, name its source and mark it unverified",
+               "Write goals that tests or review can judge inside this repository"),
+    "audit": ("Outside facts must keep their source and be marked unverified",
+              "Missing outside confirmation alone is not an objection"),
+}
+
+
+@pytest.mark.parametrize("role", sorted(CAPABILITIES))
 def test_briefs_and_plans_respect_downstream_capabilities(role):
     prompt = prompt_text(role)
-    assert (
-        "the maker has TL3 worktree file tools, run_tests through PrismaBuild "
-        "and read-only recall" in prompt
-    )
-    assert (
-        "the reviewer has read-only worktree tools, the supplied diff "
-        "and check verdicts" in prompt
-    )
-    assert "Do not require another repo, a fetched page or a shell" in prompt
+    for statement in CAPABILITIES[role]:
+        assert statement in prompt
 
 
-@pytest.mark.parametrize("role", ["ingest", "audit", "planner"])
+@pytest.mark.parametrize("role", sorted(OUTSIDE_FACTS))
 def test_outside_facts_stay_attributed_and_unverified(role):
     prompt = prompt_text(role)
-    assert (
-        "Preserve outside facts as the request gives them, name their source "
-        "and mark them unverified" in prompt
-    )
-    assert (
-        "goals that tests or review can judge inside this repo "
-        "without outside verification" in prompt
-    )
+    for statement in OUTSIDE_FACTS[role]:
+        assert statement in prompt
 
 
 def test_planner_review_goals_name_available_evidence():
@@ -49,12 +58,12 @@ def test_planner_review_goals_name_available_evidence():
 def test_reviewer_judges_review_goals_without_outside_verification():
     prompt = prompt_text("reviewer")
     assert (
-        "Judge review-verified goals using the supplied diff, check verdicts "
-        "and readable head worktree" in prompt
+        "Judge review-verified goals from the diff, the check verdicts "
+        "and the head worktree" in prompt
     )
     assert (
-        "Treat attributed outside facts as unverified; "
-        "do not require outside verification" in prompt
+        "Treat attributed outside facts as unverified. "
+        "Do not require outside verification" in prompt
     )
 
 

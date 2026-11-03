@@ -95,21 +95,21 @@ def test_plan_check_kinds_reach_maker_test_tool(maker_request):
 
 def test_prompt_distinguishes_excused_regressions_and_unverified_evidence():
     prompt = " ".join(files("tl3_workers").joinpath("prompts", "maker.md").read_text().split())
-    assert "pre-existing only for tests named in regression checks" in prompt
-    assert "fails-on-base means this test also failed or errored on base, but no regression check names it." in prompt
-    assert "fails-on-base does not excuse demonstrating, reproducing or behavior-preserving checks" in prompt
-    assert "Never edit unrelated code, pins or tests to make it pass" in prompt
-    assert "Name it and both runs in your self-check; it is not a reason for cant_meet" in prompt
-    assert "For a goal verified by review, give the change and your account" in prompt
-    assert "Name evidence your tools cannot reach as unverified; review decides" in prompt
-    assert "A failing check your change caused is never unverified." in prompt
+    assert "label a failure pre-existing only for tests that regression checks name" in prompt
+    assert "fails-on-base means that the test also failed or errored on base, but no regression check names it." in prompt
+    assert "It excuses no demonstrating, reproducing or behavior-preserving check" in prompt
+    assert "do not edit unrelated code, pins or tests to make a test pass" in prompt
+    assert "Name such a test and both runs in your self-check" in prompt
+    assert "so it is not a reason for cant_meet" in prompt
+    assert "For a goal that review verifies, describe the change and how it meets the goal" in prompt
+    assert "Mark evidence that your tools cannot reach as unverified. Review decides" in prompt
+    assert "A failing check that your change caused is never unverified." in prompt
 
 
 def test_prompt_tells_history_records_from_open_feedback():
     # #316: superseded findings arrive as one-line records with resolved_round.
     prompt = " ".join(files("tl3_workers").joinpath("prompts", "maker.md").read_text().split())
-    assert "A feedback item with resolved_round is a one-line record of history that a later review or check superseded; it is not a task." in prompt
-    assert "The full-text items without resolved_round are the open ones to fix." in prompt
+    assert "In a fix round, fix every open feedback item. An item with resolved_round is history, not a task." in prompt
 
 
 def test_prompt_requires_reds_the_harness_accepts():
@@ -117,12 +117,12 @@ def test_prompt_requires_reds_the_harness_accepts():
     # test can pass there; neither demonstrates the change.
     prompt = " ".join(files("tl3_workers").joinpath("prompts", "maker.md").read_text().split())
     assert "must fail by assertion on the base" in prompt
-    assert "Import names the change adds inside the test body, or reach them through their module" in prompt
-    assert "a test failure, not a collection error" in prompt
-    assert "Prefer new test files where the plan allows" in prompt
-    assert "force the bad interleaving or timing deterministically with injected clocks, events or barriers" in prompt
-    assert "head's tests overlaid on the base implementation" in prompt
-    assert "Ordinary demonstrating proof is controller-owned and remains pending until Checking" in prompt
+    assert "Import the names that your change adds inside the test body" in prompt
+    assert "the base run fails as a test, not at collection" in prompt
+    assert "Prefer new test files when the plan allows them" in prompt
+    assert "force the bad timing with injected clocks, events or barriers" in prompt
+    assert "It cannot prove RED for an ordinary demonstrating check" in prompt
+    assert "Checking proves that RED after your reply" in prompt
     assert "A plain base pass neither supplies nor disproves that RED" in prompt
     assert "Confirm the base outcome with run_tests and its base comparison before replying done" not in prompt
 

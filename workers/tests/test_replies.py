@@ -116,7 +116,9 @@ def test_every_role_prompt_asks_for_json_only(role, request_fixture, text, reque
 
 
 def test_maker_prompt_asks_for_json_only():
-    assert ONLY_JSON in files("tl3_workers").joinpath("prompts", "maker.md").read_text()
+    # #648: code appends ONLY_JSON to every system prompt (see the test above); the
+    # maker prompt names its reply kinds instead of repeating it.
+    assert "Your reply is one of these kinds" in files("tl3_workers").joinpath("prompts", "maker.md").read_text()
 
 
 @pytest.mark.parametrize("role,request_fixture,text", [

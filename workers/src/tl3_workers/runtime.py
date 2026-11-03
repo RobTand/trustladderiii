@@ -23,7 +23,7 @@ from langchain_openai import ChatOpenAI
 from jsonschema import ValidationError
 
 from tl3_workers.evidence import forcing_capabilities, forcing_guidance
-from tl3_workers.contracts import read_json, read_reply, schema, validate
+from tl3_workers.contracts import model_facing, read_json, read_reply, schema, validate
 from tl3_workers.roles import ROLES
 from tl3_workers.roles.planner import EXPLORATION_DECLARATION, PlanConsistencyError
 from tl3_workers.forcing_rehearsal import ForcingRehearsals
@@ -221,7 +221,7 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None,
             variant["properties"].pop(name, None)
     for name in role.code_only_fields:
         proposal.get("$defs", {}).pop(name, None)
-    prompt += json.dumps(proposal, ensure_ascii=False)
+    prompt += json.dumps(model_facing(proposal), ensure_ascii=False)
     # Deep Agents requires read_file in its filesystem middleware. The profile
     # excludes it at both model and dispatch boundaries; StateBackend holds no host files.
     filesystem = FilesystemMiddleware(
