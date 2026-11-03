@@ -2,7 +2,12 @@
 
 from copy import deepcopy
 from dataclasses import asdict, replace
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
+from pathlib import Path
+import subprocess
+import threading
 from types import SimpleNamespace
 
 import httpx
@@ -13,13 +18,124 @@ import pytest
 
 from tl3_workers import runtime
 from tl3_workers.roles import maker
-import test_maker_budget
-import test_tracing
 
-# pytest collects shared fixtures under these module-level names.
-maker_request = test_maker_budget.maker_request
-receiver = test_tracing.receiver
-exporters = test_tracing.exporters
+# Local copies of test_maker_budget's maker request and test_tracing's receiver: a test module that imports another test module adds a
+# test_to_test edge, which the Gate's graph-impact check refuses.
+def git(root, *args):
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env.update({
+        "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_AUTHOR_NAME": "Fixture", "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+        "GIT_COMMITTER_NAME": "Fixture", "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+    })
+    return subprocess.run(
+        ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", *args],
+        cwd=root, env=env, check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+
+@pytest.fixture
+def maker_request(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    git(root, "init", "--quiet", "--template=")
+    (root / "greeting.py").write_text("def greet(): return 'goodbye'\n")
+    git(root, "add", ".")
+    git(root, "commit", "--quiet", "-m", "Base")
+    return {
+        "protocol": 1,
+        "operation": {"node": 1, "generation": 0, "kind": "make"},
+        "role": "maker",
+        "model": {"base_url": "http://model.invalid/v1", "name": "fixture-model",
+                  "effort": "high", "budget_tokens": 32000},
+        "key_file": str(tmp_path / "unused-key"),
+        "worktree": str(root),
+        "inputs": {
+            "brief": "Return hello without changing greet's interface.",
+            "goals": [{"id": "greeting", "description": "Return hello.", "verification": "test"},
+                      {"id": "interface", "description": "Keep greet's interface.", "verification": "review"}],
+            "plan": {
+                "files": ["greeting.py", "test_greeting.py"],
+                "checks": [
+                    {"name": "hello", "kind": "demonstrating",
+                     "tests": ["test_greeting.py::test_hello"], "goal_ids": ["greeting"]},
+                    {"name": "signature", "kind": "behavior-preserving",
+                     "tests": ["test_greeting.py::test_signature"], "goal_ids": ["interface"]},
+                ],
+            },
+            "attempt": 1, "round": 0,
+            "tests": {"image": "sha256:" + "a" * 64,
+                      "tools_path": "/mnt/shared/prismabuild-fleet/repo/tools"},
+            "context_size": 1000,
+        },
+    }
+
+
+@pytest.fixture
+def receiver():
+    class Packets(list):
+        block = False
+        started = threading.Event()
+        release = threading.Event()
+
+    packets = Packets()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if packets.block:
+                packets.started.set()
+                packets.release.wait(15)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"experiment":{"experiment_id":"12"}}')
+
+        def do_POST(self):
+            packets.append((self.path, self.headers, self.rfile.read(int(self.headers['Content-Length']))))
+            self.send_response(getattr(packets, 'tag_status', 200)
+                               if self.path.endswith('set-experiment-tag') else 200)
+            self.end_headers()
+            self.wfile.write(b'{}')
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f'http://127.0.0.1:{server.server_port}', packets
+    packets.release.set()
+    server.shutdown()
+    server.server_close()
+    thread.join()
+
+
+@pytest.fixture
+def exporters(monkeypatch):
+    children = []
+    popen = subprocess.Popen
+
+    def launch(*args, **kwargs):
+        child = popen(*args, **kwargs)
+        command = child.args
+        if (isinstance(command, (list, tuple)) and len(command) > 2
+                and command[2] == 'ship' and Path(command[1]).name == 'tracing.py'):
+            children.append(child)
+        return child
+
+    monkeypatch.setattr(subprocess, 'Popen', launch)
+    yield children
+    for child in children:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=15)
+
+
+def exported_spans(packets):
+    from mlflow.entities import Span
+    from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
+    assert packets, "worker did not export a trace"
+    request = ExportTraceServiceRequest.FromString(packets[-1][2])
+    return [Span.from_otel_proto(span) for span in request.resource_spans[0].scope_spans[0].spans]
 
 CANT_MEET = {"kind": "cant_meet", "report": "The plan needs a file it does not declare."}
 RETRO = {"slowed_by": ["Three reads of greeting.py repeated the same lines."],
@@ -146,7 +262,7 @@ def test_retro_is_a_separate_span_on_the_maker_trace(maker_request, monkeypatch,
     runtime.run(maker_request, lambda event: None)
     for child in exporters:
         assert child.wait(timeout=15) == 0
-    spans = test_tracing.exported_spans(packets)
+    spans = exported_spans(packets)
     root = next(span for span in spans if span.parent_id is None)
     retro = next(span for span in spans if span.name == "tl3.maker_retro")
     assert retro.parent_id == root.span_id

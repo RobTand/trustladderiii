@@ -13,10 +13,38 @@ import pytest
 from tl3_workers import runtime
 from tl3_workers.contracts import schema
 from tl3_workers.tools import Worktree
-import test_workers
 
-# pytest collects the shared fixture under this module-level name.
-request_doc = test_workers.request_doc
+# Local copies of test_workers' replies and ingest request: a test module that imports another test module adds a
+# test_to_test edge, which the Gate's graph-impact check refuses.
+BRIEF = {
+    "kind": "brief", "brief": "Fix the greeting without changing its interface.",
+    "goals": [
+        {"description": "Return the requested greeting.", "verification": "test"},
+        {"description": "Keep the public interface clear.", "verification": "review"},
+    ],
+    "memory_ids": [],
+}
+EARLY = {"kind": "early_end", "outcome": "duplicate", "reason": "Issue 2 requests the same fix."}
+AGREE = {"verdict": "agree", "objections": []}
+DISAGREE = {"verdict": "disagree", "objections": ["The issue also asks for punctuation."]}
+
+
+@pytest.fixture
+def request_doc(tmp_path):
+    return {
+        "protocol": 1,
+        "operation": {"node": 1, "generation": 0, "kind": "ingest"},
+        "role": "ingest",
+        "model": {"base_url": "http://model.invalid/v1", "name": "fixture-model",
+                  "effort": "high", "budget_tokens": 32000},
+        "key_file": str(tmp_path / "never-read-this-key"),
+        "inputs": {
+            "issue": {"number": 1, "title": "Fix greeting", "body": "Return hello.",
+                      "author": "requester", "comments": []},
+            "repo": {"readme": "A greeting library.", "file_list": ["greeting.py"]},
+        },
+        "worktree": str(tmp_path),
+    }
 
 
 def abort_rule(role):
@@ -53,7 +81,7 @@ class ToolModel(FakeMessagesListChatModel):
     """Calls one tool, then answers with the role's final reply."""
     calls: list = []
     call: dict = {"name": "read", "args": {"path": "greeting.py"}}
-    final: dict = test_workers.BRIEF
+    final: dict = BRIEF
 
     def bind_tools(self, tools, **kwargs):
         return self
@@ -97,13 +125,13 @@ def ended_by_environment(model, events, error, tmp_path):
 def test_environment_errno_in_a_read_only_role_fails_the_run(request_doc, monkeypatch, tmp_path, code, role):
     request_doc["role"] = request_doc["operation"]["kind"] = role
     if role == "audit":
-        request_doc["inputs"]["ingest"] = test_workers.BRIEF
+        request_doc["inputs"]["ingest"] = BRIEF
 
     def unreadable(self, path: str, offset: int = 0, limit: int = 200, column: int = 0) -> str:
         raise OSError(code, "fixture environment failure", path)
 
     monkeypatch.setattr(Worktree, "read", unreadable)
-    final = test_workers.AGREE if role == "audit" else test_workers.BRIEF
+    final = AGREE if role == "audit" else BRIEF
     ended_by_environment(*run_ingest(request_doc, monkeypatch, tmp_path, final=final), tmp_path)
 
 
