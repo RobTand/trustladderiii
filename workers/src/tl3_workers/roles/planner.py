@@ -131,8 +131,6 @@ def check_reply(inputs, reply, *, rehearsals=None):
     missing_forced = []
     paths = set()
     if reply["kind"] == "leaf":
-        violations.extend(proof_applicability(inputs['ingest']['goals'], reply['checks'],
-            lambda node: base_definition(node, inputs.get('base_sha'))[1]))
         if inputs["must_split"]:
             violations.append("Must split after running out of room.")
         if not reply["files"]:
@@ -154,6 +152,7 @@ def check_reply(inputs, reply, *, rehearsals=None):
                     violations.append(str(error))
         covered = set()
         forcings = {}
+        exact_nodes = set()
         for index, check in enumerate(reply["checks"]):
             if "forcing" in check:
                 # #393: a forced reproduction is the red for a deflake.
@@ -173,6 +172,7 @@ def check_reply(inputs, reply, *, rehearsals=None):
                 except ValueError:
                     violations.append("Checks must name exact pytest node IDs.")
                     continue
+                exact_nodes.add(node_id)
                 # A forced check runs the old test on the base, so it must exist there too.
                 if check["kind"] in {"regression", "behavior-preserving"} or ("forcing" in check and not check.get("proof", {}).get("subjects")) or "declared_symptom" in check:
                     path = node_id.split("::")[0]
@@ -191,6 +191,9 @@ def check_reply(inputs, reply, *, rehearsals=None):
             if not cited <= goals:
                 violations.append("A check cites an unknown goal.")
             covered.update(cited)
+        violations.extend(proof_applicability(inputs['ingest']['goals'],
+            [check for check in reply['checks'] if set(check['node_ids']) <= exact_nodes],
+            lambda node: base_definition(node, inputs.get('base_sha'))[1]))
         edit_errors, uncovered = edit_violations(inputs["ingest"]["goals"], reply)
         violations.extend(edit_errors)
         if "Checks must name exact pytest node IDs." not in violations:
