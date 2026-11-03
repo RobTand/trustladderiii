@@ -90,3 +90,20 @@ fn lifecycle_late_phase_cannot_revive_expired_inactivity() {
         || start + Duration::from_secs(elapsed.get()),
     );
 }
+
+#[test]
+fn lifecycle_timely_progress_outlives_inactivity() {
+    let start = Instant::now();
+    let elapsed = std::cell::Cell::new(0);
+    let mut applied = 0;
+    drain_deadline::lifecycle(
+        &mut applied,
+        |applied| (*applied, *applied == 4),
+        |_| elapsed.set(elapsed.get() + 40),
+        |_| vec![()],
+        |applied, ()| *applied += 1,
+        || start + Duration::from_secs(elapsed.get()),
+    );
+    assert_eq!(applied, 4);
+    assert_eq!(elapsed.get(), 160);
+}

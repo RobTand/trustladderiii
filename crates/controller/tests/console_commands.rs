@@ -2,6 +2,9 @@
 //! effect of Rob's equivalent comment, refusals say why, and a crash between
 //! filing and applying loses nothing and applies once.
 
+#[allow(dead_code)]
+#[path = "support/scenario.rs"]
+mod scenario;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 
@@ -721,22 +724,19 @@ fn wait_for_console(
     mut observe: impl FnMut() -> Vec<(String, Value)>,
     mut changed: impl FnMut(),
 ) {
-    let started = std::time::Instant::now();
-    let mut last_progress = started;
     let mut nodes = Vec::new();
-    while !done() {
+    scenario::wait(what, inactivity, absolute, || {
+        if done() {
+            return Some(());
+        }
         let next = observe();
         if next != nodes {
-            last_progress = std::time::Instant::now();
+            scenario::progress(format!("console {what}; nodes={next:?}"));
             nodes = next;
         }
-        assert!(
-            last_progress.elapsed() < inactivity && started.elapsed() < absolute,
-            "console fixture stalled waiting for {what}; last nodes={nodes:?}; quiet={:?}",
-            last_progress.elapsed()
-        );
         changed();
-    }
+        None
+    });
 }
 
 /// tl3d wakes on the console's notification alone: no comment, webhook or
