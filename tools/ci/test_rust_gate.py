@@ -80,7 +80,7 @@ class GateTests(unittest.TestCase):
             root = Path(temporary)
             fixture = root / 'tl3-store-pg-budget'
             (fixture / 'data').mkdir(parents=True)
-            child = 'import time; start=time.process_time(); exec("while time.process_time()-start < 6: pass")'
+            child = 'import time; start=time.process_time(); exec("while time.process_time()-start < 6.1: pass")'
             server = ('import subprocess, sys\n'
                       + f'subprocess.run([sys.executable, "-c", {child!r}], check=True)\n'
                       + 'print("ready", flush=True)\n'
