@@ -119,8 +119,9 @@ def added_names(base: Path, head: Path, patterns: list[str]) -> frozenset[tuple[
             for node in module.body:
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                     found.add((name, node.name))
-                elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-                    # Module-level constants are importable names too (PQ #2662). Only
+                elif isinstance(node, ast.Assign) or isinstance(node, ast.AnnAssign) and node.value is not None:
+                    # Module-level constants are importable names too (PQ #2662, #611). A bare
+                    # annotation binds nothing at runtime, so it needs a value. Only
                     # plain name stores bind a module name; attribute and subscript
                     # stores do not, and nested statements are not module bindings.
                     targets = node.targets if isinstance(node, ast.Assign) else [node.target]

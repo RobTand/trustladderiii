@@ -541,6 +541,7 @@ def test_added_names_include_new_module_constants(tmp_path):
         "OLD = 1\n"
         "NEW_PROFILE = dict(a=1)\n"
         "TYPED: int = 2\n"
+        "BARE: int\n"
         "LEFT = RIGHT = 3\n"
         "FIRST, (SECOND, *REST) = 1, (2, 3)\n"
         "obj = object()\n"
@@ -552,4 +553,4 @@ def test_added_names_include_new_module_constants(tmp_path):
     names = {name for path, name in added_names(base, head, ["tests/*.py"]) if path == "pkg/digests.py"}
     assert {"NEW_PROFILE", "TYPED", "LEFT", "RIGHT", "FIRST", "SECOND", "REST", "obj", "table"} <= names
     # Attribute and subscript stores bind no module name; nested statements are not module-level bindings.
-    assert not names & {"attribute", "key", "CONDITIONAL", "OLD"}
+    assert not names & {"attribute", "key", "CONDITIONAL", "OLD", "BARE"}
