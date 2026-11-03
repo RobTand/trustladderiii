@@ -21,6 +21,7 @@ py_library(
     srcs = [
         "__init__.py",
         "execution.py",
+        "generator.py",
         "limits.py",
         "model.py",
         "node_ids.py",
@@ -33,4 +34,11 @@ py_library(
     imports = [".."],
     visibility = ["//visibility:public"],
     deps = ["@tl3_pip//pytest"],
+)
+
+py_binary(
+    name = "generator",
+    srcs = ["generator.py"],
+    imports = [".."],
+    visibility = ["//visibility:public"],
 )

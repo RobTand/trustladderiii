@@ -80,7 +80,7 @@ def _recover_temporaries(worktree, state):
 
 
 def make_generator_tool(worktree):
-    transient_state = {}
+    transient_state = getattr(worktree, "generator_checkpoint", {})
 
     def run() -> dict:
         """Regenerate configured outputs. There are no model-selected commands or arguments."""
@@ -107,6 +107,7 @@ def make_generator_tool(worktree):
         def record():
             nonlocal transient_state
             transient_state = state
+            worktree.generator_checkpoint = state
             if state_path:
                 save(state_path, state)
 
