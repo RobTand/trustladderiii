@@ -118,7 +118,8 @@ pub(super) fn open_request(settings: &tl3_config::Store) {
         .expect("restart must preserve approved decisions")
         .value;
     assert_eq!(inherited["request_version"], 1);
-    assert_eq!(inherited["decisions"], context["decisions"]);
+    assert_eq!(inherited["decision_ids"], json!(["pq2662-q10"]));
+    assert!(inherited.get("decisions").is_none());
     // A change request revokes the contradictory approval without erasing its history.
     drop(controller);
     let mut controller = steering::race_controller(
@@ -153,9 +154,32 @@ pub(super) fn open_request(settings: &tl3_config::Store) {
         .unwrap()
         .value;
     assert_eq!(updated["request_version"], 2);
+    assert_eq!(updated["decision_ids"], json!([]));
+    let history = store
+        .load()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|r| r.table == "decisions")
+        .collect::<Vec<_>>();
     assert_eq!(
-        updated["decisions"][0]["superseded_by"],
+        history.len(),
+        1,
+        "history is stored once across all request versions"
+    );
+    assert_eq!(
+        history[0].value["superseded_by"],
         "https://github.com/owner/sandbox/issues/12#issuecomment-20011"
+    );
+    assert!(
+        history[0].value["supersession_reason"]
+            .as_str()
+            .unwrap()
+            .contains("contradicts")
+    );
+    assert_eq!(
+        history[0].value["answer"],
+        context["decisions"][0]["answer"]
     );
     assert_eq!(
         store
@@ -166,7 +190,7 @@ pub(super) fn open_request(settings: &tl3_config::Store) {
             .find(|r| r.table == "request_decisions" && r.id == "0")
             .unwrap()
             .value,
-        context
+        json!({"schema_version":2, "request_version":0, "decision_ids":["pq2662-q10"]})
     );
     println!("test restart_open_request_starts_from_edited_issue ... ok");
 }

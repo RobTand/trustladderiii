@@ -224,6 +224,26 @@ fn classifier_schema(value: &Value, reply: bool) -> Result<()> {
 
 pub(crate) fn validate_classification(inputs: &Value, reply: &Value) -> Result<()> {
     classifier_schema(reply, true)?;
+    if inputs.get("reconcile_issue").is_some() || reply["kind"] == "reconcile_decisions" {
+        if inputs.get("reconcile_issue").is_none() || reply["kind"] != "reconcile_decisions" {
+            return Err(Error::Invalid("restart must reconcile the current issue"));
+        }
+        let active: std::collections::BTreeSet<_> = inputs["decision_context"]["decisions"]
+            .as_array()
+            .ok_or(Error::Invalid("reconciliation needs decisions"))?
+            .iter()
+            .map(|d| d["id"].as_str().unwrap())
+            .collect();
+        let items = reply["assessments"].as_array().unwrap();
+        let ids: std::collections::BTreeSet<_> =
+            items.iter().map(|a| a["id"].as_str().unwrap()).collect();
+        if ids != active || ids.len() != items.len() {
+            return Err(Error::Invalid(
+                "reconciliation must assess every applicable decision exactly once",
+            ));
+        }
+        return Ok(());
+    }
     if inputs["selected_answer"]
         .as_object()
         .is_some_and(|selected| {

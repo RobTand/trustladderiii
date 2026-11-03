@@ -165,3 +165,6 @@ plan before the maker may edit it.
 Include an approved extra file when the goals require it, and carry the decision's
 restrictions into the plan. A restart does not require asking the same scope
 question again.
+
+The controller reconciles restored decisions against the current issue before
+restart intake. Current issue text supersedes contradictory old approvals.

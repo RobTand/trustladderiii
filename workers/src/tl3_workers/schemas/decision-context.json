@@ -55,6 +55,10 @@
               "string",
               "null"
             ]
+          },
+          "supersession_reason": {
+            "type": "string",
+            "minLength": 1
           }
         },
         "required": [
@@ -68,7 +72,8 @@
           "superseded_by"
         ],
         "additionalProperties": false
-      }
+      },
+      "maxItems": 64
     }
   },
   "required": [

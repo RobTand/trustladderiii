@@ -1255,7 +1255,16 @@ fn changed_console_request_reconciles_existing_decisions() {
         .iter()
         .max_by_key(|(id, _)| id.parse::<u64>().unwrap())
         .unwrap();
-    assert!(!latest.1["decisions"][0]["superseded_by"].is_null());
+    assert_eq!(latest.1["decision_ids"], json!([]));
+    let history = world.rows("decisions");
+    assert_eq!(history.len(), 1);
+    assert!(!history[0].1["superseded_by"].is_null());
+    assert!(
+        history[0].1["supersession_reason"]
+            .as_str()
+            .unwrap()
+            .contains("contradicts")
+    );
     assert!(world.rows("console_selected_answers").is_empty());
     db.stop();
 }

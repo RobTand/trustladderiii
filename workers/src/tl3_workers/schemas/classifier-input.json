@@ -120,6 +120,33 @@
     "selected_answer": {
       "$ref": "classifier-reply.json",
       "description": "A typed console choice. Copy these fields exactly; assess only its decision details and supersedes."
+    },
+    "reconcile_issue": {
+      "type": "object",
+      "description": "Fresh GitHub issue, frozen before restart intake. Its current title and body override contradictory restored decisions.",
+      "required": [
+        "number",
+        "title",
+        "body",
+        "updated_at"
+      ],
+      "properties": {
+        "number": {
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_at": {
+          "type": "string"
+        }
+      }
     }
   },
   "required": [

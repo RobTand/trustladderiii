@@ -612,11 +612,8 @@ impl Controller {
                 None
             };
             if pending.is_none() {
-                commit.rows.push(put(
-                    "request_decisions",
-                    node.clone(),
-                    json!(decisions::Context::new(NodeId(world.nodes.len() as u64))),
-                ));
+                decisions::Context::new(NodeId(world.nodes.len() as u64))
+                    .store(snapshot, commit)?;
             }
             let event = if let Some(proposed) = &proposed {
                 Event::NewAdoption {
