@@ -161,3 +161,12 @@ fn blocked_maker_reply_needs_cited_evidence() {
         assert!(map_reply("maker", &reply).is_err(), "{reply}");
     }
 }
+
+#[test]
+fn request_123_pending_is_a_handover_not_a_false_success() {
+    let reply = json!({"kind":"done", "head":"a".repeat(40), "self_check":[
+        {"goal_id":"repair", "status":"met", "evidence":"Normal head passed."},
+        {"goal_id":"publication", "status":"pending", "why":"Publishing owns PR creation."}
+    ]});
+    assert!(matches!(map_reply("maker", &reply).unwrap(), MappedReply::Made(_)));
+}
