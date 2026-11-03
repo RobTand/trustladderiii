@@ -2601,8 +2601,9 @@ impl Controller {
                 key,
                 reply,
                 failure,
+                judge_failure,
             } => {
-                self.postmortem_finished(snapshot, &key, reply, failure, commit)?;
+                self.postmortem_finished(snapshot, &key, reply, failure, judge_failure, commit)?;
                 return Ok(None);
             }
             Observation::LinkedRequest {

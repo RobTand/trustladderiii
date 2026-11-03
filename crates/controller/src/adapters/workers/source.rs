@@ -646,6 +646,7 @@ pub(super) fn parse_reply(
         return Ok(Observation::Postmortem {
             key: delivery.key.clone(),
             reply: Some(reply.ok_or(Error::Invalid("worker reply is missing"))?),
+            judge_failure: None,
             failure: None,
         });
     }
