@@ -71,6 +71,9 @@
                   "proof"
                 ],
                 "additionalProperties": false
+              },
+              "proof_obligation": {
+                "$ref": "#/$defs/proof_obligation"
               }
             },
             "required": [
@@ -506,6 +509,51 @@
         "$ref": "#/$defs/evidence_requirement"
       },
       "maxItems": 64
+    },
+    "proof_obligation": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "assertion"
+        },
+        "observer": {
+          "enum": [
+            "new",
+            "any"
+          ]
+        },
+        "subjects": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|::|$))[^\\\\\\u0000\\r\\n]+\\.py(?:::[A-Za-z_][A-Za-z_0-9]*)*$"
+          }
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "quote": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "kind",
+        "observer",
+        "subjects",
+        "source",
+        "quote"
+      ],
+      "additionalProperties": false,
+      "description": "A proof obligation explicitly required by the source, with its literal quote. Method choices cannot invent or replace it."
     }
   }
 }
