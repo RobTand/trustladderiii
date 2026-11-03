@@ -238,7 +238,7 @@ class RustRunnerReceiptTests(unittest.TestCase):
             execute.assert_called_once()
 
     def test_long_controller_scenarios_accept_sharding(self):
-        for name in ['mergify', 'publishing']:
+        for name in ['mergify', 'publishing', 'github-flow', 'github-notices', 'simulation']:
             with self.subTest(binary=name):
                 self.run_sharded('tl3-controller/' + name)
 

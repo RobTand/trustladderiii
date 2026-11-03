@@ -198,6 +198,7 @@ fn observe(controller: &mut Controller, api: &Server, config: &Bootstrap) {
         ingress::apply(controller, input).unwrap();
     }
     for _ in 0..20 {
+        scenario_progress("ci_evidence: controller step");
         controller.drive_once().unwrap();
         if controller.world().unwrap().nodes[0].phase != Phase::Queued {
             break;

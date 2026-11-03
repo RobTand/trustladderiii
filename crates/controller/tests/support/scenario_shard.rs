@@ -2,6 +2,8 @@ use std::{
     cmp::Reverse,
     collections::{HashMap, HashSet},
     env,
+    fmt::Debug,
+    hash::Hash,
 };
 
 macro_rules! worker_groups {
@@ -77,10 +79,12 @@ impl WorkerGroup {
 
 /// Assign each declared scenario group to exactly one Bazel shard.
 /// Groups keep their original fixture lifetime and scenario timing markers.
-pub struct Shard {
+pub struct Shard<G = WorkerGroup> {
     index: usize,
-    owners: HashMap<WorkerGroup, usize>,
-    planned: HashSet<WorkerGroup>,
+    groups: Vec<G>,
+    markers: HashMap<G, usize>,
+    owners: HashMap<G, usize>,
+    planned: HashSet<G>,
     selected: usize,
 }
 
@@ -95,42 +99,78 @@ impl Shard {
     }
 
     pub fn new(index: usize, total: usize) -> Self {
+        Self::with_groups(
+            index,
+            total,
+            &WORKER_GROUPS
+                .iter()
+                .map(|group| (*group, group.markers(), group.estimated_seconds()))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    pub fn unsharded() -> Self {
+        Self::new(0, 1)
+    }
+}
+
+impl<G: Copy + Debug + Eq + Hash> Shard<G> {
+    pub fn from_groups(groups: &[(G, usize, usize)]) -> Self {
+        let parse = |name: &str, default| {
+            env::var(name).map_or(default, |value| value.parse().expect("invalid Bazel shard"))
+        };
+        Self::with_groups(
+            parse("TEST_SHARD_INDEX", 0),
+            parse("TEST_TOTAL_SHARDS", 1),
+            groups,
+        )
+    }
+
+    pub fn with_groups(index: usize, total: usize, groups: &[(G, usize, usize)]) -> Self {
         assert!(
             total > 0 && index < total,
             "invalid Bazel shard index/count"
         );
-        let mut groups = WORKER_GROUPS.to_vec();
-        groups.sort_by_key(|group| Reverse(group.estimated_seconds()));
+        let declared: Vec<_> = groups.iter().map(|(group, _, _)| *group).collect();
+        let markers: HashMap<_, _> = groups
+            .iter()
+            .map(|(group, markers, _)| (*group, *markers))
+            .collect();
+        assert_eq!(
+            markers.len(),
+            groups.len(),
+            "duplicate scenario group declaration"
+        );
+        let mut groups = groups.to_vec();
+        groups.sort_by_key(|(_, _, seconds)| Reverse(*seconds));
         let mut loads = vec![0; total];
         let mut owners = HashMap::new();
-        for group in groups {
+        for (group, _, seconds) in groups {
             let owner = loads
                 .iter()
                 .enumerate()
                 .min_by_key(|(_, load)| *load)
                 .unwrap()
                 .0;
-            loads[owner] += group.estimated_seconds();
+            loads[owner] += seconds;
             owners.insert(group, owner);
         }
         Self {
             index,
+            groups: declared,
+            markers,
             owners,
             planned: HashSet::new(),
             selected: 0,
         }
     }
 
-    pub fn unsharded() -> Self {
-        Self::new(0, 1)
-    }
-
-    pub fn run(&mut self, group: WorkerGroup, scenario: impl FnOnce()) {
+    pub fn run(&mut self, group: G, scenario: impl FnOnce()) {
         assert!(
             self.planned.insert(group),
             "duplicate scenario group: {group:?}"
         );
-        let markers = group.markers();
+        let markers = self.markers[&group];
         let owner = self.owners[&group];
         if owner == self.index {
             scenario();
@@ -139,7 +179,7 @@ impl Shard {
     }
 
     pub fn finish(self, label: &str) {
-        for group in WORKER_GROUPS {
+        for group in &self.groups {
             assert!(
                 self.planned.contains(group),
                 "missing scenario group: {group:?}"

@@ -34,6 +34,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         );
         // merge_bot_account is a person login, so neither event is filtered as a bot.
         for (id, event) in [(500, "merged"), (501, "closed")] {
+            scenario_progress(format!("merge_closure: {event}"));
             state.events.push(
                 json!({"id":id,"event":event,"actor":{"id":42,"login":if mode == "normal" {"RobTand"} else {"rob"}},
                 "created_at":"2026-10-30T01:00:00Z","issue":{"number":100}}),

@@ -11,6 +11,14 @@ import rust_gate  # noqa: E402
 
 # Must match WORKSPACE in tools/bazel/rust.bzl.
 WORKSPACE = Path('/tmp/tl3-workspace')
+SHARD_AWARE_BINARIES = {
+    'tl3-controller/github-flow',
+    'tl3-controller/github-notices',
+    'tl3-controller/mergify',
+    'tl3-controller/publishing',
+    'tl3-controller/simulation',
+    'tl3-controller/workers',
+}
 
 
 def link_workspace():
@@ -57,7 +65,7 @@ def main():
     if int(os.environ.get('TEST_TOTAL_SHARDS', '1')) > 1:
         shard = {'index': int(os.environ['TEST_SHARD_INDEX']),
                  'total': int(os.environ['TEST_TOTAL_SHARDS'])}
-        if harness != 'custom' or name != 'tl3-controller/workers':
+        if harness != 'custom' or name not in SHARD_AWARE_BINARIES:
             raise RuntimeError('scenario sharding requires a shard-aware custom harness')
         Path(os.environ['TEST_SHARD_STATUS_FILE']).touch()
     cpu_seconds, cpu_details = {}, {}

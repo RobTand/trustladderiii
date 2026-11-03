@@ -310,6 +310,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         // (cleared at once by the passing probe), one more counted failure,
         // then the second incident, which needs Rob.
         for look in 1..=5 {
+            scenario_progress(format!("requeue: look {look}"));
             clock.0.set(clock.0.get() + Duration::from_secs(100_000));
             controller.look_now().unwrap();
             drain(&mut controller);

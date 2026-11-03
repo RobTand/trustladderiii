@@ -20,6 +20,7 @@ fn publishing(settings: &tl3_config::Store, api: &Server, root: &Path) -> Contro
         })
         .unwrap();
     for _ in 0..300 {
+        scenario_progress("classic_protection: controller step");
         if let Some(effect) = controller
             .snapshot()
             .unwrap()
@@ -104,6 +105,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     assert!(controller.drive_once().unwrap());
     if mode == "runner-code" {
         for _ in 0..20 {
+            scenario_progress("classic_protection: controller step");
             if controller.world().unwrap().nodes[0]
                 .effect
                 .is_some_and(|effect| effect.cancelling)
@@ -149,6 +151,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     if matches!(mode, "failure" | "stale-failure" | "runner-code") {
         // Consume only until the fix round starts, so the fake maker cannot finish it.
         for _ in 0..20 {
+            scenario_progress("classic_protection: controller step");
             if controller.world().unwrap().nodes[0].phase == Phase::Making {
                 break;
             }
@@ -170,6 +173,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         assert_eq!(api.state.lock().unwrap().reruns, 0);
         if mode == "stale-failure" {
             for _ in 0..20 {
+                scenario_progress("classic_protection: controller step");
                 if !controller
                     .snapshot()
                     .unwrap()
@@ -308,6 +312,7 @@ fn restricted(settings: &tl3_config::Store, mode: &str) {
         .clone();
     controller.look_key(&key).unwrap();
     for _ in 0..30 {
+        scenario_progress("classic_protection: controller step");
         if controller.world().unwrap().nodes[0].phase == Phase::Making {
             break;
         }
