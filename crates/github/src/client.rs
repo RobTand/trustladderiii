@@ -144,14 +144,19 @@ impl Error {
             Self::ActionsForbidden(ActionsRefusal::Other) => {
                 FailureClass::Permanent("actions_refused")
             }
-            Self::Http { status: 401 | 403 } => FailureClass::Permanent("permission"),
-            Self::Http { status: 404 | 410 } => FailureClass::Permanent("not_found"),
-            Self::Http { status: 422 } => FailureClass::Permanent("invalid_request"),
+            Self::Http { status } => {
+                use tl3_mergify_core::http::{StatusClass, status_class};
+                match status_class(*status) {
+                    // A rate-limited response is `RateLimited`, never `Http`.
+                    StatusClass::Quota => FailureClass::Quota,
+                    class if class.permanent() => FailureClass::Permanent(class.as_str()),
+                    class => FailureClass::Transient(class.as_str()),
+                }
+            }
             Self::Config(_) => FailureClass::Permanent("setup"),
             Self::Jwt => FailureClass::Permanent("permission"),
-            Self::Http { status: 500..=599 } => FailureClass::Transient("upstream_server"),
             Self::Response => FailureClass::Transient("invalid_response"),
-            Self::Http { .. } | Self::Transport => FailureClass::Transient("transport"),
+            Self::Transport => FailureClass::Transient("transport"),
         }
     }
 }
@@ -375,9 +380,10 @@ impl GitHub {
                     let m = m.to_ascii_lowercase();
                     m.contains("secondary rate limit") || m.contains("abuse detection")
                 });
-            let rate_limited = status == StatusCode::TOO_MANY_REQUESTS
-                || (status == StatusCode::FORBIDDEN
-                    && (remaining_zero || headers.contains_key("retry-after") || secondary));
+            let rate_limited = tl3_mergify_core::http::rate_limited(
+                status.as_u16(),
+                remaining_zero || headers.contains_key("retry-after") || secondary,
+            );
             if remaining_zero || rate_limited {
                 let delay = rate_delay(&headers, attempt);
                 throttle.blocked_until =
@@ -862,13 +868,13 @@ impl GitHub {
             .send()
             .await
             .map_err(|_| Error::Transport)?;
-        if response.status() == StatusCode::TOO_MANY_REQUESTS
-            || response.status() == StatusCode::FORBIDDEN
-                && response
-                    .headers()
-                    .get("x-ratelimit-remaining")
-                    .is_some_and(|value| value == "0")
-        {
+        if tl3_mergify_core::http::rate_limited(
+            response.status().as_u16(),
+            response
+                .headers()
+                .get("x-ratelimit-remaining")
+                .is_some_and(|value| value == "0"),
+        ) {
             let delay = rate_delay(response.headers(), 0);
             throttle.blocked_until = Instant::now().checked_add(delay).ok_or(Error::Response)?;
             return Err(Error::RateLimited { retry_after: delay });

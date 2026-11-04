@@ -6,6 +6,9 @@ package(default_visibility = ["//visibility:public"])
 tl3_crate(
     package = "tl3-mergify",
     crate = "tl3_mergify",
-    local_deps = ["//crates/github:tl3_github"],
+    local_deps = [
+        "//crates/github:tl3_github",
+        "//crates/mergify-core:tl3_mergify_core",
+    ],
     examples = {"sandbox_gate": "examples/sandbox_gate.rs"},
 )
