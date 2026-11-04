@@ -12,11 +12,14 @@ class MergePrerequisiteError(ValueError):
 
 
 def check_prerequisites(inputs, reply):
+    prerequisites = reply.get("merge_prerequisites", [])
+    if not prerequisites:
+        return
     issue = inputs["issue"]
     sources = [issue.get("body", ""), issue.get("title", "")]
     sources.extend(comment.get("body", "") for comment in issue.get("comments", []))
     seen = set()
-    for prerequisite in reply.get("merge_prerequisites", []):
+    for prerequisite in prerequisites:
         quote = prerequisite["source_quote"]
         key = prerequisite["kind"], prerequisite["number"]
         if key in seen or not any(quote in (source or "") for source in sources):
