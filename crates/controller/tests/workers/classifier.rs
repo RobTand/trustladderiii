@@ -128,7 +128,7 @@ fn command(mut command: Command, input: &Value) -> std::process::Output {
     result
 }
 
-fn real_worker_repair() {
+pub(super) fn real_worker_repair() {
     let root = tempfile::tempdir().unwrap();
     let mut request = json!({
         "protocol": 1,

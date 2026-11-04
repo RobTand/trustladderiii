@@ -486,6 +486,8 @@ fn main() {
         .get(1)
         .is_some_and(|arg| arg == "--real-worker-contracts")
     {
+        classifier::real_worker_repair();
+        println!("test real_worker_contract_classifier ... ok");
         simulation(&database.create("contract_ingest_audit"));
         println!("test real_worker_contract_ingest_audit ... ok");
         planning::planning(&database.create("contract_planner"), "normal");
