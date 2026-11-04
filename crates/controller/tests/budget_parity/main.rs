@@ -22,7 +22,6 @@ fn parity(mode: &str) {
     let mut child = Command::new(python)
         .arg(root.join("crates/controller/tests/budget_parity/parity.py"))
         .arg(mode)
-        .env("TL3_BINARY", env!("CARGO_BIN_EXE_tl3"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
