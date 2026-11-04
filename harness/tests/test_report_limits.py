@@ -1,3 +1,4 @@
+import faulthandler
 import json
 from pathlib import Path
 import sys
@@ -16,7 +17,18 @@ class Progress:
         pass
 
 
-def test_collection_above_64_kib_has_a_normal_report(tmp_path, monkeypatch):
+@pytest.fixture
+def report_watchdog(capfd):
+    # Bazel's Python runner ignores --test_arg; keep stall stacks in test.log.
+    with capfd.disabled():
+        faulthandler.dump_traceback_later(5, repeat=True)
+        try:
+            yield
+        finally:
+            faulthandler.cancel_dump_traceback_later()
+
+
+def test_collection_above_64_kib_has_a_normal_report(tmp_path, monkeypatch, report_watchdog):
     (tmp_path / 'test_many.py').write_text(
         'import pytest\n@pytest.mark.parametrize("value", range(1000), '
         'ids=lambda value: "case_" + str(value) + "x" * 80)\n'
