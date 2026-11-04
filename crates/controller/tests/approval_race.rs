@@ -161,6 +161,23 @@ impl Respond for Api {
     }
 }
 
+#[derive(Clone)]
+struct ConcurrentApi {
+    api: Api,
+    reads: Arc<std::sync::Barrier>,
+}
+impl Respond for ConcurrentApi {
+    fn respond(&self, request: &Request) -> ResponseTemplate {
+        // Each HTTP frontend has its own wiremock server thread. Both capture
+        // the same stale listing before either reconciler can issue a PATCH.
+        let response = self.api.respond(request);
+        if request.method == "GET" && request.url.path().ends_with("/check-runs") {
+            self.reads.wait();
+        }
+        response
+    }
+}
+
 struct TargetGitHub {
     real: adapters::github::Adapter,
     other: adapters::github::Fake,
@@ -992,11 +1009,27 @@ fn concurrent_approval_reconciliations_converge() {
     case.corrupt_copies(3);
     let delivery = case.delivery();
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let reads = Arc::new(std::sync::Barrier::new(2));
+    let servers: Vec<_> = (0..2)
+        .map(|_| {
+            case._runtime.block_on(async {
+                let server = MockServer::start().await;
+                Mock::given(|_: &Request| true)
+                    .respond_with(ConcurrentApi {
+                        api: case.api.clone(),
+                        reads: reads.clone(),
+                    })
+                    .mount(&server)
+                    .await;
+                server
+            })
+        })
+        .collect();
     std::thread::scope(|scope| {
         for index in 0..2 {
             let barrier = barrier.clone();
             let delivery = delivery.clone();
-            let uri = case.server.uri();
+            let uri = servers[index].uri();
             let root = case.root.path().join(format!("reconciler-{index}"));
             scope.spawn(move || {
                 let client = GitHub::new(

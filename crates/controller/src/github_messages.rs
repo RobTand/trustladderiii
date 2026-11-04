@@ -53,6 +53,44 @@ impl Controller {
     }
 
     pub(crate) fn reconcile_messages(&mut self, snapshot: &Snapshot) -> Result<bool> {
+        // Older versions keyed work by comment ID. Fold those durable rows before
+        // doing any HTTP work, so restart/upgrade cannot retry once per copy.
+        let mut migration = Commit::new(
+            format!("coalesce-github-messages:{}", snapshot.revision.get()),
+            json!({"coalesce_messages":true}),
+            snapshot,
+        );
+        for row in snapshot.rows.iter().filter(|row| row.table == TABLE) {
+            let Observation::GitHubComment {
+                repository,
+                issue,
+                comment,
+            } = crate::decode_stored(row.value.clone())?
+            else {
+                return Err(Error::Invalid("invalid message reconciliation record"));
+            };
+            let key = tl3_github::GitHub::comment_effect_key(&comment.body)
+                .ok_or(Error::Invalid("cleanup marker missing"))?;
+            let id = format!(
+                "{}/{}/{}/{}/{}",
+                repository.owner.to_ascii_lowercase(),
+                repository.name.to_ascii_lowercase(),
+                repository.installation,
+                issue,
+                key
+            );
+            if row.id != id {
+                migration.rows.push(RowChange::Delete {
+                    table: TABLE.into(),
+                    id: row.id.clone(),
+                });
+                migration.rows.push(put(TABLE, id, row.value.clone()));
+            }
+        }
+        if !migration.rows.is_empty() {
+            self.store.commit(&migration)?;
+            return Ok(true);
+        }
         for row in snapshot.rows.iter().filter(|row| row.table == TABLE) {
             let Observation::GitHubComment {
                 repository,
@@ -99,6 +137,28 @@ impl Controller {
                         let delivery = crate::decode_stored(effect.payload)?;
                         self.maintenance_incident(snapshot, &delivery, &cleanup_key, "message_cleanup",
                             format!("GitHub message cleanup failed for {}/{} issue {}. Clear to retry deduplication.",repository.owner,repository.name,issue),&mut commit)?;
+                    } else {
+                        // A marked message can outlive its historical local effect.
+                        self.input_failed(
+                            snapshot,
+                            &cleanup_key,
+                            Some(crate::input_errors::IssueTarget {
+                                repository: repository.clone(),
+                                issue,
+                            }),
+                            "GitHub message cleanup",
+                            None,
+                            Upstream::GitHub,
+                            error,
+                            &mut commit,
+                        )?;
+                        for change in &mut commit.rows {
+                            if let RowChange::Put { table, value, .. } = change
+                                && table == "incidents"
+                            {
+                                value["effect"] = json!(cleanup_key);
+                            }
+                        }
                     }
                 }
                 self.store.commit(&commit)?;
