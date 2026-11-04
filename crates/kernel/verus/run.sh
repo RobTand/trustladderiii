@@ -39,5 +39,5 @@ if [[ ${1:-} == --mutants ]]; then
   shift
   /usr/bin/time -v python3 crates/kernel/tools/progress_mutants.py "$work/verus-x86-linux/verus" "$work/rust" "$@"
 else
-  /usr/bin/time -v "$work/verus-x86-linux/verus" --num-threads 1 --rlimit 30 -V spinoff-all --sysroot "$work/rust" "${1:-crates/kernel/verus/progress.rs}" "${@:2}"
+  /usr/bin/time -v "$work/verus-x86-linux/verus" --num-threads 1 --rlimit 30 --multiple-errors 0 -V spinoff-all --sysroot "$work/rust" "${1:-crates/kernel/verus/progress.rs}" "${@:2}"
 fi
