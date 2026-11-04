@@ -314,6 +314,7 @@ fn measure_complete_step_cost_and_allocations() {
                         if mode == 0 {
                             c.apply_reference(&s, input, event, &mut commit).unwrap();
                         } else {
+                            assert!(!c.post_kernel_alarm(&s).unwrap());
                             c.apply(&s, input, event, &mut commit).unwrap();
                         }
                         // The store's JSONB parameter encoder serializes every row,
