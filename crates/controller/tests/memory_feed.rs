@@ -81,7 +81,7 @@ impl Fixture {
         let mut ownership = Ownership::claim(Store::open(&settings).unwrap()).unwrap();
         let supervisor =
             Supervisor::new(&config, &scratch.path().join("records"), &mut ownership).unwrap();
-        drop(ownership);
+        ownership.release().unwrap();
         assert!(
             !attempts.recv_timeout(WAIT).unwrap(),
             "first delivery sees the outage"
@@ -453,7 +453,7 @@ fn outage_consumer_death_and_restart_rearms_automatic_recovery() {
         )
         .unwrap(),
     );
-    drop(ownership);
+    ownership.release().unwrap();
     assert!(!fixture.attempts.recv_timeout(WAIT).unwrap());
     fixture.barrier();
     let mut ctl = controller(&fixture, &clock);

@@ -24,6 +24,7 @@ fn main() {
             ownership_release as fn(&tl3_config::Store),
         ),
         ("ownership_drop", ownership_drop),
+        ("ownership_release_after_loss", ownership_release_after_loss),
         (
             "mvp_schema_6_upgrades_to_hindsight",
             mvp_schema_6_upgrades_to_hindsight as fn(&tl3_config::Store),
@@ -128,7 +129,7 @@ fn main() {
 fn migrate(settings: &tl3_config::Store) -> tl3_store::Result<Store> {
     let mut ownership = Ownership::claim(Store::connect(settings)?)?;
     ownership.migrate()?;
-    drop(ownership);
+    ownership.release()?;
     Store::open(settings)
 }
 
@@ -149,6 +150,7 @@ fn ownership_release(settings: &tl3_config::Store) {
     owner.migrate().unwrap();
     let mut observer = raw(settings);
     let pid = owner_pid(&mut observer);
+    let owner = Ownership::claim(owner.into_store()).unwrap();
     assert!(
         Ownership::claim(Store::open(settings).unwrap()).is_err(),
         "live owners still refuse contenders"
@@ -176,6 +178,20 @@ fn ownership_release(settings: &tl3_config::Store) {
 
 fn owner_pid(observer: &mut Client) -> i32 {
     observer.query_one("SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND classid::bigint = 1414280003 AND objid::bigint = 1330533458 AND objsubid = 1 AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) AND granted", &[]).unwrap().get(0)
+}
+
+/// #785: a failed release reports session loss rather than claiming success.
+fn ownership_release_after_loss(settings: &tl3_config::Store) {
+    let owner = Ownership::claim(Store::open(settings).unwrap()).unwrap();
+    let mut observer = raw(settings);
+    let pid = owner_pid(&mut observer);
+    assert!(
+        observer
+            .query_one("SELECT pg_terminate_backend($1)", &[&pid])
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+    assert!(matches!(owner.release(), Err(Error::OwnershipLost)));
 }
 
 /// #785: transfer keeps ownership; normal drop and unwinding release it.

@@ -100,13 +100,14 @@ fn database(config: &tl3_config::Config) -> Result<tl3_store::Store> {
     }
     let mut ownership = tl3_store::Ownership::claim(tl3_store::Store::connect(settings)?)?;
     ownership.migrate()?;
+    let store = ownership.release()?;
     println!("Postgres: database exists, fsync on, migrations applied");
     // This runs on every tl3-postgres start, which tl3d and the status page
     // require. A console fault must never stop the database.
     if let Err(error) = console_role(config) {
         println!("Postgres: console login not granted: {error}");
     }
-    Ok(ownership.into_store())
+    Ok(store)
 }
 
 /// The console reads through its own login, which may read every table,

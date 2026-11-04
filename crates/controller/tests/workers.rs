@@ -475,6 +475,7 @@ fn main() {
         let mut ownership =
             tl3_controller::Ownership::claim(Store::open(&settings).unwrap()).unwrap();
         let supervisor = Supervisor::new(&config, &root.join("fakes"), &mut ownership).unwrap();
+        ownership.release().unwrap();
         let mut source = supervisor.source();
         let (tx, rx) = mpsc::channel();
         source
