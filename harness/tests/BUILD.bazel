@@ -206,3 +206,9 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_summary_limits",
+    srcs = ["test_summary_limits.py"],
+    deps = ["//harness/src/tl3_harness"],
+)
