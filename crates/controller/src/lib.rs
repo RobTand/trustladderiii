@@ -13,6 +13,7 @@ pub mod adapters;
 mod blocked;
 pub mod board;
 mod branches;
+pub mod classifier;
 pub mod cli;
 pub mod clock;
 pub mod console;

@@ -2974,6 +2974,7 @@ dependencies = [
  "hex",
  "hmac 0.12.1",
  "jsonschema",
+ "libc",
  "loom",
  "postgres",
  "postgresql_embedded",

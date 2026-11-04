@@ -538,7 +538,7 @@ pub(super) fn feed_retirement_end_to_end(settings: &tl3_config::Store) {
 pub(super) fn recall_key_request_wiring(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let mut config = config(settings, root.path(), "normal");
-    config.workers.python = "/bin/true".into();
+    config.workers.launcher = vec!["/bin/true".into()];
     config.hindsight.api_key_file = Some(root.path().join("never-read-fixture-key"));
     let mut store = Store::open(settings).unwrap();
     materials(&mut store);
