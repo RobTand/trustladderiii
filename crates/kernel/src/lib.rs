@@ -2398,7 +2398,28 @@ kernel_fn! {
 
 // ---------------------------------------------------------------- replies
 
-fn accepts(w: &World, n: &Node, reply: &Reply) -> bool {
+kernel_fn! {
+/// Reply rows / #771: phase, schema and commit identity use the executable checks.
+fn accepts(w: &World, n: &Node, reply: &Reply) -> (result: bool) [
+    ensures result == match (n.phase, *reply) {
+        (Phase::Ingesting | Phase::Auditing | Phase::Planning { .. }, Reply::ProtectedPaths) => true,
+        (Phase::Ingesting, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)) => true,
+        (Phase::Auditing, Reply::AuditAgrees | Reply::AuditDisagrees) => true,
+        (Phase::Planning { .. }, Reply::PlanLeaf { footprint, .. }) =>
+            footprint::valid_footprint(*w, footprint),
+        (Phase::Planning { .. }, Reply::PlanSplit | Reply::PlanCantMeet) => true,
+        (Phase::Making, Reply::MakerDone { .. }) => true,
+        (Phase::Making, Reply::MakerNeedsFiles { files, .. }) =>
+            footprint::valid_footprint(*w, files),
+        (Phase::Making, Reply::MakerCantMeet | Reply::MakerOutOfRoom) => true,
+        (Phase::Checking, Reply::ChecksDone { report, .. }) => report,
+        (Phase::Reviewing, Reply::Approved { head }) =>
+            n.head == Some(head) && n.checked == Some(head),
+        (Phase::Reviewing, Reply::ChangesRequested | Reply::ReviewerOutOfRoom) => true,
+        (Phase::Rebasing, Reply::RebaseClean { .. } | Reply::RebaseNeedsChanges) => true,
+        _ => false,
+    },
+] {
     match (n.phase, reply) {
         (Phase::Ingesting | Phase::Auditing | Phase::Planning { .. }, Reply::ProtectedPaths) => {
             true
@@ -2420,6 +2441,7 @@ fn accepts(w: &World, n: &Node, reply: &Reply) -> bool {
         (Phase::Rebasing, Reply::RebaseNeedsChanges) => true,
         _ => false,
     }
+}
 }
 
 fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Outbox) {
