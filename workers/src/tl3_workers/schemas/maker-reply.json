@@ -227,9 +227,12 @@
           "enum": [
             "backstop",
             "no_progress",
+            "context_tokens",
             "input_tokens"
           ]
         },
+        "compaction_count": {"type": "integer", "minimum": 0},
+        "context_fraction": {"type": "number", "minimum": 0},
         "no_progress_window": {"type": "integer", "minimum": 0},
         "no_progress_turns": {"type": "integer", "minimum": 0},
         "last_progress_kind": {"enum": [null, "read", "grep", "glob", "write", "edit", "run_tests"]},
