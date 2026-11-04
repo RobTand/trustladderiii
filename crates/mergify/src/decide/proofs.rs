@@ -662,7 +662,13 @@ fn check_translate_route() {
     let head_current: bool = kani::any();
     let approved: bool = kani::any();
     let routed = route(kind, node, head_current, approved);
-    let stale = kind.names_attempt_head() && !head_current;
+    // The oracle names the attempt kinds itself, independent of
+    // `Kind::names_attempt_head`, so a mutant there cannot move both.
+    let attempt = matches!(
+        kind,
+        Kind::CiFailed { .. } | Kind::Conflict | Kind::DequeuedByCommand
+    );
+    let stale = attempt && !head_current;
     assert!(
         (routed == Route::Record) == stale,
         "only a stale attempt is just recorded"
@@ -681,10 +687,33 @@ fn check_translate_route() {
         };
         match expected {
             Some(fact) => assert!(routed == Route::Kernel(fact), "wrong kernel fact"),
-            None => assert!(kind.setup(), "a non-setup fact missed the kernel"),
+            None => {
+                assert!(
+                    matches!(
+                        kind,
+                        Kind::ChecksUnavailable
+                            | Kind::CheckMissing
+                            | Kind::QueueBlocked
+                            | Kind::CheckReported
+                    ),
+                    "a non-setup fact missed the kernel"
+                );
+                assert!(
+                    !matches!(routed, Route::Kernel(_) | Route::Record),
+                    "setup evidence reached the kernel or was only recorded"
+                );
+            }
         }
     }
     kani::cover!(stale, "a stale attempt is recorded");
+    kani::cover!(
+        kind == Kind::Conflict && !head_current,
+        "a stale conflict is recorded"
+    );
+    kani::cover!(
+        kind == Kind::DequeuedByCommand && !head_current,
+        "a stale dequeue command is recorded"
+    );
     kani::cover!(
         routed == Route::Kernel(KernelFact::CiFailed { infra: true }),
         "an infrastructure failure"

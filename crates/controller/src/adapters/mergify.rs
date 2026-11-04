@@ -1944,6 +1944,103 @@ impl GitHubTranslator for Translator {
 }
 
 #[cfg(test)]
+mod kind_tests {
+    use super::*;
+
+    /// `Evidence::kind` matches every variant with no wildcard, so the compiler
+    /// keeps it total. This pins each arm and the flags it copies (#735).
+    /// Kani can't take it: the controller crate pulls in sqlx and Postgres.
+    #[test]
+    fn every_evidence_maps_to_its_kind() {
+        let head = || "abc".to_string();
+        let required = || RequiredCheck {
+            context: "Rust".into(),
+            app: Some(15368),
+        };
+        let mut cases = vec![
+            (
+                Evidence::ChecksUnavailable {
+                    permissions: vec!["checks".into()],
+                },
+                Kind::ChecksUnavailable,
+            ),
+            (
+                Evidence::CheckMissing {
+                    head: head(),
+                    required: required(),
+                },
+                Kind::CheckMissing,
+            ),
+            (
+                Evidence::QueueBlocked {
+                    head: head(),
+                    conditions: vec!["scopes".into()],
+                    failed: vec![],
+                },
+                Kind::QueueBlocked,
+            ),
+            (
+                Evidence::CheckReported {
+                    head: head(),
+                    required: required(),
+                },
+                Kind::CheckReported,
+            ),
+            (
+                Evidence::Conflict {
+                    check: 1,
+                    completed_at: None,
+                    head: head(),
+                },
+                Kind::Conflict,
+            ),
+            (
+                Evidence::DequeuedByCommand {
+                    check: 2,
+                    completed_at: None,
+                    head: head(),
+                },
+                Kind::DequeuedByCommand,
+            ),
+            (
+                Evidence::DequeuedByPerson { event: 3 },
+                Kind::DequeuedByPerson,
+            ),
+            (Evidence::ClosedByPerson { event: 4 }, Kind::ClosedByPerson),
+            (Evidence::PushByOther { head: head() }, Kind::PushByOther),
+        ];
+        for checks_passed in [false, true] {
+            cases.push((
+                Evidence::Merged {
+                    head: head(),
+                    checks_passed,
+                },
+                Kind::Merged { checks_passed },
+            ));
+        }
+        for head_check in [false, true] {
+            for infra in [false, true] {
+                cases.push((
+                    Evidence::CiFailed {
+                        check: 5,
+                        completed_at: None,
+                        head: head(),
+                        infra,
+                        head_check,
+                        details: Default::default(),
+                    },
+                    Kind::CiFailed { head_check, infra },
+                ));
+            }
+        }
+        assert_eq!(cases.len(), 15);
+        for (evidence, kind) in cases {
+            assert_eq!(evidence.kind(), kind, "{evidence:?}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod error_tests {
     use super::*;
 

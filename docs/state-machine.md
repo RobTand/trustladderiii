@@ -719,6 +719,15 @@ TL3 decides on the check-suite and check-run webhooks it already receives, with 
 
 A pending or missing required check is a legitimate wait, not a stall. The held enqueue arms no allowance timer, and a look at it never spends a retry. An incident clears when its head stops being the node's head or approved head, or the node closes, because that kernel result is evidence the head no longer matters.
 
+### Q52 and #447 clarifications (#735)
+
+#735 moved these decisions into pure functions with Kani proofs, and recorded what the controller already does. None of this is a new rule.
+
+- **#447, a blocked queue.** Mergify can wait on queue-entry conditions that nothing still running can meet, such as PrismaBuild's scopes after its pr-gate failed. When every check other than Mergify's own has completed on the approved head, and every check suite on it has completed, TL3 opens a deduplicated repo setup incident. The incident names the head, the unmet conditions and the failed checks outside the required set. It opens only while the leaf is Queued or still enqueuing, never reaches the kernel, and clears like a missing-check incident. The proof `queue_blocked_total` and the route in `q52` cover it.
+- **Unreadable statuses.** A requirement with no expected app counts as missing only when the head's commit statuses could be read. A refused read makes absence unknowable, and it opens a check-setup incident instead (`required_missing`).
+- **Clearing in any open phase.** A report of the missing context clears its open incident in any open phase, not only Publishing. The state table's row names Publishing because that is where the incident opens.
+- **What the proofs don't cover.** The proofs cover the parts separately: `required_missing`, `suites_completed` and the routing of each fact. The conjunction "every suite completed and a context is missing, so emit the fact" sits in the asynchronous queue read, between two GitHub reads, and no proof covers it. Scenarios still test it, so #727 keeps them.
+
 ## Q55: forced reproduction
 
 Rob, 2026-11-02, answering #393: "yes, agreed." This is a reading of Q40 for deflakes. A flaky test passes on the base most of the time, so stress alone cannot establish RED. The approved subject/observer rule below permits separate assertion observers for test subjects.

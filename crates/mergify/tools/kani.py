@@ -5,7 +5,7 @@ status table, in tl3-github (`src/status.rs`).
 
     kani.py manifest [NAME...]   print a PrismaBuild campaign manifest
     kani.py prove [NAME...]      prove the named harnesses, or all of them
-    kani.py mutants [NAME...]    for each harness, seed its mutant and require
+    kani.py mutants [NAME...]    for each harness, seed each of its mutants and require
                                  that the harness FAILS; the source is restored
 
 Run `prove` and `mutants` only inside an admitted action, from a disposable
@@ -29,65 +29,63 @@ PROOF_FILES = [
     (DECIDE + "proofs.rs", "tl3-mergify", "decide::proofs"),
     (STATUS, "tl3-github", "status::proofs"),
 ]
-# One mutation per harness: (file, exact text, replacement). Each breaks the
-# property its harness states, so the harness must fail.
-MUTANTS = {
-    "observe_select": (DECIDE + "observe.rs", "check.id >= checks[best].id", "check.id > checks[best].id"),
-    "observe_merged": (
-        DECIDE + "observe.rs",
-        "if reported == QueueState::Merged {\n        QueueState::Unknown",
-        "if reported == QueueState::Waiting {\n        QueueState::Unknown",
-    ),
-    "observe_conflict": (
-        DECIDE + "observe.rs",
-        "(pull.mergeable == Some(false) || pull.mergeable_state == Mergeable::Dirty)",
-        "pull.mergeable == Some(false)",
-    ),
-    "observe_rule_concluded": (DECIDE + "observe.rs", "finished >= dequeued", "finished > dequeued"),
-    "observe_check_state": (
-        DECIDE + "observe.rs",
-        "    ) {\n        QueueState::FailedCi",
-        "    ) && conclusion.is_none() {\n        QueueState::FailedCi",
-    ),
-    "checks_passed_total": (
-        DECIDE + "facts.rs",
-        "|a, b| a.app_key == b.app_key && a.name_key == b.name_key",
-        "|a, b| a.name_key == b.name_key",
-    ),
-    "queue_blocked_total": (DECIDE + "facts.rs", "            && !check.required\n", "\n"),
-    "q52": (
-        DECIDE + "translate.rs",
-        "Kind::CheckMissing if node.enqueuing() && approved_head",
-        "Kind::CheckMissing if approved_head",
-    ),
-    "translate_closed": (
-        DECIDE + "translate.rs",
-        "(!matches!(kind, Kind::Merged { .. }) || node.merged)",
-        "!matches!(kind, Kind::Merged { .. })",
-    ),
-    "translate_head_ci": (
-        DECIDE + "translate.rs",
-        "return node.phase == Phase::Queued || node.enqueuing();",
-        "return node.phase != Phase::Closed;",
-    ),
-    "translate_route": (
-        DECIDE + "translate.rs",
-        "if kind.names_attempt_head() && !head_current {",
-        "if kind.names_attempt_head() && !head_current && approved_head {",
-    ),
-    "ci_classify": (DECIDE + "translate.rs", "outside && !repeated", "outside"),
-    "person_facts_total": (
-        DECIDE + "facts.rs",
-        "if event.actor != Actor::Person {",
-        "if event.actor == Actor::Missing {",
-    ),
-    "http_status_class_total": (
-        STATUS,
-        "status == 429 || status == 403 && rate_signal",
-        "status == 429 || status == 403",
-    ),
-    "facts_outcome": (DECIDE + "facts.rs", "head_infra.unwrap_or(true)", "head_infra.unwrap_or(false)"),
-}
+# Seeded mutants: (harness, file, exact text, replacement). Each breaks the
+# property its harness states, so the harness must fail. Every harness has at
+# least one.
+MUTANTS = [
+    ("observe_select", DECIDE + "observe.rs",
+     "check.id >= checks[best].id",
+     "check.id > checks[best].id"),
+    ("observe_merged", DECIDE + "observe.rs",
+     "if reported == QueueState::Merged {\n        QueueState::Unknown",
+     "if reported == QueueState::Waiting {\n        QueueState::Unknown"),
+    ("observe_conflict", DECIDE + "observe.rs",
+     "(pull.mergeable == Some(false) || pull.mergeable_state == Mergeable::Dirty)",
+     "pull.mergeable == Some(false)"),
+    ("observe_rule_concluded", DECIDE + "observe.rs",
+     "finished >= dequeued",
+     "finished > dequeued"),
+    ("observe_check_state", DECIDE + "observe.rs",
+     "    ) {\n        QueueState::FailedCi",
+     "    ) && conclusion.is_none() {\n        QueueState::FailedCi"),
+    ("checks_passed_total", DECIDE + "facts.rs",
+     "|a, b| a.app_key == b.app_key && a.name_key == b.name_key",
+     "|a, b| a.name_key == b.name_key"),
+    ("queue_blocked_total", DECIDE + "facts.rs",
+     "            && !check.required\n",
+     "\n"),
+    ("q52", DECIDE + "translate.rs",
+     "Kind::CheckMissing if node.enqueuing() && approved_head",
+     "Kind::CheckMissing if approved_head"),
+    ("translate_closed", DECIDE + "translate.rs",
+     "(!matches!(kind, Kind::Merged { .. }) || node.merged)",
+     "!matches!(kind, Kind::Merged { .. })"),
+    ("translate_head_ci", DECIDE + "translate.rs",
+     "return node.phase == Phase::Queued || node.enqueuing();",
+     "return node.phase != Phase::Closed;"),
+    ("translate_route", DECIDE + "translate.rs",
+     "if kind.names_attempt_head() && !head_current {",
+     "if kind.names_attempt_head() && !head_current && approved_head {"),
+    # Dropping an attempt kind must fail the harness's independent oracle.
+    ("translate_route", DECIDE + "translate.rs",
+     "Self::CiFailed { .. } | Self::Conflict | Self::DequeuedByCommand",
+     "Self::CiFailed { .. } | Self::DequeuedByCommand"),
+    ("translate_route", DECIDE + "translate.rs",
+     "Self::CiFailed { .. } | Self::Conflict | Self::DequeuedByCommand",
+     "Self::CiFailed { .. } | Self::Conflict"),
+    ("ci_classify", DECIDE + "translate.rs",
+     "outside && !repeated",
+     "outside"),
+    ("person_facts_total", DECIDE + "facts.rs",
+     "if event.actor != Actor::Person {",
+     "if event.actor == Actor::Missing {"),
+    ("http_status_class_total", STATUS,
+     "status == 429 || status == 403 && rate_signal",
+     "status == 429 || status == 403"),
+    ("facts_outcome", DECIDE + "facts.rs",
+     "head_infra.unwrap_or(true)",
+     "head_infra.unwrap_or(false)"),
+]
 
 
 def harnesses():
@@ -142,8 +140,9 @@ def prove(names, known):
 
 def mutants(names, known):
     failed = []
-    for name in names:
-        file, before, after = MUTANTS[name]
+    for name, file, before, after in MUTANTS:
+        if name not in names:
+            continue
         path = ROOT / file
         original = path.read_text()
         if original.count(before) != 1:
@@ -185,8 +184,8 @@ def main():
     known = harnesses()
     if set(names) - set(known):
         sys.exit(f"unknown harness: {sorted(set(names) - set(known))}")
-    if set(known) != set(MUTANTS):
-        sys.exit("every harness needs exactly one seeded mutant")
+    if set(known) != {mutant[0] for mutant in MUTANTS}:
+        sys.exit("every harness needs a seeded mutant, and every mutant a harness")
     names = names or sorted(known)
     if mode == "manifest":
         return manifest(names)
