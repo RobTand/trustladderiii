@@ -6,6 +6,7 @@
 use std::collections::BTreeSet;
 
 const ADDITIONAL_PROOFS: &[&str] = &[
+    "apply_dependency_registration",
     "dependency_no_cycle",
     "dependency_waiting_holds_nothing",
     "dependency_delivered_releases",

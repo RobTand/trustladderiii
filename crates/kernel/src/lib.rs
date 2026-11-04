@@ -1733,7 +1733,8 @@ pub fn proof_of_event(event: &Event) -> &'static str {
             Fact::IncidentCleared { .. } => "apply_incident_cleared",
             Fact::UpstreamStalled => "apply_upstream_stalled",
             Fact::Priority(_) => "apply_priority",
-            Fact::Dependency { .. } | Fact::DependencyReset => "apply_dependency",
+            Fact::Dependency { .. } => "apply_dependency",
+            Fact::DependencyReset => "apply_dependency_reset",
         },
         Event::Command { command, .. } => match command {
             Command::Stop => "apply_stop",

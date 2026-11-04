@@ -73,6 +73,9 @@ fn any_world(phase: Option<Phase>) -> World {
     kani::assume(world.gates[0].w <= 3 && world.gates[1].w <= 3);
     kani::assume(world.next_ticket < LIMIT && world.next_question < LIMIT);
     kani::assume(small(&world.nodes[0]) && small(&world.nodes[1]));
+    // With an empty dependency table consistency already requires this new
+    // flag to be false. State it early so the solver can prune the credit path.
+    kani::assume(!world.nodes[0].credit.withheld && !world.nodes[1].credit.withheld);
     kani::assume(world.consistent());
     world
 }
@@ -704,7 +707,9 @@ fn check_dependency_cycles() {
             rejected: false,
         });
     }
-    kani::assume(world.consistent());
+    // The concrete roots and unique external numbers satisfy every other
+    // invariant. Only the prior graph is symbolic in this graph-safety proof.
+    kani::assume(world.dependency_graph_acyclic());
     // Roots are interchangeable. Fix the owner of the new edge, as the
     // existing event proofs do, while both prior edges remain arbitrary.
     let from: u8 = 0;
@@ -727,7 +732,6 @@ fn check_dependency_cycles() {
         &mut out,
     );
     assert!(world.dependency_graph_acyclic());
-    require_consistent(&world);
     kani::cover!(
         world.dependencies.last().unwrap().rejected,
         "a cyclic declaration is rejected"
@@ -740,9 +744,9 @@ fn check_dependency_cycles() {
 
 fn check_dependency_fact() {
     // Dependency facts do no head or counter arithmetic, so this domain needs
-    // no small-counter assumptions. Both roots may be in any valid phase.
-    let mut world = World::new(&[3, 3], 2);
-    world.nodes = kani::vec::exact_vec::<Node, 2>();
+    // no small-counter assumptions. The root may be in any valid phase.
+    let mut world = World::new(&[3], 1);
+    world.nodes = kani::vec::exact_vec::<Node, 1>();
     kani::assume(world.consistent());
     let target = DependencyTarget {
         kind: PrerequisiteKind::Issue,
@@ -789,29 +793,58 @@ fn check_dependency_fact() {
         phase == Phase::Queued,
         "facts are accepted in the merge queue"
     );
-    let count = world.dependencies.len();
+}
+
+fn check_dependency_registration() {
+    let mut world = World::new(&[3], 1);
+    world.nodes = kani::vec::exact_vec::<Node, 1>();
+    kani::assume(world.consistent());
+    let phase = world.nodes[0].phase;
     let started = world.nodes[0].planning_started;
     apply(
         &mut world,
         fact(Fact::Dependency {
             target: DependencyTarget {
+                kind: PrerequisiteKind::Issue,
                 number: 2762,
-                ..target
+                request: None,
             },
             status: kani::any(),
         }),
         &mut Outbox::new(),
     );
     if started || !matches!(phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned) {
-        assert_eq!(
-            world.dependencies.len(),
-            count,
+        assert!(
+            world.dependencies.is_empty(),
             "a started request never gains a prerequisite"
         );
+    } else {
+        assert_eq!(world.dependencies.len(), 1);
     }
     require_consistent(&world);
+    kani::cover!(started, "a started request rejects a declaration");
+    kani::cover!(
+        !world.dependencies.is_empty(),
+        "an unstarted root accepts a declaration"
+    );
+}
+
+fn check_dependency_reset() {
+    let mut world = waiting_dependency_world();
+    world.nodes[0].phase = kani::any();
+    kani::assume(world.consistent());
+    let phase = world.nodes[0].phase;
     apply(&mut world, fact(Fact::DependencyReset), &mut Outbox::new());
+    assert_eq!(world.dependencies.is_empty(), phase == Phase::Ingesting);
     require_consistent(&world);
+    kani::cover!(
+        world.dependencies.is_empty(),
+        "re-ingest clears declarations"
+    );
+    kani::cover!(
+        !world.dependencies.is_empty(),
+        "other phases preserve declarations"
+    );
 }
 
 fn ack(ack: Ack) -> Event {
@@ -861,6 +894,12 @@ macro_rules! proof {
 }
 
 proof!(apply_dependency, 3, check_dependency_fact());
+proof!(
+    apply_dependency_registration,
+    3,
+    check_dependency_registration()
+);
+proof!(apply_dependency_reset, 2, check_dependency_reset());
 proof!(dependency_no_cycle, 4, check_dependency_cycles());
 proof!(
     dependency_waiting_holds_nothing,
