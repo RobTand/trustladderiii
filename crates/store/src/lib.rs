@@ -1648,6 +1648,22 @@ fn load_effects(client: &mut impl postgres::GenericClient) -> Result<Vec<Effect>
             .into_iter().map(decode_effect).collect()
 }
 
+/// #783: bounded event pages inside the replay reader's existing READ ONLY transaction.
+pub fn events_in(
+    tx: &mut Transaction<'_>,
+    revision: Revision,
+    limit: u32,
+) -> Result<Vec<EventRecord>> {
+    load_events(tx, revision, limit)
+}
+
+/// Resolve an inclusive replay start by immutable event key, or by revision.
+pub fn find_event_revision(tx: &mut Transaction<'_>, event: &str) -> Result<Option<Revision>> {
+    let revision = event.parse::<i64>().ok().filter(|revision| *revision > 0);
+    tx.query_opt("SELECT revision FROM tl3_events WHERE event_key = $1 OR revision = $2 ORDER BY (event_key = $1) DESC LIMIT 1", &[&event, &revision])?
+        .map(|row| Revision::try_from(row.get::<_, i64>(0))).transpose()
+}
+
 fn load_events(
     client: &mut impl postgres::GenericClient,
     revision: Revision,

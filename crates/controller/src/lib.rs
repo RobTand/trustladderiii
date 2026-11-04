@@ -47,6 +47,7 @@ pub mod publication_failure;
 mod question_findings;
 pub mod redaction;
 pub mod release;
+pub mod replay;
 mod review_stops;
 pub mod reviewer;
 mod scope;
@@ -54,6 +55,7 @@ mod snapshot;
 pub mod status;
 pub mod status_web;
 pub mod steering;
+pub mod store_stats;
 mod sync;
 pub mod worker_inputs;
 
@@ -72,6 +74,8 @@ use tl3_store::{
 pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("replay-check: {0}")]
+    Replay(String),
     #[error("{0}")]
     Store(#[from] tl3_store::Error),
     #[error("{0}")]
