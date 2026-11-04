@@ -3243,18 +3243,44 @@ fn pool_free(w: &World) -> (result: bool) [
 }
 }
 
-/// Planning is admitted while fewer than W leaves wait for a slot in the repo.
-fn admits(w: &World, repo: RepoId) -> bool {
-    let Some(gate) = repo.index().and_then(|r| w.gates.get(r)) else {
+kernel_fn! {
+/// Q30 / #771: planning admission uses the actual slot-waiter count.
+fn admits(w: &World, repo: RepoId) -> (result: bool) [
+    requires open_prefix(w.nodes@, w.nodes@.len()) <= u32::MAX as int,
+    ensures result == if repo.0 as int < w.gates@.len() {
+        slot_waiters(w.nodes@, w.nodes@.len(), repo) < w.gates@[repo.0 as int].w
+    } else { false },
+] {
+    let Some(r) = repo.index() else {
+        return false;
+    };
+    let Some(gate) = w.gates.get(r) else {
         return false;
     };
     let mut waiting = 0u32;
-    for n in &w.nodes {
+    let mut i = 0usize;
+    kernel_while! { (i < w.nodes.len()) [
+        invariant
+            i <= w.nodes.len(),
+            waiting as int == slot_waiters(w.nodes@, i as nat, repo),
+            waiting as int <= open_prefix(w.nodes@, i as nat),
+            open_prefix(w.nodes@, w.nodes@.len()) <= u32::MAX as int,
+            r < w.gates.len(), r as int == repo.0 as int,
+            *gate == w.gates@[r as int],
+        decreases w.nodes.len() - i,
+    ] {
+        let n = &w.nodes[i];
+        kernel_proof! {
+            reveal(open_prefix);
+            open_prefix_monotone(w.nodes@, i as nat + 1, w.nodes@.len());
+        }
         if n.repo == repo && matches!(n.phase, Phase::Ready(_)) && n.ticket.is_some() {
             waiting += 1;
         }
-    }
+        i += 1;
+    } }
     waiting < gate.w as u32
+}
 }
 
 fn slot_free(w: &World, i: usize) -> bool {

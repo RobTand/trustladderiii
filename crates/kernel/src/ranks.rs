@@ -251,6 +251,11 @@ pub(super) open spec fn pool_users(nodes: Seq<Node>, end: nat) -> nat {
     potential_prefix(nodes, end, |n: Node| if n.pool { 1nat } else { 0nat })
 }
 
+pub(super) open spec fn slot_waiters(nodes: Seq<Node>, end: nat, repo: RepoId) -> nat {
+    potential_prefix(nodes, end, |n: Node|
+        if n.repo == repo && n.phase is Ready && n.ticket.is_some() { 1nat } else { 0nat })
+}
+
 pub(super) proof fn potential_prefix_equal(left: Seq<Node>, right: Seq<Node>, end: nat,
     potential: spec_fn(Node) -> nat)
     requires end <= left.len(), end <= right.len(),
