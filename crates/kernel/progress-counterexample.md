@@ -5,7 +5,9 @@ The progress preconditions are consistency, settledness, an open request,
 `World::headroom_ok()`, and `last_cmd < u64::MAX` for every node. The complete progress theorem and the per-step counter bounds remain proof
 obligations. The rank functions, credit operations and every local settle case
 now have verified contracts over their actual executable bodies. Existing Kani
-harnesses and tests stay.
+harnesses and tests stay. The executable headroom predicate itself now verifies
+against its mathematical scope. That equivalence does not establish the complete
+step's counter bound.
 
 The controller now allocates command IDs through `Node::next_command_id`, using
 `checked_add`. Exhaustion raises `command ids exhausted for request N` without
@@ -77,10 +79,23 @@ projection would not repair this failed correspondence.
 
 The pinned Verus toolchain and spike sources remain at the locations recorded in
 `/home/rob/tmp/tl3-build/rust-fv/verus-spike.md`. The source-connected runner is
-`verus/run.sh`. Action `5991cf68394bfff558c5bfdc7a239ed5d689dc9e675dbfcadee2739b9bf16a17`
-verified 85 obligations at `b6082bca7b`, including the real local settle cases.
-That count includes generated type obligations. It does not mean that 85
-progress theorems have been delivered. The whole-world theorem remains open.
+`verus/run.sh`. Action
+`c931517caccec85d27937e4d90649eb808323819eef68226775f40d2a4803683`
+verified 130 obligations at `6d3b870d8d`, including the real local settle cases,
+headroom guard, read-only pool/admission queries, prerequisite query and retry
+allocation bounds. It exited zero with receipt
+`bdd4745248037236f5b81a32402b692f81cf596cbd480035aaf3237eb3c2dc2a`.
+The verifier took 34.91 seconds and peaked at 387,428 KiB. That count includes
+generated type obligations. It does not mean that 130 progress theorems have
+been delivered. The whole-world theorem remains open.
+
+Action `1cce0e0f279657317f8d851f0898a10b87898e59ddc42fba3005b5055e81d0b3`
+qualified ten core contracts at `37a0ebc441`. Its baseline verified 88 obligations;
+each command, credit, agenda, rank and sum mutant then failed a proof obligation.
+The driver exited zero with receipt
+`c2a8841a884221977f9838b54840b4c5b15ed846002bf48bb5ed6a7a7eef04c8`.
+Further allocation, scope and local-transition mutants are separate qualification
+work; this core run does not qualify those later contracts.
 
 ## Counter audit and proposed step reserves
 
@@ -142,7 +157,9 @@ Each local settle case proves a decreasing height at most six and allocation
 potentials at most one generation, one effect, two tickets and one merge credit.
 These statements quantify over every scheduling decision, with no world-size
 bound. Both normal Rust and Verus compile those same case bodies. The read-only
-scheduler wrapper and the complete apply/settle composition remain to verify.
+pool occupancy, planning-admission count and prerequisite query now verify
+against exact predicates. The slot/file query, scheduler wrapper and complete
+apply/settle composition remain to verify.
 
 For global tickets, the per-step reserve scales with node count, but the lifetime
 count still needs about 2^64 events. Charge an allocation against the local ticket
@@ -159,7 +176,16 @@ some progress event, with no per-request fairness claim.
 ## Proof migration status
 
 No Kani harness is replaced or weakened. There is no gated Verus replacement
-in this PR yet. The mapping below records obligations that remain for #771:
+in this PR yet. The mapping below separates the delivered foundation from the
+remaining progress obligations.
+
+| Verified foundation | Executable connection | Remaining composition |
+| --- | --- | --- |
+| `world_headroom`, `node_headroom`, `open_prefix` | `headroom_ok`, `counter_exhaustion`, checked scan/settle/ticket budgets | Prove the reserves cover every full `step`. |
+| `internal_height`, allocation capacities, `advance_post` | Every executable `advance_node` case and its dispatcher | Verify the scheduler wrapper and complete settle loop. |
+| `potential_update`, `potential_bound`, `settle_reserve_totals` | Potentials over sequences of the real `Node` type | Connect each actual world update and pass to these sums. |
+| `pool_users`, `slot_waiters`, `prerequisites_delivered` | Actual pool, admission and prerequisite queries | Prove slot/file obstruction and global witness existence. |
+| Allocation and credit contracts | Actual `set_phase`, `emit_node`, `take_ticket_node`, `ask_rob`, `raise_incident`, retry and credit bodies | Finish apply handlers, frame bounds and full-step overflow safety. |
 
 | Existing Kani harnesses | Required Verus result, not yet delivered |
 | --- | --- |
