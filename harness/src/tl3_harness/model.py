@@ -90,7 +90,7 @@ NATIVE_THREAD_ENVIRONMENT = {"OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
 RESERVED_ENVIRONMENT = frozenset({"HOME", "PATH", "TMPDIR", "TEMP", "TMP", *NATIVE_THREAD_ENVIRONMENT})
 RESERVED_PREFIXES = ("PYTHON", "PYTEST", "LD_", "TL3_", "PRISMABUILD_")
 ENVIRONMENT_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,63}")
-TARGET = re.compile(r"[A-Za-z_][\w\u0301\u200c]*(?:\.[A-Za-z_][\w\u0301\u200c]*)+")
+TARGET = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+")
 
 
 def forced_exception(name: str) -> type | None:

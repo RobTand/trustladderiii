@@ -346,7 +346,7 @@ def describe(error):
     """`Type: first line` of the exception, kept apart from the traceback the 1,000-char limit cuts."""
     if isinstance(error, pytest.Collector.CollectError) and error.__cause__ is not None:
         error = error.__cause__
-    line = next((line.strip(' \t\n\r\v\f') for line in str(error).splitlines() if line.strip(' \t\n\r\v\f')), "")
+    line = next((line.strip() for line in str(error).splitlines() if line.strip()), "")
     return (f"{type(error).__name__}: {line}" if line else type(error).__name__).replace("`", "'")[:200]
 
 
