@@ -1241,6 +1241,7 @@ enum Item {
     Teardown(EffectKind),
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 const RELEASE_STEP: u8 = 3;
 
 kernel_fn! {
@@ -1602,9 +1603,16 @@ impl World {
         Ok(())
     }
 
-    fn check_node(&self, n: &Node) -> Result<(), Broken> {
+    kernel_fn! {
+    /// #771: the production checker establishes the progress proof's node
+    /// invariants. This is a consequence of its existing checks, not a new rule.
+    #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+    fn check_node(&self, n: &Node) -> (result: Result<(), Broken>) [
+        ensures result.is_ok() ==> node_checked(*self, *n),
+    ] {
+        let _gate_count = self.gates.len();
         let items = agenda(n.phase);
-        if n.repo.index().is_none_or(|r| r >= self.gates.len()) {
+        if match n.repo.index() { Some(r) => r >= self.gates.len(), None => true } {
             return Err(Broken::Config);
         }
         if !self.has_footprint(n.footprint) {
@@ -1715,7 +1723,7 @@ impl World {
                     return Err(Broken::Question);
                 }
                 // While Rob is asked, nothing else is in flight for the node.
-                if n.effect.is_some_and(|e| !e.cancelling) {
+                if matches!(n.effect, Some(e) if !e.cancelling) {
                     return Err(Broken::Question);
                 }
                 match n.phase {
@@ -1792,7 +1800,7 @@ impl World {
         }
         if n.waiting_incident {
             // Only an effect the node has already moved past may still be in flight.
-            let live_effect = n.effect.is_some_and(|e| !e.cancelling);
+            let live_effect = matches!(n.effect, Some(e) if !e.cancelling);
             if live_effect || n.ticket.is_some() || n.phase.holding() || n.phase.is_closed() {
                 return Err(Broken::Incident);
             }
@@ -1802,16 +1810,8 @@ impl World {
         }
 
         if n.credit.withheld
-            && n.question.is_some_and(|q| {
-                !matches!(
-                    q.cont,
-                    Cont::Ingesting
-                        | Cont::Auditing
-                        | Cont::Unplanned
-                        | Cont::Stop(_)
-                        | Cont::Nowhere
-                )
-            })
+            && matches!(n.question, Some(q) if !matches!(q.cont,
+                Cont::Ingesting | Cont::Auditing | Cont::Unplanned | Cont::Stop(_) | Cont::Nowhere))
         {
             return Err(Broken::Dependencies);
         }
@@ -1861,8 +1861,7 @@ impl World {
         // The PR counts as open from the moment TL3 asks GitHub to open it.
         let opening = n.phase == Phase::Publishing
             && n.pos == 2
-            && n.effect
-                .is_some_and(|e| !e.cancelling && e.kind == EffectKind::OpenPr);
+            && matches!(n.effect, Some(e) if !e.cancelling && e.kind == EffectKind::OpenPr);
         if n.phase == Phase::Publishing && (n.pos >= 3 || opening) && !n.pr_open {
             return Err(Broken::Pr);
         }
@@ -1915,8 +1914,14 @@ impl World {
         Ok(())
     }
 
+    }
+
     /// What a leaf needs before it may resume into a holding phase.
-    fn check_ready(&self, n: &Node, r: Resume) -> Result<(), Broken> {
+    kernel_fn! {
+    /// #771: verify the real leaf-readiness checker against its ghost predicate.
+    fn check_ready(&self, n: &Node, r: Resume) -> (result: Result<(), Broken>) [
+        ensures result.is_ok() == ready_checked(*n, r),
+    ] {
         if n.attempt == 0
             || n.attempt > 3
             || n.round > 1
@@ -1935,6 +1940,7 @@ impl World {
             },
         };
         if ok { Ok(()) } else { Err(Broken::Leaf) }
+    }
     }
 }
 
@@ -3968,6 +3974,96 @@ fn mark_handled(m: &mut Node) -> (result: ()) [
 
 #[cfg(verus_keep_ghost)]
 verus! {
+/// #771: the actual readiness check, expressed without executing its guards.
+spec fn ready_checked(n: Node, r: Resume) -> bool {
+    1 <= n.attempt <= 3 && n.round <= 1 && !footprint::footprint_empty(n.footprint)
+        && n.credit.ready && match r {
+            Resume::Making => true,
+            Resume::Checking | Resume::Rebasing => n.head.is_some(),
+            Resume::Reviewing => n.head.is_some() && n.checked == n.head,
+            Resume::Publishing => match n.head {
+                Some(h) => n.approved == Some(h) && n.checked == Some(h), None => false,
+            },
+        }
+}
+
+/// #771: continuations accepted by the production AwaitingRob check.
+spec fn question_fits(q: Question) -> bool {
+    match (q.kind, q.cont) {
+        (QKind::AuditDisagreement, Cont::Unplanned) => true,
+        (QKind::AuditDisagreement, Cont::Stop(o)) => matches!(o,
+            Outcome::Duplicate | Outcome::AlreadyDone | Outcome::NotActionable),
+        (QKind::NeedsSplitting, Cont::Nowhere) => true,
+        (QKind::CantMeet, Cont::Planning { .. } | Cont::Ready(Resume::Making)) => true,
+        (QKind::OutOfCredit, Cont::Planning { .. } | Cont::Ready(Resume::Making)
+            | Cont::Ready(Resume::Checking) | Cont::Ready(Resume::Reviewing)) => true,
+        (QKind::EffectFailed, Cont::Ingesting | Cont::Auditing | Cont::Unplanned
+            | Cont::Planning { .. } | Cont::Ready(_)) => true,
+        _ => false,
+    }
+}
+
+/// #771: the existing per-node consistency checks used by progress. This is
+/// proved as a postcondition of check_node on the real Node and World types.
+spec fn node_checked(w: World, n: Node) -> bool {
+    n.repo.0 < w.gates@.len() && footprint::valid_footprint(w, n.footprint)
+        && arithmetic_consistent(n) && settle_shape(n) && stopping_effect_fits(n)
+        && (n.phase is Closed ==> n.pos == 0 && n.effect.is_none() && n.run.is_none()
+            && n.job.is_none() && !n.pool && !n.holds && n.ticket.is_none()
+            && n.question.is_none() && !n.waiting_incident && !n.pr_open && !n.worktree)
+        && (!(n.phase is Closed) ==> n.pos <= items(n.phase).len()
+            && (n.pos == items(n.phase).len() ==> n.phase == Phase::Publishing || n.phase is Stopping))
+        && (holding(n.phase) ==> n.holds)
+        && (n.holds ==> holding(n.phase) || (n.phase is Stopping && n.pos <= RELEASE_STEP))
+        && (n.pool ==> n.run.is_some() && n.phase != Phase::Rebasing)
+        && (match n.run {
+            Some(g) => (current_item(n) == Some(Item::Await) && g == n.generation
+                && matches!(n.phase, Phase::Ingesting | Phase::Auditing | Phase::Planning { .. }
+                    | Phase::Making | Phase::Reviewing | Phase::Rebasing))
+                || (n.phase is Stopping && n.pos == 0),
+            None => true,
+        })
+        && (match n.job {
+            Some(g) => (n.phase == Phase::Checking && current_item(n) == Some(Item::Await) && g == n.generation)
+                || (n.phase is Stopping && n.pos <= 1),
+            None => true,
+        })
+        && (current_item(n) == Some(Item::Await) ==> if n.phase == Phase::Checking {
+            n.job == Some(n.generation)
+        } else { n.run == Some(n.generation) })
+        && (match n.effect {
+            None => true,
+            Some(e) => e.seq < n.next_seq && (e.cancelling || if
+                matches!(e.kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase) {
+                current_item(n) == Some(Item::Await)
+            } else { current_item(n) == Some(Item::Do(e.kind)) || current_item(n) == Some(Item::Teardown(e.kind)) }),
+        })
+        && (match n.ticket { None => true, Some(t) => t < w.next_ticket
+            && !n.waiting_incident && n.effect.is_none() && !n.pool
+            && matches!(current_item(n), Some(Item::Slot) | Some(Item::Start(_))) })
+        && (n.waiting_incident ==> !(n.phase is Closed) && !holding(n.phase)
+            && n.ticket.is_none() && (match n.effect { None => true, Some(e) => e.cancelling })
+            && (!(n.phase is Stopping) ==> n.run.is_none() && n.job.is_none() && !n.pool))
+        && (match n.question {
+            None => n.phase != Phase::AwaitingRob,
+            Some(q) => q.id < w.next_question && (match n.effect { None => true, Some(e) => e.cancelling })
+                && match n.phase {
+                    Phase::AwaitingRob => question_fits(q) && n.run.is_none() && n.job.is_none() && !n.pool,
+                    Phase::Stopping(_) => q.kind == QKind::CleanupFailed && matches!(current_item(n), Some(Item::Teardown(_))),
+                    _ => false,
+                },
+        })
+        && (match n.phase { Phase::Ready(r) => ready_checked(n, r), _ => true })
+        && (match n.phase {
+            Phase::Making => ready_checked(n, Resume::Making),
+            Phase::Checking => ready_checked(n, Resume::Checking),
+            Phase::Reviewing => ready_checked(n, Resume::Reviewing),
+            Phase::Publishing | Phase::Queued => ready_checked(n, Resume::Publishing),
+            Phase::Rebasing => ready_checked(n, Resume::Rebasing),
+            _ => true,
+        })
+}
+
 /// #771: intermediate source-level safety scope. These consistency clauses
 /// must be connected to the real checker before the final progress theorem.
 pub closed spec fn step_scope(w: World) -> bool {
