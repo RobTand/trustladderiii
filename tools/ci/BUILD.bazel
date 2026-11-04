@@ -102,6 +102,7 @@ py_library(
 tl3_py_test(
     name = "test_bazel_parity",
     srcs = ["test_bazel_parity.py"],
+    data = ["//tools/bazel:libtest-shards.json"],  # keep
     deps = [
         ":bazel_parity",
         "//tools/bazel:rust_runner",

@@ -3877,9 +3877,10 @@ fn commit_sha(snapshot: &Snapshot, head: Option<HeadId>) -> Option<&str> {
 mod git_tests;
 
 #[cfg(test)]
-#[allow(dead_code)]
-#[path = "../../store/tests/support/mod.rs"]
 mod store_support;
+
+#[cfg(test)]
+mod store_support_tests;
 
 #[cfg(test)]
 mod stored_shape_tests {
