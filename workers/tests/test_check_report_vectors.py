@@ -11,7 +11,8 @@ import pytest
 
 from tl3_workers.contracts import SCHEMA_BASE, registry
 
-VECTORS = sorted((Path(__file__).resolve().parents[2] / 'harness/test-vectors/contracts').glob('*.json'))
+# released/ holds the previous release's reports, which review must still accept (#750 review).
+VECTORS = sorted((Path(__file__).resolve().parents[2] / 'harness/test-vectors/contracts').rglob('*.json'))
 CHECKS = Draft202012Validator({'$ref': SCHEMA_BASE + 'reviewer-input.json#/properties/checks'}, registry=registry())
 
 
@@ -19,7 +20,7 @@ def test_vectors_are_present():
     assert len(VECTORS) >= 7
 
 
-@pytest.mark.parametrize('path', VECTORS, ids=lambda path: path.stem)
+@pytest.mark.parametrize('path', VECTORS, ids=lambda path: '/'.join(path.parts[-2:]))
 def test_reviewer_checks_accept_the_harness_vector(path):
     results = json.loads(path.read_text())['results']
     errors = [f"{'/'.join(map(str, error.absolute_path))}: {error.message}" for error in CHECKS.iter_errors(results)]

@@ -369,8 +369,13 @@ impl<const MIN: u64, const MAX: u64> Integer<MIN, MAX> {
         }
     }
 
-    pub fn get(self) -> u64 {
+    pub fn get(&self) -> u64 {
         self.0
+    }
+
+    /// Red (#750 review): a stub until integral JSON numbers are kept as written.
+    pub fn from_number(_number: serde_json::Number) -> Result<Self, String> {
+        todo!("accept schema-valid integral numbers")
     }
 }
 
@@ -409,8 +414,13 @@ pub struct Parallel(u64);
 impl Parallel {
     pub const VALUES: [u64; 4] = [0, 2, 3, 4];
 
-    pub fn get(self) -> u64 {
+    pub fn get(&self) -> u64 {
         self.0
+    }
+
+    /// Red (#750 review): a stub until parallel has a constructor.
+    pub fn from_number(_number: serde_json::Number) -> Result<Self, String> {
+        todo!("construct a parallel count")
     }
 }
 

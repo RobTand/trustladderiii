@@ -46,6 +46,9 @@ SYMPTOM = ('import os\n\ndef test_original():\n    if os.getenv("REPRODUCE"):\n'
            '        raise TimeoutError("deadline passed")\n')
 SYMPTOM_FIXED = 'def test_original():\n    assert True\n'
 PROOF = {'subjects': ['product.py::value'], 'observer_support': [], 'red_message': 'value too small'}
+# runner.py records the qualified class name unclipped; test_tool.py refuses it past 300
+# characters only after keeping (and hashing) the record (#750 review).
+LONG_EXCEPTION = 'Deadline' + 'X' * 320
 
 
 def plan_check(name, kind, tests, **extra):
@@ -107,6 +110,15 @@ SCENARIOS = {
         head={'pkg/core.py': 'def value():\n    return 1  # changed\n'},
         plan=[plan_check('other stays green', 'regression', ['tests/test_other.py::test_other'])],
         selected_tests=1),
+    # #750 review: the symptom record keeps an exception name longer than 300 characters.
+    'symptom-long-exception': dict(
+        base={'tests/test_long.py': (f'class {LONG_EXCEPTION}(Exception):\n    pass\n\n\n'
+                                     f'def test_long():\n    raise {LONG_EXCEPTION}("deadline passed")\n')},
+        head={'tests/test_long.py': 'def test_long():\n    assert True\n'},
+        plan=[plan_check('long exception symptom', 'demonstrating', ['tests/test_long.py::test_long'],
+                         declared_symptom={'node': 'tests/test_long.py::test_long',
+                                           'exception': 'builtins.TimeoutError', 'phase': 'call',
+                                           'repeat': 1, 'parallel': 0})]),
     # #592/#626: a declared symptom carries every run's records as evidence.
     'declared-symptom': dict(
         base={'tests/test_original.py': SYMPTOM},

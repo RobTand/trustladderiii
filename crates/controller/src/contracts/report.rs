@@ -162,6 +162,17 @@ pub struct PhaseEvidence {
     pub head_forced: Option<PhaseRun>,
 }
 
+impl PhaseEvidence {
+    /// Red (#750 review): a stub until the evidence refuses an empty side set.
+    pub fn new(
+        _base: Option<PhaseRun>,
+        _head: Option<PhaseRun>,
+        _head_forced: Option<PhaseRun>,
+    ) -> Result<Self, String> {
+        todo!("phase evidence constructor")
+    }
+}
+
 impl<'de> Deserialize<'de> for PhaseEvidence {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]

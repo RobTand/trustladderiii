@@ -27,6 +27,12 @@ pub struct CheckRun {
 
 pub use crate::contracts::{Check, CheckKind as Kind};
 
+/// The trusted harness this controller stages. Red (#750 review): a stub that still
+/// follows the configured path, so a deploy that moves `current` changes it.
+pub(super) fn pinned_harness(harness: &Path) -> Result<PathBuf> {
+    Ok(harness.to_owned())
+}
+
 const MAX_REPORT_LINE_BYTES: usize = 4 * 1024 * 1024;
 
 pub(crate) fn validate_plan_size(plan: &[Check]) -> Result<()> {
@@ -241,6 +247,57 @@ mod tests {
                 "reject uppercase reviewed commit before staging"
             );
         }
+    }
+
+    /// Encodes: #750 review finding 2. deploy.py's `install_release` switches `current` before
+    /// tl3d restarts, so a running controller must keep staging its own release's harness.
+    #[test]
+    fn harness_staging_is_pinned_to_the_running_release() {
+        let f = crate::git_tests::Repo::new();
+        let root = f.root.path().join("tl3");
+        for release in ["a", "b"] {
+            let harness = root
+                .join("releases")
+                .join(release)
+                .join("harness/src/tl3_harness");
+            fs::create_dir_all(&harness).unwrap();
+            fs::write(
+                harness.join("release.py"),
+                format!("RELEASE = {release:?}\n"),
+            )
+            .unwrap();
+        }
+        let current = root.join("current");
+        std::os::unix::fs::symlink(root.join("releases/a"), &current).unwrap();
+        let configured = current.join("harness/src/tl3_harness");
+        let running = pinned_harness(&configured).unwrap();
+        // install_release: link the new release beside `current`, then replace it.
+        let next = root.join("current.tmp");
+        std::os::unix::fs::symlink(root.join("releases/b"), &next).unwrap();
+        fs::rename(&next, &current).unwrap();
+        let staged_release = |harness: &Path, name: &str| {
+            let staged = f.root.path().join(name);
+            stage(
+                &staged,
+                harness,
+                &f.delivery(),
+                "sha256:fixture",
+                &[],
+                &Default::default(),
+            )
+            .unwrap();
+            fs::read_to_string(staged.join("trusted/tl3_harness/release.py")).unwrap()
+        };
+        assert_eq!(
+            staged_release(&running, "input-running"),
+            "RELEASE = \"a\"\n",
+            "the controller started from release a keeps staging release a's harness"
+        );
+        assert_eq!(
+            staged_release(&pinned_harness(&configured).unwrap(), "input-restarted"),
+            "RELEASE = \"b\"\n",
+            "after the restart the controller pins the new release"
+        );
     }
 
     #[test]

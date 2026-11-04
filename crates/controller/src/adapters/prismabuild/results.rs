@@ -626,10 +626,8 @@ pub(crate) mod contract_vectors {
         pub failed_tests: Vec<FailedTest>,
     }
 
-    pub(crate) fn parsed() -> Vec<Parsed> {
-        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../harness/test-vectors/contracts");
-        let mut paths: Vec<_> = std::fs::read_dir(&directory)
+    fn json_files(directory: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut paths: Vec<_> = std::fs::read_dir(directory)
             .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
             .map(|entry| entry.unwrap().path())
             .filter(|path| {
@@ -638,12 +636,41 @@ pub(crate) mod contract_vectors {
             })
             .collect();
         paths.sort();
-        assert!(paths.len() >= 7, "harness contract vectors are missing");
-        paths.iter().map(|path| parse_vector(path)).collect()
+        paths
     }
 
-    fn parse_vector(path: &std::path::Path) -> Parsed {
-        let name = path.file_stem().unwrap().to_string_lossy().into_owned();
+    /// The current harness's vectors, then each earlier release's under `released/<version>`:
+    /// a controller resumes checks the previous release staged (#750 review finding 2).
+    pub(crate) fn parsed() -> Vec<Parsed> {
+        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../harness/test-vectors/contracts");
+        let current = json_files(&directory);
+        assert!(current.len() >= 7, "harness contract vectors are missing");
+        let mut parsed: Vec<_> = current
+            .iter()
+            .map(|path| parse_vector(path, "tl3.checks.v1", ""))
+            .collect();
+        let released = directory.join("released");
+        let mut versions: Vec<_> = std::fs::read_dir(&released)
+            .unwrap_or_else(|error| panic!("{}: {error}", released.display()))
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        versions.sort();
+        for version in versions {
+            let label = version.file_name().unwrap().to_string_lossy().into_owned();
+            let paths = json_files(&version);
+            assert!(!paths.is_empty(), "{label}: no released vectors");
+            parsed.extend(
+                paths
+                    .iter()
+                    .map(|path| parse_vector(path, &label, &format!("released/{label}/"))),
+            );
+        }
+        parsed
+    }
+
+    fn parse_vector(path: &std::path::Path, version: &str, prefix: &str) -> Parsed {
+        let name = format!("{prefix}{}", path.file_stem().unwrap().to_string_lossy());
         let vector: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         let request = &vector["request"];
         let mut run =
@@ -667,7 +694,7 @@ pub(crate) mod contract_vectors {
         // The envelope the trusted action prints around result_json (action.py).
         let line = format!(
             "TL3_CHECKS {}\n",
-            json!({"schema":"tl3.checks.v1", "effect_key":request["effect_key"],
+            json!({"schema":version, "effect_key":request["effect_key"],
                 "base":request["base"], "head":request["head"], "reviewed":request["reviewed"],
                 "results":vector["results"]})
         );
@@ -696,16 +723,24 @@ pub(crate) mod contract_vectors {
     fn controller_accepts_every_harness_vector_and_keeps_its_shape() {
         for parsed in parsed() {
             let name = &parsed.name;
+            let verdicts = parsed.vector["results"].as_array().unwrap();
             assert!(
-                parsed.report,
+                !parsed.results.is_empty(),
                 "{name}: results.rs refused the harness report; the vector and the parser disagree"
+            );
+            // An infrastructure verdict keeps its evidence but is not a report.
+            assert_eq!(
+                parsed.report,
+                verdicts
+                    .iter()
+                    .all(|result| result["verdict"] != "infrastructure-failure"),
+                "{name}"
             );
             assert_eq!(
                 Value::Array(parsed.results),
                 parsed.vector["results"],
                 "{name}: the stored report must keep every key the harness reports, unchanged"
             );
-            let verdicts = parsed.vector["results"].as_array().unwrap();
             assert_eq!(
                 parsed.pass,
                 verdicts.iter().all(|result| result["verdict"] == "pass"),
