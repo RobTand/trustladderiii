@@ -62,6 +62,7 @@ pub struct Store {
 }
 
 const CONTROLLER_CLAIM: i64 = 0x544c33434f4e5452;
+const CONTROLLER_CLAIM_HELD: &str = "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND classid::bigint=1414280003 AND objid::bigint=1330533458 AND objsubid=1 AND granted)";
 
 /// Exclusive controller ownership, held by the same Postgres session throughout startup.
 /// #785: only this capability can migrate or admit destructive initialization.
@@ -91,9 +92,12 @@ impl Ownership {
 
     /// Probe this session's existing lock, without reacquiring or reconnecting it.
     pub fn ensure_held(&mut self) -> Result<()> {
-        let held = self.store.client.query_one(
-            "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND classid::bigint=1414280003 AND objid::bigint=1330533458 AND objsubid=1 AND granted)", &[]
-        ).map_err(|_| Error::OwnershipLost)?.get::<_, bool>(0);
+        let held = self
+            .store
+            .client
+            .query_one(CONTROLLER_CLAIM_HELD, &[])
+            .map_err(|_| Error::OwnershipLost)?
+            .get::<_, bool>(0);
         if !held {
             return Err(Error::OwnershipLost);
         }
@@ -1021,6 +1025,15 @@ impl Store {
         let (cursor, through): (i64, i64) = (row.get(0), row.get(1));
         if cursor >= through {
             return Ok(false);
+        }
+        // #785: the backfill uses the controller's claimed session, never an
+        // auxiliary open. Probe its existing lock without acquiring a new one.
+        if !tx
+            .query_one(CONTROLLER_CLAIM_HELD, &[])
+            .map_err(|_| Error::OwnershipLost)?
+            .get::<_, bool>(0)
+        {
+            return Err(Error::OwnershipLost);
         }
         let rows = tx.query("SELECT revision, payload FROM tl3_events WHERE revision > $1 AND revision <= $2 ORDER BY revision LIMIT 256", &[&cursor, &through])?;
         let mut next = through;
