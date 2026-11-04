@@ -2498,8 +2498,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
 }
 
 kernel_fn! {
-/// Reply rows / #771: accepted replies outside file extension allocate at most
-/// one generation, one question, one starting ledger and one paid credit.
+/// Reply rows / #771: partition the unchanged match for bounded solver queries.
 fn reply_transition(w: &mut World, i: usize, reply: Reply,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -2507,25 +2506,28 @@ fn reply_transition(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures final(w).nodes@.len() == old(w).nodes@.len(),
-        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
-            ==> final(w).nodes@[j] == old(w).nodes@[j],
-        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
-        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
-        final(w).nodes@[i as int].credit.start as int <= old(w).nodes@[i as int].credit.start as int + CREDIT_START_STEP_BUDGET,
-        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
-        final(w).nodes@[i as int].credit.added == old(w).nodes@[i as int].credit.added,
-        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
-        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-        final(w).next_ticket == old(w).next_ticket,
-        final(w).next_question as int <= old(w).next_question as int + 1,
-        final(w).gates@ == old(w).gates@,
-        final(w).pool_capacity == old(w).pool_capacity,
-        final(w).fail_fast == old(w).fail_fast,
-        final(w).file_sets@ == old(w).file_sets@,
-        final(w).dependencies@ == old(w).dependencies@,
-        final(out).len <= old(out).len + 1,
-] proof [reveal(retry_bounds);] {
+    ensures reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+] {
+    match reply {
+        Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
+            | Reply::AuditDisagrees | Reply::ProtectedPaths => reply_ingest(w, i, reply, out),
+        Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet => reply_plan(w, i, reply, out),
+        _ => reply_work(w, i, reply, out),
+    }
+}
+}
+
+kernel_fn! {
+/// Reply rows / #771: one phase change, at most one paid credit and one question.
+fn reply_ingest(w: &mut World, i: usize, reply: Reply,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+        !(reply is MakerNeedsFiles),
+    ensures reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+] proof [reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::IngestDone { size } => {
             let m = &mut w.nodes[i];
@@ -2568,6 +2570,24 @@ fn reply_transition(w: &mut World, i: usize, reply: Reply,
                 ask_rob(w, i, QKind::AuditDisagreement, cont, 0, out);
             }
         }
+        Reply::ProtectedPaths => enter_stopping(&mut w.nodes[i], Outcome::NotActionable),
+        _ => {}
+    }
+}
+}
+
+kernel_fn! {
+/// Reply rows / #771: one phase change, at most one paid credit and one question.
+fn reply_plan(w: &mut World, i: usize, reply: Reply,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+        !(reply is MakerNeedsFiles),
+    ensures reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+] proof [reveal(reply_bounds); reveal(retry_bounds);] {
+    match reply {
         Reply::PlanLeaf { footprint, fits } => {
             let m = &mut w.nodes[i];
             let must_split = matches!(m.phase, Phase::Planning { must_split: true });
@@ -2584,14 +2604,29 @@ fn reply_transition(w: &mut World, i: usize, reply: Reply,
         }
         Reply::PlanSplit => ask_rob(w, i, QKind::NeedsSplitting, Cont::Nowhere, 0, out),
         Reply::PlanCantMeet => plan_retry(w, i, true, out),
-        Reply::ProtectedPaths => enter_stopping(&mut w.nodes[i], Outcome::NotActionable),
+        _ => {}
+    }
+}
+}
+
+kernel_fn! {
+/// Reply rows / #771: one phase change, at most one paid credit and one question.
+fn reply_work(w: &mut World, i: usize, reply: Reply,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+        !(reply is MakerNeedsFiles),
+    ensures reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+] proof [reveal(reply_bounds); reveal(retry_bounds);] {
+    match reply {
         Reply::MakerDone { head } => {
             let m = &mut w.nodes[i];
             m.head = Some(head);
             m.checked = None;
             set_phase(m, Phase::Checking);
         }
-        Reply::MakerNeedsFiles { .. } => {}
         Reply::MakerCantMeet => next_rung(w, i, ReviewStop::MakerCantMeet, out),
         Reply::MakerOutOfRoom => out_of_room(w, i, ReviewStop::MakerOutOfRoom, out),
         Reply::ChecksDone {
@@ -2644,7 +2679,7 @@ fn reply_transition(w: &mut World, i: usize, reply: Reply,
                 );
             }
         }
-        Reply::RunFailed => {}
+        _ => {}
     }
 }
 }
