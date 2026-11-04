@@ -1027,7 +1027,7 @@ impl Controller {
     /// The hook exposes durable boundaries for process-level fault injection.
     pub fn drive_once_with(&mut self, mut hook: impl FnMut(Boundary, &str)) -> Result<bool> {
         let snapshot = self.store.load()?;
-        if self.post_input_incident(&snapshot)? {
+        if self.reconcile_memory(&snapshot)? || self.post_input_incident(&snapshot)? {
             return Ok(true);
         }
         for row in snapshot
@@ -2553,9 +2553,17 @@ impl Controller {
                 })),
             ));
         } else {
+            // Q7: clearance covers the current persisted memory outcome, even
+            // if the feed finished another held attempt before this comment.
+            if let Some(failure) = incident.input_failure.as_mut()
+                && failure.memory_version.is_some()
+            {
+                failure.memory_version = Some(self.store.memory_feed_version()?);
+            }
             if incident.open && incident.signature.class == postmortems::PAUSED {
                 self.reset_postmortem_pause(snapshot, commit);
             }
+            self.resume_memory_incident(&incident, commit);
             incident.open = false;
             if !self.retry_notice(snapshot, &incident, commit)? {
                 self.resume_incident_look(snapshot, &incident, commit)?;
