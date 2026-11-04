@@ -1,13 +1,24 @@
-# Command ID exhaustion blocks unbounded kernel progress
+# Progress scope and counter exhaustion
 
-Ticket #771 cannot meet its unrestricted progress claim without a decision about
-counter exhaustion. This note records a counterexample in the executable kernel.
-No kernel rule, type, or transition has changed. All existing tests and Kani
-harnesses remain.
+Ticket #771 uses the lead's enforced-scope decision. No state-table rule changes.
+The progress preconditions are consistency, settledness, an open request,
+`World::headroom_ok()`, and `last_cmd < u64::MAX` for every node. The complete
+progress theorem and the per-step counter bounds remain proof obligations.
+Existing Kani harnesses and tests stay.
 
-The binding builder brief says, "No state-table rule, kernel type or transition,
-and no Q54 change; if one is needed, STOP and hand back a design note for a Q27
-decision." This is that handback. It does not complete #771.
+The controller now allocates command IDs through `Node::next_command_id`, using
+`checked_add`. Exhaustion raises `command ids exhausted for request N` without
+emitting an event. Raw `Observation::Kernel(Event::Command { .. })` is rejected
+in `Controller::translate`; typed `Observation::Steering` carries a command but
+no caller-assigned ID. It uses the same checked constructor. Thus accepted
+controller commands advance `last_cmd` by exactly one. Exhaustion from zero
+requires 18,446,744,073,709,551,615 accepted commands on one request. This is a
+physical reachability argument, not an unbounded mathematical invariant.
+
+The raw kernel still accepts any ID greater than `last_cmd`. The following
+counterexample characterizes that unrestricted API and lies outside the theorem
+scope. It remains a regression test. The witness now returns `None` at command
+exhaustion, with its signature unchanged, instead of panicking or wrapping.
 
 ## A reachable settled world has no progress event
 
@@ -24,9 +35,9 @@ settledness. The final world has one Unplanned, paused root. It has no effect,
 run, question, incident, PR history, or dependency. Its command ID is exhausted.
 Its measure is `28 * 64 + 2 + 8 = 1802`.
 
-`World::witness` selects Resume and evaluates `last_cmd + 1`.
-With overflow checks, that panics. With wrapping arithmetic, the witness has
-command ID zero. `on_command` ignores it because `id <= last_cmd`.
+Before the authorized fix, `World::witness` selected Resume and evaluated
+`last_cmd + 1`. Debug overflow checks panicked; release arithmetic wrapped to
+zero, which `on_command` ignored. The checked helper now returns `None`.
 
 This is more than a bug in the witness selector. No `u64` command ID is greater
 than `u64::MAX`, so every command is ignored, including Stop and ChangeRequest.
@@ -67,28 +78,65 @@ The pinned Verus toolchain and spike sources remain at the locations recorded in
 `/home/rob/tmp/tl3-build/rust-fv/verus-spike.md`. No new Verus result is claimed
 by this note. The counterexample runs the real kernel instead.
 
-## Decision needed before implementation resumes
+## Counter audit and proposed step reserves
 
-The lead needs a Q27 decision about the progress contract and counter lifecycle:
+The apply boundary checks the pure headroom helper before every event. The same
+mechanism covers dependency reconciliation's individual `step` calls and startup
+capacity reconciliation's `settle_world`. Failed checks raise
+`kernel counter headroom exhausted: <counter>` without applying that transition.
+The bounds below still need their whole-step proof; passing helper tests alone
+does not discharge it.
 
-- Specify a concrete exhaustion or renewal protocol, then authorize its kernel
-  behavior and prove its refinement. Changing only addition to saturate or wrap
-  does not make a greater command ID available.
-- Or explicitly scope the theorem to worlds with enough counter headroom, and
-  decide how the executable system enforces that scope. This changes the
-  unrestricted no-dead-state claim and is not silently added by this PR.
+| Counter | Width | Proposed K per step | Event count needed from a fresh ledger |
+| --- | --- | --- | --- |
+| `last_cmd` | u64 | 1 per accepted controller command | About 1.84e19 accepted commands on one request. Checked separately at command construction. |
+| `generation` | u64 | 3 | At least about 6.15e18 events affecting one request. Apply can increment twice; settle adds at most one phase change. |
+| `next_seq` | u64 | 2 | At least about 9.22e18 events affecting one request under this conservative bound. Apply and settle can each emit at most one effect per node. |
+| `next_question` | u64 | 1 | About 1.84e19 events globally. Allocations occur only in apply. |
+| `next_ticket` | u64 | `2 * (nodes.len() + 1)` | Depends on world size; two tickets per node per settle, including a possible new node. A fixed K independent of node count would be unsound. |
+| `credit.start` | u32 | 258 | Initialized once to at most `u8::MAX + RESERVE`; fresh requests cannot exhaust it. |
+| `credit.earned` | u32 | 1 | Merge credit applies once per request; fresh requests cannot exhaust it. |
+| `credit.added` | u32 | 255 | About 16.8 million maximal AddCredit answers. This includes automatic top-ups, which add at most one for a continuation. |
+| `credit.spent` | u32 | 1 | About 4.29 billion paid events on one request. |
 
-Generation, effect-sequence, ticket, question, and credit arithmetic also need
-their own obligations. This note establishes one sufficient blocker. It does
-not claim to have audited every counter.
+Credit's derived arithmetic uses i64, which contains the sum and difference of
+all four u32 entries. A consistent ledger is nonnegative. Withheld credit allows
+only zero-cost question continuations. For an AddCredit answer, the deposit
+covers the one-unit continuation unless the deposit is zero; that case tops up
+by one. Thus deposit plus automatic top-up is at most 255, not 256. The local
+credit operations have source-level Verus contracts; their callers and the
+complete step still need composition proofs.
 
-Q30 and Q39 still accept starvation. This counterexample concerns the existence
-of any progress event, rather than fairness or progress for an individual waiter.
+No remaining raw observation assigns a monotone counter. Reply generation and
+acknowledgement sequence numbers are compared with existing values. Ingest's
+u8 size initializes credit.start to at most 258 once. Answer question IDs select
+an existing question, and AddCredit is u8. Head IDs, prerequisite issue/PR
+numbers and target request IDs are identities, not monotone kernel counters.
 
-## Proof migration remains blocked
+Production raw observation sources inspected:
+
+- `adapters/workers.rs` and `adapters/workers/fake.rs`: worker Replies.
+- `adapters/prismabuild.rs`: check-result Replies.
+- `adapters/worktrees.rs`: worktree Facts.
+- `adapters/github/publishing.rs` and `adapters/mergify.rs`: PR/queue Facts.
+- `looks.rs` and executor completion forwarding in `lib.rs`: Facts and forwarded
+  observations, all passing through translate.
+- `ingress.rs`: simulation stdin forwards observations to observe, which now
+  rejects raw Commands as well as raw Ack/NewRequest/NewAdoption.
+
+The u8 attempt, round, retry and incident fields are bounded by consistency or
+saturating operations. Their arithmetic, the u32 scratch scan/pass counters and
+the mathematical whole-world rank still need explicit proof treatment. In
+particular, `admits` counts Ready waiters in u32; persistent counter headroom
+alone does not bound that count for arbitrary world sizes.
+
+Q30 and Q39 still accept starvation. The theorem concerns the existence of
+some progress event, with no per-request fairness claim.
+
+## Proof migration status
 
 No Kani harness is replaced or weakened. There is no gated Verus replacement
-in this PR. The intended theorem mapping remains work for #771 after the decision:
+in this PR yet. The mapping below records obligations that remain for #771:
 
 | Existing Kani harnesses | Required Verus result, not yet delivered |
 | --- | --- |
@@ -100,13 +148,8 @@ in this PR. The intended theorem mapping remains work for #771 after the decisio
 | `gate_maker_progress_w2`, `gate_maker_progress_w3`, `gate_merge_progress_w2`, `gate_merge_progress_w3`, `gate_resume_progress_w2`, `gate_resume_progress_w3` | Executable event refinement and whole-world rank decrease. |
 | `gate_leaf_progress_w2`, `gate_leaf_progress_w3` | Q48 grant after the last conflicting holder finishes, with older tickets and disjoint overtakers. |
 
-The final tests characterize the defect so the PR can have a green Gate without
-claiming to fix it. The red commit asserts the requested progress property and
-fails. The final commit explicitly replaces that false assertion with a
-counterexample assertion. This is a blocked-contract handback, not a red-to-green
-implementation of the requested theorem. No test present on main was changed.
-
-Run the characterization through PrismaBuild in both ordinary and release test
-profiles. Record each action's verdict, complete ending, and log digest in the
-PR body. Expected failures have failure endings rather than success receipts.
-Existing kernel suites and the Kani compile check must still pass.
+The counterexample tests characterize the unrestricted API in debug and release
+profiles. The final proof must refine the actual `apply` and `advance` bodies,
+not the #764 projection. Importing the kernel or verifying helper contracts alone
+does not complete that refinement. Seeded mutants must reject each delivered
+lemma before any replacement of the corresponding Kani harness is proposed.

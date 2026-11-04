@@ -380,11 +380,11 @@ impl Credit {
         /// State-table credit ledger: one unit per paid retry or continuation.
         fn spend(&mut self, cost: u32) -> (result: ()) [
             requires old(self).spent as int + cost as int <= u32::MAX as int,
-            ensures self.spent as int == old(self).spent as int + cost as int,
-                self.start == old(self).start,
-                self.earned == old(self).earned,
-                self.added == old(self).added,
-                self.withheld == old(self).withheld,
+            ensures final(self).spent as int == old(self).spent as int + cost as int,
+                final(self).start == old(self).start,
+                final(self).earned == old(self).earned,
+                final(self).added == old(self).added,
+                final(self).withheld == old(self).withheld,
         ] {
             self.spent += cost;
         }
@@ -402,12 +402,14 @@ impl Credit {
                 old(self).added as int + cost as int <= u32::MAX as int,
                 old(self).spent as int + cost as int <= u32::MAX as int,
             ensures
-                self.added as int >= old(self).added as int,
-                self.added as int <= old(self).added as int + cost as int,
-                self.spent as int == old(self).spent as int + cost as int,
-                self.start == old(self).start,
-                self.earned == old(self).earned,
-                self.withheld == old(self).withheld,
+                final(self).added as int >= old(self).added as int,
+                final(self).added as int <= old(self).added as int + cost as int,
+                final(self).spent as int == old(self).spent as int + cost as int,
+                final(self).start == old(self).start,
+                final(self).earned == old(self).earned,
+                final(self).withheld == old(self).withheld,
+                final(self).start as int + final(self).earned as int + final(self).added as int
+                    >= final(self).spent as int,
         ] {
             let short = cost as i64 - self.balance();
             if short > 0 {
