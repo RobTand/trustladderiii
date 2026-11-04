@@ -152,6 +152,7 @@ proof fn pending_lookup(w: World, i: int, target: DependencyTarget, existing: Op
         match target.request { None => true, Some(node) => node.0 < w.nodes@.len()
             && w.nodes@[node.0 as int].repo == w.nodes@[i].repo },
 {
+    reveal(dependency_progress_input);
     let k = choose|k: int| 0 <= k < w.dependencies@.len()
         && w.dependencies@[k].node == NodeId(i as u64) && w.dependencies@[k].target == target
         && !w.dependencies@[k].rejected && w.dependencies@[k].status == DependencyStatus::Pending;
@@ -647,6 +648,7 @@ impl World {
         kernel_snapshot! { before_dependency = *self }
         kernel_proof! {
             if dependency_progress_input(*self, i as int, target, status) {
+                reveal(dependency_progress_input);
                 let k = choose|k: int| 0 <= k < self.dependencies@.len()
                     && self.dependencies@[k].node == NodeId(i as u64) && self.dependencies@[k].target == target
                     && !self.dependencies@[k].rejected && self.dependencies@[k].status == DependencyStatus::Pending;
@@ -702,6 +704,7 @@ impl World {
         self.record_dependency(i, existing, dependency, out);
         kernel_proof! {
             if dependency_progress_input(before_dependency@, i as int, target, status) {
+                reveal(dependency_progress_input);
                 delivered_record_progress(before_dependency@, *self, existing.unwrap() as int);
             }
         }

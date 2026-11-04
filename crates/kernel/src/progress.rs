@@ -288,6 +288,7 @@ spec fn command_progress_input(n: Node, command: Command) -> bool {
 verus! {
 /// #693 / #771: delivery of an existing pending prerequisite is an outside
 /// witness. Rejected and abandoned declarations instead select ChangeRequest.
+#[verifier::opaque]
 spec fn dependency_progress_input(w: World, i: int, target: DependencyTarget,
     status: DependencyStatus) -> bool {
     !(w.nodes@[i].phase is Closed) && status == DependencyStatus::Delivered

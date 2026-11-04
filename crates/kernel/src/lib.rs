@@ -3713,6 +3713,7 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
     kernel_proof! {
         if world_checked(*w) && chosen_for_node(*w, i as int, Event::Fact { node: NodeId(i as u64), fact }) {
             if let Fact::Dependency { target, status } = fact {
+                reveal(dependency_progress_input);
                 dependencies::pending_ready(*w, i as int, target);
                 assert(dependency_progress_input(*w, i as int, target, status));
             }
