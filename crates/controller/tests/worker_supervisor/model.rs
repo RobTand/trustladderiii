@@ -222,6 +222,16 @@ impl Model for Protocol {
         }
         Some(state)
     }
+    /// P12 (#752), state-table "Start or stop an agent run" row:
+    /// "one exit writer owns the claim" and "exit is published only after waitpid"
+    /// encode once-per-operation ownership and terminal evidence. "no zombie
+    /// remains" encodes the row's requirement that a stopped run has ended.
+    /// "lost exit is reconciled as absence" and "restart overlaps worker exit"
+    /// witness the record-loss and restart cases required by #752.
+    /// S4 (#730), state-table "Reply" row and operation-generation invariant:
+    /// "each generation applies at most once" and "applied replies have their
+    /// own exit" fence outcomes to the matching operation. "both generations
+    /// complete" witnesses that this fencing permits successive operations.
     fn properties(&self) -> Vec<Property<Self>> {
         vec![
             Property::<Self>::always("one exit writer owns the claim", |_, s| {
