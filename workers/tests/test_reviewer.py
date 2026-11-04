@@ -583,6 +583,32 @@ def test_review_receives_helper_identities_and_both_verdicts(review_request):
         validate('reviewer-input', inputs)
 
 
+def test_review_accepts_the_harness_red_message_matches_receipt(review_request):
+    # PB #2691 (incident 72807): #713's harness receipt adds red_message_matches;
+    # the reviewer input schema must accept exactly the typed match kinds.
+    from jsonschema import ValidationError
+    from tl3_workers.contracts import validate
+
+    identity = {'rule': 'subject-observer-v1', 'declaration': None, 'mode': 'head-observer',
+                'subjects': {'tests/test_helpers.py::_execute': {'base': 'a' * 64, 'head': 'b' * 64}},
+                'source_base_tree_sha256': 'f' * 64,
+                'base_tree_sha256': 'c' * 64, 'head_tree_sha256': 'd' * 64,
+                'observer_sha256': {'tests/test_helpers.py::test_diagnostic': 'e' * 64},
+                'support_sha256': {},
+                'red_message_matches': {'tests/test_helpers.py::test_diagnostic': 'source-assertion'}}
+    check = review_request['inputs']['checks'][0]
+    check.update(kind='demonstrating', verdict='pass', proof=identity)
+    check['tests'][0].update(test='tests/test_helpers.py::test_diagnostic',
+                            base='assertion', head='passed', passed=True)
+    inputs = json.loads(json.dumps(review_request['inputs']))
+    validate('reviewer-input', inputs)
+    inputs['checks'][0]['proof']['red_message_matches']['tests/test_helpers.py::test_diagnostic'] = 'message'
+    validate('reviewer-input', inputs)
+    inputs['checks'][0]['proof']['red_message_matches']['tests/test_helpers.py::test_diagnostic'] = 'prefix'
+    with pytest.raises(ValidationError):
+        validate('reviewer-input', inputs)
+
+
 def test_review_input_carries_the_issue_for_a_forcing(review_request):
     from jsonschema import ValidationError
     from tl3_workers.contracts import validate
