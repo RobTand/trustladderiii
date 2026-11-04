@@ -387,7 +387,7 @@ mod classifier_tests {
 
     #[test]
     fn unsure_is_one_nonempty_line_of_at_most_300_characters() {
-        let inputs = json!({"state": {"closed": false}});
+        let inputs = json!({"comment": {"author":"owner", "body":"unsure"}, "state": {"phase":"Making", "closed": false}});
         validate_classification(
             &inputs,
             &json!({"kind": "unsure", "question": "é".repeat(300)}),

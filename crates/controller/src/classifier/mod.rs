@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 
 /// Validate the wire reply, then decide over finite classification facts.
 pub fn validate(inputs: &Value, reply: &Value) -> crate::Result<()> {
+    crate::adapters::workers::protocol::classifier_schema(inputs, false)?;
     crate::adapters::workers::protocol::classifier_schema(reply, true)?;
     let classification = parse(inputs, reply)?;
     decide(classification).map_err(|violation| crate::Error::Invalid(violation.message()))
@@ -57,13 +58,18 @@ fn parse(inputs: &Value, reply: &Value) -> crate::Result<Classification> {
         kind,
         answer,
         reconcile_issue: inputs.get("reconcile_issue").is_some(),
-        assessments_exact: ids == all && assessments.is_some_and(|a| a.len() == ids.len()),
+        assessments_exact: decisions.is_some()
+            && ids == all
+            && assessments.is_some_and(|a| a.len() == ids.len()),
         selected_matches: inputs["selected_answer"]
             .as_object()
             .is_none_or(|selected| {
-                selected
-                    .iter()
-                    .all(|(key, value)| reply.get(key) == Some(value))
+                selected.iter().all(|(key, value)| {
+                    reply.get(key) == Some(value)
+                            // Python compares 1 and 1.0 equally in a selected answer;
+                            // the credit-integer rule still rejects a floating reply.
+                            || (key == "amount" && reply[key].as_f64() == value.as_f64())
+                })
             }),
         has_applicable: !active.is_empty(),
         supersedes_present: reply.get("supersedes").is_some(),

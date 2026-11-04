@@ -55,7 +55,8 @@ fn cli_contract() {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
     #[test]
-    fn parsed_question_identity_and_offers(id in "[a-zA-Z0-9_]{1,50}", other in "[a-zA-Z0-9_]{1,50}", offered in any::<bool>(), unclear in any::<bool>()) {
+    fn parsed_question_identity_and_offers(id in "\\PC{1,50}", same in any::<bool>(), offered in any::<bool>(), unclear in any::<bool>()) {
+        let other = if same {id.clone()} else {format!("other:{id}")};
         let mut input = inputs();
         input["state"]["open_question"] = json!({"id": id, "kind":"effect_failed", "answers":if offered {vec!["continue"]} else {vec!["stop"]}});
         let reply = json!({"kind":"answer","question_id":other,"answer":if unclear {"unclear"} else {"continue"}});
@@ -74,5 +75,21 @@ proptest! {
         let supersedes: Vec<_> = unique.iter().map(|id| format!("q{id}")).collect();
         let reply = json!({"kind":"change_request","new_text":"new text","supersedes":supersedes});
         prop_assert_eq!(validate(&input, &reply).is_ok(), unique.iter().all(|id| !retired && ids.contains(id)));
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(128))]
+    #[test]
+    fn parsed_reconciliation_exact_coverage(ids in prop::collection::vec(0u8..10, 0..20), assessments in prop::collection::vec(0u8..12, 0..20), exact in any::<bool>()) {
+        let mut input = inputs();
+        let assessments = if exact {ids.iter().copied().collect::<std::collections::BTreeSet<_>>().into_iter().collect()} else {assessments};
+        input["reconcile_issue"] = json!({"number":1,"title":"Restart","body":null,"updated_at":"2026-11-04"});
+        input["decision_context"] = json!({"schema_version":1,"request_version":1,"decisions":ids.iter().map(|id| json!({"id":format!("q{id}"),"source_comment":null,"question":{},"answer":"yes","allowed_scope":[],"restrictions":[],"origin_request_version":1,"superseded_by":"later"})).collect::<Vec<_>>()});
+        let reply = json!({"kind":"reconcile_decisions","assessments":assessments.iter().map(|id|json!({"id":format!("q{id}"),"contradicted":false,"reason":"still applies"})).collect::<Vec<_>>()});
+        let active: std::collections::BTreeSet<_> = ids.iter().collect();
+        let assessed: std::collections::BTreeSet<_> = assessments.iter().collect();
+        let expected = active == assessed && assessed.len() == assessments.len();
+        prop_assert_eq!(validate(&input,&reply).is_ok(),expected);
     }
 }
