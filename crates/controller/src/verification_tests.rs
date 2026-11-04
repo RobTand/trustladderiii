@@ -274,7 +274,17 @@ fn measure_complete_step_cost_and_allocations() {
             let mut world = World::new(&[1], 2);
             let mut closed = Node::new(RepoId(0));
             closed.phase = Phase::Closed(Outcome::Stopped);
-            world.nodes = vec![closed; count];
+            for _ in 0..2 {
+                world = tl3_kernel::step(
+                    world,
+                    Event::NewRequest {
+                        repo: RepoId(0),
+                        priority: Priority::Unranked,
+                    },
+                )
+                .0;
+            }
+            world.nodes.resize(count, closed);
             assert!(world.valid());
             let mut rows: Vec<_> = snapshot::encode(&world)
                 .unwrap()
