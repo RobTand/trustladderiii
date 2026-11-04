@@ -1612,7 +1612,9 @@ impl Controller {
                 &mut commit,
             )?;
         }
-        queue_retirement(&mut commit, delivery);
+        if approval_delivery::is_approval(delivery) {
+            queue_retirement(&mut commit, delivery);
+        }
         looks::resolve_effect_incidents(&snapshot, &mut commit, |_, key| Ok(key == delivery.key))?;
         self.store.commit(&commit)?;
         self.remove_hold(delivery);
@@ -1825,10 +1827,12 @@ impl Controller {
             }
             self.queue_observation(&snapshot, &mut commit, key, index, observation)?;
         }
-        if matches!(
-            state,
-            EffectState::Confirmed | EffectState::Failed | EffectState::Cancelled
-        ) {
+        if approval_delivery::is_approval(&delivery)
+            && matches!(
+                state,
+                EffectState::Confirmed | EffectState::Failed | EffectState::Cancelled
+            )
+        {
             queue_retirement(&mut commit, &delivery);
         }
         evidence::retire_delivered(&snapshot, &mut commit, &delivery, completion.ack);
