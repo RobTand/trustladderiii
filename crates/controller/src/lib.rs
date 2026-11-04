@@ -19,6 +19,7 @@ pub mod console;
 mod decisions;
 pub mod evidence;
 pub mod executor;
+mod github_messages;
 mod goals;
 mod http;
 pub mod ingress;
@@ -852,6 +853,9 @@ impl Controller {
     /// Upstream inbox keys must be stable across webhook redelivery and looks.
     pub fn observe(&mut self, key: &str, observation: Observation) -> Result<()> {
         let snapshot = self.store.load()?;
+        if self.queue_message_reconciliation(&snapshot, key, &observation)? {
+            return Ok(());
+        }
         if let Observation::TraceLogsCapped { evicted } = observation {
             // #430: an operations note (#81), once while it stays open.
             let mut commit = Commit::new(
@@ -1019,6 +1023,9 @@ impl Controller {
     /// The hook exposes durable boundaries for process-level fault injection.
     pub fn drive_once_with(&mut self, mut hook: impl FnMut(Boundary, &str)) -> Result<bool> {
         let snapshot = self.store.load()?;
+        if self.reconcile_messages(&snapshot)? {
+            return Ok(true);
+        }
         if self.post_input_incident(&snapshot)? {
             return Ok(true);
         }

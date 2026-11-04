@@ -644,6 +644,15 @@ impl GitHub {
         format!("<!-- tl3:effect:{} -->", hex::encode(effect_key.as_bytes()))
     }
 
+    /// The single complete marker on an app message, including derived keys.
+    pub fn comment_effect_key(body: &str) -> Option<String> {
+        let mut markers = body
+            .lines()
+            .filter_map(|line| line.strip_prefix("<!-- tl3:effect:")?.strip_suffix(" -->"));
+        let key = String::from_utf8(hex::decode(markers.next()?).ok()?).ok()?;
+        (!key.is_empty() && markers.next().is_none()).then_some(key)
+    }
+
     fn owns_comment(&self, comment: &Comment) -> bool {
         comment.user.login == format!("{}[bot]", self.0.slug)
     }

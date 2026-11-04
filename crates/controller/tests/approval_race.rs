@@ -30,12 +30,16 @@ struct Checks {
     apply_first: bool,
     release_before_retry: bool,
     comments: Vec<Value>,
+    fail_comment_reads: bool,
 }
 
 impl Checks {
     fn apply(&mut self, request: &Request) -> ResponseTemplate {
         if request.url.path() == "/repos/owner/sandbox/issues/12/comments" {
             if request.method == "GET" {
+                if self.fail_comment_reads {
+                    return ResponseTemplate::new(503);
+                }
                 return ResponseTemplate::new(200).set_body_json(json!(self.comments));
             }
             let body: Value = serde_json::from_slice(&request.body).unwrap();
@@ -163,6 +167,14 @@ impl Executor for TargetGitHub {
     }
     fn app_login(&self, installation: u64) -> Option<String> {
         self.real.app_login(installation)
+    }
+    fn reconcile_message(
+        &mut self,
+        repository: &Repository,
+        issue: u64,
+        comment: &tl3_github::Comment,
+    ) -> tl3_controller::Result<()> {
+        self.real.reconcile_message(repository, issue, comment)
     }
 }
 
@@ -547,11 +559,33 @@ fn late_comment_after_confirmation_is_deduplicated_on_github_news() {
         )
         .unwrap();
     tl3_controller::ingress::drain(&mut controller).unwrap();
+    api.0.lock().unwrap().fail_comment_reads = true;
+    assert!((0..30).any(|_| !controller.drive_once().unwrap()));
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "github_message_reconciliations")
+    );
+    assert_eq!(api.0.lock().unwrap().comments.len(), 2);
+    drop(controller);
+    api.0.lock().unwrap().fail_comment_reads = false;
+    let mut controller = open(&settings, root.path(), Some(&server.uri()));
     assert!((0..30).any(|_| !controller.drive_once().unwrap()));
     assert_eq!(
         api.0.lock().unwrap().comments.len(),
         1,
         "the next reconciliation must clean the late copy of a confirmed comment"
+    );
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "github_message_reconciliations")
     );
     assert_eq!(
         controller.effect(&key).unwrap().unwrap().state,

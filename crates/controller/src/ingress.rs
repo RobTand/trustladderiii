@@ -649,19 +649,21 @@ fn comment_input(
     comment: tl3_github::Comment,
     rob: u64,
 ) -> Option<Input> {
-    (comment.user.id == rob).then(|| Input::Observation {
-        key: format!(
-            "github-comment:{}/{}/{}/{}",
-            repo.owner.to_ascii_lowercase(),
-            repo.name.to_ascii_lowercase(),
-            repo.installation,
-            comment.id
-        ),
-        observation: Observation::GitHubComment {
-            repository: repo.clone(),
-            issue,
-            comment,
-        },
+    (comment.user.id == rob || GitHub::comment_effect_key(&comment.body).is_some()).then(|| {
+        Input::Observation {
+            key: format!(
+                "github-comment:{}/{}/{}/{}",
+                repo.owner.to_ascii_lowercase(),
+                repo.name.to_ascii_lowercase(),
+                repo.installation,
+                comment.id
+            ),
+            observation: Observation::GitHubComment {
+                repository: repo.clone(),
+                issue,
+                comment,
+            },
+        }
     })
 }
 

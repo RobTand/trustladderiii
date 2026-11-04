@@ -378,6 +378,15 @@ pub trait Executor {
     fn app_login(&self, _installation: u64) -> Option<String> {
         None
     }
+    /// Reconcile a marked message on upstream news, including after confirmation.
+    fn reconcile_message(
+        &mut self,
+        _repository: &crate::Repository,
+        _issue: u64,
+        _comment: &tl3_github::Comment,
+    ) -> Result<()> {
+        Ok(())
+    }
     /// The issue as GitHub has it now, read fresh (Q39).
     fn issue(
         &mut self,

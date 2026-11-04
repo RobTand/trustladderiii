@@ -316,6 +316,35 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
+    fn app_login(&self, installation: u64) -> Option<String> {
+        self.clients
+            .get(&installation)
+            .map(|client| format!("{}[bot]", client.app_slug()))
+    }
+
+    fn reconcile_message(
+        &mut self,
+        repository: &crate::Repository,
+        issue: u64,
+        comment: &tl3_github::Comment,
+    ) -> Result<()> {
+        if self.app_login(repository.installation).as_deref() != Some(comment.user.login.as_str()) {
+            return Ok(());
+        }
+        let Some(key) = GitHub::comment_effect_key(&comment.body) else {
+            return Ok(());
+        };
+        self.records.fence(self.epoch)?;
+        let client = self
+            .clients
+            .get(&repository.installation)
+            .ok_or(Error::Invalid("missing GitHub installation client"))?;
+        let repo = format!("{}/{}", repository.owner, repository.name);
+        self.runtime
+            .block_on(client.reconcile_comments(&repo, issue, &key))?;
+        Ok(())
+    }
+
     fn prerequisite(
         &mut self,
         repository: &crate::Repository,
