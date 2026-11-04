@@ -432,12 +432,10 @@ fn main() {
             serde_json::from_slice(&fs::read(&args[2]).unwrap()).unwrap();
         let root = Path::new(&args[3]);
         let config = config(&settings, root, "normal");
-        let supervisor = Supervisor::new(
-            &config,
-            &root.join("fakes"),
-            &crate::startup_ownership::ownership(),
-        )
-        .unwrap();
+        // This child emits only JSON on stdout. Its existing test database also
+        // supplies ownership without a second fixture server's startup message.
+        let ownership = tl3_controller::Ownership::claim(Store::open(&settings).unwrap()).unwrap();
+        let supervisor = Supervisor::new(&config, &root.join("fakes"), &ownership).unwrap();
         let mut source = supervisor.source();
         let (tx, rx) = mpsc::channel();
         source
