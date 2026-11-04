@@ -3893,6 +3893,14 @@ fn observation_upstream(
 }
 
 fn queue_retirement(commit: &mut Commit, delivery: &Delivery) {
+    if approval_delivery::is_approval(delivery) {
+        for table in [approval_delivery::AUTHORIZATIONS, "notice_incidents"] {
+            commit.rows.push(RowChange::Delete {
+                table: table.into(),
+                id: delivery.key.clone(),
+            });
+        }
+    }
     if executor::upstream(delivery.output) == executor::Upstream::Mergify
         || approval_delivery::is_approval(delivery)
     {
