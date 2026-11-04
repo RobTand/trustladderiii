@@ -1582,9 +1582,9 @@ impl World {
     /// #771: successful executable consistency checking supplies the exact
     /// progress invariants used by the source-connected theorem.
     pub fn consistent(&self) -> (result: bool) [
-        requires world_headroom(*self), footprint::ordered_table(*self),
+        requires world_headroom(*self), storage_ordered(*self),
         ensures result ==> world_checked(*self),
-    ] {
+    ] proof [reveal(storage_ordered);] {
         self.check().is_ok()
     }
     }
@@ -1594,9 +1594,9 @@ impl World {
     /// #771: the real world checker establishes positive capacities and the
     /// per-node and prerequisite facts, without changing any acceptance rule.
     pub fn check(&self) -> (result: Result<(), Broken>) [
-        requires world_headroom(*self), footprint::ordered_table(*self),
+        requires world_headroom(*self), storage_ordered(*self),
         ensures result.is_ok() ==> world_checked(*self),
-    ] proof [reveal(world_headroom); reveal(world_checked);] {
+    ] proof [reveal(world_headroom); reveal(world_checked); reveal(storage_ordered);] {
         self.check_dependencies()?;
         if self.gates.is_empty() || self.pool_capacity == 0 {
             return Err(Broken::Config);
@@ -4183,11 +4183,15 @@ spec fn question_fits(q: Question) -> bool {
     }
 }
 
+/// #771: immutable file storage is ordered by the production interner.
+pub closed spec fn storage_ordered(w: World) -> bool { footprint::ordered_table(w) }
+
 /// #771: the existing per-node consistency checks used by progress. This is
 /// proved as a postcondition of check_node on the real Node and World types.
 spec fn node_checked(w: World, n: Node) -> bool {
     n.repo.0 < w.gates@.len() && footprint::valid_footprint(w, n.footprint)
         && arithmetic_consistent(n) && settle_shape(n) && stopping_effect_fits(n)
+        && (n.phase == Phase::Queued ==> n.pr_open && n.had_pr && n.merged.is_none())
         && (n.phase is Closed ==> n.pos == 0 && n.effect.is_none() && n.run.is_none()
             && n.job.is_none() && !n.pool && !n.holds && n.ticket.is_none()
             && n.question.is_none() && !n.waiting_incident && !n.pr_open && !n.worktree)

@@ -129,7 +129,7 @@ pub(super) open spec fn effect_distance(n: Node) -> int {
 }
 
 #[verifier::opaque]
-pub closed spec fn distance(n: Node) -> nat {
+pub(super) open spec fn distance(n: Node) -> nat {
     if n.phase is Closed { 0 }
     else if pause_due(n) {
         phase_rank(Phase::Ready(match n.phase {
@@ -146,6 +146,9 @@ pub closed spec fn distance(n: Node) -> nat {
             + if n.question.is_some() && n.phase is Stopping { 4int } else { 0int }) as nat
     }
 }
+
+/// #771: public view of the executable node distance.
+pub closed spec fn node_distance(n: Node) -> nat { distance(n) }
 
 /// #771: local moves left before this node blocks, independent of scheduling.
 /// Stopping has five agenda entries and closure, hence at most six moves.
@@ -477,7 +480,7 @@ impl Node {
         /// Falls with every internal transition settle takes. Kani proves it, so
         /// settle ends for any number of requests.
         pub fn settle_rank(&self) -> (result: u64) [
-            ensures result as int == 4 * super::ranks::distance(*self) + pending_rank(*self),
+            ensures result as int == 4 * node_distance(*self) + pending_rank(*self),
                 result <= 16387,
         ] {
             4 * self.distance() + self.pending()
@@ -490,7 +493,7 @@ impl Node {
         // The pinned Verus frontend requires nested if-let instead of let chains.
         #[allow(clippy::collapsible_if)]
         pub fn distance(&self) -> (result: u64) [
-            ensures result as int == super::ranks::distance(*self), result <= 4096,
+            ensures result as int == node_distance(*self), result <= 4096,
         ] proof [reveal(effect_distance); reveal(current_item);] {
             if self.phase.is_closed() {
                 return 0;

@@ -66,7 +66,7 @@ pub open spec fn ordered(files: Seq<FileId>) -> bool {
 }
 
 #[verifier::opaque]
-pub closed spec fn ordered_table(world: World) -> bool {
+pub(super) open spec fn ordered_table(world: World) -> bool {
     forall|i: int| 0 <= i < world.file_sets@.len() ==> ordered(world.file_sets@[i]@)
 }
 
