@@ -199,7 +199,8 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
             "$(rootpath //tools/bazel:worker_python)" if workers else "-",
         ] + gate_args,
         data = depset(
-            [":" + name + "_binary", "//tools/ci:rust-test-budget.json", "//tools/bazel:libtest-shards.json"] + binaries +
+            [":" + name + "_binary", "//tools/ci:rust-test-budget.json", "//tools/bazel:libtest-shards.json"] +
+            (["//tools/ci:controller_test_runner.sh"] if controller else []) + binaries +
             kwargs.get("compile_data", []) + kwargs.get("srcs", []) + runtime + runtime_data,
         ).to_list() + postgres,
         deps = ["//tools/ci:rust_gate"],

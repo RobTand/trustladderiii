@@ -70,6 +70,9 @@ def main():
     for repository in Path('..').glob('*postgres_linux_*'):
         os.environ['TL3_TEST_POSTGRES_DIR'] = str(repository.resolve())
     binary = {'name': name, 'command': [str(Path(executable).resolve())]}
+    if name.startswith('tl3-controller/'):
+        binary['command'] = ['bash', str(Path('tools/ci/controller_test_runner.sh').resolve()),
+                             '--controller', *binary['command']]
     shard = None
     if int(os.environ.get('TEST_TOTAL_SHARDS', '1')) > 1:
         shard = {'index': int(os.environ['TEST_SHARD_INDEX']),
