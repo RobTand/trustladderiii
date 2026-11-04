@@ -8,7 +8,8 @@ use std::{
     io::{BufRead, BufReader, Read},
     path::Path,
     sync::{
-        LazyLock,
+        Arc, LazyLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, SyncSender},
     },
     time::Duration,
@@ -1163,7 +1164,45 @@ fn curate(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usize> 
 pub(crate) type Announcer = std::sync::Arc<std::sync::Mutex<Option<Box<dyn Announce>>>>;
 
 #[derive(Clone)]
-pub(crate) struct Feed(SyncSender<()>);
+pub(crate) struct Feed(Arc<FeedWake>);
+
+struct FeedWake {
+    sender: SyncSender<()>,
+    store: tl3_config::Store,
+    life: Arc<FeedLife>,
+}
+
+struct FeedLife {
+    stopped: AtomicBool,
+    listener: String,
+}
+
+impl Drop for FeedWake {
+    fn drop(&mut self) {
+        self.life.stopped.store(true, Ordering::SeqCst);
+        let _ = self.sender.try_send(());
+        // #773: a feed no longer owned by a supervisor must leave the watched set.
+        if let Ok(mut store) = Store::open(&self.store) {
+            let _ = store.stop_memory_listener(&self.life.listener);
+        }
+    }
+}
+
+fn wait_for_memory_retry(retry: &mut tl3_store::Listener, feed: &FeedLife) -> Result<bool> {
+    loop {
+        if feed.stopped.load(Ordering::SeqCst) {
+            return Ok(false);
+        }
+        let signals = retry.wait()?;
+        if signals.contains(&feed.listener) {
+            return Ok(false);
+        }
+        if signals.contains("") {
+            return Ok(true);
+        }
+    }
+}
+
 impl Feed {
     pub(crate) fn start(
         store: tl3_config::Store,
@@ -1171,8 +1210,23 @@ impl Feed {
         breaker: Breaker,
         announcer: Announcer,
     ) -> Self {
+        static NEXT_LISTENER: AtomicU64 = AtomicU64::new(0);
         let (sender, receiver) = mpsc::sync_channel(1);
+        let life = Arc::new(FeedLife {
+            stopped: AtomicBool::new(false),
+            listener: format!(
+                "stop:{}:{}",
+                std::process::id(),
+                NEXT_LISTENER.fetch_add(1, Ordering::SeqCst)
+            ),
+        });
+        let wake = FeedWake {
+            sender,
+            store: store.clone(),
+            life: life.clone(),
+        };
         std::thread::spawn(move || {
+            // The thread holds no sender or FeedWake, so its owner can retire it.
             'feed: while receiver.recv().is_ok() {
                 loop {
                     // #773: arm before I/O so a retry racing the failed response
@@ -1185,44 +1239,44 @@ impl Feed {
                             break 'feed;
                         }
                     };
-                    let mut store = match Store::open(&store) {
-                        Ok(store) => store,
-                        Err(error) => {
-                            eprintln!("Hindsight memory retained for retry: {error}");
-                            if let Err(error) = retry.wait() {
-                                eprintln!("Hindsight memory retry listener ended: {error}");
-                                break 'feed;
-                            }
-                            continue;
-                        }
-                    };
-                    let delivery = deliver(&mut store, &settings, &breaker);
-                    if let Some(announcer) = announcer.lock().unwrap().as_deref()
-                        && let Err(error) = announce(&mut store, announcer)
-                    {
-                        eprintln!("memory curation notes retained for retry: {error}");
+                    if life.stopped.load(Ordering::SeqCst) {
+                        break 'feed;
                     }
-                    match delivery {
-                        Ok(_) => break,
+                    // The writer session ends before the feed holds.
+                    let delivery = (|| {
+                        let mut store = Store::open(&store)?;
+                        let delivery = deliver(&mut store, &settings, &breaker);
+                        if let Some(announcer) = announcer.lock().unwrap().as_deref()
+                            && let Err(error) = announce(&mut store, announcer)
+                        {
+                            eprintln!("memory curation notes retained for retry: {error}");
+                        }
+                        delivery
+                    })();
+                    if let Err(error) = delivery {
+                        eprintln!("Hindsight memory retained for retry: {error}");
+                    } else {
+                        break;
+                    }
+                    // Only this upstream's signal releases the hold.
+                    // Ordinary retirement wakes remain coalesced.
+                    match wait_for_memory_retry(&mut retry, &life) {
+                        Ok(true) => {}
+                        Ok(false) => break 'feed,
                         Err(error) => {
-                            eprintln!("Hindsight memory retained for retry: {error}");
-                            // Only this upstream's signal releases the hold.
-                            // Ordinary retirement wakes remain coalesced.
-                            if let Err(error) = retry.wait() {
-                                eprintln!("Hindsight memory retry listener ended: {error}");
-                                break 'feed;
-                            }
+                            eprintln!("Hindsight memory retry listener ended: {error}");
+                            break 'feed;
                         }
                     }
                 }
             }
         });
-        let feed = Self(sender);
+        let feed = Self(Arc::new(wake));
         feed.wake();
         feed
     }
     pub(crate) fn wake(&self) {
-        let _ = self.0.try_send(());
+        let _ = self.0.sender.try_send(());
     }
 }
 

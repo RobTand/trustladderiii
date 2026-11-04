@@ -148,6 +148,13 @@ impl Store {
         Ok(())
     }
 
+    /// #773: wake only the retiring feed, without releasing other feeds' holds.
+    pub fn stop_memory_listener(&mut self, listener: &str) -> Result<()> {
+        self.client
+            .execute("SELECT pg_notify('tl3_memory_retry', $1)", &[&listener])?;
+        Ok(())
+    }
+
     /// Open an independent read-only session without transferring this writer's ownership.
     pub fn reader(&self) -> Result<Reader> {
         Reader::open(&self.settings)
