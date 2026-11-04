@@ -47,8 +47,8 @@ def use_worker_python(launcher):
     os.environ['TL3_TEST_UV'] = str(uv)
 
 
-def list_tests(executable):
-    output = subprocess.run([executable, '--list', '--format=terse'], check=True, capture_output=True,
+def list_tests(command):
+    output = subprocess.run([*command, '--list', '--format=terse'], check=True, capture_output=True,
                             text=True, env=child_env()).stdout
     return libtest_shards.listed(output)
 
@@ -70,13 +70,16 @@ def main():
     for repository in Path('..').glob('*postgres_linux_*'):
         os.environ['TL3_TEST_POSTGRES_DIR'] = str(repository.resolve())
     binary = {'name': name, 'command': [str(Path(executable).resolve())]}
+    if name.startswith('tl3-controller/'):
+        binary['command'] = ['bash', str(Path('tools/ci/controller_test_runner.sh').resolve()),
+                             '--controller', *binary['command']]
     shard = None
     if int(os.environ.get('TEST_TOTAL_SHARDS', '1')) > 1:
         shard = {'index': int(os.environ['TEST_SHARD_INDEX']),
                  'total': int(os.environ['TEST_TOTAL_SHARDS'])}
         if harness == 'libtest':
             weights = json.loads(libtest_shards.WEIGHTS.read_text()).get(name, {})
-            selected = libtest_shards.select(list_tests(binary['command'][0]), weights,
+            selected = libtest_shards.select(list_tests(binary['command']), weights,
                                              shard['index'], shard['total'])
             arguments = ['--exact', *selected, *arguments]
         elif name not in SHARD_AWARE_BINARIES:
