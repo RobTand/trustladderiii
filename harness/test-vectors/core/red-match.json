@@ -183,65 +183,81 @@
   {
    "expected": {
     "match": "mismatch",
-    "reason": "assert 'a b' == 'x'",
+    "reason": "assert (1 == 2)",
     "tokens": [
-     "assert\"ab\"==\"x\"",
+     "assert1==2and\"ab\"",
      [
       [
        1,
        "assert"
       ],
       [
-       3,
-       "\"a  b\""
+       2,
+       "1"
       ],
       [
        55,
        "=="
       ],
       [
+       2,
+       "2"
+      ],
+      [
+       1,
+       "and"
+      ],
+      [
        3,
-       "\"x\""
+       "\"a  b\""
       ]
      ]
     ]
    },
    "id": "literal-whitespace",
    "input": {
-    "declared": "assert \"a  b\" == \"x\"",
-    "source": "assert \"a b\" == \"x\""
+    "declared": "assert 1 == 2 and \"a  b\"",
+    "source": "assert 1 == 2 and \"a b\""
    }
   },
   {
    "expected": {
-    "match": "message",
-    "reason": "assert 'a' == 'b'",
+    "match": "mismatch",
+    "reason": "assert (1 == 2)",
     "tokens": [
-     "assert'a'=='b'",
+     "assert1==2and'a'",
      [
       [
        1,
        "assert"
       ],
       [
-       3,
-       "'a'"
+       2,
+       "1"
       ],
       [
        55,
        "=="
       ],
       [
+       2,
+       "2"
+      ],
+      [
+       1,
+       "and"
+      ],
+      [
        3,
-       "'b'"
+       "'a'"
       ]
      ]
     ]
    },
    "id": "literal-quotes",
    "input": {
-    "declared": "assert 'a' == 'b'",
-    "source": "assert \"a\" == \"b\""
+    "declared": "assert 1 == 2 and 'a'",
+    "source": "assert 1 == 2 and \"a\""
    }
   },
   {
