@@ -12,11 +12,13 @@ use std::{
 };
 use tl3_controller::{
     Bootstrap, Controller, LabelledIssue, Repository, adapters,
-    executor::{Delivery, Output, Upstream},
+    executor::{
+        CommentKind, Completion, Delivery, Executor, Look, Output, Reconciliation, Upstream,
+    },
 };
 use tl3_github::{AppConfig, ClientOptions, GitHub, message::Policy};
 use tl3_kernel::EffectKind;
-use tl3_store::{EffectState, Store};
+use tl3_store::{ConsoleCommands, EffectState, Store};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 #[derive(Default)]
@@ -26,6 +28,37 @@ struct Checks {
     visible: Vec<Value>,
     refuse_next_read: bool,
     apply_first: bool,
+    release_before_retry: bool,
+    comments: Vec<Value>,
+}
+
+impl Checks {
+    fn apply(&mut self, request: &Request) -> ResponseTemplate {
+        if request.url.path() == "/repos/owner/sandbox/issues/12/comments" {
+            if request.method == "GET" {
+                return ResponseTemplate::new(200).set_body_json(json!(self.comments));
+            }
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            let comment = json!({"id": self.comments.len() + 1, "body": body["body"],
+                "user": {"id":99,"login":"factory[bot]"},
+                "created_at":"2026-11-04T00:00:00Z", "updated_at":"2026-11-04T00:00:00Z",
+                "issue_url":"https://api.github.com/repos/owner/sandbox/issues/12"});
+            self.comments.push(comment.clone());
+            return ResponseTemplate::new(201).set_body_json(comment);
+        }
+        if request.method == "DELETE"
+            && let Some(id) = request
+                .url
+                .path()
+                .strip_prefix("/repos/owner/sandbox/issues/comments/")
+        {
+            let id: u64 = id.parse().unwrap();
+            self.comments.retain(|comment| comment["id"] != id);
+            return ResponseTemplate::new(204);
+        }
+        github_fake::respond(request, request.url.path(), "/repos/owner/sandbox", self)
+            .expect("unexpected GitHub request")
+    }
 }
 
 impl github_fake::Routes for Checks {
@@ -52,13 +85,7 @@ impl Api {
     fn release(&self) {
         let mut state = self.0.lock().unwrap();
         let request = state.held.take().expect("first POST is still in flight");
-        github_fake::respond(
-            &request,
-            request.url.path(),
-            "/repos/owner/sandbox",
-            &mut *state,
-        )
-        .expect("apply the held POST through the existing GitHub fake");
+        state.apply(&request);
     }
 }
 
@@ -75,7 +102,12 @@ impl Respond for Api {
             state.refuse_next_read = false;
             return ResponseTemplate::new(404);
         }
-        if request.method == "POST" && request.url.path() == "/repos/owner/sandbox/check-runs" {
+        if request.method == "POST"
+            && matches!(
+                request.url.path(),
+                "/repos/owner/sandbox/check-runs" | "/repos/owner/sandbox/issues/12/comments"
+            )
+        {
             state.posts += 1;
             if state.posts == 1 && !state.apply_first {
                 // #766: retain the mutation after the client's request deadline.
@@ -83,14 +115,54 @@ impl Respond for Api {
                 state.held = Some(request.clone());
                 return ResponseTemplate::new(201).set_delay(Duration::from_secs(60));
             }
+            if state.posts == 2 && state.release_before_retry {
+                let first = state
+                    .held
+                    .take()
+                    .expect("A remains outstanding until B is sent");
+                state.apply(&first);
+            }
         }
-        github_fake::respond(
-            request,
-            request.url.path(),
-            "/repos/owner/sandbox",
-            &mut *state,
-        )
-        .expect("unexpected GitHub request")
+        state.apply(request)
+    }
+}
+
+struct TargetGitHub {
+    real: adapters::github::Adapter,
+    other: adapters::github::Fake,
+}
+
+impl TargetGitHub {
+    fn target(&mut self, delivery: &Delivery) -> &mut dyn Executor {
+        if matches!(
+            delivery.output,
+            Output::Effect {
+                kind: EffectKind::PostApproval,
+                ..
+            } | Output::Comment {
+                kind: CommentKind::ConsoleNote,
+                ..
+            }
+        ) {
+            &mut self.real
+        } else {
+            &mut self.other
+        }
+    }
+}
+
+impl Executor for TargetGitHub {
+    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+        self.target(delivery).execute(delivery)
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        self.target(delivery).reconcile(delivery)
+    }
+    fn look(&mut self, delivery: &Delivery) -> tl3_controller::Result<Look> {
+        self.target(delivery).look(delivery)
+    }
+    fn app_login(&self, installation: u64) -> Option<String> {
+        self.real.app_login(installation)
     }
 }
 
@@ -131,20 +203,23 @@ fn open(settings: &tl3_config::Store, root: &Path, uri: Option<&str>) -> Control
         .unwrap();
         registry.register(
             Upstream::GitHub,
-            adapters::github::Adapter::new(
-                BTreeMap::from([(3, client)]),
-                adapters::workers::FakeWriter,
-                0,
-                Policy::default(),
-                &root.join("github"),
-                Some(tl3_config::OperationsIssue {
-                    owner: "owner".into(),
-                    name: "operations".into(),
-                    installation_id: 3,
-                    number: 81,
-                }),
-            )
-            .unwrap(),
+            TargetGitHub {
+                real: adapters::github::Adapter::new(
+                    BTreeMap::from([(3, client)]),
+                    adapters::workers::FakeWriter,
+                    0,
+                    Policy::default(),
+                    &root.join("github"),
+                    Some(tl3_config::OperationsIssue {
+                        owner: "owner".into(),
+                        name: "operations".into(),
+                        installation_id: 3,
+                        number: 81,
+                    }),
+                )
+                .unwrap(),
+                other: adapters::github::Fake::new(&root.join("fakes")),
+            },
         );
     }
     Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap()
@@ -191,14 +266,21 @@ fn ready_approval(controller: &mut Controller) -> String {
 /// proof that the earlier POST has ended.
 #[test]
 fn late_approval_post_after_hold_release_does_not_duplicate() {
-    late_post(false);
+    late_post(false, false);
 }
 
 /// #766; state-table effect recovery: Sent -> Uncertain after restart must
 /// preserve the original key without assuming a timed-out POST has ended.
 #[test]
 fn late_approval_post_after_restart_does_not_duplicate() {
-    late_post(true);
+    late_post(true, false);
+}
+
+/// #764/#766: Sent, absent read, A times out, hold, Uncertain, same-version
+/// restart, Intended, absent retry read, POST B, then A lands before B.
+#[test]
+fn approval_spike_schedule_lands_a_then_b_after_restart() {
+    late_post(true, true);
 }
 
 /// #766; the effect machine permits retry on authoritative absence. A known
@@ -251,13 +333,14 @@ fn refused_approval_read_can_retry_after_an_empty_look() {
     panic!("approval never retried after its known refusal");
 }
 
-fn late_post(restart: bool) {
+fn late_post(restart: bool, release_before_retry: bool) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
         .build()
         .unwrap();
     let api = Api::default();
+    api.0.lock().unwrap().release_before_retry = release_before_retry;
     let server = runtime.block_on(async {
         let server = MockServer::start().await;
         Mock::given(|_: &Request| true)
@@ -317,7 +400,9 @@ fn late_post(restart: bool) {
             break;
         }
     }
-    api.release();
+    if api.0.lock().unwrap().held.is_some() {
+        api.release();
+    }
     let delivery: Delivery = serde_json::from_value(effect.payload).unwrap();
     let external_id = format!("{key}:{}", delivery.head_sha.unwrap());
     let copies = api
@@ -350,4 +435,126 @@ fn late_post(restart: bool) {
         );
     }
     panic!("late approval was never confirmed");
+}
+
+/// #764/#766; state-table comment contract: the next reconciliation deletes
+/// extras even when B confirmed the effect before the timed-out A landed.
+#[test]
+fn late_comment_after_confirmation_is_deduplicated_on_github_news() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let api = Api::default();
+    let server = runtime.block_on(async {
+        let server = MockServer::start().await;
+        Mock::given(|_: &Request| true)
+            .respond_with(api.clone())
+            .mount(&server)
+            .await;
+        server
+    });
+    let mut db = database::Database::start();
+    let settings = db.create("comment_race");
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = open(&settings, root.path(), None);
+    controller
+        .intake(LabelledIssue {
+            delivery: "comment-race".into(),
+            owner: "owner".into(),
+            repo: "sandbox".into(),
+            installation: 3,
+            number: 12,
+            title: "Fix the value".into(),
+            actor: 42,
+            label: "tl3".into(),
+            labels: vec![],
+        })
+        .unwrap();
+    let id = "00000000-0000-4000-8000-000000000766";
+    ConsoleCommands::open(&settings)
+        .unwrap()
+        .submit(id, 0, &json!({"kind":"pause"}))
+        .unwrap();
+    tl3_controller::ingress::drain(&mut controller).unwrap();
+    let key = format!("console-note:{id}");
+    assert_eq!(
+        controller.effect(&key).unwrap().unwrap().state,
+        EffectState::Intended
+    );
+    drop(controller);
+    let mut controller = open(&settings, root.path(), Some(&server.uri()));
+    assert!((0..30).any(|_| !controller.drive_once().unwrap()));
+    assert_eq!(api.0.lock().unwrap().posts, 1);
+    assert!(api.0.lock().unwrap().comments.is_empty());
+    assert_eq!(
+        controller.effect(&key).unwrap().unwrap().state,
+        EffectState::Uncertain
+    );
+    drop(controller);
+    let mut controller = open(&settings, root.path(), Some(&server.uri()));
+    for _ in 0..30 {
+        if controller.effect(&key).unwrap().unwrap().state == EffectState::Confirmed {
+            break;
+        }
+        assert!(controller.drive_once().unwrap());
+    }
+    assert_eq!(
+        controller.effect(&key).unwrap().unwrap().state,
+        EffectState::Confirmed
+    );
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .pending_effects
+            .iter()
+            .any(|effect| effect.key == key)
+    );
+    assert_eq!(
+        api.0.lock().unwrap().comments.len(),
+        1,
+        "B landed and confirmed the effect"
+    );
+    api.release();
+    assert_eq!(
+        api.0.lock().unwrap().comments.len(),
+        2,
+        "A landed after confirmation"
+    );
+    for _ in 0..5 {
+        controller.drive_once().unwrap();
+    }
+    let late = api.0.lock().unwrap().comments.last().unwrap().clone();
+    let mut webhook: Value = serde_json::from_str(include_str!(
+        "../../github/tests/fixtures/issue-comment-created.json"
+    ))
+    .unwrap();
+    webhook["repository"]["owner"]["login"] = json!("owner");
+    webhook["repository"]["name"] = json!("sandbox");
+    webhook["installation"]["id"] = json!(3);
+    webhook["issue"]["number"] = json!(12);
+    webhook["comment"] = late.clone();
+    webhook["sender"] = late["user"].clone();
+    Store::open(&settings)
+        .unwrap()
+        .receive_ingress(
+            "github-webhook",
+            "late-comment",
+            "issue_comment",
+            &serde_json::to_vec(&webhook).unwrap(),
+        )
+        .unwrap();
+    tl3_controller::ingress::drain(&mut controller).unwrap();
+    assert!((0..30).any(|_| !controller.drive_once().unwrap()));
+    assert_eq!(
+        api.0.lock().unwrap().comments.len(),
+        1,
+        "the next reconciliation must clean the late copy of a confirmed comment"
+    );
+    assert_eq!(
+        controller.effect(&key).unwrap().unwrap().state,
+        EffectState::Confirmed
+    );
 }

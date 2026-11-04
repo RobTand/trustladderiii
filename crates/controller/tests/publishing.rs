@@ -1738,7 +1738,7 @@ fn publication_recovery() {
     let mut adapter = server.adapter(&records, 1);
     assert!(matches!(
         adapter.reconcile(&approval).unwrap(),
-        Reconciliation::Pending
+        Reconciliation::Absent
     ));
     server.api.state.lock().unwrap().lose_response = Some("/check-runs");
     assert!(adapter.execute(&approval).is_err());
@@ -1754,12 +1754,12 @@ fn publication_recovery() {
     wrong.head_sha = Some("b".repeat(40));
     assert!(matches!(
         adapter.reconcile(&wrong).unwrap(),
-        Reconciliation::Pending
+        Reconciliation::Absent
     ));
     server.api.state.lock().unwrap().checks[0]["app"]["id"] = json!(456);
     assert!(matches!(
         adapter.reconcile(&approval).unwrap(),
-        Reconciliation::Pending
+        Reconciliation::Absent
     ));
     server.api.state.lock().unwrap().checks[0]["app"]["id"] = json!(123);
     let mut open = d.clone();
