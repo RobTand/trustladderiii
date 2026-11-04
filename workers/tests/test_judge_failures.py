@@ -221,10 +221,17 @@ def graders(tmp_path, monkeypatch):
     return install
 
 
-def grade_spans(log):
+def repairs(log):
+    """The repair outcome and failure class on each repaired grade judge span."""
     _, spans = exported_spans(log)
-    return [{item.key: item.value for item in span.attributes}
-            for span in spans if span.name == "grade judge"]
+    found = []
+    for span in spans:
+        attrs = {item.key: item.value for item in span.attributes}
+        if span.name == "grade judge" and "tl3.judge.repair" in attrs:
+            found.append((attrs["tl3.judge.repair"].string_value,
+                          attrs["tl3.judge.failure_class"].string_value
+                          if "tl3.judge.failure_class" in attrs else None))
+    return found
 
 
 def test_a_malformed_grade_reply_is_repaired_once_and_accepted(graders):
@@ -244,9 +251,7 @@ def test_a_malformed_grade_reply_is_repaired_once_and_accepted(graders):
     # The repair is one more turn of the same judge, inside its 48.
     assert [(item["turn_count"], item["iteration_limit"]) for item in recorded["judge_runs"]
             if item["stage"] == "grade"] == [(3, 47), (2, 47)]
-    spans = grade_spans(log)
-    assert spans[0]["tl3.judge.repair"].string_value == "accepted"
-    assert "tl3.judge.repair" not in spans[1]
+    assert repairs(log) == [("accepted", None)]
 
 
 def test_a_grade_still_malformed_after_repair_is_null_and_the_postmortem_completes(graders):
@@ -261,9 +266,7 @@ def test_a_grade_still_malformed_after_repair_is_null_and_the_postmortem_complet
     assert len(model.repaired) == 1, "one bounded repair turn"
     recorded = json.loads(summary.read_text())
     assert recorded["outcome"] == "succeeded" and recorded["reason"] is None
-    spans = grade_spans(log)
-    assert spans[0]["tl3.judge.repair"].string_value == "failed"
-    assert spans[0]["tl3.judge.failure_class"].string_value == "schema"
+    assert repairs(log) == [("failed", "schema")]
 
 
 @pytest.mark.parametrize("mode", MODES)
