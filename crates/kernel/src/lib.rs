@@ -664,7 +664,6 @@ pub struct Gate {
     derive(serde::Serialize, serde::Deserialize)
 )]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct World {
     pub nodes: Vec<Node>,
