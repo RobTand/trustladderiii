@@ -1070,7 +1070,6 @@ tl3_py_test(
     srcs = ["test_tokenizer_parity_oracle.py"],
     deps = [
         ":conftest",
-
         "@tl3_pip//pytest",
     ],
 )

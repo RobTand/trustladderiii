@@ -15,6 +15,11 @@ import tl3_workers
     ('patterns', 'not-a-list'), ('checked', [['x', 'unknown-check']]),
     ('regex', {}), ('words', {}), ('characters', {}),
     ('context', True), ('near_chars', -1), ('schema_version', 753),
+    ('patterns:0', ''), ('patterns:0', 753), ('checked:0', ['x', 'unknown-check']),
+    ('checked:0', [753, 'check_labelled']), ('regex:BEARER', 753),
+    ('words:SECRET_WORDS', 'not-a-list'), ('words:SECRET_WORDS', []),
+    ('characters:alnum', []), ('helpers:HEADER_REFERENCE', ''),
+    ('regex:BEARER', '('),
 ])
 @pytest.mark.parametrize('matching_hash', [False, True])
 def test_worker_import_refuses_invalid_policy(tmp_path, field, value, matching_hash):
@@ -26,7 +31,11 @@ def test_worker_import_refuses_invalid_policy(tmp_path, field, value, matching_h
             shutil.copyfile(source / name, package / name)
     original = (source / 'policy.json').read_bytes()
     policy = json.loads(original)
-    policy[field] = value
+    if ':' in field:
+        field, key = field.split(':')
+        policy[field][int(key) if key.isdecimal() else key] = value
+    else:
+        policy[field] = value
     changed = json.dumps(policy).encode()
     (package / 'policy.json').write_bytes(changed)
     identity = package / '_policy_identity.py'
