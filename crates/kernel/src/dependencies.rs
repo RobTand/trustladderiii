@@ -214,7 +214,30 @@ impl World {
         Ok(())
     }
 
-    pub(super) fn withhold_dependency_credit(&mut self, i: usize) {
+    kernel_fn! {
+    /// State-table planning admission / #771: withholding preserves ledger amounts.
+    pub(super) fn withhold_dependency_credit(&mut self, i: usize) -> (result: ()) [
+        requires i < old(self).nodes@.len(),
+        ensures final(self).nodes@ == old(self).nodes@.update(i as int, Node {
+            credit: Credit {
+                withheld: old(self).nodes@[i as int].credit.withheld
+                    || (!prerequisites_delivered(*old(self), NodeId(i as u64))
+                        && !old(self).nodes@[i as int].planning_started
+                        && matches!(old(self).nodes@[i as int].phase,
+                            Phase::Ingesting | Phase::Auditing | Phase::Unplanned)
+                        && old(self).nodes@[i as int].credit.ready),
+                ..old(self).nodes@[i as int].credit
+            },
+            ..old(self).nodes@[i as int]
+        }),
+            final(self).next_ticket == old(self).next_ticket,
+            final(self).next_question == old(self).next_question,
+            final(self).gates@ == old(self).gates@,
+            final(self).pool_capacity == old(self).pool_capacity,
+            final(self).fail_fast == old(self).fail_fast,
+            final(self).file_sets@ == old(self).file_sets@,
+            final(self).dependencies@ == old(self).dependencies@,
+    ] {
         if !self.dependencies_delivered(NodeId(i as u64))
             && !self.nodes[i].planning_started
             && matches!(
@@ -227,6 +250,7 @@ impl World {
                 n.credit.withheld = true;
             }
         }
+    }
     }
 
     pub(super) fn remove_dependency(&mut self, i: usize, kind: PrerequisiteKind, number: u64) {
