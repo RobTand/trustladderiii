@@ -1,4 +1,6 @@
 //! #371: an upgrade replays observations an older release already committed.
+#[path = "support/ownership.rs"]
+mod startup_ownership;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 
@@ -126,7 +128,12 @@ fn startup_rereads_a_finished_run_in_the_newer_shape_and_the_loop_survives() {
     finished_attempt(&config.workers.runs, &run, &reply);
     let before = controller.snapshot().unwrap().revision;
     // Start-up: the new release's worker source rescans watched runs.
-    let supervisor = Supervisor::new(&config, &root.path().join("records")).unwrap();
+    let supervisor = Supervisor::new(
+        &config,
+        &root.path().join("records"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     let mut source = supervisor.source();
     let (sender, receiver) = mpsc::channel();
     source

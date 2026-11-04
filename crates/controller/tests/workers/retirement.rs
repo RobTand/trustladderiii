@@ -56,7 +56,12 @@ pub(super) fn summaries_and_states(settings: &tl3_config::Store) {
         vec![],
         vec![],
     );
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     let uncertain = seed(&mut store, &config, "uncertain", EffectState::Uncertain);
     let sent = seed(&mut store, &config, "sent", EffectState::Sent);
     let cancelling = seed(&mut store, &config, "cancelling", EffectState::Cancelling);
@@ -201,7 +206,12 @@ pub(super) fn blocked_identities(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let config = config(settings, root.path(), "normal");
     let mut store = Store::open(settings).unwrap();
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     for (key, record) in [
         ("corrupt", "{".into()),
         (
@@ -219,7 +229,12 @@ pub(super) fn blocked_identities(settings: &tl3_config::Store) {
             "later drains skip a blocked identity"
         );
     }
-    let mut restarted = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut restarted = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     restarted.retire(&mut store).unwrap();
     assert_eq!(store.worker_progress(None).unwrap().len(), 2);
 }
@@ -227,7 +242,12 @@ pub(super) fn blocked_identities(settings: &tl3_config::Store) {
 pub(super) fn io_child(settings: &tl3_config::Store, root: &Path) {
     use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
     let config = config(settings, root, "normal");
-    let supervisor = Supervisor::new(&config, &root.join("fakes")).unwrap();
+    let supervisor = Supervisor::new(
+        &config,
+        &root.join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     let mut source = supervisor.source();
     let mut store = Store::open(settings).unwrap();
     let (tx, _) = mpsc::channel();
@@ -280,7 +300,12 @@ pub(super) fn transient_io(settings: &tl3_config::Store) {
     materials(&mut store);
     let run = delivery();
     watch_run(&mut store, &run);
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     supervisor.execute(&run).unwrap();
     wait_for_signal(|| root.path().join("entered").exists());
     let path = root.path().join("settings.json");
@@ -312,7 +337,12 @@ pub(super) fn session_guard(settings: &tl3_config::Store, guard: &str) {
     let session = config.workers.runs.join("sessions/0/plan-0/attempt-1.json");
     fs::create_dir_all(session.parent().unwrap()).unwrap();
     fs::write(&session, "saved conversation").unwrap();
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     let run = delivery();
     match guard {
         "inbox" => save(
@@ -406,7 +436,12 @@ pub(super) fn session_unlink_error(settings: &tl3_config::Store) {
         fs::write(session.join("attempt.json"), "saved conversation").unwrap();
     }
     let retained = config.workers.runs.join("sessions/0");
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     fs::set_permissions(&retained, fs::Permissions::from_mode(0o500)).unwrap();
     let result = supervisor.retire(&mut store);
     fs::set_permissions(&retained, fs::Permissions::from_mode(0o700)).unwrap();
@@ -440,7 +475,12 @@ pub(super) fn bad_memory_never_blocks_retirement(settings: &tl3_config::Store) {
         let root = tempfile::tempdir().unwrap();
         let config = config(settings, root.path(), "normal");
         let mut store = Store::open(settings).unwrap();
-        let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+        let mut supervisor = Supervisor::new(
+            &config,
+            &root.path().join("fakes"),
+            &mut crate::startup_ownership::ownership(),
+        )
+        .unwrap();
         let run = seed(
             &mut store,
             &config,
@@ -514,7 +554,12 @@ pub(super) fn feed_retirement_end_to_end(settings: &tl3_config::Store) {
     config.hindsight.endpoint = server.uri().parse().unwrap();
     config.hindsight.api_key_file = Some(key);
     let mut store = Store::open(settings).unwrap();
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     let run = seed(&mut store, &config, "memory-feed", EffectState::Confirmed);
     let attempt = root_for(&config, &run.key).join("attempt-00000000");
     fs::write(attempt.join("request.json"), json!({"role":"audit", "model":{"name":"fixture"}, "inputs":{"goals":["remember me"]}, "memory":{"repo":"fixture", "request":"0"}}).to_string()).unwrap();
@@ -542,7 +587,12 @@ pub(super) fn recall_key_request_wiring(settings: &tl3_config::Store) {
     config.hindsight.api_key_file = Some(root.path().join("never-read-fixture-key"));
     let mut store = Store::open(settings).unwrap();
     materials(&mut store);
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     let run = delivery();
     watch_run(&mut store, &run);
     let error = supervisor.execute(&run).unwrap_err();
@@ -572,7 +622,12 @@ pub(super) fn memory_store_error_retries_retirement(settings: &tl3_config::Store
     let root = tempfile::tempdir().unwrap();
     let config = config(settings, root.path(), "normal");
     let mut store = Store::open(settings).unwrap();
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     let run = seed(
         &mut store,
         &config,
@@ -628,7 +683,12 @@ pub(super) fn retirement_keeps_an_unshipped_span_log(settings: &tl3_config::Stor
     let root = tempfile::tempdir().unwrap();
     let config = config(settings, root.path(), "normal");
     let mut store = Store::open(settings).unwrap();
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     let run = seed(&mut store, &config, "span-log", EffectState::Confirmed);
     let run_root = root_for(&config, &run.key);
     let attempt = run_root.join("attempt-00000000");

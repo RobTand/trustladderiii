@@ -9,7 +9,7 @@ use std::sync::{
     mpsc::{self, Receiver},
 };
 use std::time::Duration;
-use tl3_controller::{adapters::workers::Supervisor, executor::Executor};
+use tl3_controller::{Ownership, adapters::workers::Supervisor, executor::Executor};
 use tl3_store::{MemoryFeedState, Store};
 use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
@@ -78,7 +78,10 @@ impl Fixture {
         config.workers.runs = scratch.path().join("runs");
         config.hindsight.endpoint = server.uri().parse().unwrap();
         config.hindsight.api_key_file = None;
-        let supervisor = Supervisor::new(&config, &scratch.path().join("records")).unwrap();
+        let mut ownership = Ownership::claim(Store::open(&settings).unwrap()).unwrap();
+        let supervisor =
+            Supervisor::new(&config, &scratch.path().join("records"), &mut ownership).unwrap();
+        drop(ownership);
         assert!(
             !attempts.recv_timeout(WAIT).unwrap(),
             "first delivery sees the outage"
@@ -441,8 +444,16 @@ fn outage_consumer_death_and_restart_rearms_automatic_recovery() {
     assert_eq!(ctl.next_look_in().unwrap(), None);
     drop(ctl);
     drop(fixture.supervisor.take());
-    fixture.supervisor =
-        Some(Supervisor::new(&fixture.config, &fixture._scratch.path().join("records")).unwrap());
+    let mut ownership = Ownership::claim(Store::open(&fixture.settings).unwrap()).unwrap();
+    fixture.supervisor = Some(
+        Supervisor::new(
+            &fixture.config,
+            &fixture._scratch.path().join("records"),
+            &mut ownership,
+        )
+        .unwrap(),
+    );
+    drop(ownership);
     assert!(!fixture.attempts.recv_timeout(WAIT).unwrap());
     fixture.barrier();
     let mut ctl = controller(&fixture, &clock);

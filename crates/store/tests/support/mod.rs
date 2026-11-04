@@ -24,7 +24,7 @@ impl Database {
     }
 
     pub fn start_with_fsync(fsync: bool) -> Self {
-        Self::start_with(fsync, 20)
+        Self::start_with(fsync, 20, false)
     }
 
     /// One server for a whole test process (#731). Rust never drops a static, so
@@ -36,8 +36,18 @@ impl Database {
         reason = "Used by the controller library's shared fixture; this fixture is shared with store tests"
     )]
     pub fn start_shared() -> (Self, Child) {
+        Self::start_shared_with(false)
+    }
+
+    /// Adapter crash children reserve stdout for their handshake (#785).
+    #[allow(dead_code, reason = "Used by standalone controller adapter fixtures")]
+    pub fn start_shared_on_stderr() -> (Self, Child) {
+        Self::start_shared_with(true)
+    }
+
+    fn start_shared_with(stderr: bool) -> (Self, Child) {
         // Parallel `cargo test` threads share this server, and each test opens several sessions.
-        let database = Self::start_with(true, 200);
+        let database = Self::start_with(true, 200, stderr);
         let settings = database.postgres.settings();
         let watchdog = Command::new("sh")
             .args([
@@ -55,7 +65,7 @@ impl Database {
         (database, watchdog)
     }
 
-    fn start_with(fsync: bool, max_connections: u32) -> Self {
+    fn start_with(fsync: bool, max_connections: u32, stderr: bool) -> Self {
         scratch::reap(&std::env::temp_dir());
         let scratch = tempfile::Builder::new()
             .prefix("tl3-store-pg-")
@@ -108,10 +118,15 @@ impl Database {
         runtime
             .block_on(postgres.setup())
             .expect("download and initialize embedded Postgres");
-        println!(
+        let diagnostic = format!(
             "embedded Postgres cached setup (fsync={fsync}): {:.2}s",
             started.elapsed().as_secs_f64()
         );
+        if stderr {
+            eprintln!("{diagnostic}");
+        } else {
+            println!("{diagnostic}");
+        }
         runtime
             .block_on(postgres.start())
             .expect("start embedded Postgres");
@@ -131,6 +146,18 @@ impl Database {
     }
 
     pub fn create(&mut self, name: &str) -> tl3_config::Store {
+        let settings = self.create_uninitialized(name);
+        let mut ownership =
+            tl3_store::Ownership::claim(tl3_store::Store::connect(&settings).unwrap()).unwrap();
+        ownership.migrate().unwrap();
+        settings
+    }
+
+    #[allow(
+        dead_code,
+        reason = "Schema and migration regressions need an empty database"
+    )]
+    pub fn create_uninitialized(&mut self, name: &str) -> tl3_config::Store {
         self.runtime
             .block_on(self.postgres.create_database(name))
             .unwrap();
