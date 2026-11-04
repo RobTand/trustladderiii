@@ -90,3 +90,31 @@ fn legacy_kernel_event_is_not_a_pass() {
             .contains("fixture:event-2")
     );
 }
+
+/// #783: measure the added invariant scan on real settled worlds, without a timing assertion.
+#[test]
+fn measure_invariant_cost_per_step() {
+    use std::{hint::black_box, time::Instant};
+    let mut world = World::new(&[1], 1);
+    for count in [1, 16, 64, 256] {
+        while world.nodes.len() < count {
+            world = tl3_kernel::step(
+                world,
+                Event::NewRequest {
+                    repo: RepoId(0),
+                    priority: Priority::Unranked,
+                },
+            )
+            .0;
+        }
+        let iterations = 200;
+        let start = Instant::now();
+        for _ in 0..iterations {
+            tl3_controller::verification::check_world(black_box(&world)).unwrap();
+        }
+        println!(
+            "invariant_cost nodes={count} iterations={iterations} ns_per_step={}",
+            start.elapsed().as_nanos() / iterations
+        );
+    }
+}

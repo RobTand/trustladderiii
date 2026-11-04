@@ -1678,3 +1678,48 @@ parse proptests, and real-process repair/tool-denial test. Use
 `--test_arg=--classifier-contracts` for the classifier group alone. Python tests
 exercise only the shim with a fake executable and orchestration with the Rust
 validation boundary stubbed. They never depend on the real `tl3` binary.
+
+## Check kernel history
+
+`tl3 replay-check --config FILE [--from EVENT]` checks the event log without
+starting a controller or contacting upstreams. `EVENT` is an event key or a
+positive revision, included in the check. The command exits nonzero on the
+first invariant failure or snapshot divergence and names its event and revision.
+A successful run prints the event count, kernel step count and final revision.
+
+Replay uses `Config::load_status` and `Reader::open`, with SQL-enforced read-only
+access. One repeatable-read, read-only transaction covers paged event reads and
+the final snapshot, so concurrent controller commits cannot change the view.
+A SELECT-only store role provides another access restriction.
+
+New controller commits retain each real kernel step's prepared input and
+result, plus the committed kernel snapshot, in the append-only event result.
+Replay checks the chain between commits, permits translation to append interned
+footprints, replays capacity reconciliation through `settle_world`, and compares
+the last result with the actual world rows. This is a diagnostic command;
+normal recovery still loads a snapshot without replay.
+
+Older logs lack historical snapshots. Replay fails explicitly at those events;
+it never calls unchecked history a pass. After an upgrade, use `--from` with the
+first instrumented kernel event to check the suffix. Its recorded prior world
+is the trusted starting point. Keep the binary version with its log because
+kernel upgrades can intentionally change replay results.
+
+Every applied kernel step, including dependency updates, checks consistency
+and settlement before its candidate is committed. A failure discards candidate
+writes and effects, records a TL3-side incident naming the event and broken
+rule, and holds the request across restarts. Other requests can continue.
+A failure with no identifiable request holds all requests. Status shows the
+incident, and the existing incident publisher posts it. Rob's clear or a new
+release clears the hold through the existing Q51 path. The rejected event stays
+in the audit log; obtain fresh authoritative evidence after fixing its cause.
+No credit or kernel transition changes. The `headroom_ok` hook is marked in
+`verification::check_world` for #771 and is not implemented here.
+
+The invariant scan runs on every step, without sampling. The
+`measure_invariant_cost_per_step` fixture reports its added scan time for settled
+worlds with 1, 16, 64 and 256 nodes on BuildBuddy. This excludes database I/O
+and serialization. Reassess the policy if production-sized scans exceed 1 ms.
+The lead can schedule `tl3 replay-check --config FILE` nightly at 03:00 UTC,
+using a separate read-only store configuration. No timer, live configuration or
+unit is installed by this change.

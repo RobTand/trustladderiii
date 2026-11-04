@@ -67,7 +67,9 @@ impl Controller {
             let postmortem_pause = incident.signature.class == crate::postmortems::PAUSED;
             if !postmortem_pause
                 && (incident.cause() != looks::Cause::Tl3
-                    || !(incident.blocking || incident.effect.is_some()))
+                    || !(incident.blocking
+                        || incident.effect.is_some()
+                        || incident.signature.class == crate::verification::CLASS))
             {
                 continue;
             }

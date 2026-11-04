@@ -246,9 +246,9 @@ fn apply_fact(
     fact: Fact,
     outputs: &mut Vec<Out>,
     commit: &mut Commit,
-) {
+) -> Result<()> {
     let event = Event::Fact { node, fact };
-    let (next, emitted) = tl3_kernel::step(world.clone(), event);
+    let (next, emitted) = crate::verification::checked_step(world.clone(), event, commit)?;
     *world = next;
     outputs.extend(emitted);
     if !commit.result.is_object() {
@@ -263,6 +263,7 @@ fn apply_fact(
         .as_array_mut()
         .unwrap()
         .push(json!(event));
+    Ok(())
 }
 
 impl Controller {
@@ -422,7 +423,7 @@ impl Controller {
                         },
                         outputs,
                         commit,
-                    );
+                    )?;
                 }
             }
             for declaration in declarations {
@@ -435,7 +436,7 @@ impl Controller {
                     },
                     outputs,
                     commit,
-                );
+                )?;
             }
         }
         Ok(())
@@ -561,7 +562,7 @@ impl Controller {
                         },
                         outputs,
                         commit,
-                    );
+                    )?;
                 }
                 if unannounced {
                     commit.rows.push(put(
@@ -612,7 +613,7 @@ impl Controller {
                     },
                     &mut outputs,
                     commit,
-                );
+                )?;
             }
         }
         self.announce_dependency_endings(snapshot, world, Vec::new(), &mut outputs, commit)?;

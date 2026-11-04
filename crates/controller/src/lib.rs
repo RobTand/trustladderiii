@@ -51,7 +51,7 @@ pub mod status;
 pub mod status_web;
 pub mod steering;
 mod sync;
-mod verification;
+pub mod verification;
 pub mod worker_inputs;
 
 use executor::{
@@ -111,6 +111,10 @@ pub enum Error {
     Quota { retry_after: std::time::Duration },
     /// The enqueue guard is waiting for required checks to report. This is
     /// evidence of a legitimate wait, not a failure (Q52).
+    #[error("kernel invariant {rule} failed after {event:?}")]
+    KernelInvariant { event: Option<Event>, rule: String },
+    #[error("replay-check: {0}")]
+    Replay(String),
     #[error("required head checks are still pending")]
     ChecksPending,
 }
@@ -348,6 +352,7 @@ impl Controller {
                     .rows
                     .push(put("repos", index.to_string(), serde_json::to_value(repo)?));
             }
+            commit.result = json!({"kernel_anchor":world});
             store.commit(&commit)?;
         } else {
             snapshot::decode(&snapshot)?;
@@ -483,6 +488,7 @@ impl Controller {
                 serde_json::to_value(repository)?,
             ));
         }
+        commit.result = json!({"kernel_settle":world});
         let (world, outputs) = tl3_kernel::settle_world(world);
         self.record_kernel_result(&snapshot, world, outputs, &mut commit)?;
         self.store.commit(&commit)?;
@@ -1067,6 +1073,20 @@ impl Controller {
         }
         if let Some(row) = snapshot.rows.iter().find(|r| r.table == "inbox") {
             let observation: Observation = decode_stored(row.value.clone())?;
+            if input_errors::observation_context(&snapshot, &observation)?
+                .2
+                .is_some_and(|node| verification::held(&snapshot, node))
+            {
+                let mut commit =
+                    Commit::new(format!("hold:{}", row.id), row.value.clone(), &snapshot);
+                commit.rows.push(RowChange::Delete {
+                    table: "inbox".into(),
+                    id: row.id.clone(),
+                });
+                commit.result = json!({"kernel_held":true});
+                self.store.commit(&commit)?;
+                return Ok(true);
+            }
             let mut waiting_for_queue = false;
             if let Observation::Queue(fact) = &observation
                 && fact.needs_queue_ack()
@@ -1100,6 +1120,7 @@ impl Controller {
                 let mut world = snapshot::decode(&snapshot)?;
                 let mut commit =
                     Commit::new(format!("consume:{}", row.id), row.value.clone(), &snapshot);
+                verification::prepare(&snapshot, &mut commit);
                 match self.translate(&snapshot, &mut world, observation.clone(), &mut commit) {
                     Ok(Some(event)) => self.apply(&snapshot, world, event, &mut commit)?,
                     Ok(None) => {}
@@ -1143,6 +1164,9 @@ impl Controller {
         let world = snapshot::decode(&snapshot)?;
         for effect in &snapshot.pending_effects {
             let delivery = hydrate(effect, &snapshot)?;
+            if verification::held(&snapshot, delivery.node()) {
+                continue;
+            }
             // ClosePr removes the queue label without waiting for Mergify admission reads.
             let closing_queue = executor::upstream(delivery.output) == executor::Upstream::Mergify
                 && matches!(
@@ -1753,6 +1777,33 @@ impl Controller {
     fn apply(
         &mut self,
         snapshot: &Snapshot,
+        world: World,
+        event: Event,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        verification::prepare(snapshot, commit);
+        if snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "kernel_holds" && row.id == "all")
+            || verification::event_node(event)
+                .is_some_and(|node| verification::held(snapshot, node))
+        {
+            *commit = Commit::new(commit.event_key.clone(), commit.event.clone(), snapshot);
+            commit.result = json!({"kernel_held":true});
+            return Ok(());
+        }
+        match self.apply_checked(snapshot, world, event, commit) {
+            Err(Error::KernelInvariant { event, rule }) => {
+                verification::reject(snapshot, event, &rule, commit)
+            }
+            result => result,
+        }
+    }
+
+    fn apply_checked(
+        &mut self,
+        snapshot: &Snapshot,
         mut world: World,
         event: Event,
         commit: &mut Commit,
@@ -1816,7 +1867,7 @@ impl Controller {
         let mut dependency_outputs = Vec::new();
         self.declare_merge_dependencies(&mut world, event, &mut dependency_outputs, commit)?;
         let dependency_roots = merge_dependencies::changed_roots(&world, event);
-        let (mut world, mut outputs) = tl3_kernel::step(world, event);
+        let (mut world, mut outputs) = verification::checked_step(world, event, commit)?;
         outputs.splice(0..0, dependency_outputs);
         self.announce_dependency_endings(
             snapshot,
@@ -1854,7 +1905,36 @@ impl Controller {
         outputs: Vec<Out>,
         commit: &mut Commit,
     ) -> Result<()> {
+        if let Err(rule) = verification::check_world(&world) {
+            return verification::reject(snapshot, None, &rule, commit);
+        }
         let previous = snapshot::decode(snapshot)?;
+        if previous.nodes.iter().enumerate().any(|(index, node)| {
+            verification::held(snapshot, NodeId(index as u64))
+                && world.nodes.get(index) != Some(node)
+        }) {
+            *commit = Commit::new(commit.event_key.clone(), commit.event.clone(), snapshot);
+            commit.result = json!({"kernel_replay": crate::replay::ReplayRecord {
+                before: previous.clone(), steps: vec![], after: previous,
+            }, "kernel_held":true});
+            return Ok(());
+        }
+        if !commit.result.is_object() {
+            commit.result = json!({});
+        }
+        let steps = commit
+            .result
+            .as_object_mut()
+            .expect("object")
+            .remove("kernel_steps")
+            .map(serde_json::from_value)
+            .transpose()?
+            .unwrap_or_default();
+        commit.result["kernel_replay"] = json!(crate::replay::ReplayRecord {
+            before: previous.clone(),
+            steps,
+            after: world.clone(),
+        });
         let before = snapshot::encode(&previous)?;
         for (index, node) in world.nodes.iter().enumerate() {
             if !matches!(node.phase, tl3_kernel::Phase::Planning { .. })
@@ -2536,6 +2616,9 @@ impl Controller {
         inbox: String,
         commit: &mut Commit,
     ) -> Result<()> {
+        if incident.signature.class == verification::CLASS {
+            verification::release(snapshot, &incident.id, commit);
+        }
         if incident.blocking {
             commit.rows.push(put(
                 "inbox",

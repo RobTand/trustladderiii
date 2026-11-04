@@ -38,6 +38,20 @@ pub(crate) struct InputFailure {
     retry_after_ms: Option<u64>,
 }
 
+impl InputFailure {
+    pub(crate) fn runtime(target: Option<IssueTarget>, key: &str) -> Self {
+        Self {
+            scope: format!("kernel:{key}"),
+            target,
+            title: "Kernel invariant failure".into(),
+            posted: false,
+            attempted_epoch: None,
+            post_failure: None,
+            retry_after_ms: None,
+        }
+    }
+}
+
 pub(crate) fn recoverable(error: &Error) -> bool {
     !matches!(
         error,
@@ -65,6 +79,9 @@ impl Controller {
         error: Error,
         commit: &mut Commit,
     ) -> Result<()> {
+        if let Error::KernelInvariant { event, rule } = &error {
+            return crate::verification::reject(snapshot, *event, rule, commit);
+        }
         if !recoverable(&error) {
             return Err(error);
         }
