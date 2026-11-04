@@ -285,6 +285,21 @@ fn open_mode(
     uri: Option<&str>,
     legacy: bool,
 ) -> Controller {
+    open_clock(
+        settings,
+        root,
+        uri,
+        legacy,
+        tl3_controller::clock::SystemClock,
+    )
+}
+fn open_clock(
+    settings: &tl3_config::Store,
+    root: &Path,
+    uri: Option<&str>,
+    legacy: bool,
+    clock: impl tl3_controller::clock::Clock + 'static,
+) -> Controller {
     let mut registry = adapters::simulation(&root.join("fakes")).unwrap();
     if let Some(uri) = uri {
         let client = GitHub::new(
@@ -326,7 +341,8 @@ fn open_mode(
             },
         );
     }
-    Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap()
+    Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), clock)
+        .unwrap()
 }
 
 fn ready_approval(controller: &mut Controller) -> String {
@@ -1443,4 +1459,189 @@ fn retired_approval_history_does_not_block_open_without_adapter() {
         result.is_ok(),
         "retired history must not require its old GitHub adapter"
     );
+}
+
+#[derive(Clone)]
+struct ManualClock(Arc<std::sync::atomic::AtomicU64>);
+impl tl3_controller::clock::Clock for ManualClock {
+    fn now(&self) -> std::time::SystemTime {
+        std::time::UNIX_EPOCH
+            + Duration::from_millis(self.0.load(std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
+/// #766, state-table:307: a later cleanup incident requires Rob, despite healthy probes.
+#[test]
+fn cleanup_second_incident_requires_rob() {
+    let case = Case::new("cleanup_second_incident");
+    let mut controller = case.open();
+    queue_duplicate_comments(&case, &mut controller);
+    case.api.0.lock().unwrap().fail_comment_reads = true;
+    drain(&mut controller);
+    controller.look_now().unwrap(); // The issue GET probe succeeds; cleanup itself still fails.
+    drain(&mut controller);
+    let incident = controller
+        .snapshot()
+        .unwrap()
+        .rows
+        .iter()
+        .find(|r| {
+            r.table == "incidents"
+                && r.value["open"] == true
+                && r.value["signature"]["class"] == "message_cleanup"
+        })
+        .unwrap()
+        .clone();
+    assert_eq!(incident.value["needs_rob"], true);
+    case.api.0.lock().unwrap().fail_comment_reads = false;
+    controller.look_now().unwrap();
+    drain(&mut controller);
+    assert_eq!(
+        case.api.0.lock().unwrap().comments.len(),
+        2,
+        "a healthy probe cannot clear a later incident"
+    );
+    controller
+        .observe(
+            "clear-second-cleanup",
+            tl3_controller::executor::Observation::GitHubComment {
+                repository: bootstrap().repos[0].clone(),
+                issue: 12,
+                comment: tl3_github::Comment {
+                    id: 999,
+                    body: format!("clear incident {}", incident.id),
+                    user: tl3_github::Actor {
+                        id: 42,
+                        login: "rob".into(),
+                    },
+                    created_at: chrono::DateTime::UNIX_EPOCH,
+                    updated_at: chrono::DateTime::UNIX_EPOCH,
+                    issue_url: "https://api.github.com/repos/owner/sandbox/issues/12".into(),
+                },
+            },
+        )
+        .unwrap();
+    drain(&mut controller);
+    assert_eq!(case.api.0.lock().unwrap().comments.len(), 1);
+}
+
+/// #766, Q27: terminal Pending repair also schedules recovery, without a webhook or manual look.
+#[test]
+fn pending_terminal_repair_recovers_on_due_timer_after_restart() {
+    let case = Case::new("repair_pending_timer");
+    let clock = ManualClock(Arc::new(std::sync::atomic::AtomicU64::new(1_000_000)));
+    case.api.0.lock().unwrap().apply_first = true;
+    let mut controller = open_clock(
+        &case.settings,
+        case.root.path(),
+        Some(&case.server.uri()),
+        false,
+        clock.clone(),
+    );
+    drain(&mut controller);
+    let check = case.api.0.lock().unwrap().visible[0].clone();
+    case.api.0.lock().unwrap().visible.clear();
+    case.check_news(&mut controller, check);
+    drain(&mut controller);
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents"
+                && r.value["signature"]["class"] == "approval_repair"
+                && r.value["open"] == true)
+    );
+    drop(controller);
+    case.corrupt_copies(3);
+    clock
+        .0
+        .fetch_add(31_000, std::sync::atomic::Ordering::Relaxed);
+    let mut controller = open_clock(
+        &case.settings,
+        case.root.path(),
+        Some(&case.server.uri()),
+        false,
+        clock,
+    );
+    controller.look_due().unwrap();
+    drain(&mut controller);
+    case.assert_converged(3);
+    let snapshot = controller.snapshot().unwrap();
+    assert!(
+        !snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == "approval_reconciliations"
+                || (r.table == "allowances" && r.id.starts_with("approval-repair:"))
+                || (r.table == "maintenance_failures"))
+    );
+}
+
+/// #766, delivery failures: connect refusal before writing a POST is ordinary retryable failure.
+#[test]
+fn connect_failure_before_post_has_no_dispatch_evidence() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let uri = format!("http://{}/", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        for body in [
+            json!({"token":"fake-token", "expires_at":"2099-01-01T00:00:00Z"}),
+            json!({"total_count":0,"check_runs":[]}),
+        ] {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut headers = Vec::new();
+            while !headers.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                socket.read_exact(&mut byte).unwrap();
+                headers.push(byte[0]);
+            }
+            let body = body.to_string();
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+        }
+        // Joining this thread closes the listener before the POST starts.
+    });
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let client = GitHub::new(
+        AppConfig {
+            id: 123,
+            slug: "factory".into(),
+            pem: include_str!("../../mergify/tests/fixtures/throwaway-key.pem").into(),
+            webhook_secret: "fixture".into(),
+        },
+        3,
+        ClientOptions {
+            api_url: uri.parse().unwrap(),
+            max_retries: 0,
+            mutation_interval: Duration::ZERO,
+            ..ClientOptions::default()
+        },
+    )
+    .unwrap();
+    runtime
+        .block_on(client.check_runs("owner/sandbox", "head"))
+        .unwrap();
+    server.join().unwrap();
+    let failure = runtime
+        .block_on(client.post_check_run_tracked(
+            "owner/sandbox",
+            &tl3_github::NewCheckRun {
+                name: "TL3 approval".into(),
+                head_sha: "head".into(),
+                external_id: "key:head".into(),
+                status: tl3_github::CheckStatus::Completed,
+                conclusion: Some(tl3_github::CheckConclusion::Success),
+            },
+            None,
+        ))
+        .unwrap_err();
+    assert!(
+        !failure.sent,
+        "a connection refused before send cannot be an outstanding POST"
+    );
+    assert!(matches!(failure.error, tl3_github::Error::Transport));
 }

@@ -1215,13 +1215,15 @@ impl Controller {
             }
             match effect.state {
                 EffectState::Intended => {
-                    if approval_delivery::is_approval(&delivery)
+                    let (prior_dispatch, predecessor) = if approval_delivery::is_approval(&delivery)
                         && !snapshot.rows.iter().any(|r| {
                             r.table == approval_delivery::AUTHORIZATIONS && r.id == effect.key
-                        })
-                        && self.approval_prior_dispatch(effect, &snapshot)?.0
-                    {
-                        let predecessor = self.approval_prior_dispatch(effect, &snapshot)?.1;
+                        }) {
+                        self.approval_prior_dispatch(effect, &snapshot)?
+                    } else {
+                        (false, false)
+                    };
+                    if prior_dispatch {
                         match self.adapters.adapter(&delivery)?.reconcile(&delivery) {
                             Ok(Reconciliation::Absent) if !predecessor => {}
                             Ok(Reconciliation::Found(completion)) if !predecessor => {
