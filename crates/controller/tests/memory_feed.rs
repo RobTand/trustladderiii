@@ -107,11 +107,15 @@ impl Fixture {
     }
 
     fn sql(&self) -> postgres::Client {
+        self.sql_database(&self.settings.database)
+    }
+
+    fn sql_database(&self, database: &str) -> postgres::Client {
         postgres::Config::new()
             .host(&self.settings.host)
             .port(self.settings.port)
             .user(&self.settings.user)
-            .dbname(&self.settings.database)
+            .dbname(database)
             .password("tl3-disposable-test-password")
             .connect(postgres::NoTls)
             .unwrap()
@@ -312,7 +316,8 @@ fn shutdown_needs_no_new_database_connection_and_leaves_no_listener() {
     let mut fixture = Fixture::new(false);
     fixture.barrier();
     let mut observer = fixture.sql();
-    observer
+    fixture
+        .sql_database("postgres")
         .batch_execute("ALTER DATABASE feed ALLOW_CONNECTIONS false")
         .unwrap();
     drop(fixture.supervisor.take());
