@@ -78,6 +78,7 @@ _CONTROLLER_WORKERS = [
     "test_test_writer_references",
 ]
 _CONTROLLER_BINARIES = {
+    "test_test_classifier": [":tl3"],
     "test_test_console_commands": [":tl3d"],
     "test_test_github-flow": [":tl3d"],
     # Both groups compile github.rs, including its env!("CARGO_BIN_EXE_tl3d").
@@ -151,7 +152,7 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
         env["CARGO_BIN_EXE_" + binary[1:]] = WORKSPACE + "/$(rootpath " + binary + ")"
     runtime = _CONTROLLER_RUNTIME.get(name, []) if controller else _RUNTIME.get(package, [])
     if workers:
-        runtime = runtime + ["//tools/bazel:worker_python", "@o200k_base//file"]
+        runtime = runtime + [":tl3", "//tools/bazel:worker_python", "@o200k_base//file"]
     postgres = select({
         "@platforms//cpu:aarch64": ["@postgres_linux_arm64//:all"],
         "//conditions:default": ["@postgres_linux_amd64//:all"],
