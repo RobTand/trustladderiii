@@ -45,6 +45,83 @@ def fixture(name):
     raise RuntimeError(f"fixture {name} is missing")
 
 
+def source_at_boundary(language, size):
+    headers = {
+        "rust": "pub struct Record { pub path: String, pub sequence: u64, pub active: bool }\n\n",
+        "python": "from collections.abc import Iterable\n\n",
+        "typescript": "export interface RecordEntry { path: string; sequence: number; active: boolean; }\n\n",
+        "go": 'package queue\n\nimport "fmt"\n\ntype Record struct {\n\tPath string\n\tSequence uint64\n\tActive bool\n}\n\n',
+    }
+    functions = {
+        "rust": '''pub fn select_batch_INDEX(records: &[Record], minimum: u64) -> Vec<String> {
+    let mut selected_INDEX = Vec::new();
+    for (offset, record) in records.iter().enumerate() {
+        if record.active && record.sequence >= minimum + INDEX {
+            let identity = format!("{}:{}", record.path, offset);
+            selected_INDEX.push(identity);
+        } else if record.path.ends_with(".rs") {
+            continue;
+        }
+    }
+    selected_INDEX.sort_unstable();
+    selected_INDEX
+}
+
+''',
+        "python": '''def select_batch_INDEX(records: Iterable[dict], minimum: int) -> list[str]:
+    selected_INDEX = []
+    for offset, record in enumerate(records):
+        sequence = int(record.get("sequence", 0))
+        if record["active"] and sequence >= minimum + INDEX:
+            identity = f"{record['path']}:{offset}"
+            selected_INDEX.append(identity)
+        elif record["path"].endswith(".py"):
+            continue
+    return sorted(selected_INDEX)
+
+''',
+        "typescript": '''export function selectBatch_INDEX(records: RecordEntry[], minimum: number): string[] {
+    const selected_INDEX: string[] = [];
+    records.forEach((record, offset) => {
+        if (record.active && record.sequence >= minimum + INDEX) {
+            const identity = `${record.path}:${offset}`;
+            selected_INDEX.push(identity);
+        } else if (record.path.endsWith(".ts")) {
+            return;
+        }
+    });
+    return selected_INDEX.sort((left, right) => left.localeCompare(right));
+}
+
+''',
+        "go": '''func selectBatch_INDEX(records []Record, minimum uint64) []string {
+	selected_INDEX := make([]string, 0, len(records))
+	for offset, record := range records {
+		if record.Active && record.Sequence >= minimum + INDEX {
+			identity := fmt.Sprintf("%s:%d", record.Path, offset)
+			selected_INDEX = append(selected_INDEX, identity)
+		} else if len(record.Path) == 0 {
+			continue
+		}
+	}
+	return selected_INDEX
+}
+
+''',
+    }
+    text = headers[language]
+    index = 0
+    while True:
+        function = functions[language].replace("INDEX", str(index))
+        if len((text + function).encode()) > size - 32:
+            break
+        text += function
+        index += 1
+    comment = "#" if language == "python" else "//"
+    padding = "\n" + comment + " boundary padding "
+    return text + padding + "." * (size - len((text + padding).encode()) - 1) + "\n"
+
+
 def corpus():
     for name, text in {
         "empty": "", "rust": "fn main() { let café = vec![1_u64, 2]; println!(\"{:?}\", café); }\n",
@@ -72,6 +149,10 @@ def corpus():
     for extra in [-1, 0, 1]:
         yield {"group": "large", "name": f"large-file-boundary-{extra:+}", "text": "hello world\n",
                "repeat": 6000, "truncate_bytes": 65_536 + extra}
+    for language in ["rust", "python", "typescript", "go"]:
+        for size in [65_535, 65_536]:
+            yield {"group": "large", "name": f"source-boundary-{language}-{size}",
+                   "text": source_at_boundary(language, size)}
     yield {"group": "large", "name": "forecast-unicode-fixture", "text": "こんにちは 🌍 <|endoftext|>\r\n",
            "repeat": 700, "suffix": "last line"}
     architecture = {"group": "large", "name": "large-files-ARCHITECTURE", "prefix": "# Architecture\n\n",

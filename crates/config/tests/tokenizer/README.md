@@ -35,11 +35,20 @@ uv run --no-project --python 3.14 --with tiktoken==0.14.0 \
   python crates/config/tools/tokenizer_oracle.py --benchmark
 ```
 
+To check committed bytes without changing the file, run the same command with
+`--check` instead of `--benchmark`. Exit status 1 means the file is missing or
+has drifted. `--output PATH --check` checks another file without writing it.
+The worker-side test uses this mode and checks both bytes and modification time.
+
 The corpus includes code in Rust, Python, TypeScript, Go, SQL and shell;
 normalization forms, emoji sequences, Unicode case and whitespace, control
 characters and literal special tokens; repetitive BPE cases; and the original
 `test_planner_forecast` boundary/Unicode inputs and `test_large_files`
-`ARCHITECTURE`/`POOL` fixtures. The 2,048 random cases use seed 748, alternating
+`ARCHITECTURE`/`POOL` fixtures. Rust, Python, TypeScript and Go modules each
+have cases at exactly 65,535 and 65,536 UTF-8 bytes. They contain complete,
+indented function bodies with numbered identifiers, branches, loops, types,
+operators and string formatting. A final comment pads each module to its byte
+limit without cutting a function or a UTF-8 sequence. The 2,048 random cases use seed 748, alternating
 mixed text with arbitrary Unicode scalar values. They are committed once
 rather than starting a Python subprocess for every Rust proptest example.
 Lone Python surrogates cannot enter Rust `str` and are outside this corpus.
