@@ -18,8 +18,50 @@ pub fn load(reader: &mut tl3_store::Reader) -> crate::Result<Stats> {
     Ok(stats)
 }
 
-pub fn read(_tx: &mut tl3_store::Transaction<'_>) -> crate::Result<Stats> {
-    Ok(Stats::default())
+pub fn read(tx: &mut tl3_store::Transaction<'_>) -> crate::Result<Stats> {
+    let world_rows = tx
+        .query(
+            "SELECT table_name, count(*) FROM tl3_world GROUP BY table_name ORDER BY table_name",
+            &[],
+        )
+        .map_err(tl3_store::Error::from)?
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect();
+    let events = tx
+        .query_one(
+            "SELECT count(*), min(revision), max(revision) FROM tl3_events",
+            &[],
+        )
+        .map_err(tl3_store::Error::from)?;
+    let min_world_version = tx
+        .query_one("SELECT min(version) FROM tl3_world", &[])
+        .map_err(tl3_store::Error::from)?
+        .get(0);
+    // Bounded pages avoid loading old payloads or printing any JSON value.
+    // Use exactly replay's decoder, rather than an approximation of its schema.
+    let mut cursor = 0i64;
+    let replay_from_revision = 'search: loop {
+        let records=tx.query("SELECT revision, result FROM tl3_events WHERE revision > $1 AND (result ? 'kernel_anchor' OR result ? 'kernel_replay') ORDER BY revision LIMIT 32",&[&cursor]).map_err(tl3_store::Error::from)?;
+        if records.is_empty() {
+            break None;
+        }
+        for record in records {
+            cursor = record.get(0);
+            let value: serde_json::Value = record.get(1);
+            if matches!(crate::replay::stored_snapshot(&value), Ok(Some(_))) {
+                break 'search Some(cursor);
+            }
+        }
+    };
+    Ok(Stats {
+        world_rows,
+        events: events.get(0),
+        min_event_revision: events.get(1),
+        max_event_revision: events.get(2),
+        min_world_version,
+        replay_from_revision,
+    })
 }
 
 pub fn render_text(stats: &Stats) -> String {
