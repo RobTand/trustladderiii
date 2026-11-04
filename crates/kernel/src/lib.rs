@@ -3071,15 +3071,50 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
     match fact {
         Fact::DependencyRemove { kind, number } => w.remove_dependency(i, kind, number),
         Fact::Dependency { target, status } => w.dependency_fact(i, target, status, out),
+        Fact::PrMerged {
+            head,
+            checks_passed,
+        } => pr_merged(w, i, head, checks_passed, out),
+        _ => fact_transition(w, i, fact, out),
+    }
+}
+
+kernel_fn! {
+/// Fact rows / #771: non-dependency, non-merge facts allocate at most one
+/// generation, one question and one paid credit, and emit at most two notices.
+#[allow(clippy::collapsible_if)]
+fn fact_transition(w: &mut World, i: usize, fact: Fact,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+        !(fact is DependencyRemove || fact is Dependency || fact is PrMerged),
+    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit.start == old(w).nodes@[i as int].credit.start,
+        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
+        final(w).nodes@[i as int].credit.added == old(w).nodes@[i as int].credit.added,
+        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 2,
+] proof [reveal(retry_bounds);] {
+    match fact {
+        Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {}
         Fact::Priority(priority) => {
             if !w.nodes[i].phase.is_closed() {
                 w.nodes[i].priority = priority;
             }
         }
-        Fact::PrMerged {
-            head,
-            checks_passed,
-        } => pr_merged(w, i, head, checks_passed, out),
         Fact::PrClosedByPerson => {
             let m = &mut w.nodes[i];
             if !m.pr_open {
@@ -3129,8 +3164,10 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
             if m.phase != Phase::Queued && !before_enqueue {
                 return;
             }
-            if before_enqueue && let Some(effect) = m.effect.as_mut() {
-                effect.cancelling = true;
+            if before_enqueue {
+                if let Some(effect) = m.effect.as_mut() {
+                    effect.cancelling = true;
+                }
             }
             if !infra {
                 failed_round(w, i, ReviewStop::CiFailed, out);
@@ -3171,8 +3208,33 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
         }
     }
 }
+}
 
-fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bool, out: &mut Outbox) {
+kernel_fn! {
+/// Merge fact rows / Q18 / #771: a late merge earns credit once; other merges
+/// enter teardown. Even an unapproved late merge emits at most four notices.
+fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bool,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 4 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit.start == old(w).nodes@[i as int].credit.start,
+        final(w).nodes@[i as int].credit.earned as int <= old(w).nodes@[i as int].credit.earned as int + 1,
+        final(w).nodes@[i as int].credit.added == old(w).nodes@[i as int].credit.added,
+        final(w).nodes@[i as int].credit.spent == old(w).nodes@[i as int].credit.spent,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question == old(w).next_question,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 4,
+] {
     let m = &mut w.nodes[i];
     if !m.had_pr || m.merged.is_some() {
         return;
@@ -3200,6 +3262,7 @@ fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bool, out: &m
         notice(out, i, Notice::Incident { needs_rob: false });
         notice(out, i, Notice::Note(NoteKind::UnapprovedMerge));
     }
+}
 }
 
 // ---------------------------------------------------------------- commands
