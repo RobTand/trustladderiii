@@ -102,10 +102,31 @@ fn prepare_repaired_head(api: &Server, d: &Delivery) {
 }
 fn setup_at(prior: bool, intended: bool) -> (support::Database, Fixture, Controller) {
     let mut database = support::Database::start();
-    let settings = database.create("waiting_requeue");
+    let (fixture, controller) = setup_in(&mut database, "waiting_requeue", prior, intended);
+    (database, fixture, controller)
+}
+
+fn setup_in(
+    database: &mut support::Database,
+    name: &str,
+    prior: bool,
+    intended: bool,
+) -> (Fixture, Controller) {
+    let settings = database.create(name);
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
-    let mut controller = queued(&settings, &api, root.path(), true);
+    let clock = head_checks::Clock(std::rc::Rc::new(std::cell::Cell::new(
+        std::time::SystemTime::now(),
+    )));
+    let mut controller = queued_for_clock(
+        &settings,
+        &api,
+        root.path(),
+        true,
+        &[],
+        bootstrap(),
+        Some(clock.clone()),
+    );
     let old_head = api.state.lock().unwrap().pull["head"]["sha"]
         .as_str()
         .unwrap()
@@ -140,9 +161,6 @@ fn setup_at(prior: bool, intended: bool) -> (support::Database, Fixture, Control
             "verified dequeue history is durable"
         );
     }
-    let clock = head_checks::Clock(std::rc::Rc::new(std::cell::Cell::new(
-        std::time::SystemTime::now(),
-    )));
     // Both controller and adapter use this clock before the repaired enqueue.
     drop(controller);
     let mut registry = adapters::simulation(root.path()).unwrap();
@@ -234,7 +252,7 @@ fn setup_at(prior: bool, intended: bool) -> (support::Database, Fixture, Control
         old_head,
     };
     let controller = fixture.open();
-    (database, fixture, controller)
+    (fixture, controller)
 }
 
 fn prior_dequeue_survives_repaired_head_and_removed_label() {
@@ -303,6 +321,7 @@ fn requeue_intent_and_marker_survive_restart_lost_response_and_effect_retirement
 }
 
 fn dispatch_rechecks_head_conditions_and_human_decisions() {
+    let mut database = support::Database::start();
     for mode in [
         "unmet",
         "unknown-payload",
@@ -319,7 +338,7 @@ fn dispatch_rechecks_head_conditions_and_human_decisions() {
         "permission-read",
     ] {
         scenario_progress(format!("waiting_requeue {mode}: fixture"));
-        let (_db, f, mut c) = setup(true);
+        let (f, mut c) = setup_in(&mut database, mode, true, false);
         scenario_progress(format!("waiting_requeue {mode}: prepared"));
         f.grace(&mut c);
         {
@@ -381,7 +400,7 @@ fn dispatch_rechecks_head_conditions_and_human_decisions() {
             );
         }
     }
-    let (_db, f, mut c) = setup(true);
+    let (f, mut c) = setup_in(&mut database, "eligible", true, false);
     f.grace(&mut c);
     f.look(&mut c);
     assert_eq!(
@@ -454,9 +473,10 @@ fn no_prior_dequeue_never_recovers_and_later_approved_head_has_its_own_budget() 
 }
 
 fn refused_or_unacknowledged_requeue_uses_bounded_existing_recovery() {
+    let mut database = support::Database::start();
     for mode in ["reply", "permission", "rejected", "unknown"] {
         scenario_progress(format!("waiting_requeue {mode}: fixture"));
-        let (_db, f, mut c) = setup(true);
+        let (f, mut c) = setup_in(&mut database, mode, true, false);
         scenario_progress(format!("waiting_requeue {mode}: prepared"));
         if mode == "reply" {
             f.api.state.lock().unwrap().command_reply = Some(requeue::restricted_reply());
@@ -538,7 +558,7 @@ fn waiting_requeue_progress_and_notice_name_the_completed_check_correctly() {
     );
 }
 
-pub(super) fn run() {
+pub(super) fn run(mut shard: Option<(&mut support::scenario_shard::Shard<usize>, usize)>) {
     let cases: &[(&str, fn())] = &[
         (
             "prior_dequeue_survives_repaired_head_and_removed_label",
@@ -566,13 +586,20 @@ pub(super) fn run() {
         ),
     ];
     let mut failures = Vec::new();
-    for (name, case) in cases {
-        scenario_progress(format!("waiting_requeue {name}: case"));
-        if std::panic::catch_unwind(*case).is_err() {
-            eprintln!("FAILED #608 {name}");
-            failures.push(*name);
+    for (index, (name, case)) in cases.iter().enumerate() {
+        let mut run = || {
+            scenario_progress(format!("waiting_requeue {name}: case"));
+            if std::panic::catch_unwind(*case).is_err() {
+                eprintln!("FAILED #608 {name}");
+                failures.push(*name);
+            } else {
+                println!("test {name} ... ok");
+            }
+        };
+        if let Some((shard, offset)) = &mut shard {
+            shard.run(*offset + index, run);
         } else {
-            println!("test {name} ... ok");
+            run();
         }
     }
     assert!(failures.is_empty(), "#608 regressions: {failures:?}");
@@ -739,9 +766,9 @@ fn consumed_head_budget_also_blocks_legacy_dispatch_path() {
     );
 }
 
-pub(super) fn review() {
+pub(super) fn review(mut shard: Option<(&mut support::scenario_shard::Shard<usize>, usize)>) {
     let mut failures = Vec::new();
-    for (name, case) in [
+    for (index, (name, case)) in [
         (
             "recorded_human_removal_before_first_dispatch_requires_explicit_resume",
             recorded_human_removal_before_first_dispatch_requires_explicit_resume as fn(),
@@ -754,13 +781,23 @@ pub(super) fn review() {
             "consumed_head_budget_also_blocks_legacy_dispatch_path",
             consumed_head_budget_also_blocks_legacy_dispatch_path,
         ),
-    ] {
-        scenario_progress(format!("waiting_requeue review {name}: case"));
-        if std::panic::catch_unwind(case).is_err() {
-            eprintln!("FAILED #608 review {name}");
-            failures.push(name);
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut run = || {
+            scenario_progress(format!("waiting_requeue review {name}: case"));
+            if std::panic::catch_unwind(case).is_err() {
+                eprintln!("FAILED #608 review {name}");
+                failures.push(name);
+            } else {
+                println!("test {name} ... ok");
+            }
+        };
+        if let Some((shard, offset)) = &mut shard {
+            shard.run(*offset + index, run);
         } else {
-            println!("test {name} ... ok");
+            run();
         }
     }
     assert!(failures.is_empty(), "#608 review regressions: {failures:?}");

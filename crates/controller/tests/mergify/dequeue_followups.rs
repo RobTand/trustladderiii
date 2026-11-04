@@ -45,6 +45,18 @@ struct AllowanceRecovery {
     looks: Arc<AtomicUsize>,
     done: mpsc::Sender<()>,
     late: Option<(tl3_config::Store, Vec<u8>)>,
+    clock: RecoveryClock,
+}
+
+#[derive(Clone)]
+struct RecoveryClock {
+    at: head_checks::Clock,
+    started: std::rc::Rc<std::cell::Cell<Option<std::time::Instant>>>,
+}
+impl tl3_controller::clock::Clock for RecoveryClock {
+    fn now(&self) -> std::time::SystemTime {
+        self.at.0.get() + self.started.get().map_or(Duration::ZERO, |at| at.elapsed())
+    }
 }
 impl Executor for AllowanceRecovery {
     fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
@@ -54,7 +66,15 @@ impl Executor for AllowanceRecovery {
         self.inner.reconcile(delivery)
     }
     fn look(&mut self, delivery: &Delivery) -> tl3_controller::Result<Look> {
-        if self.looks.fetch_add(1, Ordering::SeqCst) == 1 {
+        let look = self.looks.fetch_add(1, Ordering::SeqCst);
+        if look == 1 {
+            // Only the source-loop wait consumes allowance time. Slow fixture
+            // reads and late-delivery translation must not add failed looks.
+            self.clock
+                .at
+                .0
+                .set(tl3_controller::clock::Clock::now(&self.clock));
+            self.clock.started.set(None);
             {
                 let mut state = self.state.lock().unwrap();
                 state.checks = fixture("dequeued", "checks");
@@ -71,6 +91,9 @@ impl Executor for AllowanceRecovery {
             }
         }
         let result = self.inner.look(delivery)?;
+        if look == 0 {
+            self.clock.started.set(Some(std::time::Instant::now()));
+        }
         if self.late.is_none()
             && matches!(&result, Look::Found(completion) if !completion.observations.is_empty())
         {
@@ -82,7 +105,21 @@ impl Executor for AllowanceRecovery {
 pub(super) fn source_loop(settings: &tl3_config::Store, timeout_delivery: bool) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
-    drop(queued(settings, &api, root.path(), true));
+    let clock = RecoveryClock {
+        at: head_checks::Clock(std::rc::Rc::new(std::cell::Cell::new(
+            std::time::SystemTime::now(),
+        ))),
+        started: std::rc::Rc::new(std::cell::Cell::new(None)),
+    };
+    drop(queued_for_clock(
+        settings,
+        &api,
+        root.path(),
+        true,
+        &[],
+        bootstrap(),
+        Some(clock.at.clone()),
+    ));
     let mut body = webhook_fixture();
     body["action"] = json!("completed");
     body["check_run"] = api.state.lock().unwrap().queue_check();
@@ -93,14 +130,19 @@ pub(super) fn source_loop(settings: &tl3_config::Store, timeout_delivery: bool) 
     registry.register(
         Upstream::Mergify,
         AllowanceRecovery {
-            inner: api.adapter(&root.path().join("mergify"), 0),
+            inner: api
+                .adapter(&root.path().join("mergify"), 0)
+                .with_clock(clock.clone()),
             state: api.state.clone(),
             looks: looks.clone(),
             done: done.clone(),
             late: timeout_delivery.then(|| (settings.clone(), serde_json::to_vec(&body).unwrap())),
+            clock: clock.clone(),
         },
     );
-    let mut c = Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    let mut c =
+        Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), clock)
+            .unwrap();
     c.register_github_translator(
         "mergify",
         FailingTranslator {
