@@ -275,6 +275,6 @@ fn wait_for_file(root: &Path, name: &str) {
     .unwrap();
     let mut input = fs::File::from(fd);
     while !root.join(name).exists() {
-        input.read(&mut [0; 4096]).unwrap();
+        assert!(input.read(&mut [0; 4096]).unwrap() > 0);
     }
 }
