@@ -20,6 +20,8 @@ _PACKAGE_DATA = {
     "tools/ci": [
         "//:bazel_config",
         "//:workflows",
+        # test_kani_gate lists the harnesses in crates/kernel/src/proofs.rs.
+        "//crates/kernel:sources",
         "//crates/store:sources",
         "//harness:project_files",
         "//tools/bazel:sources",
