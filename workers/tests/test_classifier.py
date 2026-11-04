@@ -313,7 +313,7 @@ def test_change_request_supersedes_only_applicable_decisions(request_doc):
 
 
 @pytest.fixture(autouse=True)
-def classifier_cli_parity(monkeypatch):
+def classifier_cli_parity(monkeypatch, request):
     """Freeze every existing case before removing the Python oracle."""
     from dataclasses import replace
     from pathlib import Path
@@ -322,7 +322,7 @@ def classifier_cli_parity(monkeypatch):
     from tl3_workers.roles import classifier
     original = classifier.check_reply
     checked = runtime._checked
-    binary = Path("crates/controller/tl3").resolve()
+    binary = Path("../crates/controller/tl3").resolve()
     vectors, mismatches = [], []
 
     def parity(inputs, reply):
@@ -354,6 +354,7 @@ def classifier_cli_parity(monkeypatch):
     monkeypatch.setattr(classifier, "check_reply", parity)
     monkeypatch.setitem(ROLES, "classifier", replace(classifier.ROLE, check_reply=parity))
     yield
-    for vector in vectors:
-        print("CLASSIFIER_VECTOR " + json.dumps(vector, ensure_ascii=True))
+    with request.config.pluginmanager.getplugin("capturemanager").global_and_fixture_disabled():
+        for vector in vectors:
+            print("CLASSIFIER_VECTOR " + json.dumps(vector, ensure_ascii=True))
     assert not mismatches, mismatches
