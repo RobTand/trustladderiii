@@ -87,7 +87,8 @@ impl World {
         }
     }
 
-    pub(crate) fn footprints_disjoint(&self, a: Footprint, b: Footprint) -> bool {
+    /// #783 / Q27: reuse the existing lock-overlap predicate.
+    pub fn footprints_disjoint(&self, a: Footprint, b: Footprint) -> bool {
         if let (Repr::Inline(a), Repr::Inline(b)) = (a.0, b.0) {
             return a & b == 0;
         }

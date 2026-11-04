@@ -1126,6 +1126,22 @@ impl World {
         true
     }
 
+    /// #783 / Q27: probe the existing advance rules on an isolated clone.
+    /// Callers must include every node whose ability to advance may have changed.
+    pub fn is_settled_at(&self, indexes: &[usize]) -> bool {
+        if indexes.is_empty() {
+            return true;
+        }
+        let mut w = self.clone();
+        let mut out = Outbox::new();
+        for &i in indexes {
+            if advance(&mut w, i, &mut out) {
+                return false;
+            }
+        }
+        true
+    }
+
     /// One outside event that moves the world closer to done: a successful
     /// reply, a confirmation, a fact, or one of Rob's answers. Kani proves it
     /// always exists while a node is open, and that it lowers `measure`.
@@ -1326,7 +1342,8 @@ impl World {
         Ok(())
     }
 
-    fn check_node(&self, n: &Node) -> Result<(), Broken> {
+    /// #783 / Q27: expose the existing node predicate without changing its rules.
+    pub fn check_node(&self, n: &Node) -> Result<(), Broken> {
         let items = agenda(n.phase);
         if n.repo.index().is_none_or(|r| r >= self.gates.len()) {
             return Err(Broken::Config);

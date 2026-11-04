@@ -1,0 +1,1 @@
+# #783: fixed runner seed 0x0783_2026_1104; named pool-summary regression below.

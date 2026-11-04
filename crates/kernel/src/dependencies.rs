@@ -94,7 +94,8 @@ impl World {
         })
     }
 
-    pub(super) fn check_dependencies(&self) -> Result<(), Broken> {
+    /// #783 / Q27: reuse the existing dependency predicate for cached checks.
+    pub fn check_dependencies(&self) -> Result<(), Broken> {
         for (index, node) in self.nodes.iter().enumerate() {
             if node.credit.withheld
                 && !self

@@ -23,6 +23,7 @@ pub mod evidence;
 pub mod executor;
 mod goals;
 mod http;
+pub mod incremental;
 pub mod ingress;
 pub mod input_errors;
 pub mod looks;
