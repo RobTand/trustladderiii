@@ -657,6 +657,7 @@ impl World {
         kernel_proof! {
             if dependency_progress_input(*self, i as int, target, status) {
                 reveal(dependency_progress_input);
+                assert(status == DependencyStatus::Delivered);
                 let k = choose|k: int| 0 <= k < self.dependencies@.len()
                     && self.dependencies@[k].node == NodeId(i as u64) && self.dependencies@[k].target == target
                     && !self.dependencies@[k].rejected && self.dependencies@[k].status == DependencyStatus::Pending;
