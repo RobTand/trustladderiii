@@ -1881,11 +1881,9 @@ impl Controller {
             .expect("object")
             .remove("kernel_steps")
             .unwrap_or_else(|| json!([]));
-        commit.result["kernel_replay"] = json!({
-            "before": previous,
-            "steps": steps,
-            "after": world,
-        });
+        let mut replay = json!({"before": previous, "after": world});
+        replay["steps"] = steps;
+        commit.result["kernel_replay"] = replay;
         let before = snapshot::encode(&previous)?;
         for (index, node) in world.nodes.iter().enumerate() {
             if !matches!(node.phase, tl3_kernel::Phase::Planning { .. })

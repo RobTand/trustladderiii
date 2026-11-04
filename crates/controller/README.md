@@ -1706,20 +1706,50 @@ is the trusted starting point. Keep the binary version with its log because
 kernel upgrades can intentionally change replay results.
 
 Every applied kernel step, including dependency updates, checks consistency
-and settlement before its candidate is committed. A failure discards candidate
-writes and effects, records a TL3-side incident naming the event and broken
-rule, and holds the request across restarts. Other requests can continue.
-A failure with no identifiable request holds all requests. Status shows the
-incident, and the existing incident publisher posts it. Rob's clear or a new
-release clears the hold through the existing Q51 path. The rejected event stays
-in the audit log; obtain fresh authoritative evidence after fixing its cause.
-No credit or kernel transition changes. The `headroom_ok` hook is marked in
-`verification::check_world` for #771 and is not implemented here.
+and settlement. Detection never changes the committed world, effects, credit,
+completion receipts or observations. A violation records a durable operator
+alarm naming the request, invariant and event. It creates no kernel incident
+or request hold. The alarm appears in `tl3 status` and on the status page,
+even when the existing snapshot validator refuses the invalid world. Main's
+existing startup validation is unchanged.
 
-The invariant scan runs on every step, without sampling. The
-`measure_invariant_cost_per_step` fixture reports its added scan time for settled
-worlds with 1, 16, 64 and 256 nodes on BuildBuddy. This excludes database I/O
-and serialization. Reassess the policy if production-sized scans exceed 1 ms.
+The controller posts one code-written operations comment per request and
+invariant through the existing `OperationsNote`/`ConsoleNote` channel. Its
+stable marker reconciles a post that landed before the local posted bit was
+saved. Alarm rows are retained across restarts and releases; they are not
+kernel incidents and `clear incident` does not remove them. Without an
+operations destination, the alarm remains on status. Posting failures retain
+it and retry after 30 seconds. The `headroom_ok` hook in
+`verification::check_world` remains inert for #771.
+
+Checks remain unsampled. The complete-cost fixture measures the actual
+controller apply path against a frozen integration-base reference at 256,
+1,024 and 4,096 retained nodes, with 4 and 16 non-kernel rows per node. It
+includes JSON construction, serialization, snapshot-row searches and
+allocations. See the #783 handoff for measured costs and scaling limits.
 The lead can schedule `tl3 replay-check --config FILE` nightly at 03:00 UTC,
-using a separate read-only store configuration. No timer, live configuration or
-unit is installed by this change.
+using a separate read-only store configuration. Start with `--from` the first
+instrumented kernel event, inclusive, and keep the matching binary. No timer,
+live configuration or unit is installed by this change.
+
+## Count store rows without exposing values
+
+`tl3 store-stats --config FILE [--json]` loads the store configuration and its
+credential through the same loader as status and replay. It opens the same
+SQL-enforced repeatable-read, read-only Reader transaction. It never claims
+controller ownership, takes advisory locks or writes.
+
+The stable TSV table and JSON report contain only world-row counts grouped
+by table name, event count and revision bounds, the minimum world-row version,
+and the earliest available replay starting revision. Empty revision ranges
+are `-` in TSV and `null` in JSON. Row IDs, event keys, payloads, credentials
+and stored values are never output.
+
+Replay-start availability uses the same decoder as `replay-check`: the first
+event containing a decodable `kernel_anchor` World or a complete
+`kernel_replay` record with its `before` World. This reports availability of
+a baseline, not successful verification of its invariants or the suffix.
+After deploy, the TL3 lead can run `tl3 store-stats --config FILE --json`,
+then run replay from the first instrumented kernel event, inclusive. Keep the
+matching binary with the log. These commands were tested only on disposable
+fixture stores; this change does not access the live store.

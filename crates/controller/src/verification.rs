@@ -84,10 +84,14 @@ pub(crate) fn checked_step(
         .expect("object")
         .entry("kernel_steps")
         .or_insert_with(|| json!([]));
+    let mut record = serde_json::Map::new();
+    record.insert("input".into(), input);
+    record.insert("event".into(), json!(event));
+    record.insert("after".into(), serde_json::to_value(&world)?);
     steps
         .as_array_mut()
         .expect("step array")
-        .push(json!({"input":input,"event":event,"after":world}));
+        .push(serde_json::Value::Object(record));
     Ok((world, outputs))
 }
 
