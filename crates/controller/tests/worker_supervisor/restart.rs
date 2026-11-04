@@ -80,7 +80,7 @@ fn restarted_controller_cancels_legacy_worker_and_rejects_its_late_outcome() {
     config.workers.command = vec![
         "-c".into(),
         format!(
-            "import pathlib,signal; print('{{\"kind\":\"early_end\",\"outcome\":\"not_suitable\",\"reason\":\"legacy outcome\"}}',flush=True); pathlib.Path({:?}).write_text('ready'); signal.pause()",
+            "import pathlib,signal; print('{{\"kind\":\"early_end\",\"outcome\":\"not_actionable\",\"reason\":\"legacy outcome\"}}',flush=True); pathlib.Path({:?}).write_text('ready'); signal.pause()",
             entered.to_str().unwrap()
         ),
     ];
@@ -131,6 +131,12 @@ fn restarted_controller_cancels_legacy_worker_and_rejects_its_late_outcome() {
         .find(|attempt| attempt.join("supervisor.py").exists())
         .unwrap();
     let worker = check_identity(&attempt, "process.json");
+    let pidfd = rustix::process::pidfd_open(
+        rustix::process::Pid::from_raw(worker["pid"].as_i64().unwrap().try_into().unwrap())
+            .unwrap(),
+        rustix::process::PidfdFlags::empty(),
+    )
+    .unwrap();
     let pinned_runtime = fs::read(attempt.join("launch.json")).unwrap();
     drop(controller);
     // Reopen the actual persisted controller with the current Rust launch path.
@@ -157,8 +163,13 @@ fn restarted_controller_cancels_legacy_worker_and_rejects_its_late_outcome() {
     drive(&mut controller);
     let newer = watch(&mut controller);
     assert!(newer.generation > original.generation);
-    assert!(
-        !Path::new(&format!("/proc/{}", worker["pid"])).exists(),
+    let mut exited = [rustix::event::PollFd::new(
+        &pidfd,
+        rustix::event::PollFlags::IN,
+    )];
+    assert_eq!(
+        rustix::event::poll(&mut exited, Some(&rustix::event::Timespec::default())).unwrap(),
+        1,
         "legacy worker must terminate before retry"
     );
     assert!(!matches!(
