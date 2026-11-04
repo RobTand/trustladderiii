@@ -350,12 +350,10 @@ fn measure_complete_step_cost_and_allocations() {
             let base = totals[0];
             let added = totals[1];
             println!(
-                "complete_invariant_cost nodes={count} extra_rows_per_node={density} iterations={iterations} main_ns={} instrumented_ns={} added_ns={} added_allocations={} added_bytes={}",
-                base.0 / iterations as u128,
-                added.0 / iterations as u128,
-                (added.0 as i128 - base.0 as i128) / iterations as i128,
-                (added.1 as i128 - base.1 as i128) / iterations as i128,
-                (added.2 as i128 - base.2 as i128) / iterations as i128
+                "complete_invariant_cost nodes={count} extra_rows_per_node={density} iterations={iterations} main_ns={} instrumented_ns={} added_ns={}",
+                base / iterations as u128,
+                added / iterations as u128,
+                (added as i128 - base as i128) / iterations as i128
             );
         }
     }
