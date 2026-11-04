@@ -25,6 +25,10 @@ def _unique_object(pairs):
     return document
 
 
+def _reject_constant(_constant):
+    raise ReplyCheckInfrastructureError("reply validator returned invalid output")
+
+
 def check_reply(role, inputs, reply):
     binary = os.environ.get("TL3_BINARY")
     if not binary:
@@ -45,7 +49,8 @@ def check_reply(role, inputs, reply):
     except UnicodeError:
         raise ReplyCheckInfrastructureError("reply validator returned invalid output") from None
     try:
-        document = json.loads(result.stdout, object_pairs_hook=_unique_object)
+        document = json.loads(result.stdout, object_pairs_hook=_unique_object,
+                              parse_constant=_reject_constant)
     except json.JSONDecodeError:
         raise ReplyCheckInfrastructureError("reply validator returned invalid output") from None
     violations = document.get("violations") if isinstance(document, dict) else None
