@@ -1906,7 +1906,13 @@ impl Controller {
         outputs: Vec<Out>,
         commit: &mut Commit,
     ) -> Result<()> {
-        if let Err(rule) = verification::check_world(&world) {
+        // checked_step already checked the last result, including dependency
+        // steps. Direct capacity reconciliation still needs its own scan.
+        if commit.result["kernel_steps"]
+            .as_array()
+            .is_none_or(Vec::is_empty)
+            && let Err(rule) = verification::check_world(&world)
+        {
             return verification::reject(snapshot, None, &rule, commit);
         }
         let previous = snapshot::decode(snapshot)?;
@@ -1928,13 +1934,11 @@ impl Controller {
             .as_object_mut()
             .expect("object")
             .remove("kernel_steps")
-            .map(serde_json::from_value)
-            .transpose()?
-            .unwrap_or_default();
-        commit.result["kernel_replay"] = json!(crate::replay::ReplayRecord {
-            before: previous.clone(),
-            steps,
-            after: world.clone(),
+            .unwrap_or_else(|| json!([]));
+        commit.result["kernel_replay"] = json!({
+            "before": previous,
+            "steps": steps,
+            "after": world,
         });
         let before = snapshot::encode(&previous)?;
         for (index, node) in world.nodes.iter().enumerate() {
