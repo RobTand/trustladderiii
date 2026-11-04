@@ -44,13 +44,17 @@ mixed text with arbitrary Unicode scalar values. They are committed once
 rather than starting a Python subprocess for every Rust proptest example.
 Lone Python surrogates cannot enter Rust `str` and are outside this corpus.
 
-Three Bazel targets keep the corpus independently runnable:
+The Rust corpus runs in three independent Bazel targets:
 
 ```text
 //crates/config:test_test_tokenizer_curated
 //crates/config:test_test_tokenizer_random
 //crates/config:test_test_tokenizer_large
 ```
+
+`//workers/tests:test_tokenizer_parity_oracle` regenerates the complete oracle
+in-process with Python and compares every committed byte. It also prints
+Python timings on the BuildBuddy platform used for the Rust measurements.
 
 The comparison reports every mismatching case, both counts, the signed delta,
 the maximum absolute delta and whether Rust counts bound Python counts above.

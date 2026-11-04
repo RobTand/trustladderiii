@@ -1040,3 +1040,9 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_tokenizer_parity_oracle",
+    srcs = ["test_tokenizer_parity_oracle.py"],
+    deps = [":conftest"],
+)

@@ -94,8 +94,7 @@ pub fn tokenizer() -> &'static CoreBPE {
 }
 
 pub fn count(encoding: &CoreBPE, text: &str) -> usize {
-    // Seeded mutant for #748's RED run; GREEN removes this one-token offset.
-    encoding.encode_ordinary(text).len() + 1
+    encoding.encode_ordinary(text).len()
 }
 
 pub fn oracle() -> Oracle {
