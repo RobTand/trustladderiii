@@ -238,7 +238,12 @@ fn late_post(restart: bool) {
         EffectState::Uncertain
     );
     assert!(
-        !controller.drive_once().unwrap(),
+        (0..30).any(|_| !controller.drive_once().unwrap()),
+        "held controller must settle"
+    );
+    assert_eq!(
+        api.0.lock().unwrap().posts,
+        1,
         "transport hold prevents immediate retry"
     );
 
