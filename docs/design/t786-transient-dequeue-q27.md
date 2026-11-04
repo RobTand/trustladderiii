@@ -104,21 +104,172 @@ The decision needed is whether to approve this bounded Mergify exception to
 Q7 and the no-progress rule. Without that exception, the implementation must
 retain earlier stall incidents and cannot satisfy the requested invariant.
 
-## Typed evidence still needed
+## Classification research, 2026-11-04
 
-Read-only inspection of PB #2794's head
-`1dcd11d4` returned Mergify queue check
-[126517983421](https://api.github.com/repos/RobTand/prismabuild/check-runs/126517983421).
-Its output has a title and summary describing branch indexing delay, but no
-`mergify.v1` span, JSON reason, or abort code. `output.text` is null. Its queue
-rule check, `126509983401`, likewise contains prose only. This is evidence
-about these API responses, not a claim that Mergify has no typed API elsewhere.
+Mergify documents structured dequeue codes in its REST activity log. Typed-only
+classification is possible through that API; it is not possible from PB #2794's
+observed GitHub dequeue check alone. Whether the historical PB event actually
+carries a non-null code remains unverified: the unauthenticated activity-log GET
+returned HTTP 403 with `{"detail":"Forbidden"}`. No credentials were read or
+forwarded to Mergify, and no authenticated Mergify request was attempted.
 
-Under #786's typed-only constraint these responses remain `Unknown`. A verified
-typed payload or documented upstream endpoint is needed before selecting the
-transient wire codes. Do not invent codes from the title. Pin the eventual
-payload as a parser fixture and retain the prose-only response as a negative
-case.
+### Exact machine fields and values
+
+The primary sources are the [activity-log reference](https://docs.mergify.com/api/activity-log/)
+and its [OpenAPI 3.1 document](https://docs.mergify.com/openapi.json).
+The REST base is `https://api.mergify.com/v1`.
+
+| Event discriminator | Exact JSON path | Schema |
+| --- | --- | --- |
+| `type = "action.queue.leave"` | `events[].metadata.dequeue_code` | `EventQueueLeaveMetadata.properties.dequeue_code` |
+| `type = "action.queue.checks_end"` | `events[].metadata.abort_code` | `EventQueueChecksEndMetadata.properties.abort_code` |
+
+Both fields explicitly enumerate these exact uppercase wire values:
+
+| Failure | Exact code | Documented rule-context spelling |
+| --- | --- | --- |
+| GitHub has not indexed the new branch | `DRAFT_PULL_REQUEST_CREATION_BRANCH_NOT_INDEXED` | `draft-pull-request-creation-branch-not-indexed` |
+| Draft PR creation failed | `DRAFT_PULL_REQUEST_CREATION_FAILED` | `draft-pull-request-creation-failed` |
+
+The [data-types reference](https://docs.mergify.com/configuration/data-types/#queue-dequeue-reason)
+describes the first as "Mergify could not create the merge queue draft pull request
+because GitHub had not yet indexed the new branch." It describes the second as
+"Mergify could not create the merge queue draft pull request."
+The [conditions reference](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-queue-dequeue-reason)
+exposes these lowercase spellings through `queue-dequeue-reason`, "The code
+identifying why a pull request's merge queue checks ended". These are documented
+codes, not names inferred from display text. The documentation does not promise
+that every generic draft-PR creation failure is transient; that policy remains
+part of the pending decision.
+
+`dequeue_code` and `abort_code` are nullable. The leave event also carries
+`pull_request_head_sha`, nullable `session_id`, nullable `batch_id`, `merged`,
+`queue_name`, `branch`, and `queued_at`. The checks-end event carries `aborted`,
+`abort_status` with values `DEFINITIVE` or `REEMBARKED`, and session/batch/run
+identity. Its `abort_reason` and the leave event's `reason` are documented as
+Markdown display text, including legacy plain-text fallback. They are not the
+code fields. A checks-end event alone need not mean the PR left the queue;
+correlate the leave record to the exact PR/head/session before retrying.
+Missing, null, stale, or unrecognized codes cannot establish a transient class.
+
+### REST retrieval and access limit
+
+Use `GET /repos/{owner}/{repository}/logs`, with `pull_request`, repeated
+`event_type`, `received_from`, `received_to`, and `per_page` filters. Follow the
+response's RFC 5988 `Link` pagination links. The documented defaults cover only
+a one-day window, so use explicit timestamps when recovering old history.
+The following unauthenticated GET was made once and returned the 403 above:
+
+```text
+https://api.mergify.com/v1/repos/RobTand/prismabuild/logs?pull_request=2794&event_type=action.queue.leave&event_type=action.queue.checks_end&received_from=2026-11-04T10%3A00%3A00Z&received_to=2026-11-04T10%3A30%3A00Z&per_page=100
+```
+
+The [authentication reference](https://docs.mergify.com/api/usage/#authentication)
+and endpoint schema allow an admin-scoped application key or Mergify user token.
+GitHub user tokens remain accepted but are deprecated as Mergify credentials;
+a GitHub App installation token is not listed as that user-token scheme.
+This research neither provisions credentials nor tests TL3's current credential
+compatibility. An authorized authenticated GET is still needed to capture the
+actual PB #2794 leave/checks-end events and confirm historical code availability.
+
+The old `/repos/{owner}/{repository}/events` and
+`/repos/{owner}/{repository}/pulls/{pull}/events` endpoints were
+[deprecated in 2023](https://docs.mergify.com/changelog/2023-10-31-events-api-deprecation/)
+in favor of `/logs`. Do not build against those old paths.
+
+### Contract fixture and live check fixture
+
+This fixture is extracted verbatim from the two `QueueChecksOutcome.properties`
+definitions in the downloaded OpenAPI document. It pins the documented codes
+and meanings. It is a schema excerpt, not a captured PB activity-log event:
+
+```json
+{
+  "DRAFT_PULL_REQUEST_CREATION_BRANCH_NOT_INDEXED": {
+    "type": "integer",
+    "title": "Draft Pull Request Creation Branch Not Indexed",
+    "description": "The draft pull request cannot be created because GitHub has not indexed the branch yet",
+    "default": 0
+  },
+  "DRAFT_PULL_REQUEST_CREATION_FAILED": {
+    "type": "integer",
+    "title": "Draft Pull Request Creation Failed",
+    "description": "The draft pull request cannot be created",
+    "default": 0
+  }
+}
+```
+
+For either code above, the documented classification input is the projection
+`{"type":"action.queue.leave","metadata":{"dequeue_code":CODE}}`, or
+`{"type":"action.queue.checks_end","metadata":{"abort_code":CODE}}`.
+These are schema-derived projections, not complete event fixtures. The complete
+live event fixture remains unavailable because of the 403; no fabricated event
+is presented as observed evidence.
+
+This second fixture is an actual response projection from
+[PB queue check 126517983421](https://api.github.com/repos/RobTand/prismabuild/check-runs/126517983421).
+The title and entire summary are verbatim JSON string values, with newlines
+escaped by JSON serialization:
+
+```json
+{
+  "id": 126517983421,
+  "name": "Mergify Merge Queue",
+  "head_sha": "1dcd11d4d75771a0f249b8feca4f4e042d92eb53",
+  "external_id": "queue:2794",
+  "conclusion": "neutral",
+  "output": {
+    "title": "Dequeued — draft pull request creation failed due to GitHub branch indexing delay",
+    "summary": "### 🚫 Left the queue · draft pull request creation failed due to GitHub branch indexing delay\n\n7 min in the queue, with no time running CI.\n\n**So far**\n\n- ✅ **Entered the queue** Wed 4 Nov, 10:19 · rule `default` · triggered by the [`@mergifyio queue` command](https://github.com/RobTand/prismabuild/pull/2794#issuecomment-6628278843)\n- 🚫 **Left the queue** 10:26 · `1dcd11d`\n\n**Reason**\n\nThe draft pull request cannot be created\n\n**Hint**\n\nGitHub is currently delayed in indexing new branches, preventing the pull request from being created.\nRetrying right away may not resolve the issue.\nThe problem is temporary and typically clears once GitHub catches up.\nIf you want to requeue this pull request, you can post a `@mergifyio queue` comment.\n\n<sub>Times in UTC · [dashboard](https://dashboard.mergify.com/orgs/RobTand/repos/prismabuild/queues/status?branch=main&pull=2794) · [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>",
+    "text": null,
+    "annotations_count": 0,
+    "annotations_url": "https://api.github.com/repos/RobTand/prismabuild/check-runs/126517983421/annotations"
+  }
+}
+```
+
+The [annotations GET](https://api.github.com/repos/RobTand/prismabuild/check-runs/126517983421/annotations)
+returned `[]`, matching `annotations_count = 0`. `output.text` is null. The
+summary contains neither a `mergify.v1` span nor a JSON block or abort code.
+Its queue-rule check, `126509983401`, previously returned the exact title
+"The pull request has been removed from the queue `default`" and summary
+"The draft pull request cannot be created.\n\nYou can take a look at `Mergify Merge Queue` check runs for more details about the failure.\n".
+That generic rule report does not distinguish branch indexing from other
+creation failures. No separate real generic draft-creation-failure queue-check
+title/summary was captured; do not invent or approve one based on this report.
+
+`GET /repos/RobTand/prismabuild/commits/1dcd11d4/check-runs?filter=all&per_page=100`
+reported 30 runs. Earlier Mergify engine check `126507535242` on this head does
+contain a `mergify.v1` JSON payload, but its decoded state is `waiting`, not a
+dequeue. Its existence does not supply typed evidence for the later dequeue.
+An additional page had zero runs.
+
+### Other interfaces checked
+
+- The [current queue APIs](https://docs.mergify.com/api/merge-queue/) expose live
+  batches and queued PRs, including a pending manual `dequeue_requested` flag.
+  The documented live PR/status schemas do not expose the historical
+  `dequeue_code`; use the activity log for an exited attempt.
+- The [statistics API](https://docs.mergify.com/api/statistics/) documents both
+  draft-creation codes as outcome counters. The
+  `/stats/queues_pr_exit_reasons` endpoint groups `exit_reason` counts by time.
+  These aggregates cannot bind a reason to PB #2794's exact head or session.
+- [GitHub's `check_run` webhook](https://docs.github.com/en/webhooks/webhook-events-and-payloads#check_run)
+  contains the check-run object. No separate Mergify dequeue code is documented
+  in that envelope. The actual check output and annotations inspected above
+  supply none. Historical webhook deliveries were not read.
+- The Mergify OpenAPI document has no top-level outbound `webhooks` definitions.
+  The [published page index](https://docs.mergify.com/sitemap-0.xml) and
+  [Slack integration documentation](https://docs.mergify.com/integrations/slack/)
+  did not identify a generic outbound dequeue-reason webhook contract. This is
+  a limit of the documentation search, not proof that none exists.
+
+All network research used GETs, sequentially, with at least about one second
+between requests. Initial bare documentation requests returned 403; the official
+pages and schema were accessible with a normal browser User-Agent. The Mergify
+API 403 above was not retried with credentials. No API writes, live changes,
+implementation, tests, or proofs were performed.
 
 ## Verification after approval
 
