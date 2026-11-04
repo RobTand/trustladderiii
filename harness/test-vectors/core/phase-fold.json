@@ -1,0 +1,2428 @@
+{
+ "cases": [
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "passed",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-00",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "passed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "skipped",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-01",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "skipped",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-02",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-03",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "skipped",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-04",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "passed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "skipped",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-05",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "skipped",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-06",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-07",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-08",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "passed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-09",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "skipped",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-10",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-11",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "failed",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-12",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "teardown",
+      "passed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "failed",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-13",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "teardown",
+      "skipped",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-14",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-15",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "skipped",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-16",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "passed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "skipped",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-17",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "skipped",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-18",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-19",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "skipped",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-20",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "passed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "skipped",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-21",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "skipped",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-22",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-23",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-24",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "passed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-25",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "skipped",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-26",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-27",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "failed",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-28",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "teardown",
+      "passed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "failed",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-29",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "teardown",
+      "skipped",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-30",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-31",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-32",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "passed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-33",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "skipped",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-34",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-35",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-36",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "passed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-37",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "skipped",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-38",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-39",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-40",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "passed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-41",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "skipped",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-42",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-43",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-44",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "teardown",
+      "passed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-45",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "teardown",
+      "skipped",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-46",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-47",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-48",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "call",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "passed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-49",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "call",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "skipped",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-50",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "call",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-51",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "call",
+      "passed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-52",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "call",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "passed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-53",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "call",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "skipped",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-54",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "call",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-55",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "call",
+      "skipped",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-56",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "passed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-57",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "skipped",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-58",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-59",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      false
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-60",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "teardown",
+      "passed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-61",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "teardown",
+      "skipped",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-62",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\n\n",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "phases-63",
+   "input": {
+    "phases": [
+     [
+      "setup",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "call",
+      "failed",
+      "",
+      false,
+      true
+     ],
+     [
+      "teardown",
+      "failed",
+      "",
+      false,
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+     "outcome": "failed",
+     "test": "tests/test_value.py::test_value",
+     "truncated": true
+    }
+   ],
+   "id": "truncated-unicode",
+   "input": {
+    "phases": [
+     [
+      "call",
+      "failed",
+      "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+      true,
+      true
+     ],
+     [
+      "teardown",
+      "passed",
+      "",
+      false,
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "expected": [
+    {
+     "event": "result",
+     "message": "worker crashed",
+     "outcome": "error",
+     "test": "tests/test_value.py::test_value",
+     "truncated": false
+    }
+   ],
+   "id": "worker-crash",
+   "input": {
+    "parallel": true,
+    "phases": [
+     [
+      "???",
+      "failed",
+      "worker crashed",
+      false,
+      false
+     ]
+    ],
+    "when": "???"
+   }
+  }
+ ],
+ "kind": "phase-fold"
+}
