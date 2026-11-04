@@ -370,71 +370,70 @@ pub(super) closed spec fn advance_post(before: Node, after: Node,
 
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
-    fn advance_blocked(node: &mut Node, next_ticket: &mut u64,
-        context: AdvanceContext, out: &mut Outbox) -> (result: bool) [
-        requires advance_pre(*old(node), *old(next_ticket), old(out).len),
+    fn advance_blocked(node: &mut Node, _next_ticket: &mut u64,
+        _context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
+        requires advance_pre(*old(node), *old(_next_ticket), old(_out).len),
             old(node).phase is Closed || old(node).waiting_incident || old(node).effect.is_some(),
         ensures advance_post(*old(node), *final(node),
-            *old(next_ticket), *final(next_ticket), result),
+            *old(_next_ticket), *final(_next_ticket), result),
     ] proof [reveal(advance_post);] {
         let n = *node;
-            if n.phase.is_closed() {
-                return false;
+        if n.phase.is_closed() {
+            return false;
+        }
+        if n.waiting_incident {
+            if n.ticket.is_some() {
+                node.ticket = None;
+                return true;
             }
-            if n.waiting_incident {
-                if n.ticket.is_some() {
-                    node.ticket = None;
-                    return true;
-                }
-                return false;
-            }
-            if n.effect.is_some() {
-                return false; // one effect in flight at a time
-            }
-            false
+            return false;
+        }
+        if n.effect.is_some() {
+            return false; // one effect in flight at a time
+        }
+        false
     }
 }
 
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
-    fn advance_finished(node: &mut Node, next_ticket: &mut u64,
+    fn advance_finished(node: &mut Node, _next_ticket: &mut u64,
         context: AdvanceContext, out: &mut Outbox) -> (result: bool) [
-        requires advance_pre(*old(node), *old(next_ticket), old(out).len),
+        requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)).is_none(),
         ensures advance_post(*old(node), *final(node),
-            *old(next_ticket), *final(next_ticket), result),
+            *old(_next_ticket), *final(_next_ticket), result),
     ] proof [reveal(advance_post);] {
         let n = *node;
-                return match n.phase {
-                    Phase::Publishing => {
-                        set_phase(node, Phase::Queued);
-                        true
-                    }
-                    Phase::Stopping(outcome) if n.question.is_none() => {
-                        close_node(node, context.node, outcome, out);
-                        true
-                    }
-                    _ => false,
-                };
+        return match n.phase {
+            Phase::Publishing => {
+                set_phase(node, Phase::Queued);
+                true
+            }
+            Phase::Stopping(outcome) if n.question.is_none() => {
+                close_node(node, context.node, outcome, out);
+                true
+            }
+            _ => false,
+        };
     }
 }
 
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
-    fn advance_do(node: &mut Node, next_ticket: &mut u64,
+    fn advance_do(node: &mut Node, _next_ticket: &mut u64,
         context: AdvanceContext, out: &mut Outbox, kind: EffectKind) -> (result: bool) [
-        requires advance_pre(*old(node), *old(next_ticket), old(out).len),
+        requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Do(kind)),
         ensures advance_post(*old(node), *final(node),
-            *old(next_ticket), *final(next_ticket), result),
+            *old(_next_ticket), *final(_next_ticket), result),
     ] proof [reveal(advance_post);] {
         let n = *node;
-                    if n.paused {
-                        return pause_node(node);
-                    }
-                    emit_node(node, context.node, kind, out);
-                    true
-
+        if n.paused {
+            return pause_node(node);
+        }
+        emit_node(node, context.node, kind, out);
+        true
     }
 }
 
@@ -448,188 +447,180 @@ kernel_fn! {
             *old(next_ticket), *final(next_ticket), result),
     ] proof [reveal(advance_post);] {
         let n = *node;
-                    if n.paused {
-                        return pause_node(node);
-                    }
-                    if n.ticket.is_none() {
-                        take_ticket_node(node, next_ticket);
-                        return true;
-                    }
-                    if context.pool {
-                        let m = &mut *node;
-                        m.ticket = None;
-                        m.pool = true;
-                        m.run = Some(m.generation);
-                        m.pos += 1;
-                        emit_node(node, context.node, EffectKind::StartRun(role), out);
-                        return true;
-                    }
-                    false
-
+        if n.paused {
+            return pause_node(node);
+        }
+        if n.ticket.is_none() {
+            take_ticket_node(node, next_ticket);
+            return true;
+        }
+        if context.pool {
+            let m = &mut *node;
+            m.ticket = None;
+            m.pool = true;
+            m.run = Some(m.generation);
+            m.pos += 1;
+            emit_node(node, context.node, EffectKind::StartRun(role), out);
+            return true;
+        }
+        false
     }
 }
 
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
-    fn advance_checks(node: &mut Node, next_ticket: &mut u64,
+    fn advance_checks(node: &mut Node, _next_ticket: &mut u64,
         context: AdvanceContext, out: &mut Outbox) -> (result: bool) [
-        requires advance_pre(*old(node), *old(next_ticket), old(out).len),
+        requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::StartChecks),
         ensures advance_post(*old(node), *final(node),
-            *old(next_ticket), *final(next_ticket), result),
+            *old(_next_ticket), *final(_next_ticket), result),
     ] proof [reveal(advance_post);] {
         let n = *node;
-                    if n.paused {
-                        return pause_node(node);
-                    }
-                    let m = &mut *node;
-                    m.job = Some(m.generation);
-                    m.pos += 1;
-                    emit_node(node, context.node, EffectKind::SubmitChecks, out);
-                    true
-
+        if n.paused {
+            return pause_node(node);
+        }
+        let m = &mut *node;
+        m.job = Some(m.generation);
+        m.pos += 1;
+        emit_node(node, context.node, EffectKind::SubmitChecks, out);
+        true
     }
 }
 
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
-    fn advance_rebase(node: &mut Node, next_ticket: &mut u64,
+    fn advance_rebase(node: &mut Node, _next_ticket: &mut u64,
         context: AdvanceContext, out: &mut Outbox) -> (result: bool) [
-        requires advance_pre(*old(node), *old(next_ticket), old(out).len),
+        requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::StartRebase),
         ensures advance_post(*old(node), *final(node),
-            *old(next_ticket), *final(next_ticket), result),
+            *old(_next_ticket), *final(_next_ticket), result),
     ] proof [reveal(advance_post);] {
         let n = *node;
-                    if n.paused {
-                        return pause_node(node);
-                    }
-                    let m = &mut *node;
-                    m.run = Some(m.generation);
-                    m.pos += 1;
-                    emit_node(node, context.node, EffectKind::StartRebase, out);
-                    true
-
+        if n.paused {
+            return pause_node(node);
+        }
+        let m = &mut *node;
+        m.run = Some(m.generation);
+        m.pos += 1;
+        emit_node(node, context.node, EffectKind::StartRebase, out);
+        true
     }
 }
 
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
-    fn advance_admit(node: &mut Node, next_ticket: &mut u64,
-        context: AdvanceContext, out: &mut Outbox) -> (result: bool) [
-        requires advance_pre(*old(node), *old(next_ticket), old(out).len),
+    fn advance_admit(node: &mut Node, _next_ticket: &mut u64,
+        context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
+        requires advance_pre(*old(node), *old(_next_ticket), old(_out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Admit),
         ensures advance_post(*old(node), *final(node),
-            *old(next_ticket), *final(next_ticket), result),
+            *old(_next_ticket), *final(_next_ticket), result),
     ] proof [reveal(advance_post);] {
         let n = *node;
-                    if n.paused || !context.admit {
-                        return false;
-                    }
-                    let m = &mut *node;
-                    m.credit.withheld = false;
-                    m.planning_started = true;
-                    set_phase(m, Phase::Planning { must_split: false });
-                    true
-
+        if n.paused || !context.admit {
+            return false;
+        }
+        let m = &mut *node;
+        m.credit.withheld = false;
+        m.planning_started = true;
+        set_phase(m, Phase::Planning { must_split: false });
+        true
     }
 }
 
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
     fn advance_slot(node: &mut Node, next_ticket: &mut u64,
-        context: AdvanceContext, out: &mut Outbox) -> (result: bool) [
-        requires advance_pre(*old(node), *old(next_ticket), old(out).len),
+        context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
+        requires advance_pre(*old(node), *old(next_ticket), old(_out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Slot),
         ensures advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
     ] proof [reveal(advance_post);] {
         let n = *node;
-                    let Phase::Ready(r) = n.phase else {
-                        return false;
-                    };
-                    if n.paused {
-                        if n.ticket.is_some() {
-                            node.ticket = None;
-                            return true;
-                        }
-                        return false;
-                    }
-                    if n.ticket.is_none() {
-                        take_ticket_node(node, next_ticket);
-                        return true;
-                    }
-                    if context.slot {
-                        let m = &mut *node;
-                        m.holds = true;
-                        set_phase(m, r.phase());
-                        return true;
-                    }
-                    false
-
+        let Phase::Ready(r) = n.phase else {
+            return false;
+        };
+        if n.paused {
+            if n.ticket.is_some() {
+                node.ticket = None;
+                return true;
+            }
+            return false;
+        }
+        if n.ticket.is_none() {
+            take_ticket_node(node, next_ticket);
+            return true;
+        }
+        if context.slot {
+            let m = &mut *node;
+            m.holds = true;
+            set_phase(m, r.phase());
+            return true;
+        }
+        false
     }
 }
 
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
-    fn advance_release(node: &mut Node, next_ticket: &mut u64,
-        context: AdvanceContext, out: &mut Outbox) -> (result: bool) [
-        requires advance_pre(*old(node), *old(next_ticket), old(out).len),
+    fn advance_release(node: &mut Node, _next_ticket: &mut u64,
+        _context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
+        requires advance_pre(*old(node), *old(_next_ticket), old(_out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Release),
         ensures advance_post(*old(node), *final(node),
-            *old(next_ticket), *final(next_ticket), result),
+            *old(_next_ticket), *final(_next_ticket), result),
     ] proof [reveal(advance_post);] {
-        let n = *node;
-                    let m = &mut *node;
-                    m.holds = false;
-                    m.pos += 1;
-                    true
-
+        let m = &mut *node;
+        m.holds = false;
+        m.pos += 1;
+        true
     }
 }
 
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
-    fn advance_teardown(node: &mut Node, next_ticket: &mut u64,
+    fn advance_teardown(node: &mut Node, _next_ticket: &mut u64,
         context: AdvanceContext, out: &mut Outbox, kind: EffectKind) -> (result: bool) [
-        requires advance_pre(*old(node), *old(next_ticket), old(out).len),
+        requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Teardown(kind)),
         ensures advance_post(*old(node), *final(node),
-            *old(next_ticket), *final(next_ticket), result),
+            *old(_next_ticket), *final(_next_ticket), result),
     ] proof [reveal(advance_post);] {
         let n = *node;
-                    if n.question.is_some() {
-                        return false; // waiting for Rob
-                    }
-                    let gone = match kind {
-                        EffectKind::StopRun => n.run.is_none(),
-                        EffectKind::WithdrawJob => n.job.is_none(),
-                        EffectKind::ClosePr => !n.pr_open,
-                        EffectKind::RemoveWorktree => !n.worktree,
-                        _ => false,
-                    };
-                    if gone {
-                        let m = &mut *node;
-                        if kind == EffectKind::StopRun {
-                            m.pool = false;
-                        }
-                        m.pos += 1;
-                        return true;
-                    }
-                    emit_node(node, context.node, kind, out);
-                    true
-
+        if n.question.is_some() {
+            return false; // waiting for Rob
+        }
+        let gone = match kind {
+            EffectKind::StopRun => n.run.is_none(),
+            EffectKind::WithdrawJob => n.job.is_none(),
+            EffectKind::ClosePr => !n.pr_open,
+            EffectKind::RemoveWorktree => !n.worktree,
+            _ => false,
+        };
+        if gone {
+            let m = &mut *node;
+            if kind == EffectKind::StopRun {
+                m.pool = false;
+            }
+            m.pos += 1;
+            return true;
+        }
+        emit_node(node, context.node, kind, out);
+        true
     }
 }
 
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
-    fn advance_idle(node: &mut Node, next_ticket: &mut u64,
-        context: AdvanceContext, out: &mut Outbox) -> (result: bool) [
-        requires advance_pre(*old(node), *old(next_ticket), old(out).len),
-            !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && matches!(current_item(*old(node)), Some(Item::Await | Item::Merge | Item::Answer)),
-        ensures advance_post(*old(node), *final(node),
-            *old(next_ticket), *final(next_ticket), result),
+    fn advance_idle(_node: &mut Node, _next_ticket: &mut u64,
+        _context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
+        requires advance_pre(*old(_node), *old(_next_ticket), old(_out).len),
+            !(old(_node).phase is Closed) && !old(_node).waiting_incident && old(_node).effect.is_none() && matches!(current_item(*old(_node)), Some(Item::Await | Item::Merge | Item::Answer)),
+        ensures advance_post(*old(_node), *final(_node),
+            *old(_next_ticket), *final(_next_ticket), result),
     ] proof [reveal(advance_post);] {
         false
     }
