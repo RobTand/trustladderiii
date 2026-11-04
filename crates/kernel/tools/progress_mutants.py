@@ -11,7 +11,7 @@ import tempfile
 
 CASES = [
     ('command_id', 'lib.rs', 'self.last_cmd.checked_add(1)', 'self.last_cmd.checked_add(0)'),
-    ('credit_balance', 'lib.rs', 'if self.withheld {', 'if false {'),
+    ('credit_balance', 'lib.rs', 'if self.withheld {\n                0', 'if false {\n                0'),
     ('credit_ledger', 'lib.rs',
      'self.start as i64 + self.earned as i64 + self.added as i64 - self.spent as i64',
      'self.start as i64 + self.earned as i64 - self.spent as i64'),
@@ -19,9 +19,9 @@ CASES = [
     ('credit_topup', 'lib.rs', 'self.added += short as u32;', 'self.added += 0;'),
     ('agenda', 'lib.rs', 'Phase::Unplanned => &[I::Admit],', 'Phase::Unplanned => &[],'),
     ('phase_rank', 'lib.rs', 'Phase::Unplanned => 28,', 'Phase::Unplanned => 27,'),
-    ('distance', 'lib.rs', 'd += 8;', 'd += 7;'),
-    ('pending_rank', 'lib.rs', 'return 3;', 'return 2;'),
-    ('sum_update', 'progress_specs.rs',
+    ('distance', 'ranks.rs', 'd += 8;', 'd += 7;'),
+    ('pending_rank', 'ranks.rs', 'return 3;', 'return 2;'),
+    ('sum_update', 'ranks.rs',
      'node_total(nodes.drop_last()) + distance(nodes.last())',
      'node_total(nodes.drop_last()) + 0'),
 ]
