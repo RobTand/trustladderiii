@@ -349,33 +349,72 @@ pub struct Credit {
 }
 
 impl Credit {
-    pub fn balance(&self) -> i64 {
-        if self.withheld {
-            0
-        } else {
-            self.ledger_balance()
+    kernel_fn! {
+        pub fn balance(&self) -> (balance: i64) [
+            ensures balance as int == if self.withheld { 0int } else {
+                self.start as int + self.earned as int + self.added as int - self.spent as int
+            },
+        ] {
+            if self.withheld {
+                0
+            } else {
+                self.ledger_balance()
+            }
         }
     }
 
-    fn ledger_balance(&self) -> i64 {
-        self.start as i64 + self.earned as i64 + self.added as i64 - self.spent as i64
+    kernel_fn! {
+        fn ledger_balance(&self) -> (balance: i64) [
+            ensures balance as int == self.start as int + self.earned as int
+                + self.added as int - self.spent as int,
+        ] {
+            self.start as i64 + self.earned as i64 + self.added as i64 - self.spent as i64
+        }
     }
 
     fn can_spend(&self, cost: u32) -> bool {
         self.balance() >= cost as i64
     }
 
-    fn spend(&mut self, cost: u32) {
-        self.spent += cost;
+    kernel_fn! {
+        /// State-table credit ledger: one unit per paid retry or continuation.
+        fn spend(&mut self, cost: u32) -> (result: ()) [
+            requires old(self).spent as int + cost as int <= u32::MAX as int,
+            ensures self.spent as int == old(self).spent as int + cost as int,
+                self.start == old(self).start,
+                self.earned == old(self).earned,
+                self.added == old(self).added,
+                self.withheld == old(self).withheld,
+        ] {
+            self.spent += cost;
+        }
     }
 
-    /// Rob's answers never fail for lack of credit: add the shortfall, then spend.
-    fn pay(&mut self, cost: u32) {
-        let short = cost as i64 - self.balance();
-        if short > 0 {
-            self.added += short as u32;
+    kernel_fn! {
+        /// State-table credit ledger: Rob's answers top up the shortfall first.
+        /// #771: consistent ledgers are nonnegative; withholding permits only
+        /// zero-cost continuations. Hence automatic top-up adds at most cost.
+        fn pay(&mut self, cost: u32) -> (result: ()) [
+            requires
+                old(self).start as int + old(self).earned as int + old(self).added as int
+                    >= old(self).spent as int,
+                old(self).withheld ==> cost == 0,
+                old(self).added as int + cost as int <= u32::MAX as int,
+                old(self).spent as int + cost as int <= u32::MAX as int,
+            ensures
+                self.added as int >= old(self).added as int,
+                self.added as int <= old(self).added as int + cost as int,
+                self.spent as int == old(self).spent as int + cost as int,
+                self.start == old(self).start,
+                self.earned == old(self).earned,
+                self.withheld == old(self).withheld,
+        ] {
+            let short = cost as i64 - self.balance();
+            if short > 0 {
+                self.added += short as u32;
+            }
+            self.spent += cost;
         }
-        self.spent += cost;
     }
 }
 
