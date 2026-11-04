@@ -93,6 +93,98 @@ def start_worker(tmp_path, request, turns, *, raw=None, mode=None, env_overrides
     return Result(process.returncode, events, process.stderr.decode("utf-8", "replace"))
 
 
+class _EntryOs:
+    """The os module as tl3_workers.__main__ sees it, minus main's fd 1 swap.
+
+    In a child, main keeps fd 1 for protocol events and points fd 1 at stderr.
+    In-process, the events go to memory and the test process keeps its fds.
+    """
+
+    def __init__(self, output):
+        self._output = output
+
+    def __getattr__(self, name):
+        return getattr(os, name)
+
+    def dup(self, fd):
+        assert fd == 1, fd
+        return fd
+
+    def fdopen(self, fd, mode):
+        assert (fd, mode) == (1, "wb"), (fd, mode)
+        return self._output
+
+    def dup2(self, source, target):
+        assert (source, target) == (2, 1), (source, target)
+
+
+def bind_tools(model, tools, **kwargs):
+    """Tool binding for the in-process fake; fixtures may replace it."""
+    return model
+
+
+def start_worker_in_process(tmp_path, request, turns, *, raw=None, mode=None, env_overrides=None):
+    """start_worker for cases whose assertion is a decision, not the process boundary.
+
+    It runs the same installed main (request validation, graph, stream, reply
+    validation) with the same scripted model, without a fresh interpreter. Tests
+    of the stdout protocol, stray fd writes, the kill checkpoint or the exporter
+    keep start_worker.
+    """
+    import io
+    import socket
+    from unittest.mock import patch
+
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+
+    import tl3_workers.__main__ as entry
+    from tl3_workers import runtime
+
+    assert mode in (None, "quota", "fail-with-secret"), "this mode tests the process boundary"
+    # The child reads the script back from JSON; so does this.
+    script = json.loads(json.dumps(turns))
+    model = FakeMessagesListChatModel(responses=[AIMessage(**turn) for turn in script])
+
+    def create_model(request):
+        if mode == "quota":
+            from openai import RateLimitError
+            response = httpx.Response(429, headers={"retry-after": "600"},
+                                      request=httpx.Request("POST", "http://model.invalid/v1"))
+            raise RateLimitError("secret provider text", response=response, body=None)
+        if mode == "fail-with-secret":
+            raise RuntimeError("fixture-secret-value " + request["key_file"])
+        return model
+
+    def no_network(*args, **kwargs):
+        raise AssertionError("network forbidden in worker tests")
+
+    payload = (json.dumps(request) if raw is None else raw).encode("utf-8")
+    output, errors = io.BytesIO(), io.StringIO()
+    stdin = io.TextIOWrapper(io.BytesIO(payload), encoding="utf-8")
+    environment = {"LANGSMITH_TRACING": "false", "LANGCHAIN_TRACING_V2": "false", **(env_overrides or {})}
+    cwd, stdout = os.getcwd(), sys.stdout
+    try:
+        with patch.dict(os.environ, environment), \
+             patch.object(entry, "os", _EntryOs(output)), \
+             patch.object(sys, "argv", ["tl3_workers", "run"]), \
+             patch.object(sys, "stdin", stdin), \
+             patch.object(sys, "stderr", errors), \
+             patch.object(FakeMessagesListChatModel, "bind_tools",
+                          lambda self, tools, **kwargs: bind_tools(self, tools, **kwargs)), \
+             patch.object(runtime, "create_model", create_model), \
+             patch.object(socket.socket, "connect", no_network), \
+             patch.object(socket.socket, "connect_ex", no_network), \
+             patch.object(socket, "getaddrinfo", no_network):
+            exit_code = entry.main()
+    finally:
+        # main points sys.stdout at stderr and enters the worktree, as in a child.
+        sys.stdout = stdout
+        os.chdir(cwd)
+    events = [json.loads(line) for line in output.getvalue().decode("utf-8").splitlines()]
+    return Result(exit_code, events, errors.getvalue())
+
+
 def run_real_entrypoint(request, *, raw=None):
     return subprocess.run(
         [sys.executable, "-m", "tl3_workers", "run"],

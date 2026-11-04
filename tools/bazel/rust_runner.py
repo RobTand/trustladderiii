@@ -2,12 +2,15 @@
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 # Import siblings by path: a crate's own tools/ directory can shadow ours.
 sys.path[:0] = [str(Path(__file__).parent), str(Path('tools/ci').resolve())]
 from runtime import prepare  # noqa: E402
+import libtest_shards  # noqa: E402
 import rust_gate  # noqa: E402
+from child_env import child_env  # noqa: E402
 
 # Must match WORKSPACE in tools/bazel/rust.bzl.
 WORKSPACE = Path('/tmp/tl3-workspace')
@@ -44,6 +47,12 @@ def use_worker_python(launcher):
     os.environ['TL3_TEST_UV'] = str(uv)
 
 
+def list_tests(executable):
+    output = subprocess.run([executable, '--list', '--format=terse'], check=True, capture_output=True,
+                            text=True, env=child_env()).stdout
+    return libtest_shards.listed(output)
+
+
 def enforce_budget(results, config, runner, outputs, baseline=None, cpu_seconds=None, cpu_fallbacks=None):
     warnings = rust_gate.check_budget(results, config, baseline or config, runner_class=runner,
                                       cpu_seconds=cpu_seconds, cpu_fallbacks=cpu_fallbacks)
@@ -65,7 +74,12 @@ def main():
     if int(os.environ.get('TEST_TOTAL_SHARDS', '1')) > 1:
         shard = {'index': int(os.environ['TEST_SHARD_INDEX']),
                  'total': int(os.environ['TEST_TOTAL_SHARDS'])}
-        if harness != 'custom' or name not in SHARD_AWARE_BINARIES:
+        if harness == 'libtest':
+            weights = json.loads(libtest_shards.WEIGHTS.read_text()).get(name, {})
+            selected = libtest_shards.select(list_tests(binary['command'][0]), weights,
+                                             shard['index'], shard['total'])
+            arguments = ['--exact', *selected, *arguments]
+        elif name not in SHARD_AWARE_BINARIES:
             raise RuntimeError('scenario sharding requires a shard-aware custom harness')
         Path(os.environ['TEST_SHARD_STATUS_FILE']).touch()
     cpu_seconds, cpu_details = {}, {}

@@ -83,23 +83,8 @@ and up to five blame subgraphs. The gate preserves both revisions' hashes and
 dependency exports. bazel-diff v70.0.2 `explain --format mermaid` produces the blame
 subgraphs, which the GitHub job puts in its summary.
 
-`tools/ci/graph_impact_proof.py --range PR:BASE:HEAD` compares historical ranges.
-It generates independent hash pairs with v42 and v70.0.2 and fails if their impacted
-rule sets differ. It plants broad reach, forbidden dependencies, existing-source
-expansion, and a cycle into the exported graph and checks each failure. It also
-checks that a new sibling test, three new hub sources, and a U improvement pass.
-Run it through the same Run API workflow, with a ten-minute timeout and the
-historical commits available in the runner's checkout. Follow the
-[credential rules](bazel.md#running-tests) for logs, child processes, and artifacts.
-
-`graph_impact_replay.py --harvest graph-impact-replay-ranges.json` exports the last
-30 merged ranges using queries, sharing immutable snapshots at consecutive
-revisions. Its compressed BuildBuddy artifact can be replayed with `--graphs`.
-The replay records old and revised rule outcomes, every failure reason, package
-ceilings, and typed edge differences in `graph-impact-replay.json`.
-Historical proofs reject production source labels absent from the requested
-revision's Git tree. This catches untracked proof files entering Bazel data globs.
 The recorded [30-range replay](graph-impact-replay.md) lists each failure reason.
+The scripts that produced it are no longer in the tree.
 
 The crate cut report removes one real crate or crate-source edge at a time and
 counts lost reach nodes across affected tests. These are candidates for narrowing

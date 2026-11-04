@@ -1,4 +1,6 @@
 """The Bazel migration must preserve the gate's discovered tests."""
+# libtest_shards arrives through //tools/bazel:rust_runner and is imported by path.
+# gazelle:ignore libtest_shards
 import json
 import os
 from pathlib import Path
@@ -266,6 +268,95 @@ class RustRunnerReceiptTests(unittest.TestCase):
             self.assertEqual(receipt['rust'], {'tl3-controller/workers': ['one']})
             self.assertIsInstance(receipt.get('cpu_seconds', {}), dict)
             self.assertNotIn('wall_seconds', receipt)
+
+
+class LibtestShardTests(unittest.TestCase):
+    """#731: libtest binaries split across Bazel shards by measured test time."""
+
+    BINARY = 'tl3-controller/tl3_controller'
+
+    def setUp(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'bazel'))
+
+    def run_shard(self, index, total, names, weights):
+        import rust_runner
+        with tempfile.TemporaryDirectory() as temporary:
+            measured = Path(temporary, 'weights.json')
+            measured.write_text(json.dumps({self.BINARY: weights}))
+            environment = {'TEST_TOTAL_SHARDS': str(total), 'TEST_SHARD_INDEX': str(index),
+                           'TEST_SHARD_STATUS_FILE': str(Path(temporary, 'status')),
+                           'TEST_UNDECLARED_OUTPUTS_DIR': temporary, 'TL3_BUDGETS': 'record'}
+
+            def execute(binary, custom, arguments, **_):
+                self.assertFalse(custom)
+                self.assertEqual(arguments[0], '--exact')
+                return {f'{self.BINARY}::{name}': 0.25 for name in arguments[1:]}
+            with patch.dict(os.environ, environment), \
+                 patch.object(sys, 'argv', ['runner', 'fixture', self.BINARY, 'libtest', '-']), \
+                 patch.object(rust_runner, 'prepare'), \
+                 patch.object(rust_runner, 'link_workspace'), \
+                 patch.object(rust_runner, 'check_workspace'), \
+                 patch.object(rust_runner, 'list_tests', return_value=names), \
+                 patch.object(rust_runner.libtest_shards, 'WEIGHTS', measured), \
+                 patch.object(rust_runner.rust_gate, 'execute_binary', side_effect=execute):
+                rust_runner.main()
+            self.assertTrue(Path(temporary, 'status').exists())
+            receipt = json.loads(Path(temporary, 'inventory.json').read_text())
+            self.assertEqual(receipt['shard'], {'index': index, 'total': total})
+            return receipt['rust'][self.BINARY]
+
+    def test_every_libtest_test_runs_in_exactly_one_shard(self):
+        names = [f'module::test_{n}' for n in range(20)]
+        weights = {name: 1.0 for name in names} | {'module::test_7': 30.0}
+        ran = [self.run_shard(index, 4, names, weights) for index in range(4)]
+        self.assertEqual(sorted(name for shard in ran for name in shard), sorted(names))
+        self.assertEqual(len({name for shard in ran for name in shard}), len(names))
+        self.assertIn(['module::test_7'], ran, 'the slowest test gets a shard to itself')
+
+    def test_selection_balances_measured_seconds(self):
+        import libtest_shards
+        weights = {f't{n}': float(n) for n in range(1, 41)}
+        loads = [sum(weights[name] for name in libtest_shards.select(sorted(weights), weights, index, 4))
+                 for index in range(4)]
+        self.assertLessEqual(max(loads) - min(loads), 40.0)
+        self.assertEqual(sum(loads), sum(weights.values()))
+
+    def test_unmeasured_tests_count_as_the_median_measured_test(self):
+        import libtest_shards
+        weights = {'slow': 100.0, 'a': 1.0, 'b': 1.0}
+        shards = [libtest_shards.select(['slow', 'a', 'b', 'new'], weights, index, 2) for index in range(2)]
+        self.assertIn(['slow'], shards)
+        self.assertIn(['a', 'b', 'new'], shards)
+
+    def test_a_shard_without_tests_fails(self):
+        import libtest_shards
+        with self.assertRaisesRegex(RuntimeError, 'Empty libtest shard'):
+            libtest_shards.select(['only'], {}, 1, 2)
+
+    def test_lists_tests_from_libtest_terse_output(self):
+        import libtest_shards
+        output = 'a::first: test\nb::bench: benchmark\na::second: test\n\n2 tests, 1 benchmark\n'
+        self.assertEqual(libtest_shards.listed(output), ['a::first', 'a::second'])
+
+    def test_weights_come_from_passing_tests_in_test_logs(self):
+        import libtest_shards
+        lines = [
+            f'[{self.BINARY}] {{ "type": "test", "event": "started", "name": "a::one" }}',
+            f'[{self.BINARY}] {{ "type": "test", "name": "a::one", "event": "ok", "exec_time": 1.25 }}',
+            f'[{self.BINARY}] {{ "type": "test", "name": "a::one", "event": "ok", "exec_time": 2.5 }}',
+            f'[{self.BINARY}] {{ "type": "test", "name": "a::two", "event": "failed", "exec_time": 9.0 }}',
+            '[tl3-controller/other] { "type": "test", "name": "b::x", "event": "ok", "exec_time": 7.0 }',
+        ]
+        self.assertEqual(libtest_shards.measured(self.BINARY, lines), {'a::one': 2.5})
+        with self.assertRaisesRegex(RuntimeError, 'No passing'):
+            libtest_shards.measured(self.BINARY, lines[-1:])
+
+    def test_committed_weights_cover_each_sharded_libtest_binary(self):
+        import libtest_shards
+        root = Path(__file__).resolve().parents[2]
+        weights = json.loads((root / libtest_shards.WEIGHTS).read_text())
+        self.assertGreater(len(weights[self.BINARY]), 300)
+        self.assertTrue(all(seconds >= 0 for seconds in weights[self.BINARY].values()))
 
 
 class NestedSuiteSizingTests(unittest.TestCase):

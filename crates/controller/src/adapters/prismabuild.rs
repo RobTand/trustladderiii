@@ -51,6 +51,8 @@ mod results;
 mod source;
 pub(crate) use checks::validate_plan_size;
 pub use checks::{Check, CheckRun, Kind};
+#[cfg(test)]
+pub(crate) use results::contract_vectors;
 pub(crate) use results::{HARNESS, selected_failures};
 pub use source::{RunningSource, Source};
 

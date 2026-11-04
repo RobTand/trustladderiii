@@ -52,6 +52,13 @@ _SCENARIO_SHARDS = {
     "tl3-controller/workers": 8,
 }
 
+# rust_runner.py splits these libtest binaries by the measured test times in
+# libtest-shards.json (#731). The controller library ran 362 tests serially in
+# one 249-324 s action.
+_LIBTEST_SHARDS = {
+    "tl3-controller/tl3_controller": 8,
+}
+
 # Inputs read by controller tests, rather than by the controller library.
 _CONTROLLER_TEST_DATA = [
     "//crates/config:sources",
@@ -162,7 +169,7 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     )
     py_test(
         name = name,
-        srcs = ["//tools/bazel:rust_runner.py", "//tools/bazel:runtime.py"],
+        srcs = ["//tools/bazel:rust_runner.py", "//tools/bazel:runtime.py", "//tools/bazel:libtest_shards.py"],
         main = "//tools/bazel:rust_runner.py",
         args = [
             "$(rootpath :%s_binary)" % name,
@@ -171,14 +178,14 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
             "$(rootpath //tools/bazel:worker_python)" if workers else "-",
         ] + gate_args,
         data = depset(
-            [":" + name + "_binary", "//tools/ci:rust-test-budget.json"] + binaries +
+            [":" + name + "_binary", "//tools/ci:rust-test-budget.json", "//tools/bazel:libtest-shards.json"] + binaries +
             kwargs.get("compile_data", []) + kwargs.get("srcs", []) + runtime + runtime_data,
         ).to_list() + postgres,
         deps = ["//tools/ci:rust_gate"],
         tags = ["rust"] + tags,
         exec_properties = exec_properties,
         size = "large",
-        shard_count = _SCENARIO_SHARDS.get(binary_id, 0),
+        shard_count = _SCENARIO_SHARDS.get(binary_id, _LIBTEST_SHARDS.get(binary_id, 0)),
         # Keep #472 while worker shards need CPU calibration and wall_only entries remain.
         timeout = "eternal" if binary_id == "tl3-controller/workers" else "long",
     )

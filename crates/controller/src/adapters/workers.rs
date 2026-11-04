@@ -4,6 +4,8 @@ use tl3_worktrees::{CommitId, Worktrees};
 pub mod writer;
 pub use writer::{FakeWriter, Writer};
 
+#[cfg(test)]
+mod contract_vector_tests;
 mod evidence;
 mod facts;
 mod fake;

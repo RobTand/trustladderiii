@@ -102,6 +102,7 @@ py_library(
 tl3_py_test(
     name = "test_bazel_parity",
     srcs = ["test_bazel_parity.py"],
+    data = ["//tools/bazel:libtest-shards.json"],  # keep
     deps = [
         ":bazel_parity",
         "//tools/bazel:rust_runner",
@@ -259,27 +260,6 @@ py_binary(
     deps = [
         ":bazel_gate",
         ":bazel_graph_impact",
-    ],
-)
-
-py_binary(
-    name = "graph_impact_proof",
-    srcs = ["graph_impact_proof.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":bazel_gate",
-        ":bazel_graph_impact",
-    ],
-)
-
-py_binary(
-    name = "graph_impact_replay",
-    srcs = ["graph_impact_replay.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":bazel_gate",
-        ":bazel_graph_impact",
-        "//tools/ci:child_env",
     ],
 )
 

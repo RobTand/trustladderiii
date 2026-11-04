@@ -340,6 +340,22 @@ pub(super) fn validate_forecast_settings(reply: &Value, settings: &Value) -> Res
     Ok(())
 }
 
+/// One input property's packaged schema, for contract tests of a projection (#734).
+#[cfg(test)]
+pub(super) fn input_property_validator(role: &str, property: &str) -> jsonschema::Validator {
+    let mut schemas = PACKAGED_SCHEMAS
+        .iter()
+        .map(|(name, source)| ((*name).to_owned(), serde_json::from_str(source).unwrap()))
+        .collect::<Vec<_>>();
+    let name = format!("{role}-input-{property}.json");
+    schemas.push((
+        name.clone(),
+        serde_json::json!({"$id": format!("https://trustladderiii.invalid/workers/protocol-1/{name}"),
+            "$ref": format!("{role}-input.json#/properties/{property}")}),
+    ));
+    schemas_from(schemas).unwrap().remove(&name).unwrap()
+}
+
 fn schemas_from(schemas: Vec<(String, Value)>) -> Result<BTreeMap<String, jsonschema::Validator>> {
     let mut registry = jsonschema::Registry::new();
     for (name, schema) in &schemas {
