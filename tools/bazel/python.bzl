@@ -41,9 +41,11 @@ _PACKAGE_DEPS = {
 # cases moved in-process. Bazel splits each of these modules into shards of
 # about _SHARD_SECONDS, and python_runner.py picks each shard's tests. Update a
 # figure when a target's measured time moves; add any Python target over 30 s.
+# selection_groups uses the maximum sum of shard times in #763's 20 uncached
+# runs under Gate load (3a92be6a), after removing test-only durability waits.
 _MEASURED_SECONDS = {
     "harness/tests:test_review_fixes": 35,
-    "harness/tests:test_selection_groups": 81,
+    "harness/tests:test_selection_groups": 240,
     "harness/tests:test_test_tool": 38,
     "workers/tests:test_large_files": 35,
     "workers/tests:test_maker": 48,
