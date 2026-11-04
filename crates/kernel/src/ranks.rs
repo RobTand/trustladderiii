@@ -336,6 +336,7 @@ impl Node {
 
 kernel_fn! {
         /// #771: actual local settle transition, for every scheduling decision.
+    #[cfg_attr(verus_keep_ghost, verifier::rlimit(120))]
     pub(super) fn advance_node(
         node: &mut Node,
         next_ticket: &mut u64,
