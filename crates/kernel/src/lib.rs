@@ -3677,7 +3677,6 @@ kernel_fn! {
 /// Fact rows / #771: compose declaration updates, merge credit and the remaining
 /// fact handlers. No fact assigns a command ID, effect sequence or ticket.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
-#[cfg_attr(verus_keep_ghost, verifier::isolate_assertions)]
 fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), i <= u64::MAX as int,
         old(out).len + 4 <= OUTBOX,

@@ -621,7 +621,6 @@ impl World {
     /// Prerequisite fact rows / #693 / #771: declarations and terminal facts
     /// preserve every numeric ledger and emit at most one note.
     #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
-    #[cfg_attr(verus_keep_ghost, verifier::isolate_assertions)]
     pub(super) fn dependency_fact(&mut self, i: usize, target: DependencyTarget,
         status: DependencyStatus, out: &mut Outbox) -> (result: ()) [
         requires i < old(self).nodes@.len(), i <= u64::MAX as int,
