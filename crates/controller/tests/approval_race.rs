@@ -813,7 +813,7 @@ fn legacy_retry_intention_after_upgrade_is_ambiguous() {
     }
     let snapshot = store.load().unwrap();
     let mut upgrade = tl3_store::Commit::new("upgrade", json!({"upgrade":true}), &snapshot);
-    upgrade.next_epoch = Some(tl3_store::Epoch::new(snapshot.epoch.get() + 1).unwrap());
+    upgrade.next_epoch = Some(tl3_store::Epoch::try_from(snapshot.epoch.get() + 1).unwrap());
     store.commit(&upgrade).unwrap();
     drop(store);
     let mut controller = case.open();
@@ -929,7 +929,7 @@ fn stop_retires_ambiguous_approval_and_allows_upgrade() {
     let snapshot = store.load().unwrap();
     let mut upgrade =
         tl3_store::Commit::new("upgrade-after-stop", json!({"upgrade":true}), &snapshot);
-    upgrade.next_epoch = Some(tl3_store::Epoch::new(snapshot.epoch.get() + 1).unwrap());
+    upgrade.next_epoch = Some(tl3_store::Epoch::try_from(snapshot.epoch.get() + 1).unwrap());
     store.commit(&upgrade).unwrap();
 }
 
