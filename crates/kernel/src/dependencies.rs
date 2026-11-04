@@ -112,7 +112,7 @@ pub(super) open spec fn delivery_key_ready(w: World, i: int, target: DependencyT
 
 /// #693 / #771: consistency and uniqueness supply the delivered-fact guards.
 pub(super) proof fn pending_ready(w: World, i: int, target: DependencyTarget)
-    requires dependencies_checked(w),
+    requires dependencies_checked(w), 0 <= i < w.nodes@.len() <= u64::MAX as int,
         exists|k: int| 0 <= k < w.dependencies@.len()
             && w.dependencies@[k].node == NodeId(i as u64) && w.dependencies@[k].target == target
             && !w.dependencies@[k].rejected && w.dependencies@[k].status == DependencyStatus::Pending,
@@ -158,9 +158,10 @@ proof fn pending_lookup(w: World, i: int, target: DependencyTarget, existing: Op
         && !w.dependencies@[k].rejected && w.dependencies@[k].status == DependencyStatus::Pending;
     assert(existing is Some);
     let index = existing.unwrap() as int;
-    if index < k { assert(!same_declaration(w.dependencies@[index], w.dependencies@[k])); }
-    if k < index { assert(!same_declaration(w.dependencies@[k], w.dependencies@[index])); }
-    assert(index == k);
+    assert(w.dependencies@[index].node == NodeId(i as u64));
+    assert(w.dependencies@[index].target.kind == target.kind);
+    assert(w.dependencies@[index].target.number == target.number);
+    assert(w.dependencies@[index].target == target);
 }
 
 /// #693 / #771: an exact delivered-row replacement consumes one debt token.
