@@ -627,7 +627,7 @@ fn main() {
             ),
             Some("unavailable") => {
                 unavailable_scenarios(&mut database);
-                println!("5 quota-ladder unavailable scenarios passed; no skips");
+                println!("6 quota-ladder unavailable scenarios passed; no skips");
             }
             _ => quota_scenarios(&mut database),
         }
@@ -819,6 +819,10 @@ fn unavailable_scenarios(database: &mut Database) {
     println!("test quota_unavailable_model_is_probed_after_expiry ... ok");
     quota_ladder::request_error_fails(&database.create("unavailable_request_error"));
     println!("test quota_request_caused_400_fails_without_fallback ... ok");
+    quota_ladder::whole_ladder_out_raises_an_operations_note(
+        &database.create("unavailable_ladder_out"),
+    );
+    println!("test quota_whole_ladder_out_raises_an_operations_note ... ok");
 }
 
 // These scenarios isolate ingest/audit. Maker acceptance below uses the real

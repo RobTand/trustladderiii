@@ -284,6 +284,7 @@ class FailureClass(StrEnum):
 class JudgeFailure:
     category: FailureClass
     status: int | None = None
+    code: str | None = None
 
 
 # AssessmentError retains a code but discards the exception's typed fields.

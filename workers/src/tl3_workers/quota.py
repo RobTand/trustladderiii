@@ -31,6 +31,15 @@ def reset_ms(error, now):
 # Q53 (#745): how long a model that can't be served stays off its ladders before
 # a step tries it again.
 PROBE_S = 15 * 60
+SHORT_PROBE_S = 2 * 60
+
+
+def event(error, now, request):
+    """The quota event that ends this failed run, or None for a failure."""
+    reset = ending_ms(error, now, request["role"])
+    if reset is None:
+        return None
+    return {"event": "quota", "role": request["role"], "reset_ms": reset}
 
 
 def ending_ms(error, now, role):
