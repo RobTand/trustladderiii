@@ -39,6 +39,9 @@ struct Checks {
 
 impl Checks {
     fn apply(&mut self, request: &Request) -> ResponseTemplate {
+        if request.method == "GET" && request.url.path() == "/repos/owner/sandbox/issues/12" {
+            return ResponseTemplate::new(200).set_body_json(json!({"number":12,"title":"request","body":"request","state":"open","updated_at":"2026-11-04T00:00:00Z","labels":[],"pull_request":null}));
+        }
         if request.url.path() == "/repos/owner/sandbox/issues/12/comments" {
             if request.method == "GET" {
                 if self.fail_comment_reads {
@@ -1371,7 +1374,14 @@ fn legacy_allowance_replacement_after_upgrade_requires_authorization() {
 fn quota_exhausted_by_preflight_is_not_dispatch_ambiguity() {
     let case = Case::new("preflight_last_quota");
     case.api.0.lock().unwrap().exhaust_check_quota = true;
-    let mut controller = case.open();
+    let clock = ManualClock(Arc::new(std::sync::atomic::AtomicU64::new(1_000_000)));
+    let mut controller = open_clock(
+        &case.settings,
+        case.root.path(),
+        Some(&case.server.uri()),
+        false,
+        clock.clone(),
+    );
     drain(&mut controller);
     assert_eq!(case.api.0.lock().unwrap().posts, 0);
     assert!(
@@ -1384,7 +1394,16 @@ fn quota_exhausted_by_preflight_is_not_dispatch_ambiguity() {
         api.exhaust_check_quota = false;
         api.apply_first = true;
     }
-    let mut controller = case.open();
+    clock
+        .0
+        .fetch_add(121_000, std::sync::atomic::Ordering::Relaxed);
+    let mut controller = open_clock(
+        &case.settings,
+        case.root.path(),
+        Some(&case.server.uri()),
+        false,
+        clock,
+    );
     controller.look_key(&case.key).unwrap();
     drain(&mut controller);
     assert_eq!(case.api.0.lock().unwrap().posts, 1);
