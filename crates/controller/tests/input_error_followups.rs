@@ -16,7 +16,7 @@ use tl3_controller::{
     executor::{Completion, Delivery, Executor, Look, Observation, Reconciliation, Upstream},
 };
 use tl3_kernel::{Event, NodeId};
-use tl3_store::Store;
+use tl3_store::{Commit, RowChange, Store};
 
 #[derive(Clone)]
 struct TestClock(Rc<Cell<u64>>);
@@ -162,6 +162,78 @@ fn raw_max_command_id_is_rejected_without_changing_the_node() {
             && row.value["input_failure"]["scope"]
                 .as_str()
                 .is_some_and(|scope| scope.starts_with("observation:"))
+    }));
+}
+
+fn seed_node_counter(c: &mut Controller, settings: &tl3_config::Store, field: &str, value: u64) {
+    let snapshot = c.snapshot().unwrap();
+    let mut node = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "nodes" && row.id == "0")
+        .unwrap()
+        .value
+        .clone();
+    node[field] = json!(value);
+    let mut commit = Commit::new(format!("seed-{field}"), json!(null), &snapshot);
+    commit.rows.push(RowChange::Put {
+        table: "nodes".into(),
+        id: "0".into(),
+        value: node,
+    });
+    Store::open(settings).unwrap().commit(&commit).unwrap();
+}
+
+/// #771: ID exhaustion produces an incident without applying command intent.
+#[test]
+fn exhausted_steering_ids_raise_an_incident_without_an_event() {
+    let mut db = support::Database::start();
+    let settings = db.create("steering_id_headroom");
+    let root = tempfile::tempdir().unwrap();
+    let mut c = open(&settings, root.path());
+    c.intake(issue()).unwrap();
+    seed_node_counter(&mut c, &settings, "last_cmd", u64::MAX);
+    let before = c.world().unwrap();
+    c.observe(
+        "pause",
+        Observation::Steering {
+            node: NodeId(0),
+            command: tl3_kernel::Command::Pause,
+        },
+    )
+    .unwrap();
+    assert!(c.drive_once().unwrap());
+    assert_eq!(c.world().unwrap(), before);
+    assert!(c.snapshot().unwrap().rows.iter().any(|row| {
+        row.table == "incidents"
+            && row.value["summary"] == "command ids exhausted for request 0"
+            && row.value["cause"] == "tl3"
+    }));
+}
+
+/// #771: the apply boundary must stop before any kernel mutation can overflow.
+#[test]
+fn exhausted_kernel_headroom_prevents_the_step_and_reports_the_counter() {
+    let mut db = support::Database::start();
+    let settings = db.create("kernel_counter_headroom");
+    let root = tempfile::tempdir().unwrap();
+    let mut c = open(&settings, root.path());
+    c.intake(issue()).unwrap();
+    seed_node_counter(&mut c, &settings, "next_seq", u64::MAX);
+    let before = c.world().unwrap();
+    c.observe(
+        "pause",
+        Observation::Steering {
+            node: NodeId(0),
+            command: tl3_kernel::Command::Pause,
+        },
+    )
+    .unwrap();
+    assert!(c.drive_once().unwrap());
+    assert_eq!(c.world().unwrap(), before);
+    assert!(c.snapshot().unwrap().rows.iter().any(|row| {
+        row.table == "incidents"
+            && row.value["summary"] == "kernel counter headroom exhausted: next_seq"
     }));
 }
 struct BrokenLook {
