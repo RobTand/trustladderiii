@@ -440,6 +440,9 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
                     }
                 }
             };
+            if matches!(completion, Complete::Confirmed { .. }) {
+                state.confirmed = true;
+            }
             out.push(Effect::Complete(completion));
         }
         QueueEvent::Prepare {

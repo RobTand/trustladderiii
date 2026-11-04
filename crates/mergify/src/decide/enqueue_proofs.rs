@@ -137,6 +137,11 @@ proof!(enqueue_ack_sound, {
         }
     };
     assert_eq!(first(&effects), expected, "enqueue outcome misjudged");
+    assert_eq!(
+        next.confirmed,
+        state.confirmed || matches!(expected, Effect::Complete(Complete::Confirmed { .. })),
+        "acknowledgement missing from next state"
+    );
     if refused(state) {
         assert_eq!(effects.len(), 2);
         assert_eq!(

@@ -94,6 +94,7 @@ MUTANTS = [
     ("enqueue_recovery_grace", DECIDE + "enqueue.rs", "                    now_ms.saturating_sub(since) >= GRACE_MS", "                    now_ms.saturating_sub(since) >= GRACE_MS / 2"),
     ("enqueue_dequeue_fresh", DECIDE + "enqueue.rs", "event.id > queued", "event.id >= queued"),
     ("enqueue_required_check", DECIDE + "enqueue.rs", "check.app == App::Actions", "check.app != App::Missing"),
+    ("enqueue_ack_sound", DECIDE + "enqueue.rs", "state.confirmed = true;", "// mutant: omit acknowledgement state"),
 ]
 
 
