@@ -1768,7 +1768,13 @@ fn missing_effect_cleanup_recovers_without_rob() {
         .unwrap()
         .rows
         .iter()
-        .find(|r| r.table == "incidents" && r.value["open"] == true)
+        .find(|r| {
+            r.table == "incidents"
+                && r.value["open"] == true
+                && r.value["effect"]
+                    .as_str()
+                    .is_some_and(|key| key.starts_with("github-cleanup:"))
+        })
         .unwrap()
         .id
         .clone();
@@ -1866,6 +1872,7 @@ fn gap_catchup_repairs_late_approval_after_closure() {
         )
         .unwrap();
     let inputs = catchup.pass(&mut store, &bootstrap()).unwrap();
+    tl3_controller::ingress::drain(&mut controller).unwrap();
     for input in inputs {
         tl3_controller::ingress::apply(&mut controller, input).unwrap();
     }
