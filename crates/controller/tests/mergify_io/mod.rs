@@ -9,13 +9,13 @@ use tl3_controller::{
     adapters::mergify::{Evidence, Progress, RequiredCheck},
 };
 use tl3_github::{CheckRun, IssueActivity, PullRequest};
-use tl3_kernel::{Ack, EffectKind, NodeId};
+use tl3_kernel::{Ack, EffectKind, NodeId, Out};
 use tl3_mergify::{
     QUEUE_LABEL, QueueState,
     decide::{enqueue as lifecycle, facts},
 };
 mod io;
-use io::{Clock, GitHub, Mergify, Runtime, Snapshot};
+use io::{Clock, GitHub, Mergify, Path, Runtime, Snapshot};
 mod records;
 use records::Records;
 #[path = "client.rs"]
@@ -278,14 +278,17 @@ mod properties {
             frames,
             appears_at: usize::MAX,
         });
-        let mut runs = 0;
+        let runs = ::std::cell::Cell::new(0);
         runner
             .run(&strategy, |s| {
-                runs += io::compare(&s, entry).map_err(TestCaseError::fail)?;
+                runs.set(runs.get() + io::compare(&s, entry).map_err(TestCaseError::fail)?);
                 Ok(())
             })
             .unwrap();
-        eprintln!("{entry:?}: {CASES} schedules; {runs} complete/crash comparisons");
+        eprintln!(
+            "{entry:?}: {CASES} schedules; {} complete/crash comparisons",
+            runs.get()
+        );
     }
     /// #760: Waiting + queue label + Ready intent must sample recovery twice.
     #[test]

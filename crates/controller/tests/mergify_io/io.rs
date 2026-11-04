@@ -251,8 +251,8 @@ pub(super) fn completed(result: Result<Completion>) -> Value {
     }
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct PathBuf(String);
-pub(super) type Path = PathBuf;
+pub(crate) struct PathBuf(String);
+pub(crate) type Path = PathBuf;
 impl PathBuf {
     pub fn from(s: &str) -> Self {
         Self(s.into())
@@ -370,7 +370,7 @@ impl Snapshot {
 pub(super) struct Archive {
     pub payload: Value,
 }
-pub(super) struct Store;
+pub(crate) struct Store;
 impl Store {
     pub fn open(path: &PathBuf) -> Result<Self> {
         read("store.open", &path.0);
