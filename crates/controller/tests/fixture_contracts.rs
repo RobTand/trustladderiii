@@ -92,6 +92,9 @@ impl Executor for Spy {
     fn look(&mut self, delivery: &Delivery) -> Result<Look> {
         self.hit("look", delivery.key.clone())
     }
+    fn probe_memory(&mut self) -> Result<()> {
+        self.hit("probe_memory", String::new())
+    }
     fn probe(&mut self, delivery: &Delivery) -> Result<bool> {
         self.hit("probe", delivery.key.clone())
     }
@@ -231,6 +234,7 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
                 )
                 .is_err()
         );
+        assert!(router.probe_memory().is_err());
         assert!(router.retire(&mut store).is_err());
         assert_eq!(
             *calls.lock().unwrap(),
@@ -257,6 +261,7 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
                         question.repository.owner, question.repository.name
                     )
                 ),
+                (primary, "probe_memory", String::new()),
                 (primary, "retire", String::new()),
             ]
         );
