@@ -1052,10 +1052,10 @@ fn concurrent_approval_reconciliations_converge() {
         })
         .collect();
     std::thread::scope(|scope| {
-        for index in 0..2 {
+        for (index, server) in servers.iter().enumerate() {
             let barrier = barrier.clone();
             let delivery = delivery.clone();
-            let uri = servers[index].uri();
+            let uri = server.uri();
             let root = case.root.path().join(format!("reconciler-{index}"));
             scope.spawn(move || {
                 let client = GitHub::new(
