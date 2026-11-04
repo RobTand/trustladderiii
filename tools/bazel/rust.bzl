@@ -85,8 +85,6 @@ _CONTROLLER_WORKERS = [
     "test_test_budget_parity",
 ]
 _CONTROLLER_BINARIES = {
-    "lib_test_tl3_controller": [":tl3"],
-    "test_test_budget_parity": [":tl3"],
     "test_test_worker_supervisor": [":tl3-worker-supervisor"],
     "test_test_workers": [":tl3"],
     "test_test_console_commands": [":tl3d"],
