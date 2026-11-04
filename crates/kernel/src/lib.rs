@@ -2469,6 +2469,64 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
     }
     end_operation(&mut w.nodes[i]);
     match reply {
+        Reply::MakerNeedsFiles { files, fits } => {
+            if fits && !files.is_empty() && w.nodes[i].credit.can_spend(1) {
+                let footprint = w.union_footprints(w.nodes[i].footprint, files);
+                let m = &mut w.nodes[i];
+                m.credit.spend(1);
+                m.footprint = footprint;
+                m.holds = false;
+                set_phase(m, Phase::Ready(Resume::Making));
+            } else if fits && !files.is_empty() && w.fail_fast {
+                // Q54 stops retries, not credit decisions: Rob funds the extension.
+                let footprint = w.union_footprints(w.nodes[i].footprint, files);
+                w.nodes[i].footprint = footprint;
+                ask_rob(
+                    w,
+                    i,
+                    QKind::OutOfCredit,
+                    Cont::Ready(Resume::Making),
+                    1,
+                    out,
+                );
+            } else {
+                out_of_room(w, i, ReviewStop::MakerNeedsFiles, out);
+            }
+        }
+        _ => reply_transition(w, i, reply, out),
+    }
+}
+
+kernel_fn! {
+/// Reply rows / #771: accepted replies outside file extension allocate at most
+/// one generation, one question, one starting ledger and one paid credit.
+fn reply_transition(w: &mut World, i: usize, reply: Reply,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+        !(reply is MakerNeedsFiles),
+    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit.start as int <= old(w).nodes@[i as int].credit.start as int + CREDIT_START_STEP_BUDGET,
+        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
+        final(w).nodes@[i as int].credit.added == old(w).nodes@[i as int].credit.added,
+        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 1,
+] proof [reveal(retry_bounds);] {
+    match reply {
         Reply::IngestDone { size } => {
             let m = &mut w.nodes[i];
             if !m.credit.ready {
@@ -2533,30 +2591,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
             m.checked = None;
             set_phase(m, Phase::Checking);
         }
-        Reply::MakerNeedsFiles { files, fits } => {
-            if fits && !files.is_empty() && w.nodes[i].credit.can_spend(1) {
-                let footprint = w.union_footprints(w.nodes[i].footprint, files);
-                let m = &mut w.nodes[i];
-                m.credit.spend(1);
-                m.footprint = footprint;
-                m.holds = false;
-                set_phase(m, Phase::Ready(Resume::Making));
-            } else if fits && !files.is_empty() && w.fail_fast {
-                // Q54 stops retries, not credit decisions: Rob funds the extension.
-                let footprint = w.union_footprints(w.nodes[i].footprint, files);
-                w.nodes[i].footprint = footprint;
-                ask_rob(
-                    w,
-                    i,
-                    QKind::OutOfCredit,
-                    Cont::Ready(Resume::Making),
-                    1,
-                    out,
-                );
-            } else {
-                out_of_room(w, i, ReviewStop::MakerNeedsFiles, out);
-            }
-        }
+        Reply::MakerNeedsFiles { .. } => {}
         Reply::MakerCantMeet => next_rung(w, i, ReviewStop::MakerCantMeet, out),
         Reply::MakerOutOfRoom => out_of_room(w, i, ReviewStop::MakerOutOfRoom, out),
         Reply::ChecksDone {
@@ -2611,6 +2646,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
         }
         Reply::RunFailed => {}
     }
+}
 }
 
 kernel_fn! {
