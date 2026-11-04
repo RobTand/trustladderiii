@@ -223,8 +223,10 @@ impl World {
                 withheld: old(self).nodes@[i as int].credit.withheld
                     || (!prerequisites_delivered(*old(self), NodeId(i as u64))
                         && !old(self).nodes@[i as int].planning_started
-                        && matches!(old(self).nodes@[i as int].phase,
-                            Phase::Ingesting | Phase::Auditing | Phase::Unplanned)
+                        && (match old(self).nodes@[i as int].phase {
+                            Phase::Ingesting | Phase::Auditing | Phase::Unplanned => true,
+                            _ => false,
+                        })
                         && old(self).nodes@[i as int].credit.ready),
                 ..old(self).nodes@[i as int].credit
             },
