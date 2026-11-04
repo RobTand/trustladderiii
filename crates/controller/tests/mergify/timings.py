@@ -13,6 +13,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('receipts', nargs='+', type=Path)
     parser.add_argument('--logs', nargs='*', type=Path, default=[])
+    parser.add_argument('--extra-receipts', nargs='*', type=Path, default=[],
+                        help='Additional runs used only to take conservative maximum weights')
     parser.add_argument('--write', action='store_true', help='Update the Rust group weights from a pre-fix run')
     args = parser.parse_args()
     tests = {}
@@ -31,6 +33,11 @@ def main():
         shards[index] = sum(seconds.values())
     if sorted(shards) != list(range(shard['total'])):
         raise SystemExit('missing shard receipts')
+    for path in args.extra_receipts:
+        receipt = json.loads(path.read_text())
+        for name, seconds in receipt['seconds'].items():
+            if not name.endswith('::__tail__'):
+                tests[name] = max(tests.get(name, 0), seconds)
     groups = {}
     for path in args.logs:
         for group, seconds in re.findall(r'mergify group (\d+): ([0-9.]+)s', path.read_text()):
