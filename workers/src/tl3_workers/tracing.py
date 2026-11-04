@@ -1212,6 +1212,13 @@ def span_entry(span, redactor, role, model):
             value = json.loads(raw)
             if type(value) is int and value >= 0:
                 result.attributes.add(key=key).value.int_value = value
+    # A grade's repair outcome and failure class (#728): known values only.
+    from tl3_workers.judges import FailureClass
+    for key, known in (('tl3.judge.repair', {'accepted', 'failed'}),
+                       ('tl3.judge.failure_class', {item.value for item in FailureClass})):
+        if (raw := span.attributes.get(key)) is not None and isinstance(
+                value := json.loads(raw), str) and value in known:
+            result.attributes.add(key=key).value.string_value = value
     if span.attributes.get('tl3.proxy.usage_chunks_truncated') is not None:
         result.attributes.add(key='tl3.proxy.usage_chunks_truncated').value.bool_value = True
     if kind in {'LLM', 'CHAT_MODEL'} and (raw := span.attributes.get('mlflow.chat.tokenUsage')):
@@ -1299,6 +1306,11 @@ def failure_tags(error):
     from tl3_workers.forcing_rehearsal import ForcingInfrastructureError
     from tl3_workers.tools import WorktreeUnavailable
     from tl3_workers.turns import InvalidReply, Unrepairable
+    from tl3_workers.reply_check import ReplyCheckInfrastructureError, ReplyViolation
+
+    if isinstance(error, (ReplyCheckInfrastructureError, ReplyViolation)):
+        # Rust emits fixed repair text; infrastructure errors contain no child output or paths.
+        return {"failure_class": type(error).__name__, "failure_message": str(error)}
 
     if type(error) is MergePrerequisiteError:
         return {"failure_class": "MergePrerequisiteError",

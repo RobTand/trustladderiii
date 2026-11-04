@@ -50,6 +50,7 @@ def test_reached_assertion_has_bound_verified_receipts(rehearsal):
     assert all('--anywhere' in cmd and '--demand' in cmd and '--cpus' in cmd for cmd in calls)
 
 
+@pytest.mark.durability
 def test_killed_fork_target_validates_exact_rehearsal_receipts(rehearsal):
     ledger, root, inputs, calls = rehearsal
     (root / 'tests/test_adoption.py').write_text('''

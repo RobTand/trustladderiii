@@ -2,6 +2,8 @@
 // #673 measured a complete worker case at 215.423 s; 450 s > 2x.
 const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(450);
 
+#[path = "workers/classifier.rs"]
+mod classifier;
 mod maker;
 use support::scenario_shard::{self, WorkerGroup};
 use tl3_controller::executor::Output as Out;
@@ -360,6 +362,12 @@ fn finish_fixture(database: Database, group: &str) {
 }
 
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--classifier-contracts") {
+        prepare_workers();
+        classifier::run();
+        println!("6 classifier scenarios passed; no skips");
+        return;
+    }
     if env::args().len() == 1 {
         run_default();
         return;
@@ -478,6 +486,8 @@ fn main() {
         .get(1)
         .is_some_and(|arg| arg == "--real-worker-contracts")
     {
+        classifier::real_worker_repair();
+        println!("test real_worker_contract_classifier ... ok");
         simulation(&database.create("contract_ingest_audit"));
         println!("test real_worker_contract_ingest_audit ... ok");
         planning::planning(&database.create("contract_planner"), "normal");
@@ -625,6 +635,16 @@ fn main() {
                 &database.create("quota_removed_legacy"),
                 true,
             ),
+            Some("ladder-out") => {
+                quota_ladder::whole_ladder_out_raises_an_operations_note(
+                    &database.create("unavailable_ladder_out"),
+                );
+                println!("test quota_whole_ladder_out_raises_an_operations_note ... ok");
+            }
+            Some("unavailable") => {
+                unavailable_scenarios(&mut database);
+                println!("6 quota-ladder unavailable scenarios passed; no skips");
+            }
             _ => quota_scenarios(&mut database),
         }
         database.stop();
@@ -801,6 +821,24 @@ fn quota_scenarios(database: &mut Database) {
     println!("test quota_wait_for_removed_model_resumes_on_open ... ok");
     quota_ladder::removed_model_resumes_on_open(&database.create("quota_removed_legacy"), true);
     println!("test quota_legacy_wait_for_removed_model_resumes_on_open ... ok");
+}
+
+fn unavailable_scenarios(database: &mut Database) {
+    for kind in ["model_not_found", "allowance_unverified", "retry_limit"] {
+        quota_ladder::unavailable_model_falls_back(
+            &database.create(&format!("unavailable_{kind}")),
+            kind,
+        );
+        println!("test quota_unavailable_{kind}_falls_back_to_next_model ... ok");
+    }
+    quota_ladder::unavailable_model_is_probed_after_expiry(&database.create("unavailable_probe"));
+    println!("test quota_unavailable_model_is_probed_after_expiry ... ok");
+    quota_ladder::request_error_fails(&database.create("unavailable_request_error"));
+    println!("test quota_request_caused_400_fails_without_fallback ... ok");
+    quota_ladder::whole_ladder_out_raises_an_operations_note(
+        &database.create("unavailable_ladder_out"),
+    );
+    println!("test quota_whole_ladder_out_raises_an_operations_note ... ok");
 }
 
 // These scenarios isolate ingest/audit. Maker acceptance below uses the real
@@ -1436,18 +1474,12 @@ fn late_launcher(settings: &tl3_config::Store) {
     let delivery = delivery();
     let attempt = root_for(&config, &delivery.key).join("attempt-00000000");
     fs::create_dir_all(&attempt).unwrap();
-    fs::write(
-        attempt.join("supervisor.py"),
-        include_bytes!("../tools/worker_supervisor.py"),
-    )
-    .unwrap();
     // This is the record left if the controller dies immediately before spawn.
     assert!(matches!(
         supervisor.reconcile(&delivery).unwrap(),
         Reconciliation::Absent
     ));
-    let status = Command::new(&config.workers.python)
-        .arg(attempt.join("supervisor.py"))
+    let status = Command::new(env!("CARGO_BIN_EXE_tl3-worker-supervisor"))
         .arg(&attempt)
         .status()
         .unwrap();
@@ -2721,6 +2753,7 @@ fn run_default() {
         finish_fixture(database, "worker_restart");
     });
     shard.run(WorkerGroup::Reply, || {
+        classifier::run();
         let mut database = Database::start();
         invalid_replies(&database.create("workers_invalid"));
         println!("test schema_missing_nonzero_and_duplicate_replies_fail ... ok");
@@ -2817,6 +2850,11 @@ fn run_default() {
         println!("test planner_stop ... ok");
         quota_scenarios(&mut database);
         finish_fixture(database, "worker_planning");
+    });
+    shard.run(WorkerGroup::Unavailable, || {
+        let mut database = Database::start();
+        unavailable_scenarios(&mut database);
+        finish_fixture(database, "worker_unavailable");
     });
     let mut database = Database::start();
     maker::run(&mut database, &mut shard);

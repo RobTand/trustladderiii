@@ -15,6 +15,17 @@ pub fn id() -> String {
     if let Some(tree) = option_env!("TL3_RELEASE_TREE") {
         return tree.into();
     }
+    // #731: a Bazel-built test binary has no Git tree, and hashing it took about
+    // 3 s per postmortem case file. The running binary is fixed for the process.
+    if cfg!(test) {
+        static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        DIGEST.get_or_init(binary_digest).clone()
+    } else {
+        binary_digest()
+    }
+}
+
+fn binary_digest() -> String {
     match std::env::current_exe().and_then(std::fs::read) {
         Ok(binary) => format!("sha256:{:x}", Sha256::digest(binary)),
         Err(error) => {

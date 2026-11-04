@@ -5,26 +5,15 @@ use base64::{
     engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
 };
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use tl3_github::{CheckRun, GitHub, PullRequest};
+pub mod decide;
+use decide::observe::{Mergeable, PullView};
+pub use decide::{
+    CheckView, MERGIFY_APP_ID, QUEUE_CHECK, QUEUE_LABEL, QUEUE_RULE_CHECK, QueueState,
+};
 
-pub const QUEUE_CHECK: &str = "Mergify Merge Queue";
-pub const MERGIFY_APP_ID: u64 = 10562;
 const MERGIFY_BOT_ID: u64 = 37929162;
-pub const QUEUE_LABEL: &str = "tl3-queue";
-pub const QUEUE_RULE_CHECK: &str = "Rule: Queue TL3-approved PRs (queue)";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum QueueState {
-    Waiting,
-    Queued,
-    ChecksRunning,
-    Merged,
-    Dequeued,
-    DequeuedByPerson,
-    FailedCi,
-    Conflict,
-    Unknown,
-}
 
 #[derive(Clone, Debug)]
 pub struct Observation {
@@ -162,13 +151,10 @@ impl Mergify {
             return Err(Error::ChangedDuringRead);
         }
         let observation = observe(after, &checks, approved_head);
-        if observation.state == QueueState::Dequeued
-            && observation.pull_request.mergeable != Some(true)
-            && matches!(
-                observation.pull_request.mergeable_state.as_deref(),
-                None | Some("unknown")
-            )
-        {
+        if decide::observe::mergeability_pending(
+            observation.state,
+            pull_view(&observation.pull_request),
+        ) {
             return Err(Error::MergeabilityPending);
         }
         Ok(observation)
@@ -181,60 +167,64 @@ pub fn is_merge_queue_pr(pull_request: &PullRequest) -> bool {
         && pull_request.user.login == "mergify[bot]"
 }
 
+/// Parse check runs into the core's views at the adapter boundary. `head` is
+/// the commit the caller reads; `required` marks the caller's required
+/// contexts. Names and app IDs are interned per call.
+pub fn views(
+    checks: &[CheckRun],
+    head: &str,
+    required: impl Fn(&CheckRun) -> bool,
+) -> Vec<CheckView> {
+    let mut names = BTreeMap::new();
+    let mut apps = BTreeMap::new();
+    checks
+        .iter()
+        .map(|check| {
+            let next = names.len() as u32;
+            let name_key = *names.entry(check.name.as_str()).or_insert(next);
+            let next = apps.len() as u32;
+            let app_key = *apps
+                .entry(check.app.as_ref().map(|app| app.id))
+                .or_insert(next);
+            CheckView {
+                id: check.id,
+                head: if check.head_sha == head {
+                    decide::Head::Current
+                } else {
+                    decide::Head::Other
+                },
+                app: decide::App::parse(check.app.as_ref().map(|app| (app.id, app.slug.as_str()))),
+                app_key,
+                name: decide::Name::parse(&check.name),
+                name_key,
+                required: required(check),
+                status: decide::Status::parse(&check.status),
+                conclusion: check.conclusion.as_deref().map(decide::Conclusion::parse),
+                completed_at: check.completed_at.map(|time| decide::Time {
+                    secs: time.timestamp(),
+                    nanos: time.timestamp_subsec_nanos(),
+                }),
+            }
+        })
+        .collect()
+}
+
+pub fn pull_view(pull_request: &PullRequest) -> PullView {
+    PullView {
+        merged: pull_request.merged_at.is_some(),
+        mergeable: pull_request.mergeable,
+        mergeable_state: Mergeable::parse(pull_request.mergeable_state.as_deref()),
+    }
+}
+
 /// Only a check on this head from Mergify's GitHub App describes current state.
 pub fn observe(pull_request: PullRequest, checks: &[CheckRun], approved_head: &str) -> Observation {
-    let check = checks
-        .iter()
-        .filter(|check| {
-            check.head_sha == pull_request.head.sha
-                && check.name == QUEUE_CHECK
-                && check
-                    .app
-                    .as_ref()
-                    .is_some_and(|app| app.id == MERGIFY_APP_ID && app.slug == "mergify")
-        })
-        .max_by_key(|check| check.id)
-        .cloned();
-    let state = if pull_request.merged_at.is_some() {
-        QueueState::Merged
-    } else {
-        let reported = check
-            .as_ref()
-            .map(check_state)
-            .unwrap_or(QueueState::Unknown);
-        // GitHub's merge record wins over a queue report, including a delayed one.
-        if reported == QueueState::Merged {
-            QueueState::Unknown
-        } else if reported == QueueState::Dequeued
-            && (pull_request.mergeable == Some(false)
-                || pull_request.mergeable_state.as_deref() == Some("dirty"))
-        {
-            QueueState::Conflict
-        } else {
-            reported
-        }
-    };
-    let dequeue_rule_concluded = check.as_ref().is_some_and(|queue| {
-        checks
-            .iter()
-            .filter(|rule| {
-                rule.head_sha == pull_request.head.sha
-                    && rule.name == QUEUE_RULE_CHECK
-                    && rule
-                        .app
-                        .as_ref()
-                        .is_some_and(|app| app.id == MERGIFY_APP_ID && app.slug == "mergify")
-            })
-            .max_by_key(|rule| rule.id)
-            .is_some_and(|rule| {
-                rule.status == "completed"
-                    && rule.conclusion.is_some()
-                    && rule
-                        .completed_at
-                        .zip(queue.completed_at)
-                        .is_some_and(|(finished, dequeued)| finished >= dequeued)
-            })
-    });
+    let views = views(checks, &pull_request.head.sha, |_| false);
+    let selected = decide::observe::select(&views, decide::Name::QueueCheck);
+    let check = selected.map(|index| checks[index].clone());
+    let state =
+        decide::observe::queue_state(pull_view(&pull_request), || check.as_ref().map(check_state));
+    let dequeue_rule_concluded = decide::observe::rule_concluded(&views, selected);
     let unapproved_merge =
         pull_request.merged_at.is_some() && pull_request.head.sha != approved_head;
     Observation {
@@ -248,12 +238,15 @@ pub fn observe(pull_request: PullRequest, checks: &[CheckRun], approved_head: &s
 }
 
 fn check_state(check: &CheckRun) -> QueueState {
-    if matches!(
-        check.conclusion.as_deref(),
-        Some("timed_out" | "startup_failure")
-    ) {
-        return QueueState::FailedCi;
-    }
+    decide::observe::check_state(
+        check.conclusion.as_deref().map(decide::Conclusion::parse),
+        || report(check),
+    )
+}
+
+/// The queue state a check's output reports: its versioned payload, or else
+/// its title. This is the string boundary; the core decides from the result.
+pub fn report(check: &CheckRun) -> QueueState {
     let Some(output) = &check.output else {
         return QueueState::Unknown;
     };
@@ -375,12 +368,14 @@ fn payload_state(json: &str) -> Option<QueueState> {
 
 /// A timeout or an interrupted run reports runner/setup failure rather than a test failure.
 pub fn ci_is_infrastructure(check: &CheckRun) -> bool {
-    if matches!(
-        check.conclusion.as_deref(),
-        Some("timed_out" | "startup_failure")
-    ) {
-        return true;
-    }
+    decide::observe::ci_is_infrastructure(
+        check.conclusion.as_deref().map(decide::Conclusion::parse),
+        || report_infrastructure(check),
+    )
+}
+
+/// Whether the check's own report names a timeout or an interrupted run.
+fn report_infrastructure(check: &CheckRun) -> bool {
     let payload = check
         .output
         .as_ref()
@@ -464,9 +459,8 @@ pub fn eligible_waiting(check: &CheckRun) -> bool {
 /// The selected check belongs to Mergify on the original PR head.
 pub fn merged_via_queue(observation: &Observation) -> bool {
     observation.check.as_ref().is_some_and(|check| {
-        check.status == "completed"
-            && check.conclusion.as_deref() == Some("success")
-            && check_state(check) == QueueState::Merged
+        let view = views(std::slice::from_ref(check), &check.head_sha, |_| false)[0];
+        decide::observe::merged_via_queue(&view, || check_state(check))
     })
 }
 

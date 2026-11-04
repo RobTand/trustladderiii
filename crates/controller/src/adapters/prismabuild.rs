@@ -51,6 +51,8 @@ mod results;
 mod source;
 pub(crate) use checks::validate_plan_size;
 pub use checks::{Check, CheckRun, Kind};
+#[cfg(test)]
+pub(crate) use results::contract_vectors;
 pub(crate) use results::{HARNESS, selected_failures};
 pub use source::{RunningSource, Source};
 
@@ -102,6 +104,8 @@ pub struct Adapter {
     runtime: tokio::runtime::Runtime,
     keys: tokio::sync::broadcast::Sender<NodeId>,
     records_lock: Arc<Mutex<()>>,
+    /// The harness read at startup (`checks::Harness::load`), published on first staging.
+    harness: Mutex<checks::Harness>,
 }
 
 fn adapter_error(error: tl3_prismabuild::Error) -> crate::Error {
@@ -337,7 +341,18 @@ impl Adapter {
                 clean_inputs(&entry.path())?;
             }
         }
+        // Beside the records directory, whose subdirectories are node records.
+        let copies = settings.records.with_file_name(format!(
+            "{}-harness",
+            settings
+                .records
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        ));
+        let harness = Mutex::new(checks::Harness::load(&settings.harness, &copies));
         Ok(Self {
+            harness,
             client,
             settings,
             images: super::images::Images::default(),
@@ -479,7 +494,11 @@ impl Adapter {
         staged.checks = Some(run.clone());
         let changed_paths = checks::stage(
             &input,
-            &self.settings.harness,
+            &self
+                .harness
+                .lock()
+                .expect("PrismaBuild harness lock")
+                .path()?,
             &staged,
             image,
             &self.protected_paths(&delivery.repository),
@@ -507,7 +526,7 @@ impl Adapter {
         let parallel = run
             .plan
             .iter()
-            .filter_map(|check| check.declared_symptom.as_ref()?.get("parallel")?.as_u64())
+            .filter_map(|check| Some(check.declared_symptom.as_ref()?.parallel.get()))
             .max()
             .unwrap_or(0)
             .clamp(1, 4) as u32;

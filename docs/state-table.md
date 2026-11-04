@@ -1,6 +1,6 @@
 # TL3 state table
 
-Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47, Q48, Q50 and Q51, and on 2026-11-02 with Q54, and on 2026-11-03 with the Q27 declared-symptom RED approval (#592) and Q39 postmortem lane (#642). Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
+Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47, Q48, Q50 and Q51, and on 2026-11-02 with Q54, and on 2026-11-03 with the Q27 declared-symptom RED approval (#592) and Q39 postmortem lane (#642), and on 2026-11-04 with the postmortem lane's ladder fallback (#759). Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
 
 **Changing the rules.** Any change to a rule in this file needs Rob's approval. That includes a new rule that comes from a bug Kani or a test finds. A clarification that changes no rule doesn't need it (Q27).
 
@@ -540,12 +540,19 @@ When the last step confirms, the leaf moves to Queued.
 | Check-suite or check-run evidence | All check suites on the approved head have completed, but a required context from the expected app is absent | Publishing, enqueue pending | Open a deduplicated repo setup incident naming the head, context and expected app. No failure count or credit charge. (Q52, Rob, 2026-11-01) |
 | Required check reports | The context and expected app match an open missing-check incident on that head | Publishing | Clear that incident; evaluate the reported check normally (Q52) |
 | `clear incident <id>` | Rob names an open missing-check incident | Publishing | Clear the incident; required-check enforcement still applies (Q52) |
+| Check-suite or check-run evidence | Mergify waits on unmet queue-entry conditions on the approved head. Every check suite on it has completed, and so has every check other than Mergify's own | Publishing, enqueue pending | Open a deduplicated repo setup incident naming the head, the unmet conditions and the failed checks outside the required set. No failure count or credit charge. (#447; clarification recorded in #735, not a new rule) |
 
 Publication guards report a Conflict fact when the checked head conflicts with current main, including before the push or PR opening completes and before enqueue. Rebasing uses the same credit and recheck rules as a conflict in Queued. A clean main advance needs no rebase; publish the checked head and let Mergify update the merge tree.
 
 Required head-check failures at the enqueue step use the same credit costs and infrastructure retry limits as failures in Queued (Q47).
 
 The missing-check rows decide on the check-suite and check-run webhooks TL3 already receives, with no timer or polling. A cleared incident stays cleared for that head, context and app. Waiting for required checks arms no allowance timer and spends no retry. The incident also clears when its head is replaced or the leaf closes.
+
+These clarify how the controller already applies Q52 and #447 (#735). They add no rule:
+
+- **Unreadable statuses.** A requirement with no expected app can be met by a legacy commit status. If GitHub refuses the status read (HTTP 403 or 404), its absence can't be known, so no missing-check incident opens for it. The refused read opens a check-setup incident instead.
+- **Clearing in any open phase.** When the missing context reports on its head from the expected app, TL3 clears the incident in whatever open phase the leaf is in, not only in Publishing. A closed leaf's incidents have already cleared with it.
+- **The blocked-queue incident (#447)** opens only for the approved head, while the leaf is Queued or still enqueuing. Like a missing-check incident, it never reaches the kernel, and it clears when its head stops being the node's head or approved head, or the leaf closes.
 
 ### A failed round
 
@@ -566,6 +573,7 @@ The missing-check rows decide on the check-suite and check-run webhooks TL3 alre
 | CI failed | The runner or its setup failed | See "Failures" | Enqueue again, when the failure rules allow |
 | Conflict | | Rebasing | Rebase onto main, in a new generation |
 | GitHub or Mergify stalled | No incident is already open | Queued, waiting on an incident | Raise an incident. A probe or Rob clears the first; only Rob clears later incidents. See "Looks and stalls" and Q7. |
+| Check-suite or check-run evidence | Mergify waits on unmet queue-entry conditions on the approved head. Every check suite on it has completed, and so has every check other than Mergify's own | Queued | Open a deduplicated repo setup incident naming the head, the unmet conditions and the failed checks outside the required set. No failure count or credit charge. (#447; clarification recorded in #735, not a new rule) |
 
 ### Rebasing
 
@@ -773,6 +781,8 @@ Slice one uses one account. Each agent run takes a ticket, then waits for a free
 - `tl3 status` and the console's cards show each waiting run's priority and place in line.
 
 Rob amended Q39 on 2026-11-03 (#642): "postmortems should not eat the same budget as everything else. Everything gets a postmortem regardless of budget." Every closed node owes a postmortem, including clean merges regardless of the former sample share (Q32 amended). Postmortems run in their own controller lane, at most two concurrently, oldest owed first. They never wait for or consume agent-pool capacity and have no daily allowance. Model quota for the models actually used, the failure-streak pause and recovery validation (#632), and the deadline still apply. Delivery grants are unchanged.
+
+The postmortem lane falls back down its ladder like any other role (Q53), amended on 2026-11-04 (#759) under Rob's 2026-11-03 decision above: "Everything gets a postmortem regardless of budget." The writer and the grade judges each run on the first model in the postmortem ladder that isn't out, the grade judges starting from its second entry. A model the provider can't serve counts as out until its probe. The lane claims while any postmortem model serves, and waits only while every one is out. Quota still applies to the models a run actually uses. This replaces #486's rule that a quota record on any postmortem model stops claims.
 
 From slice two on:
 

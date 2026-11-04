@@ -102,6 +102,7 @@ py_library(
 tl3_py_test(
     name = "test_bazel_parity",
     srcs = ["test_bazel_parity.py"],
+    data = ["//tools/bazel:libtest-shards.json"],  # keep
     deps = [
         ":bazel_parity",
         "//tools/bazel:rust_runner",
@@ -263,27 +264,6 @@ py_binary(
 )
 
 py_binary(
-    name = "graph_impact_proof",
-    srcs = ["graph_impact_proof.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":bazel_gate",
-        ":bazel_graph_impact",
-    ],
-)
-
-py_binary(
-    name = "graph_impact_replay",
-    srcs = ["graph_impact_replay.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":bazel_gate",
-        ":bazel_graph_impact",
-        "//tools/ci:child_env",
-    ],
-)
-
-py_binary(
     name = "child_env",
     srcs = ["child_env.py"],
     visibility = ["//visibility:public"],
@@ -335,5 +315,25 @@ tl3_py_test(
     deps = [
         ":kani_gate",
         "@tl3_pip//pyyaml",
+    ],
+)
+
+tl3_py_test(
+    name = "test_verus_gate",
+    srcs = ["test_verus_gate.py"],
+    deps = [
+        ":bazel_gate",
+        ":bazel_parity",
+        ":remote_gate",
+    ],
+)
+
+py_binary(
+    name = "verus_qualification",
+    srcs = ["verus_qualification.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":bazel_gate",
+        ":remote_gate",
     ],
 )

@@ -4,7 +4,7 @@
 executors. Read [the architecture note](../../docs/architecture.md) for the
 transaction and recovery contracts.
 
-All commands use the same TOML configuration as `tl3-config`. The daemon runs
+Service commands use the same TOML configuration as `tl3-config`. The daemon runs
 production adapters by default, or simulation with `--simulate`. Status commands read the configured store
 and do not load GitHub or model credentials.
 
@@ -225,20 +225,16 @@ and harness configuration with a new maker change. It then runs the real checks
 adapter against recorded queue evidence. The separate trial checks the committed
 result independently through PrismaBuild's managed container.
 
-Generate all-host verification with
-`python3 crates/controller/tools/worker_review_manifest.py maker`, then submit
-the manifest with `pbcampaign.py --detach`. The three pinned actions run maker,
-worker, supervisor, PrismaBuild adapter, GitHub ingress and worktrees scenarios.
-They also cover process exit during both opening and reading `/proc/<pid>/stat`.
+The host actions run maker, worker, supervisor, PrismaBuild adapter, GitHub
+ingress and worktrees scenarios. They also cover process exit during both
+opening and reading `/proc/<pid>/stat`.
 The open case extends main's ESRCH fix; permission errors still propagate.
 The daemon fixture makes and commits a real change through the shared ingress loop.
 A separate portable action runs the Python worker and harness suites and
 `tools/verify.sh`. These tests use fixtures and never submit nested jobs.
-Add `--trial-image <immutable-image>` to the manifest command to include a new
-real maker-to-harness trial in its own admitted action. The image must already
-exist on an eligible worker. `tools/maker_trial.py` requires admission and
-never submits work. The submitting session runs `pbcampaign.py` outside every
-admitted action.
+`tools/maker_trial.py` runs a new real maker-to-harness trial in its own
+admitted action. The image must already exist on an eligible worker. The script
+requires admission and never submits work.
 
 ## GitHub ingress in simulation
 
@@ -458,17 +454,9 @@ with a fake model and deny network calls. They kill workers and controllers
 with SIGKILL, check reattachment, exercise invalid and premature replies, and
 verify the goals delivered to the GitHub fake.
 
-For the review-fix evidence, create a clean detached worktree at the final
-commit, then generate the campaign there:
-
-```bash
-python3 crates/controller/tools/review_manifest.py > /tmp/tl3-review-campaign.json
-python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-review-campaign.json
-```
-
-The campaign adds the kernel tests and three Kani harnesses covering retryable
-acknowledgements, publishing transitions, and queued progress. Read each terminal
-record, log, and CAS receipt before reporting a pass.
+The review-fix evidence adds the kernel tests and three Kani harnesses covering
+retryable acknowledgements, publishing transitions, and queued progress. Read
+each terminal record, log, and CAS receipt before reporting a pass.
 
 The real Mergify adapter replaces its registry entry with one call:
 
@@ -541,17 +529,8 @@ Mergify's no-progress allowance, the controller sends `Fact::UpstreamStalled`.
 The kernel raises an incident in Queued. Its text includes GitHub's merge time
 and Mergify's queue-check title and status from that watch.
 
-Create a clean detached worktree at the final commit, then submit its host checks:
-
-```bash
-python3 crates/controller/tools/mergify_review_manifest.py > /tmp/tl3-mergify-review.json
-python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-mergify-review.json
-```
-
-The manifest runs controller, GitHub, Mergify and store tests on `dl380g10`,
-`sparky` and `sparklina`, including the crash simulation smoke run. After they pass,
-generate `mergify_review_manifest.py workspace` and submit it to run
-`bash crates/controller/tools/verify.sh` once with `--anywhere`. The scenarios use local HTTP servers and embedded Postgres.
+The Mergify checks run controller, GitHub, Mergify and store tests, including the
+crash simulation smoke run. The scenarios use local HTTP servers and embedded Postgres.
 See [the fixture notes](tests/fixtures/mergify/README.md) for recorded and synthetic
 inputs. Real queue payload confirmation remains the sandbox trial on #17.
 
@@ -666,11 +645,7 @@ directory failure, failed `.done` write or closed ingress receiver reaches
 no timed wake-up and never scans the directory during ordinary bell waits.
 It submits no fleet work from inside tests.
 
-Generate the adapter review campaign from a clean detached worktree with
-`python3 crates/controller/tools/prismabuild_review_manifest.py hosts > /tmp/tl3-pb-review.json`.
-Submit that file with the published `pbcampaign.py`. It runs controller, client and store
-process tests once on each fleet host. After those pass, generate and submit
-`prismabuild_review_manifest.py workspace` for the full verification script.
+The adapter review runs controller, client and store process tests.
 
 The separate outer-session trial is reproducible from the repository root:
 
@@ -692,22 +667,8 @@ SIGKILL cuts inside transactions and around dispatch and reconciliation. Its
 default `merge` smoke scenario covers all twenty save points. Set
 `TL3_SIM_FULL=1` for the full matrix and effect-and-phase coverage assertion.
 Its seed and optional scenario and save-point filters appear in failure output.
-Generate the required three-host and two-portable campaign with
-`python3 crates/controller/tools/crash_manifest.py`. All execution still goes
-through PrismaBuild.
-
-For PR #64's receiver and status review evidence, create a clean detached worktree
-at the final commit. From that worktree, submit the three host checks:
-
-```bash
-python3 crates/controller/tools/github_review_manifest.py > /tmp/tl3-github-review.json
-python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-github-review.json
-```
-
-The manifest pins the controller, GitHub and Postgres test targets to `dl380g10`, `sparky`
-and `sparklina`. Controller targets include the status page and process tests.
-After they pass, submit the full workspace `tools/verify.sh` command shown above
-once with `--anywhere`. Record every action key and result in the PR body.
+The receiver and status review runs the controller, GitHub and Postgres test
+targets. Controller targets include the status page and process tests.
 
 
 ## Worktree adapter
@@ -789,13 +750,8 @@ read both values again: the base and head move together. `Delivery::head_sha`
 remains the exact commit requested by an individual push effect.
 
 
-`tools/worktree_review_manifest.py worktrees` generates the three host-tagged
-PrismaBuild checks from a clean detached worktree at the final commit. Each runs
-all controller and worktrees targets, including the 50 SIGKILL boundaries and real
-killed-add recoveries. Submit its JSON with `pbcampaign.py --detach`. After those
-pass, submit `tools/worktree_review_manifest.py workspace` the same way to run
-`verify.sh` once with portable placement. Record every action key and result in
-the PR body. See the [worktrees recovery guide](../worktrees/README.md#recovery)
+The worktrees checks run all controller and worktrees targets, including the 50
+SIGKILL boundaries and real killed-add recoveries. See the [worktrees recovery guide](../worktrees/README.md#recovery)
 for manual initialization locks and half-registered adds that need operator cleanup.
 
 
@@ -820,13 +776,8 @@ Until these boundaries support a role, its starts and stops use the worker fake.
 
 Worker tests resolve `TL3_TEST_UV` first, then `uv` on PATH. Missing uv fails
 with an installation message. They sync the locked Python 3.14 environment once
-per test process. Run the process scenarios on dl380g10, sparky and sparklina
-through PrismaBuild with `--tag HOST`. From a clean detached worktree, run
-`python3 crates/controller/tools/worker_review_manifest.py workers` to generate
-the three host actions, including controller and store process scenarios.
-After they pass, generate the portable full check with
-`python3 crates/controller/tools/worker_review_manifest.py workspace`.
-Submit each generated manifest with `pbcampaign.py --detach`.
+per test process. The process scenarios include controller and store process
+scenarios.
 
 ## Steering by comment
 
@@ -882,17 +833,9 @@ reattachment, replacements, corrections and a queued PR merging while paused.
 In simulation, a `hold-merges` file in the fake records directory lets the
 Mergify fake retain a queued PR until the test supplies merge evidence.
 
-Generate ticket 14's three host checks from a clean commit:
-
-```bash
-python3 crates/controller/tools/steering_review_manifest.py hosts > /tmp/tl3-steering-hosts.json
-python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-steering-hosts.json
-```
-
-The `steering` selection runs the GitHub target, including steering races,
-on all three hosts. The `writer` selection runs the Python writer tests once.
-The `workspace` selection generates the portable full check. Inspect each
-terminal result, logs and CAS receipt. No kernel rule or proof changes.
+The steering checks run the GitHub target, including steering races, and the
+Python writer tests. Inspect each terminal result, logs and CAS receipt. No
+kernel rule or proof changes.
 
 ## Planning evidence
 
@@ -974,9 +917,6 @@ cannot suppress the question or bypass the message checks.
 Run `bash crates/controller/tools/verify-planning.sh` through PrismaBuild once
 with each host tag, `dl380g10`, `sparky` and `sparklina`. It runs controller and
 store process scenarios and the worker package's offline fake-model tests.
-Generate all three host actions with
-`python3 crates/controller/tools/worker_review_manifest.py planning` and submit
-the manifest through `pbcampaign.py --detach`.
 
 The planner process scenarios cover malformed output, a controller killed while a
 planner is running, and stopping a live planner. Malformed replies fail without
@@ -1030,8 +970,10 @@ it holds no pool grant, and no delivery work waits on it.
   block it, and running postmortems never consume delivery grants (Q39 amended
   by Rob on 2026-11-03, #642).
 - **Quota and recovery.** `start_postmortem` asks the store for an owed row first.
-  It claims nothing while either model the postmortem uses has a `model_quotas`
-  row: entry 0 writes the postmortem and entry 1, if present, grades it. There is
+  Entry 0 writes the postmortem and entry 1, if present, grades it. Each falls
+  down the whole ladder past models whose `model_quotas` record hasn't expired,
+  as other roles fall back (Q53, #759), and the lane claims nothing only while
+  every entry is out. There is
   no daily allowance. Three consecutive failures pause new claims. Recovery
   resets the failure boundary and retains every claim and outcome for audit.
   A single validation run must succeed before the lane resumes; failure pauses
@@ -1410,11 +1352,18 @@ names its model only in the attempt's `request.json`, which the adapter reads.
 The maker's reply records its model in `maker_session`, and the reviewer stays a
 different family from it.
 
-From a clean detached worktree at the final commit, generate the host runs,
-workspace checks, worker protocol tests, kernel tests and stall proof with `python3 crates/controller/tools/looks_manifest.py`. Submit the
-manifest with the published `pbcampaign.py`. Process and timing tests run once
-on each of dl380g10, sparky and sparklina. Check every terminal record, log and CAS
-receipt before reporting a pass.
+When every model a step may use is out, and has been for 30 minutes since the
+step's first ending with no model turn served since, the look posts one
+operations note with the fixed reason `model_ladder_unavailable` and keeps
+waiting (#759). The wait wakes at that bound if it comes before the earliest
+reset. A progress checkpoint clears the step's record, so a later outage posts
+again. A postmortem's quota event may name its case file's grade model, and the
+controller charges that model; its grade judges run on the first model not out
+from the ladder's second entry on.
+
+The looks checks cover the workspace, worker protocol tests, kernel tests and
+the stall proof. Check every terminal record, log and CAS receipt before
+reporting a pass.
 
 ## Failed notice posts
 
@@ -1447,12 +1396,9 @@ note goes to the operations issue. Any other permanent failure raises the usual
 notice incident and keeps the restart pending; clearing the incident retries
 the read.
 
-Generate ticket 87's host actions with
-`python3 crates/controller/tools/notice_review_manifest.py hosts`.
 The GitHub target includes notices, steering and retry crashes at every store
 and adapter save point, including question 403 and incident-post failures.
-The host actions also run looks. The `workspace` selection runs `tools/verify.sh`.
-Use `all` to generate both sets. These commands run through PrismaBuild.
+The host actions also run looks.
 The kernel and state table match `main`, so this controller change needs no
 Kani campaign.
 
@@ -1520,13 +1466,8 @@ selected session; new maker attempts reset the reviewer. The controller carries
 the latest accepted generation even when starting a fresh conversation, so an
 older exhausted checkpoint is not treated as an unaccepted retry.
 
-To reproduce #88's checks, generate a manifest with
-`python3 crates/controller/tools/reviewer_resume_manifest.py hosts` or `workspace`,
-then submit it with `pbcampaign.py`. The `red` option generates the focused
-pre-fix scenarios; set its row's `cwd` to a clean detached worktree at the red
-commit before submission. The host rows run the Python workers,
-publishing and workers scenarios on each named host. The workers scenarios include
-the maker scenarios. The workspace row runs `crates/controller/tools/verify.sh`.
+The #88 checks run the Python workers, publishing and workers scenarios. The
+workers scenarios include the maker scenarios.
 
 `github::Adapter` executes `PostApproval`, `OpenPr` and `ClosePr` through the App
 client. The check is named `TL3 approval`. Its external ID contains the effect key
@@ -1561,15 +1502,8 @@ To add a supervisor role, update these points together:
 5. Translate and persist the reply in `Controller::translate`.
 6. Exercise the process and its retirement on all three fleet hosts.
 
-Generate the development campaign from a clean commit:
-
-```bash
-python3 crates/controller/tools/publishing_review_manifest.py hosts > /tmp/tl3-publishing.json
-python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-publishing.json
-```
-
-This runs the publishing, GitHub and PrismaBuild adapter scenarios once per host
-on dl380g10, sparky and sparklina. It also runs the affected Rust suites,
+The publishing checks run the publishing, GitHub and PrismaBuild adapter scenarios.
+They also run the affected Rust suites,
 including process recovery scenarios, and the worker package's offline tests. The
 `publishing` target combines local repositories, mock GitHub HTTP, recorded
 PrismaBuild records and recorded Mergify check fixtures. It runs the reviewer
@@ -1578,8 +1512,7 @@ control commit and check evidence while exercising review, publication and clean
 The maker scenarios separately run the real maker process. Publishing covers
 merge and cleanup, an outside commit, a free catch-up recheck,
 an unapproved merge, and lost-response recovery for GitHub writes. No test submits
-nested fleet work. After the host runs pass, generate the `workspace` campaign
-and submit it for formatting, Clippy and full workspace verification.
+nested fleet work.
 
 
 ## Proposed-head scope hook
@@ -1626,14 +1559,8 @@ with at least 8 non-whitespace characters of changed content. Supporting imports
 fixtures, documentation, type hints, required formatting and needed small helper
 refactors are in scope. Uncertain scope concerns stay non-blocking.
 
-Generate the verification campaign with
-`python3 crates/controller/tools/scope_review_manifest.py all`, save its JSON
-outside the checkout, and submit it through `pbcampaign.py`. It includes the
-worktrees suite and controller scope scenarios on all three hosts, reviewer and
-writer Python tests with the deployment helper, and `tools/verify.sh`.
-For a scope fix round, `fix-round` generates the worktrees, scope, publishing,
-reviewer and writer suites on dl380g10 and sparky. After those pass, submit the
-`workspace` action at the same commit.
+The scope checks include the worktrees suite and controller scope scenarios,
+reviewer and writer Python tests with the deployment helper, and `tools/verify.sh`.
 
 ### Required head checks before queue retry
 
@@ -1717,3 +1644,37 @@ node's head or approved head, or the node closes. Neither path reaches the kerne
 failure or credit is charged, and the enqueue still waits for the check. Run
 `bash crates/controller/tools/verify-missing-checks.sh` through PrismaBuild for
 the focused scenarios.
+
+## Classifier reply checks
+
+`tl3 check-reply classifier` reads one JSON object `{ "inputs": ..., "reply": ... }`
+from stdin and writes `{ "violations": [...] }`. It needs no configuration or
+store. A valid classification has no violations; an invalid one has the first
+repair message, in the worker's original order. Malformed JSON or an unsupported
+role exits unsuccessfully. Both this command and controller acceptance call
+`classifier::validate`.
+
+The controller gives every worker `TL3_BINARY`, the `tl3` executable beside its
+own executable in the immutable release. Test drivers may supply that path
+explicitly. The worker's Python code only transports JSON and raises the
+returned repair message.
+
+The finite decision proof imports the production `decision.rs` directly through
+`src/classifier/kani.rs`. This avoids the kernel's intentionally disabled serde
+implementations under `cfg(kani)`. Until #726 provides a Bazel proof target, run
+this command inside an admitted PrismaBuild campaign action:
+
+```text
+kani crates/controller/src/classifier/kani.rs --harness proofs::classification_total_and_sound --exact --output-format regular -j 1
+```
+
+Require `VERIFICATION:- SUCCESSFUL` and all 14 cover checks. A separate disposable
+action removes the restartability guard in `decision.rs`; the same proof must
+fail its ordered-rule assertion. The unwind bound is 13 for the proof's twelve
+rule rows. Production decisions have no loops or collection-size bound.
+
+`//crates/controller:test_test_workers` retains the golden cases, CLI contract,
+parse proptests, and real-process repair/tool-denial test. Use
+`--test_arg=--classifier-contracts` for the classifier group alone. Python tests
+exercise only the shim with a fake executable and orchestration with the Rust
+validation boundary stubbed. They never depend on the real `tl3` binary.

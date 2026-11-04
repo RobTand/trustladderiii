@@ -6,6 +6,8 @@ load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "libtest-shards.json",
+    "libtest_shards.py",
     "python_runner.py",
     "requirements.txt",
     "runtime.py",
@@ -62,6 +64,7 @@ py_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":runtime",
+        ":sync_contention",
         "@tl3_pip//pytest",
     ],
 )
@@ -74,11 +77,20 @@ py_binary(
 )
 
 py_binary(
+    name = "libtest_shards",
+    srcs = ["libtest_shards.py"],
+    visibility = ["//visibility:public"],
+    deps = ["//tools/ci:shards"],
+)
+
+py_binary(
     name = "rust_runner",
     srcs = ["rust_runner.py"],
     visibility = ["//visibility:public"],
     deps = [
+        ":libtest_shards",
         ":runtime",
+        "//tools/ci:child_env",
         "//tools/ci:rust_gate",
     ],
 )
@@ -114,7 +126,10 @@ py_library(
 tl3_py_test(
     name = "test_runtime",
     srcs = ["test_runtime.py"],
-    deps = [":python_runner"],
+    deps = [
+        ":python_runner",
+        "@tl3_pip//pytest",
+    ],
 )
 
 filegroup(
@@ -153,5 +168,11 @@ py_binary(
 py_binary(
     name = "stage_contract",
     srcs = ["stage_contract.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_library(
+    name = "sync_contention",
+    srcs = ["sync_contention.py"],
     visibility = ["//visibility:public"],
 )

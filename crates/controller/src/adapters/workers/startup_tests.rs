@@ -573,17 +573,25 @@ fn maker_checks_against_the_worktree_base(database: &str, stored_on: &str, resta
     );
 }
 
-/// #403: a claimed postmortem's request carries a case file its schema accepts,
-/// with the postmortem ladder's models and the node's MLflow tags.
-#[test]
-fn a_postmortem_request_carries_a_valid_case_file() {
+/// A claimed postmortem's delivery, with its store and config.
+fn claimed_postmortem(
+    name: &str,
+    configure: impl FnOnce(&mut tl3_config::Config),
+) -> (
+    crate::git_tests::Repo,
+    crate::git_tests::support::Database,
+    tl3_config::Config,
+    Store,
+    Delivery,
+) {
     use crate::git_tests::{Repo, support::Database};
     let f = Repo::new();
     let mut db = Database::start();
     let mut config =
         tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
-    config.store = db.create("postmortem_case");
+    config.store = db.create(name);
     config.workers.runs = f.root.path().join("runs");
+    configure(&mut config);
     let registry = crate::adapters::simulation(&f.root.path().join("fakes")).unwrap();
     let mut controller = crate::Controller::open(
         Store::open(&config.store).unwrap(),
@@ -637,6 +645,14 @@ fn a_postmortem_request_carries_a_valid_case_file() {
     }
     let delivery = delivery.unwrap();
     assert!(delivery.is_postmortem());
+    (f, db, config, store, delivery)
+}
+
+/// #403: a claimed postmortem's request carries a case file its schema accepts,
+/// with the postmortem ladder's models and the node's MLflow tags.
+#[test]
+fn a_postmortem_request_carries_a_valid_case_file() {
+    let (f, _db, config, mut store, delivery) = claimed_postmortem("postmortem_case", |_| {});
     let snapshot = store.load().unwrap();
     let supervisor = Supervisor::new(&config, &f.root.path().join("records")).unwrap();
     let request = supervisor
@@ -668,6 +684,74 @@ fn a_postmortem_request_carries_a_valid_case_file() {
             .any(|grade| grade["dimension"] == "reliability")
     );
     assert!(inputs["case"]["phases"].as_array().unwrap().len() > 1);
+}
+
+/// #759 (Q53): a postmortem falls back like other roles. Its writer is the
+/// first postmortem model not out, and its grade judges run on the first not
+/// out from the second entry on.
+#[test]
+fn a_postmortem_request_falls_back_past_models_that_are_out() {
+    let (f, _db, config, mut store, delivery) =
+        claimed_postmortem("postmortem_fallback", |config| {
+            config.models.postmortem = config.models.maker.clone();
+        });
+    let [writer, grader] = [0, 1].map(|index| config.models.postmortem[index].name.clone());
+    assert_ne!(writer, grader);
+    let supervisor = Supervisor::new(&config, &f.root.path().join("records")).unwrap();
+    let mut models = |out: &[(&str, u64)]| {
+        let snapshot = store.load().unwrap();
+        let mut commit = tl3_store::Commit::new(
+            format!("fixture-quotas:{}", snapshot.revision.get()),
+            json!({"fixture": "quotas"}),
+            &snapshot,
+        );
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "model_quotas")
+        {
+            commit.rows.push(tl3_store::RowChange::Delete {
+                table: row.table.clone(),
+                id: row.id.clone(),
+            });
+        }
+        for (model, reset) in out {
+            commit.rows.push(crate::put(
+                "model_quotas",
+                (*model).into(),
+                json!({"reset_ms": reset}),
+            ));
+        }
+        store.commit(&commit).unwrap();
+        let snapshot = store.load().unwrap();
+        let request = supervisor
+            .request(&delivery, "postmortem", &mut store, &snapshot)
+            .unwrap();
+        (
+            request["model"]["name"].as_str().unwrap().to_owned(),
+            request["inputs"]["grade_model"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        )
+    };
+    const LATER: u64 = 4_000_000_000_000;
+    assert_eq!(models(&[]), (writer.clone(), grader.clone()));
+    assert_eq!(
+        models(&[(grader.as_str(), LATER)]),
+        (writer.clone(), writer.clone()),
+        "the grade model is out, so the writer's model grades"
+    );
+    assert_eq!(
+        models(&[(writer.as_str(), LATER)]),
+        (grader.clone(), grader.clone()),
+        "the writer's model is out, so the grade model writes"
+    );
+    assert_eq!(
+        models(&[(writer.as_str(), 1), (grader.as_str(), 1)]),
+        (writer.clone(), grader.clone()),
+        "expired records are no bar"
+    );
 }
 
 #[test]

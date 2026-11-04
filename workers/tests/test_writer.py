@@ -9,7 +9,7 @@ import sys
 import pytest
 
 from tl3_workers.roles import ROLES
-from worker_process import start_worker
+from worker_process import start_worker, start_worker_in_process
 
 
 QUESTION = {
@@ -94,7 +94,7 @@ def test_three_options_and_last_recommendation(tmp_path, writer_request):
     reply["recommended_option"] = 2
     writer_request["inputs"]["facts"]["options"] = reply["options"]
     writer_request["inputs"]["facts"]["recommended_option"] = 2
-    result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
+    result = start_worker_in_process(tmp_path, writer_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 0, result.stderr
     assert result.events[-1]["reply"] == reply
 
@@ -105,7 +105,7 @@ def test_summary_can_report_unmet_goals(tmp_path, writer_request):
         "outcome": "Stopped before email delivery was added.",
         "unmet_goals": ["Customers receive receipts by email."],
     })
-    result = start_worker(tmp_path, writer_request, [{"content": json.dumps(PARTIAL_SUMMARY)}])
+    result = start_worker_in_process(tmp_path, writer_request, [{"content": json.dumps(PARTIAL_SUMMARY)}])
     assert result.exit_code == 0, result.stderr
     assert result.events[-1]["reply"] == PARTIAL_SUMMARY
 
@@ -113,7 +113,7 @@ def test_summary_can_report_unmet_goals(tmp_path, writer_request):
 @pytest.mark.parametrize("count", [0, 1, 4])
 def test_invalid_option_counts_do_not_leave_worker(tmp_path, writer_request, count):
     reply = {**QUESTION, "options": [QUESTION["options"][0]] * count}
-    result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
+    result = start_worker_in_process(tmp_path, writer_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
     # The invalid reply gets one repair turn, which the fake answers the same way.
     assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
@@ -122,7 +122,7 @@ def test_invalid_option_counts_do_not_leave_worker(tmp_path, writer_request, cou
 @pytest.mark.parametrize("index", [-1, None, True, "0"])
 def test_invalid_recommendations_do_not_leave_worker(tmp_path, writer_request, index):
     reply = {**QUESTION, "recommended_option": index}
-    result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
+    result = start_worker_in_process(tmp_path, writer_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
     # The invalid reply gets one repair turn, which the fake answers the same way.
     assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
@@ -142,7 +142,7 @@ def test_blank_required_text_does_not_leave_worker(tmp_path, writer_request, fie
         reply["options"][0][field] = value
     else:
         reply[field] = value
-    result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
+    result = start_worker_in_process(tmp_path, writer_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
     # The invalid reply gets one repair turn, which the fake answers the same way.
     assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
@@ -151,7 +151,7 @@ def test_blank_required_text_does_not_leave_worker(tmp_path, writer_request, fie
 @pytest.mark.parametrize("field", list(QUESTION))
 def test_missing_question_fields_do_not_leave_worker(tmp_path, writer_request, field):
     reply = {key: value for key, value in QUESTION.items() if key != field}
-    result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
+    result = start_worker_in_process(tmp_path, writer_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
     # The invalid reply gets one repair turn, which the fake answers the same way.
     assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
@@ -165,7 +165,7 @@ def test_missing_question_fields_do_not_leave_worker(tmp_path, writer_request, f
 ])
 def test_wrong_reply_shape_does_not_leave_worker(tmp_path, writer_request, kind, reply):
     writer_request["inputs"] = inputs_for(kind)
-    result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
+    result = start_worker_in_process(tmp_path, writer_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
     # The invalid reply gets one repair turn, which the fake answers the same way.
     assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
@@ -179,7 +179,7 @@ def test_wrong_reply_shape_does_not_leave_worker(tmp_path, writer_request, kind,
 ])
 def test_invalid_inputs_fail_before_model_turn(tmp_path, writer_request, inputs):
     writer_request["inputs"] = inputs
-    result = start_worker(tmp_path, writer_request, [{"content": json.dumps(QUESTION)}])
+    result = start_worker_in_process(tmp_path, writer_request, [{"content": json.dumps(QUESTION)}])
     assert result.exit_code == 1
     assert result.events == []
     assert result.stderr.strip() == "tl3_workers: request failed"
@@ -271,7 +271,7 @@ def test_checker_violations_reach_model_on_protocol_rerun(tmp_path, writer_reque
 def test_clarification_rules_are_left_to_controller(tmp_path, writer_request, text):
     writer_request["inputs"] = inputs_for("clarification")
     reply = {"text": text}
-    result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
+    result = start_worker_in_process(tmp_path, writer_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 0, result.stderr
     assert result.events[-1] == {"event": "reply", "role": "writer", "reply": reply}
 
@@ -284,7 +284,7 @@ def test_dropped_change_note_drafts_only_prose(tmp_path, writer_request):
         "change_quote": quote,
     })
     reply = {"text": "The old version merged before your change could start. File it again."}
-    result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
+    result = start_worker_in_process(tmp_path, writer_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 0, result.stderr
     assert result.events[-1]["reply"] == reply
 
@@ -339,7 +339,7 @@ def test_reference_removal_feedback_reaches_fake_model(tmp_path, writer_request,
 ])
 def test_structural_rules_are_left_to_controller(tmp_path, writer_request, kind, reply):
     writer_request["inputs"] = inputs_for(kind)
-    result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
+    result = start_worker_in_process(tmp_path, writer_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 0, result.stderr
     assert result.events[-1] == {"event": "reply", "role": "writer", "reply": reply}
 
@@ -347,7 +347,7 @@ def test_structural_rules_are_left_to_controller(tmp_path, writer_request, kind,
 def test_scope_removals_reach_writer_as_facts(tmp_path, writer_request):
     writer_request["inputs"] = inputs_for("summary")
     writer_request["inputs"]["facts"]["removed_changes"] = "Changes not part of this request were removed: extra.txt, pyproject.toml."
-    result = start_worker(tmp_path, writer_request, [{"content": json.dumps(SUMMARY)}])
+    result = start_worker_in_process(tmp_path, writer_request, [{"content": json.dumps(SUMMARY)}])
     assert result.exit_code == 0, result.stderr
     assert result.events[-1]["reply"] == SUMMARY
 
@@ -457,7 +457,7 @@ def test_prompt_tells_a_summary_how_to_use_findings():
 
 def test_question_reply_may_state_its_decision(tmp_path, writer_request):
     reply = {**QUESTION, "decision": DECISION}
-    result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
+    result = start_worker_in_process(tmp_path, writer_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 0, result.stderr
     assert result.events[-1]["reply"] == reply
 
@@ -474,7 +474,7 @@ def test_prompt_turns_findings_into_a_cause_and_one_decision():
 def test_question_body_has_a_hard_cap(tmp_path, writer_request, field, limit):
     reply = {**QUESTION, "decision": DECISION}
     reply[field] = "x" * limit + " exceeds the cap" + ("?" if field == "decision" else ".")
-    result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}] * 2)
+    result = start_worker_in_process(tmp_path, writer_request, [{"content": json.dumps(reply)}] * 2)
     assert result.exit_code != 0, "an oversized draft must not leave the worker"
 
 
