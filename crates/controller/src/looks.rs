@@ -603,7 +603,7 @@ impl Controller {
                         .adapter(&state.delivery)?
                         .probe(&state.delivery)
                     {
-                        Ok(true) => self.probe_passed(state)?,
+                        Ok(true) => self.probe_passed(Some(state), state.incident.as_deref())?,
                         Ok(false) | Err(_) => self.rearm(state),
                     }
                 }
