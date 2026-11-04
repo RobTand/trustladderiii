@@ -1028,13 +1028,19 @@ impl Outbox {
         }
     }
 
-    fn push(&mut self, o: Out) {
-        assert!(
-            self.len < OUTBOX,
-            "a transition emitted more than OUTBOX outputs"
-        );
-        self.items[self.len] = Some(o);
-        self.len += 1;
+    kernel_fn! {
+    fn push(&mut self, o: Out) -> (result: ()) [
+    requires old(self).len < OUTBOX,
+    ensures final(self).len == old(self).len + 1,
+        final(self).items@ == old(self).items@.update(old(self).len as int, Some(o)),
+    ] {
+            assert!(
+                self.len < OUTBOX,
+                "a transition emitted more than OUTBOX outputs"
+            );
+            self.items[self.len] = Some(o);
+            self.len += 1;
+        }
     }
 
     /// The output in slot `i`, if any. Slots fill in order.
@@ -1179,11 +1185,16 @@ kernel_fn! {
     }
 }
 
-fn notice(out: &mut Outbox, node: usize, notice: Notice) {
+kernel_fn! {
+fn notice(out: &mut Outbox, node: usize, notice: Notice) -> (result: ()) [
+requires old(out).len < OUTBOX,
+ensures final(out).len == old(out).len + 1,
+] {
     out.push(Out::Notice {
         node: NodeId(node as u64),
         notice,
     });
+}
 }
 
 impl World {
@@ -2068,6 +2079,9 @@ kernel_fn! {
             final(m).generation == old(m).generation, final(m).next_seq == old(m).next_seq,
             final(m).phase == old(m).phase, final(m).pos == old(m).pos,
             final(m).effect == old(m).effect, final(m).question == old(m).question,
+        final(m).ticket == old(m).ticket,
+            final(m).paused == old(m).paused,
+            final(m).waiting_incident == old(m).waiting_incident,
     ] {
         if !m.credit.merge_credited {
             m.credit.earned += 1;
@@ -2076,7 +2090,20 @@ kernel_fn! {
     }
 }
 
-fn close_node(m: &mut Node, i: usize, outcome: Outcome, out: &mut Outbox) {
+kernel_fn! {
+fn close_node(m: &mut Node, i: usize, outcome: Outcome, out: &mut Outbox) -> (result: ()) [
+requires old(m).credit.merge_credited || old(m).credit.earned < u32::MAX,
+    old(out).len + 2 <= OUTBOX,
+ensures final(m).phase == Phase::Closed(outcome), final(m).pos == 0,
+    final(m).ticket.is_none(),
+    final(m).generation == old(m).generation, final(m).next_seq == old(m).next_seq,
+    final(m).credit.earned as int == old(m).credit.earned as int
+        + if outcome == Outcome::Merged && !old(m).credit.merge_credited { 1int } else { 0int },
+    final(m).credit.merge_credited == (old(m).credit.merge_credited || outcome == Outcome::Merged),
+    final(m).credit.start == old(m).credit.start, final(m).credit.added == old(m).credit.added,
+    final(m).credit.spent == old(m).credit.spent,
+    final(out).len <= old(out).len + 2,
+] {
     m.phase = Phase::Closed(outcome);
     m.pos = 0;
     m.ticket = None;
@@ -2087,6 +2114,7 @@ fn close_node(m: &mut Node, i: usize, outcome: Outcome, out: &mut Outbox) {
     if outcome == Outcome::Replaced {
         notice(out, i, Notice::FileReplacement);
     }
+}
 }
 
 fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8, out: &mut Outbox) {
@@ -2122,7 +2150,20 @@ fn emit(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
     emit_node(&mut w.nodes[i], i, kind, out);
 }
 
-fn emit_node(m: &mut Node, i: usize, kind: EffectKind, out: &mut Outbox) {
+kernel_fn! {
+/// #771: effect allocation increases next_seq by exactly one.
+fn emit_node(m: &mut Node, i: usize, kind: EffectKind, out: &mut Outbox) -> (result: ()) [
+requires old(m).next_seq < u64::MAX, old(out).len < OUTBOX,
+ensures *final(m) == Node {
+    next_seq: (old(m).next_seq + 1) as u64,
+    effect: Some(InFlight { seq: old(m).next_seq, kind, cancelling: false }),
+    worktree: old(m).worktree || kind == EffectKind::PrepareWorktree,
+    pr_open: old(m).pr_open || kind == EffectKind::OpenPr,
+    had_pr: old(m).had_pr || kind == EffectKind::OpenPr,
+    ..*old(m)
+},
+final(out).len == old(out).len + 1,
+] {
     let seq = m.next_seq;
     m.next_seq += 1;
     m.effect = Some(InFlight {
@@ -2150,6 +2191,7 @@ fn emit_node(m: &mut Node, i: usize, kind: EffectKind, out: &mut Outbox) {
         kind,
         head,
     });
+}
 }
 
 // ---------------------------------------------------------------- replies
@@ -3090,7 +3132,29 @@ fn advance_node(
 
 /// A paused leaf starts nothing new. In a holding phase it gives back its slot
 /// and files and waits in Ready, resuming at the step it reached.
-fn pause_node(m: &mut Node) -> bool {
+kernel_fn! {
+fn pause_node(m: &mut Node) -> (result: bool) [
+requires old(m).generation < u64::MAX,
+ensures final(m).generation as int <= old(m).generation as int + 1,
+    final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
+    final(m).question == old(m).question,
+    final(m).paused == old(m).paused, final(m).waiting_incident == old(m).waiting_incident,
+    if holding(old(m).phase) {
+        result && final(m).phase == Phase::Ready(match old(m).phase {
+            Phase::Making => Resume::Making,
+            Phase::Checking => Resume::Checking,
+            Phase::Reviewing => Resume::Reviewing,
+            Phase::Publishing | Phase::Queued => Resume::Publishing,
+            _ => Resume::Rebasing,
+        }) && final(m).pos == 0 && final(m).ticket.is_none()
+            && final(m).effect == match old(m).effect {
+                Some(e) => Some(InFlight { cancelling: true, ..e }), None => None,
+            }
+    } else {
+        result == old(m).ticket.is_some()
+            && *final(m) == Node { ticket: None, ..*old(m) }
+    },
+] {
     if m.phase.holding() {
         if let Some(r) = m.phase.resume() {
             m.holds = false;
@@ -3104,11 +3168,19 @@ fn pause_node(m: &mut Node) -> bool {
     }
     false
 }
+}
 
-fn take_ticket_node(node: &mut Node, next_ticket: &mut u64) {
+kernel_fn! {
+/// Q39 / #771: a place in line consumes exactly one global ticket.
+fn take_ticket_node(node: &mut Node, next_ticket: &mut u64) -> (result: ()) [
+requires *old(next_ticket) < u64::MAX,
+ensures *final(next_ticket) as int == *old(next_ticket) as int + 1,
+    *final(node) == Node { ticket: Some(*old(next_ticket)), ..*old(node) },
+] {
     let t = *next_ticket;
     *next_ticket += 1;
     node.ticket = Some(t);
+}
 }
 
 fn pool_free(w: &World) -> bool {
