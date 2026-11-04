@@ -3130,9 +3130,9 @@ fn advance_node(
     }
 }
 
-/// A paused leaf starts nothing new. In a holding phase it gives back its slot
-/// and files and waits in Ready, resuming at the step it reached.
 kernel_fn! {
+    /// A paused leaf starts nothing new. In a holding phase it gives back its slot
+    /// and files and waits in Ready, resuming at the step it reached. Q30 / #771.
 fn pause_node(m: &mut Node) -> (result: bool) [
 requires old(m).generation < u64::MAX,
 ensures final(m).generation as int <= old(m).generation as int + 1,
