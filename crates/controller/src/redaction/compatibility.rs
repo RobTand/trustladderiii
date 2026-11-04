@@ -179,10 +179,10 @@ fn parsed_class(pattern: &str, classes: &[String; 3], ignore_case: bool) -> Resu
                 let ast = ast::parse::Parser::new()
                     .parse(&format!("[{}]", classes[index]))
                     .map_err(|e| e.to_string())?;
-                let Ast::ClassBracketed(class) = ast else {
+                let Ast::ClassBracketed(class) = &ast else {
                     return Err("invalid frozen Python character class".into());
                 };
-                let mut set = bracketed(&class, classes, false)?;
+                let mut set = bracketed(class, classes, false)?;
                 if perl.negated {
                     set.negate();
                 }
@@ -214,9 +214,9 @@ fn parsed_class(pattern: &str, classes: &[String; 3], ignore_case: bool) -> Resu
     let ast = ast::parse::Parser::new()
         .parse(pattern)
         .map_err(|e| e.to_string())?;
-    let set = match ast {
-        Ast::ClassBracketed(class) => bracketed(&class, classes, ignore_case)?,
-        Ast::ClassPerl(perl) => item(&ClassSetItem::Perl(*perl), classes, ignore_case)?,
+    let set = match &ast {
+        Ast::ClassBracketed(class) => bracketed(class, classes, ignore_case)?,
+        Ast::ClassPerl(perl) => item(&ClassSetItem::Perl((**perl).clone()), classes, ignore_case)?,
         _ => return Err("expected a parsed Python character class".into()),
     };
     Ok(format!("(?-i:{})", Hir::class(Class::Unicode(set))))
