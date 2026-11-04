@@ -38,6 +38,7 @@ mod dependencies;
 pub use dependencies::Dependency;
 mod footprint;
 include!("headroom.rs");
+include!("progress.rs");
 mod ids;
 mod queries;
 pub use footprint::Footprint;
@@ -1400,8 +1401,8 @@ impl World {
         total
     }
 
-    /// True when settle has nothing left to do.
     kernel_fn! {
+    /// True when settle has nothing left to do.
     /// #771: true from the actual settle probe excludes every sufficient
     /// internal move used by the gate and pool obstruction argument.
     pub fn is_settled(&self) -> (result: bool) [
@@ -1553,9 +1554,9 @@ impl World {
         self.consistent() && self.is_settled()
     }
 
+    kernel_fn! {
     /// What holds between any two transitions, including inside settle. Kani
     /// proves that applying an event and every internal transition keep it.
-    kernel_fn! {
     /// #771: successful executable consistency checking supplies the exact
     /// progress invariants used by the source-connected theorem.
     pub fn consistent(&self) -> (result: bool) [
@@ -1566,8 +1567,8 @@ impl World {
     }
     }
 
-    /// `consistent`, naming the first rule a world breaks.
     kernel_fn! {
+    /// `consistent`, naming the first rule a world breaks.
     /// #771: the real world checker establishes positive capacities and the
     /// per-node and prerequisite facts, without changing any acceptance rule.
     pub fn check(&self) -> (result: Result<(), Broken>) [
@@ -1993,8 +1994,8 @@ impl World {
 
     }
 
-    /// What a leaf needs before it may resume into a holding phase.
     kernel_fn! {
+    /// What a leaf needs before it may resume into a holding phase.
     /// #771: verify the real leaf-readiness checker against its ghost predicate.
     fn check_ready(&self, n: &Node, r: Resume) -> (result: Result<(), Broken>) [
         ensures result.is_ok() == ready_checked(*n, r),
@@ -2150,8 +2151,8 @@ pub fn proofs_of_phase(phase: Phase) -> &'static [&'static str] {
 }
 // proof map end
 
-/// The kernel: apply one event, then settle.
 kernel_fn! {
+/// The kernel: apply one event, then settle.
 /// #771: the public executable step inherits the checked whole-step K bounds.
 pub fn step(world: World, event: Event) -> (result: (World, Vec<Out>)) [
     requires step_scope(world),
@@ -2169,9 +2170,9 @@ pub fn settle_world(mut world: World) -> (World, Vec<Out>) {
     (world, out)
 }
 
+kernel_fn! {
 /// `step`, also reporting how many passes settle needed. Tests use it to size
 /// the loop bound that Kani's unwinding check then proves.
-kernel_fn! {
 /// #771: verify the production event-to-settle composition. The scope here is
 /// the arithmetic and storage projection of consistency, plus headroom. The
 /// progress theorem separately requires command freshness for every node.
