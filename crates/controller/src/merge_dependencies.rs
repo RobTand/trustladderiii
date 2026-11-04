@@ -245,15 +245,13 @@ impl Controller {
         &self,
         snapshot: &Snapshot,
         world: &mut World,
-        node: NodeId,
-        fact: Fact,
+        event: Event,
         outputs: &mut Vec<Out>,
         commit: &mut Commit,
     ) -> Result<()> {
         if !self.kernel_headroom(snapshot, world, commit)? {
             return Ok(());
         }
-        let event = Event::Fact { node, fact };
         let (next, emitted) = tl3_kernel::step(world.clone(), event);
         *world = next;
         outputs.extend(emitted);
@@ -423,10 +421,12 @@ impl Controller {
                     self.apply_fact(
                         snapshot,
                         world,
-                        node,
-                        Fact::DependencyRemove {
-                            kind: dependency.target.kind,
-                            number: dependency.target.number,
+                        Event::Fact {
+                            node,
+                            fact: Fact::DependencyRemove {
+                                kind: dependency.target.kind,
+                                number: dependency.target.number,
+                            },
                         },
                         outputs,
                         commit,
@@ -437,10 +437,12 @@ impl Controller {
                 self.apply_fact(
                     snapshot,
                     world,
-                    node,
-                    Fact::Dependency {
-                        target: declaration.target,
-                        status: declaration.status,
+                    Event::Fact {
+                        node,
+                        fact: Fact::Dependency {
+                            target: declaration.target,
+                            status: declaration.status,
+                        },
                     },
                     outputs,
                     commit,
@@ -561,13 +563,15 @@ impl Controller {
                     self.apply_fact(
                         snapshot,
                         world,
-                        dependency.node,
-                        Fact::Dependency {
-                            target: DependencyTarget {
-                                request: Some(bound),
-                                ..dependency.target
+                        Event::Fact {
+                            node: dependency.node,
+                            fact: Fact::Dependency {
+                                target: DependencyTarget {
+                                    request: Some(bound),
+                                    ..dependency.target
+                                },
+                                status,
                             },
-                            status,
                         },
                         outputs,
                         commit,
@@ -616,10 +620,12 @@ impl Controller {
                 self.apply_fact(
                     snapshot,
                     world,
-                    dependency.node,
-                    Fact::Dependency {
-                        target: dependency.target,
-                        status: fact.status,
+                    Event::Fact {
+                        node: dependency.node,
+                        fact: Fact::Dependency {
+                            target: dependency.target,
+                            status: fact.status,
+                        },
                     },
                     &mut outputs,
                     commit,
@@ -696,14 +702,16 @@ mod tests {
         c.apply_fact(
             &snapshot,
             &mut world,
-            node,
-            Fact::Dependency {
-                target: DependencyTarget {
-                    kind: PrerequisiteKind::Issue,
-                    number: 2761,
-                    request: None,
+            Event::Fact {
+                node,
+                fact: Fact::Dependency {
+                    target: DependencyTarget {
+                        kind: PrerequisiteKind::Issue,
+                        number: 2761,
+                        request: None,
+                    },
+                    status: DependencyStatus::Pending,
                 },
-                status: DependencyStatus::Pending,
             },
             &mut outputs,
             &mut commit,

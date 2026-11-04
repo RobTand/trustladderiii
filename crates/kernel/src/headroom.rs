@@ -1,8 +1,9 @@
 use crate::{NodeId, World};
 
-#[allow(dead_code)]
-fn scan_step_budget(_open_nodes: usize) -> Option<u32> {
-    Some(0)
+// A step appends at most one node; Closed never becomes open again. Every
+// u32 scan in admits/pool_free counts only open nodes in a consistent world.
+fn scan_step_budget(open_nodes: usize) -> Option<u32> {
+    u32::try_from(open_nodes).ok()?.checked_add(1)
 }
 
 /// #771: reserves for one external event followed by the complete settle loop.
@@ -27,20 +28,6 @@ pub struct CounterExhaustion {
     pub counter: &'static str,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::scan_step_budget;
-
-    /// #771: scratch u32 scans need room for every open node and one new root.
-    #[test]
-    fn scan_budget_checks_the_actual_u32_width() {
-        assert_eq!(scan_step_budget(0), Some(1));
-        assert_eq!(scan_step_budget(1024), Some(1025));
-        assert_eq!(scan_step_budget(u32::MAX as usize - 1), Some(u32::MAX));
-        assert_eq!(scan_step_budget(u32::MAX as usize), None);
-    }
-}
-
 impl World {
     /// #771: a step may create one node, and each node can take a slot ticket
     /// followed by an agent-pool ticket during settle. The global reserve must
@@ -58,6 +45,13 @@ impl World {
     }
 
     pub fn counter_exhaustion(&self) -> Option<CounterExhaustion> {
+        let open_nodes = self.nodes.iter().filter(|n| !n.phase.is_closed()).count();
+        if scan_step_budget(open_nodes).is_none() {
+            return Some(CounterExhaustion {
+                node: None,
+                counter: "node_scan",
+            });
+        }
         let tickets = self.ticket_step_budget();
         if tickets.is_none_or(|budget| self.next_ticket > u64::MAX - budget) {
             return Some(CounterExhaustion {
@@ -95,5 +89,19 @@ impl World {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scan_step_budget;
+
+    /// #771: scratch u32 scans need room for every open node and one new root.
+    #[test]
+    fn scan_budget_checks_the_actual_u32_width() {
+        assert_eq!(scan_step_budget(0), Some(1));
+        assert_eq!(scan_step_budget(1024), Some(1025));
+        assert_eq!(scan_step_budget(u32::MAX as usize - 1), Some(u32::MAX));
+        assert_eq!(scan_step_budget(u32::MAX as usize), None);
     }
 }

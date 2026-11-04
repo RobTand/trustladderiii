@@ -26,6 +26,11 @@ use vstd::prelude::*;
 #[macro_use]
 mod verification;
 
+#[cfg(verus_keep_ghost)]
+mod progress_specs;
+#[cfg(verus_keep_ghost)]
+use progress_specs::*;
+
 mod dependencies;
 pub use dependencies::Dependency;
 mod footprint;
@@ -101,7 +106,10 @@ pub enum Resume {
 }
 
 impl Resume {
-    pub fn phase(self) -> Phase {
+    kernel_fn! {
+        pub fn phase(self) -> (result: Phase) [
+            ensures result == resumed_phase(self),
+        ] {
         match self {
             Resume::Making => Phase::Making,
             Resume::Checking => Phase::Checking,
@@ -109,6 +117,7 @@ impl Resume {
             Resume::Publishing => Phase::Publishing,
             Resume::Rebasing => Phase::Rebasing,
         }
+    }
     }
 }
 
@@ -137,8 +146,11 @@ pub enum Phase {
 }
 
 impl Phase {
+    kernel_fn! {
     /// The phases in which a leaf holds a slot and its files.
-    pub fn holding(self) -> bool {
+        pub fn holding(self) -> (result: bool) [
+            ensures result == holding(self),
+        ] {
         matches!(
             self,
             Phase::Making
@@ -149,9 +161,20 @@ impl Phase {
                 | Phase::Rebasing
         )
     }
+    }
 
+    kernel_fn! {
     /// Where a holding leaf picks up again after waiting in Ready.
-    pub fn resume(self) -> Option<Resume> {
+        pub fn resume(self) -> (result: Option<Resume>) [
+            ensures result == match self {
+                Phase::Making => Some(Resume::Making),
+                Phase::Checking => Some(Resume::Checking),
+                Phase::Reviewing => Some(Resume::Reviewing),
+                Phase::Publishing | Phase::Queued => Some(Resume::Publishing),
+                Phase::Rebasing => Some(Resume::Rebasing),
+                _ => None,
+            },
+        ] {
         match self {
             Phase::Making => Some(Resume::Making),
             Phase::Checking => Some(Resume::Checking),
@@ -161,13 +184,22 @@ impl Phase {
             _ => None,
         }
     }
-
-    pub fn is_closed(self) -> bool {
-        matches!(self, Phase::Closed(_))
     }
 
-    fn is_stopping(self) -> bool {
+    kernel_fn! {
+        pub fn is_closed(self) -> (result: bool) [
+            ensures result == (self is Closed),
+        ] {
+        matches!(self, Phase::Closed(_))
+    }
+    }
+
+    kernel_fn! {
+        fn is_stopping(self) -> (result: bool) [
+            ensures result == (self is Stopping),
+        ] {
         matches!(self, Phase::Stopping(_))
+    }
     }
 
     pub fn name(self) -> &'static str {
@@ -233,12 +265,17 @@ pub enum EffectKind {
 }
 
 impl EffectKind {
+    kernel_fn! {
     /// Effects that start an operation. The operation's reply moves the node on.
-    fn starts_operation(self) -> bool {
+        fn starts_operation(self) -> (result: bool) [
+            ensures result == matches!(self, EffectKind::StartRun(_)
+                | EffectKind::SubmitChecks | EffectKind::StartRebase),
+        ] {
         matches!(
             self,
             EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase
         )
+    }
     }
 }
 
@@ -569,13 +606,20 @@ impl Node {
         }
     }
 
-    fn current(&self) -> Option<Item> {
+    kernel_fn! {
+        fn current(&self) -> (result: Option<Item>) [
+            ensures result == current_item(*self),
+        ] {
         agenda(self.phase).get(self.pos as usize).copied()
     }
+    }
 
+    kernel_fn! {
     /// A paused leaf whose next step would start work, and which settle will
     /// move to Ready instead.
-    fn pause_move_due(&self) -> bool {
+        fn pause_move_due(&self) -> (result: bool) [
+            ensures result == pause_due(*self),
+        ] {
         self.paused
             && self.phase.holding()
             && !self.waiting_incident
@@ -585,11 +629,15 @@ impl Node {
                 Some(Item::Do(_) | Item::Start(_) | Item::StartChecks | Item::StartRebase)
             )
     }
+    }
 
+    kernel_fn! {
     /// Bookkeeping settle still owes the node without moving it closer to
     /// done: a move to Ready because it's paused (3), taking a place in line
     /// (2), or giving one back (1).
-    fn pending(&self) -> u64 {
+        fn pending(&self) -> (result: u64) [
+            ensures result as int == pending_rank(*self), result <= 3,
+        ] {
         if self.phase.is_closed() {
             return 0;
         }
@@ -611,16 +659,25 @@ impl Node {
             _ => 0,
         }
     }
-
-    /// Falls with every internal transition settle takes. Kani proves it, so
-    /// settle ends for any number of requests.
-    pub fn settle_rank(&self) -> u64 {
-        4 * self.distance() + self.pending()
     }
 
+    kernel_fn! {
+    /// Falls with every internal transition settle takes. Kani proves it, so
+    /// settle ends for any number of requests.
+        pub fn settle_rank(&self) -> (result: u64) [
+            ensures result as int == 4 * progress_specs::distance(*self) + pending_rank(*self),
+                result <= 16387,
+        ] {
+        4 * self.distance() + self.pending()
+    }
+    }
+
+    kernel_fn! {
     /// Distance to Closed. Each witnessed event lowers the world's total, and
     /// no internal transition raises it.
-    pub fn distance(&self) -> u64 {
+        pub fn distance(&self) -> (result: u64) [
+            ensures result as int == progress_specs::distance(*self), result <= 4096,
+        ] {
         if self.phase.is_closed() {
             return 0;
         }
@@ -656,6 +713,7 @@ impl Node {
             d += 4;
         }
         d
+    }
     }
 }
 
@@ -1092,7 +1150,10 @@ enum Item {
 
 const RELEASE_STEP: u8 = 3;
 
-fn agenda(phase: Phase) -> &'static [Item] {
+kernel_fn! {
+    fn agenda(phase: Phase) -> (result: &'static [Item]) [
+        ensures result@ == items(phase), result.len() <= 5,
+    ] {
     use EffectKind as K;
     use Item as I;
     match phase {
@@ -1123,6 +1184,7 @@ fn agenda(phase: Phase) -> &'static [Item] {
         Phase::Closed(_) => &[],
     }
 }
+}
 
 /// Where a retried run starts again in its phase's agenda.
 fn operation_start(phase: Phase) -> u8 {
@@ -1132,7 +1194,11 @@ fn operation_start(phase: Phase) -> u8 {
     }
 }
 
-fn rank(phase: Phase) -> u64 {
+kernel_fn! {
+    fn rank(phase: Phase) -> (result: u64) [
+        ensures result as int == phase_rank(phase), result <= 32,
+        decreases if phase is Ready { 1nat } else { 0nat },
+    ] {
     match phase {
         Phase::Closed(_) => 0,
         Phase::Stopping(_) => 2,
@@ -1150,8 +1216,12 @@ fn rank(phase: Phase) -> u64 {
         Phase::AwaitingRob => 3,
     }
 }
+}
 
-fn cont_rank(cont: Cont) -> u64 {
+kernel_fn! {
+    fn cont_rank(cont: Cont) -> (result: u64) [
+        ensures result as int == continuation_rank(cont), result <= 32,
+    ] {
     match cont {
         Cont::Ingesting => 32,
         Cont::Auditing => 30,
@@ -1160,6 +1230,7 @@ fn cont_rank(cont: Cont) -> u64 {
         Cont::Ready(r) => rank(Phase::Ready(r)),
         Cont::Stop(_) | Cont::Nowhere => 2,
     }
+}
 }
 
 fn notice(out: &mut Outbox, node: usize, notice: Notice) {
