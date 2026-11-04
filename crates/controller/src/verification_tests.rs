@@ -260,8 +260,15 @@ fn measure_complete_step_cost_and_allocations() {
     use tl3_kernel::{Node, Outcome, Phase};
     use tl3_store::{Revision, WorldRow};
     let mut db = Database::start();
+    // Keep routine debug verification narrow. The optimized BuildBuddy run
+    // measures the full scaling curve and allocation regions.
+    let counts: &[usize] = if cfg!(debug_assertions) {
+        &[256]
+    } else {
+        &[256, 1024, 4096]
+    };
     for density in [4, 16] {
-        for count in [256, 1024, 4096] {
+        for &count in counts {
             let settings = db.create("invariant_cost");
             let root = tempfile::tempdir().unwrap();
             let mut c = Controller::open_with_clock(
