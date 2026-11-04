@@ -1264,9 +1264,18 @@ impl World {
         }
     }
 
-    fn index(&self, node: NodeId) -> Option<usize> {
+    kernel_fn! {
+    /// #771: external node IDs name existing storage or are ignored.
+    fn index(&self, node: NodeId) -> (result: Option<usize>) [
+        ensures result.is_some() == (node.0 as int < self.nodes@.len()),
+            match result {
+                Some(i) => i as int == node.0 as int && i < self.nodes@.len(),
+                None => true,
+            },
+    ] {
         let i = node.index()?;
         if i < self.nodes.len() { Some(i) } else { None }
+    }
     }
 
     /// The sum of every node's distance to Closed.
@@ -2223,7 +2232,32 @@ kernel_fn! {
     }
 }
 
-fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8, out: &mut Outbox) {
+kernel_fn! {
+/// Question rows / #771: one question and one generation, on the selected node.
+fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(w).next_question < u64::MAX,
+        old(w).nodes@[i as int].generation < u64::MAX, old(out).len < OUTBOX,
+    ensures final(w).next_question as int == old(w).next_question as int + 1,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).nodes@ == old(w).nodes@.update(i as int, Node {
+            holds: false,
+            question: Some(Question { id: old(w).next_question, kind, cont, cost, clarified: false }),
+            phase: Phase::AwaitingRob,
+            generation: (old(w).nodes@[i as int].generation + 1) as u64,
+            pos: 0, ticket: None,
+            effect: match old(w).nodes@[i as int].effect {
+                Some(e) => Some(InFlight { cancelling: true, ..e }), None => None,
+            },
+            ..old(w).nodes@[i as int]
+        }),
+        final(out).len == old(out).len + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+] {
     let id = w.next_question;
     w.next_question += 1;
     let m = &mut w.nodes[i];
@@ -2238,8 +2272,36 @@ fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8, out: &mut
     set_phase(m, Phase::AwaitingRob);
     notice(out, i, Notice::Ask { question: id });
 }
+}
 
-fn raise_incident(w: &mut World, i: usize, needs_rob: bool, out: &mut Outbox) {
+kernel_fn! {
+/// Incident rows / #771: only a holding phase allocates a generation.
+fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        holding(old(w).nodes@[i as int].phase) ==>
+            old(w).nodes@[i as int].generation < u64::MAX,
+    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int
+            == old(w).nodes@[i as int].generation as int
+                + if holding(old(w).nodes@[i as int].phase) { 1int } else { 0int },
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit,
+        final(w).nodes@[i as int].question == old(w).nodes@[i as int].question,
+        final(w).nodes@[i as int].waiting_incident,
+        final(w).nodes@[i as int].incident_needs_rob == needs_rob,
+        final(w).nodes@[i as int].ticket.is_none(),
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question == old(w).next_question,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len == old(out).len + 1,
+] {
     let m = &mut w.nodes[i];
     m.waiting_incident = true;
     m.incident_needs_rob = needs_rob;
@@ -2250,6 +2312,7 @@ fn raise_incident(w: &mut World, i: usize, needs_rob: bool, out: &mut Outbox) {
         set_phase(m, Phase::Ready(r));
     }
     notice(out, i, Notice::Incident { needs_rob });
+}
 }
 
 fn emit(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
