@@ -9,6 +9,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -38,7 +39,8 @@ LEAD_NOTE = '[truncated: earlier text omitted]\n'
 def load_policy():
     """Refuse worker startup when packaged data differs from the Rust build contract."""
     try:
-        from ._policy_identity import IDENTITY
+        # Detached exporters execute this file directly, outside the package.
+        IDENTITY = runpy.run_path(str(Path(__file__).with_name('_policy_identity.py')))['IDENTITY']
         data = Path(__file__).with_name('policy.json').read_bytes()
         if hashlib.sha256(data).hexdigest() != IDENTITY['sha256']:
             raise RuntimeError('identity mismatch')

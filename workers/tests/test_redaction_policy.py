@@ -22,7 +22,8 @@ import tl3_workers
     ('regex:BEARER', '('),
 ])
 @pytest.mark.parametrize('matching_hash', [False, True])
-def test_worker_import_refuses_invalid_policy(tmp_path, field, value, matching_hash):
+@pytest.mark.parametrize('launch', ['import', 'script'])
+def test_worker_import_refuses_invalid_policy(tmp_path, field, value, matching_hash, launch):
     source = Path(tl3_workers.__file__).parent
     package = tmp_path / 'tl3_workers'
     package.mkdir()
@@ -44,10 +45,11 @@ def test_worker_import_refuses_invalid_policy(tmp_path, field, value, matching_h
         text = identity.read_text()
         assert old in text
         identity.write_text(text.replace(old, new))
-    result = subprocess.run(
-        [sys.executable, '-I', '-c',
-         'import sys; sys.path.insert(0,sys.argv[1]); import tl3_workers; print("worker-started")',
-         str(tmp_path)], capture_output=True, text=True, check=False)
+    command = ([sys.executable, '-I', str(package / 'tracing.py')] if launch == 'script' else
+               [sys.executable, '-I', '-c',
+                'import sys; sys.path.insert(0,sys.argv[1]); import tl3_workers; print("worker-started")',
+                str(tmp_path)])
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
     assert result.returncode != 0, 'invalid policy allowed worker import'
     assert 'worker-started' not in result.stdout
     assert 'redaction policy' in result.stderr.lower()
@@ -69,3 +71,13 @@ def test_worker_import_refuses_stale_matching_structure(tmp_path):
         capture_output=True, text=True, check=False)
     assert result.returncode != 0, 'stale policy allowed worker import'
     assert 'redaction policy' in result.stderr.lower()
+
+
+def test_detached_exporter_loads_the_bound_policy():
+    """#753: script startup must validate the same sidecar as worker package import."""
+    script = Path(tl3_workers.__file__).with_name('tracing.py')
+    result = subprocess.run([sys.executable, '-I', str(script)],
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 2
+    assert 'usage: tracing.py' in result.stderr
+    assert 'redaction policy' not in result.stderr.lower()
