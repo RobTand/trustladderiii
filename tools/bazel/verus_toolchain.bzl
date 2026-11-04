@@ -12,7 +12,7 @@ def _repository_impl(ctx):
         stripPrefix = "verus-x86-linux",
     )
     checked = ctx.execute(["sha256sum", "verus/z3"])
-    if checked.return_code or checked.stdout.split()[0] != ctx.attr.z3_sha256:
+    if checked.return_code or checked.stdout.split(" ")[0] != ctx.attr.z3_sha256:
         fail("Bundled Verus Z3 digest mismatch: " + checked.stderr)
     for component, digest in ctx.attr.rust_sha256.items():
         dist = "%s-%s-x86_64-unknown-linux-gnu" % (component, ctx.attr.rust_version)
