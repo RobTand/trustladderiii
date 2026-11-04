@@ -11,6 +11,7 @@ pub const APPROVAL_CHECK: &str = "TL3 approval";
 #[derive(serde::Serialize, serde::Deserialize)]
 enum ApprovalAttempt {
     Preflight,
+    Dispatching,
     Uncertain,
     Refused,
 }
@@ -197,9 +198,15 @@ impl Adapter {
                     {
                         return Err(publication_failure::http(error, Endpoint::CheckRuns));
                     }
-                    Err(_) => return Err(Error::ApprovalAmbiguous),
+                    Err(_) => {
+                        self.records
+                            .write(&attempt, &serde_json::to_vec(&ApprovalAttempt::Uncertain)?)?;
+                        return Err(Error::ApprovalAmbiguous);
+                    }
                 };
                 if !approved(&check, &client, delivery)? {
+                    self.records
+                        .write(&attempt, &serde_json::to_vec(&ApprovalAttempt::Uncertain)?)?;
                     return Err(Error::ApprovalAmbiguous);
                 }
                 Ok(Completion::confirmed(vec![]))
