@@ -17,14 +17,15 @@ def test_content_checks_skip_disk_barriers(name):
 @pytest.mark.parametrize('name', ['fsync', 'fdatasync'])
 def test_durability_checks_keep_real_disk_barriers(name):
     with pytest.raises(OSError):
-        getattr(os, name)(-1)
+        getattr(os, name)(2**31 - 1)
 
 
+@pytest.mark.durability
 @pytest.mark.parametrize('writer', ['session', 'facts', 'summary'])
 def test_atomic_write_syncs_before_publication_and_then_syncs_directory(tmp_path, monkeypatch, writer):
     """#768: checkpoints, completion facts and summaries keep their sync order."""
     with pytest.raises(OSError):
-        os.fsync(-1)
+        os.fsync(2**31 - 1)
     path = tmp_path / 'checkpoint.json'
     events = []
     original_sync, original_replace = os.fsync, os.replace
@@ -57,7 +58,7 @@ def test_atomic_write_syncs_before_publication_and_then_syncs_directory(tmp_path
 def test_span_log_syncs_before_waking_the_shipper(tmp_path, monkeypatch):
     """#430/#768: the shipper wake follows the completed log durability barrier."""
     with pytest.raises(OSError):
-        os.fdatasync(-1)
+        os.fdatasync(2**31 - 1)
     log = tracing.SpanLog(str(tmp_path / 'spans.jsonl'))
     read, log.wake = os.pipe()
     events = []

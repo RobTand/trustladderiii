@@ -266,6 +266,7 @@ def test_duplicate_stream_usage_is_charged_and_recorded_once(request_doc, monkey
     assert budgets[0].spent == charge
 
 
+@pytest.mark.durability
 def test_session_identity_reaches_header_and_body_across_turns_and_resume(request_doc, monkeypatch, tmp_path):
     Path(request_doc["key_file"]).write_text("fixture-only-key")
     request_doc.update(role="maker", session_file=str(tmp_path / "session.json"), last_accepted_generation=6)

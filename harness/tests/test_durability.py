@@ -19,14 +19,14 @@ def test_content_checks_skip_disk_barriers(name):
 @pytest.mark.parametrize('name', ['fsync', 'fdatasync'])
 def test_durability_checks_keep_real_disk_barriers(name):
     with pytest.raises(OSError):
-        getattr(os, name)(-1)
+        getattr(os, name)(2**31 - 1)
 
 
 @pytest.mark.durability
 def test_report_journal_is_synced_before_progress(tmp_path, monkeypatch):
     """#768: execution.run_tree must sync each journal record before progress."""
     with pytest.raises(OSError):
-        os.fsync(-1)
+        os.fsync(2**31 - 1)
     (tmp_path / 'test_probe.py').write_text('def test_ok(): pass\n')
     runner = Path(execution.__file__).with_name('runner.py')
     monkeypatch.setattr(execution, 'container_command', lambda *args: [

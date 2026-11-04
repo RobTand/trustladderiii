@@ -511,6 +511,7 @@ def test_q44_reviewer_reports_exhaustion_through_process_protocol(tmp_path, revi
 
 
 @pytest.mark.parametrize("with_session", [False, True])
+@pytest.mark.durability
 def test_q44_model_cannot_request_a_free_restart(review_request, session_model, tmp_path, with_session):
     _, responses = session_model
     responses[:] = [AIMessage(content=json.dumps({"verdict": "out_of_room"}))]

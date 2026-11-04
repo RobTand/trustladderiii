@@ -100,6 +100,7 @@ def test_exhausted_maker_recovers_completed_generator_receipt_without_resubmissi
     ("Path('tests/BUILD.bazel').unlink(); Path('tests/BUILD.bazel').symlink_to('/etc/passwd')", "regular"),
     ("Path('tests/BUILD.bazel').chmod(0o755)", "mode"),
 ])
+@pytest.mark.durability
 def test_generator_failure_and_out_of_scope_output_preserve_source(
         generator_repo, generator_backend, tmp_path, mutation, fragment):
     script = generator_repo / "generate.py"
