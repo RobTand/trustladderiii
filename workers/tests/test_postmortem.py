@@ -695,8 +695,20 @@ def test_assessment_key_is_stable_and_separates_each_identity_field():
         assert postmortem.assessment_key(*changed) != key
 
 
+@pytest.fixture
+def assessment_waits(monkeypatch):
+    from types import SimpleNamespace
+
+    waits = []
+    # The validator subprocess also uses time.sleep while polling its deadline.
+    monkeypatch.setattr(postmortem, "time", SimpleNamespace(
+        time_ns=postmortem.time.time_ns, sleep=waits.append))
+    return waits
+
+
 @pytest.mark.durability
-def test_pending_lookup_rechecks_after_bounded_wait_before_any_post(contract_boundary, monkeypatch):
+def test_pending_lookup_rechecks_after_bounded_wait_before_any_post(
+        contract_boundary, monkeypatch, assessment_waits):
     document, traces, values, calls = contract_boundary
     values.append(written(0))
     save = postmortem._save
@@ -714,14 +726,13 @@ def test_pending_lookup_rechecks_after_bounded_wait_before_any_post(contract_bou
     with pytest.raises(KeyboardInterrupt):
         run(document)
     traces.traces.insert(0, source_trace("maker", 2_000_000_000, {}))
-    queries, waits = [], []
+    queries, waits = [], assessment_waits
 
     def absent(trace_id, key):
         queries.append((trace_id, key))
         return None
 
     monkeypatch.setattr(traces, "assessment", absent)
-    monkeypatch.setattr(postmortem.time, "sleep", waits.append)
     result, _ = run(document)
     assert len(queries) == 2 and queries[0] == queries[1]
     assert queries[0][0] == original_target
@@ -736,11 +747,11 @@ def test_pending_lookup_rechecks_after_bounded_wait_before_any_post(contract_bou
 
 @pytest.mark.durability
 def test_stale_lookup_then_visible_assessment_resolves_without_another_post(
-        contract_boundary, monkeypatch):
+        contract_boundary, monkeypatch, assessment_waits):
     document, traces, values, calls = contract_boundary
     values.append(written(0))
     log, lookup = traces.log, traces.assessment
-    posts, queries, waits = [], [], []
+    posts, queries, waits = [], [], assessment_waits
 
     def lost_response(*args):
         posts.append(args)
@@ -756,7 +767,6 @@ def test_stale_lookup_then_visible_assessment_resolves_without_another_post(
         return None if len(queries) == 1 else lookup(trace_id, key)
 
     monkeypatch.setattr(traces, "assessment", stale_once)
-    monkeypatch.setattr(postmortem.time, "sleep", waits.append)
     result, _ = run(document)
     assert len(posts) == 1 and len(traces.logged) == 1
     assert len(queries) == 2 and queries[0] == queries[1]
@@ -766,7 +776,7 @@ def test_stale_lookup_then_visible_assessment_resolves_without_another_post(
 
 @pytest.mark.durability
 def test_server_enforced_assessment_id_prevents_duplicate_when_both_lookups_are_stale(
-        contract_boundary, monkeypatch):
+        contract_boundary, monkeypatch, assessment_waits):
     from types import SimpleNamespace
 
     document, traces, values, calls = contract_boundary
@@ -791,7 +801,6 @@ def test_server_enforced_assessment_id_prevents_duplicate_when_both_lookups_are_
 
     source.client = SimpleNamespace(log_assessment=log, get_trace_info=info)
     monkeypatch.setattr(postmortem, "SOURCE", lambda settings: source)
-    monkeypatch.setattr(postmortem.time, "sleep", lambda seconds: None)
     with pytest.raises(ValueError, match="assessment write failure"):
         run(document)
     with pytest.raises(ValueError, match="assessment write failure"):
