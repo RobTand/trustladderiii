@@ -567,6 +567,11 @@ fn repeated_incident_for_the_same_memory_requires_rob_and_cannot_probe_clear() {
             .unwrap()
             .contains(&format!("clear incident {}", second.id))
     );
+    assert_eq!(
+        ctl.next_look_in().unwrap(),
+        None,
+        "a Rob-held incident waits for clearance, not a probe deadline"
+    );
     fixture.available.store(true, Ordering::SeqCst);
     while fixture.attempts.try_recv().is_ok() {}
     clock.0.set(clock.0.get() + 120_000);
@@ -634,10 +639,144 @@ fn repeated_incident_for_the_same_memory_requires_rob_and_cannot_probe_clear() {
             .iter()
             .all(|row| row.table != "incidents" || row.value["open"] != true)
     );
-    ctl.look_now().unwrap();
+    ctl.look_due().unwrap();
     fixture.acknowledged();
     drain(&mut ctl);
     assert_eq!(fixture.attempts.try_recv(), Ok(true));
+}
+
+/// #773: a real notification through ingress and retirement cannot wake itself forever.
+#[test]
+fn empty_healthy_ingress_wake_writes_no_feed_state() {
+    let mut fixture = Fixture::new(false);
+    fixture.barrier();
+    fixture.available.store(true, Ordering::SeqCst);
+    fixture.retry_signal();
+    fixture.retire();
+    fixture.acknowledged();
+    let clock = FakeClock(std::rc::Rc::new(std::cell::Cell::new(1_000_000)));
+    let mut ctl = controller(&fixture, &clock);
+    let mut listener = tl3_store::Listener::ingress(&fixture.settings).unwrap();
+    let mut sql = fixture.sql();
+    sql.batch_execute("CREATE TABLE feed_writes (state text); CREATE FUNCTION count_feed_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO feed_writes VALUES (NEW.state); RETURN NEW; END $$; CREATE TRIGGER count_feed_write AFTER UPDATE ON tl3_memory_feed FOR EACH ROW EXECUTE FUNCTION count_feed_write()") .unwrap();
+    let version = fixture.store.memory_feed_version().unwrap();
+    sql.batch_execute("NOTIFY tl3_ingress").unwrap();
+    listener.wait().unwrap();
+    let (sender, receiver) = mpsc::channel();
+    sender.send(tl3_controller::cli::Input::Wake).unwrap();
+    drop(sender);
+    tl3_controller::ingress::run(&mut ctl, receiver).unwrap();
+    fixture.barrier();
+    let writes: i64 = sql
+        .query_one("SELECT count(*) FROM feed_writes", &[])
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        writes, 0,
+        "empty healthy wakes must not write or notify feed state"
+    );
+    assert_eq!(fixture.store.memory_feed_version().unwrap(), version);
+    assert!(fixture.attempts.try_recv().is_ok()); // The one acknowledged recovery above.
+    assert!(fixture.attempts.try_recv().is_err());
+}
+
+/// #773 / Q7: priority work arriving after an outage cannot inherit its failure.
+#[test]
+fn held_retain_keeps_its_outcome_lineage_when_a_curation_arrives() {
+    let mut fixture = Fixture::new(false);
+    fixture.barrier();
+    let clock = FakeClock(std::rc::Rc::new(std::cell::Cell::new(1_000_000)));
+    let mut ctl = controller(&fixture, &clock);
+    drain(&mut ctl);
+    let first = hindsight_incident(&mut ctl);
+    fixture
+        .store
+        .record_memory_curation(
+            "unattempted-curation",
+            &tl3_store::MemoryCuration {
+                memory_id: "priority-B".into(),
+                state: "valid",
+                verdict: "accepted",
+                source: "fixture",
+                request: None,
+                run: None,
+                claim: None,
+                reason: "new priority work".into(),
+                evidence: json!({}),
+            },
+        )
+        .unwrap();
+    fixture.barrier();
+    drain(&mut ctl);
+    let open: Vec<_> = ctl
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|row| row.table == "incidents" && row.value["open"] == true)
+        .collect();
+    assert_eq!(
+        open.len(),
+        1,
+        "unattempted B must not receive A's outage incident"
+    );
+    assert_eq!(open[0].id, first.id);
+    assert_eq!(
+        open[0].value["input_failure"]["scope"],
+        format!("memory:retain:{OPERATION}")
+    );
+}
+
+/// #773 / Q7: legacy scope is its own lineage, never a wildcard for new operations.
+#[test]
+fn a_closed_legacy_memory_incident_does_not_escalate_a_new_operation() {
+    let mut fixture = Fixture::new(false);
+    fixture.barrier();
+    let clock = FakeClock(std::rc::Rc::new(std::cell::Cell::new(1_000_000)));
+    let mut ctl = controller(&fixture, &clock);
+    drain(&mut ctl);
+    let first = hindsight_incident(&mut ctl);
+    fixture.available.store(true, Ordering::SeqCst);
+    ctl.look_now().unwrap();
+    fixture.acknowledged();
+    drain(&mut ctl);
+    let snapshot = fixture.store.load().unwrap();
+    let mut legacy = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "incidents" && row.id == first.id)
+        .unwrap()
+        .value
+        .clone();
+    legacy["input_failure"]["scope"] = json!("memory");
+    legacy["input_failure"]
+        .as_object_mut()
+        .unwrap()
+        .remove("memory_version");
+    let mut commit =
+        tl3_store::Commit::new("legacy-memory-scope", json!({"fixture":true}), &snapshot);
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "incidents".into(),
+        id: first.id,
+        value: legacy,
+    });
+    fixture.store.commit(&commit).unwrap();
+    fixture.available.store(false, Ordering::SeqCst);
+    fixture
+        .store
+        .queue_memory(
+            "77300000-0000-0000-0000-000000000003",
+            &json!({"content":"unrelated new operation"}),
+        )
+        .unwrap();
+    fixture.retire();
+    fixture.barrier();
+    drain(&mut ctl);
+    assert_eq!(
+        hindsight_incident(&mut ctl).value["needs_rob"],
+        false,
+        "legacy incidents cannot escalate an unrelated first incident"
+    );
 }
 
 /// #773 / Q7: a different operation starts its own incident lineage.
