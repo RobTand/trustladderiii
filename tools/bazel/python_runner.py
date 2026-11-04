@@ -20,12 +20,16 @@ def run_unittest(name):
 
 
 def shard_items(items, index, total):
-    """Bazel shard `index` of `total`: round-robin over collection order.
+    """Bazel shard `index` of `total`: round-robin over the sorted node IDs.
 
-    Neighbouring parametrized cases often cost the same, so dealing them out
-    keeps shards even. Every item lands in exactly one shard.
+    Each shard is a separate process whose collection order may differ (sets,
+    hash-seeded parametrize), so the deal ranks node IDs, not positions. Every
+    item lands in exactly one shard, in its collected order. Sorted neighbours
+    are usually parametrized cases of one test with similar cost, so dealing
+    them out keeps shards even.
     """
-    return items[index::total]
+    rank = {nodeid: position for position, nodeid in enumerate(sorted(item.nodeid for item in items))}
+    return [item for item in items if rank[item.nodeid] % total == index]
 
 
 class Shard:
