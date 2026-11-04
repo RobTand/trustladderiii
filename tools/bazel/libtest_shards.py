@@ -22,12 +22,19 @@ WEIGHTS = Path('tools/bazel/libtest-shards.json')
 
 def listed(output):
     """Test names from `--list --format=terse`, which prints `NAME: test`."""
-    raise NotImplementedError
+    return [line.removesuffix(': test') for line in output.splitlines() if line.endswith(': test')]
 
 
 def select(names, weights, index, total):
     """This shard's tests, in a partition that covers every name exactly once."""
-    raise NotImplementedError
+    if not 0 <= index < total:
+        raise ValueError('Shard must satisfy 0 <= INDEX < TOTAL')
+    default = statistics.median(weights.values()) if weights else 1.0
+    filled = {name: weights.get(name, default) for name in names}
+    chosen = shards.partition(names, total, filled)[index]
+    if not chosen:
+        raise RuntimeError(f'Empty libtest shard {index}/{total}')
+    return sorted(chosen)
 
 
 def measured(binary, lines):
@@ -36,7 +43,22 @@ def measured(binary, lines):
     A test seen in several logs keeps its largest time, so one quiet run cannot
     hide a slow test from the partition.
     """
-    raise NotImplementedError
+    prefix = re.compile(r'^\[' + re.escape(binary) + r'\] (\{.*\})\s*$')
+    seconds = {}
+    for line in lines:
+        match = prefix.match(line)
+        if not match:
+            continue
+        try:
+            event = json.loads(match[1])
+        except json.JSONDecodeError:
+            continue
+        if event.get('type') == 'test' and event.get('event') == 'ok' and 'exec_time' in event:
+            name = event['name']
+            seconds[name] = max(seconds.get(name, 0.0), round(event['exec_time'], 3))
+    if not seconds:
+        raise RuntimeError(f'No passing {binary} tests in the logs')
+    return dict(sorted(seconds.items()))
 
 
 def main():

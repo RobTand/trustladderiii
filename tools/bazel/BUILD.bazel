@@ -6,6 +6,7 @@ load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "libtest-shards.json",
     "libtest_shards.py",
     "python_runner.py",
     "requirements.txt",

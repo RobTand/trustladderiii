@@ -74,7 +74,12 @@ def main():
     if int(os.environ.get('TEST_TOTAL_SHARDS', '1')) > 1:
         shard = {'index': int(os.environ['TEST_SHARD_INDEX']),
                  'total': int(os.environ['TEST_TOTAL_SHARDS'])}
-        if harness != 'custom' or name not in SHARD_AWARE_BINARIES:
+        if harness == 'libtest':
+            weights = json.loads(libtest_shards.WEIGHTS.read_text()).get(name, {})
+            selected = libtest_shards.select(list_tests(binary['command'][0]), weights,
+                                             shard['index'], shard['total'])
+            arguments = ['--exact', *selected, *arguments]
+        elif name not in SHARD_AWARE_BINARIES:
             raise RuntimeError('scenario sharding requires a shard-aware custom harness')
         Path(os.environ['TEST_SHARD_STATUS_FILE']).touch()
     cpu_seconds, cpu_details = {}, {}
