@@ -363,7 +363,7 @@ fn measure_complete_step_cost_and_allocations() {
     if std::env::var_os("TL3_ALLOC_CHILD").is_none() {
         let probe = std::env::current_dir()
             .unwrap()
-            .join("crates/controller/tools/libtl3_allocation_counter.so");
+            .join("crates/controller/libtl3_allocation_counter.so");
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",

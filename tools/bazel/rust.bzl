@@ -101,7 +101,7 @@ _CONTROLLER_RUNTIME = {
     "test_test_redaction_generated": ["//workers/tests:redaction_generated"],
     "test_test_redaction_parity": ["//workers/tests:redaction_branches"],
     "lib_test_tl3_controller": [
-        "//crates/controller/tools:allocation_counter",
+        "//crates/controller:allocation_counter",
         "//harness:project_files",
         "//workers/tests:worker_process",
         "//workers/tools:scripts",
@@ -232,6 +232,14 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
         ),
     )
     if directory == "crates/controller":
+        native.genrule(
+            name = "allocation_counter",
+            testonly = True,
+            srcs = ["tools/allocation_counter.c"],
+            outs = ["libtl3_allocation_counter.so"],
+            cmd = "$(CC) -shared -fPIC -O2 $(location tools/allocation_counter.c) -o $@",
+            toolchains = ["@bazel_tools//tools/cpp:current_cc_toolchain"],
+        )
         native.filegroup(
             name = "library_sources",
             srcs = native.glob(["src/**/*", "tools/**/*"]),
