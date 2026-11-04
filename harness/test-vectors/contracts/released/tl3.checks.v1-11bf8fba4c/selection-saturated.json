@@ -1,0 +1,165 @@
+{
+ "fixture": "harness/tests/test_contract_vectors.py::selection-saturated",
+ "request": {
+  "base": "5274ca20d2d3d216732720f38b0718314756151a",
+  "effect_key": "checks:selection-saturated",
+  "head": "becd86a458a13f2e4c7767ab061e4ee411f2d93e",
+  "image": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "plan": [
+   {
+    "kind": "regression",
+    "name": "other stays green",
+    "tests": [
+     "tests/test_other.py::test_other"
+    ]
+   }
+  ],
+  "reviewed": null,
+  "selected_tests": 1
+ },
+ "results": [
+  {
+   "custody": "in-process",
+   "kind": "regression",
+   "name": "other stays green",
+   "tests": [
+    {
+     "base": "passed",
+     "head": "passed",
+     "message": "",
+     "passed": true,
+     "phases": {
+      "base": {
+       "call": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "setup": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "teardown": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "test": "tests/test_other.py::test_other"
+      },
+      "head": {
+       "call": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "setup": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "teardown": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "test": "tests/test_other.py::test_other"
+      }
+     },
+     "pre_existing": false,
+     "test": "tests/test_other.py::test_other"
+    }
+   ],
+   "verdict": "pass"
+  },
+  {
+   "custody": "in-process",
+   "kind": "regression",
+   "name": "Existing tests that import the change",
+   "selection": {
+    "base_units": [
+     {
+      "cases": 1,
+      "members": [
+       "tests/test_core.py"
+      ],
+      "outcomes": {
+       "tests/test_core.py": "passed"
+      }
+     }
+    ],
+    "charged_cases": 1,
+    "head_units": [
+     [
+      "tests/test_core.py"
+     ]
+    ],
+    "limit": 1,
+    "policy": "historical failures first, then complete-unit prefix by import distance, path, and declaration order",
+    "saturation": {
+     "cases": null,
+     "reason": "Next complete unit cannot fit; lower-priority units were not checked.",
+     "remaining": 0,
+     "unit": [
+      "tests/test_more.py"
+     ]
+    },
+    "skipped_checked": false,
+    "skipped_units": [
+     [
+      "tests/test_more.py"
+     ]
+    ]
+   },
+   "tests": [
+    {
+     "base": "passed",
+     "head": "passed",
+     "message": "Complete execution group ('tests/test_core.py',); identical base/head collection 1 tests, sha256 dfb91624729e87a9b05d1a2fce60f85346645ac30cadcc2538891d1300f40d05; retry unit: not retried.",
+     "passed": true,
+     "phases": {
+      "base": {
+       "call": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "setup": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "teardown": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "test": "tests/test_core.py::test_core"
+      },
+      "head": {
+       "call": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "setup": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "teardown": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "test": "tests/test_core.py::test_core"
+      }
+     },
+     "pre_existing": false,
+     "test": "tests/test_core.py"
+    }
+   ],
+   "verdict": "pass"
+  }
+ ]
+}

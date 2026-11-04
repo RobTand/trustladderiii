@@ -67,8 +67,14 @@ def main():
     if relative.startswith(('workers/', 'harness/')):
         # Light checks run these projects' pytest from the project directory.
         import pytest
+        plugins = [Shard(*shard)] if shard else []
+        args = [str(module), '-v', '--durations=10', *sys.argv[2:]]
+        if delay := os.environ.get('TEST_SYNC_DELAY_SECONDS'):
+            from sync_contention import SyncContention
+            plugins.append(SyncContention(float(delay)))
+            args.append('-s')
         os.chdir(relative.split('/')[0])
-        status = pytest.main([str(module), '-v', *sys.argv[2:]], plugins=[Shard(*shard)] if shard else [])
+        status = pytest.main(args, plugins=plugins)
     elif shard:
         raise RuntimeError(f'{relative}: sharding needs a pytest module')
     else:

@@ -10,6 +10,11 @@ use std::time::{Duration, UNIX_EPOCH};
 use tl3_kernel::{Ack, Event, Fact, NodeId, Phase, World};
 use tl3_store::{Commit, EffectState, RowChange, Snapshot};
 
+/// #759: how long every model a step may use can be out before an operations note.
+const LADDER_OUT_MS: u64 = 30 * 60 * 1000;
+/// #759: the operations note's fixed, typed reason.
+const LADDER_OUT_REASON: &str = "model_ladder_unavailable";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct AllowanceState {
     pub delivery: Delivery,
@@ -21,6 +26,13 @@ pub(crate) struct AllowanceState {
     last_quota_ms: Option<u64>,
     #[serde(default)]
     last_quota_model: Option<String>,
+    /// #759: since this step's first model ending with no model turn served
+    /// since. A progress checkpoint clears it.
+    #[serde(default)]
+    unserved_since_ms: Option<u64>,
+    /// #759: the operations note for this run of endings is posted.
+    #[serde(default)]
+    ladder_out_noticed: bool,
     stopping: bool,
     pub incident: Option<String>,
     #[serde(default)]
@@ -52,6 +64,8 @@ impl AllowanceState {
             quota_ms: None,
             last_quota_ms: None,
             last_quota_model: None,
+            unserved_since_ms: None,
+            ladder_out_noticed: false,
             stopping: false,
             incident: None,
             healthy: false,
@@ -458,6 +472,7 @@ impl Controller {
             .iter()
             .filter_map(|s| s.due_ms)
             .chain(reread)
+            .chain(crate::memory::next_probe_ms(&snapshot)?)
             .min()
             .map(|due| Duration::from_millis(due.saturating_sub(now))))
     }
@@ -476,6 +491,7 @@ impl Controller {
     }
 
     fn looks(&mut self, force: bool, key: Option<&str>) -> Result<()> {
+        self.look_memory_probe(force, key)?;
         self.retry_input_incident_posts()?;
         let mut snapshot = self.store.load()?;
         // Same-second priority rereads that are due share this timer (Q39).
@@ -591,7 +607,7 @@ impl Controller {
                         .probe(&state.delivery)
                     {
                         Ok(true) => {
-                            self.probe_passed(state)?;
+                            self.probe_passed(Some(state), state.incident.as_deref())?;
                             self.retry_held_effects(upstream(state.delivery.output));
                             self.rearm(state);
                         }
@@ -611,7 +627,18 @@ impl Controller {
                 now,
             )?;
             if resume > now {
-                state.due_ms = Some(resume);
+                // #759: every model this step may use is out. Say so once
+                // when that has lasted LADDER_OUT_MS, so an outage can't wait silently.
+                let bound = state
+                    .unserved_since_ms
+                    .filter(|_| !state.ladder_out_noticed)
+                    .map(|since| since.saturating_add(LADDER_OUT_MS));
+                if bound.is_some_and(|bound| bound <= now) {
+                    state.ladder_out_noticed = true;
+                    state.due_ms = Some(resume);
+                    return self.ladder_out_note(state, resume, now);
+                }
+                state.due_ms = Some(bound.map_or(resume, |bound| bound.min(resume)));
                 self.save_allowance(state)?;
                 return Ok(());
             }
@@ -852,7 +879,7 @@ impl Controller {
                     self.retry_held_effects(upstream(state.delivery.output));
                 }
                 state.healthy = true;
-                self.probe_passed(state)?;
+                self.probe_passed(Some(state), state.incident.as_deref())?;
             }
             Ok(Look::Quota { reset_ms }) => {
                 state.quota_ms = Some(reset_ms);
@@ -890,7 +917,7 @@ impl Controller {
                         Ok(true) => {
                             state.healthy = true;
                             self.retry_held_effects(upstream(state.delivery.output));
-                            self.probe_passed(state)?;
+                            self.probe_passed(Some(state), state.incident.as_deref())?;
                         }
                         Ok(false) => self.rearm(state),
                         Err(error) => self.look_failed(state, error)?,
@@ -1215,15 +1242,19 @@ impl Controller {
         Ok(())
     }
 
-    fn probe_passed(&mut self, state: &AllowanceState) -> Result<()> {
-        let Some(id) = &state.incident else {
+    pub(crate) fn probe_passed(
+        &mut self,
+        state: Option<&AllowanceState>,
+        id: Option<&str>,
+    ) -> Result<()> {
+        let Some(id) = id else {
             return Ok(());
         };
         let snapshot = self.store.load()?;
         let Some(row) = snapshot
             .rows
             .iter()
-            .find(|r| r.table == "incidents" && r.id == *id)
+            .find(|r| r.table == "incidents" && r.id == id)
         else {
             return Ok(());
         };
@@ -1231,17 +1262,18 @@ impl Controller {
         if !incident.open || incident.needs_rob {
             return Ok(());
         }
-        if incident.effect.is_some() {
+        if incident.effect.is_some() || state.is_none() {
             incident.open = false;
             let mut commit =
                 Commit::new(format!("probe:{id}"), json!({"probe_passed":id}), &snapshot);
             self.retry_notice(&snapshot, &incident, &mut commit)?;
             commit
                 .rows
-                .push(put("incidents", id.clone(), json!(incident)));
+                .push(put("incidents", id.to_owned(), json!(incident)));
             self.store.commit(&commit)?;
             return Ok(());
         }
+        let state = state.expect("kernel incident has an allowance");
         let world = self.world()?;
         let node = &world.nodes[state.delivery.node().0 as usize];
         if node.waiting_incident && !node.incident_needs_rob {
@@ -1358,6 +1390,9 @@ impl Controller {
                 state.wait_ended = false;
                 state.progress = Some(checkpoint);
                 state.progress_ms = self.now_ms();
+                // A model turn or tool result: a model served this step (#759).
+                state.unserved_since_ms = None;
+                state.ladder_out_noticed = false;
                 state.due_ms = Some(
                     state.progress_ms.saturating_add(
                         u64::from(
@@ -1431,6 +1466,7 @@ impl Controller {
             state.last_quota_ms = Some(reset_ms);
             state.last_quota_model = model.map(str::to_owned);
             state.quota_ms = Some(reset_ms);
+            state.unserved_since_ms.get_or_insert(self.now_ms());
             // The look asks the adapter whether another model can take the step now.
             state.due_ms = Some(self.now_ms());
             commit
@@ -1459,6 +1495,88 @@ impl Controller {
         if !commit.rows.is_empty() {
             self.store.commit(&commit)?;
         }
+        Ok(())
+    }
+
+    /// #759: one operations note that every model this step may use has been
+    /// out for LADDER_OUT_MS, in the commit that marks it posted. Its reason
+    /// is the fixed `model_ladder_unavailable`; the text names only config
+    /// model names, the request and the wait's end.
+    fn ladder_out_note(&mut self, state: &AllowanceState, resume: u64, now: u64) -> Result<()> {
+        let snapshot = self.store.load()?;
+        if ended_effect_look(&snapshot, &snapshot::decode(&snapshot)?, &state.delivery) {
+            return Ok(());
+        }
+        let since = state.unserved_since_ms.unwrap_or(now);
+        let mut commit = Commit::new(
+            format!("model-ladder-out:{}:{since}", state.delivery.key),
+            json!({"model_ladder_out": state.delivery.key, "since_ms": since}),
+            &snapshot,
+        );
+        commit
+            .rows
+            .push(put("allowances", state.delivery.key.clone(), json!(state)));
+        if let Some(operations) = &self.bootstrap.operations {
+            let node = state.delivery.node();
+            let request = crate::request(&snapshot, node)?;
+            let role = crate::adapters::workers::protocol::delivery_role(&state.delivery)
+                .unwrap_or("worker");
+            let out: Vec<&str> = snapshot
+                .rows
+                .iter()
+                .filter(|row| {
+                    row.table == "model_quotas"
+                        && row.value["reset_ms"].as_u64().is_some_and(|r| r > now)
+                })
+                .map(|row| row.id.as_str())
+                .collect();
+            let until = chrono::DateTime::from_timestamp_millis(resume as i64)
+                .map(|at| at.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                .unwrap_or_else(|| "an unknown time".into());
+            let line = format!(
+                "Operations notice ({LADDER_OUT_REASON}): every {role} model has been unavailable or out of quota for {} minutes. {}/{}#{} waits for the earliest probe or reset, at {until}. Models out now: {}. If every model is out, check CLIProxyAPI.",
+                LADDER_OUT_MS / 60_000,
+                request.repo.owner,
+                request.repo.name,
+                request.issue,
+                out.join(", "),
+            );
+            let delivery = Delivery {
+                key: format!("model-ladder-out:{}:{since}", state.delivery.key),
+                epoch: snapshot.epoch.get(),
+                output: Out::Comment {
+                    node,
+                    kind: crate::executor::CommentKind::OperationsNote,
+                },
+                generation: state.delivery.generation,
+                head_sha: None,
+                repository: crate::Repository {
+                    owner: operations.owner.clone(),
+                    name: operations.name.clone(),
+                    installation: operations.installation_id,
+                },
+                issue: operations.number,
+                pull_request: None,
+                proposed: None,
+                paths: vec![],
+                attempt: state.delivery.attempt,
+                round: state.delivery.round,
+                replanned: state.delivery.replanned,
+                checks: None,
+                job_generation: None,
+                question: None,
+                note: Some(line.clone()),
+                scope_removals: None,
+                marker_key: None,
+                question_context: None,
+                steering: Some(crate::steering::Task::ConsoleNote { text: line }),
+                request_text: None,
+                evidence: None,
+            };
+            commit.rows.push(self.allowance_row(delivery.clone()));
+            commit.effects.push(delivery.into_effect());
+        }
+        self.store.commit(&commit)?;
         Ok(())
     }
 

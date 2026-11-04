@@ -1,6 +1,10 @@
-//! Rust execution of #302's text policy, generated from its Python definitions.
+//! Text matching against the authoritative Rust redaction policy.
 use fancy_regex::{Captures, Regex};
-use serde_json::Value;
+mod compatibility;
+mod source;
+mod unicode;
+
+use source::{Check, Policy};
 use std::{
     collections::HashMap,
     sync::{Arc, LazyLock, Mutex},
@@ -8,11 +12,9 @@ use std::{
 type Result<T> = std::result::Result<T, String>;
 type Span = (usize, usize);
 const LIMIT: usize = 1024 * 1024;
-fn policy() -> Result<&'static Value> {
-    static POLICY: LazyLock<Result<Value>> = LazyLock::new(|| {
-        serde_json::from_str(include_str!("redaction/policy.json")).map_err(|e| e.to_string())
-    });
-    POLICY.as_ref().map_err(Clone::clone)
+fn policy() -> &'static Policy {
+    static POLICY: LazyLock<Policy> = LazyLock::new(source::policy);
+    &POLICY
 }
 
 struct Characters {
@@ -28,8 +30,10 @@ fn characters() -> Result<&'static Characters> {
     static CHARACTERS: LazyLock<Result<Characters>> = LazyLock::new(|| {
         let ranges = |name: &str| -> Result<Vec<[u32; 2]>> {
             let mut ranges = Vec::new();
-            for range in policy()?["characters"][name]
-                .as_str()
+            for range in policy()
+                .characters
+                .get(name)
+                .copied()
                 .ok_or("missing Python character ranges")?
                 .split(',')
             {
@@ -96,86 +100,7 @@ fn python_pattern(pattern: &str) -> Result<String> {
             class(&chars.space, false),
         ])
     });
-    fn shorthand(code: char, classes: &[String; 3], invert: bool) -> String {
-        let index = match code {
-            'w' | 'W' => 0,
-            'd' | 'D' => 1,
-            _ => 2,
-        };
-        let negate = if code.is_ascii_uppercase() ^ invert {
-            "^"
-        } else {
-            ""
-        };
-        format!("(?-i:[{negate}{}])", classes[index])
-    }
-    fn bracket(
-        source: &mut std::iter::Peekable<std::str::Chars<'_>>,
-        classes: &[String; 3],
-    ) -> Result<String> {
-        let negate = source.next_if_eq(&'^').is_some();
-        let mut literal = String::new();
-        let mut codes = Vec::new();
-        loop {
-            match source.next().ok_or("unfinished regex class")? {
-                ']' => break,
-                '\\' => match source.next().ok_or("unfinished class escape")? {
-                    code @ ('w' | 'W' | 'd' | 'D' | 's' | 'S') => codes.push(code),
-                    'b' => literal.push_str(r"\x08"),
-                    code => {
-                        literal.push('\\');
-                        literal.push(code);
-                    }
-                },
-                '[' => literal.push_str(r"\["),
-                c => literal.push(c),
-            }
-        }
-        if codes.is_empty() {
-            return Ok(format!("[{}{literal}]", if negate { "^" } else { "" }));
-        }
-        if literal.is_empty() && codes.len() == 1 {
-            return Ok(shorthand(codes[0], classes, negate));
-        }
-        let mut parts = codes
-            .into_iter()
-            .map(|c| shorthand(c, classes, false))
-            .collect::<Vec<_>>();
-        if !literal.is_empty() {
-            parts.push(format!("[{literal}]"));
-        }
-        let union = parts.join("|");
-        Ok(if negate {
-            format!("(?:(?!(?:{union}))(?s:.))")
-        } else {
-            format!("(?:{union})")
-        })
-    }
-    let classes = CLASSES.as_ref().map_err(Clone::clone)?;
-    let word = shorthand('w', classes, false);
-    let mut out = String::new();
-    let mut source = pattern.chars().peekable();
-    while let Some(c) = source.next() {
-        if c == '[' {
-            out.push_str(&bracket(&mut source, classes)?);
-            continue;
-        }
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        let escape = source.next().ok_or("unfinished regex escape")?;
-        match escape {
-            'w' | 'W' | 'd' | 'D' | 's' | 'S' => out.push_str(&shorthand(escape, classes, false)),
-            'b' => out.push_str(&format!(r"(?:(?<!{word})(?={word})|(?<={word})(?!{word}))")),
-            'B' => out.push_str(&format!(r"(?:(?<!{word})(?!{word})|(?<={word})(?={word}))")),
-            other => {
-                out.push('\\');
-                out.push(other);
-            }
-        }
-    }
-    Ok(out)
+    compatibility::translate(pattern, CLASSES.as_ref().map_err(Clone::clone)?)
 }
 
 fn rx(pattern: &str) -> Result<Arc<Regex>> {
@@ -189,27 +114,33 @@ fn rx(pattern: &str) -> Result<Arc<Regex>> {
     Ok(regex)
 }
 fn rule(name: &str) -> Result<Arc<Regex>> {
-    rx(policy()?["regex"][name]
-        .as_str()
+    rx(policy()
+        .regex
+        .get(name)
+        .or_else(|| policy().helpers.get(name))
+        .copied()
         .ok_or_else(|| format!("missing redaction rule {name}"))?)
 }
 fn has(set: &str, word: &str) -> Result<bool> {
-    Ok(policy()?["words"][set]
-        .as_array()
+    Ok(policy()
+        .words
+        .get(set)
         .ok_or("missing redaction words")?
-        .iter()
-        .any(|v| v.as_str() == Some(word)))
+        .contains(&word))
 }
 fn search(pattern: &str, text: &str) -> Result<bool> {
     rx(pattern)?.is_match(text).map_err(|e| e.to_string())
 }
 fn full(pattern: &str, text: &str) -> Result<bool> {
-    search(&format!(r"\A(?:{pattern})\z"), text)
+    search(&format!(r"\A(?:{pattern})\Z"), text)
 }
 fn full_rule(name: &str, text: &str) -> Result<bool> {
     full(
-        policy()?["regex"][name]
-            .as_str()
+        policy()
+            .regex
+            .get(name)
+            .or_else(|| policy().helpers.get(name))
+            .copied()
             .ok_or("missing redaction rule")?,
         text,
     )
@@ -258,15 +189,10 @@ fn label_kind(label: &str) -> Result<Option<Kind>> {
     }
     let mut previous = "";
     for word in &words {
-        let parts = policy()?["words"]["SECRET_PARTS"]
-            .as_array()
-            .ok_or("missing secret parts")?;
+        let parts = policy().words["SECRET_PARTS"];
         if has("SECRET_WORDS", word)?
             || word.ends_with("token")
-            || parts
-                .iter()
-                .filter_map(Value::as_str)
-                .any(|part| word.contains(part))
+            || parts.iter().any(|part| word.contains(part))
             || (word == "key" && has("KEY_QUALIFIERS", previous)?)
             || matches!(
                 (previous, word.as_str()),
@@ -285,7 +211,7 @@ fn label_kind(label: &str) -> Result<Option<Kind>> {
     Ok(None)
 }
 fn unquote(value: &str) -> Result<(String, bool)> {
-    let regex = rx(r#"^[rbfuRBFU]{1,2}(?=["'])"#)?;
+    let regex = rule("UNQUOTE_PREFIX")?;
     let stripped = regex.replace(value, "");
     let stripped = stripped.trim_start_matches('\\');
     if stripped.chars().count() >= 2 && stripped.starts_with(['"', '\'', '`']) {
@@ -295,7 +221,7 @@ fn unquote(value: &str) -> Result<(String, bool)> {
     Ok((value.into(), false))
 }
 fn placeholder(value: &str) -> Result<bool> {
-    if !full(r"[A-Za-z]+(?:[-_ .:][A-Za-z]+)*", value)? {
+    if !full_rule("PLACEHOLDER_TEXT", value)? {
         return Ok(false);
     }
     for word in rule("LABEL_WORDS")?.find_iter(value) {
@@ -333,7 +259,7 @@ fn random_like(token: &str, minimum: usize) -> Result<bool> {
     if parts.len() > 1 {
         let mut ordinary = true;
         for part in &parts {
-            ordinary &= full("[a-z0-9]*", part)? || part.chars().count() <= 2;
+            ordinary &= full_rule("ORDINARY_PART", part)? || part.chars().count() <= 2;
         }
         if ordinary {
             for part in parts {
@@ -400,7 +326,7 @@ fn plausible(
         && (tail
             .trim_start_matches(|c| member(&chars.space, c))
             .starts_with(['*', '+'])
-            || search(r"\A(?:\s*\+|.*\+\s*$)", &inner)?)
+            || start_rule("CONCATENATION", &inner)?)
     {
         return Ok(false);
     }
@@ -415,7 +341,8 @@ fn plausible(
         {
             return Ok(false);
         }
-        if assign == ":" && full(r"[A-Z]\w*", &inner)? && search(r"\A[ \t]*[<\[,)|=]", tail)? {
+        if assign == ":" && full_rule("TYPE_IDENTIFIER", &inner)? && start_rule("TYPE_TAIL", tail)?
+        {
             return Ok(false);
         }
         if full_rule("IDENTIFIER", &inner)? && label_kind(&inner)?.is_some() {
@@ -424,17 +351,17 @@ fn plausible(
         if full_rule("CODE_NAME", &inner)? && code {
             return Ok(false);
         }
-        if full_rule("WORD", &inner)? && search(r"\A[ \t]+[^\s#]", tail)? {
+        if full_rule("WORD", &inner)? && start_rule("WORD_TAIL", tail)? {
             return Ok(false);
         }
-        if full(r"[A-Za-z]{2,12}\d{0,3}", &inner)? && search(r"\A[ \t]+[a-z]{2,}", tail)? {
+        if full_rule("SHORT_NAME", &inner)? && start_rule("LOWER_TAIL", tail)? {
             return Ok(false);
         }
     }
     if kind == Some(Kind::Weak) {
         let sample = prefix(&inner, 64);
         return Ok(random_like(sample, 12)?
-            || (full(r"[A-Za-z0-9]{12,}", sample)?
+            || (full_rule("WEAK_TOKEN", sample)?
                 && sample.chars().any(|c| member(&chars.upper, c))
                 && sample.chars().any(|c| member(&chars.lower, c))
                 && sample.chars().any(|c| member(&chars.digit, c))));
@@ -443,7 +370,7 @@ fn plausible(
 }
 fn readable(value: &str) -> Result<bool> {
     let inner = unquote(value)?.0;
-    Ok(full(r"[A-Za-z][A-Za-z:/._ -]*", &inner)? && !random_like(&inner, 8)?)
+    Ok(full_rule("READABLE_TEXT", &inner)? && !random_like(&inner, 8)?)
 }
 fn token_shaped(value: &str) -> Result<bool> {
     let chars = characters()?;
@@ -471,7 +398,7 @@ fn secretish(value: &str, quoted: bool) -> Result<bool> {
         || full_rule("PATHLIKE", core)?
         || core.contains("://")
         || full_rule("DOTTED", core)?
-        || full(r"[\d.:,/+-]+", core)?
+        || full_rule("NUMBER_TEXT", core)?
         || placeholder(core)?
     {
         return Ok(false);
@@ -490,12 +417,12 @@ fn secretish(value: &str, quoted: bool) -> Result<bool> {
         || (special >= 2 && (upper || digit))
         || (quoted && digit && (upper || lower) && special >= 1))
 }
-fn checked(check: &str, cap: &Captures<'_>, text: &str) -> Result<Option<Span>> {
+fn checked(check: Check, cap: &Captures<'_>, text: &str) -> Result<Option<Span>> {
     let chars = characters()?;
     let label = get(cap, "l");
     let value = get(cap, "v");
     let keep = match check {
-        "check_labelled" => {
+        Check::Labelled => {
             if label_kind(label)? == Some(Kind::Strong)
                 && matches!(label.to_lowercase().as_str(), "signature" | "sig")
                 && readable(value)?
@@ -522,7 +449,7 @@ fn checked(check: &str, cap: &Captures<'_>, text: &str) -> Result<Option<Span>> 
                 .rfind('\n')
                 .map_or(low, |i| low + i + 1);
             if full_rule("WORD", value)?
-                && matches(&rx(r"[A-Za-z]{2,}[ \t]")?, &text[line..whole.start()])?.len() >= 2
+                && matches(&rule("PROSE_WORDS")?, &text[line..whole.start()])?.len() >= 2
             {
                 return Ok(None);
             }
@@ -542,8 +469,8 @@ fn checked(check: &str, cap: &Captures<'_>, text: &str) -> Result<Option<Span>> 
                 code,
             )?
         }
-        "check_flag" => plausible(label_kind(label)?, label, value, "", "=", false)?,
-        "check_table" => {
+        Check::Flag => plausible(label_kind(label)?, label, value, "", "=", false)?,
+        Check::Table => {
             let value = value.trim_matches('`');
             label_kind(label.trim_matches(['`', '*', ' ']))?.is_some()
                 && !start_rule("REFERENCE", value)?
@@ -551,9 +478,9 @@ fn checked(check: &str, cap: &Captures<'_>, text: &str) -> Result<Option<Span>> 
                 && token_shaped(value)?
                 && !value.chars().any(|c| member(&chars.space, c))
         }
-        "check_block" => label_kind(label)? == Some(Kind::Strong),
-        "check_name_value" => plausible(label_kind(label)?, label, value, "", "", false)?,
-        "check_header" => {
+        Check::Block => label_kind(label)? == Some(Kind::Strong),
+        Check::NameValue => plausible(label_kind(label)?, label, value, "", "", false)?,
+        Check::Header => {
             let group = if cap.name("v").is_some() { "v" } else { "c" };
             let value = get(cap, group);
             let inner = unquote(value)?.0;
@@ -562,7 +489,7 @@ fn checked(check: &str, cap: &Captures<'_>, text: &str) -> Result<Option<Span>> 
                     .is_match(&inner)
                     .map_err(|e| e.to_string())?
                 || placeholder(&inner)?
-                || search(r"\A[A-Za-z_][\w.]*+[ \t]*+(?:[,)}]|$)", value)?
+                || start_rule("HEADER_REFERENCE", value)?
             {
                 return Ok(None);
             }
@@ -584,33 +511,32 @@ fn checked(check: &str, cap: &Captures<'_>, text: &str) -> Result<Option<Span>> 
             }
             return Ok(span(cap, group));
         }
-        "check_bearer" => token_shaped(value)? && !placeholder(value)?,
-        "check_url" => {
+        Check::Bearer => token_shaped(value)? && !placeholder(value)?,
+        Check::Url => {
             !start_rule("REFERENCE", value)?
                 && !rule("TEMPLATE")?
                     .is_match(value)
                     .map_err(|e| e.to_string())?
                 && !placeholder(value)?
         }
-        "check_user" => {
+        Check::User => {
             !value.chars().all(|c| member(&chars.digit, c))
                 && !rule("TEMPLATE")?
                     .is_match(value)
                     .map_err(|e| e.to_string())?
         }
-        "check_aws" => label_kind(label)?.is_some(),
-        "check_ssh_keygen" => !unquote(value)?.0.is_empty(),
-        "check_xml" => {
+        Check::Aws => label_kind(label)?.is_some(),
+        Check::SshKeygen => !unquote(value)?.0.is_empty(),
+        Check::Xml => {
             chars.trim(value).chars().count() >= 4
                 && label_kind(label)? == Some(Kind::Strong)
                 && plausible(Some(Kind::Strong), label, value, "", "=", false)?
         }
-        "check_json_pair" => {
+        Check::JsonPair => {
             unquote(value)?.0.chars().count() >= 4
                 && plausible(label_kind(label)?, label, value, "", ":", false)?
         }
-        "check_pair" => secretish(value, false)?,
-        _ => return Err(format!("unknown redaction check {check}")),
+        Check::Pair => secretish(value, false)?,
     };
     Ok(if keep { span(cap, "v") } else { None })
 }
@@ -642,8 +568,8 @@ fn spans(text: &str) -> Result<Vec<Span>> {
         }
         found.push((begin.start(), reach));
     }
-    for pattern in policy()?["patterns"].as_array().ok_or("missing patterns")? {
-        for cap in matches(&rx(pattern.as_str().ok_or("invalid pattern")?)?, text)? {
+    for pattern in policy().patterns {
+        for cap in matches(&rx(pattern)?, text)? {
             let value = cap
                 .name("v")
                 .or_else(|| cap.get(0))
@@ -651,12 +577,9 @@ fn spans(text: &str) -> Result<Vec<Span>> {
             found.push((value.start(), value.end()));
         }
     }
-    for pair in policy()?["checked"]
-        .as_array()
-        .ok_or("missing checked patterns")?
-    {
-        for cap in matches(&rx(pair[0].as_str().ok_or("invalid pattern")?)?, text)? {
-            if let Some(span) = checked(pair[1].as_str().ok_or("invalid check")?, &cap, text)? {
+    for &(pattern, check) in policy().checked {
+        for cap in matches(&rx(pattern)?, text)? {
+            if let Some(span) = checked(check, &cap, text)? {
                 found.push(span);
             }
         }
@@ -664,9 +587,9 @@ fn spans(text: &str) -> Result<Vec<Span>> {
     for word in matches(&rule("NEAR_WORD")?, text)? {
         let word = word.get(0).ok_or("missing nearby word")?;
         let rest = &text[word.end()..];
-        let high = prefix(rest, 48 + 256).len();
+        let high = prefix(rest, policy().near_chars + 256).len();
         let end = rest[..high].find('\n').unwrap_or(high);
-        let limit = prefix(&rest[..end], 48).len();
+        let limit = prefix(&rest[..end], policy().near_chars).len();
         for token in matches(&rule("NEAR_TOKEN")?, &rest[..end])? {
             if token.get(0).ok_or("missing nearby token")?.start() >= limit {
                 break;
@@ -729,7 +652,7 @@ fn spans(text: &str) -> Result<Vec<Span>> {
             } else {
                 let mut header = (2..=64).contains(&cells.len());
                 for cell in &cells {
-                    header &= full(r"[\w .-]{1,40}", cell)?;
+                    header &= full_rule("CSV_HEADER", cell)?;
                 }
                 columns = if header {
                     let mut indices = Vec::new();
@@ -755,7 +678,7 @@ fn spans(text: &str) -> Result<Vec<Span>> {
         let token = matched.as_str();
         let mut position = matched.start();
         if (text[matched.end()..].starts_with("...") || text[matched.end()..].starts_with('…'))
-            && full("[0-9a-f]+", token)?
+            && full_rule("HEX_PREFIX", token)?
         {
             continue;
         }
@@ -803,7 +726,7 @@ fn spans(text: &str) -> Result<Vec<Span>> {
     }
     Ok(merged)
 }
-pub(crate) fn text(value: &str) -> crate::Result<String> {
+pub fn text(value: &str) -> crate::Result<String> {
     let render = || -> Result<String> {
         if value.len() > LIMIT {
             return Err("redaction input exceeds one MiB".into());
@@ -816,13 +739,75 @@ pub(crate) fn text(value: &str) -> crate::Result<String> {
                     .get(cursor..start)
                     .ok_or("invalid redaction boundary")?,
             );
-            out.push_str("[REDACTED]");
+            out.push_str(policy().redacted);
             cursor = end;
         }
         out.push_str(value.get(cursor..).ok_or("invalid redaction boundary")?);
         Ok(out)
     };
     render().map_err(|error| crate::Error::RedactionInfra(std::io::Error::other(error)))
+}
+
+/// Serialize the authoritative Rust redaction policy for Python consumers.
+pub fn generated_policy() -> String {
+    static VALID: LazyLock<Result<()>> = LazyLock::new(|| {
+        let policy = policy();
+        let expressions = [("regex", &policy.regex), ("helpers", &policy.helpers)]
+            .into_iter()
+            .flat_map(|(section, entries)| {
+                entries
+                    .iter()
+                    .map(move |(name, pattern)| (format!("{section}:{name}"), *pattern))
+            })
+            .chain(
+                policy
+                    .patterns
+                    .iter()
+                    .enumerate()
+                    .map(|(index, pattern)| (format!("patterns:{index}"), *pattern)),
+            )
+            .chain(
+                policy
+                    .checked
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (pattern, _))| (format!("checked:{index}"), *pattern)),
+            );
+        for (name, pattern) in expressions {
+            rx(pattern).map_err(|error| format!("{name}: {error}"))?;
+        }
+        Ok(())
+    });
+    VALID
+        .as_ref()
+        .expect("cannot generate an unsupported redaction policy");
+    serde_json::to_string_pretty(policy()).expect("static redaction policy is serializable") + "\n"
+}
+
+/// Bind the packaged Python consumer to this build's exact policy and structure.
+pub fn generated_policy_identity() -> String {
+    use sha2::{Digest, Sha256};
+    let policy = policy();
+    let identity = serde_json::json!({
+        "sha256": format!("{:x}", Sha256::digest(generated_policy().as_bytes())),
+        "fields": serde_json::to_value(policy).expect("static policy").as_object().expect("policy object").keys().cloned().collect::<Vec<_>>(),
+        "values": {
+            "schema_version": policy.schema_version, "unicode_version": policy.unicode_version,
+            "context": policy.context, "near_chars": policy.near_chars, "redacted": policy.redacted,
+        },
+        "maps": {
+            "regex": policy.regex.keys().collect::<Vec<_>>(),
+            "helpers": policy.helpers.keys().collect::<Vec<_>>(),
+            "words": policy.words.keys().collect::<Vec<_>>(),
+            "characters": policy.characters.keys().collect::<Vec<_>>(),
+        },
+        "patterns": policy.patterns.len(),
+        "checked": policy.checked.iter().map(|(_, check)| check).collect::<Vec<_>>(),
+    });
+    format!(
+        "# Generated by tl3 redaction-policy --identity-output. Do not edit.\nIDENTITY = {}\n",
+        serde_json::to_string_pretty(&identity).expect("static identity")
+    )
 }
 
 #[cfg(test)]
@@ -931,51 +916,15 @@ print(json.dumps(out))
 
     #[test]
     fn generated_policy_matches_the_authoritative_source() {
-        let status = super::python_command()
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/redaction_policy.py"))
-            .arg("--check")
-            .status()
-            .unwrap();
-        assert!(status.success());
-    }
-
-    #[test]
-    fn matches_python_on_the_shared_matrix() {
-        use std::io::Write;
-        let mut matrix: Vec<String> =
-            serde_json::from_str(include_str!("redaction/matrix.json")).unwrap();
-        assert_eq!(matrix.len(), 196);
-        matrix.extend(
-            serde_json::from_str::<Vec<String>>(include_str!("redaction/corpus.json")).unwrap(),
+        assert_eq!(
+            super::generated_policy(),
+            include_str!("redaction/policy.json")
         );
-        let mut child = super::python_command()
-            .args(["-I", "-c", "import json,sys; from tl3_workers.tracing import Redactor; r=Redactor(None); print(json.dumps([r.text(s,limit=len(s)) for s in json.load(sys.stdin)]))"])
-            .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped())
-            .spawn().unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(&serde_json::to_vec(&matrix).unwrap())
-            .unwrap();
-        let output = child.wait_with_output().unwrap();
-        assert!(output.status.success());
-        let expected: Vec<String> = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(expected.len(), matrix.len());
-        let actual = matrix
-            .iter()
-            .map(|text| super::text(text).unwrap_or_else(|error| panic!("{text:?}: {error:?}")))
-            .collect::<Vec<_>>();
-        let mismatches = matrix
-            .iter()
-            .zip(actual)
-            .zip(expected)
-            .filter(|((_, actual), expected)| actual != expected)
-            .map(|((input, actual), expected)| (input, actual, expected))
-            .collect::<Vec<_>>();
-        assert!(
-            mismatches.is_empty(),
-            "Python redaction parity mismatches: {mismatches:?}"
+        let worker = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../workers/src/tl3_workers/policy.json");
+        assert_eq!(
+            super::generated_policy(),
+            std::fs::read_to_string(worker).unwrap()
         );
     }
 }

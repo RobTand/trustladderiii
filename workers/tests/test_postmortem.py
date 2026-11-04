@@ -12,7 +12,6 @@ import pytest
 
 from tl3_workers import judges, tracing
 from tl3_workers.contracts import validate
-from tl3_workers.roles import ROLES
 from tl3_workers.roles import postmortem
 from postmortem_support import FakeTraces, KEY, MAKER_PROMPT, SECRET, TOKEN, request, run
 from postmortem_support import judge_environment as judge_environment
@@ -52,18 +51,6 @@ def reply(recommendations=1):
             "usage": {"traces": 1, "input_tokens": 100, "output_tokens": 10,
                       "cache_read_input_tokens": 60, "cache_creation_input_tokens": 0},
             "models": {"postmortem": "claude-opus-5-5", "grades": "claude-sonnet-5-5"}}
-
-
-def test_the_schema_and_code_each_reject_a_fourth_recommendation():
-    validate("postmortem-reply", reply(3))
-    with pytest.raises(ValidationError):
-        validate("postmortem-reply", reply(4))
-    with pytest.raises(ValueError, match="at most three"):
-        ROLES["postmortem"].check_reply({}, reply(4))
-    add = reply(1)
-    add["postmortem"]["recommendations"][0].update(operation="add")
-    with pytest.raises(ValidationError):
-        validate("postmortem-reply", add)
 
 
 def test_a_tool_result_is_redacted_and_capped():
@@ -236,6 +223,7 @@ def test_judges_see_only_redacted_capped_material_and_grades_are_logged(tmp_path
     assert (len(model.payloads), len(traces.logged)) == (calls, logged)
 
 
+@pytest.mark.durability
 def test_a_restart_after_judging_logs_only_the_missing_assessments(tmp_path, model,
                                                                    monkeypatch):
     traces = FakeTraces([source_trace("maker", 1_000_000_000, {})])
@@ -412,13 +400,8 @@ def contract_boundary(tmp_path, monkeypatch):
 @pytest.mark.parametrize("bad, diagnostic", [
     (dict(written(0), went_wrong=["The maker skipped a test."]), "schema validation failed: type"),
     ("{broken JSON", "JSON parse failure"),
-    (dict(written(0), recommendations=[dict(RECOMMENDATION, operation="execute")]),
-     "recommendation contract failure"),
     (dict(written(0), recommendations=[dict(RECOMMENDATION, target="bad\x00path")]),
      "recommendation contract failure"),
-    (dict(written(0), recommendations=[dict(RECOMMENDATION, operation="add")]),
-     "recommendation contract failure"),
-    (written(4), "recommendation contract failure"),
 ])
 def test_invalid_output_never_becomes_successful_work(contract_boundary, bad, diagnostic):
     document, traces, values, calls = contract_boundary
@@ -436,6 +419,7 @@ def test_invalid_output_never_becomes_successful_work(contract_boundary, bad, di
     assert not (workdir / "assessments.json").exists()
 
 
+@pytest.mark.durability
 def test_wrong_type_is_repaired_before_checkpoint_and_assessment(contract_boundary):
     document, traces, values, calls = contract_boundary
     values.extend([dict(written(0), went_wrong=["The maker skipped a test."]), written(0)])
@@ -464,6 +448,7 @@ def test_feedback_failure_names_stage_without_repair_or_provider_text(contract_b
 
 @pytest.mark.parametrize("artifact", ["reply.json", "judged.json"])
 @pytest.mark.parametrize("malformed", [False, True])
+@pytest.mark.durability
 def test_invalid_cached_work_is_rejected_before_judging_or_logging(
         contract_boundary, artifact, malformed):
     document, traces, values, calls = contract_boundary
@@ -480,6 +465,7 @@ def test_invalid_cached_work_is_rejected_before_judging_or_logging(
 
 
 @pytest.mark.parametrize("artifact", ["judged.json", "assessments.json", "reply.json"])
+@pytest.mark.durability
 def test_restart_after_each_valid_checkpoint_never_repeats_assessments(
         contract_boundary, monkeypatch, artifact):
     document, traces, values, calls = contract_boundary
@@ -503,6 +489,7 @@ def test_restart_after_each_valid_checkpoint_never_repeats_assessments(
     assert result["assessment_ids"] == ["a-1"]
 
 
+@pytest.mark.durability
 def test_ambiguous_assessment_response_is_reconciled_without_resubmit(contract_boundary):
     document, traces, values, calls = contract_boundary
     values.append(written(0))
@@ -660,6 +647,7 @@ def test_representative_repaired_postmortem_reaches_valid_final_envelope_once(
     ("assessments.json", '{"correctness": 42}'),
     ("assessment-pending.json", '{"correctness": {"unexpected": "object"}}'),
 ])
+@pytest.mark.durability
 def test_invalid_assessment_cache_fails_before_external_writes(contract_boundary, artifact, content):
     document, traces, values, calls = contract_boundary
     (Path(document["worktree"]) / "judged.json").write_text(json.dumps(reply(0)))
@@ -670,6 +658,7 @@ def test_invalid_assessment_cache_fails_before_external_writes(contract_boundary
     assert not traces.logged
 
 
+@pytest.mark.durability
 def test_restart_after_intent_before_post_resolves_to_one_assessment(contract_boundary, monkeypatch):
     document, traces, values, calls = contract_boundary
     values.append(written(0))
@@ -706,7 +695,20 @@ def test_assessment_key_is_stable_and_separates_each_identity_field():
         assert postmortem.assessment_key(*changed) != key
 
 
-def test_pending_lookup_rechecks_after_bounded_wait_before_any_post(contract_boundary, monkeypatch):
+@pytest.fixture
+def assessment_waits(monkeypatch):
+    from types import SimpleNamespace
+
+    waits = []
+    # The validator subprocess also uses time.sleep while polling its deadline.
+    monkeypatch.setattr(postmortem, "time", SimpleNamespace(
+        time_ns=postmortem.time.time_ns, sleep=waits.append))
+    return waits
+
+
+@pytest.mark.durability
+def test_pending_lookup_rechecks_after_bounded_wait_before_any_post(
+        contract_boundary, monkeypatch, assessment_waits):
     document, traces, values, calls = contract_boundary
     values.append(written(0))
     save = postmortem._save
@@ -724,14 +726,13 @@ def test_pending_lookup_rechecks_after_bounded_wait_before_any_post(contract_bou
     with pytest.raises(KeyboardInterrupt):
         run(document)
     traces.traces.insert(0, source_trace("maker", 2_000_000_000, {}))
-    queries, waits = [], []
+    queries, waits = [], assessment_waits
 
     def absent(trace_id, key):
         queries.append((trace_id, key))
         return None
 
     monkeypatch.setattr(traces, "assessment", absent)
-    monkeypatch.setattr(postmortem.time, "sleep", waits.append)
     result, _ = run(document)
     assert len(queries) == 2 and queries[0] == queries[1]
     assert queries[0][0] == original_target
@@ -744,12 +745,13 @@ def test_pending_lookup_rechecks_after_bounded_wait_before_any_post(contract_bou
     assert json.loads((workdir / "assessment-pending.json").read_text()) == {}
 
 
+@pytest.mark.durability
 def test_stale_lookup_then_visible_assessment_resolves_without_another_post(
-        contract_boundary, monkeypatch):
+        contract_boundary, monkeypatch, assessment_waits):
     document, traces, values, calls = contract_boundary
     values.append(written(0))
     log, lookup = traces.log, traces.assessment
-    posts, queries, waits = [], [], []
+    posts, queries, waits = [], [], assessment_waits
 
     def lost_response(*args):
         posts.append(args)
@@ -765,7 +767,6 @@ def test_stale_lookup_then_visible_assessment_resolves_without_another_post(
         return None if len(queries) == 1 else lookup(trace_id, key)
 
     monkeypatch.setattr(traces, "assessment", stale_once)
-    monkeypatch.setattr(postmortem.time, "sleep", waits.append)
     result, _ = run(document)
     assert len(posts) == 1 and len(traces.logged) == 1
     assert len(queries) == 2 and queries[0] == queries[1]
@@ -773,8 +774,9 @@ def test_stale_lookup_then_visible_assessment_resolves_without_another_post(
     assert result["assessment_ids"] == ["a-1"]
 
 
+@pytest.mark.durability
 def test_server_enforced_assessment_id_prevents_duplicate_when_both_lookups_are_stale(
-        contract_boundary, monkeypatch):
+        contract_boundary, monkeypatch, assessment_waits):
     from types import SimpleNamespace
 
     document, traces, values, calls = contract_boundary
@@ -799,7 +801,6 @@ def test_server_enforced_assessment_id_prevents_duplicate_when_both_lookups_are_
 
     source.client = SimpleNamespace(log_assessment=log, get_trace_info=info)
     monkeypatch.setattr(postmortem, "SOURCE", lambda settings: source)
-    monkeypatch.setattr(postmortem.time, "sleep", lambda seconds: None)
     with pytest.raises(ValueError, match="assessment write failure"):
         run(document)
     with pytest.raises(ValueError, match="assessment write failure"):
@@ -850,3 +851,89 @@ def test_judge_turn_counts_and_limits_reach_spans_and_summary(tmp_path, monkeypa
             value = attrs["tl3.judge." + field]
             assert value.WhichOneof("value") == "int_value"
             assert value.int_value == metrics[field]
+
+
+@pytest.fixture
+def fake_reply_checker(tmp_path, monkeypatch):
+    import sys
+
+    def install(body):
+        checker = tmp_path / 'fake-tl3'
+        checker.write_text(f'#!{sys.executable}\n' + body)
+        checker.chmod(0o755)
+        monkeypatch.setenv('TL3_BINARY', str(checker))
+        return checker
+    return install
+
+
+@pytest.mark.parametrize('violations', [[], ["a recommendation's before and after must fit its operation"]])
+def test_postmortem_shim_transports_exact_reply_and_repair(fake_reply_checker, violations):
+    from tl3_workers.turns import InvalidReply, TurnControl, repaired
+
+    inputs, output = {'case': 'café'}, reply(0)
+    fake_reply_checker(
+        'import json, sys\n'
+        "assert sys.argv[1:] == ['check-reply', 'postmortem']\n"
+        f'assert json.load(sys.stdin) == {dict(inputs=inputs, reply=output)!r}\n'
+        f'print({json.dumps(dict(violations=violations))!r})\n')
+    if not violations:
+        assert postmortem.check_reply(inputs, output) is None
+        return
+    history = []
+    with pytest.raises(InvalidReply) as caught:
+        repaired(TurnControl(), history, lambda: output,
+                 lambda value: postmortem._checked(inputs, value))
+    first = violations[0]
+    assert all(str(error) == first for error in caught.value.errors)
+    assert tracing.failure_tags(caught.value.errors[0]) == {
+        'failure_class': 'ReplyViolation', 'failure_message': first}
+    assert history[0].text == (
+        f'Your reply failed validation: {first}\nTools are unavailable for this turn. Return one '
+        'corrected JSON object matching your reply schema and nothing else.')
+
+
+@pytest.mark.parametrize('body,message', [
+    ("print('null')\n", 'reply validator returned invalid output'),
+    ("print('{\"violations\": false}')\n", 'reply validator returned invalid output'),
+    ("print('{\"violations\": [null]}')\n", 'reply validator returned invalid output'),
+    ("print('private-validator-canary')\n", 'reply validator returned invalid output'),
+    ("import sys\nprint('private-validator-canary', file=sys.stderr)\nsys.exit(7)\n",
+     'reply validator process failed'),
+    ("import time\ntime.sleep(0.3)\n", 'reply validator timed out'),
+])
+def test_postmortem_validator_failure_bypasses_repair(fake_reply_checker, monkeypatch, body, message):
+    from tl3_workers import reply_check
+    from tl3_workers.turns import TurnControl, repaired
+
+    fake_reply_checker(body)
+    if body.startswith('import time'):
+        monkeypatch.setattr(reply_check, 'TIMEOUT_SECONDS', 0.05)
+    history, asked = [], []
+
+    def ask():
+        asked.append(True)
+        return reply(0)
+
+    with pytest.raises(reply_check.ReplyCheckInfrastructureError) as caught:
+        repaired(TurnControl(), history, ask, lambda value: postmortem.check_reply({}, value))
+    assert history == [] and asked == [True]
+    assert tracing.failure_tags(caught.value) == {
+        'failure_class': 'ReplyCheckInfrastructureError', 'failure_message': message}
+
+
+
+def test_validator_infrastructure_failure_precedes_checkpoints_and_assessments(
+        contract_boundary, fake_reply_checker):
+    from tl3_workers.reply_check import ReplyCheckInfrastructureError
+
+    document, traces, values, calls = contract_boundary
+    values.append(written(0))
+    fake_reply_checker("print('private-validator-canary')\n")
+    with pytest.raises(ReplyCheckInfrastructureError) as caught:
+        run(document)
+    assert tracing.failure_tags(caught.value)['failure_message'] == (
+        'reply validator returned invalid output')
+    assert len(calls) == 1
+    assert not traces.logged
+    for artifact in ['judged.json', 'assessment-pending.json', 'assessments.json', 'reply.json']:
+        assert not (Path(document['worktree']) / artifact).exists()

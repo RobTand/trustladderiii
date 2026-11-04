@@ -13,9 +13,11 @@ pub mod adapters;
 mod blocked;
 pub mod board;
 mod branches;
+pub mod classifier;
 pub mod cli;
 pub mod clock;
 pub mod console;
+pub mod contracts;
 mod decisions;
 pub mod evidence;
 pub mod executor;
@@ -31,6 +33,7 @@ pub mod memory;
 pub mod merge_dependencies;
 mod narrowing;
 mod notices;
+pub mod postmortem_reply;
 mod postmortems;
 pub use postmortems::PostmortemPace;
 pub mod pr_body;
@@ -40,14 +43,17 @@ pub mod prompts;
 mod protected_requests;
 pub mod publication_failure;
 mod question_findings;
-mod redaction;
+pub mod redaction;
 pub mod release;
+pub mod replay;
 mod review_stops;
+pub mod reviewer;
 mod scope;
 mod snapshot;
 pub mod status;
 pub mod status_web;
 pub mod steering;
+pub mod store_stats;
 mod sync;
 pub mod worker_inputs;
 
@@ -66,6 +72,8 @@ use tl3_store::{
 pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("replay-check: {0}")]
+    Replay(String),
     #[error("{0}")]
     Store(#[from] tl3_store::Error),
     #[error("{0}")]
@@ -1025,7 +1033,7 @@ impl Controller {
     /// The hook exposes durable boundaries for process-level fault injection.
     pub fn drive_once_with(&mut self, mut hook: impl FnMut(Boundary, &str)) -> Result<bool> {
         let snapshot = self.store.load()?;
-        if self.post_input_incident(&snapshot)? {
+        if self.reconcile_memory(&snapshot)? || self.post_input_incident(&snapshot)? {
             return Ok(true);
         }
         for row in snapshot
@@ -2563,9 +2571,17 @@ impl Controller {
                 })),
             ));
         } else {
+            // Q7: clearance covers the current persisted memory outcome, even
+            // if the feed finished another held attempt before this comment.
+            if let Some(failure) = incident.input_failure.as_mut()
+                && failure.memory_version.is_some()
+            {
+                failure.memory_version = Some(self.store.memory_feed_version()?);
+            }
             if incident.open && incident.signature.class == postmortems::PAUSED {
                 self.reset_postmortem_pause(snapshot, commit);
             }
+            self.resume_memory_incident(&incident, commit);
             incident.open = false;
             if !self.retry_notice(snapshot, &incident, commit)? {
                 self.resume_incident_look(snapshot, &incident, commit)?;
@@ -3129,13 +3145,18 @@ impl Controller {
                         .iter()
                         .enumerate()
                         .map(|(index, check)| {
+                            let declared = |field: &str| check.get(field).cloned();
                             Ok(adapters::prismabuild::Check {
                                 name: format!("check-{}", index + 1),
                                 kind: serde_json::from_value(check["kind"].clone())?,
                                 tests: adapters::workers::protocol::reply_field(check, "node_ids")?,
-                                forcing: check.get("forcing").cloned(),
-                                proof: check.get("proof").cloned(),
-                                declared_symptom: check.get("declared_symptom").cloned(),
+                                forcing: declared("forcing")
+                                    .map(serde_json::from_value)
+                                    .transpose()?,
+                                proof: declared("proof").map(serde_json::from_value).transpose()?,
+                                declared_symptom: declared("declared_symptom")
+                                    .map(serde_json::from_value)
+                                    .transpose()?,
                             })
                         })
                         .collect::<Result<Vec<_>>>()?;

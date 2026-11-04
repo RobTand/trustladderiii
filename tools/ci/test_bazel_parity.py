@@ -351,6 +351,22 @@ class LibtestShardTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'No passing'):
             libtest_shards.measured(self.BINARY, lines[-1:])
 
+    def test_group_weights_come_from_scenario_group_lines(self):
+        """#742: custom scenario harnesses are weighted per group, also from test logs."""
+        import libtest_shards
+        binary = 'tl3-controller/workers'
+        lines = [
+            f'[{binary}] scenario group Planning: 41.5s',
+            f'[{binary}] test planner_stop ... ok',
+            f'[{binary}] scenario group Planning: 38.25s',
+            f'[{binary}] scenario group Router: 0.004s',
+            '[tl3-controller/mergify] scenario group Queue: 7.0s',
+            f'[{binary}] scenario group "quoted": 1.0s',
+        ]
+        self.assertEqual(libtest_shards.measured_groups(binary, lines), {'Planning': 41.5, 'Router': 0.004})
+        with self.assertRaisesRegex(RuntimeError, 'No tl3-controller/workers scenario groups'):
+            libtest_shards.measured_groups(binary, lines[1:2])
+
     def test_committed_weights_cover_each_sharded_libtest_binary(self):
         import libtest_shards
         root = Path(__file__).resolve().parents[2]

@@ -263,46 +263,7 @@ pub(crate) struct BlockingFinding {
 }
 
 pub(crate) fn validate_reply(reply: &Value, inputs: &Value) -> Result<Vec<BlockingFinding>> {
-    if reply["verdict"] == "out_of_room" {
-        return Ok(vec![]);
-    }
-    if reply["verdict"] == "approve" && reply["head_sha"] != inputs["head_sha"] {
-        return Err(Error::Invalid("review approval names a different head"));
-    }
-    let findings: Vec<BlockingFinding> = super::protocol::reply_field(reply, "blocking_findings")?;
-    for finding in &findings {
-        if finding.citation.kind == CitationKind::StandingRule && finding.citation.id == SCOPE_RULE
-        {
-            let diff = inputs
-                .get("scope_diff")
-                .unwrap_or(&inputs["diff"])
-                .as_str()
-                .unwrap_or("");
-            if !diff.lines().any(|line| {
-                (line.starts_with('+') || line.starts_with('-'))
-                    && !line.starts_with("+++")
-                    && !line.starts_with("---")
-                    && line[1..].chars().filter(|c| !c.is_whitespace()).count() >= 8
-                    && finding.evidence.lines().any(|quote| quote.trim() == line)
-            }) {
-                return Err(Error::Invalid("scope blocker must quote a changed hunk"));
-            }
-        }
-        let entries = match finding.citation.kind {
-            CitationKind::Goal => &inputs["goals"],
-            CitationKind::StandingRule => &inputs["standing_rules"],
-        };
-        if !entries.as_array().is_some_and(|entries| {
-            entries
-                .iter()
-                .any(|entry| entry["id"] == finding.citation.id)
-        }) {
-            return Err(Error::Invalid(
-                "review blocker cites an unknown goal or rule",
-            ));
-        }
-    }
-    Ok(findings)
+    crate::reviewer::validate_findings(inputs, reply)
 }
 
 #[cfg(test)]
@@ -439,8 +400,14 @@ mod hostile_tests {
                 "custody":"in-process", "verdict":"pass",
                 "tests":[{"test":"tests/test_rechecked.py", "passed":true, "base":"passed", "head":"passed", "pre_existing":false},
                          {"test":"tests/test_unverified.py", "passed":false, "base":"passed", "head":"no-report", "pre_existing":false}],
-                "selection":{"limit":500,"charged_cases":480,"head_units":[["tests/test_rechecked.py"]],
-                    "skipped_units":[["tests/test_old.py"]], "skipped_checked":false}}]});
+                "selection":{"policy":"complete-unit prefix by import distance, path, and declaration order",
+                    "limit":500,"charged_cases":480,
+                    "base_units":[{"members":["tests/test_rechecked.py"], "cases":480,
+                        "outcomes":{"tests/test_rechecked.py":"passed"}}],
+                    "head_units":[["tests/test_rechecked.py"]],
+                    "skipped_units":[["tests/test_old.py"]], "skipped_checked":false,
+                    "saturation":{"unit":["tests/test_old.py"], "cases":null, "remaining":20,
+                        "reason":"Next complete unit cannot fit; lower-priority units were not checked."}}}]});
         let value = inputs(&f.delivery(), &mut store, &snapshot, None).unwrap();
         assert!(value.get("edited_selected_tests").is_none());
         assert_eq!(

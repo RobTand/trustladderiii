@@ -4,7 +4,7 @@
 executors. Read [the architecture note](../../docs/architecture.md) for the
 transaction and recovery contracts.
 
-All commands use the same TOML configuration as `tl3-config`. The daemon runs
+Service commands use the same TOML configuration as `tl3-config`. The daemon runs
 production adapters by default, or simulation with `--simulate`. Status commands read the configured store
 and do not load GitHub or model credentials.
 
@@ -970,8 +970,10 @@ it holds no pool grant, and no delivery work waits on it.
   block it, and running postmortems never consume delivery grants (Q39 amended
   by Rob on 2026-11-03, #642).
 - **Quota and recovery.** `start_postmortem` asks the store for an owed row first.
-  It claims nothing while either model the postmortem uses has a `model_quotas`
-  row: entry 0 writes the postmortem and entry 1, if present, grades it. There is
+  Entry 0 writes the postmortem and entry 1, if present, grades it. Each falls
+  down the whole ladder past models whose `model_quotas` record hasn't expired,
+  as other roles fall back (Q53, #759), and the lane claims nothing only while
+  every entry is out. There is
   no daily allowance. Three consecutive failures pause new claims. Recovery
   resets the failure boundary and retains every claim and outcome for audit.
   A single validation run must succeed before the lane resumes; failure pauses
@@ -1054,10 +1056,32 @@ item's size using Postgres's JSONB text representation. Invalid JSON and oversiz
 the evidence and fail retirement so a later drain can retry.
 
 A separate thread drains the outbox into `[hindsight].bank`, which defaults to
-`tl3`. The bank must be separate from the coordinator's bank. The thread wakes
-at startup and at controller drains through a channel of capacity one. An
-outage leaves rows for the next controller wake or restart. It never polls on
-a timer and never makes a request wait for Hindsight.
+`tl3`. The bank must be separate from the coordinator's bank. Startup and
+controller drains send coalesced channel wakes. After a delivery error the
+thread holds the queued rows, ignoring ordinary drains. There is no private
+SQL listener or feed retry timer.
+
+The controller records an upstream incident, `Hindsight unavailable: N memories
+held`, and posts it through the existing operations-issue incident path. Other
+requests continue. Restore Hindsight or its credentials. The controller's
+existing earliest-deadline look schedules a probe after two minutes, matching
+#759's unavailable-model probe. The probe requests delivery with the saved
+operation UUIDs. A deadline does not clear the incident: acknowledged delivery
+and durable queue removal do. Failed probes rearm the same look. Recovery drains
+the queue and clears the incident automatically, without an operator command.
+`tl3 memory retry --config FILE` requests an earlier attempt through durable
+retry evidence and the existing ingress wake. Evidence arriving during a failed
+response survives that failure. A successful retain or curation from another
+process also requests an attempt. Restart retries the durable queue.
+
+Web status and `tl3 status` show `Feed` (`ready`, `delivering`, `held`, or
+`failed`), `Pending`, `Parked`, and `HTTP parked`. A lost consumer shows
+`failed (no consumer; restart tl3d)` and raises a TL3-side incident. Retry then
+returns an error instead of reporting success. A session advisory lock proves
+consumer presence without a heartbeat. Dropping the final supervisor handle
+sends a local stop and joins the thread before dependencies are released;
+shutdown needs no new database connection. The feed retains one writer session
+while idle and has no blocking SQL listener.
 
 The server's `/openapi.json`, read on 2026-10-30, documents
 `POST /v1/default/banks/{bank}/memories` with `async: true` and a client-supplied
@@ -1089,6 +1113,25 @@ Every flush deletes expired HTTP rows, including a flush with no pending rows.
 Existing parked rows begin their retention period when migration 9 runs.
 Transport failures and 5xx responses end the pass and leave rows pending for the
 next wake. A hung endpoint costs one request timeout per pass.
+
+Memory incidents follow Q7 by operation lineage. Retains use the stable operation
+UUID; curations use their durable sequence. A successful probe can clear the
+first incident. Only Rob can clear later incidents for that lineage, using the
+`clear incident ID` command on the operations issue. Probes and `memory retry`
+leave those operations held until clearance. Clearance is checked before each
+outgoing operation, so a preceding curation cannot release a retain's hold.
+Rob's clearance covers the current persisted outcome. Other operations get their own
+incident count. The attempted lineage is stored with the outcome, so priority
+work arriving later cannot inherit its failure. Legacy `memory` incidents keep
+their own scope. A reused first incident after restart rearms its recovery look.
+Later incidents have no probe deadline while waiting for Rob; his clearance
+arms an immediate recovery look in the same durable commit.
+Feed failure or panic wakes the existing worker ingress source, even if the
+source registers after the exit. Intentional joined shutdown sends no failure wake. Feed failure does not skip worker-session retirement.
+Migration 19 adds a runtime version marker so clearing an incident does not
+count the same failed attempt again. Migration 20 adds the attempted lineage.
+An empty healthy wake writes no feed state and sends no ingress notification.
+Migrations 18 and 19 stay unchanged.
 
 The active retry set holds at most 10,000 rows; new records beyond that limit
 park the oldest pending rows. After a successful retain drains the pending set,
@@ -1349,6 +1392,15 @@ model no longer configured ends when tl3d opens. A wait recorded before Q53
 names its model only in the attempt's `request.json`, which the adapter reads.
 The maker's reply records its model in `maker_session`, and the reviewer stays a
 different family from it.
+
+When every model a step may use is out, and has been for 30 minutes since the
+step's first ending with no model turn served since, the look posts one
+operations note with the fixed reason `model_ladder_unavailable` and keeps
+waiting (#759). The wait wakes at that bound if it comes before the earliest
+reset. A progress checkpoint clears the step's record, so a later outage posts
+again. A postmortem's quota event may name its case file's grade model, and the
+controller charges that model; its grade judges run on the first model not out
+from the ladder's second entry on.
 
 The looks checks cover the workspace, worker protocol tests, kernel tests and
 the stall proof. Check every terminal record, log and CAS receipt before
@@ -1633,3 +1685,43 @@ node's head or approved head, or the node closes. Neither path reaches the kerne
 failure or credit is charged, and the enqueue still waits for the check. Run
 `bash crates/controller/tools/verify-missing-checks.sh` through PrismaBuild for
 the focused scenarios.
+
+## Classifier reply checks
+
+`tl3 check-reply classifier` reads one JSON object `{ "inputs": ..., "reply": ... }`
+from stdin and writes `{ "violations": [...] }`. It needs no configuration or
+store. A valid classification has no violations; an invalid one has the first
+repair message, in the worker's original order. Malformed JSON or an unsupported
+role exits unsuccessfully. Both this command and controller acceptance call
+`classifier::validate`.
+
+The controller gives every worker `TL3_BINARY`, the `tl3` executable beside its
+own executable in the immutable release. Test drivers may supply that path
+explicitly. The worker's Python code only transports JSON and raises the
+returned repair message.
+
+The finite decision proof imports the production `decision.rs` directly through
+`src/classifier/kani.rs`. This avoids the kernel's intentionally disabled serde
+implementations under `cfg(kani)`. Until #726 provides a Bazel proof target, run
+this command inside an admitted PrismaBuild campaign action:
+
+```text
+kani crates/controller/src/classifier/kani.rs --harness proofs::classification_total_and_sound --exact --output-format regular -j 1
+```
+
+Require `VERIFICATION:- SUCCESSFUL` and all 14 cover checks. A separate disposable
+action removes the restartability guard in `decision.rs`; the same proof must
+fail its ordered-rule assertion. The unwind bound is 13 for the proof's twelve
+rule rows. Production decisions have no loops or collection-size bound.
+
+`//crates/controller:test_test_workers` retains the golden cases, CLI contract,
+parse proptests, and real-process repair/tool-denial test. Use
+`--test_arg=--classifier-contracts` for the classifier group alone. Python tests
+exercise only the shim with a fake executable and orchestration with the Rust
+validation boundary stubbed. They never depend on the real `tl3` binary.
+
+## Read-only store tools (#783)
+
+`tl3 store-stats --config FILE [--json]` prints table counts and event/world revisions, including the earliest decodable replay baseline. Both it and `tl3 replay-check --config FILE [--from EVENT]` use the runtime store credentials in a SQL-enforced READ ONLY, REPEATABLE READ transaction, without ownership or advisory locks.
+
+This branch does not record baselines or change the apply path. Existing legacy history without recorded snapshots fails explicitly; replay cannot verify it retroactively. For instrumented history, start with `--from` the first instrumented event inclusive and retain the matching binary. The baseline statistic means decodable stored data, not a verification pass.

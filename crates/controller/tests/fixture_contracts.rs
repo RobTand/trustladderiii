@@ -92,6 +92,9 @@ impl Executor for Spy {
     fn look(&mut self, delivery: &Delivery) -> Result<Look> {
         self.hit("look", delivery.key.clone())
     }
+    fn probe_memory(&mut self) -> Result<()> {
+        self.hit("probe_memory", String::new())
+    }
     fn probe(&mut self, delivery: &Delivery) -> Result<bool> {
         self.hit("probe", delivery.key.clone())
     }
@@ -231,6 +234,7 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
                 )
                 .is_err()
         );
+        assert!(router.probe_memory().is_err());
         assert!(router.retire(&mut store).is_err());
         assert_eq!(
             *calls.lock().unwrap(),
@@ -257,6 +261,7 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
                         question.repository.owner, question.repository.name
                     )
                 ),
+                (primary, "probe_memory", String::new()),
                 (primary, "retire", String::new()),
             ]
         );
@@ -341,10 +346,16 @@ fn scenario_shards_separate_the_measured_worker_hotspots() {
         // The seven other 11-marker shards averaged 7 s per marker.
         _ => 7 * group.markers(),
     };
+    // #742: Shard::new reads measured weights; feed these estimates to the
+    // same partition directly.
+    let groups: Vec<_> = WORKER_GROUPS
+        .iter()
+        .map(|group| (*group, group.markers(), seconds(*group)))
+        .collect();
     let mut loads = [0; 8];
     let mut owners = Vec::new();
     for (index, load) in loads.iter_mut().enumerate() {
-        let mut shard = Shard::new(index, 8);
+        let mut shard = Shard::with_groups(index, 8, &groups);
         for group in WORKER_GROUPS.iter().copied() {
             shard.run(group, || {
                 *load += seconds(group);
@@ -496,4 +507,38 @@ fn scenario_shards_cover_nonworker_groups_including_markerless_setup_once() {
     seen.sort_unstable();
     assert_eq!(seen, ["after_setup", "fast", "setup", "slow"]);
     assert!(loads.iter().all(|load| *load <= 300), "{loads:?}");
+}
+
+#[test]
+fn worker_groups_are_weighted_by_their_measured_seconds() {
+    use support::scenario_shard::{WORKER_GROUPS, measured, weights_ms};
+    let groups = measured("tl3-controller/workers");
+    let names: Vec<_> = WORKER_GROUPS.iter().map(|group| group.name()).collect();
+    assert!(
+        !groups.is_empty(),
+        "libtest-shards.json has measured worker groups"
+    );
+    for name in groups.keys() {
+        assert!(
+            names.contains(&name.as_str()),
+            "{name} is measured but is not a worker group; regenerate the weights"
+        );
+    }
+    for (name, weight) in names.iter().zip(weights_ms(&groups, &names)) {
+        if let Some(seconds) = groups.get(*name) {
+            assert_eq!(
+                weight,
+                (seconds.as_f64().unwrap() * 1000.0).round() as usize,
+                "{name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_unmeasured_group_counts_as_the_median_measured_group() {
+    use support::scenario_shard::weights_ms;
+    let measured = serde_json::json!({"a": 1.0, "b": 2.5, "slow": 90.0});
+    let weights = weights_ms(measured.as_object().unwrap(), &["slow", "a", "new"]);
+    assert_eq!(weights, [90_000, 1_000, 2_500]);
 }

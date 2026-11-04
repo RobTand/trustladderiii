@@ -84,6 +84,7 @@ class RustDependencyTests(unittest.TestCase):
                                       filegroup=record, glob=lambda patterns, **kwargs: [
                                           path for path in patterns if "*" not in path]),
             "all_crate_deps": lambda **kwargs: [],
+            "verus_proofs": lambda: None,
             "aliases": lambda **kwargs: {},
             "nonhermetic": lambda name: ([], {}),
             "select": lambda choices: choices["//conditions:default"],
@@ -157,7 +158,7 @@ class RustDependencyTests(unittest.TestCase):
         self.assertIn("tests/worker_replies.py", deps)
 
     def test_measured_controller_shard_configuration(self):
-        for name, count in [("workers", 8), ("publishing", 38),
+        for name, count in [("workers", 32), ("publishing", 38),
                             ("mergify", 50), ("github-flow", 50),
                             ("github-notices", 32), ("simulation", 16),
                             ("core_defects", 0)]:
@@ -196,6 +197,7 @@ class TestSizingTests(unittest.TestCase):
                                       package_relative_label=lambda label: label),
             "struct": SimpleNamespace,
             "all_crate_deps": lambda **kwargs: [],
+            "verus_proofs": lambda: None,
             "aliases": lambda **kwargs: {},
             "select": lambda choices: choices["//conditions:default"],
             "depset": lambda items: SimpleNamespace(to_list=lambda: list(dict.fromkeys(items))),

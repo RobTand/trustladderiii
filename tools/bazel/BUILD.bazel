@@ -64,6 +64,7 @@ py_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":runtime",
+        ":sync_contention",
         "@tl3_pip//pytest",
     ],
 )
@@ -85,6 +86,7 @@ py_binary(
 py_binary(
     name = "rust_runner",
     srcs = ["rust_runner.py"],
+    data = ["//tools/ci:controller_test_runner.sh"],
     visibility = ["//visibility:public"],
     deps = [
         ":libtest_shards",
@@ -167,5 +169,11 @@ py_binary(
 py_binary(
     name = "stage_contract",
     srcs = ["stage_contract.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_library(
+    name = "sync_contention",
+    srcs = ["sync_contention.py"],
     visibility = ["//visibility:public"],
 )

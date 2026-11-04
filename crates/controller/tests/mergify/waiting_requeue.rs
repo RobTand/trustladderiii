@@ -800,3 +800,77 @@ pub(super) fn review(mut shard: Option<(&mut support::scenario_shard::Shard<usiz
     }
     assert!(failures.is_empty(), "#608 review regressions: {failures:?}");
 }
+
+/// #608: the grace starts before command-history I/O, including across restart.
+pub(super) fn grace_samples_before_history() {
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    #[derive(Clone)]
+    struct Clock(Arc<AtomicU64>);
+    impl tl3_controller::clock::Clock for Clock {
+        fn now(&self) -> std::time::SystemTime {
+            std::time::UNIX_EPOCH + Duration::from_millis(self.0.load(Ordering::SeqCst))
+        }
+    }
+    let (_db, f, c) = setup(true);
+    drop(c);
+    for entry in std::fs::read_dir(f.root.path().join("mergify")).unwrap() {
+        let path = entry.unwrap().path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "requeue")
+        {
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+    const START: u64 = 1_000_000;
+    let clock = Clock(Arc::new(AtomicU64::new(START)));
+    let delayed = clock.clone();
+    let histories = Arc::new(AtomicUsize::new(0));
+    let reads = histories.clone();
+    f.api._runtime.block_on(async {
+        Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(
+                "/repos/owner/sandbox/issues/100/comments",
+            ))
+            .respond_with(move |_: &Request| {
+                // Advance virtual time during the read, without a wall-clock sleep.
+                delayed.0.fetch_add(2_000, Ordering::SeqCst);
+                reads.fetch_add(1, Ordering::SeqCst);
+                ResponseTemplate::new(200).set_body_json(json!([]))
+            })
+            .with_priority(1)
+            .mount(&f.api.server)
+            .await;
+    });
+    let mut adapter = f.adapter().with_clock(clock.clone());
+    assert!(matches!(
+        adapter.look(&f.delivery).unwrap(),
+        Look::Alive { .. }
+    ));
+    assert_eq!(histories.load(Ordering::SeqCst), 1);
+    assert_eq!(clock.0.load(Ordering::SeqCst), START + 2_000);
+    let path = std::fs::read_dir(f.root.path().join("mergify"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "requeue")
+        })
+        .unwrap();
+    let recovery: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(
+        recovery["eligible_since_ms"],
+        json!(START),
+        "grace timestamp moved across the command-history read"
+    );
+    drop(adapter);
+    clock.0.store(START + 301_000, Ordering::SeqCst);
+    let mut restarted = f.adapter().with_clock(clock);
+    let _ = restarted.look(&f.delivery).unwrap();
+    assert_eq!(
+        f.commands(),
+        1,
+        "restart must dispatch 301 seconds after eligibility"
+    );
+    println!("test grace_samples_before_history ... ok");
+}

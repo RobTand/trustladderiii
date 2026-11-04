@@ -224,6 +224,22 @@ merged PRs and says whether their selection included the failing test. The
 job summary and the `post-merge-<sha>` artifact hold one `POST_MERGE_RECORD`
 JSON line per run.
 
+## Disk durability in pytest
+
+Harness and worker pytest fixtures skip `os.fsync` and `os.fdatasync` for
+content and verdict tests. Mark persistence, atomic-write, journal-ordering,
+and crash-recovery tests with `@pytest.mark.durability` to retain real calls.
+The fixtures patch only the standard-library `os` module, so they add no
+production dependencies to the test graph. Child processes retain their own
+real synchronization calls.
+
+To reproduce shared-disk stalls on BuildBuddy, pass
+`--run_under='env TEST_SYNC_DELAY_SECONDS=2'` to a targeted Bazel test run.
+The opt-in probe delays each real synchronization call and reports its count
+and elapsed time. Use `TEST_SYNC_DELAY_SECONDS=0` to measure without added
+latency. Content tests should report zero calls; marked durability tests
+retain their barriers. Bazel's normal test timeout still applies.
+
 ## Time budget warnings
 
 Per-test CPU, wall-only, and wall-backstop overruns are warnings. A Rust

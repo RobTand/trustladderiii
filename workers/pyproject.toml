@@ -33,8 +33,9 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-tl3_workers = ["schemas/*.json", "prompts/*.md", "evaluation/*.json"]
+tl3_workers = ["schemas/*.json", "prompts/*.md", "evaluation/*.json", "policy.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--durations=10"
+markers = ["durability: retain real disk synchronization for persistence and crash recovery"]

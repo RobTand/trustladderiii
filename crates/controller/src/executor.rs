@@ -438,6 +438,10 @@ pub trait Executor {
     fn probe(&mut self, _delivery: &Delivery) -> Result<bool> {
         Ok(false)
     }
+    /// #773: the existing controller look schedules a Hindsight delivery probe.
+    fn probe_memory(&mut self) -> Result<()> {
+        Ok(())
+    }
     /// Resume an owner-confirmed quota ending under the same operation key.
     fn resume_after_quota(&mut self, _delivery: &Delivery) -> Result<Option<Completion>> {
         Ok(None)

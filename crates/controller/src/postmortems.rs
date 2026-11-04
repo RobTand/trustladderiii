@@ -18,9 +18,6 @@ use tl3_store::{
 /// The world table that keeps a claimed postmortem's delivery live.
 pub(crate) const JOBS: &str = "postmortem_jobs";
 
-/// Q32: a postmortem recommends at most three changes.
-pub(crate) const MAX_RECOMMENDATIONS: usize = 3;
-
 /// Q39, Rob 2026-11-03 (#642): postmortems have their own lane.
 const CONCURRENCY: usize = 2;
 
@@ -48,20 +45,11 @@ pub(crate) fn fingerprint(target: &str, operation: &str, before: &str, after: &s
 /// A postmortem reply as the worker protocol accepts it: the role's schema,
 /// and at most three recommendations, which code checks as well.
 pub(crate) fn check_reply(reply: &Value) -> Result<()> {
-    crate::adapters::workers::protocol::validate_reply("postmortem", reply)?;
-    recommendations(reply).map(|_| ())
+    crate::postmortem_reply::validate(reply)
 }
 
 fn recommendations(reply: &Value) -> Result<&Vec<Value>> {
-    let recommendations = reply["postmortem"]["recommendations"]
-        .as_array()
-        .ok_or(Error::Invalid("a postmortem needs its recommendations"))?;
-    if recommendations.len() > MAX_RECOMMENDATIONS {
-        return Err(Error::Invalid(
-            "a postmortem recommends at most three changes",
-        ));
-    }
-    Ok(recommendations)
+    crate::postmortem_reply::recommendations(reply)
 }
 
 /// Redact every string in a JSON value, as TL3 stores and retains it.
@@ -328,11 +316,17 @@ pub(crate) fn case_file(
         .find(|row| row.table == "releases" && row.id == "tl3d")
         .and_then(|row| row.value["id"].as_str().map(str::to_owned))
         .unwrap_or_else(crate::release::id);
-    let grade_model = models
-        .postmortem
-        .get(1)
-        .or(models.postmortem.first())
-        .ok_or(Error::Invalid("models.postmortem is empty"))?;
+    // Q53 (#759): the grade judges fall back like the writer, from the
+    // ladder's second entry on, past models that are out.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let grade_model = crate::adapters::workers::ladder::running(
+        &crate::adapters::workers::ladder::candidates(models, "postmortem", 1, false, None)?,
+        &crate::adapters::workers::ladder::quota_resets(snapshot),
+        now,
+    );
     Ok(json!({
         "record": {"id": id, "trigger": record.trigger, "reason": record.reason},
         "case": {
@@ -416,8 +410,10 @@ pub(crate) fn stalled(mut completion: Completion) -> Completion {
 /// The models whose quota the postmortem lane needs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PostmortemPace {
-    /// Entry 0 writes the postmortem; entry 1, if present, grades it.
-    /// While either has reported quota, nothing is claimed.
+    /// Every entry of the postmortem ladder, in order. Entry 0 writes the
+    /// postmortem and entry 1, if present, grades it; each falls back down the
+    /// whole ladder past models that are out, so nothing is claimed only while
+    /// every entry is out (#759).
     pub models: Vec<String>,
 }
 
@@ -428,7 +424,6 @@ impl PostmortemPace {
                 .models
                 .postmortem
                 .iter()
-                .take(2)
                 .map(|model| model.name.clone())
                 .collect(),
         }
@@ -495,10 +490,19 @@ impl crate::Controller {
         let Some(pace) = &self.postmortems else {
             return Ok(false);
         };
-        let quota = snapshot
-            .rows
-            .iter()
-            .any(|row| row.table == "model_quotas" && pace.models.contains(&row.id));
+        // Q53 (#759): the lane falls back like other roles, so it waits only
+        // while every model in its ladder is out.
+        let now = self.now_ms();
+        let quota = !pace.models.is_empty()
+            && pace.models.iter().all(|model| {
+                snapshot.rows.iter().any(|row| {
+                    row.table == "model_quotas"
+                        && row.id == *model
+                        && row.value["reset_ms"]
+                            .as_u64()
+                            .is_some_and(|reset| reset > now)
+                })
+            });
         let running = snapshot.rows.iter().filter(|row| row.table == JOBS).count();
         let Some(owed) = self.store.owed_postmortem()? else {
             return self.postmortem_blocked(snapshot, None);

@@ -269,6 +269,7 @@ def test_public_stdout_is_not_machine_data(consumer):
 
 
 @pytest.mark.parametrize('name', ['pbrun', 'pbwait'])
+@pytest.mark.durability
 def test_killed_child_is_channel_failure_even_with_valid_record(consumer, name):
     run, scripts = consumer
     configure(scripts, name, killed=True)

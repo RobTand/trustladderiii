@@ -19,7 +19,7 @@ pub(super) fn role(role: Role) -> Option<&'static str> {
     }
 }
 
-pub(super) fn delivery_role(delivery: &crate::executor::Delivery) -> Option<&'static str> {
+pub(crate) fn delivery_role(delivery: &crate::executor::Delivery) -> Option<&'static str> {
     use crate::executor::{CommentKind, Output};
     match delivery.output {
         Output::Comment {
@@ -225,7 +225,7 @@ fn forecast(reply: &Value) -> Result<(u64, u64)> {
     Ok((tokens, fit))
 }
 
-fn classifier_schema(value: &Value, reply: bool) -> Result<()> {
+pub(crate) fn classifier_schema(value: &Value, reply: bool) -> Result<()> {
     let validator = validator("classifier", if reply { "reply" } else { "input" })?;
     if validator.is_valid(value) {
         Ok(())
@@ -234,92 +234,15 @@ fn classifier_schema(value: &Value, reply: bool) -> Result<()> {
     }
 }
 
-pub(crate) fn validate_classification(inputs: &Value, reply: &Value) -> Result<()> {
-    classifier_schema(reply, true)?;
-    if inputs.get("reconcile_issue").is_some() || reply["kind"] == "reconcile_decisions" {
-        if inputs.get("reconcile_issue").is_none() || reply["kind"] != "reconcile_decisions" {
-            return Err(Error::Invalid("restart must reconcile the current issue"));
-        }
-        let active: std::collections::BTreeSet<_> = inputs["decision_context"]["decisions"]
-            .as_array()
-            .ok_or(Error::Invalid("reconciliation needs decisions"))?
-            .iter()
-            .map(|d| d["id"].as_str().unwrap())
-            .collect();
-        let items = reply["assessments"].as_array().unwrap();
-        let ids: std::collections::BTreeSet<_> =
-            items.iter().map(|a| a["id"].as_str().unwrap()).collect();
-        if ids != active || ids.len() != items.len() {
-            return Err(Error::Invalid(
-                "reconciliation must assess every applicable decision exactly once",
-            ));
-        }
-        return Ok(());
+pub(crate) fn reviewer_schema(value: &Value, reply: bool) -> Result<()> {
+    if validator("reviewer", if reply { "reply" } else { "input" })?.is_valid(value) {
+        Ok(())
+    } else {
+        Err(Error::Invalid("reviewer value breaks role schema"))
     }
-    if inputs["selected_answer"]
-        .as_object()
-        .is_some_and(|selected| {
-            selected
-                .iter()
-                .any(|(key, value)| reply.get(key) != Some(value))
-        })
-    {
-        return Err(Error::Invalid(
-            "classifier changed a selected console answer",
-        ));
-    }
-    let active = inputs["decision_context"]["decisions"].as_array();
-    if (reply["kind"] == "change_request" || reply["answer"] == "change_request")
-        && active.is_some_and(|decisions| !decisions.is_empty())
-        && reply["supersedes"].as_array().is_none()
-    {
-        return Err(Error::Invalid(
-            "replacement must assess applicable decisions",
-        ));
-    }
-    if reply["supersedes"].as_array().is_some_and(|ids| {
-        ids.iter().any(|id| {
-            !active.is_some_and(|decisions| {
-                decisions
-                    .iter()
-                    .any(|decision| decision["id"] == *id && decision["superseded_by"].is_null())
-            })
-        })
-    }) {
-        return Err(Error::Invalid("supersedes names an inapplicable decision"));
-    }
-    let closed = inputs["state"]["closed"] == true;
-    let kind = reply["kind"].as_str().unwrap();
-    if (kind == "restart" && inputs["state"]["restartable"] != true)
-        || (closed && !matches!(kind, "complaint" | "remark" | "unsure" | "restart"))
-        || (!closed && kind == "complaint")
-    {
-        return Err(Error::Invalid(
-            "classification does not apply to request state",
-        ));
-    }
-    if kind == "answer" {
-        let question = &inputs["state"]["open_question"];
-        if question.is_null()
-            || reply["question_id"] != question["id"]
-            || (reply["answer"] != "unclear"
-                && !question["answers"]
-                    .as_array()
-                    .is_some_and(|a| a.contains(&reply["answer"])))
-            || (reply["answer"] == "add_credit" && reply["amount"].as_u64().is_none())
-        {
-            return Err(Error::Invalid(
-                "classifier answer does not name its offered question",
-            ));
-        }
-    }
-    if (kind == "change_request" || reply["answer"] == "change_request")
-        && reply["new_text"].as_str().unwrap().trim().is_empty()
-    {
-        return Err(Error::Invalid("changed request text is empty"));
-    }
-    Ok(())
 }
+
+pub(crate) use crate::classifier::validate as validate_classification;
 
 pub(super) fn validate_forecast_settings(reply: &Value, settings: &Value) -> Result<()> {
     if let Some(forecast) = reply.get("forecast") {
@@ -472,7 +395,7 @@ mod classifier_tests {
 
     #[test]
     fn unsure_is_one_nonempty_line_of_at_most_300_characters() {
-        let inputs = json!({"state": {"closed": false}});
+        let inputs = json!({"comment": {"author":"owner", "body":"unsure"}, "state": {"phase":"Making", "closed": false}});
         validate_classification(
             &inputs,
             &json!({"kind": "unsure", "question": "é".repeat(300)}),

@@ -574,7 +574,6 @@ fn main() {
     }
     if env::args().nth(1).as_deref() == Some("--real-worker-contracts") {
         real_writer::run("multiline");
-        real_writer::classifier_contract();
         return;
     }
     if let Some(mode) = env::args()
@@ -618,7 +617,7 @@ fn main() {
     } else {
         [
             6, 11, 6, 1, 1, 1, 1, 1, 7, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
         ]
         .to_vec()
     };
@@ -626,9 +625,9 @@ fn main() {
     // Intake regressions share the vocabulary group and emit status lines, not
     // timing markers. The group weight includes its measured post-marker tail.
     let seconds = [
-        205, 87, 41, 23, 59, 7, 4, 8, 47, 10, 1, 6, 2, 95, 3, 23, 163, 11, 142, 16, 111, 114, 59,
-        166, 98, 141, 41, 222, 61, 7, 7, 104, 45, 63, 1, 8, 6, 76, 59, 28, 42, 3, 49, 7, 35, 14,
-        37, 16, 9, 64, 39, 54, 56, 12, 41, 5, 66, 38,
+        205, 87, 41, 23, 59, 7, 4, 8, 47, 1, 6, 2, 95, 3, 23, 163, 11, 142, 16, 111, 114, 59, 166,
+        98, 141, 41, 222, 61, 7, 7, 104, 45, 63, 1, 8, 6, 76, 59, 28, 42, 3, 49, 7, 35, 14, 37, 16,
+        9, 64, 39, 54, 56, 12, 41, 5, 66, 38,
     ];
     // Successful main notice receipt 50fdb6d4 and completed eight- and sixteen-shard receipts.
     let notice_seconds = [
@@ -722,7 +721,7 @@ fn main() {
         database.stop();
         return;
     }
-    if args.get(1).is_some_and(|arg| arg == "--startup-ack") {
+    if args.iter().any(|arg| arg == "--startup-ack") {
         startup_ack::run(&mut database);
         database.stop();
         return;
@@ -804,9 +803,6 @@ fn main() {
     });
     case!({
         real_writer::all();
-    });
-    case!({
-        real_writer::classifier_contract();
     });
     case!({
         writer_checks();
@@ -952,7 +948,7 @@ fn main() {
         shard.finish("GitHub integration");
         return;
     }
-    let scenario_count = 202;
+    let scenario_count = 201;
     println!(
         "{scenario_count} GitHub integration scenarios passed; no skips; no live GitHub calls"
     );

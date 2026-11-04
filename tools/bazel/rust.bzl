@@ -14,6 +14,7 @@ load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 load("//tools/bazel:nonhermetic.bzl", "nonhermetic")
 load("//tools/bazel:python.bzl", "tl3_py_test")
 load("//tools/bazel:test_sizing.bzl", "test_size")
+load("//tools/bazel:verus.bzl", "verus_proofs")
 
 # Cargo tests read env!("CARGO_MANIFEST_DIR") and some require it absolute.
 # rust_runner.py points this fixed path at the test's runfiles. Each test needs
@@ -49,7 +50,7 @@ _SCENARIO_SHARDS = {
     "tl3-controller/mergify": 50,
     "tl3-controller/publishing": 38,
     "tl3-controller/simulation": 16,
-    "tl3-controller/workers": 8,
+    "tl3-controller/workers": 32,
 }
 
 # rust_runner.py splits these libtest binaries by the measured test times in
@@ -57,6 +58,7 @@ _SCENARIO_SHARDS = {
 # one 249-324 s action.
 _LIBTEST_SHARDS = {
     "tl3-controller/tl3_controller": 8,
+    "tl3-controller/redaction_generated": 8,
 }
 
 # Inputs read by controller tests, rather than by the controller library.
@@ -71,6 +73,9 @@ _CONTROLLER_TEST_COMPILE_DATA = {
 }
 # Only these scenarios execute tl3_workers. Its imports include tl3_harness.
 _CONTROLLER_WORKERS = [
+    "test_test_redaction_adapter",
+    "test_test_redaction_generated",
+    "test_test_redaction_parity",
     "lib_test_tl3_controller",
     "test_test_github-flow",
     "test_test_publishing",
@@ -78,15 +83,23 @@ _CONTROLLER_WORKERS = [
     "test_test_writer_references",
 ]
 _CONTROLLER_BINARIES = {
+    "test_test_worker_supervisor": [":tl3-worker-supervisor"],
+    "test_test_workers": [":tl3"],
     "test_test_console_commands": [":tl3d"],
+    "test_test_redaction_policy": [":tl3"],
     "test_test_github-flow": [":tl3d"],
     # Both groups compile github.rs, including its env!("CARGO_BIN_EXE_tl3d").
     "test_test_github-notices": [":tl3d"],
     "test_test_simulation": [":tl3", ":tl3d"],
+    "test_test_replay_store": [":tl3"],
 }
 # These tests stage the trusted harness into a sealed check action, even when
 # the queue fixture supplies the result instead of executing that action.
 _CONTROLLER_RUNTIME = {
+    "test_test_redaction_policy": ["//workers/src:redaction_contract"],
+    "test_test_redaction_adapter": ["//workers/tests:redaction_branches"],
+    "test_test_redaction_generated": ["//workers/tests:redaction_generated"],
+    "test_test_redaction_parity": ["//workers/tests:redaction_branches"],
     "lib_test_tl3_controller": [
         "//harness:project_files",
         "//workers/tests:worker_process",
@@ -94,6 +107,8 @@ _CONTROLLER_RUNTIME = {
         "//workers/src:prompts",
         "//workers/tests:fixtures",
     ],
+    # The shared harness check-report vectors (#734) the typed contracts parse (#741).
+    "test_test_contracts": ["//harness:project_files"],
     "test_test_hindsight": ["//workers/src:role_files"],
     "test_test_prismabuild": ["//harness/src/tl3_harness", "//crates/prismabuild:sources"],
     "test_test_publishing": ["//harness/src/tl3_harness", "//crates/prismabuild:sources"],
@@ -109,6 +124,9 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
+    "tests/redaction_parity.rs": ["tests/redaction_support/**"],
+    "tests/redaction_generated.rs": ["tests/redaction_support/**"],
+    "tests/worker_supervisor/main.rs": ["tests/worker_supervisor/legacy.py", "tests/worker_supervisor/restart.rs"],
     "tests/console_commands.rs": ["tests/fixtures/decisions/**", "tests/support/scenario.rs"],
     "tests/hindsight.rs": ["README.md"],
     "tests/fail_fast.rs": ["tests/support/**"],
@@ -145,6 +163,11 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     package = native.package_name()
     controller = package == "crates/controller"
     binaries = _CONTROLLER_BINARIES.get(name, []) if controller else []
+    # Every controller test can reach the adapter, including through shared fixtures.
+    if controller and ":tl3" not in binaries:
+        binaries = binaries + [":tl3"]
+    if controller and ":tl3-worker-supervisor" not in binaries:
+        binaries = binaries + [":tl3-worker-supervisor"]
     workers = controller and name in _CONTROLLER_WORKERS
     env = {"CARGO_MANIFEST_DIR": WORKSPACE + "/" + package}
     for binary in binaries:
@@ -180,10 +203,12 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
             "$(rootpath //tools/bazel:worker_python)" if workers else "-",
         ] + gate_args,
         data = depset(
-            [":" + name + "_binary", "//tools/ci:rust-test-budget.json", "//tools/bazel:libtest-shards.json"] + binaries +
+            [":" + name + "_binary", "//tools/ci:rust-test-budget.json", "//tools/bazel:libtest-shards.json"] +
+            (["//tools/ci:controller_test_runner.sh"] if controller else []) + binaries +
             kwargs.get("compile_data", []) + kwargs.get("srcs", []) + runtime + runtime_data,
         ).to_list() + postgres,
         deps = ["//tools/ci:rust_gate"],
+        env = {"TL3_BINARY": WORKSPACE + "/$(rootpath :tl3)"} if controller else {},
         tags = ["rust"] + tags,
         exec_properties = exec_properties,
         size = "large",
@@ -201,6 +226,7 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
     declared_tests holds the [[test]] entries that do not.
     """
     directory = native.package_name()
+    verus_proofs()
     native.exports_files(["Cargo.toml", "BUILD.bazel"])
     native.filegroup(
         name = "sources",

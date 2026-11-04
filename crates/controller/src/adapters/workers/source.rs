@@ -38,6 +38,7 @@ pub struct WorkerOutputSource {
     root: PathBuf,
     settings: tl3_config::Store,
     active: ActiveRuns,
+    memory: Option<crate::memory::FeedExit>,
     inotify: Option<OwnedFd>,
     root_watch: i32,
     overflows: u64,
@@ -82,6 +83,7 @@ impl WorkerOutputSource {
             root,
             settings,
             active,
+            memory: None,
             inotify: None,
             root_watch: -1,
             overflows: 0,
@@ -98,6 +100,11 @@ impl WorkerOutputSource {
     pub(super) fn with_flusher(mut self, launcher: Vec<String>, python: PathBuf) -> Self {
         self.launcher = launcher;
         self.python = python;
+        self
+    }
+
+    pub(super) fn with_memory(mut self, memory: crate::memory::FeedExit) -> Self {
+        self.memory = Some(memory);
         self
     }
 
@@ -219,6 +226,9 @@ impl WorkerOutputSource {
 
     /// Nonblocking event drain for simulations which drive Controller directly.
     pub fn poll_once(&mut self, store: &mut Store, sender: &Sender<Input>) -> Result<()> {
+        if let Some(memory) = &self.memory {
+            memory.supervise(sender);
+        }
         at("poll_once", self.poll_once_inner(store, sender))
     }
 
@@ -586,10 +596,22 @@ pub(super) fn parse_reply(
         if progress(&value) {
             continue;
         }
-        if value.as_object().is_some_and(|o| o.len() == 3)
+        // #759: a postmortem's grade judges run on the case file's grade
+        // model, and only that model may be named as the one to charge.
+        let charged = match value.get("model") {
+            None => Some(None),
+            Some(model) if delivery.is_postmortem() && *model == inputs["grade_model"] => {
+                model.as_str().map(|model| Some(model.to_owned()))
+            }
+            Some(_) => None,
+        };
+        if value
+            .as_object()
+            .is_some_and(|o| o.len() == 3 + usize::from(value.get("model").is_some()))
             && value["event"] == "quota"
             && value["role"] == role
         {
+            let model = charged.ok_or(Error::Invalid("invalid quota model"))?;
             let reset_ms = value["reset_ms"]
                 .as_u64()
                 .filter(|v| *v > 0)
@@ -601,7 +623,7 @@ pub(super) fn parse_reply(
             return Ok(Observation::Quota {
                 key: delivery.key.clone(),
                 reset_ms,
-                model: None,
+                model,
             });
         }
         if !value.as_object().is_some_and(|o| o.len() == 3)
