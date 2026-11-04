@@ -2480,7 +2480,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         final(w).fail_fast == old(w).fail_fast,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
-] proof [reveal(reply_bounds);] {
+] proof [reveal(reply_bounds); reveal(footprint::ordered_table);] {
     let n = &w.nodes[i];
     if n.phase.is_stopping() {
         // The run or job ended on its own, so teardown needn't stop it.
@@ -2541,7 +2541,7 @@ fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         final(w).fail_fast == old(w).fail_fast,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
-] proof [reveal(retry_bounds);] {
+] proof [reveal(retry_bounds); reveal(footprint::ordered_table);] {
     if fits && !files.is_empty() && w.nodes[i].credit.can_spend(1) {
         let footprint = w.union_footprints(w.nodes[i].footprint, files);
         let m = &mut w.nodes[i];

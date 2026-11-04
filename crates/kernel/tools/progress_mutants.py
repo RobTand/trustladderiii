@@ -77,12 +77,35 @@ CASES = [
     ('prerequisite_query', 'dependencies.rs',
      'd.rejected || d.status != DependencyStatus::Delivered',
      'd.rejected && d.status != DependencyStatus::Delivered', 'dependencies_delivered'),
-
+    ('reply_ingest_budget', 'lib.rs', 'm.credit.start = size as u32 + RESERVE;',
+     'm.credit.start = size as u32 + RESERVE + 259;', 'reply_ingest'),
+    ('reply_plan_budget', 'lib.rs', 'set_phase(m, Phase::Ready(Resume::Making));',
+     'set_phase(m, Phase::Ready(Resume::Making)); m.generation += 1;', 'reply_plan'),
+    ('reply_work_budget', 'lib.rs', 'm.credit.spend(1);',
+     'm.credit.spend(2);', 'reply_work'),
+    ('fact_budget', 'lib.rs', 'set_phase(m, Phase::Ready(Resume::Publishing));',
+     'set_phase(m, Phase::Ready(Resume::Publishing)); m.generation += 1;', 'fact_transition'),
+    ('late_merge_budget', 'lib.rs', 'merge_credit(m);',
+     'merge_credit(m); m.credit.earned += 1;', 'pr_merged'),
+    ('file_collection', 'footprint.rs', 'files.push(FileId(bit));',
+     'files.push(FileId(0));', 'collect_files'),
+    ('file_table_frame', 'footprint.rs', 'self.file_sets.push(files);',
+     'self.file_sets.push(files); self.next_ticket += 1;', 'intern_sorted_files'),
+    ('file_union_frame', 'footprint.rs', 'self.intern_sorted_files(files)',
+     '{ self.next_question += 1; self.intern_sorted_files(files) }', 'union_footprints'),
+    ('dependency_visit_fuel', 'dependencies.rs',
+     '+ if seen[end as int - 1] { 0nat } else { 1nat }', '+ 0nat'),
+    ('dependency_traversal_fuel', 'dependencies.rs', 'seen |= mask;',
+     'seen ^= mask;', 'dependency_path'),
+    ('dependency_removal_frame', 'dependencies.rs', 'self.dependencies.truncate(write);',
+     'self.dependencies.truncate(write); self.next_ticket += 1;', 'remove_dependency'),
+    ('dependency_fact_frame', 'dependencies.rs', 'self.withhold_dependency_credit(i);',
+     'self.withhold_dependency_credit(i); self.next_question += 1;', 'dependency_fact'),
 ]
 
 
 def verify(binary, sysroot, root, selected=None):
-    command = [str(binary), '--num-threads', '1', '--rlimit', '30',
+    command = [str(binary), '--num-threads', '1', '--rlimit', '30', '-V', 'spinoff-all',
                '--sysroot', str(sysroot), str(root), '--edition', '2024']
     if selected:
         module, function = selected
@@ -91,6 +114,12 @@ def verify(binary, sysroot, root, selected=None):
             'ticket_step_budget': 'World',
             'counter_exhaustion': 'World',
             'dependencies_delivered': 'World',
+            'collect_files': 'World',
+            'intern_sorted_files': 'World',
+            'union_footprints': 'World',
+            'dependency_path': 'World',
+            'remove_dependency': 'World',
+            'dependency_fact': 'World',
         }.get(function)
         target = f'{owner}::{function}' if owner else function
         command.extend(['--verify-only-module', module, '--verify-function', target])
@@ -139,7 +168,8 @@ def main():
             selected = None
             if scope and not args.full_mutants:
                 module = {'ranks.rs': 'kernel::ranks',
-                          'dependencies.rs': 'kernel::dependencies'}.get(filename, 'kernel')
+                          'dependencies.rs': 'kernel::dependencies',
+                          'footprint.rs': 'kernel::footprint'}.get(filename, 'kernel')
                 selected = (module, scope[0])
             result = verify(args.verifier, args.sysroot, copy / 'verus/progress.rs', selected)
             print(f'CASE {name} source_sha256={digest} target={selected} '
