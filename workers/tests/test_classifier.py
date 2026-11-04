@@ -148,3 +148,25 @@ def test_reply_shim_duplicate_keys_are_infrastructure_failure(fake_tl3, response
         "failure_message": "reply validator returned invalid output",
     }
     assert "private-validator-canary" not in str(caught.value)
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_reply_shim_nonstandard_constants_are_infrastructure_failure(fake_tl3, constant):
+    response = f'{{"violations":[],"metadata":[{{"private-validator-canary":{constant}}}]}}'
+    fake_tl3(f"print({response!r})\n")
+    asked = []
+    history = []
+
+    def ask():
+        asked.append(True)
+        return '{"kind":"remark"}'
+
+    with pytest.raises(reply_check.ReplyCheckInfrastructureError) as caught:
+        repaired(TurnControl(), history, ask, lambda _: check_reply({}, {"kind": "remark"}))
+    assert asked == [True]
+    assert history == []
+    assert failure_tags(caught.value) == {
+        "failure_class": "ReplyCheckInfrastructureError",
+        "failure_message": "reply validator returned invalid output",
+    }
+    assert "private-validator-canary" not in str(caught.value)
