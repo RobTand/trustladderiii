@@ -261,3 +261,54 @@ fn every_policy_expression_compiles_with_python() {
     assert_eq!(required.len(), 90);
     assert_eq!(compiled, required);
 }
+
+/// #788: accepted tokens retain literal escapes, scoped flags, captures and class membership.
+#[test]
+fn supported_python_tokens_keep_their_meaning() {
+    for (pattern, text) in [
+        (r"\x69\u0131\U00000130", "iıİ"),
+        (r"a\vb", "a\u{b}b"),
+        (r"a\fb", "a\u{c}b"),
+        (r"\\N\{literal\}", r"\N{literal}"),
+        (r"(?im-s:a+)", "AAA"),
+        (r"(?P<name>ab)(?P=name)", "abab"),
+        (r"[\]\-]", "-"),
+    ] {
+        let translated = compatibility::translate(pattern, &classes()).unwrap();
+        let regex = Regex::new(&format!(r"\A(?:{translated})\z")).unwrap();
+        assert!(regex.is_match(text).unwrap(), "{pattern:?} {text:?}");
+    }
+}
+
+/// #788: extensions outside the supported subset must fail at the lexical boundary.
+#[test]
+fn unsupported_tokens_are_named_before_backend_parsing() {
+    for pattern in [
+        r"\h(",
+        r"\H",
+        r"\p{Greek}",
+        r"\R",
+        r"\0",
+        r"\123",
+        r"\<",
+        r"\>",
+        r"(?x:ab)",
+        r"(?#comment)a",
+        r"(?'name'a)",
+        r"(?<name>a)",
+        r"(?i-i:a)",
+        r"(?-i)a",
+        r"[\A]",
+        r"\u{69}",
+        r"\U0000D800",
+    ] {
+        let error = compatibility::translate(pattern, &classes()).unwrap_err();
+        assert!(
+            error.starts_with("unsupported Python regex grammar at byte "),
+            "{pattern}: {error}"
+        );
+        if pattern == r"\h(" {
+            assert!(error.contains("escape \\h"));
+        }
+    }
+}
