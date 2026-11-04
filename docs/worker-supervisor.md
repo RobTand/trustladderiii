@@ -31,65 +31,48 @@ be installed with the controller binaries before new attempts launch.
 The old executable is frozen under `tests/worker_supervisor/legacy.py` solely as
 a compatibility fixture. No production path embeds or launches it.
 
-## P12 and S4 model
+## Trace conformance
 
-`tests/worker_supervisor/model.rs` models two generations, each with two competing
-supervisors and one worker. The finite bounds include one controller crash and
-restart, one supervisor loss at any active stage, and one old-generation replay.
-These bounds exercise each identity relationship and both winners of a duplicate
-claim. They do not establish an unbounded proof over arbitrary crashes or runs.
+`//crates/controller:test_test_worker_supervisor` runs the legacy byte fixture,
+cancellation checks, and one real-trace conformance test. The trace starts a
+supervisor, disconnects the controller handshake, races a duplicate, waits for
+exit, and starts a new generation. It runs with a Rust owner whose executable is
+unlinked before fork, and with a live legacy Python owner and a Rust contender.
+FIFO EOF and inotify order the test without sleep-based synchronization.
 
-The checker exhausts the reachable graph without a depth or state-count cutoff.
-Safety properties require one exit writer per claim, at most one accepted outcome
-per generation, and an exit only after reaping. Completion requires both runs to
-be inspected and every launched child to be reaped. Witnesses require a lost exit,
-a controller crash overlapping worker exit, and two successful generations.
+The test replays the real attempt's claim, process, start, and exit records into
+a fresh directory. A duplicate must preserve every recorded byte and must not
+start another worker. Removing the replayed exit record must leave it absent,
+and replaying that older attempt must preserve the newer attempt's exit bytes.
+The compatibility fixture also checks signal status and reaping through the
+real helper. These tests exercise concrete traces; they are not an exhaustive
+protocol proof.
 
-A missing exit is absence, as in the existing controller. It is never synthesized
-as success. Reconciliation can start another attempt using the existing policy.
-Exactly-once publication means a successful owner publishes one exit, duplicates
-publish none, and a lost publication remains absent. It does not mean the original
-worker's exit code can be recovered after that record is lost.
+Existing worker scenarios remain gated by
+`//crates/controller:test_test_workers`. Their assertions remain intact. The
+late-launcher scenario invokes the Rust helper instead of staging the production
+Python source.
 
-The model assumes atomic filesystem link and rename, successful fsync durability,
-and eventual OS scheduling and child exit. After an owner dies, Linux adopts and
-reaps its child. `ReapOrphan` models that OS guarantee, rather than claiming the
-supervisor can waitpid a child after it dies. Disk corruption, machine loss, PID
-namespace changes, and unbounded worker execution are outside the model.
+## Verus follow-up
 
-The conformance test observes real claim and start files, disconnects the
-controller handshake, races a duplicate helper, waits for exit, and then starts a
-new generation. It replays those events through the model. It runs once with a
-Rust owner whose executable is unlinked before fork, and once with a live legacy
-Python owner and a Rust contender. FIFO EOF and inotify order the test without
-sleep-based synchronization.
+The protocol proof moves to a separate Verus follow-up under #730. No protocol
+model-checking framework or proof dependency ships in this change. The follow-up
+needs to check these properties under worker exit racing controller restart,
+duplicate supervisors, lost exit records, and two contenders for one claim:
 
-The gated mutant check permits a rejected supervisor to publish an exit. It must
-produce a counterexample. The migration's red commit runs the exhaustive property
-check with this mutant enabled and runs the compatibility fixture against a stub.
-
-## Transition map
-
-All production paths below are relative to `crates/controller/`.
-
-| Model action | Production operation |
+| Property | Production transitions |
 | --- | --- |
-| `Claim` | `src/bin/tl3-worker-supervisor.rs:43`, exclusive `claim.json` link at line 124 |
-| `Spawn` | `src/bin/tl3-worker-supervisor.rs:58`, fork the pinned helper image |
-| `Start` | `src/bin/tl3-worker-supervisor.rs:26`, exclusive `process.json` link before exec at line 41 |
-| `Exit` | OS worker exit observed by `wait` at `src/bin/tl3-worker-supervisor.rs:65` |
-| `Reap` | `src/bin/tl3-worker-supervisor.rs:65`, `Child::wait` reaps before output fsync |
-| `ReapOrphan` | Linux child adoption after owner loss, an external assumption |
-| `Publish` | `src/bin/tl3-worker-supervisor.rs:71`, exit publication through rename at line 130 |
-| `Lose` | Process loss between operations in `src/bin/tl3-worker-supervisor.rs:43` through line 71 |
-| `Inspect` | `src/adapters/workers.rs:1441`, cancellation links, identity checks, and exit read |
-| `CrashController` | Loss of the controller while its independently scoped supervisor keeps running, `src/adapters/workers.rs:1111` |
-| `RestartController` | Reconciliation through `src/adapters/workers.rs:1428` |
-| `Advance` | New delivery generation and separate attempt directory, `src/adapters/workers.rs:1073` |
-| `Replay` | Generation refusal in `src/lib.rs:3072` and the kernel's existing reply-generation guard |
+| At most one supervisor owns an attempt, and a rejected contender starts no worker and publishes no outcome | `crates/controller/src/bin/tl3-worker-supervisor.rs:43`, exclusive claim; `:124`, atomic link; `:58`, child spawn; `:71`, exit publication |
+| At most one worker executes for an attempt, including cancellation before its wrapper starts | `crates/controller/src/bin/tl3-worker-supervisor.rs:26`, process claim; `:41`, exec; `crates/controller/src/adapters/workers.rs:1444` and `:1449`, cancellation fences |
+| A surviving owner publishes exactly one exit after worker exit and reaping; duplicates cannot overwrite it | `crates/controller/src/bin/tl3-worker-supervisor.rs:65`, wait/reap; `:66`, output fsync; `:71`, exit publication; `:130`, rename |
+| A lost exit remains absence, never fabricated success; a live owner or worker prevents absence | `crates/controller/src/adapters/workers.rs:1445`, liveness checks; `:1453`, exit read and absent result |
+| Restart preserves the independently scoped owner and its recorded identity, including a worker exit during disconnection | `crates/controller/src/adapters/workers.rs:1114`, launcher setup; `:1428`, recorded reconciliation; `crates/controller/src/bin/tl3-worker-supervisor.rs:48`, handshake; `:65`, wait/reap |
+| An outcome is accepted at most once for its operation, and an older generation cannot affect a newer one | `crates/controller/src/adapters/workers.rs:1073`, attempt selection; `:1130`, pinned launch record; `crates/controller/src/lib.rs:3072`, reply-generation guard |
+| Every launched child is eventually reaped | `crates/controller/src/bin/tl3-worker-supervisor.rs:65`, owner wait; Linux adoption and reaping after owner death is an explicit external assumption |
 
-`//crates/controller:test_test_worker_supervisor` gates the model, mutant check,
-byte-compatibility fixture, cancellation check, and real-trace conformance test.
-Existing worker scenarios remain gated by `//crates/controller:test_test_workers`.
-No test assertions are pruned in this migration. The late-launcher scenario now
-invokes the Rust helper instead of staging the production Python source.
+The proof must state atomic link/rename, successful fsync durability, eventual
+scheduling and worker exit, and Linux orphan reaping as assumptions. Disk
+corruption, machine loss, PID namespace changes, and unbounded worker execution
+need explicit treatment or exclusions. Exactly-once publication cannot recover a
+worker's original exit code after its owner dies without publishing it. The
+existing controller may reconcile that absence and retry under its current rules.
