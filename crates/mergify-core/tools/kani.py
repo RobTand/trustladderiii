@@ -152,7 +152,7 @@ def manifest(names):
         "KANI_JOBS": "1", "OMP_NUM_THREADS": "1", "RAYON_NUM_THREADS": "1",
     }
     rows = [{"cwd": str(CRATE), "argv": ["/usr/bin/python3", "tools/kani.py", "prove", name],
-             "cpus": 1, "demand": {"mem_gb": 4}, "anywhere": True, "env": env,
+             "cpus": 1, "demand": {"mem_gb": 2}, "anywhere": True, "env": env,
              "priority": -10, "timeout_s": 1800} for name in names]
     print(json.dumps(rows, indent=2))
     return 0
