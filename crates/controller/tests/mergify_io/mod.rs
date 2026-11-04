@@ -197,7 +197,7 @@ pub mod snapshot {
     pub struct World {
         pub nodes: Vec<Node>,
     }
-    pub fn decode(s: &Snapshot) -> Result<World> {
+    pub(crate) fn decode(s: &Snapshot) -> Result<World> {
         Ok(World {
             nodes: vec![Node {
                 phase: if s.rows[0].value["inactive"] == true {
@@ -375,7 +375,7 @@ mod properties {
         let mut runner = TestRunner::new(Config {
             cases: CASES,
             max_shrink_iters: 2048,
-            rng_seed: RngSeed::Fixed(0x751_760_2026),
+            rng_seed: RngSeed::Fixed(0x0075_1760_2026),
             failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/tests/mergify_io/proptest-regressions.txt"
@@ -424,7 +424,7 @@ mod properties {
         let mut runner = TestRunner::new(Config {
             cases: CASES,
             max_shrink_iters: 2048,
-            rng_seed: RngSeed::Fixed(0x751_760_2026),
+            rng_seed: RngSeed::Fixed(0x0075_1760_2026),
             failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/tests/mergify_io/proptest-regressions.txt"
