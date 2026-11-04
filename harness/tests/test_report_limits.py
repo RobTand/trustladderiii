@@ -1,4 +1,3 @@
-import faulthandler
 import json
 from pathlib import Path
 import sys
@@ -17,7 +16,7 @@ class Progress:
         pass
 
 
-def test_collection_above_64_kib_has_a_normal_report(tmp_path, monkeypatch, capfd):
+def test_collection_above_64_kib_has_a_normal_report(tmp_path, monkeypatch):
     (tmp_path / 'test_many.py').write_text(
         'import pytest\n@pytest.mark.parametrize("value", range(1000), '
         'ids=lambda value: "case_" + str(value) + "x" * 80)\n'
@@ -25,13 +24,10 @@ def test_collection_above_64_kib_has_a_normal_report(tmp_path, monkeypatch, capf
     monkeypatch.setattr(execution, 'container_command', lambda tree, container, tests: [
         sys.executable, '-I', '-B', str(RUNNER), json.dumps(tests), str(tree)])
     report = tmp_path / 'report.jsonl'
-    # Disable capture in the test phase so Bazel retains stall stacks.
-    with capfd.disabled():
-        faulthandler.dump_traceback_later(5, repeat=True)
-        try:
-            outcomes = execution.run_tree(tmp_path, IMAGE, ('test_many.py::test_many',), report, Progress())
-        finally:
-            faulthandler.cancel_dump_traceback_later()
+    # This checks report framing, not crash durability. Remote fsync can stall
+    # on thousands of records; retain real journal writes and flushes here.
+    monkeypatch.setattr(execution.os, 'fsync', lambda descriptor: None)
+    outcomes = execution.run_tree(tmp_path, IMAGE, ('test_many.py::test_many',), report, Progress())
     assert outcomes == {'test_many.py::test_many': Outcome.PASSED}
     collection = next(line for line in report.read_bytes().splitlines()
                       if json.loads(line)['event'] == 'collection')
