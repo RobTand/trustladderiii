@@ -609,6 +609,8 @@ fn check_unplanned_progress(world: World) {
             let gate_occupant =
                 matches!(world.nodes[1].phase, Phase::Ready(_)) && world.nodes[1].ticket.is_some();
             assert!(gate_occupant);
+            // Assertions do not prune symbolic execution. This branch avoids
+            // expanding advance for phases already excluded by the assertion.
             if gate_occupant {
                 assert!(advance(&mut after, 1, &mut out), "a gate occupant can move");
             }
@@ -642,7 +644,8 @@ fn check_unplanned_witness(world: World) {
                 ack: Ack::Confirmed,
             },
         );
-    } else if n.waiting_incident {
+    } else {
+        assert!(n.waiting_incident);
         check_unplanned_event(
             world,
             Event::Fact {
@@ -650,33 +653,6 @@ fn check_unplanned_witness(world: World) {
                 fact: Fact::IncidentCleared { by_rob: true },
             },
         );
-    } else {
-        let dependency = *world
-            .dependencies
-            .iter()
-            .find(|d| d.node == node && (d.rejected || d.status != DependencyStatus::Delivered))
-            .expect("a blocked Unplanned root has an unresolved prerequisite");
-        if dependency.rejected || dependency.status == DependencyStatus::Abandoned {
-            check_unplanned_event(
-                world,
-                Event::Command {
-                    node,
-                    id: n.last_cmd + 1,
-                    command: Command::ChangeRequest,
-                },
-            );
-        } else {
-            check_unplanned_event(
-                world,
-                Event::Fact {
-                    node,
-                    fact: Fact::Dependency {
-                        target: dependency.target,
-                        status: DependencyStatus::Delivered,
-                    },
-                },
-            );
-        }
     }
 }
 

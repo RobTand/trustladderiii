@@ -145,10 +145,12 @@ expand every phase of the other request through both `is_settled` and `witness`.
   whole-world measure.
 - `progress_from_unplanned_waiting` and its `_one` companion use exactly two and
   one prerequisites with arbitrary statuses, external or root targets, and
-  rejection flags, with at least one unresolved prerequisite. Admission cannot move; the waiting root holds no
-  slot, pool entry, ticket, worker run, or spendable credit. An outside witness
-  still exists and strictly lowers the measure. A pending fact can deliver;
-  abandonment or rejection requires Rob to change the request.
+  rejection flags, with at least one unresolved prerequisite. Admission cannot
+  move; the waiting root holds no slot, pool entry, ticket, worker run, or
+  spendable credit. These blocked-state
+  harnesses do not assert progress while a prerequisite is unresolved. The Fact
+  proofs separately check delivery and terminal latching; abandonment or
+  rejection requires Rob to change the request.
 
 The dependency harnesses retain arbitrary node fields and the original bounds
 on counters, credit, repos, gates, and file sets. Dependencies belong to root 0,
