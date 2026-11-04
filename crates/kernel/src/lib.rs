@@ -3709,7 +3709,7 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
         final(w).fail_fast == old(w).fail_fast,
         final(w).file_sets@ == old(w).file_sets@,
         final(out).len <= old(out).len + 4,
-] {
+] proof [hide(node_checked);] {
     kernel_snapshot! { before_fact = *w }
     kernel_proof! {
         if fact_progress_input(*w, i as int, fact) { fact_witness_premises(*w, i as int, fact); }

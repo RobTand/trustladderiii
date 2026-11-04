@@ -132,7 +132,18 @@ pub(super) proof fn pending_ready(w: World, i: int, target: DependencyTarget)
     }
 }
 
-/// #771: the production key lookup selects the unique pending witness row.
+/// #771: expose only scalar validation facts to the mutation dispatcher.
+proof fn delivery_input_guards(w: World, i: int, target: DependencyTarget, status: DependencyStatus)
+    requires dependency_progress_input(w, i, target, status),
+    ensures status == DependencyStatus::Delivered, !(w.nodes@[i].phase is Closed),
+        target.number > 0,
+        match target.request { None => true, Some(node) => node.0 < w.nodes@.len()
+            && w.nodes@[node.0 as int].repo == w.nodes@[i].repo },
+{
+    reveal(dependency_progress_input);
+}
+
+/// #771: the production key lookup selects a pending witness row.
 proof fn pending_lookup(w: World, i: int, target: DependencyTarget, existing: Option<usize>)
     requires dependency_progress_input(w, i, target, DependencyStatus::Delivered),
         match existing {
@@ -663,14 +674,7 @@ impl World {
         kernel_snapshot! { before_dependency = *self }
         kernel_proof! {
             if dependency_progress_input(*self, i as int, target, status) {
-                reveal(dependency_progress_input);
-                assert(status == DependencyStatus::Delivered);
-                let k = choose|k: int| 0 <= k < self.dependencies@.len()
-                    && self.dependencies@[k].node == NodeId(i as u64) && self.dependencies@[k].target == target
-                    && !self.dependencies@[k].rejected && self.dependencies@[k].status == DependencyStatus::Pending;
-                assert(target.number > 0);
-                assert(match target.request { None => true, Some(node) => node.0 < self.nodes@.len()
-                    && self.nodes@[node.0 as int].repo == self.nodes@[i as int].repo });
+                delivery_input_guards(*self, i as int, target, status);
             }
         }
         if target.number == 0 {
@@ -720,7 +724,6 @@ impl World {
         self.record_dependency(i, existing, dependency, out);
         kernel_proof! {
             if dependency_progress_input(before_dependency@, i as int, target, status) {
-                reveal(dependency_progress_input);
                 delivered_record_progress(before_dependency@, *self, existing.unwrap() as int);
             }
         }
