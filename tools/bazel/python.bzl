@@ -94,7 +94,7 @@ def tl3_py_test(name, srcs, main = None, deps = [], data = [], **kwargs):
         srcs = srcs + ["//tools/bazel:python_runner.py", "//tools/bazel:runtime.py"],
         args = [package + "/" + module],
         deps = _unique_labels(deps + _PACKAGE_DEPS.get(package, []) + ["//tools/ci:child_env", requirement("pytest")]),
-        data = data + (["//crates/config:sources"] if package == "workers/tests" and name == "test_tokenizer_parity_oracle" else []) + _PACKAGE_DATA.get(package, []) + native.glob(
+        data = data + (["//crates/config:tools/tokenizer_oracle.py", "//crates/config:tests/tokenizer/oracle.json"] if package == "workers/tests" and name == "test_tokenizer_parity_oracle" else []) + _PACKAGE_DATA.get(package, []) + native.glob(
             ["**"],
             exclude = ["BUILD.bazel", "**/__pycache__/**"],
             allow_empty = True,
