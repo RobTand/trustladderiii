@@ -159,3 +159,54 @@ print(json.dumps({'event':'reply','role':'writer','reply':{'text':'The requested
         WriterReply::Text(_)
     ));
 }
+
+/// Encodes #785: the losing daemon must leave the owner's staging and harness
+/// publication intact, through the same registration/open path used by tl3d.
+#[test]
+fn second_daemon_cannot_destroy_the_owners_staged_inputs() {
+    use tl3_controller::{Bootstrap, Controller};
+    use tl3_store::Store;
+
+    let root = tempfile::tempdir().unwrap();
+    let mut config = config(root.path());
+    let mut database = support::Database::start();
+    config.store = database.create("startup_ownership");
+    // Sources are dropped after registration, releasing the webhook listener.
+    // Ownership must reject the contender. No upstream is contacted.
+    let start = || {
+        let registration = production::register(&config)?;
+        let controller = Controller::open(
+            Store::open(&config.store)?,
+            registration.adapters,
+            Bootstrap::from_config(&config)?,
+        )?;
+        Ok::<_, tl3_controller::Error>(controller)
+    };
+    let owner = start().unwrap();
+    let records = config.workers.runs.join(".controller/prismabuild");
+    let paths = [
+        records.join("active.input/harness/check.py"),
+        records.join("0/active.input/harness/check.py"),
+        records
+            .with_file_name("prismabuild-harness")
+            .join("owner/check.py"),
+    ];
+    for path in &paths {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, b"owner's staged bytes").unwrap();
+    }
+    let loser = start();
+    for path in &paths {
+        assert_eq!(
+            fs::read(path).ok().as_deref(),
+            Some(b"owner's staged bytes".as_slice()),
+            "the losing daemon damaged {}",
+            path.display()
+        );
+    }
+    assert!(
+        matches!(loser, Err(ref error) if error.to_string().contains("controller ownership is still held"))
+    );
+    drop(owner);
+    database.stop();
+}
