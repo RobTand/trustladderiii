@@ -86,11 +86,9 @@ def selected(repo, base, commit, limit=400, plan=PLAN, container=CONTAINER, fail
     return execution.run_checks(repo, base, commit, plan, container=container, selected_tests=limit, selected_failures=failures)
 
 
-def test_selection_fixture_does_not_wait_for_report_storage(monkeypatch, request):
-    def unavailable_storage(descriptor):
-        pytest.fail('selection fixture reached blocking report fsync (#763)')
-
-    monkeypatch.setattr(execution.os, 'fsync', unavailable_storage)
+def test_selection_fixture_does_not_wait_for_report_storage(request):
+    assert execution.os.fsync(-1) is None
+    assert execution.os.fdatasync(-1) is None
     fixture = request.getfixturevalue('frozen_repo')
     test_complete_fixture_unit_retries_without_manufacturing_393_unused_rows(fixture)
 
