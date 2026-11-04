@@ -310,3 +310,32 @@ def test_change_request_supersedes_only_applicable_decisions(request_doc):
     request_doc["inputs"]["decision_context"]["decisions"][0]["superseded_by"] = "a later answer"
     with pytest.raises(ValueError, match="not applicable"):
         check_reply(request_doc["inputs"], reply)
+
+
+@pytest.fixture(autouse=True)
+def classifier_cli_parity(monkeypatch):
+    """Freeze every existing case before removing the Python oracle."""
+    from dataclasses import replace
+    from pathlib import Path
+    import subprocess
+    from tl3_workers.roles import classifier
+    original = classifier.check_reply
+
+    def parity(inputs, reply):
+        expected = []
+        try:
+            original(inputs, reply)
+        except ValueError as error:
+            expected = [str(error)]
+        vector = {"inputs": inputs, "reply": reply, "violations": expected}
+        print("CLASSIFIER_VECTOR " + json.dumps(vector, ensure_ascii=True))
+        binary = Path("crates/controller/tl3").resolve()
+        result = subprocess.run([str(binary), "check-reply", "classifier"],
+                                input=json.dumps({"inputs": inputs, "reply": reply}),
+                                text=True, capture_output=True, check=True)
+        assert json.loads(result.stdout) == {"violations": expected}
+        if expected:
+            raise ValueError(expected[0])
+
+    monkeypatch.setattr(classifier, "check_reply", parity)
+    monkeypatch.setitem(ROLES, "classifier", replace(classifier.ROLE, check_reply=parity))

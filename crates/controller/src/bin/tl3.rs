@@ -1,4 +1,8 @@
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("check-reply") {
+        println!("{{\"violations\":[\"classifier validator not implemented\"]}}");
+        return;
+    }
     let result = if std::env::args().nth(1).as_deref() == Some("memory") {
         tl3_controller::cli::memory()
     } else {
