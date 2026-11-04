@@ -1,7 +1,5 @@
 use stateright::{Model, Property};
 
-// The red commit deliberately bypasses the read-before-retry path in lib.rs.
-const CONSULT_LEDGER_BEFORE_RETRY: bool = false;
 pub const MAX_LOSSES: u8 = 2;
 pub const MAX_DUPLICATES: u8 = 1;
 
@@ -237,13 +235,6 @@ impl Model for EffectModel {
             MarkUncertain(_) => effect.phase = Phase::Uncertain,
             ReadRecord(_) => {
                 if effect.recorded {
-                    if !CONSULT_LEDGER_BEFORE_RETRY
-                        && effect.contract == Contract::Once
-                        && effect.epoch >= next.fence
-                    {
-                        // Mutant: POST again instead of reading the existing key.
-                        effect.mutations += 1;
-                    }
                     if effect.contract == Contract::Message {
                         effect.copies = 1;
                         next.reconciled = Some(key);
