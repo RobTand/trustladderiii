@@ -992,3 +992,15 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_pb_tests_group_limits",
+    srcs = ["test_pb_tests_group_limits.py"],
+    deps = [
+        ":conftest",
+        ":worker_process",
+        "//harness/src/tl3_harness",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
