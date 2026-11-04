@@ -2,6 +2,7 @@ use serde_json::Value;
 use std::{
     fs,
     io::{BufRead, BufReader, Read},
+    os::{fd::AsRawFd, unix::process::CommandExt},
     path::Path,
     process::{Child, Command, Stdio},
 };
@@ -138,6 +139,55 @@ fn legacy_protocol_fixture_is_byte_compatible() {
                 );
             }
         }
+    }
+}
+
+/// #752: Python's close_fds boundary must also hold for Rust-owned workers.
+#[test]
+fn inherited_descriptor_is_closed_in_both_worker_implementations() {
+    for legacy in [true, false] {
+        let root = tempfile::tempdir().unwrap();
+        let sentinel = fs::File::create(root.path().join("sentinel")).unwrap();
+        fixture(
+            root.path(),
+            "import os\ntry: os.fstat(200)\nexcept OSError: print('closed')\nelse: print('leaked')",
+        );
+        let mut launch = if legacy {
+            fs::write(
+                root.path().join("supervisor.py"),
+                include_bytes!("legacy.py"),
+            )
+            .unwrap();
+            let mut launch = Command::new("/usr/bin/python3");
+            launch
+                .arg(root.path().join("supervisor.py"))
+                .arg(root.path())
+                .stdout(Stdio::piped());
+            launch
+        } else {
+            command(root.path())
+        };
+        let fd = sentinel.as_raw_fd();
+        // SAFETY: the child hook only calls dup2, an async-signal-safe syscall.
+        // The parent keeps sentinel open through spawn. dup2 clears FD_CLOEXEC
+        // only in this child, leaving parallel tests' descriptor tables alone.
+        unsafe {
+            launch.pre_exec(move || {
+                if libc::dup2(fd, 200) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut owner = launch.spawn().unwrap();
+        claimed(&mut owner);
+        assert!(owner.wait().unwrap().success());
+        assert_eq!(exit_code(root.path()), 0);
+        assert_eq!(
+            fs::read_to_string(root.path().join("stdout.jsonl")).unwrap(),
+            "closed\n",
+            "legacy={legacy}: inherited sentinel reached the worker"
+        );
     }
 }
 
