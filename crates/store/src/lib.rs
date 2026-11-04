@@ -1389,12 +1389,14 @@ fn apply_postmortem(
             id,
             run_key,
             failure,
+            judge_failure,
         } => {
             // A failure worth retrying is owed again, twice at most (#486).
             let retried = RETRIED_FAILURES.contains(&failure.as_str());
+            let failure = judge_failure.map_or_else(|| failure.clone(), |cause| cause.to_string());
             let failed = tx.execute(
                 &format!("UPDATE tl3_postmortems SET status = CASE WHEN $5 AND attempts < 2 THEN 'owed' ELSE 'failed' END, attempts = CASE WHEN $5 AND attempts < 2 THEN attempts + 1 ELSE attempts END, run_key = CASE WHEN $5 AND attempts < 2 THEN NULL ELSE run_key END, started_at = CASE WHEN $5 AND attempts < 2 THEN NULL ELSE started_at END, model = CASE WHEN $5 AND attempts < 2 THEN NULL ELSE model END, rubric_version = CASE WHEN $5 AND attempts < 2 THEN NULL ELSE rubric_version END, failed_at = {AT}, failure = $4 WHERE id = $1 AND status = 'running' AND run_key = $2"),
-                &[id, run_key, &revision, failure, &retried],
+                &[id, run_key, &revision, &failure, &retried],
             )?;
             if failed == 1 {
                 claim_ended(tx, run_key, "failed", Some(failure.as_str()))?;

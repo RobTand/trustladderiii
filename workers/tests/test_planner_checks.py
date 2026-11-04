@@ -32,7 +32,8 @@ def test_planner_exact_node_ids_agree_with_harness(vector, planner_request, monk
         check["node_ids"] = [vector["node_id"]]
     try:
         planner.check_reply(planner_request["inputs"], reply)
-        valid = "Checks must name exact pytest node IDs." not in reply["violations"]
+        valid = not any(error.startswith("Checks must name exact pytest node IDs.")
+                        for error in reply["violations"])
     except ValueError:
         valid = False
     assert valid == vector["valid"]
@@ -51,8 +52,8 @@ def test_planner_schema_follower_succeeds_without_code_only_fields(
     assert actual['forecast']['fit_tokens'] == planner_request['inputs']['forecast']['fit_tokens']
     assert {key: value for key, value in actual.items()
             if key not in {'forecast', 'execution', 'violations'}} == proposal
-    assert actual['execution']['allowed_tool_turns'] == 64
-    assert actual['execution']['usable_tool_turns'] == 56
+    assert actual['execution']['allowed_tool_turns'] == 512
+    assert actual['execution']['usable_tool_turns'] == 512
     assert bool(actual['violations']) == (proposal['kind'] == 'split')
 
 

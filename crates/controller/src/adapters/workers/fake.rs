@@ -33,6 +33,7 @@ impl Executor for Fake {
             } => vec![Observation::Postmortem {
                 key: delivery.key.clone(),
                 reply: Some(crate::postmortems::simulated_reply()),
+                judge_failure: None,
                 failure: None,
             }],
 

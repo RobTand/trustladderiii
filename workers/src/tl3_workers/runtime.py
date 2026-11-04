@@ -25,7 +25,7 @@ from jsonschema import ValidationError
 from tl3_workers.evidence import forcing_capabilities, forcing_guidance
 from tl3_workers.contracts import model_facing, read_json, read_reply, schema, validate
 from tl3_workers.roles import ROLES
-from tl3_workers.roles.planner import EXPLORATION_DECLARATION, PlanConsistencyError
+from tl3_workers.roles.planner import EXPLORATION_DECLARATION, PlanConsistencyError, planner_schema_reply
 from tl3_workers.forcing_rehearsal import ForcingRehearsals
 from tl3_workers.tools import Worktree, build_tools
 from tl3_workers.memory import Summary, current
@@ -237,6 +237,7 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None,
     if role.exploration_budget is not None:
         # The allowance wraps the turn control, so it charges dropped calls and repairs.
         control.allowance = ExplorationMiddleware(role.exploration_budget, role.name, context_size)
+        worktree.allowance = control.allowance
         middleware.append(control.allowance)
     middleware.append(control)
     return create_deep_agent(
@@ -300,7 +301,8 @@ def _run(request, emit):
                 maker_budget = ROLES["maker"].exploration_budget
                 model_inputs = {**model_inputs, "maker_budget": {
                     "tool_turns": maker_budget.tool_turns, "input_tokens": maker_budget.input_tokens,
-                    "finalization_turns": maker_budget.finalization_turns}}
+                    "finalization_turns": maker_budget.finalization_turns,
+                    "no_progress_window": maker_budget.no_progress_window}}
             ledger = getattr(worktree, 'forcing_rehearsals', None)
             if ledger is not None and (ledger.candidates or ledger.active):
                 model_inputs = {**model_inputs, 'forcing_rehearsal_state': {
@@ -349,7 +351,7 @@ def _run(request, emit):
 
 
 def _checked(role, inputs, reply, *, worktree=None):
-    validate(role.reply_schema, reply)
+    validate(role.reply_schema, planner_schema_reply(reply) if role.name == 'planner' else reply)
     if role.check_reply is not None:
         if role.name == 'planner':
             role.check_reply(inputs, reply, rehearsals=getattr(worktree, 'forcing_rehearsals', None))

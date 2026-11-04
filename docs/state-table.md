@@ -194,12 +194,12 @@ Rob's answers never fail for lack of credit. An answer that needs credit adds wh
 
 A node's forecast is computed by code: the token count of its slice of the brief and of its declared files, plus an overhead calibrated from MLflow. The starting constants are set in config.
 
-**Execution feasibility (Q27, Rob, 2026-11-03, [#614 approval](https://github.com/RobTand/trustladderiii/issues/614#issuecomment-6602791347)).** Code also estimates the maker's tool-turn demand. The estimate requires an explicit exploration allowance in addition to the structural floor for implementation, test-first proof, metadata, configured generation, readback and final verification. Structure alone cannot establish execution fit. It must fit the maker's existing allowance minus its finalization reserve. Token fit alone does not establish execution feasibility. These are separate measurements; execution pressure must not inflate the token forecast.
+**Execution feasibility (Q27, Rob, 2026-11-03, [#614 approval](https://github.com/RobTand/trustladderiii/issues/614#issuecomment-6602791347)).** Code also estimates the maker's tool-turn demand. The estimate requires an explicit exploration allowance in addition to the structural floor for implementation, test-first proof, metadata, configured generation, readback and final verification. Structure alone cannot establish execution fit. Under Rob's 2026-11-03 amendment [#692](https://github.com/RobTand/trustladderiii/issues/692), it must fit the maker's high backstop. Final verification is already part of the estimate. The maker continues while progressing, bounded by a consecutive no-progress window and that backstop. The finalization reserve starts near either limit. Request credit and per-call token fit still apply. Token fit alone does not establish execution feasibility. These are separate measurements; execution pressure must not inflate the token forecast.
 
 **A node is a leaf** when all of these hold:
 
 - the forecast fits, under about 100k of the 150k. That is a starting value, tuned later from MLflow data (Q4);
-- the execution estimate fits the maker's usable tool-turn allowance after reserving finalization capacity (Q27, Rob, 2026-11-03);
+- the execution estimate fits the maker's high tool-turn backstop (Q27, Rob, 2026-11-03);
 - it is in one repo;
 - every measure has a check;
 - its footprint avoids protected paths, which in slice one include CI, Mergify and, until its second review arrives, test configuration;
@@ -208,13 +208,13 @@ A node's forecast is computed by code: the token count of its slice of the brief
 **A split is allowed** for one of four reasons, and the plan must name which:
 
 - the forecast doesn't fit;
-- the execution estimate exceeds the maker's usable allowance before maker work starts, even if the token forecast fits (`execution_budget`, Q27, Rob, 2026-11-03);
+- the execution estimate exceeds the maker's high backstop before maker work starts, even if the token forecast fits (`execution_budget`, Q27, Rob, 2026-11-03);
 - the work spans several repos, in which case it must split by repo, one child per repo;
 - a leaf ran out of room.
 
 Every split has at least 2 children. Every child's forecast must be smaller than its parent's, except in a repo split.
 
-For an execution-budget split, every child's execution estimate must instead be smaller than its parent's and fit its usable allowance; its token forecast must also fit. Such a proposal contains at most 8 pieces. Every source obligation must remain covered by the pieces' goal references. Code records per-piece estimates and their aggregate demand and allowance with the plan. The existing split path, credit ledger, admissions and durable operation identities still apply. Splitting never restores spent maker allowance or retries failed work. Q54 is unchanged.
+For an execution-budget split, every child's execution estimate must instead be smaller than its parent's and fit its high backstop; its token forecast must also fit. Such a proposal contains at most 8 pieces. Every source obligation must remain covered by the pieces' goal references. Code records per-piece estimates and their aggregate demand and allowance with the plan. The existing split path, credit ledger, admissions and durable operation identities still apply. Splitting never restores spent maker allowance or retries failed work. Q54 is unchanged.
 
 **A plan breaks a rule** when it does any of these:
 
@@ -390,7 +390,7 @@ A node that spans several repos is admitted at once, because its plan must split
 The controller supplies the planner with these inputs, alongside the brief,
 goals and forecast settings:
 
-- `maker_budget`: worker code supplies the maker's actual hard tool-turn and input-token allowances and the finalization reserve within them. The planner declares exploration separately and estimates all required work against the usable allowance, including proof, metadata and final verification. A final leaf that exceeds it is refused. An initial execution-budget split uses the existing Plan: split path and preserves every obligation. It is not a retry after maker failure.
+- `maker_budget`: worker code supplies the maker's high tool-turn backstop, no-progress window, scaled input-token allowance and finalization reserve. The planner declares exploration separately and estimates all required work against the backstop, including proof, metadata and final verification. A final leaf that exceeds it is refused. An initial execution-budget split uses the existing Plan: split path and preserves every obligation. It is not a retry after maker failure.
 
 - `must_split`: true after a maker ran out of room or a fresh reviewer ran out of room, otherwise false. A leaf
   reply is rejected when it is true.

@@ -40,7 +40,7 @@ Agreed for the fit limit (Q4); the rest is proposed:
 - Every split has at least 2 children. Execution-budget split proposals have at most 8 pieces under Rob's 2026-11-03 Q27 approval below; other splits keep their existing bounds.
 - Code measures each child's forecast. Every child must be smaller than its parent, except when the split is by repo. An execution-budget split instead lowers each child's execution estimate and requires both tool-turn and token fit.
 - A node is a leaf when four things hold:
-  - **It fits:** forecast peak context is under about 100k of the 150k, and required tool work fits the maker's allowance minus finalization capacity. The context limit is a starting value, tuned later from MLflow data. Slice one still uses its existing narrowing path (Q4).
+  - **It fits:** forecast peak context is under about 100k of the 150k, and required tool work fits the maker's high backstop. The context limit is a starting value, tuned later from MLflow data. Slice one still uses its existing narrowing path (Q4).
   - **It is checkable:** each measure has a check.
   - **It is decided:** no design questions remain.
   - **It lands alone:** it is one reviewable change that keeps main passing on its own, in one repo.
@@ -836,8 +836,9 @@ Approved by Rob, 2026-11-03: [decision](https://github.com/RobTand/trustladderii
 
 > Execution-budget feasibility is a planning constraint: a plan that fits the token limit but would exceed the maker's tool/turn budget may be split before maker work, with bounded decomposition, every obligation preserved across the leaves, and aggregate accounting retained. Q54 (fail_fast) is unchanged.
 
-The planner receives the maker's current hard caps and finalization reserve.
-Code refuses a leaf whose estimated tool demand exceeds the usable allowance.
+The planner receives the maker's high backstop, no-progress window, input-token
+allowance and finalization reserve. Code refuses a leaf whose estimated tool
+demand exceeds the backstop.
 The estimate includes proof, metadata, configured generation, final readback,
 regressions and scope review. Token and execution forecasts remain separate.
 The planner must explicitly estimate exploration as well as structural work.
@@ -853,18 +854,56 @@ Slice one's existing narrowing path remains; this change creates no automatic
 maker continuation. Existing credit, admission and effect identities continue
 to bound and account for work. There is no kernel type or transition change.
 
-The maker's last 8 tool turns belong to verification and readback within its
-existing 64-turn cap. Edits and generation are refused during that reserve.
-Each turn reports the remaining budget in appended user content. By halfway
-through the cap, a maker without a completed edit to a declared non-test file
-is warned to stop broad exploration and implement with focused reads. Test-only
-edits do not satisfy that implementation milestone.
-The final JSON keeps its existing input-token reserve. Exhaustion records the
-limiting dimension, spent and allowed counts, exact preserved tree and
-unfinished obligations. It retains the existing fail_fast stop path and
-reaches the stop summary and operations notice as a typed budget diagnostic.
-No exhausted visit receives a fresh allowance or a blind automatic restart.
+### Amendment: progress-based maker allowance (#692)
 
+Rob, 2026-11-03, about 23:00Z:
+
+> "you can raise tool turns substantially. Again, this can be dynamic. As long as it's making progress I don't care how many tool calls it makes."
+
+This replaces the fixed 64-turn maker allowance and the planner's 56 usable
+turns. The maker stops after 16 consecutive tool turns without progress, or at
+the high backstop of 512 turns. Progress is a successful write or edit that
+changes the worktree diff, a test result with a new selection, verdict or
+failing node, or previously unseen content from read, grep or glob. Repeated
+identical calls never count. Fingerprints and the no-progress count survive
+compaction and visit recovery. A turn with several calls makes progress when
+any eligible call progresses.
+
+The last eight turns before either limit permit verification and readback.
+Edits and generation are refused in that reserve. Fresh evidence can reset
+the no-progress count and restore working turns while the backstop has room.
+Each turn appends the remaining allowance and progress facts as user content.
+The implementation milestone warning remains at halfway through the backstop.
+
+The input-token allowance scales to 96M with the backstop, so the former 6M
+cap does not end an otherwise progressing maker. Per-call fit, compaction,
+cache pricing and request credit remain enforced. The planner compares its
+complete structural estimate, including final verification, to 512 turns.
+It permits an execution_budget split only above that backstop. Token forecasts
+remain separate. Q54, credits and all kernel properties are unchanged.
+
+Exhaustion records no_progress, backstop or input_tokens, turns used, the
+no-progress window and streak, last progress kind, preserved tree and unfinished
+obligations. The final JSON retains its input-token reserve. These facts reach
+the status report, review stop and operations notice. No exhausted visit gets
+a fresh allowance or an automatic restart.
+
+PB #2717's maker trace tr-9a4108441b3a92b72e47528fec056ae9 used 64 tool calls:
+35 edits, 20 reads, seven searches and two tests. PB #2718's original trace
+tr-79a2eb37cdf22eb0d20886e6aa574a4e also used 64: 18 edits, 21 reads, 21 searches,
+one glob and three tests. Distinct successful mutations and new read/search
+content continued to the cap. Under the observable progress
+classification, #2717 has 64 progress calls and no non-progress calls. Original
+#2718 has 63 progress calls and one non-progress call, a longest streak of one.
+The later #2718 trace tr-fb874ae1f3ce327769654749aac61f2f has 52 progress and
+11 non-progress calls out of 63, with a longest streak of three. A 16-turn window leaves eight
+working turns and eight reserve turns, above those observed gaps. The 512-turn
+backstop gives eight times the former cap for completing progressing work.
+These traces were capped, so they cannot establish a normal completion bound.
+MLflow clips some payloads and omits before/after edit trees; these counts use
+successful distinct edits as a proxy and new test selections where visible.
+Runtime progress instead checks actual confined file contents and normalized
+test results, excluding receipts, timing and tree identities.
 
 ## Q59: root merge prerequisites before planning
 

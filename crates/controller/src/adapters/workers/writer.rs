@@ -729,52 +729,140 @@ fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> V
                         serde_json::to_string(reply).unwrap_or_default(),
                     )
                 });
-            let problem = match violation {
-                Violation::WrongReplyShape => {
-                    "has the wrong reply shape for the requested message kind"
-                }
-                Violation::Mention(token) => {
-                    return format!("Remove the user or team mention '{token}'.");
-                }
-                Violation::ForeignReference(token) => {
-                    return format!("Remove the foreign reference '{token}'; refer only to this request's issue or pull request.");
-                }
-                Violation::MissingDecision => {
-                    return "Add the decision: the one decision Rob must make, as a single question ending in a question mark.".into();
-                }
-                Violation::DecisionNotOneQuestion => {
-                    return "The decision must be one plain question ending in a question mark, with no other sentence.".into();
-                }
-                Violation::HtmlEntity(entity) => {
-                    return format!("Replace the HTML entity '{entity}' in '{text}'; write the character itself, not an HTML entity.");
-                }
-                Violation::InternalVocabulary => "uses an internal word",
-                Violation::InternalNameOrId => "contains an internal name or identifier",
-                Violation::FilePath => "contains a file path",
-                Violation::Log => "contains log text",
-                Violation::MissingRequest | Violation::RequestDoesNotQuoteTitle => {
-                    "does not quote the original issue title exactly"
-                }
-                Violation::MissingObstacle => "has no obstacle text",
-                Violation::ObstacleTooLong => "has more than two obstacle sentences",
-                Violation::OptionCount => "does not contain two or three options",
-                Violation::MissingOptionAction(_) => "has an option without an action",
-                Violation::MissingOptionOutcome(_) => "has an option without an outcome",
-                Violation::MissingRecommendation => "has a recommendation outside the options",
-                Violation::MissingRecommendationReason => "has no recommendation reason",
-                Violation::MissingAnswerInstructions => "has no answer instructions",
-            };
-            let offending = text
-                .split_whitespace()
-                .find(|token| {
-                    message::check_prose(token, policy)
-                        .is_err_and(|errors| errors.contains(violation))
-                })
-                .unwrap_or(&text)
-                .trim_matches(['.', '!', '?', '"', '\'']);
-            format!("The {field} {problem} '{offending}'.")
+            // Every check sees the text with each exact quoted title masked, so a
+            // correctly quoted title is never the cause (message.rs without_title_quotes).
+            let masked = message::without_title_quotes(&text, policy).into_owned();
+            if let Some(hint) = title_hint(violation, &field, &masked, policy) {
+                return hint;
+            }
+            describe(violation, &field, &masked, policy)
         })
         .collect()
+}
+
+/// What a check that the quoted-title exemption covers calls the offending text.
+fn title_covered(violation: &Violation) -> Option<&'static str> {
+    Some(match violation {
+        Violation::InternalVocabulary => "uses an internal word",
+        Violation::InternalNameOrId => "contains an internal name or identifier",
+        Violation::FilePath => "contains a file path",
+        Violation::Log => "contains log text",
+        Violation::Mention(_) => "has the user or team mention",
+        Violation::ForeignReference(_) => "has the foreign reference",
+        Violation::HtmlEntity(_) => "has the HTML entity",
+        _ => return None,
+    })
+}
+
+/// Feedback when the bare issue title itself fails the check (PB #2757, #2783):
+/// quoting the unchanged title exempts it. The checker decides, not token splitting.
+fn title_hint(violation: &Violation, field: &str, masked: &str, policy: &Policy) -> Option<String> {
+    let problem = title_covered(violation)?;
+    let title = policy
+        .request_title
+        .as_deref()
+        .filter(|title| !title.is_empty())?;
+    let bare = bare_title_spans(masked, title);
+    if bare.is_empty() {
+        return None;
+    }
+    if !message::check_prose(title, policy).is_err_and(|errors| errors.contains(violation)) {
+        return None;
+    }
+    let word = match violation {
+        Violation::Mention(token)
+        | Violation::ForeignReference(token)
+        | Violation::HtmlEntity(token) => token.clone(),
+        _ => title
+            .split_whitespace()
+            .find(|token| {
+                message::check_prose(token, policy).is_err_and(|errors| errors.contains(violation))
+            })
+            .unwrap_or(title)
+            .trim_matches(DISPLAY_PUNCTUATION)
+            .to_owned(),
+    };
+    let mut hint = format!(
+        "The {field} {problem} '{word}' from the issue title. Keep the title unchanged \
+         and write all of it inside ASCII double quotes: \"{title}\"."
+    );
+    let mut outside = masked.to_owned();
+    for span in bare.into_iter().rev() {
+        outside.replace_range(span, " ");
+    }
+    if message::check_prose(&outside, policy).is_err_and(|errors| errors.contains(violation)) {
+        hint.push(' ');
+        hint.push_str(&describe(violation, field, &outside, policy));
+    }
+    Some(hint)
+}
+
+/// Occurrences of `title` that do not run into a neighbouring word character, as the
+/// checker's `\b` rules see words: "Capture stdout" is not bare inside "Capture stdout_file".
+fn bare_title_spans(text: &str, title: &str) -> Vec<std::ops::Range<usize>> {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let starts_word = title.chars().next().is_some_and(word);
+    let ends_word = title.chars().next_back().is_some_and(word);
+    text.match_indices(title)
+        .map(|(start, found)| start..start + found.len())
+        .filter(|span| {
+            !(starts_word && text[..span.start].chars().next_back().is_some_and(word))
+                && !(ends_word && text[span.end..].chars().next().is_some_and(word))
+        })
+        .collect()
+}
+
+const DISPLAY_PUNCTUATION: [char; 16] = [
+    '.', ',', ';', ':', '!', '?', '"', '\'', '(', ')', '[', ']', '\u{201c}', '\u{201d}',
+    '\u{2018}', '\u{2019}',
+];
+
+fn describe(violation: &Violation, field: &str, text: &str, policy: &Policy) -> String {
+    let problem = match violation {
+        Violation::WrongReplyShape => "has the wrong reply shape for the requested message kind",
+        Violation::Mention(token) => {
+            return format!("Remove the user or team mention '{token}'.");
+        }
+        Violation::ForeignReference(token) => {
+            return format!(
+                "Remove the foreign reference '{token}'; refer only to this request's issue or pull request."
+            );
+        }
+        Violation::MissingDecision => {
+            return "Add the decision: the one decision Rob must make, as a single question ending in a question mark.".into();
+        }
+        Violation::DecisionNotOneQuestion => {
+            return "The decision must be one plain question ending in a question mark, with no other sentence.".into();
+        }
+        Violation::HtmlEntity(entity) => {
+            return format!(
+                "Replace the HTML entity '{entity}' in '{text}'; write the character itself, not an HTML entity."
+            );
+        }
+        Violation::InternalVocabulary => "uses an internal word",
+        Violation::InternalNameOrId => "contains an internal name or identifier",
+        Violation::FilePath => "contains a file path",
+        Violation::Log => "contains log text",
+        Violation::MissingRequest | Violation::RequestDoesNotQuoteTitle => {
+            "does not quote the original issue title exactly"
+        }
+        Violation::MissingObstacle => "has no obstacle text",
+        Violation::ObstacleTooLong => "has more than two obstacle sentences",
+        Violation::OptionCount => "does not contain two or three options",
+        Violation::MissingOptionAction(_) => "has an option without an action",
+        Violation::MissingOptionOutcome(_) => "has an option without an outcome",
+        Violation::MissingRecommendation => "has a recommendation outside the options",
+        Violation::MissingRecommendationReason => "has no recommendation reason",
+        Violation::MissingAnswerInstructions => "has no answer instructions",
+    };
+    let offending = text
+        .split_whitespace()
+        .find(|token| {
+            message::check_prose(token, policy).is_err_and(|errors| errors.contains(violation))
+        })
+        .unwrap_or(text)
+        .trim_matches(['.', '!', '?', '"', '\'']);
+    format!("The {field} {problem} '{offending}'.")
 }
 
 fn short_question(text: &str) -> bool {
@@ -783,4 +871,179 @@ fn short_question(text: &str) -> bool {
         && !text.contains(['\r', '\n', '\u{0085}', '\u{2028}', '\u{2029}'])
         && text.trim_end().ends_with('?')
         && text.matches('?').count() == 1
+}
+
+#[cfg(test)]
+mod title_feedback_tests {
+    use super::*;
+
+    #[test]
+    fn an_internal_word_from_the_unquoted_title_asks_for_the_title_quotes() {
+        // PB #2757: "lineage" came only from the title, written without quotes.
+        let title = "Show the lineage of PrismaBuild runs";
+        let policy = Policy {
+            request_title: Some(title.into()),
+            ..Policy::default()
+        };
+        let reply = WriterReply::Text(TextDraft {
+            text: format!("You asked for {title}. The work starts next."),
+        });
+        let feedback = feedback(&reply, &[Violation::InternalVocabulary], &policy);
+        assert_eq!(feedback.len(), 1);
+        assert!(feedback[0].contains("lineage"), "{}", feedback[0]);
+        assert!(
+            feedback[0].contains(&format!("\"{title}\""))
+                && feedback[0].contains("ASCII double quotes"),
+            "{}",
+            feedback[0]
+        );
+    }
+
+    #[test]
+    fn a_log_word_from_the_unquoted_title_asks_for_the_title_quotes() {
+        // PB #2783: "stdout" came only from the title, written without quotes.
+        let title = "[P1] Project publish-sealed refusal stdout at the pbrun writer";
+        let policy = Policy {
+            request_title: Some(title.into()),
+            ..Policy::default()
+        };
+        let reply = WriterReply::Text(TextDraft {
+            text: format!("You asked for {title}. The work starts next."),
+        });
+        let feedback = feedback(&reply, &[Violation::Log], &policy);
+        assert_eq!(feedback.len(), 1);
+        assert!(feedback[0].contains("stdout"), "{}", feedback[0]);
+        assert!(
+            feedback[0].contains(&format!("\"{title}\""))
+                && feedback[0].contains("ASCII double quotes"),
+            "{}",
+            feedback[0]
+        );
+    }
+
+    #[test]
+    fn a_log_word_outside_the_title_still_asks_to_remove_it() {
+        let policy = Policy {
+            request_title: Some("Add a blue button".into()),
+            ..Policy::default()
+        };
+        let reply = WriterReply::Text(TextDraft {
+            text: "You asked for \"Add a blue button\". The stderr shows a failure.".into(),
+        });
+        let feedback = feedback(&reply, &[Violation::Log], &policy);
+        assert!(feedback[0].contains("stderr"), "{}", feedback[0]);
+        assert!(
+            !feedback[0].contains("ASCII double quotes"),
+            "{}",
+            feedback[0]
+        );
+    }
+
+    fn text(text: String) -> WriterReply {
+        WriterReply::Text(TextDraft { text })
+    }
+
+    fn titled(title: &str) -> Policy {
+        Policy {
+            request_title: Some(title.into()),
+            ..Policy::default()
+        }
+    }
+
+    #[test]
+    fn a_correctly_quoted_title_is_never_blamed() {
+        // #685 review: "lineage" is exempt inside the quoted title; only "leaf" fails.
+        let title = "Show the lineage of PrismaBuild runs";
+        let reply = text(format!("You asked for \"{title}\". The leaf failed."));
+        let feedback = feedback(&reply, &[Violation::InternalVocabulary], &titled(title));
+        assert!(feedback[0].contains("'leaf'"), "{}", feedback[0]);
+        assert!(!feedback[0].contains("lineage"), "{}", feedback[0]);
+        assert!(
+            !feedback[0].contains("ASCII double quotes"),
+            "{}",
+            feedback[0]
+        );
+    }
+
+    #[test]
+    fn a_title_word_beside_punctuation_still_asks_for_the_title_quotes() {
+        // #685 review: the word sits next to a comma, parentheses or curly quotes.
+        for (title, violation, word) in [
+            (
+                "Show lineage, please",
+                Violation::InternalVocabulary,
+                "lineage",
+            ),
+            (
+                "Fix the (lineage) view",
+                Violation::InternalVocabulary,
+                "lineage",
+            ),
+            (
+                "Use \u{201c}lineage\u{201d} data",
+                Violation::InternalVocabulary,
+                "lineage",
+            ),
+            ("Capture stdout, then stop", Violation::Log, "stdout"),
+            ("Keep (stdout) quiet", Violation::Log, "stdout"),
+        ] {
+            let reply = text(format!("You asked for {title}. The work starts next."));
+            let feedback = feedback(&reply, std::slice::from_ref(&violation), &titled(title));
+            assert!(feedback[0].contains(word), "{title}: {}", feedback[0]);
+            assert!(
+                feedback[0].contains(&format!("\"{title}\""))
+                    && feedback[0].contains("ASCII double quotes"),
+                "{title}: {}",
+                feedback[0]
+            );
+        }
+    }
+
+    #[test]
+    fn a_title_inside_a_longer_word_is_not_a_bare_title() {
+        // #685 re-review: "Capture stdout" matches inside "Capture stdout_file", but the
+        // checker's \b rule does not; only "stderr" fails.
+        let title = "Capture stdout";
+        let reply = text(format!(
+            "You asked for \"{title}\". Capture stdout_file next; stderr is missing."
+        ));
+        let feedback = feedback(&reply, &[Violation::Log], &titled(title));
+        assert!(feedback[0].contains("'stderr'"), "{}", feedback[0]);
+        assert!(
+            !feedback[0].contains("ASCII double quotes"),
+            "{}",
+            feedback[0]
+        );
+    }
+
+    #[test]
+    fn a_bare_title_word_and_another_word_get_both_fixes() {
+        let title = "Show the lineage of PrismaBuild runs";
+        let reply = text(format!("You asked for {title}. The leaf failed."));
+        let feedback = feedback(&reply, &[Violation::InternalVocabulary], &titled(title));
+        assert!(
+            feedback[0].contains("ASCII double quotes"),
+            "{}",
+            feedback[0]
+        );
+        assert!(feedback[0].contains("'leaf'"), "{}", feedback[0]);
+    }
+
+    #[test]
+    fn an_internal_word_outside_the_title_still_asks_to_remove_it() {
+        let policy = Policy {
+            request_title: Some("Add a blue button".into()),
+            ..Policy::default()
+        };
+        let reply = WriterReply::Text(TextDraft {
+            text: "You asked for \"Add a blue button\". The leaf failed.".into(),
+        });
+        let feedback = feedback(&reply, &[Violation::InternalVocabulary], &policy);
+        assert!(feedback[0].contains("leaf"), "{}", feedback[0]);
+        assert!(
+            !feedback[0].contains("ASCII double quotes"),
+            "{}",
+            feedback[0]
+        );
+    }
 }

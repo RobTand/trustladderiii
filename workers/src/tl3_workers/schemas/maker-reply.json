@@ -225,11 +225,14 @@
         },
         "dimension": {
           "enum": [
-            "tool_turns",
-            "input_tokens",
-            "context_tokens"
+            "backstop",
+            "no_progress",
+            "input_tokens"
           ]
         },
+        "no_progress_window": {"type": "integer", "minimum": 0},
+        "no_progress_turns": {"type": "integer", "minimum": 0},
+        "last_progress_kind": {"enum": [null, "read", "grep", "glob", "write", "edit", "run_tests"]},
         "tool_turns": {
           "type": "object",
           "properties": {
@@ -318,6 +321,9 @@
       "required": [
         "kind",
         "dimension",
+        "no_progress_window",
+        "no_progress_turns",
+        "last_progress_kind",
         "tool_turns",
         "input_tokens",
         "operation",

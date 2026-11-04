@@ -2,6 +2,15 @@
 
 Every rule in every TL3 worker prompt, classified before the #648 condensation. This file is the record that each kept (b) rule is still stated once, and each deleted rule had a reason. PR 2 condenses every role except the planner. PR 3 condenses the planner after #662.
 
+## Message-policy audit after PB #2757
+
+`crates/github/src/message.rs` enforces these writer rules. The condensation had weakened or dropped some, so the follow-up restores them in writer.md:
+
+- W5: write the issue title unchanged inside ASCII double quotes. The checker exempts only that exact quoted title from the internal-word check. On a title-word violation, the writer keeps the title and fixes the quotes. The repair feedback now says the same.
+- W6: the obstacle is at most 600 characters. The decision is one question that ends with its only question mark, with no other sentence, and at most 400 characters (`DecisionNotOneQuestion`).
+- W3: the writer never writes TL3, or a name that contains it, such as a branch name (`InternalNameOrId`; PB #2754 and #2775).
+- Checked and still stated: no internal words, ids, file paths or logs; no mentions or foreign references (code spans are exempt); the clarification rules (one line, at most 300 characters, the excerpt quoted exactly, one final question mark); and the obstacle's one or two sentences.
+
 ## Applied in PR 2
 
 These changes go beyond the drafts. Wording pins in the tests showed rules the drafts had dropped:

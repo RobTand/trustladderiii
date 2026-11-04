@@ -129,7 +129,9 @@ py_library(
         "@tl3_pip//opentelemetry_proto",
         "@tl3_pip//opentelemetry_sdk",
         "@tl3_pip//pandas",
+        "@tl3_pip//pydantic",
         "@tl3_pip//referencing",
+        "@tl3_pip//requests",
         "@tl3_pip//sqlparse",  # keep: imported dynamically by MLflow tracing
         "@tl3_pip//tiktoken",
     ],

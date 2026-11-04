@@ -5,21 +5,23 @@ grep's pattern is an RE2 regular expression, with no backreferences or lookaroun
 matched per line; set literal to true to search text as written. grep's path may
 be a file or a directory; glob's path must be a directory.
 
-The code-owned maker_budget gives the existing tool-turn and cache-weighted
-input-token caps and the finalization reserve inside those caps. Prefer smaller
-leaves when the declared files and checks would leave little maker capacity.
-Account for test-first work, proof runs, metadata and CHANGELOG updates,
-configured generation, readback, regressions, final diff review and the final
-JSON. The finalization reserve permits verification and readback, not new edits.
-Rob approved execution-budget feasibility as a planning constraint on 2026-11-03
-(Q27, #614). Supply estimated_tool_turns for the whole plan and each proposed
+The code-owned maker_budget gives the high tool-turn backstop, no-progress window,
+cache-weighted input-token allowance and finalization reserve. A progressing maker
+can continue beyond 64 turns. Execution feasibility uses the backstop, not the
+no-progress window or the backstop minus its finalization reserve. Account for
+test-first work, proof runs, metadata and CHANGELOG updates, configured generation,
+readback, regressions, final diff review and the final JSON. The finalization
+reserve permits verification and readback, not new edits. It starts near the
+no-progress window or backstop and ends if new evidence restores progress, unless
+the backstop is near. Request credit and per-call token-fit rules still apply.
+Rob amended Q27/#614 on 2026-11-03 (#692) to allow progress-based execution.
+Supply estimated_tool_turns for the whole plan and each proposed
 piece. Also declare estimated_exploration_turns for each leaf, split and piece:
 budget orientation reads, searches, globs and recall explicitly. Code refuses
 execution fit on structure alone when that declaration is absent. Zero must be
 an explicit estimate, justified by already-located source and known edits.
-PB #2718 exhausted 64 turns on three files after 43 orientation/search turns;
-file count cannot predict that exploration. Prefer a smaller, located leaf if
-exploration plus required work cannot fit. Include every required edit and check.
+PB #2718 exhausted the former 64-turn cap after extensive orientation and search.
+File count cannot predict exploration. Include every required edit and check.
 Code adds declared exploration to the structural floor and uses the larger of your
 estimate and a structural estimate: nine operations per file, four per check,
 two for scope review, one for configured generation and one inspection per
@@ -27,9 +29,9 @@ generator-owned output. The per-file floor
 allows five edits, two implementation reads, a search and final readback;
 increase your estimate when a file needs more work. Per-piece structural
 estimates use at least one check per goal; include additional checks in your estimate.
-A leaf whose estimate exceeds the usable allowance is refused before maker work.
+A leaf whose estimate exceeds the backstop is refused before maker work.
 The new split reason execution_budget permits 2 to 8 pieces even when tokens fit.
-Every piece must fit the usable tool allowance and the token limit and have a
+Every piece must fit the tool-turn backstop and the token limit and have a
 smaller execution estimate than its parent. Preserve every source obligation
 through goal_ids and the piece brief, including proof, metadata and final checks.
 Code records per-piece and aggregate estimates with the plan. Existing split
@@ -108,6 +110,15 @@ those marked for review. Return exactly one of these proposals:
   or behavior-preserving, pytest node_ids and the goal_ids it confirms. Every
   goal needs at least one check. Demonstrating checks may name tests the maker
   will add; they must fail by assertion on the base and pass on the change.
+  A goal's proof_obligation is a source requirement. Bind the check's goal_ids,
+  proof.subjects and proof.red_message to it. For observer new, choose a new
+  deterministic assertion, including for helpers inside test files. An old-node
+  probabilistic exception campaign cannot discharge that obligation. Supply
+  goal_ids to rehearse_forcing before it admits any action. A supplemental
+  campaign may bind a separate compatible goal; zero occurrences remain no RED.
+  Regression and behavior-preserving selectors must exist on the selected base.
+  A head-only observer belongs in a demonstrating check, because regression
+  always executes the untouched original base.
   For work that makes something deterministic, a demonstrating check must name
   a test that reproduces the race deterministically, for example with an
   injected clock, event or barrier; a flaky test can pass on the base. When the

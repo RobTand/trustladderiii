@@ -350,7 +350,8 @@ fn without_blocker_paths(text: &str, policy: &Policy) -> String {
         .into_owned()
 }
 
-fn without_title_quotes<'a>(text: &'a str, policy: &Policy) -> Cow<'a, str> {
+/// The text with each exact ASCII-double-quoted title masked, as every check sees it.
+pub fn without_title_quotes<'a>(text: &'a str, policy: &Policy) -> Cow<'a, str> {
     match policy
         .request_title
         .as_deref()

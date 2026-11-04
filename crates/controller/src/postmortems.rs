@@ -402,10 +402,12 @@ pub(crate) fn stalled(mut completion: Completion) -> Completion {
         if let Observation::Postmortem {
             reply: None,
             failure,
+            judge_failure,
             ..
         } = observation
         {
             *failure = Some("no_progress".into());
+            *judge_failure = None;
         }
     }
     completion
@@ -702,6 +704,7 @@ impl crate::Controller {
         key: &str,
         reply: Option<Value>,
         failure: Option<String>,
+        judge_failure: Option<tl3_store::JudgeFailure>,
         commit: &mut Commit,
     ) -> Result<()> {
         let Some(job) = snapshot
@@ -739,19 +742,25 @@ impl crate::Controller {
             Some(Err(_)) => PostmortemUpdate::Failed {
                 id,
                 run_key,
+                judge_failure: None,
                 failure: "invalid_reply".into(),
             },
             None => PostmortemUpdate::Failed {
                 id,
                 run_key,
+                judge_failure,
                 failure: failure_class(failure.as_deref()).into(),
             },
         };
         let failure = match &update {
-            PostmortemUpdate::Failed { failure, .. } => Some(failure.as_str()),
+            PostmortemUpdate::Failed {
+                failure,
+                judge_failure,
+                ..
+            } => Some(judge_failure.map_or_else(|| failure.clone(), |cause| cause.to_string())),
             _ => None,
         };
-        self.finish_validation(snapshot, key, failure, commit)?;
+        self.finish_validation(snapshot, key, failure.as_deref(), commit)?;
         commit.postmortem_updates.push(update);
         Ok(())
     }
@@ -772,6 +781,7 @@ impl crate::Controller {
         commit.postmortem_updates.push(PostmortemUpdate::Failed {
             id: *id,
             run_key: run_key.clone(),
+            judge_failure: None,
             failure: failure_class(Some(class)).into(),
         });
         Ok(())

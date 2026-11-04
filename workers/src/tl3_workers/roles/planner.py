@@ -1,21 +1,23 @@
 """Report plan measurements and rule violations to the controller."""
 
 from copy import deepcopy
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 import re
+from subprocess import CalledProcessError
 
 from jsonschema import Draft202012Validator
 
 from tl3_workers.roles.base import Role
-from tl3_workers.evidence import preflight
+from tl3_workers.evidence import preflight, proof_applicability
 from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES, MAX_EXECUTION_PIECES, execution_forecast
 from tl3_harness import Check, Forcing, HarnessInputError, Kind, Proof
 from tl3_harness.proof import overlaps
 from tl3_harness.limits import validate_check_plan
-from tl3_harness.trees import test_function_source
+from tl3_harness.trees import git, test_function_source
 from tl3_workers.tools import Worktree
 from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.recall import check_citations
+from tl3_workers.turns import REPAIR_MESSAGE_BYTES
 
 
 # Fresh proposals require estimates; the transport still accepts workers that
@@ -30,28 +32,50 @@ EXPLORATION_DECLARATION = {
 def execution_budget_details(execution):
     components = ", ".join(f"{name}={value}" for name, value in execution["components"].items())
     return (f"estimated {execution['estimated_tool_turns']} tool turns, "
-            f"usable {execution['usable_tool_turns']} after the finalization reserve. "
+            f"backstop {execution['allowed_tool_turns']}. "
             f"Components: {components}.")
 
 
 class PlanConsistencyError(ValueError):
-    """A draft's checks disagree with its edit declarations or forced base selection."""
+    """A draft's checks disagree with its declarations or exact base selections."""
 
-    def __init__(self, uncovered, missing_forced=(), *, draft=None):
+    def __init__(self, uncovered, missing_forced=(), *, draft=None, selectors=None, missing_proof=None):
         self.draft = deepcopy(draft)
         self.uncovered = set(uncovered)
         self.missing_forced = set(missing_forced)
-        self.node_ids = (*uncovered, *missing_forced)
+        self.selectors = selectors or {}
+        self.missing_proof = missing_proof or {}
+        self.local = bool(self.selectors or self.missing_proof)
+        self.node_ids = (*uncovered, *missing_forced,
+                         *(node for nodes in self.selectors.values() for node in nodes),
+                         *(f"check-{index + 1} proof: {', '.join(sorted(fields))}"
+                           for index, fields in self.missing_proof.items()))
         self.violations = [
             f"`{node_id}` is in edits_tests but no demonstrating check names it. "
             "Name it in a demonstrating check that fails on the base by an assertion."
             for node_id in uncovered]
         self.violations.extend(f"Existing check must name a test defined at the base: {node_id}"
                                for node_id in missing_forced)
+        self.violations.extend(
+            f"Checks must name exact pytest node IDs. Replace `{node}` with the exact test definitions this check needs."
+            for nodes in self.selectors.values() for node in nodes)
+        self.violations.extend(
+            f"check-{index + 1} is missing required proof declarations: {', '.join(sorted(fields))}. "
+            "State the expected assertion message supported by this check. Missing subjects or observer_support "
+            "may only be filled with [] for an inferred partition. Preserve all existing proof values."
+            for index, fields in self.missing_proof.items())
+        if self.local:
+            super().__init__("\n".join(self.violations) +
+                             "\nUse already-read facts. Only replace the named check's selectors or fill its "
+                             "missing proof fields. Preserve every other declaration, existing proof value, "
+                             "check, goal, forcing, evidence obligation, file and estimate. "
+                             "Do not invent base failures; return cant_meet if needed.")
+            return
         super().__init__("\n".join(self.violations) +
                          "\nReconcile the declaration and checks using already-read facts. "
                          "Keep the draft's files, goals, check kinds and forcings. Only add missing "
                          "demonstrating coverage, replace forced non-base selections with base tests, "
+                         "replace non-exact selectors with the exact base tests the check needs, "
                          "or drop an uncovered unnecessary edit. Do not expand the draft. "
                          "Drop an edit only if it is unnecessary for the goals. "
                          "A forced check must name existing base tests and preserve every required goal, "
@@ -77,6 +101,10 @@ class PlanConsistencyError(ValueError):
         if ({key: value for key, value in reply.items() if key not in mutable}
                 != {key: value for key, value in draft.items() if key not in mutable}):
             errors.append('Correction changes declarations outside the test consistency error.')
+        if self.local:
+            errors.extend(self.constrain_local(reply))
+            reply['violations'].extend(dict.fromkeys(errors))
+            return
         before, after = set(draft.get('edits_tests', [])), set(reply.get('edits_tests', []))
         if after - before or (before - after) - self.uncovered:
             errors.append('Correction may only drop uncovered edit declarations.')
@@ -114,6 +142,73 @@ class PlanConsistencyError(ValueError):
                     errors.append('Correction adds test selections outside the draft consistency error.')
         reply['violations'].extend(dict.fromkeys(errors))
 
+    def constrain_local(self, reply):
+        """Only the rejected selectors and absent proof fields can change."""
+        errors = []
+        draft = self.draft
+        if reply.get('edits_tests') != draft.get('edits_tests'):
+            errors.append('Correction changes edit declarations.')
+        if len(reply['checks']) != len(draft['checks']):
+            errors.append('Correction changes the number of draft checks.')
+        for index, (before, after) in enumerate(zip(draft['checks'], reply['checks'])):
+            mutable = ({'node_ids'} if index in self.selectors else set())
+            if index in self.missing_proof:
+                mutable.add('proof')
+                old, new = before.get('proof', {}), after.get('proof', {})
+                if (any(new.get(key) != value for key, value in old.items())
+                        or any(new.get(key) != [] for key in self.missing_proof[index]
+                               if key != 'red_message')):
+                    errors.append('Correction changes the declared proof partition or an existing proof value.')
+            if ({key: value for key, value in before.items() if key not in mutable}
+                    != {key: value for key, value in after.items() if key not in mutable}):
+                errors.append('Correction changes declarations outside the missing fields or selectors.')
+            if index in self.selectors:
+                for node in after['node_ids']:
+                    try:
+                        Check('planned', Kind(after['kind']), (node,))
+                    except HarnessInputError:
+                        errors.append(f'Corrected check must name an exact pytest node ID: {node}')
+                        continue
+                    oversized, exists = base_definition(node)
+                    if oversized or not exists:
+                        errors.append(f'Corrected check must name a test defined at the base: {node}')
+        return errors
+
+
+def proof_omissions(reply):
+    """The proof schema's required keys are the only declaration omissions admitted here."""
+    if not isinstance(reply, dict) or reply.get('kind') != 'leaf' or not isinstance(reply.get('checks'), list):
+        return {}
+    required = set(PROOF_DECLARATION)
+    missing = {}
+    for index, check in enumerate(reply['checks']):
+        if (not isinstance(check, dict) or check.get('kind') not in {'demonstrating', 'reproducing'}
+                or 'declared_symptom' in check or not isinstance(check.get('proof', {}), dict)):
+            continue
+        absent = required - check.get('proof', {}).keys()
+        if absent:
+            missing[index] = absent
+    return missing
+
+
+# A validation-only placeholder never enters an accepted plan or a proof run.
+PROOF_DECLARATION = Proof((), (), 'undeclared assertion message').as_json()
+
+
+def proof_for_validation(check):
+    return {**PROOF_DECLARATION, **check.get('proof', {})}
+
+
+def planner_schema_reply(reply):
+    """Validate every schema rule while required proof keys get semantic refusal/repair below."""
+    missing = proof_omissions(reply)
+    if not missing:
+        return reply
+    result = deepcopy(reply)
+    for index in missing:
+        result['checks'][index]['proof'] = proof_for_validation(result['checks'][index])
+    return result
+
 
 def check_reply(inputs, reply, *, rehearsals=None):
     if rehearsals is not None:
@@ -128,6 +223,9 @@ def check_reply(inputs, reply, *, rehearsals=None):
                   if reply.pop("execution", None) is not None else [])
     uncovered = []
     missing_forced = []
+    selectors = {}
+    selector_errors = set()
+    missing_proof = proof_omissions(reply)
     paths = set()
     if reply["kind"] == "leaf":
         if inputs["must_split"]:
@@ -138,12 +236,10 @@ def check_reply(inputs, reply, *, rehearsals=None):
             violations.append("A leaf must resolve every design question.")
         if not reply["lands_on_its_own"]:
             violations.append("A leaf must land on its own.")
-        for check in reply["checks"]:
-            if check['kind'] in ('demonstrating', 'reproducing') and 'declared_symptom' not in check and 'proof' not in check:
-                violations.append('Assertion RED requires proof.red_message; use subjects: [] for an inferred partition.')
-            if 'proof' in check:
+        for index, check in enumerate(reply["checks"]):
+            if 'proof' in check or index in missing_proof:
                 try:
-                    proof = Proof.parse(check['proof'])
+                    proof = Proof.parse(proof_for_validation(check) if index in missing_proof else check['proof'])
                     for unit in (*proof.subjects, *proof.observer_support):
                         if unit.split('::')[0] not in reply['files']:
                             violations.append(f'Proof source must be in declared files: {unit}')
@@ -151,6 +247,7 @@ def check_reply(inputs, reply, *, rehearsals=None):
                     violations.append(str(error))
         covered = set()
         forcings = {}
+        exact_nodes = set()
         for index, check in enumerate(reply["checks"]):
             if "forcing" in check:
                 # #393: a forced reproduction is the red for a deflake.
@@ -167,35 +264,51 @@ def check_reply(inputs, reply, *, rehearsals=None):
             for node_id in check["node_ids"]:
                 try:
                     Check("planned", Kind(check["kind"]), (node_id,))
-                except ValueError:
-                    violations.append("Checks must name exact pytest node IDs.")
+                except HarnessInputError as error:
+                    selector_errors.add(str(error))
+                    selectors.setdefault(index, []).append(node_id)
                     continue
+                exact_nodes.add(node_id)
                 # A forced check runs the old test on the base, so it must exist there too.
                 if check["kind"] in {"regression", "behavior-preserving"} or ("forcing" in check and not check.get("proof", {}).get("subjects")) or "declared_symptom" in check:
                     path = node_id.split("::")[0]
-                    oversized, exists = base_definition(node_id)
+                    oversized, exists = base_definition(node_id, inputs.get('base_sha'))
                     if oversized:
                         violations.append(f"Existing check's test file is over the {HARD_CAP_BYTES}-byte limit: {path}")
                     elif not exists:
                         if check["kind"] == "demonstrating" and "forcing" in check:
                             missing_forced.append(node_id)
                         else:
-                            violations.append(f"Existing check must name a test defined at the base: {node_id}")
+                            guidance = (' A new assertion observer needs a demonstrating check; adding it only '
+                                        'at head cannot repair an original-base regression.'
+                                        if check['kind'] in {'regression', 'behavior-preserving'} else '')
+                            violations.append(f"Existing check must name a test defined at the base: {node_id}.{guidance}")
             cited = set(check["goal_ids"])
             if not cited <= goals:
                 violations.append("A check cites an unknown goal.")
             covered.update(cited)
+        violations.extend(proof_applicability(inputs['ingest']['goals'],
+            [check for check in reply['checks'] if set(check['node_ids']) <= exact_nodes],
+            lambda node: base_definition(node, inputs.get('base_sha'))[1]))
         edit_errors, uncovered = edit_violations(inputs["ingest"]["goals"], reply)
         violations.extend(edit_errors)
-        if "Checks must name exact pytest node IDs." not in violations:
+        planned_checks = []
+        for i, check in enumerate(reply['checks']):
+            if not check['node_ids']:
+                continue
             try:
-                validate_check_plan(tuple(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']),
-                                                (forcings.get(i) if check['kind'] == 'demonstrating' else None),
-                                                Proof.parse(check['proof']) if 'proof' in check else None,
-                                                check.get('declared_symptom'))
-                                          for i, check in enumerate(reply['checks']) if check['node_ids']))
+                planned_checks.append(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']),
+                                            forcings.get(i) if check['kind'] == 'demonstrating' else None,
+                                            Proof.parse(proof_for_validation(check))
+                                            if 'proof' in check or i in missing_proof else None,
+                                            check.get('declared_symptom')))
             except ValueError as error:
-                violations.append(str(error))
+                if str(error) not in selector_errors:
+                    violations.append(str(error))
+        try:
+            validate_check_plan(tuple(planned_checks))
+        except ValueError as error:
+            violations.append(str(error))
         required = {i for i, goal in enumerate(inputs["ingest"]["goals"])
                     if goal.get("stage", "maker") != "publishing"}
         if not required <= covered:
@@ -272,7 +385,7 @@ def check_reply(inputs, reply, *, rehearsals=None):
                 violations.append(f"Declared file can't be used: {error}. Leave it out.")
             if reason == "execution_budget":
                 if not estimate["fits"] or estimate["estimated_tool_turns"] >= execution["estimated_tool_turns"]:
-                    violations.append("Every execution-budget piece must fit the usable execution allowance and reduce demand. "
+                    violations.append("Every execution-budget piece must fit the execution backstop and reduce demand. "
                                       + execution_budget_details(estimate))
                 if not child["fits"]:
                     violations.append("Every execution-budget piece must also fit the token forecast.")
@@ -287,11 +400,18 @@ def check_reply(inputs, reply, *, rehearsals=None):
         rejected = next((item for item in reversed(rehearsals.candidates) if item['status'] == 'refused'), None)
         if rejected is not None:
             violations.append(rejected['message'])
-    if uncovered or missing_forced:
-        mismatch = PlanConsistencyError(uncovered, missing_forced, draft=reply)
+    if uncovered or missing_forced or selectors or missing_proof:
+        mismatch = PlanConsistencyError(uncovered, missing_forced, draft=reply,
+                                        selectors=selectors, missing_proof=missing_proof)
         # Only these intrinsic inconsistencies enter the existing tool-free repair.
         # Substantive plan failures still reach the controller under Q54.
-        if not violations and inputs.get('repair_plan_consistency', False):
+        proof_errors = (rehearsals.violations(inputs.get('base_sha'),
+                        [check for check in reply['checks'] if valid_forcing(check)])
+                        if mismatch.local and rehearsals is not None else [])
+        message_fits = not mismatch.local or len(str(mismatch).encode()) <= REPAIR_MESSAGE_BYTES
+        if not message_fits:
+            violations.append('Planner declarations exceed the existing correction message limit.')
+        if not violations and not proof_errors and inputs.get('repair_plan_consistency', False):
             raise mismatch
         violations.extend(mismatch.violations)
     if reply['kind'] == 'leaf':
@@ -309,14 +429,20 @@ def check_reply(inputs, reply, *, rehearsals=None):
     reply["violations"] = list(dict.fromkeys(violations))
 
 
-def base_definition(node_id):
+def base_definition(node_id, base_sha=None):
     """Whether the base defines the test, after whether its file is over the hard cap."""
     # The whole module is parsed to find the test, so the
     # declared-file hard cap bounds it, not a page size.
     try:
-        with Worktree(".") as tree, tree._file(node_id.split("::")[0]) as stream:
-            source = stream.read(HARD_CAP_BYTES + 1)
-    except (OSError, ValueError, UnicodeError):
+        if base_sha is not None:
+            identity = base_sha + ':' + node_id.split('::')[0]
+            if int(git(Path('.'), 'cat-file', '-s', identity)) > HARD_CAP_BYTES:
+                return True, False
+            source = git(Path('.'), 'cat-file', 'blob', identity).decode('utf-8')
+        else:
+            with Worktree(".") as tree, tree._file(node_id.split("::")[0]) as stream:
+                source = stream.read(HARD_CAP_BYTES + 1)
+    except (OSError, ValueError, UnicodeError, CalledProcessError):
         return False, False
     if len(source.encode("utf-8")) > HARD_CAP_BYTES:
         return True, False

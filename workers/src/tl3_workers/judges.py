@@ -11,6 +11,8 @@ the annotations below give the Bazel targets the same dependencies.
 # gazelle:include_dep @tl3_pip//pandas
 
 from contextlib import contextmanager
+from dataclasses import dataclass
+from enum import StrEnum
 import json
 import os
 from typing import Literal
@@ -160,22 +162,122 @@ def postmortem_judge(prompt, model):
     return judge("postmortem", PREAMBLE + postmortem_contract(prompt), model, str)
 
 
-def failed(feedback):
-    """A judge failed when its Feedback, or any ensemble member's, has an error."""
-    if feedback is None or feedback.error is not None:
-        return True
+class FailureClass(StrEnum):
+    QUOTA = "quota"
+    REFUSAL = "refusal"
+    HTTP = "http"
+    DEADLINE = "deadline"
+    TRANSPORT = "transport"
+    SCHEMA = "schema"
+    CONTRACT = "contract"
+    CONFIGURATION = "configuration"
+    ITERATION_LIMIT = "iteration_limit"
+    MLFLOW = "mlflow"
+    OTHER = "other"
+
+
+@dataclass(frozen=True)
+class JudgeFailure:
+    category: FailureClass
+    status: int | None = None
+
+
+# AssessmentError retains a code but discards the exception's typed fields.
+# Never infer a category from its error_message or stack_trace.
+FAILURE_CODES = {
+    **dict.fromkeys(("RATE_LIMIT_EXCEEDED", "RESOURCE_EXHAUSTED", "RateLimitError"),
+                    FailureClass.QUOTA),
+    **dict.fromkeys(("PERMISSION_DENIED", "UNAUTHENTICATED", "PermissionDeniedError",
+                     "AuthenticationError", "ContentFilterFinishReasonError"), FailureClass.REFUSAL),
+    **dict.fromkeys(("ChatCompletionError", "APIStatusError", "HTTPError", "HTTPStatusError"),
+                    FailureClass.HTTP),
+    **dict.fromkeys(("DEADLINE_EXCEEDED", "TimeoutError", "Timeout", "ReadTimeout", "ConnectTimeout",
+                     "APITimeoutError"), FailureClass.DEADLINE),
+    **dict.fromkeys(("ConnectionError", "APIConnectionError", "ConnectError"), FailureClass.TRANSPORT),
+    **dict.fromkeys(("JSONDecodeError", "ValidationError", "APIResponseValidationError",
+                     "LengthFinishReasonError"), FailureClass.SCHEMA),
+    **dict.fromkeys(("KeyError", "TypeError", "AttributeError", "BAD_REQUEST"), FailureClass.CONTRACT),
+    "INVALID_PARAMETER_VALUE": FailureClass.CONFIGURATION,
+    "REQUEST_LIMIT_EXCEEDED": FailureClass.ITERATION_LIMIT,
+    "MlflowException": FailureClass.MLFLOW,
+    "INTERNAL_ERROR": FailureClass.MLFLOW,
+}
+
+
+def _coded_failure(code):
+    return JudgeFailure(FAILURE_CODES.get(code, FailureClass.OTHER)
+                        if isinstance(code, str) else FailureClass.OTHER)
+
+
+def exception_failure(error):
+    """Known exception types and codes only, following MLflow's wrapper causes."""
+    import httpx
+    from jsonschema import ValidationError as SchemaError
+    from mlflow.exceptions import MlflowException
+    from mlflow.genai.judges.adapters.utils import ChatCompletionError
+    from openai import (APIConnectionError, APIResponseValidationError, APIStatusError,
+                        APITimeoutError, ContentFilterFinishReasonError, LengthFinishReasonError)
+    from pydantic import ValidationError as ModelSchemaError
+    import requests
+
+    chain, seen = [], set()
+    while error is not None and id(error) not in seen and len(chain) < 8:
+        seen.add(id(error))
+        chain.append(error)
+        error = error.__cause__ or error.__context__
+    for error in reversed(chain):
+        status = None
+        if isinstance(error, (ChatCompletionError, APIStatusError)):
+            status = error.status_code
+        elif isinstance(error, (requests.HTTPError, httpx.HTTPStatusError)):
+            if error.response is not None:
+                status = error.response.status_code
+        if type(status) is int and 400 <= status <= 599:
+            category = (FailureClass.QUOTA if status == 429 else
+                        FailureClass.REFUSAL if status in (401, 403) else FailureClass.HTTP)
+            return JudgeFailure(category, status)
+        if isinstance(error, (TimeoutError, requests.Timeout, httpx.TimeoutException, APITimeoutError)):
+            return JudgeFailure(FailureClass.DEADLINE)
+        if isinstance(error, (ConnectionError, requests.ConnectionError, httpx.TransportError,
+                              APIConnectionError)):
+            return JudgeFailure(FailureClass.TRANSPORT)
+        if isinstance(error, ContentFilterFinishReasonError):
+            return JudgeFailure(FailureClass.REFUSAL)
+        if isinstance(error, (json.JSONDecodeError, SchemaError, ModelSchemaError,
+                              APIResponseValidationError, LengthFinishReasonError)):
+            return JudgeFailure(FailureClass.SCHEMA)
+        if isinstance(error, (KeyError, TypeError, AttributeError)):
+            return JudgeFailure(FailureClass.CONTRACT)
+        if (type(error) is ValueError and error.args in
+                (("empty model key",), ("judges are not configured",))):
+            return JudgeFailure(FailureClass.CONFIGURATION)
+        if isinstance(error, MlflowException) and error is chain[-1]:
+            return JudgeFailure(FAILURE_CODES.get(error.error_code, FailureClass.MLFLOW))
+    return JudgeFailure(FailureClass.OTHER)
+
+
+def feedback_failure(feedback):
+    """A failed Feedback or ensemble member's allowlisted cause, otherwise None."""
+    if feedback is None:
+        return JudgeFailure(FailureClass.CONTRACT)
+    if feedback.error is not None:
+        return _coded_failure(feedback.error.error_code)
     members = (feedback.metadata or {}).get("mlflow.ensemble.sub_feedbacks")
     if isinstance(members, str):
-        import json
         try:
             members = json.loads(members)
         except ValueError:
-            return True
+            return JudgeFailure(FailureClass.CONTRACT)
     for member in members or []:
         inner = member.get("feedback") if isinstance(member.get("feedback"), dict) else member
-        if inner.get("error"):
-            return True
-    return False
+        if error := inner.get("error"):
+            return _coded_failure(error.get("error_code") if isinstance(error, dict) else None)
+    return None
+
+
+def failed(feedback):
+    """A judge failed when its Feedback, or any ensemble member's, has an error."""
+    return feedback_failure(feedback) is not None
 
 
 def bound(text, redactor, cap=TOOL_RESULT_CAP):

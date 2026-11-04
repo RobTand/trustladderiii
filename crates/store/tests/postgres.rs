@@ -2630,6 +2630,7 @@ fn postmortem_results(settings: &tl3_config::Store) {
         PostmortemUpdate::Failed {
             id: second.id,
             run_key: "postmortem:2:a".into(),
+            judge_failure: None,
             failure: "invalid_reply".into(),
         },
     )
@@ -2719,6 +2720,7 @@ fn postmortem_retries_and_pace(settings: &tl3_config::Store) {
                 Some(failure) => PostmortemUpdate::Failed {
                     id,
                     run_key: key.into(),
+                    judge_failure: None,
                     failure: failure.into(),
                 },
                 None => PostmortemUpdate::Done {

@@ -210,7 +210,8 @@ def execution_forecast(files, checks, *, declared=0, exploration=None, config=No
     if generated:
         components["generated_inspection_operations"] = len(generated)
     estimated = max(sum(components.values()), declared)
-    usable = max(0, budget.tool_turns - reserve)
+    # The estimate already includes final verification; compare the complete run to the backstop.
+    usable = budget.tool_turns
     return {"allowed_tool_turns": budget.tool_turns, "finalization_turns": reserve,
             "usable_tool_turns": usable, "estimated_tool_turns": estimated,
             "components": components, "exploration_declared": exploration is not None,

@@ -73,7 +73,7 @@ def test_exhausted_maker_recovers_completed_generator_receipt_without_resubmissi
                *[ToolMessage(content='Verified final tree', tool_call_id=call['id']) for call in calls]]
     allowance = ExplorationMiddleware(maker.ROLE.exploration_budget, 'maker')
     allowance.turns = allowance.budget.tool_turns
-    allowance.exhaustion = 'tool_turns'
+    allowance.exhaustion = 'backstop'
     request = {'worktree': str(generator_repo), 'operation': {'node': 1, 'generation': 0, 'kind': 'make'},
                'inputs': {'goals': [], 'plan': {'checks': []}}}
     with restored:

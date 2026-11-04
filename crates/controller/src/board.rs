@@ -287,6 +287,7 @@ pub struct Request {
     pub phase_since_ms: Option<i64>,
     pub progress: Option<Progress>,
     pub worker_failure: Option<WorkerFailure>,
+    pub budget_exhaustion: Option<String>,
     /// Open incidents.
     pub incidents: Vec<StoredIncident>,
     /// The model the maker ran for this attempt, which its reviewer must differ from.
@@ -480,7 +481,11 @@ fn card(
     if ending == Some(Ending::Stopped) {
         badges.insert(Badge::Stopped);
     }
-    let last_progress = last_progress(request.progress.as_ref(), request.worker_failure.as_ref());
+    let last_progress = last_progress(
+        request.progress.as_ref(),
+        request.worker_failure.as_ref(),
+        request.budget_exhaustion.as_deref(),
+    );
     Card {
         id: request.id.0,
         repo: plain(&request.repo),
@@ -543,8 +548,9 @@ fn card(
 pub(crate) fn last_progress(
     progress: Option<&Progress>,
     failure: Option<&WorkerFailure>,
+    budget: Option<&str>,
 ) -> Option<String> {
-    if progress.is_none() && failure.is_none() {
+    if progress.is_none() && failure.is_none() && budget.is_none() {
         return None;
     }
     let mut text = progress
@@ -568,6 +574,9 @@ pub(crate) fn last_progress(
             failure.class, failure.message
         )
         .expect("write to string");
+    }
+    if let Some(budget) = budget {
+        write!(text, "; {budget}").expect("write to string");
     }
     Some(plain(&text))
 }
@@ -689,6 +698,7 @@ pub(crate) fn plain(value: &str) -> String {
 pub(crate) struct Details {
     pub progress: Option<Progress>,
     pub worker_failure: Option<WorkerFailure>,
+    pub budget_exhaustion: Option<String>,
     pub incidents: Vec<StoredIncident>,
 }
 
@@ -741,6 +751,7 @@ pub(crate) fn details(
             let details = Details {
                 progress: progress.remove(node),
                 worker_failure: None,
+                budget_exhaustion: None,
                 incidents: Vec::new(),
             };
             (*node, details)
@@ -761,6 +772,16 @@ pub(crate) fn details(
                 class: failure["failure_class"].as_str().unwrap_or("unknown").into(),
                 message: failure["failure_message"].as_str().unwrap_or("worker run failed").into(),
             });
+        }
+    }
+    for row in tx.query("SELECT stop.row_id, stop.value
+        FROM tl3_world stop JOIN tl3_world node ON node.table_name = 'nodes' AND node.row_id = stop.row_id
+        WHERE stop.table_name = 'review_stops' AND stop.row_id = ANY($1)
+        AND node.value->>'review_stop' IS NOT NULL", &[&ids]).map_err(tl3_store::Error::from)? {
+        let id: String = row.get(0);
+        let stop: serde_json::Value = row.get(1);
+        if let Some(details) = id.parse().ok().and_then(|id| details.get_mut(&NodeId(id))) {
+            details.budget_exhaustion = crate::review_stops::budget_text(&stop["findings"]["budget_exhaustion"]);
         }
     }
     for row in tx.query("SELECT row_id, value FROM tl3_world WHERE table_name = 'incidents' AND value->>'node' = ANY($1) AND value->>'open' = 'true' ORDER BY row_id", &[&ids]).map_err(tl3_store::Error::from)? {
@@ -885,6 +906,7 @@ impl Rows {
                 phase_since_ms: since.get(&index.to_string()).copied(),
                 progress: details.as_ref().and_then(|d| d.progress.clone()),
                 worker_failure: details.as_ref().and_then(|d| d.worker_failure.clone()),
+                budget_exhaustion: details.as_ref().and_then(|d| d.budget_exhaustion.clone()),
                 incidents: details.map(|d| d.incidents).unwrap_or_default(),
                 // The worker adapter reads the same session for this attempt.
                 maker_model: maker_sessions
