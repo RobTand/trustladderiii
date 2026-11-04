@@ -82,11 +82,11 @@ duplicate supervisors, lost exit records, and two contenders for one claim:
 | --- | --- |
 | At most one supervisor owns an attempt, and a rejected contender starts no worker and publishes no outcome | `crates/controller/src/bin/tl3-worker-supervisor.rs:43`, exclusive claim; `:137`, atomic link; `:77`, child spawn; `:84`, exit publication |
 | At most one worker executes for an attempt, including cancellation before its wrapper starts | `crates/controller/src/bin/tl3-worker-supervisor.rs:26`, process claim; `:41`, exec; `crates/controller/src/adapters/workers.rs:1444` and `:1449`, cancellation fences |
-| A surviving owner publishes exactly one exit after worker exit and reaping; duplicates cannot overwrite it | `crates/controller/src/bin/tl3-worker-supervisor.rs:65`, wait/reap; `:79`, output fsync; `:84`, exit publication; `:143`, rename |
+| A surviving owner publishes exactly one exit after worker exit and reaping; duplicates cannot overwrite it | `crates/controller/src/bin/tl3-worker-supervisor.rs:78`, wait/reap; `:79`, output fsync; `:84`, exit publication; `:143`, rename |
 | A lost exit remains absence, never fabricated success; a live owner or worker prevents absence | `crates/controller/src/adapters/workers.rs:1445`, liveness checks; `:1453`, exit read and absent result |
 | Restart preserves the independently scoped owner and its recorded identity, including a worker exit during disconnection | `crates/controller/src/adapters/workers.rs:1114`, launcher setup; `:1428`, recorded reconciliation; `crates/controller/src/bin/tl3-worker-supervisor.rs:48`, handshake; `:78`, wait/reap |
 | An outcome is accepted at most once for its operation, and an older generation cannot affect a newer one | `crates/controller/src/adapters/workers.rs:1073`, attempt selection; `:1127`, pinned launch record; `crates/controller/src/lib.rs:3072`, reply-generation guard |
-| Every launched child is eventually reaped | `crates/controller/src/bin/tl3-worker-supervisor.rs:65`, owner wait; Linux adoption and reaping after owner death is an explicit external assumption |
+| Every launched child is eventually reaped | `crates/controller/src/bin/tl3-worker-supervisor.rs:78`, owner wait; Linux adoption and reaping after owner death is an explicit external assumption |
 
 The proof must state atomic link/rename, successful fsync durability, eventual
 scheduling and worker exit, and Linux orphan reaping as assumptions. Disk
