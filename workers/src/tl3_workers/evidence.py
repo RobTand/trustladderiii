@@ -51,11 +51,16 @@ def forcing_guidance(cpus=1):
 DIMENSIONS = ('runner_features', 'artifacts', 'methods', 'protected_files')
 
 
-def proof_applicability(goals, checks, defined=None, *, campaign=False):
+def subject_covers(chosen, subject):
+    """The selected module or definition includes the required source subject."""
+    return subject == chosen or subject.startswith(chosen + '::')
+
+
+def proof_applicability(goals, checks, defined=None, *, campaign=False, missing_subjects=None):
     """Check whether a method can supply its cited source goals' assertion proof."""
     required = any('proof_obligation' in goal for goal in goals)
     errors = []
-    for check in checks:
+    for check_index, check in enumerate(checks):
         cited = check.get('goal_ids')
         if cited is None and not required:
             continue
@@ -79,11 +84,16 @@ def proof_applicability(goals, checks, defined=None, *, campaign=False):
                 continue
             elif not proof.get('red_message', '').strip():
                 errors.append(prefix + ' requires proof.red_message binding the deterministic assertion.')
-            elif any(not any(subject == chosen or subject.startswith(chosen + '::')
-                             for chosen in proof.get('subjects', [])) for subject in obligation['subjects']):
-                errors.append(prefix + ' must identify its subjects in proof.subjects: ' + ', '.join(obligation['subjects']))
-            elif obligation['observer'] == 'new' and any(defined(node) for node in check['node_ids']):
-                errors.append(prefix + ' requires a new deterministic observer; an existing base test is insufficient.')
+            else:
+                missing = {subject for subject in obligation['subjects']
+                           if not any(subject_covers(chosen, subject) for chosen in proof.get('subjects', []))}
+                if missing:
+                    if missing_subjects is None:
+                        errors.append(prefix + ' must identify its subjects in proof.subjects: ' + ', '.join(obligation['subjects']))
+                    else:
+                        missing_subjects.setdefault(check_index, set()).update(missing)
+                if obligation['observer'] == 'new' and any(defined(node) for node in check['node_ids']):
+                    errors.append(prefix + ' requires a new deterministic observer; an existing base test is insufficient.')
     return errors
 
 
