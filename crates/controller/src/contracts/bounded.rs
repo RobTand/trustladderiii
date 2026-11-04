@@ -26,8 +26,9 @@ fn length_error(min: usize, max: usize, length: usize, unit: &str) -> String {
     }
 }
 
-/// Text with `MIN..=MAX` characters.
-#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+/// Text with `MIN..=MAX` characters. It has no `Default`: an empty text is invalid when
+/// `MIN > 0` (#750 review).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct Text<const MIN: usize, const MAX: usize>(String);
 
@@ -353,35 +354,61 @@ impl<T: JsonSchema, const MIN: usize, const MAX: usize, const UNIQUE: bool> Json
     }
 }
 
-/// An integer in `MIN..=MAX`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-#[serde(transparent)]
-pub struct Integer<const MIN: u64, const MAX: u64>(u64);
+// The integer value of a JSON number, if it has one. JSON Schema's `integer` accepts any
+// number with a zero fractional part, `3.0` included (#750 review finding 3).
+fn integral(number: &serde_json::Number) -> Option<i128> {
+    if let Some(value) = number.as_u64() {
+        return Some(value.into());
+    }
+    if let Some(value) = number.as_i64() {
+        return Some(value.into());
+    }
+    let value = number.as_f64()?;
+    // Every integral f64 in this range converts exactly. 2^64 itself is past u64::MAX.
+    (value.fract() == 0.0
+        && (-9_223_372_036_854_775_808.0..18_446_744_073_709_551_616.0).contains(&value))
+    .then_some(value as i128)
+}
+
+/// An integer in `MIN..=MAX`. The JSON number is kept as written (`3` or `3.0`), so a
+/// receipt that hashes it re-serializes byte for byte.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Integer<const MIN: u64, const MAX: u64> {
+    value: u64,
+    number: serde_json::Number,
+}
 
 impl<const MIN: u64, const MAX: u64> Integer<MIN, MAX> {
     pub fn new(value: u64) -> Result<Self, String> {
-        if (MIN..=MAX).contains(&value) {
-            Ok(Self(value))
-        } else {
-            Err(format!(
-                "expected an integer from {MIN} to {MAX}, found {value}"
-            ))
+        Self::from_number(value.into())
+    }
+
+    pub fn from_number(number: serde_json::Number) -> Result<Self, String> {
+        match integral(&number) {
+            Some(value) if (i128::from(MIN)..=i128::from(MAX)).contains(&value) => Ok(Self {
+                value: value as u64,
+                number,
+            }),
+            _ => Err(format!(
+                "expected an integer from {MIN} to {MAX}, found {number}"
+            )),
         }
     }
 
     pub fn get(&self) -> u64 {
-        self.0
+        self.value
     }
+}
 
-    /// Red (#750 review): a stub until integral JSON numbers are kept as written.
-    pub fn from_number(_number: serde_json::Number) -> Result<Self, String> {
-        todo!("accept schema-valid integral numbers")
+impl<const MIN: u64, const MAX: u64> Serialize for Integer<MIN, MAX> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.number.serialize(serializer)
     }
 }
 
 impl<'de, const MIN: u64, const MAX: u64> Deserialize<'de> for Integer<MIN, MAX> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Self::new(u64::deserialize(deserializer)?).map_err(D::Error::custom)
+        Self::from_number(serde_json::Number::deserialize(deserializer)?).map_err(D::Error::custom)
     }
 }
 
@@ -395,45 +422,110 @@ impl<const MIN: u64, const MAX: u64> JsonSchema for Integer<MIN, MAX> {
     }
 
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        let mut schema = json_schema!({"type": "integer", "minimum": MIN});
-        if MAX != u64::MAX {
-            schema.insert("maximum".into(), MAX.into());
-        }
-        schema
+        json_schema!({"type": "integer", "minimum": MIN, "maximum": MAX})
     }
 }
 
-/// A non-negative count with no upper bound.
+/// A non-negative count, up to the largest u64.
 pub type Count = Integer<0, { u64::MAX }>;
 
-/// A declared symptom campaign's xdist worker count: 0 (serial), 2, 3 or 4.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(transparent)]
-pub struct Parallel(u64);
+/// A signed 64-bit integer, such as a process exit code, kept as written.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Signed {
+    value: i64,
+    number: serde_json::Number,
+}
+
+impl Signed {
+    pub fn new(value: i64) -> Self {
+        Self {
+            value,
+            number: value.into(),
+        }
+    }
+
+    pub fn from_number(number: serde_json::Number) -> Result<Self, String> {
+        match integral(&number).and_then(|value| i64::try_from(value).ok()) {
+            Some(value) => Ok(Self { value, number }),
+            None => Err(format!("expected a 64-bit integer, found {number}")),
+        }
+    }
+
+    pub fn get(&self) -> i64 {
+        self.value
+    }
+}
+
+impl Serialize for Signed {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.number.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Signed {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_number(serde_json::Number::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+impl JsonSchema for Signed {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        "Signed".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({"type": "integer", "minimum": i64::MIN, "maximum": i64::MAX})
+    }
+}
+
+/// A declared symptom campaign's xdist worker count: 0 (serial), 2, 3 or 4, kept as written.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Parallel {
+    value: u64,
+    number: serde_json::Number,
+}
 
 impl Parallel {
     pub const VALUES: [u64; 4] = [0, 2, 3, 4];
 
-    pub fn get(&self) -> u64 {
-        self.0
+    pub fn new(value: u64) -> Result<Self, String> {
+        Self::from_number(value.into())
     }
 
-    /// Red (#750 review): a stub until parallel has a constructor.
-    pub fn from_number(_number: serde_json::Number) -> Result<Self, String> {
-        todo!("construct a parallel count")
+    pub fn from_number(number: serde_json::Number) -> Result<Self, String> {
+        match integral(&number) {
+            Some(value)
+                if Self::VALUES
+                    .iter()
+                    .any(|&allowed| i128::from(allowed) == value) =>
+            {
+                Ok(Self {
+                    value: value as u64,
+                    number,
+                })
+            }
+            _ => Err(format!("parallel must be 0, 2, 3 or 4, not {number}")),
+        }
+    }
+
+    pub fn get(&self) -> u64 {
+        self.value
+    }
+}
+
+impl Serialize for Parallel {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.number.serialize(serializer)
     }
 }
 
 impl<'de> Deserialize<'de> for Parallel {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = u64::deserialize(deserializer)?;
-        if Self::VALUES.contains(&value) {
-            Ok(Self(value))
-        } else {
-            Err(D::Error::custom(format!(
-                "parallel must be 0, 2, 3 or 4, not {value}"
-            )))
-        }
+        Self::from_number(serde_json::Number::deserialize(deserializer)?).map_err(D::Error::custom)
     }
 }
 

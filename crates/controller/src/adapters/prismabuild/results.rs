@@ -59,38 +59,34 @@ struct Log {
 // The typed report states each field's shape and bound. The rules below relate fields to
 // each other and to the staged job.
 fn phases_valid(phases: &PhaseEvidence, requested: &str) -> bool {
-    [
-        phases.base.as_ref(),
-        phases.head.as_ref(),
-        phases.head_forced.as_ref(),
-    ]
-    .into_iter()
-    .flatten()
-    .all(|run| {
-        let run_test = run.test.as_str();
-        let selected = run_test == requested
-            || (!requested.contains("::") && run_test.starts_with(&format!("{requested}::")))
-            || (!requested.contains('[')
-                && run_test.starts_with(&format!("{requested}["))
-                && run_test.ends_with(']'));
-        selected
-            && run_test.len() <= 4 * 1024 * 1024
-            && (!matches!(run.setup.outcome, PhaseOutcome::Passed) || run.call.is_some())
-            && [
-                ("setup", Some(&run.setup)),
-                ("call", run.call.as_ref()),
-                ("teardown", Some(&run.teardown)),
-            ]
-            .into_iter()
-            .all(|(phase, fact)| {
-                fact.is_none_or(|fact| {
-                    (matches!(fact.outcome, PhaseOutcome::Failed)
-                        || fact.exception.as_str().is_empty())
-                        && (!fact.assertion
-                            || phase == "call" && matches!(fact.outcome, PhaseOutcome::Failed))
+    [phases.base(), phases.head(), phases.head_forced()]
+        .into_iter()
+        .flatten()
+        .all(|run| {
+            let run_test = run.test.as_str();
+            let selected = run_test == requested
+                || (!requested.contains("::") && run_test.starts_with(&format!("{requested}::")))
+                || (!requested.contains('[')
+                    && run_test.starts_with(&format!("{requested}["))
+                    && run_test.ends_with(']'));
+            selected
+                && run_test.len() <= 4 * 1024 * 1024
+                && (!matches!(run.setup.outcome, PhaseOutcome::Passed) || run.call.is_some())
+                && [
+                    ("setup", Some(&run.setup)),
+                    ("call", run.call.as_ref()),
+                    ("teardown", Some(&run.teardown)),
+                ]
+                .into_iter()
+                .all(|(phase, fact)| {
+                    fact.is_none_or(|fact| {
+                        (matches!(fact.outcome, PhaseOutcome::Failed)
+                            || fact.exception.as_str().is_empty())
+                            && (!fact.assertion
+                                || phase == "call" && matches!(fact.outcome, PhaseOutcome::Failed))
+                    })
                 })
-            })
-    })
+        })
 }
 
 pub(super) async fn ending(

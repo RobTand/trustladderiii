@@ -5,7 +5,7 @@
 
 use super::bounded::{
     AppliedSeconds, ClippedText, CommitSha, Count, Integer, List, Nullable, RecordSchemaVersion,
-    Sha256Hex, Text, True, UNBOUNDED, present, required_nullable,
+    Sha256Hex, Signed, Text, True, UNBOUNDED, present, required_nullable,
 };
 use super::checks::{CheckKind, DeclaredSymptom, Forcing, ProofDeclaration};
 use schemars::JsonSchema;
@@ -15,6 +15,16 @@ use std::collections::BTreeMap;
 /// A test's retained failure message, in characters.
 pub const MESSAGE_CHARS: usize = 1000;
 
+// The report version the trusted action writes (action.py). A report can outlive the
+// controller that staged its check: PrismaBuild actions finish across a deploy, and each
+// controller stages only its own release's harness (checks::pinned_harness). So:
+// - a controller accepts the current version and the previous one;
+// - a report shape the previous controller would refuse, or that this controller would
+//   refuse from the previous harness, gets a new version, and fields it adds stay
+//   optional while the previous version is accepted;
+// - the previous release's reports stay as vectors under
+//   harness/test-vectors/contracts/released/<version>/, which the controller must parse.
+// A version this controller does not know is refused, never guessed at (#750 review).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ReportSchema {
     #[serde(rename = "tl3.checks.v1")]
@@ -145,31 +155,50 @@ pub struct PhaseEvidence {
         skip_serializing_if = "Option::is_none"
     )]
     #[schemars(with = "PhaseRun")]
-    pub base: Option<PhaseRun>,
+    base: Option<PhaseRun>,
     #[serde(
         default,
         deserialize_with = "present",
         skip_serializing_if = "Option::is_none"
     )]
     #[schemars(with = "PhaseRun")]
-    pub head: Option<PhaseRun>,
+    head: Option<PhaseRun>,
     #[serde(
         default,
         deserialize_with = "present",
         skip_serializing_if = "Option::is_none"
     )]
     #[schemars(with = "PhaseRun")]
-    pub head_forced: Option<PhaseRun>,
+    head_forced: Option<PhaseRun>,
 }
 
+// The sides are private, so no caller can build the empty evidence the schema refuses.
 impl PhaseEvidence {
-    /// Red (#750 review): a stub until the evidence refuses an empty side set.
     pub fn new(
-        _base: Option<PhaseRun>,
-        _head: Option<PhaseRun>,
-        _head_forced: Option<PhaseRun>,
+        base: Option<PhaseRun>,
+        head: Option<PhaseRun>,
+        head_forced: Option<PhaseRun>,
     ) -> Result<Self, String> {
-        todo!("phase evidence constructor")
+        if base.is_none() && head.is_none() && head_forced.is_none() {
+            return Err("phase evidence needs at least one side".into());
+        }
+        Ok(Self {
+            base,
+            head,
+            head_forced,
+        })
+    }
+
+    pub fn base(&self) -> Option<&PhaseRun> {
+        self.base.as_ref()
+    }
+
+    pub fn head(&self) -> Option<&PhaseRun> {
+        self.head.as_ref()
+    }
+
+    pub fn head_forced(&self) -> Option<&PhaseRun> {
+        self.head_forced.as_ref()
     }
 }
 
@@ -186,16 +215,7 @@ impl<'de> Deserialize<'de> for PhaseEvidence {
             head_forced: Option<PhaseRun>,
         }
         let sides = Sides::deserialize(deserializer)?;
-        if sides.base.is_none() && sides.head.is_none() && sides.head_forced.is_none() {
-            return Err(serde::de::Error::custom(
-                "phase evidence needs at least one side",
-            ));
-        }
-        Ok(Self {
-            base: sides.base,
-            head: sides.head,
-            head_forced: sides.head_forced,
-        })
+        Self::new(sides.base, sides.head, sides.head_forced).map_err(serde::de::Error::custom)
     }
 }
 
@@ -421,7 +441,10 @@ pub struct CollectionSaturation {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RecordFailure {
-    pub exception: Text<1, 300>,
+    // runner.py writes the full qualified class name, unclipped. test_tool.py refuses one
+    // past 300 characters only after keeping (and hashing) the record, so the record is
+    // evidence as written (#750 review finding 1).
+    pub exception: Text<1, UNBOUNDED>,
     pub phase: PhaseName,
     pub source: bool,
 }
@@ -434,12 +457,14 @@ pub enum ForcingValidation {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+// forcing_ownership.py builds these from the patch target and the resolved module's name,
+// unclipped; like RecordFailure, the record is kept as the runner wrote it.
 pub struct ForcingRefusal {
     pub phase: ForcingValidation,
-    pub target: Text<0, 4096>,
-    pub resolved_module: Text<0, 4096>,
-    pub owner_category: Text<0, 4096>,
-    pub reason: Text<0, 4096>,
+    pub target: String,
+    pub resolved_module: String,
+    pub owner_category: String,
+    pub reason: String,
 }
 
 // One record of the runner's journal in a symptom run (runner.py, summary mode).
@@ -450,7 +475,7 @@ pub enum SymptomRecord {
         schema: RecordSchemaVersion,
     },
     Finish {
-        exit_code: i64,
+        exit_code: Signed,
     },
     Collection {
         tests: Vec<Text<1, UNBOUNDED>>,

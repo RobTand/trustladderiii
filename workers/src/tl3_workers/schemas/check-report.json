@@ -61,10 +61,12 @@
       "additionalProperties": false,
       "properties": {
         "cases": {
+          "maximum": 18446744073709551615,
           "minimum": 0,
           "type": "integer"
         },
         "remaining": {
+          "maximum": 18446744073709551615,
           "minimum": 0,
           "type": "integer"
         },
@@ -208,22 +210,18 @@
       "additionalProperties": false,
       "properties": {
         "owner_category": {
-          "maxLength": 4096,
           "type": "string"
         },
         "phase": {
           "$ref": "#/$defs/ForcingValidation"
         },
         "reason": {
-          "maxLength": 4096,
           "type": "string"
         },
         "resolved_module": {
-          "maxLength": 4096,
           "type": "string"
         },
         "target": {
-          "maxLength": 4096,
           "type": "string"
         }
       },
@@ -485,7 +483,6 @@
       "additionalProperties": false,
       "properties": {
         "exception": {
-          "maxLength": 300,
           "minLength": 1,
           "type": "string"
         },
@@ -538,6 +535,7 @@
       "additionalProperties": false,
       "properties": {
         "cases": {
+          "maximum": 18446744073709551615,
           "minimum": 0,
           "type": "integer"
         },
@@ -571,6 +569,7 @@
           "type": "array"
         },
         "charged_cases": {
+          "maximum": 18446744073709551615,
           "minimum": 0,
           "type": "integer"
         },
@@ -584,6 +583,7 @@
           "type": "array"
         },
         "limit": {
+          "maximum": 18446744073709551615,
           "minimum": 0,
           "type": "integer"
         },
@@ -624,6 +624,7 @@
         "cases": {
           "anyOf": [
             {
+              "maximum": 18446744073709551615,
               "minimum": 0,
               "type": "integer"
             },
@@ -636,6 +637,7 @@
           "type": "string"
         },
         "remaining": {
+          "maximum": 18446744073709551615,
           "minimum": 0,
           "type": "integer"
         },
@@ -761,6 +763,8 @@
               "type": "string"
             },
             "exit_code": {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
               "type": "integer"
             }
           },
@@ -825,6 +829,7 @@
             },
             "target_hits": {
               "additionalProperties": {
+                "maximum": 18446744073709551615,
                 "minimum": 0,
                 "type": "integer"
               },
@@ -1007,6 +1012,7 @@
         },
         "target_hits": {
           "additionalProperties": {
+            "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
           },

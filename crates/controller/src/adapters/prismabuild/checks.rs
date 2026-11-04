@@ -27,10 +27,18 @@ pub struct CheckRun {
 
 pub use crate::contracts::{Check, CheckKind as Kind};
 
-/// The trusted harness this controller stages. Red (#750 review): a stub that still
-/// follows the configured path, so a deploy that moves `current` changes it.
+/// The trusted harness this controller stages, resolved once from the release it started
+/// from. The configured path runs through `current`, which deploy.py's `install_release`
+/// switches before tl3d restarts; staging through it would let a running controller ship
+/// the next release's harness (#750 review). Releases are immutable, and deploy.py keeps
+/// `previous`, so the resolved directory outlives the running controller.
 pub(super) fn pinned_harness(harness: &Path) -> Result<PathBuf> {
-    Ok(harness.to_owned())
+    match harness.canonicalize() {
+        Ok(pinned) => Ok(pinned),
+        // Nothing installed there yet: staging refuses it, as it always has.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(harness.to_owned()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 const MAX_REPORT_LINE_BYTES: usize = 4 * 1024 * 1024;

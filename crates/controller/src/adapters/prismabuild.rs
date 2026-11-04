@@ -301,7 +301,7 @@ impl Adapter {
             })
     }
 
-    pub fn new(client: PrismaBuild, settings: Settings) -> Result<Self> {
+    pub fn new(client: PrismaBuild, mut settings: Settings) -> Result<Self> {
         if !settings.records.is_absolute()
             || !settings.harness.is_absolute()
             || settings.python.is_empty()
@@ -312,6 +312,7 @@ impl Adapter {
                 "invalid PrismaBuild adapter settings",
             ));
         }
+        settings.harness = checks::pinned_harness(&settings.harness)?;
         fs::create_dir_all(&settings.records)?;
         // Upgrade flat bindings once, preserving completions before moving their jobs.
         for entry in fs::read_dir(&settings.records)? {
