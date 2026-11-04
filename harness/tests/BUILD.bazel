@@ -1,3 +1,6 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+
+# gazelle:resolve py _pytest.assertion.rewrite @tl3_pip//pytest
 load("//tools/bazel:python.bzl", "tl3_py_test")
 
 exports_files(["fixtures/scratch/test_disk.py"])
@@ -230,6 +233,25 @@ tl3_py_test(
     srcs = ["test_contract_vectors.py"],
     deps = [
         "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+py_binary(
+    name = "core_vectors",
+    srcs = ["core_vectors.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_core_vectors",
+    srcs = ["test_core_vectors.py"],
+    deps = [
+        ":core_vectors",
         "@tl3_pip//pytest",
     ],
 )

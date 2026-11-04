@@ -1,0 +1,631 @@
+{
+ "cases": [
+  {
+   "expected": {
+    "always": {
+     "value": null
+    },
+    "exact": true,
+    "selected": true
+   },
+   "id": "grammar-00",
+   "input": {
+    "node_id": "test_a.py::test_a",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "value": null
+    },
+    "exact": true,
+    "selected": true
+   },
+   "id": "grammar-01",
+   "input": {
+    "node_id": "tests/test_a.py::TestA::test_a[x]",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "error": "not a repo-relative pytest file or node ID: './test_a.py::test_a'"
+    },
+    "exact": true,
+    "selected": true
+   },
+   "id": "grammar-02",
+   "input": {
+    "node_id": "./test_a.py::test_a",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "error": "not a repo-relative pytest file or node ID: 'tests//test_a.py::test_a'"
+    },
+    "exact": true,
+    "selected": true
+   },
+   "id": "grammar-03",
+   "input": {
+    "node_id": "tests//test_a.py::test_a",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "value": null
+    },
+    "exact": true,
+    "selected": true
+   },
+   "id": "grammar-04",
+   "input": {
+    "node_id": ".git/test_a.py::test_a",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "value": null
+    },
+    "exact": true,
+    "selected": true
+   },
+   "id": "grammar-05",
+   "input": {
+    "node_id": "test_a.py::test_a[back\\slash]",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "value": null
+    },
+    "exact": true,
+    "selected": true
+   },
+   "id": "grammar-06",
+   "input": {
+    "node_id": ".py::x",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "value": null
+    },
+    "exact": false,
+    "selected": true
+   },
+   "id": "grammar-07",
+   "input": {
+    "node_id": "test_a.py",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "error": "not a repo-relative pytest file or node ID: 'test_a.py::'"
+    },
+    "exact": false,
+    "selected": false
+   },
+   "id": "grammar-08",
+   "input": {
+    "node_id": "test_a.py::",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "error": "not a repo-relative pytest file or node ID: 'test_a.py::::x'"
+    },
+    "exact": false,
+    "selected": false
+   },
+   "id": "grammar-09",
+   "input": {
+    "node_id": "test_a.py::::x",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "error": "not a repo-relative pytest file or node ID: '/test_a.py::x'"
+    },
+    "exact": false,
+    "selected": false
+   },
+   "id": "grammar-10",
+   "input": {
+    "node_id": "/test_a.py::x",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "error": "not a repo-relative pytest file or node ID: '-test_a.py::x'"
+    },
+    "exact": false,
+    "selected": false
+   },
+   "id": "grammar-11",
+   "input": {
+    "node_id": "-test_a.py::x",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "error": "not a repo-relative pytest file or node ID: '../test_a.py::x'"
+    },
+    "exact": false,
+    "selected": false
+   },
+   "id": "grammar-12",
+   "input": {
+    "node_id": "../test_a.py::x",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "error": "not a repo-relative pytest file or node ID: 'tests/../test_a.py::x'"
+    },
+    "exact": false,
+    "selected": false
+   },
+   "id": "grammar-13",
+   "input": {
+    "node_id": "tests/../test_a.py::x",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "error": "not a repo-relative pytest file or node ID: 'tests\\\\test_a.py::x'"
+    },
+    "exact": false,
+    "selected": false
+   },
+   "id": "grammar-14",
+   "input": {
+    "node_id": "tests\\test_a.py::x",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "error": "not a repo-relative pytest file or node ID: 'test_a.py::x\\x00'"
+    },
+    "exact": false,
+    "selected": false
+   },
+   "id": "grammar-15",
+   "input": {
+    "node_id": "test_a.py::x\u0000",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "error": "not a repo-relative pytest file or node ID: 'test_a.txt::x'"
+    },
+    "exact": false,
+    "selected": false
+   },
+   "id": "grammar-16",
+   "input": {
+    "node_id": "test_a.txt::x",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "error": "not a repo-relative pytest file or node ID: '::x'"
+    },
+    "exact": false,
+    "selected": false
+   },
+   "id": "grammar-17",
+   "input": {
+    "node_id": "::x",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "error": "not a repo-relative pytest file or node ID: ''"
+    },
+    "exact": false,
+    "selected": false
+   },
+   "id": "grammar-18",
+   "input": {
+    "node_id": "",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "value": null
+    },
+    "exact": true,
+    "selected": true
+   },
+   "id": "grammar-19",
+   "input": {
+    "node_id": "tests/test_sequences.py::test_chunked_rejects_non_positive_sizes",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "value": null
+    },
+    "exact": true,
+    "selected": true
+   },
+   "id": "grammar-20",
+   "input": {
+    "node_id": "tests/test_a.py::TestA::test_a",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "value": null
+    },
+    "exact": true,
+    "selected": true
+   },
+   "id": "grammar-21",
+   "input": {
+    "node_id": "tests/test_a.py::test_a[0]",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "value": null
+    },
+    "exact": true,
+    "selected": true
+   },
+   "id": "grammar-22",
+   "input": {
+    "node_id": "tests/test_\u00e9.py::test_\ud835\udec2",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "error": "not a repo-relative pytest file or node ID: 'tests/test_x.py::test_x[\\x85]'"
+    },
+    "exact": true,
+    "selected": true
+   },
+   "id": "grammar-23",
+   "input": {
+    "node_id": "tests/test_x.py::test_x[\u0085]",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "error": "not a repo-relative pytest file or node ID: 'tests/test_x.py::test_x[\\x7f]'"
+    },
+    "exact": true,
+    "selected": true
+   },
+   "id": "grammar-24",
+   "input": {
+    "node_id": "tests/test_x.py::test_x[\u007f]",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "error": "not a repo-relative pytest file or node ID: 'tests/[x].py::test_x'"
+    },
+    "exact": true,
+    "selected": true
+   },
+   "id": "grammar-25",
+   "input": {
+    "node_id": "tests/[x].py::test_x",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "value": null
+    },
+    "exact": true,
+    "selected": true
+   },
+   "id": "grammar-26",
+   "input": {
+    "node_id": "tests/test_x.py::test_x[a::b]",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "value": null
+    },
+    "exact": false,
+    "selected": true
+   },
+   "id": "grammar-27",
+   "input": {
+    "node_id": "tests/test_x.py",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": {
+    "always": {
+     "value": null
+    },
+    "exact": true,
+    "selected": true
+   },
+   "id": "grammar-28",
+   "input": {
+    "node_id": ".git/test_x.py::test_x",
+    "op": "grammar"
+   }
+  },
+  {
+   "expected": [
+    true,
+    true,
+    false
+   ],
+   "id": "selects-0",
+   "input": {
+    "collected": [
+     "tests/test_sequences.py::test_chunked_rejects_non_positive_sizes[0]",
+     "tests/test_sequences.py::test_chunked_rejects_non_positive_sizes[-1]",
+     "tests/test_sequences.py::test_chunked_rejects_non_positive_sizes_extra[0]"
+    ],
+    "op": "selects",
+    "requested": "tests/test_sequences.py::test_chunked_rejects_non_positive_sizes"
+   }
+  },
+  {
+   "expected": [
+    true,
+    true,
+    false
+   ],
+   "id": "selects-1",
+   "input": {
+    "collected": [
+     "tests/test_a.py::TestA::test_a[0]",
+     "tests/test_a.py::TestA::test_a[-1]",
+     "tests/test_a.py::TestB::test_a[0]"
+    ],
+    "op": "selects",
+    "requested": "tests/test_a.py::TestA::test_a"
+   }
+  },
+  {
+   "expected": [
+    true,
+    false,
+    false
+   ],
+   "id": "selects-2",
+   "input": {
+    "collected": [
+     "tests/test_a.py::test_a[0]",
+     "tests/test_a.py::test_a[-1]",
+     "tests/test_a.py::test_a[0][nested]"
+    ],
+    "op": "selects",
+    "requested": "tests/test_a.py::test_a[0]"
+   }
+  },
+  {
+   "expected": [
+    true,
+    true,
+    true,
+    false,
+    false,
+    false,
+    false
+   ],
+   "id": "selects-file-prefix",
+   "input": {
+    "collected": [
+     "tests/test_value.py",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::TestValue::test_case[one]",
+     "tests/test_value.pyx::test_value",
+     "tests/test_value.py_extra::test_value",
+     "tests/test_value.py/other.py::test_value",
+     "tests/test_values.py::test_value"
+    ],
+    "op": "selects",
+    "requested": "tests/test_value.py"
+   }
+  },
+  {
+   "expected": {
+    "value": null
+   },
+   "id": "exactly-twenty",
+   "input": {
+    "op": "always-tests",
+    "tests": [
+     "tests/test_0.py",
+     "tests/test_1.py",
+     "tests/test_2.py",
+     "tests/test_3.py",
+     "tests/test_4.py",
+     "tests/test_5.py",
+     "tests/test_6.py",
+     "tests/test_7.py",
+     "tests/test_8.py",
+     "tests/test_9.py",
+     "tests/test_10.py",
+     "tests/test_11.py",
+     "tests/test_12.py",
+     "tests/test_13.py",
+     "tests/test_14.py",
+     "tests/test_15.py",
+     "tests/test_16.py",
+     "tests/test_17.py",
+     "tests/test_18.py",
+     "tests/test_19.py"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "error": "not a repo-relative pytest file or node ID: 'tests/test_*.py'"
+   },
+   "id": "star-path",
+   "input": {
+    "op": "always-tests",
+    "tests": [
+     "tests/test_*.py"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "error": "not a repo-relative pytest file or node ID: 'tests/test_?.py'"
+   },
+   "id": "question-path",
+   "input": {
+    "op": "always-tests",
+    "tests": [
+     "tests/test_?.py"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "error": "not a repo-relative pytest file or node ID: 'tests/test:case.py'"
+   },
+   "id": "colon-path",
+   "input": {
+    "op": "always-tests",
+    "tests": [
+     "tests/test:case.py"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "error": "always_tests must list repo-relative pytest files or node IDs"
+   },
+   "id": "tuple-shape",
+   "input": {
+    "op": "always-tests",
+    "tests": null
+   }
+  },
+  {
+   "expected": {
+    "error": "always_tests must contain strings"
+   },
+   "id": "not-strings",
+   "input": {
+    "op": "always-tests",
+    "tests": [
+     1
+    ]
+   }
+  },
+  {
+   "expected": {
+    "error": "always_tests accepts at most 20 entries"
+   },
+   "id": "too-many",
+   "input": {
+    "op": "always-tests",
+    "tests": [
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "value": null
+   },
+   "id": "duplicates",
+   "input": {
+    "op": "always-tests",
+    "tests": [
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "value": null
+   },
+   "id": "empty",
+   "input": {
+    "op": "always-tests",
+    "tests": []
+   }
+  }
+ ],
+ "kind": "node-id"
+}
