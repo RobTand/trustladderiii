@@ -1,9 +1,10 @@
 /* Test-only glibc allocation probe. Rust's controller keeps forbid(unsafe_code).
- * Explicit write markers delimit allocations on the measured test thread.
+ * Explicit write markers delimit allocations across the measured test process.
  * Compile/load only on BuildBuddy; use an uninstrumented run for timings. */
 #define _GNU_SOURCE
 #include <stddef.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/syscall.h>
@@ -12,8 +13,8 @@ extern void *__libc_malloc(size_t);
 extern void *__libc_calloc(size_t, size_t);
 extern void *__libc_realloc(void *, size_t);
 extern void __libc_free(void *);
-static __thread int counting;
-static __thread uint64_t allocations, bytes;
+static _Atomic int counting;
+static _Atomic uint64_t allocations, bytes;
 static void count(size_t n) {
     if (counting) { ++allocations; bytes += n; }
 }

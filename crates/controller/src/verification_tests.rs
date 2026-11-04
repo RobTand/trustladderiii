@@ -251,26 +251,26 @@ fn alarm_survives_restart_and_does_not_duplicate_or_reject() {
 }
 
 /// #783: paired measurements include the real apply/record path, snapshot-row
-/// searches, predicate scans, all JSON construction, and final JSON wire encoding.
-/// Fixture construction is outside the measurement. The store read already on
-/// main is retained; there are no additional database reads or commits on this path.
+/// searches, predicate scans, JSON construction and the real Store::commit.
+/// Fixture construction and the unchanged initial snapshot read/decode are
+/// outside the paired measurement. Both paths use the same disposable database.
 #[test]
 fn measure_complete_step_cost_and_allocations() {
     use std::hint::black_box;
     use tl3_kernel::{Node, Outcome, Phase};
-    use tl3_store::{Epoch, Revision, Snapshot, WorldRow};
+    use tl3_store::{Revision, WorldRow};
     let mut db = Database::start();
-    let settings = db.create("invariant_cost");
-    let root = tempfile::tempdir().unwrap();
-    let mut c = Controller::open_with_clock(
-        Store::open(&settings).unwrap(),
-        adapters::simulation(root.path()).unwrap(),
-        bootstrap(),
-        FixedClock,
-    )
-    .unwrap();
     for density in [4, 16] {
         for count in [256, 1024, 4096] {
+            let settings = db.create("invariant_cost");
+            let root = tempfile::tempdir().unwrap();
+            let mut c = Controller::open_with_clock(
+                Store::open(&settings).unwrap(),
+                adapters::simulation(root.path()).unwrap(),
+                bootstrap(),
+                FixedClock,
+            )
+            .unwrap();
             let mut world = World::new(&[1], 2);
             let mut closed = Node::new(RepoId(0));
             closed.phase = Phase::Closed(Outcome::Stopped);
@@ -302,25 +302,31 @@ fn measure_complete_step_cost_and_allocations() {
                     rows.push(WorldRow {table:format!("fixture_metadata_{table}"),id:node.to_string(),value:json!({"state":"retained","node":node,"metadata":"representative payload"}),version:Revision::ZERO,arrival:0});
                 }
             }
-            let s = Snapshot {
-                revision: Revision::ZERO,
-                epoch: Epoch::ZERO,
-                rows,
-                pending_effects: vec![],
-                credit: vec![],
-                interned: vec![],
-            };
-            let event = Event::Fact {
-                node: NodeId(0),
-                fact: Fact::Priority(Priority::P0),
-            };
+            let fixture = c.store.load().unwrap();
+            let mut seed = Commit::new("fixture:seed", json!({}), &fixture);
+            seed.rows = rows
+                .into_iter()
+                .map(|row| put(&row.table, row.id, row.value))
+                .collect();
+            c.store.commit(&seed).unwrap();
             let mut totals = [0u128; 2];
-            let iterations = 3;
+            let iterations = if cfg!(debug_assertions) { 1 } else { 3 };
             for turn in 0..iterations {
                 // Alternate ordering to reduce cache/order bias.
                 for mode in [turn % 2, 1 - turn % 2] {
-                    let input = world.clone();
-                    let mut commit = Commit::new("fixture:measured", json!({}), &s);
+                    let s = c.store.load().unwrap();
+                    let input = snapshot::decode(&s).unwrap();
+                    let priority = if input.nodes[0].priority == Priority::P0 {
+                        Priority::P1
+                    } else {
+                        Priority::P0
+                    };
+                    let event = Event::Fact {
+                        node: NodeId(0),
+                        fact: Fact::Priority(priority),
+                    };
+                    let mut commit =
+                        Commit::new(format!("fixture:measured:{turn}:{mode}"), json!({}), &s);
                     use std::{io::Write, time::Instant};
                     let probe = std::env::var_os("TL3_ALLOC_CHILD").is_some();
                     if probe {
@@ -337,17 +343,9 @@ fn measure_complete_step_cost_and_allocations() {
                             assert!(!c.post_kernel_alarm(&s).unwrap());
                             c.apply(&s, input, event, &mut commit).unwrap();
                         }
-                        // The store's JSONB parameter encoder serializes every row,
-                        // effect payload and event result. Include those allocations.
-                        for row in &commit.rows {
-                            if let RowChange::Put { value, .. } = row {
-                                black_box(serde_json::to_vec(value).unwrap());
-                            }
-                        }
-                        for effect in &commit.effects {
-                            black_box(serde_json::to_vec(&effect.payload).unwrap());
-                        }
-                        black_box(serde_json::to_vec(&commit.result).unwrap());
+                        // Include the real JSONB encoder, event-log write, row
+                        // upserts and transaction commit, not a serialization proxy.
+                        c.store.commit(&commit).unwrap();
                         black_box(commit);
                     }
                     let ns = start.elapsed().as_nanos();
@@ -368,7 +366,7 @@ fn measure_complete_step_cost_and_allocations() {
         }
     }
 
-    if std::env::var_os("TL3_ALLOC_CHILD").is_none() {
+    if !cfg!(debug_assertions) && std::env::var_os("TL3_ALLOC_CHILD").is_none() {
         let probe = std::env::current_dir()
             .unwrap()
             .join("crates/controller/libtl3_allocation_counter.so");
