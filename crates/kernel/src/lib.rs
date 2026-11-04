@@ -1958,23 +1958,23 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) {
 
 // ---------------------------------------------------------------- transitions
 
-/// Every phase change starts a new generation, and the node stops waiting on
-/// whatever effect it had in flight.
 kernel_fn! {
+    /// Every phase change starts a new generation, and the node stops waiting on
+    /// whatever effect it had in flight. #771: one generation increment.
     fn set_phase(m: &mut Node, phase: Phase) -> (result: ()) [
         requires old(m).generation < u64::MAX,
         ensures
-            m.generation as int == old(m).generation as int + 1,
-            m.phase == phase, m.pos == 0, m.ticket.is_none(),
-            m.effect == match old(m).effect {
+            final(m).generation as int == old(m).generation as int + 1,
+            final(m).phase == phase, final(m).pos == 0, final(m).ticket.is_none(),
+            final(m).effect == match old(m).effect {
                 Some(e) => Some(InFlight { cancelling: true, ..e }),
                 None => None,
             },
-            m.credit == old(m).credit, m.next_seq == old(m).next_seq,
-            m.last_cmd == old(m).last_cmd, m.question == old(m).question,
-            m.run == old(m).run, m.job == old(m).job,
-            m.pool == old(m).pool, m.holds == old(m).holds,
-            m.paused == old(m).paused, m.waiting_incident == old(m).waiting_incident,
+            final(m).credit == old(m).credit, final(m).next_seq == old(m).next_seq,
+            final(m).last_cmd == old(m).last_cmd, final(m).question == old(m).question,
+            final(m).run == old(m).run, final(m).job == old(m).job,
+            final(m).pool == old(m).pool, final(m).holds == old(m).holds,
+            final(m).paused == old(m).paused, final(m).waiting_incident == old(m).waiting_incident,
     ] {
         if let Some(e) = m.effect.as_mut() {
             e.cancelling = true;
@@ -2027,17 +2027,17 @@ kernel_fn! {
     fn merge_credit(m: &mut Node) -> (result: ()) [
         requires old(m).credit.merge_credited || old(m).credit.earned < u32::MAX,
         ensures
-            m.credit.earned as int == old(m).credit.earned as int
+            final(m).credit.earned as int == old(m).credit.earned as int
                 + if old(m).credit.merge_credited { 0int } else { 1int },
-            m.credit.merge_credited,
-            m.credit.start == old(m).credit.start,
-            m.credit.added == old(m).credit.added,
-            m.credit.spent == old(m).credit.spent,
-            m.credit.ready == old(m).credit.ready,
-            m.credit.withheld == old(m).credit.withheld,
-            m.generation == old(m).generation, m.next_seq == old(m).next_seq,
-            m.phase == old(m).phase, m.pos == old(m).pos,
-            m.effect == old(m).effect, m.question == old(m).question,
+            final(m).credit.merge_credited,
+            final(m).credit.start == old(m).credit.start,
+            final(m).credit.added == old(m).credit.added,
+            final(m).credit.spent == old(m).credit.spent,
+            final(m).credit.ready == old(m).credit.ready,
+            final(m).credit.withheld == old(m).credit.withheld,
+            final(m).generation == old(m).generation, final(m).next_seq == old(m).next_seq,
+            final(m).phase == old(m).phase, final(m).pos == old(m).pos,
+            final(m).effect == old(m).effect, final(m).question == old(m).question,
     ] {
         if !m.credit.merge_credited {
             m.credit.earned += 1;
