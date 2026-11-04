@@ -114,36 +114,43 @@ def source_moves(base, head, edge_diff):
     """Pair unique byte-identical removed/added sources with source-edge evidence."""
     identities = []
     for graph, other, direction in ((base, head, 'removed'), (head, base, 'added')):
-        candidates = (graph['loc'].keys() - other['loc'].keys()) & {
-            dependency for _, dependency in edge_diff[direction]['rule_to_source']}
         by_identity = {}
-        for source in sorted(candidates):
+        for source in sorted(graph['loc']):
             identity = graph.get('source_identities', {}).get(source)
             if identity:
                 by_identity.setdefault(identity, []).append(source)
-        identities.append(by_identity)
+        candidates = (graph['loc'].keys() - other['loc'].keys()) & {
+            dependency for _, dependency in edge_diff[direction]['rule_to_source']}
+        identities.append({identity: sources[0] for identity, sources in by_identity.items()
+                           if len(sources) == 1 and sources[0] in candidates})
     old, new = identities
-    return dict(sorted((new[identity][0], old[identity][0]) for identity in old.keys() & new.keys()
-                       if len(old[identity]) == len(new[identity]) == 1))
+    return dict(sorted((new[identity], old[identity]) for identity in old.keys() & new.keys()))
 
 
-def moved_base(base, moves):
-    origins = {origin: destination for destination, origin in moves.items()}
-    return {**base,
-            'loc': {origins.get(source, source): weight for source, weight in base['loc'].items()},
-            'reach': {test: sorted(origins.get(source, source) for source in sources)
-                      for test, sources in base['reach'].items()},
-            'dependents': {origins.get(source, source): count for source, count in base['dependents'].items()}}
+def moved_head(head, moves):
+    # Base labels retain their package ownership for inheritance. Alias paths
+    # attribute moved identities to actual added edges without changing SCCs.
+    return {**head,
+            'loc': {moves.get(source, source): weight for source, weight in head['loc'].items()},
+            'reach': {test: sorted(moves.get(source, source) for source in sources)
+                      for test, sources in head['reach'].items()},
+            'dependents': {moves.get(source, source): count for source, count in head['dependents'].items()},
+            'path_edges': [*head.get('path_edges', head['edges']), *map(list, moves.items())]}
 
 
 def structural_reach_errors(base, head, allowlist):
     # The pinned core's aggregate structural-reach diagnostic ignores reach:
     # exceptions. Replace only that diagnostic; keep its edge attribution.
     inherited = graph_impact.inherited_sources(base, head)
-    growth = {test: set(head['reach'][test]) - inherited.keys() - set(base['reach'][test])
-              for test in base['reach'].keys() & head['reach'].keys()
-              if f'reach:{test}' not in allowlist
-              and len(set(head['reach'][test]) - inherited.keys()) > len(base['reach'][test])}
+    growth = {}
+    for test in base['reach'].keys() & head['reach'].keys():
+        effective = set(head['reach'][test]) - inherited.keys()
+        gained = effective - set(base['reach'][test])
+        # Deletions cannot pay for unmatched new sources, including ambiguous
+        # copies. Only proven moves retain an original source identity.
+        if (f'reach:{test}' not in allowlist
+                and (len(effective) > len(base['reach'][test]) or gained - base['loc'].keys())):
+            growth[test] = gained
     gained = set().union(*growth.values()) if growth else set()
     added = {tuple(edge) for rows in head['edge_diff']['added'].values() for edge in rows}
     causes = graph_impact._causing_edges(head, added, gained, growth) if gained else []
@@ -170,11 +177,11 @@ def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, 
                          'figures': {key: value for key, value in policy['figures'].items() if key != 'scc_max'}}
     # SCC growth is checked component-by-component against base by compare().
     moves = source_moves(base, head, head['edge_diff'])
-    comparison_base = moved_base(base, moves)
-    compared = graph_impact.compare({**comparison_base, 'edge_groups': base_groups}, head, comparison_policy,
+    comparison_head = moved_head(head, moves)
+    compared = graph_impact.compare({**base, 'edge_groups': base_groups}, comparison_head, comparison_policy,
                                     changed_tests=changed, allowlist=allowlist, record_gains=record_gains)
     errors += [error for error in compared if not error.startswith('existing test reach grew: ')]
-    errors += structural_reach_errors(comparison_base, head, allowlist)
+    errors += structural_reach_errors(base, comparison_head, allowlist)
     added = set(map(tuple, head['edges'])) - set(map(tuple, base['edges']))
     deps = {}
     for source, target in head['edges']:
@@ -185,8 +192,9 @@ def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, 
         targets.update(test for test in head['reach'] if closure(deps, test) & consumers)
     else:
         targets = set()
-    growth = sorted(((source, n - comparison_base['dependents'].get(source, 0))
-                     for source, n in head['dependents'].items() if n > comparison_base['dependents'].get(source, 0)),
+    growth = sorted(((source, n - base['dependents'].get(moves.get(source, source), 0))
+                     for source, n in head['dependents'].items()
+                     if n > base['dependents'].get(moves.get(source, source), 0)),
                     key=lambda row: (-row[1], row[0]))
     broad = {test for test in targets if any(f'{test} reach ' in error for error in errors)}
     additions = {key: reason for key, reason in sorted(allowlist.items()) if key not in previous_allowlist}
