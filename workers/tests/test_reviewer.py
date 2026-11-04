@@ -636,3 +636,32 @@ def test_review_input_retains_unresolved_displaced_failures(review_request):
         "skipped_units": [["tests/test_old.py", "tests/test_companion.py"]], "skipped_checked": False,
     }
     validate("reviewer-input", review_request["inputs"])
+
+
+@pytest.mark.parametrize("violations", [[], ["approval names a head other than the reviewed head"]])
+def test_reviewer_uses_shared_validator_transport(tmp_path, monkeypatch, violations):
+    import sys
+    from tl3_workers.roles.reviewer import check_reply
+    from tl3_workers.reply_check import ReplyViolation
+    from tl3_workers.tracing import failure_tags
+
+    request = {"inputs": {"head_sha": "untrusted café"}, "reply": {"verdict": "out_of_room"}}
+    checker = tmp_path / "fake-tl3"
+    marker = tmp_path / "called"
+    checker.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys\nfrom pathlib import Path\n"
+        "assert sys.argv[1:] == ['check-reply', 'reviewer']\n"
+        f"assert json.load(sys.stdin) == {request!r}\n"
+        f"Path({str(marker)!r}).touch()\n"
+        f"print({json.dumps({'violations': violations})!r})\n")
+    checker.chmod(0o755)
+    monkeypatch.setenv("TL3_BINARY", str(checker))
+    if violations:
+        with pytest.raises(ReplyViolation) as caught:
+            check_reply(**request)
+        assert str(caught.value) == violations[0]
+        assert failure_tags(caught.value)["failure_message"] == violations[0]
+    else:
+        assert check_reply(**request) is None
+    assert marker.exists()

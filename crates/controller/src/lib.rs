@@ -44,6 +44,7 @@ mod question_findings;
 mod redaction;
 pub mod release;
 mod review_stops;
+pub mod reviewer;
 mod scope;
 mod snapshot;
 pub mod status;

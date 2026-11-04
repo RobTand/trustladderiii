@@ -5,6 +5,8 @@ const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(450);
 #[path = "workers/classifier.rs"]
 mod classifier;
 mod maker;
+#[path = "workers/reviewer.rs"]
+mod reviewer;
 use support::scenario_shard::{self, WorkerGroup};
 use tl3_controller::executor::Output as Out;
 #[path = "workers/planning.rs"]
@@ -362,6 +364,12 @@ fn finish_fixture(database: Database, group: &str) {
 }
 
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--reviewer-contracts") {
+        prepare_workers();
+        reviewer::run();
+        println!("reviewer scenarios passed; no skips");
+        return;
+    }
     if env::args().nth(1).as_deref() == Some("--classifier-contracts") {
         prepare_workers();
         classifier::run();
@@ -2754,6 +2762,7 @@ fn run_default() {
     });
     shard.run(WorkerGroup::Reply, || {
         classifier::run();
+        reviewer::run();
         let mut database = Database::start();
         invalid_replies(&database.create("workers_invalid"));
         println!("test schema_missing_nonzero_and_duplicate_replies_fail ... ok");
