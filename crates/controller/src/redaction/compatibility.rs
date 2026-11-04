@@ -2,17 +2,13 @@
 use fancy_regex::{Assertion, Expr, LookAround};
 use std::collections::HashMap;
 
+#[path = "grammar.rs"]
+mod grammar;
+
 type Result<T> = std::result::Result<T, String>;
 
 pub(crate) fn translate(pattern: &str, classes: &[String; 3]) -> Result<String> {
-    // fancy-regex merges $ and \z into one AST assertion. The policy uses Python's
-    // \Z for strict end; reject ambiguous input rather than silently soften it.
-    let mut tokens = pattern.chars();
-    while let Some(c) = tokens.next() {
-        if c == '\\' && tokens.next() == Some('z') {
-            return Err("use Python \\Z for strict end of string".into());
-        }
-    }
+    grammar::validate(pattern)?;
     let tree = Expr::parse_tree(pattern).map_err(|e| e.to_string())?;
     let names = tree
         .named_groups

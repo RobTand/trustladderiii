@@ -147,39 +147,28 @@ pub(super) async fn evaluate(
             reported.push(expected);
         }
         for check in checks {
-            if check.status != "completed"
-                || matches!(
-                    check.conclusion.as_deref(),
-                    Some("action_required" | "stale")
-                )
-            {
-                ready = false;
-                continue;
-            }
-            if matches!(
-                check.conclusion.as_deref(),
-                Some("success" | "neutral" | "skipped")
-            ) {
-                continue;
-            }
-            ready = false;
-            let actions = check
-                .app
-                .as_ref()
-                .is_some_and(|app| app.slug == "github-actions");
-            let infra = actions
-                && (matches!(
-                    check.conclusion.as_deref(),
-                    Some("cancelled" | "timed_out" | "startup_failure")
-                ) || check.conclusion.as_deref() == Some("failure")
-                    && runner_failure(&github.check_annotations(repo, check.id).await?));
-            if infra {
-                infrastructure.push(check.clone());
-            } else if check.conclusion.is_some() {
-                tests = Some(Failure::Tests {
-                    check: check.id,
-                    completed_at: check.completed_at.map(|time| time.to_rfc3339()),
-                });
+            let view = tl3_mergify::views(std::slice::from_ref(check), &pull.head.sha, |_| true)[0];
+            // Only Actions failures need annotations to distinguish runner failures.
+            let runner = view.status == tl3_mergify::decide::Status::Completed
+                && view.app == tl3_mergify::decide::App::Actions
+                && view.conclusion == Some(tl3_mergify::decide::Conclusion::Failure)
+                && runner_failure(&github.check_annotations(repo, check.id).await?);
+            match lifecycle::required_check(view, runner) {
+                lifecycle::RequiredState::Passed => {}
+                lifecycle::RequiredState::Pending | lifecycle::RequiredState::Unknown => {
+                    ready = false
+                }
+                lifecycle::RequiredState::Infrastructure => {
+                    ready = false;
+                    infrastructure.push(check.clone());
+                }
+                lifecycle::RequiredState::Tests => {
+                    ready = false;
+                    tests = Some(Failure::Tests {
+                        check: check.id,
+                        completed_at: check.completed_at.map(|time| time.to_rfc3339()),
+                    });
+                }
             }
         }
         if let Some(status) = status {
@@ -256,13 +245,22 @@ impl Adapter {
                 .runtime
                 .block_on(github.workflow_run(&repo, saved.run.id))
                 .map_err(Error::from)?;
-            if current.head_sha != saved.run.head_sha {
-                return Ok(true);
-            }
-            if current.run_attempt > saved.run.run_attempt {
-                continue;
-            }
-            if !saved.waiting_for_completion || current.status != "completed" {
+            let (_, effects) = lifecycle::decide(
+                lifecycle::EnqueueState {
+                    rerun: Some(lifecycle::Rerun {
+                        attempt: saved.run.run_attempt,
+                        accepted: saved.accepted,
+                        waiting: saved.waiting_for_completion,
+                    }),
+                    ..Default::default()
+                },
+                lifecycle::QueueEvent::RerunPending {
+                    head: lifecycle_head(current.head_sha == saved.run.head_sha),
+                    attempt: current.run_attempt,
+                    status: tl3_mergify::decide::Status::parse(&current.status),
+                },
+            );
+            if effects == [lifecycle::Effect::RerunPending(true)] {
                 return Ok(true);
             }
         }
@@ -307,68 +305,104 @@ impl Adapter {
         let mut saved = self.saved_reruns(delivery)?;
         let path = self.records.path(&delivery.key).with_extension("reruns");
         for run in selected.into_values() {
-            if let Some(index) = saved.iter().position(|saved| saved.run.id == run.id) {
-                let previous = &saved[index];
-                if previous.accepted || run.run_attempt > previous.run.run_attempt {
-                    continue;
-                }
-                if !previous.waiting_for_completion {
-                    return Err(Error::Invalid("workflow rerun acceptance is still unknown"));
-                }
-                saved.remove(index);
-            }
-            if run.status != "completed" {
-                saved.push(Rerun {
-                    run,
-                    accepted: false,
-                    waiting_for_completion: true,
-                });
-                self.records.write(&path, &serde_json::to_vec(&saved)?)?;
-                return Err(Error::Invalid(
-                    "workflow run is still finishing before rerun",
-                ));
-            }
-            let pull = self.runtime.block_on(github.pull_request(&repo, number))?;
-            if pull.head.sha != run.head_sha || pull.state != "open" || pull.merged_at.is_some() {
-                return Err(Error::Invalid("PR changed before workflow rerun"));
-            }
-            self.fence(delivery)?;
-            saved.push(Rerun {
-                run: run.clone(),
-                accepted: false,
-                waiting_for_completion: false,
-            });
-            // GitHub has no idempotency key for reruns. Persist before POST and recover
-            // a lost response from run_attempt; silence never permits another POST.
-            self.records.write(&path, &serde_json::to_vec(&saved)?)?;
-            match self
-                .runtime
-                .block_on(github.rerun_workflow_run(&repo, run.id))
-            {
-                Ok(()) => saved.last_mut().unwrap().accepted = true,
-                Err(error) => {
-                    match &error {
-                        tl3_github::Error::ActionsForbidden(
-                            tl3_github::ActionsRefusal::RunInProgress,
-                        ) => {
-                            saved.last_mut().unwrap().waiting_for_completion = true;
+            let prior = saved.iter().find(|saved| saved.run.id == run.id);
+            let mut core = lifecycle::EnqueueState {
+                rerun: prior.map(|saved| lifecycle::Rerun {
+                    attempt: saved.run.run_attempt,
+                    accepted: saved.accepted,
+                    waiting: saved.waiting_for_completion,
+                }),
+                ..Default::default()
+            };
+            let mut writable = None;
+            loop {
+                let (next, effects) = lifecycle::decide(
+                    core,
+                    lifecycle::QueueEvent::RerunRead {
+                        head: lifecycle_head(run.head_sha == head),
+                        attempt: run.run_attempt,
+                        status: tl3_mergify::decide::Status::parse(&run.status),
+                        writable,
+                    },
+                );
+                core = next;
+                let mut read_pull = false;
+                for effect in effects {
+                    match effect {
+                        lifecycle::Effect::Continue => {}
+                        lifecycle::Effect::Read(lifecycle::Need::RerunPull) => {
+                            let pull = self.runtime.block_on(github.pull_request(&repo, number))?;
+                            writable = Some(
+                                pull.head.sha == run.head_sha
+                                    && pull.state == "open"
+                                    && pull.merged_at.is_none(),
+                            );
+                            read_pull = true;
                         }
-                        tl3_github::Error::ActionsForbidden(_)
-                        | tl3_github::Error::RateLimited { .. }
-                        | tl3_github::Error::Http {
-                            status: 400..=407 | 409..=499,
-                        } => {
-                            // A refused request did not start a rerun. Retrying this key is safe.
-                            saved.pop();
+                        lifecycle::Effect::Error(failure) => return Err(lifecycle_error(failure)),
+                        lifecycle::Effect::SaveRerun => {
+                            if core.rerun.is_some_and(|rerun| !rerun.waiting) {
+                                self.fence(delivery)?;
+                            }
+                            save_rerun_projection(self, &path, &mut saved, &run, core.rerun)?;
                         }
-                        _ => {}
+                        lifecycle::Effect::Write(lifecycle::Write::Rerun) => {
+                            let result = self
+                                .runtime
+                                .block_on(github.rerun_workflow_run(&repo, run.id));
+                            let outcome = match &result {
+                                Ok(()) => lifecycle::RerunResult::Accepted,
+                                Err(tl3_github::Error::ActionsForbidden(
+                                    tl3_github::ActionsRefusal::RunInProgress,
+                                )) => lifecycle::RerunResult::InProgress,
+                                Err(
+                                    tl3_github::Error::ActionsForbidden(_)
+                                    | tl3_github::Error::RateLimited { .. }
+                                    | tl3_github::Error::Http {
+                                        status: 400..=407 | 409..=499,
+                                    },
+                                ) => lifecycle::RerunResult::Refused,
+                                Err(_) => lifecycle::RerunResult::Unknown,
+                            };
+                            let (next, effects) =
+                                lifecycle::decide(core, lifecycle::QueueEvent::RerunDone(outcome));
+                            for effect in effects {
+                                if effect == lifecycle::Effect::SaveRerun {
+                                    save_rerun_projection(
+                                        self, &path, &mut saved, &run, next.rerun,
+                                    )?;
+                                }
+                            }
+                            result?;
+                        }
+                        _ => return Err(Error::Invalid("unexpected workflow rerun effect")),
                     }
-                    self.records.write(&path, &serde_json::to_vec(&saved)?)?;
-                    return Err(error.into());
+                }
+                if !read_pull {
+                    break;
                 }
             }
-            self.records.write(&path, &serde_json::to_vec(&saved)?)?;
         }
+
         Ok(())
     }
+}
+
+/// Update the existing JSON list without changing its schema or workflow payload.
+fn save_rerun_projection(
+    adapter: &Adapter,
+    path: &Path,
+    saved: &mut Vec<Rerun>,
+    run: &WorkflowRun,
+    state: Option<lifecycle::Rerun>,
+) -> Result<()> {
+    saved.retain(|saved| saved.run.id != run.id);
+    if let Some(state) = state {
+        saved.push(Rerun {
+            run: run.clone(),
+            accepted: state.accepted,
+            waiting_for_completion: state.waiting,
+        });
+    }
+    adapter.records.write(path, &serde_json::to_vec(saved)?)
 }

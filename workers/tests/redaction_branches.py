@@ -209,10 +209,27 @@ def coverage_cases(policy):
     return result
 
 
+def compile_policy(policy):
+    """#788: independently compile every Rust-generated expression with Python re."""
+    compiled = []
+    for section in ['regex', 'helpers', 'patterns', 'checked']:
+        entries = policy[section]
+        for key, value in (entries.items() if isinstance(entries, dict) else enumerate(entries)):
+            name = f'{section}:{key}'
+            pattern = value[0] if section == 'checked' else value
+            try:
+                re.compile(pattern)
+            except re.error as error:
+                raise AssertionError(f'Python re.compile rejected {name}: {error}') from error
+            compiled.append(name)
+    return compiled
+
+
 def main():
     import sys
     policy = json.loads(Path(sys.argv[1]).read_text())
-    print(json.dumps({'folding': encode_cases(predicate_cases(policy)),
+    compiled = compile_policy(policy)
+    print(json.dumps({'compiled': compiled, 'folding': encode_cases(predicate_cases(policy)),
                       'anchors': encode_cases(anchor_cases(policy)),
                       'coverage': coverage_cases(policy)}))
 
