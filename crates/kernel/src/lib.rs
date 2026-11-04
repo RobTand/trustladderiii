@@ -1267,7 +1267,7 @@ impl World {
     kernel_fn! {
     /// #771: external node IDs name existing storage or are ignored.
     fn index(&self, node: NodeId) -> (result: Option<usize>) [
-        ensures result.is_some() == (node.0 as int < self.nodes@.len()),
+        ensures result.is_some() == ((node.0 as int) < self.nodes@.len()),
             match result {
                 Some(i) => i as int == node.0 as int && i < self.nodes@.len(),
                 None => true,
@@ -3247,7 +3247,7 @@ kernel_fn! {
 /// Q30 / #771: planning admission uses the actual slot-waiter count.
 fn admits(w: &World, repo: RepoId) -> (result: bool) [
     requires open_prefix(w.nodes@, w.nodes@.len()) <= u32::MAX as int,
-    ensures result == if repo.0 as int < w.gates@.len() {
+    ensures result == if (repo.0 as int) < w.gates@.len() {
         slot_waiters(w.nodes@, w.nodes@.len(), repo) < w.gates@[repo.0 as int].w
     } else { false },
 ] {
