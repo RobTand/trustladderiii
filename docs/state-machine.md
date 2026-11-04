@@ -820,6 +820,20 @@ without a source partition retain the original base test as their subject and
 the trusted pytest outcome as observer. Existing declared-symptom campaigns keep
 their fixed bounds and exact exception/node/phase requirements.
 
+Lead clarification, 2026-11-04, for Rob's later review ([#709](https://github.com/RobTand/trustladderiii/issues/709),
+PB #2722): decide the declared RED match from complete failure data before
+truncating report text. Explicit assertion messages, manual `AssertionError`
+and `pytest.fail` retain whole-message equality after pytest normalization.
+For a pytest-rewritten bare `assert` with no message, the declaration may also
+equal the exact source assertion at the failing traceback instruction.
+Normalize whitespace outside string literals identically on both sides,
+preserving token boundaries and literal contents. Matching text elsewhere in
+the file or failure output supplies no proof. There is no prefix, substring or
+fuzzy matching. Capture a typed result identifying whole-message equality,
+source-assertion equality or mismatch, bound to that check's declaration;
+Checking uses this result rather than truncated text. No other proof rule,
+source partition, forcing condition or state transition changes.
+
 Forcing may replace a subject module's local stdlib reference with a private
 proxy for the duration of the check. It cannot patch shared stdlib state or an
 owner outside the served repository. The planner receives the authoritative

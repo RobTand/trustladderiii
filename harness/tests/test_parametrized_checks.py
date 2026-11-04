@@ -16,7 +16,8 @@ RUNNER = Path(__file__).parents[1] / 'src/tl3_harness/runner.py'
 
 
 def run(tree, container, tests, report, progress, additions=frozenset(), *, messages=None):
-    child = subprocess.run([sys.executable, '-I', '-B', str(RUNNER), json.dumps(tests), str(tree)],
+    request = {'tests': tests, 'red_message': messages.red_message} if getattr(messages, 'red_message', None) is not None else tests
+    child = subprocess.run([sys.executable, '-I', '-B', str(RUNNER), json.dumps(request), str(tree)],
                            capture_output=True)
     return parse([decode(line) for line in child.stdout.splitlines()], tests, set(),
                  child.returncode, additions, messages=messages)

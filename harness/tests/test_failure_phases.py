@@ -30,10 +30,11 @@ def test_probe(resource):
 
 
 def observe(tree, tests):
-    child = subprocess.run([sys.executable, '-I', '-B', str(RUNNER), json.dumps(tests), str(tree)],
+    request = {'tests': tests, 'red_message': 'call invariant'}
+    child = subprocess.run([sys.executable, '-I', '-B', str(RUNNER), json.dumps(request), str(tree)],
                            capture_output=True, check=False)
     records = [decode(line) for line in child.stdout.splitlines()]
-    notes = FailureNotes()
+    notes = FailureNotes('call invariant')
     outcomes = parse(records, tests, set(), child.returncode, messages=notes)
     return outcomes, notes, records, child.returncode
 
@@ -124,7 +125,7 @@ def test_phase_reports_still_decode_strictly(phase_repo, damage):
     else:
         phase['exception_type'] = []
     with pytest.raises(InvalidReport):
-        parse(records, (NODE,), set(), exit_code, messages=FailureNotes())
+        parse(records, (NODE,), set(), exit_code, messages=FailureNotes('call invariant'))
 
 
 def test_phase_evidence_survives_real_checking_staging(phase_repo, monkeypatch):

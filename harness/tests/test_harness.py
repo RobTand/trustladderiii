@@ -36,7 +36,8 @@ def trees(tmp_path):
 def run(tree, names, additions=frozenset(), *, notes=None):
     tests = tuple("tests/test_product.py::" + name for name in names)
     env = {"PATH": os.environ["PATH"], "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
-    child = subprocess.run([sys.executable, "-I", "-B", str(RUNNER), json.dumps(tests), str(tree)],
+    request = {'tests': tests, 'red_message': notes.red_message} if notes is not None else tests
+    child = subprocess.run([sys.executable, "-I", "-B", str(RUNNER), json.dumps(request), str(tree)],
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     records = [decode(line) for line in child.stdout.splitlines()]
     missing = {test for test in tests if not (tree / test.split("::")[0]).exists()}
@@ -65,7 +66,7 @@ def run(tree, names, additions=frozenset(), *, notes=None):
 def test_real_pytest_verdicts(trees, kind, name, expected):
     base, head, demo = trees
     additions = added_names(base, head, ["tests/*.py"])
-    notes = FailureNotes()
+    notes = FailureNotes('old product value')
     tests, before = run(demo if kind == Kind.DEMONSTRATING else base, [name], additions, notes=notes)
     _, after = run(head, [name])
     result = judge(Check(name, kind, tests, proof=Proof((), (), "old product value") if kind in (Kind.DEMONSTRATING, Kind.REPRODUCING) else None), before, after, base_notes=notes)
@@ -255,7 +256,7 @@ def test_reproducing_verdicts(trees, name, expected):
     kind = next((kind for kind in Kind if kind.value == "reproducing"), None)
     assert kind is not None, "the harness must judge reproducing checks"
     reviewed, fixed, reproducing = trees
-    notes = FailureNotes()
+    notes = FailureNotes('old product value')
     tests, before = run(reproducing, [name], added_names(reviewed, fixed, ["tests/*.py"]), notes=notes)
     _, after = run(fixed, [name])
     result = judge(Check(name, kind, tests, proof=Proof((), (), "old product value") if kind in (Kind.DEMONSTRATING, Kind.REPRODUCING) else None), before, after, base_notes=notes)
