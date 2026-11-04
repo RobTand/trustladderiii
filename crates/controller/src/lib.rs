@@ -25,6 +25,7 @@ mod goals;
 mod http;
 pub mod ingress;
 pub mod input_errors;
+mod kernel_boundary;
 pub mod looks;
 #[cfg(all(test, loom))]
 #[path = "../tests/loom/mod.rs"]
@@ -2910,7 +2911,7 @@ impl Controller {
                 }
                 return Ok(None);
             }
-            Observation::Kernel(Event::Command { .. }) => {
+            Observation::Kernel(event) if kernel_boundary::is_raw_command(event) => {
                 return Err(Error::Invalid(
                     "commands must come from the steering constructors, which assign next_command_id",
                 ));

@@ -1559,9 +1559,9 @@ impl World {
     /// #771: successful executable consistency checking supplies the exact
     /// progress invariants used by the source-connected theorem.
     pub fn consistent(&self) -> (result: bool) [
-        requires world_headroom(*self), footprint::ordered_table(*self),
+        requires world_headroom(*self), storage_ordered(*self),
         ensures result ==> world_checked(*self),
-    ] {
+    ] proof [reveal(storage_ordered);] {
         self.check().is_ok()
     }
     }
@@ -1571,9 +1571,9 @@ impl World {
     /// #771: the real world checker establishes positive capacities and the
     /// per-node and prerequisite facts, without changing any acceptance rule.
     pub fn check(&self) -> (result: Result<(), Broken>) [
-        requires world_headroom(*self), footprint::ordered_table(*self),
+        requires world_headroom(*self), storage_ordered(*self),
         ensures result.is_ok() ==> world_checked(*self),
-    ] proof [reveal(world_headroom); reveal(world_checked);] {
+    ] proof [reveal(world_headroom); reveal(world_checked); reveal(storage_ordered);] {
         self.check_dependencies()?;
         if self.gates.is_empty() || self.pool_capacity == 0 {
             return Err(Broken::Config);
@@ -2211,6 +2211,14 @@ pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<
                 && world.nodes@[j].credit.added as int <= before_step@.nodes@[j].credit.added as int + CREDIT_ADDED_STEP_BUDGET
                 && world.nodes@[j].credit.spent as int <= before_step@.nodes@[j].credit.spent as int + CREDIT_SPENT_STEP_BUDGET
         by { local_capacities(after_apply@.nodes@[j]); }
+        assert forall|j: int| before_step@.nodes@.len() <= j < world.nodes@.len() implies
+            world.nodes@[j].generation <= GENERATION_STEP_BUDGET
+                && world.nodes@[j].next_seq <= EFFECT_STEP_BUDGET
+                && world.nodes@[j].credit.start <= CREDIT_START_STEP_BUDGET
+                && world.nodes@[j].credit.earned <= CREDIT_EARNED_STEP_BUDGET
+                && world.nodes@[j].credit.added <= CREDIT_ADDED_STEP_BUDGET
+                && world.nodes@[j].credit.spent <= CREDIT_SPENT_STEP_BUDGET
+        by { local_capacities(after_apply@.nodes@[j]); }
     }
     (world, out, passes)
 }
@@ -2245,7 +2253,8 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
                 && footprint::valid_footprint(*final(w), final(w).nodes@[j].footprint),
         forall|j: int| 0 <= j < old(w).nodes@.len() ==>
             (old(w).nodes@[j].phase is Closed ==> final(w).nodes@[j].phase is Closed)
-                && final(w).nodes@[j].repo == old(w).nodes@[j].repo,
+                && final(w).nodes@[j].repo == old(w).nodes@[j].repo
+                && final(w).nodes@[j].last_cmd >= old(w).nodes@[j].last_cmd,
         old(w).nodes@.len() <= final(w).nodes@.len() <= old(w).nodes@.len() + 1,
         final(w).next_ticket == old(w).next_ticket,
         final(w).next_question as int <= old(w).next_question as int + 1,
@@ -2264,7 +2273,8 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
             && final(w).nodes@[j].credit.added as int <= old(w).nodes@[j].credit.added as int + CREDIT_ADDED_STEP_BUDGET
             && final(w).nodes@[j].credit.spent as int <= old(w).nodes@[j].credit.spent as int + CREDIT_SPENT_STEP_BUDGET,
         forall|j: int| old(w).nodes@.len() <= j < final(w).nodes@.len() ==>
-            final(w).nodes@[j].generation == 0 && final(w).nodes@[j].next_seq == 0
+            final(w).nodes@[j].last_cmd == 0
+            && final(w).nodes@[j].generation == 0 && final(w).nodes@[j].next_seq == 0
             && final(w).nodes@[j].credit.start == 0 && final(w).nodes@[j].credit.earned == 0
             && final(w).nodes@[j].credit.added == 0 && final(w).nodes@[j].credit.spent == 0,
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table);] {
@@ -2543,6 +2553,7 @@ fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8,
         final(w).fail_fast == old(w).fail_fast,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
     let id = w.next_question;
     w.next_question += 1;
@@ -2594,6 +2605,7 @@ fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len == old(out).len + 1,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
     let m = &mut w.nodes[i];
     m.waiting_incident = true;
@@ -2635,6 +2647,7 @@ fn emit(w: &mut World, i: usize, kind: EffectKind,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len == old(out).len + 1,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
     emit_node(&mut w.nodes[i], i, kind, out);
 }
@@ -2767,6 +2780,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         final(w).fail_fast == old(w).fail_fast,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(reply_bounds); reveal(footprint::ordered_table);] {
     kernel_snapshot! { before_reply = *w }
     let n = &w.nodes[i];
@@ -2850,6 +2864,7 @@ fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         final(w).fail_fast == old(w).fail_fast,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(retry_bounds); reveal(footprint::ordered_table);] {
     if fits && !files.is_empty() && w.nodes[i].credit.can_spend(1) {
         let footprint = w.union_footprints(w.nodes[i].footprint, files);
@@ -2889,6 +2904,7 @@ fn reply_transition(w: &mut World, i: usize, reply: Reply,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint
             || match reply { Reply::PlanLeaf { footprint, .. } => final(w).nodes@[i as int].footprint == footprint, _ => false },
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
@@ -2909,6 +2925,7 @@ fn finish_ingest(w: &mut World, i: usize, size: u8, early_end: Option<EarlyEnd>)
     ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, 0, 0),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(reply_bounds);] {
     let m = &mut w.nodes[i];
     if !m.credit.ready {
@@ -2934,6 +2951,7 @@ fn reply_ingest(w: &mut World, i: usize, reply: Reply,
     ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::IngestDone { size } => {
@@ -2982,6 +3000,7 @@ fn reply_plan(w: &mut World, i: usize, reply: Reply,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint
             || match reply { Reply::PlanLeaf { footprint, .. } => final(w).nodes@[i as int].footprint == footprint, _ => false },
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::PlanLeaf { footprint, fits } => {
@@ -3018,6 +3037,7 @@ fn reply_work(w: &mut World, i: usize, reply: Reply,
     ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::MakerDone { head } => {
@@ -3070,6 +3090,7 @@ fn reply_rebase(w: &mut World, i: usize, reply: Reply,
     ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::RebaseClean { head } => {
@@ -3129,6 +3150,7 @@ fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
     let m = &mut w.nodes[i];
     abandon_operation(m);
@@ -3172,6 +3194,7 @@ fn failed_round(w: &mut World, i: usize, step: ReviewStop,
     ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(retry_bounds);] {
     let m = &mut w.nodes[i];
     if m.round == 0 {
@@ -3196,6 +3219,7 @@ fn next_rung(w: &mut World, i: usize, step: ReviewStop,
     ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(retry_bounds);] {
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
@@ -3252,6 +3276,7 @@ fn out_of_room(w: &mut World, i: usize, step: ReviewStop,
     ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(retry_bounds);] {
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
@@ -3289,6 +3314,7 @@ fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
     ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(retry_bounds);] {
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
@@ -3317,6 +3343,7 @@ fn recheck(w: &mut World, i: usize, target: Phase,
     ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(retry_bounds);] {
     let m = &mut w.nodes[i];
     m.rechecks = m.rechecks.saturating_add(1);
@@ -3376,6 +3403,7 @@ fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 2,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
     let Some(e) = w.nodes[i].effect else { return };
     if e.seq != seq {
@@ -3413,6 +3441,7 @@ fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).question == old(m).question,
         final(m).fx_failures == 0, final(m).fx_incidents == 0,
+        final(m).last_cmd == old(m).last_cmd,
 ] {
     m.fx_failures = 0;
     m.fx_incidents = 0;
@@ -3474,6 +3503,7 @@ fn delivery_failed(w: &mut World, i: usize, kind: EffectKind,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
     let m = &mut w.nodes[i];
     m.fx_failures += 1;
@@ -3518,6 +3548,7 @@ fn effect_failed(w: &mut World, i: usize, kind: EffectKind,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len == old(out).len + 2,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
     notice(out, i, Notice::Incident { needs_rob: true });
     if w.nodes[i].phase.is_stopping() {
@@ -3584,6 +3615,7 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
         final(w).fail_fast == old(w).fail_fast,
         final(w).file_sets@ == old(w).file_sets@,
         final(out).len <= old(out).len + 4,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
     match fact {
         Fact::DependencyRemove { kind, number } => w.remove_dependency(i, kind, number),
@@ -3629,6 +3661,7 @@ fn fact_transition(w: &mut World, i: usize, fact: Fact,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 2,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(retry_bounds);] {
     match fact {
         Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {}
@@ -3763,6 +3796,7 @@ fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bool,
         final(w).nodes@[i as int].credit.earned as int + merge_capacity(final(w).nodes@[i as int])
             <= old(w).nodes@[i as int].credit.earned as int + 1,
 
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
     let m = &mut w.nodes[i];
     if !m.had_pr || m.merged.is_some() {
@@ -4147,6 +4181,9 @@ spec fn node_checked(w: World, n: Node) -> bool {
         })
 }
 
+/// #771: immutable file storage is normalized by the executable interner.
+pub closed spec fn storage_ordered(w: World) -> bool { footprint::ordered_table(w) }
+
 /// #771: progress facts obtained by running the production consistency checker.
 pub closed spec fn world_checked(w: World) -> bool {
     w.gates@.len() > 0 && w.pool_capacity > 0
@@ -4196,8 +4233,16 @@ pub closed spec fn step_budget(before: World, after: World) -> bool {
     before.nodes@.len() <= after.nodes@.len() <= before.nodes@.len() + 1
         && after.next_question as int <= before.next_question as int + QUESTION_STEP_BUDGET
         && after.next_ticket as int <= before.next_ticket as int + 2 * (before.nodes@.len() + 1)
+        && (forall|j: int| before.nodes@.len() <= j < after.nodes@.len() ==>
+            after.nodes@[j].generation <= GENERATION_STEP_BUDGET
+                && after.nodes@[j].next_seq <= EFFECT_STEP_BUDGET
+                && after.nodes@[j].credit.start <= CREDIT_START_STEP_BUDGET
+                && after.nodes@[j].credit.earned <= CREDIT_EARNED_STEP_BUDGET
+                && after.nodes@[j].credit.added <= CREDIT_ADDED_STEP_BUDGET
+                && after.nodes@[j].credit.spent <= CREDIT_SPENT_STEP_BUDGET)
         && forall|j: int| 0 <= j < before.nodes@.len() ==>
-            after.nodes@[j].generation as int <= before.nodes@[j].generation as int + GENERATION_STEP_BUDGET
+            after.nodes@[j].last_cmd >= before.nodes@[j].last_cmd
+                && after.nodes@[j].generation as int <= before.nodes@[j].generation as int + GENERATION_STEP_BUDGET
                 && after.nodes@[j].next_seq as int <= before.nodes@[j].next_seq as int + EFFECT_STEP_BUDGET
                 && after.nodes@[j].credit.start as int <= before.nodes@[j].credit.start as int + CREDIT_START_STEP_BUDGET
                 && after.nodes@[j].credit.earned as int <= before.nodes@[j].credit.earned as int + CREDIT_EARNED_STEP_BUDGET
@@ -4214,7 +4259,7 @@ spec fn stopping_effect_fits(n: Node) -> bool {
     }
 }
 
-spec fn settle_ready(w: World) -> bool {
+pub closed spec fn settle_ready(w: World) -> bool {
     scheduling_safe(w) && w.nodes@.len() <= u64::MAX as int
         && (forall|j: int| 0 <= j < w.nodes@.len() ==> settle_shape(w.nodes@[j])
             && w.nodes@[j].generation as int + generation_capacity(w.nodes@[j]) <= u64::MAX as int
@@ -4257,6 +4302,7 @@ spec fn settle_chain(before: World, after: World) -> bool {
                 <= before.nodes@[j].next_seq as int + effect_capacity(before.nodes@[j])
             && after.nodes@[j].credit.earned as int + merge_capacity(after.nodes@[j])
                 <= before.nodes@[j].credit.earned as int + merge_capacity(before.nodes@[j])
+            && after.nodes@[j].last_cmd == before.nodes@[j].last_cmd
             && after.nodes@[j].credit.start == before.nodes@[j].credit.start
             && after.nodes@[j].credit.added == before.nodes@[j].credit.added
             && after.nodes@[j].credit.spent == before.nodes@[j].credit.spent
@@ -4317,6 +4363,7 @@ fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>)
                         <= baseline@.nodes@[j].next_seq as int + effect_capacity(baseline@.nodes@[j])
                     && w.nodes@[j].credit.earned as int + merge_capacity(w.nodes@[j])
                         <= baseline@.nodes@[j].credit.earned as int + merge_capacity(baseline@.nodes@[j])
+                    && w.nodes@[j].last_cmd == baseline@.nodes@[j].last_cmd
                     && w.nodes@[j].credit.start == baseline@.nodes@[j].credit.start
                     && w.nodes@[j].credit.added == baseline@.nodes@[j].credit.added
                     && w.nodes@[j].credit.spent == baseline@.nodes@[j].credit.spent by {
@@ -4377,6 +4424,7 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: bool) [
         (forall|j: int| 0 <= j < old(w).nodes@.len() ==> settle_shape(old(w).nodes@[j]))
             ==> scheduling_safe(*final(w))
                 && (forall|j: int| 0 <= j < final(w).nodes@.len() ==> settle_shape(final(w).nodes@[j])),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
     kernel_snapshot! { before_advance = *w }
     kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }

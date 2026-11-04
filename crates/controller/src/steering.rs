@@ -641,7 +641,7 @@ impl Controller {
         let Some(n) = node.index().and_then(|index| world.nodes.get(index)) else {
             return Ok(None);
         };
-        let Some(id) = n.next_command_id() else {
+        let Some(event) = crate::kernel_boundary::steering_command(node, n, command) else {
             self.counter_exhausted(
                 snapshot,
                 commit,
@@ -650,7 +650,7 @@ impl Controller {
             )?;
             return Ok(None);
         };
-        Ok(Some(Event::Command { node, id, command }))
+        Ok(Some(event))
     }
 
     /// Apply one classified instruction, from a comment or the console, as Rob.

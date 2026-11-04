@@ -589,6 +589,7 @@ pub(super) open spec fn advance_pre(n: Node, ticket: u64, out_len: usize) -> boo
 pub(super) open spec fn advance_post(before: Node, after: Node,
     ticket_before: u64, ticket_after: u64, changed: bool) -> bool {
     (changed ==> internal_height(after) < internal_height(before))
+    && after.last_cmd == before.last_cmd
     && after.repo == before.repo && after.footprint == before.footprint
     && (settle_shape(before) ==> settle_shape(after))
     && (before.phase is Closed ==> after.phase is Closed)
