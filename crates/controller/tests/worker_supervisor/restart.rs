@@ -137,6 +137,10 @@ fn restarted_controller_cancels_legacy_worker_and_rejects_its_late_outcome() {
         rustix::process::PidfdFlags::empty(),
     )
     .unwrap();
+    // Capture the result while it is in flight: normal cancellation retires
+    // the attempt files before the delayed observation reaches the controller.
+    let reply: Value =
+        serde_json::from_slice(&fs::read(attempt.join("stdout.jsonl")).unwrap()).unwrap();
     let pinned_runtime = fs::read(attempt.join("launch.json")).unwrap();
     drop(controller);
     // Reopen the actual persisted controller with the current Rust launch path.
@@ -179,8 +183,6 @@ fn restarted_controller_cancels_legacy_worker_and_rejects_its_late_outcome() {
     let before = serde_json::to_value(controller.world().unwrap()).unwrap();
     // Deliver the actual JSON produced by the old worker, delayed until after
     // cancellation and replacement. The live attempt never became a new run.
-    let reply: Value =
-        serde_json::from_slice(&fs::read(attempt.join("stdout.jsonl")).unwrap()).unwrap();
     controller
         .observe(
             "late-legacy-reply",
