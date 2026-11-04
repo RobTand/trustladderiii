@@ -2,7 +2,7 @@
 // and the call between them differ. Keep until #783 integrates.
 use crate::*;
 impl Controller {
-    fn apply_reference(
+    pub(crate) fn apply_reference(
         &mut self,
         snapshot: &Snapshot,
         mut world: World,

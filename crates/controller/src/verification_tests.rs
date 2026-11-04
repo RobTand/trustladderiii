@@ -1,6 +1,6 @@
 //! #783 / Q27: detection must leave the main transaction and effects unchanged.
-use crate::{executor::*, git_tests::support::Database, *};
-use tl3_kernel::{Event, Fact, NodeId, Priority, RepoId, World};
+use crate::{git_tests::support::Database, *};
+use tl3_kernel::{Event, Fact, NodeId, Priority, RepoId};
 use tl3_store::{Commit, RowChange, Store};
 
 struct FixedClock;
