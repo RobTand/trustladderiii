@@ -91,6 +91,7 @@ _CONTROLLER_BINARIES = {
     # Both groups compile github.rs, including its env!("CARGO_BIN_EXE_tl3d").
     "test_test_github-notices": [":tl3d"],
     "test_test_simulation": [":tl3", ":tl3d"],
+    "test_test_replay_store": [":tl3"],
 }
 # These tests stage the trusted harness into a sealed check action, even when
 # the queue fixture supplies the result instead of executing that action.
@@ -162,6 +163,9 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     package = native.package_name()
     controller = package == "crates/controller"
     binaries = _CONTROLLER_BINARIES.get(name, []) if controller else []
+    # Every controller test can reach the adapter, including through shared fixtures.
+    if controller and ":tl3" not in binaries:
+        binaries = binaries + [":tl3"]
     if controller and ":tl3-worker-supervisor" not in binaries:
         binaries = binaries + [":tl3-worker-supervisor"]
     workers = controller and name in _CONTROLLER_WORKERS
@@ -199,10 +203,12 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
             "$(rootpath //tools/bazel:worker_python)" if workers else "-",
         ] + gate_args,
         data = depset(
-            [":" + name + "_binary", "//tools/ci:rust-test-budget.json", "//tools/bazel:libtest-shards.json"] + binaries +
+            [":" + name + "_binary", "//tools/ci:rust-test-budget.json", "//tools/bazel:libtest-shards.json"] +
+            (["//tools/ci:controller_test_runner.sh"] if controller else []) + binaries +
             kwargs.get("compile_data", []) + kwargs.get("srcs", []) + runtime + runtime_data,
         ).to_list() + postgres,
         deps = ["//tools/ci:rust_gate"],
+        env = {"TL3_BINARY": WORKSPACE + "/$(rootpath :tl3)"} if controller else {},
         tags = ["rust"] + tags,
         exec_properties = exec_properties,
         size = "large",

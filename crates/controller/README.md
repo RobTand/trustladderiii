@@ -1719,3 +1719,9 @@ parse proptests, and real-process repair/tool-denial test. Use
 `--test_arg=--classifier-contracts` for the classifier group alone. Python tests
 exercise only the shim with a fake executable and orchestration with the Rust
 validation boundary stubbed. They never depend on the real `tl3` binary.
+
+## Read-only store tools (#783)
+
+`tl3 store-stats --config FILE [--json]` prints table counts and event/world revisions, including the earliest decodable replay baseline. Both it and `tl3 replay-check --config FILE [--from EVENT]` use the runtime store credentials in a SQL-enforced READ ONLY, REPEATABLE READ transaction, without ownership or advisory locks.
+
+This branch does not record baselines or change the apply path. Existing legacy history without recorded snapshots fails explicitly; replay cannot verify it retroactively. For instrumented history, start with `--from` the first instrumented event inclusive and retain the matching binary. The baseline statistic means decodable stored data, not a verification pass.

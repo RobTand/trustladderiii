@@ -6,7 +6,10 @@ load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
 # gazelle:python_root
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["rust-test-budget.json"])
+exports_files([
+    "rust-test-budget.json",
+    "controller_test_runner.sh",
+])
 
 tl3_py_test(
     name = "test_graph_impact",
@@ -317,4 +320,9 @@ py_binary(
         ":bazel_gate",
         ":remote_gate",
     ],
+)
+
+tl3_py_test(
+    name = "test_controller_test_runner",
+    srcs = ["test_controller_test_runner.py"],
 )
