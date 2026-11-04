@@ -1188,7 +1188,10 @@ impl Executor for Supervisor {
         let snapshot = store.load()?;
         let mut resets = ladder::quota_resets(&snapshot);
         // Waits recorded before Q53 name their model only in the attempt itself.
-        if let Some((_, attempt)) = latest(&self.root(&delivery.key))?
+        // A recorded model whose reset covers the ending is the one it charged,
+        // such as a postmortem's grade model (#759).
+        if !resets.values().any(|reset| *reset >= announced)
+            && let Some((_, attempt)) = latest(&self.root(&delivery.key))?
             && let Some(request) = read(&attempt.join("request.json"))?
             && let Some(model) = request["model"]["name"].as_str()
         {
@@ -1501,8 +1504,10 @@ pub(super) fn inspect(attempt: &Path, delivery: &Delivery) -> Result<Reconciliat
             .ok_or(Error::Invalid("worker request is missing"))
             .and_then(|request| {
                 let mut observation = source::parse_reply(&bytes, delivery, &request["inputs"])?;
+                // The run's model, unless the ending named the postmortem's grade model.
                 if let Observation::Quota { model, .. } | Observation::WorkerReply { model, .. } =
                     &mut observation
+                    && model.is_none()
                 {
                     *model = request["model"]["name"].as_str().map(str::to_owned);
                 }

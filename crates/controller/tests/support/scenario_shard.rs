@@ -66,7 +66,7 @@ worker_groups! {
     QuotaReplays: 2,
     QuotaFallbacks: 2,
     Planning: 3,
-    Unavailable: 6,
+    Unavailable: 7,
     MakerRepositoryImages: 1,
     MakerAdoptedFix: 1,
     MakerReproducingFix: 1,
