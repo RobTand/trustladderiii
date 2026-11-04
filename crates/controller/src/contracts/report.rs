@@ -255,6 +255,7 @@ pub struct ProofReceipt {
     pub source_base_tree_sha256: Sha256Hex,
     pub base_tree_sha256: Sha256Hex,
     pub head_tree_sha256: Sha256Hex,
+    pub observer_count: Count,
     // How each observer's base failure matched the declared RED message (#709/#713).
     #[serde(
         default,
