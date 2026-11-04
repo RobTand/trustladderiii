@@ -226,6 +226,8 @@ macro_rules! run_entry {
         }
     };
 }
+// The mock store returns this module's Error directly; production converts StoreError.
+#[allow(clippy::needless_question_mark)]
 mod reference {
     adapter!();
     include!("reference.rs");
@@ -240,6 +242,7 @@ mod reference {
         run_entry!(a, entry, d, false)
     }
 }
+#[allow(clippy::needless_question_mark)]
 mod current {
     adapter!();
     include!("current.rs");
@@ -423,6 +426,34 @@ mod properties {
             include_str!("../../src/adapters/mergify/head_checks.rs"),
             include_str!("current-head.rs")
         );
+    }
+    /// #760: reference files are pinned to the reviewed pre-extraction commit.
+    #[test]
+    fn frozen_source_hashes() {
+        for (source, expected) in [
+            (
+                include_str!("base-adapter.rs.txt"),
+                "df2eb0d93fe7bf3833a5b9f509c4be466ce4ded5f21809913b715f16f52a966d",
+            ),
+            (
+                include_str!("base-client.rs.txt"),
+                "4b768e50d04ae04c02312dafdb5f8e3f8362a5cb6089867a97126642c6cb3a3d",
+            ),
+            (
+                include_str!("base-head.rs.txt"),
+                "343dad812ad98c865784f98d52a71998b25b6776913158384995a2f744dd53c7",
+            ),
+            (
+                include_str!("base-records.rs.txt"),
+                "6c18ed51bcf362d32a342645c6c830b7c0dd2536b56033b6738dea1211d2aaa4",
+            ),
+            (
+                include_str!("base-waiting.rs.txt"),
+                "3a908526a2c29f2435521572e572f03771151555ee5a396b431308ec4cc7a6e5",
+            ),
+        ] {
+            assert_eq!(format!("{:x}", Sha256::digest(source.as_bytes())), expected);
+        }
     }
     #[test]
     fn reference_functions_are_the_frozen_source() {

@@ -178,6 +178,9 @@ fn init(schedule: Schedule, cut: Option<Cut>) {
         });
     }
 }
+fn delivery_value(key: &str) -> Value {
+    json!({"key":key,"epoch":1,"output":{"Effect":{"node":0,"seq":0,"kind":"Enqueue","head":null}},"generation":0,"head_sha":"head","repository":{"owner":"owner","name":"sandbox","installation":3},"issue":1,"pull_request":100,"paths":[],"attempt":0,"round":0})
+}
 fn run(schedule: &Schedule, entry: Entry, new: bool, cut: Option<Cut>) -> Run {
     static HOOK: ::std::sync::Once = ::std::sync::Once::new();
     HOOK.call_once(|| {
@@ -189,7 +192,7 @@ fn run(schedule: &Schedule, entry: Entry, new: bool, cut: Option<Cut>) -> Run {
         }));
     });
     init(schedule.clone(), cut);
-    let d: Delivery=serde_json::from_value(json!({"key":"enqueue-1","epoch":1,"output":{"Effect":{"node":0,"seq":0,"kind":"Enqueue","head":null}},"generation":0,"head_sha":"head","repository":{"owner":"owner","name":"sandbox","installation":3},"issue":1,"pull_request":100,"paths":[],"attempt":0,"round":0})).unwrap();
+    let d: Delivery = serde_json::from_value(delivery_value("enqueue-1")).unwrap();
     let result = catch_unwind(AssertUnwindSafe(|| {
         if new {
             super::current::run(entry, &d)
@@ -365,7 +368,11 @@ pub(super) mod mock_std {
                 Ok(Self(path.clone()))
             }
             pub fn open(path: &PathBuf) -> io::Result<Self> {
-                super::super::read("file.open", &path.0);
+                let f = super::super::read("file.open", &path.0);
+                returned(&(f.word & 1 == 0));
+                if f.word & 1 != 0 {
+                    return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+                }
                 Ok(Self(path.clone()))
             }
             pub fn sync_all(&self) -> io::Result<()> {
@@ -408,12 +415,17 @@ pub(super) struct Archive {
 pub(crate) struct Store;
 impl Store {
     pub fn open(path: &PathBuf) -> Result<Self> {
-        read("store.open", &path.0);
+        let f = read("store.open", &path.0);
+        returned(&(f.word & 1 == 0));
+        if f.word & 1 != 0 {
+            return Err(io::Error::from(io::ErrorKind::PermissionDenied).into());
+        }
         Ok(Self)
     }
     pub fn load(&self) -> Result<Snapshot> {
         let f = read("store.snapshot", "");
         let repaired = (profile() == Profile::Waiting) ^ (f.word & 4 != 0);
+        returned(&(repaired, f.word & 8 != 0, f.word & 16 != 0));
         Ok(Snapshot {
             rows: vec![Row {
                 table: "nodes",
@@ -424,8 +436,18 @@ impl Store {
         })
     }
     pub fn effects(&self) -> Result<Vec<Archive>> {
-        read("store.effects", "");
-        Ok(vec![])
+        let f = read("store.effects", "");
+        let payload = delivery_value("historical");
+        let values = if f.word & 1 != 0 {
+            vec![payload]
+        } else {
+            vec![]
+        };
+        returned(&values);
+        Ok(values
+            .into_iter()
+            .map(|payload| Archive { payload })
+            .collect())
     }
 }
 pub(super) struct Runtime;
@@ -613,8 +635,19 @@ impl GitHub {
         repo: &str,
         head: &str,
     ) -> ::std::result::Result<Vec<CommitStatus>, ::tl3_github::Error> {
-        github_frame("github.statuses", &format!("{repo}@{head}"))?;
-        Ok(vec![])
+        let f = github_frame("github.statuses", &format!("{repo}@{head}"))?;
+        let values = if f.word & 1 != 0 {
+            vec![
+                json!({"id":1,"context":"CI","state":if f.word&2!=0 {"success"}else{"failure"},"updated_at":null}),
+            ]
+        } else {
+            vec![]
+        };
+        returned(&values);
+        Ok(values
+            .into_iter()
+            .map(|value| serde_json::from_value(value).unwrap())
+            .collect())
     }
     pub async fn check_annotations(
         &self,
