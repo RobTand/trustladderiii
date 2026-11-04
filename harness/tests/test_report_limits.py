@@ -17,18 +17,7 @@ class Progress:
         pass
 
 
-@pytest.fixture
-def report_watchdog(capfd):
-    # Bazel's Python runner ignores --test_arg; keep stall stacks in test.log.
-    with capfd.disabled():
-        faulthandler.dump_traceback_later(5, repeat=True)
-        try:
-            yield
-        finally:
-            faulthandler.cancel_dump_traceback_later()
-
-
-def test_collection_above_64_kib_has_a_normal_report(tmp_path, monkeypatch, report_watchdog):
+def test_collection_above_64_kib_has_a_normal_report(tmp_path, monkeypatch, capfd):
     (tmp_path / 'test_many.py').write_text(
         'import pytest\n@pytest.mark.parametrize("value", range(1000), '
         'ids=lambda value: "case_" + str(value) + "x" * 80)\n'
@@ -36,7 +25,13 @@ def test_collection_above_64_kib_has_a_normal_report(tmp_path, monkeypatch, repo
     monkeypatch.setattr(execution, 'container_command', lambda tree, container, tests: [
         sys.executable, '-I', '-B', str(RUNNER), json.dumps(tests), str(tree)])
     report = tmp_path / 'report.jsonl'
-    outcomes = execution.run_tree(tmp_path, IMAGE, ('test_many.py::test_many',), report, Progress())
+    # Disable capture in the test phase so Bazel retains stall stacks.
+    with capfd.disabled():
+        faulthandler.dump_traceback_later(5, repeat=True)
+        try:
+            outcomes = execution.run_tree(tmp_path, IMAGE, ('test_many.py::test_many',), report, Progress())
+        finally:
+            faulthandler.cancel_dump_traceback_later()
     assert outcomes == {'test_many.py::test_many': Outcome.PASSED}
     collection = next(line for line in report.read_bytes().splitlines()
                       if json.loads(line)['event'] == 'collection')
