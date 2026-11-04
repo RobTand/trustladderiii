@@ -102,6 +102,29 @@ pub closed spec fn pending_rank(n: Node) -> nat {
     } }
 }
 
+open spec fn base_distance(n: Node) -> nat {
+    let rank = match n.phase {
+        Phase::AwaitingRob => match n.question {
+            Some(q) => continuation_rank(q.cont) + 1,
+            None => 3,
+        },
+        p => phase_rank(p),
+    };
+    let len = items(n.phase).len();
+    let pos = if n.pos < len { n.pos as nat } else { len };
+    (rank * 64 + 2 * (len - pos)) as nat
+}
+
+open spec fn effect_distance(n: Node) -> int {
+    match n.effect {
+        None => 0int,
+        Some(e) => 1 - if !e.cancelling && match current_item(n) {
+            Some(Item::Do(k) | Item::Teardown(k)) => k == e.kind,
+            _ => false,
+        } { 2int } else { 0int },
+    }
+}
+
 pub closed spec fn distance(n: Node) -> nat {
     if n.phase is Closed { 0 }
     else if pause_due(n) {
@@ -113,23 +136,7 @@ pub closed spec fn distance(n: Node) -> nat {
             _ => Resume::Rebasing,
         })) * 64 + 10
     } else {
-        let rank = match n.phase {
-            Phase::AwaitingRob => match n.question {
-                Some(q) => continuation_rank(q.cont) + 1,
-                None => 3,
-            },
-            p => phase_rank(p),
-        };
-        let len = items(n.phase).len();
-        let pos = if n.pos < len { n.pos as nat } else { len };
-        let effect = match n.effect {
-            None => 0int,
-            Some(e) => 1 - if !e.cancelling && match current_item(n) {
-                Some(Item::Do(k) | Item::Teardown(k)) => k == e.kind,
-                _ => false,
-            } { 2int } else { 0int },
-        };
-        (rank * 64 + 2 * (len - pos) + effect
+        (base_distance(n) + effect_distance(n)
             + if n.paused && !(n.phase is Stopping) { 8int } else { 0int }
             + if n.waiting_incident { 8int } else { 0int }
             + if n.question.is_some() && n.phase is Stopping { 4int } else { 0int }) as nat
@@ -221,6 +228,7 @@ impl Node {
                     return rank(Phase::Ready(r)) * 64 + 2 + 8;
                 }
             }
+            kernel_proof! { assert(!pause_due(*self)); }
             let rank = match self.phase {
                 Phase::AwaitingRob => match self.question {
                     Some(q) => cont_rank(q.cont) + 1,
@@ -231,6 +239,7 @@ impl Node {
             let len = agenda(self.phase).len() as u64;
             let pos = (self.pos as u64).min(len);
             let mut d = rank * 64 + 2 * (len - pos);
+            kernel_proof! { assert(d as int == base_distance(*self)); }
             if let Some(e) = self.effect {
                 d += 1;
                 if !e.cancelling {
@@ -240,6 +249,9 @@ impl Node {
                         }
                     }
                 }
+            }
+            kernel_proof! {
+                assert(d as int == base_distance(*self) + effect_distance(*self));
             }
             if self.paused && !self.phase.is_stopping() {
                 d += 8;
