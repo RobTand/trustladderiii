@@ -263,46 +263,7 @@ pub(crate) struct BlockingFinding {
 }
 
 pub(crate) fn validate_reply(reply: &Value, inputs: &Value) -> Result<Vec<BlockingFinding>> {
-    if reply["verdict"] == "out_of_room" {
-        return Ok(vec![]);
-    }
-    if reply["verdict"] == "approve" && reply["head_sha"] != inputs["head_sha"] {
-        return Err(Error::Invalid("review approval names a different head"));
-    }
-    let findings: Vec<BlockingFinding> = super::protocol::reply_field(reply, "blocking_findings")?;
-    for finding in &findings {
-        if finding.citation.kind == CitationKind::StandingRule && finding.citation.id == SCOPE_RULE
-        {
-            let diff = inputs
-                .get("scope_diff")
-                .unwrap_or(&inputs["diff"])
-                .as_str()
-                .unwrap_or("");
-            if !diff.lines().any(|line| {
-                (line.starts_with('+') || line.starts_with('-'))
-                    && !line.starts_with("+++")
-                    && !line.starts_with("---")
-                    && line[1..].chars().filter(|c| !c.is_whitespace()).count() >= 8
-                    && finding.evidence.lines().any(|quote| quote.trim() == line)
-            }) {
-                return Err(Error::Invalid("scope blocker must quote a changed hunk"));
-            }
-        }
-        let entries = match finding.citation.kind {
-            CitationKind::Goal => &inputs["goals"],
-            CitationKind::StandingRule => &inputs["standing_rules"],
-        };
-        if !entries.as_array().is_some_and(|entries| {
-            entries
-                .iter()
-                .any(|entry| entry["id"] == finding.citation.id)
-        }) {
-            return Err(Error::Invalid(
-                "review blocker cites an unknown goal or rule",
-            ));
-        }
-    }
-    Ok(findings)
+    crate::reviewer::validate_findings(inputs, reply)
 }
 
 #[cfg(test)]

@@ -9,6 +9,10 @@ pub fn run() {
     println!("test reviewer_python_parity ... ok");
     cli_contract();
     println!("test reviewer_cli_contract ... ok");
+    parsed_citations_and_first_failure();
+    println!("test reviewer_parsed_citations ... ok");
+    real_worker_repair();
+    println!("test reviewer_real_worker_repair ... ok");
 }
 
 fn cases() -> Vec<Value> {
@@ -96,4 +100,44 @@ fn cli_contract() {
         serde_json::from_slice::<Value>(&result.stdout).unwrap(),
         json!({"violations":case["violations"]})
     );
+}
+
+fn real_worker_repair() {
+    let root = tempfile::tempdir().unwrap();
+    let request = json!({
+        "protocol":1,"operation":{"node":1,"generation":0,"kind":"review"},
+        "role":"reviewer","model":{"base_url":"http://model.invalid/v1","name":"fixture-model","effort":"high","budget_tokens":32000},
+        "key_file":root.path().join("never-read-this-key"),"worktree":root.path(),
+        "session_file":root.path().join("session.json"),"inputs":cases()[0]["inputs"],
+    });
+    let mut python = Command::new(super::worker_package().join(".venv/bin/python"));
+    python
+        .args(["-c", include_str!("reviewer/worker.py")])
+        .env("TL3_BINARY", env!("CARGO_BIN_EXE_tl3"))
+        .env("LANGSMITH_TRACING", "false")
+        .env("LANGCHAIN_TRACING_V2", "false");
+    let result = command(python, &request);
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["model_turns"], 3);
+    assert_eq!(report["replayed"], true);
+    assert_eq!(report["reply"]["head_sha"], request["inputs"]["head_sha"]);
+    assert!(!root.path().join("forbidden.txt").exists());
+}
+
+/// State-table Reviewing: parsing preserves citation membership, kind, and first-failure order.
+fn parsed_citations_and_first_failure() {
+    use proptest::{prelude::*, test_runner::TestRunner};
+    TestRunner::new(ProptestConfig::with_cases(128)).run(
+        &(prop::collection::vec(0u8..10,0..20),prop::collection::vec((0u8..12,any::<bool>()),1..21)),
+        |(ids,citations)| {
+            let mut inputs=cases()[0]["inputs"].clone();
+            inputs["goals"]=json!([{"id":"g1","description":"goal","verification":"test"}]);
+            inputs["standing_rules"]=json!(ids.iter().map(|id|json!({"id":format!("r{id}"),"description":"rule"})).collect::<Vec<_>>());
+            let blockers:Vec<_>=citations.iter().map(|(id,goal)|json!({"citation":{"kind":if *goal {"goal"} else {"standing_rule"},"id":if *goal {"g1".to_string()} else {format!("r{id}")}},"problem":"problem","evidence":"evidence"})).collect();
+            let reply=json!({"verdict":"changes","blocking_findings":blockers,"findings":[]});
+            let bytes=serde_json::to_vec(&json!({"inputs":inputs,"reply":reply})).unwrap();
+            let roundtrip:Value=serde_json::from_slice(&bytes).unwrap();
+            prop_assert_eq!(validate(&roundtrip["inputs"],&roundtrip["reply"]).is_ok(),citations.iter().all(|(id,goal)|*goal||ids.contains(id)));
+            Ok(())
+        }).unwrap();
 }
