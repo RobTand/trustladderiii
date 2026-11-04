@@ -427,12 +427,14 @@ pub trait Executor {
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion>;
     /// Reads by the original key and epoch remain valid after a fence advances.
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation>;
-    /// End a cancelled attempt. Confirmed leaves undoing any write to teardown.
     /// Q27: canonical matching copies observed by this repair, if the adapter can prove it.
-    fn repair_approval(&mut self, delivery: &Delivery) -> Result<(Reconciliation, Option<usize>)> {
-        Ok((self.reconcile(delivery)?, None))
+    fn repair_approval(&mut self, _delivery: &Delivery) -> Result<(Reconciliation, Option<usize>)> {
+        Err(crate::Error::Invalid(
+            "executor does not support approval repair",
+        ))
     }
 
+    /// End a cancelled attempt. Confirmed leaves undoing any write to teardown.
     fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         self.reconcile(delivery)
     }

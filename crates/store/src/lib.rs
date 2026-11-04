@@ -992,6 +992,17 @@ impl Store {
                     SELECT effect_key, tl3_approval_operation(payload), 1 FROM tl3_effects
                     WHERE effect_key = $1 AND payload->'output'->'Effect'->>'kind' = 'PostApproval'
                     ON CONFLICT (effect_key) DO UPDATE SET legacy_sends = tl3_dispatch_evidence.legacy_sends + 1", &[&key])?;
+                // Seed closed-head coverage in this same bounded, transactional pass.
+                // A cancelled send may still land. A single confirmed/failed attempt
+                // is retired, unless it changed after the migration watermark; repeated
+                // legacy sends cannot prove all earlier requests have ended either.
+                // No adapter or ownership assumption belongs in this store migration.
+                tx.execute("INSERT INTO tl3_world(table_name, row_id, value, version)
+                    SELECT 'approval_dispatch_recovery', e.effect_key, e.payload, $2
+                    FROM tl3_effects e JOIN tl3_dispatch_evidence d USING(effect_key)
+                    WHERE e.effect_key = $1 AND
+                        (e.state NOT IN ('Confirmed','Failed') OR e.updated_revision > $3 OR d.legacy_sends > 1)
+                    ON CONFLICT (table_name, row_id) DO NOTHING", &[&key, &next, &through])?;
             }
         }
         tx.execute("UPDATE tl3_dispatch_migration SET cursor = $1", &[&next])?;

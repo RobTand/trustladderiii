@@ -30,6 +30,10 @@ pub fn set_fake_issue(root: &Path, issue: &tl3_github::Issue) {
 }
 
 impl Executor for Fake {
+    fn repair_approval(&mut self, delivery: &Delivery) -> Result<(Reconciliation, Option<usize>)> {
+        // Simulation has local completion records, not visible upstream copy counts.
+        Ok((self.reconcile(delivery)?, None))
+    }
     fn prerequisite(
         &mut self,
         repository: &crate::Repository,
@@ -458,6 +462,8 @@ impl Executor for Adapter {
         Ok(())
     }
     fn repair_approval(&mut self, delivery: &Delivery) -> Result<(Reconciliation, Option<usize>)> {
+        // The current owner authorizes repair of evidence from an older delivery.
+        self.records.fence(self.epoch)?;
         self.repair_approval_copies(delivery)
     }
 

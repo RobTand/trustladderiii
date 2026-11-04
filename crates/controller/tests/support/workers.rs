@@ -149,6 +149,9 @@ impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
         }
         Ok(result)
     }
+    fn repair_approval(&mut self, delivery: &Delivery) -> Result<(Reconciliation, Option<usize>)> {
+        self.backend(delivery).repair_approval(delivery)
+    }
     fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         if self.is_real(delivery) {
             return self.backend(delivery).reconcile_cancellation(delivery);

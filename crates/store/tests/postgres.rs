@@ -2927,7 +2927,9 @@ fn dispatch_legacy_migration_is_bounded(settings: &tl3_config::Store) {
     let mut client = raw(settings);
     client.batch_execute("ALTER TABLE tl3_effects DISABLE TRIGGER tl3_record_dispatch;
         INSERT INTO tl3_events(event_key,revision,epoch,payload,result)
-        SELECT 'old-'||n,n,0,CASE WHEN n=600 THEN '{\"effect\":\"legacy-a\",\"to\":\"Sent\"}'::jsonb ELSE 'null'::jsonb END,'null'::jsonb FROM generate_series(1,600) n;
+        SELECT 'old-'||n,n,0,CASE WHEN n IN (255,256,257) THEN
+            jsonb_build_object('effect',CASE n WHEN 255 THEN 'pending' WHEN 256 THEN 'cancelled' ELSE 'confirmed' END,'to','Sent')
+            WHEN n=600 THEN '{\"effect\":\"legacy-a\",\"to\":\"Sent\"}'::jsonb ELSE 'null'::jsonb END,'null'::jsonb FROM generate_series(1,600) n;
         UPDATE tl3_meta SET revision=600;
         UPDATE tl3_dispatch_migration SET through_revision=600").unwrap();
     let identity = json!({"repository":{"owner":"owner","name":"sandbox","installation":3},"issue":12,
@@ -2936,6 +2938,16 @@ fn dispatch_legacy_migration_is_bounded(settings: &tl3_config::Store) {
     payload["key"] = json!("legacy-a");
     client.execute("INSERT INTO tl3_effects(effect_key,epoch,kind,payload,state,created_revision,updated_revision)
         VALUES ('legacy-a',0,'github',$1,'Confirmed',600,600)", &[&payload]).unwrap();
+    for (key, state, revision) in [
+        ("pending", "Uncertain", 255_i64),
+        ("cancelled", "Cancelled", 256),
+        ("confirmed", "Confirmed", 257),
+    ] {
+        let mut delivery = payload.clone();
+        delivery["key"] = json!(key);
+        client.execute("INSERT INTO tl3_effects(effect_key,epoch,kind,payload,state,created_revision,updated_revision)
+            VALUES ($1,0,'github',$2,$3::text::tl3_effect_state,$4,$4)", &[&key,&delivery,&state,&revision]).unwrap();
+    }
     client
         .batch_execute("ALTER TABLE tl3_effects ENABLE TRIGGER tl3_record_dispatch")
         .unwrap();
@@ -2953,6 +2965,20 @@ fn dispatch_legacy_migration_is_bounded(settings: &tl3_config::Store) {
             .get::<_, i64>(0),
         256
     );
+    let recovery: Vec<_> = store
+        .load()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|r| r.table == "approval_dispatch_recovery")
+        .map(|r| r.id)
+        .collect();
+    assert_eq!(
+        recovery.len(),
+        2,
+        "the same 256-row batch also recovers unresolved legacy dispatches"
+    );
+    assert!(recovery.contains(&"pending".into()) && recovery.contains(&"cancelled".into()));
     drop(store);
     let mut store = Store::open(settings).unwrap();
     assert!(
@@ -2974,6 +3000,19 @@ fn dispatch_legacy_migration_is_bounded(settings: &tl3_config::Store) {
         store
             .dispatched_effect_matching(&identity, "legacy-b")
             .unwrap()
+    );
+    let recovery: Vec<_> = store
+        .load()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|r| r.table == "approval_dispatch_recovery")
+        .map(|r| r.id)
+        .collect();
+    assert_eq!(
+        recovery.len(),
+        2,
+        "proven terminal single attempts must stay retired; restart must not duplicate recovery"
     );
     assert_eq!(store.approval_dispatch_count("legacy-a").unwrap(), 1);
     assert!(!store.migrate_dispatch_evidence().unwrap());
