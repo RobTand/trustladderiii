@@ -212,3 +212,12 @@ tl3_py_test(
     srcs = ["test_summary_limits.py"],
     deps = ["//harness/src/tl3_harness"],
 )
+
+tl3_py_test(
+    name = "test_red_message",
+    srcs = ["test_red_message.py"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
