@@ -50,7 +50,7 @@ fn generated_sequences_match_full_checker() {
     runner
         .run(
             &proptest::collection::vec((any::<u8>(), any::<u8>()), 1..64),
-            |(sequence)| {
+            |sequence| {
                 let mut w = world();
                 let mut checker = Incremental::default();
                 for (action, mutation) in sequence {
