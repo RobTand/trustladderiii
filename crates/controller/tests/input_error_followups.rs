@@ -132,6 +132,38 @@ fn observation_store_failure_stops_ingress() {
         "observation store failure must stop ingress"
     );
 }
+
+/// #771: raw kernel commands cannot bypass steering's command-ID allocation.
+#[test]
+fn raw_max_command_id_is_rejected_without_changing_the_node() {
+    let mut db = support::Database::start();
+    let settings = db.create("raw_command_id");
+    let root = tempfile::tempdir().unwrap();
+    let mut c = open(&settings, root.path());
+    c.intake(issue()).unwrap();
+    let input: Input = serde_json::from_value(json!({
+        "Observation": {
+            "key": "command-id-jump",
+            "observation": {"Kernel": {"Command": {
+                "node": 0,
+                "id": u64::MAX,
+                "command": "Pause"
+            }}}
+        }
+    }))
+    .unwrap();
+    tl3_controller::ingress::apply(&mut c, input).unwrap();
+    drain(&mut c);
+    let n = c.world().unwrap().nodes[0];
+    assert_eq!(n.last_cmd, 0, "raw input must not assign a command ID");
+    assert!(!n.paused, "raw input must not pause the request");
+    assert!(c.snapshot().unwrap().rows.iter().any(|row| {
+        row.table == "incidents"
+            && row.value["input_failure"]["scope"]
+                .as_str()
+                .is_some_and(|scope| scope.starts_with("observation:"))
+    }));
+}
 struct BrokenLook {
     fake: adapters::workers::Fake,
     settings: tl3_config::Store,

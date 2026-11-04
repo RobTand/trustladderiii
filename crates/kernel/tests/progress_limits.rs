@@ -133,3 +133,9 @@ fn penultimate_command_id_still_has_a_progress_witness() {
     let after = send(world, witness);
     assert!(after.measure() < before);
 }
+
+/// #771 scoped progress: an exhausted node cannot supply a fresh command ID.
+#[test]
+fn exhausted_command_witness_returns_none_without_overflow() {
+    assert_eq!(paused_unplanned(u64::MAX).witness(), None);
+}
