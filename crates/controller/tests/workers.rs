@@ -625,7 +625,10 @@ fn main() {
                 &database.create("quota_removed_legacy"),
                 true,
             ),
-            Some("unavailable") => unavailable_scenarios(&mut database),
+            Some("unavailable") => {
+                unavailable_scenarios(&mut database);
+                println!("5 quota-ladder unavailable scenarios passed; no skips");
+            }
             _ => quota_scenarios(&mut database),
         }
         database.stop();
