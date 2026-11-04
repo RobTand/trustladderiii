@@ -132,7 +132,7 @@ fn search(pattern: &str, text: &str) -> Result<bool> {
     rx(pattern)?.is_match(text).map_err(|e| e.to_string())
 }
 fn full(pattern: &str, text: &str) -> Result<bool> {
-    search(&format!(r"\A(?:{pattern})\z"), text)
+    search(&format!(r"\A(?:{pattern})\Z"), text)
 }
 fn full_rule(name: &str, text: &str) -> Result<bool> {
     full(

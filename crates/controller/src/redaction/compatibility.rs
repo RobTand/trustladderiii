@@ -1,151 +1,138 @@
-//! Python regular-expression semantics for the controller adapter.
+//! Parse Python policy regexes before translating their semantics to fancy-regex.
+use fancy_regex::{Assertion, Expr, LookAround};
+use std::collections::HashMap;
 
 type Result<T> = std::result::Result<T, String>;
 
 pub(crate) fn translate(pattern: &str, classes: &[String; 3]) -> Result<String> {
-    fn shorthand(code: char, classes: &[String; 3], invert: bool) -> String {
-        let index = match code {
-            'w' | 'W' => 0,
-            'd' | 'D' => 1,
-            _ => 2,
-        };
-        let negate = if code.is_ascii_uppercase() ^ invert {
-            "^"
-        } else {
-            ""
-        };
-        format!("(?-i:[{negate}{}])", classes[index])
-    }
-    fn bracket(
-        source: &mut std::iter::Peekable<std::str::Chars<'_>>,
-        classes: &[String; 3],
-        ignore_case: bool,
-    ) -> Result<String> {
-        // Lex one complete class, then parse it. Never splice members into its source:
-        // a trailing literal '-' changes meaning when followed by another character.
-        let mut token = String::from("[");
-        if source.next_if_eq(&'^').is_some() {
-            token.push('^');
+    // fancy-regex merges $ and \z into one AST assertion. The policy uses Python's
+    // \Z for strict end; reject ambiguous input rather than silently soften it.
+    let mut tokens = pattern.chars();
+    while let Some(c) = tokens.next() {
+        if c == '\\' && tokens.next() == Some('z') {
+            return Err("use Python \\Z for strict end of string".into());
         }
-        if source.next_if_eq(&']').is_some() {
-            token.push(']');
-        }
-        loop {
-            let c = source.next().ok_or("unfinished regex class")?;
-            token.push(c);
-            match c {
-                '\\' => token.push(source.next().ok_or("unfinished class escape")?),
-                ']' => break,
-                _ => {}
-            }
-        }
-        parsed_class(&token, classes, ignore_case)
     }
-    #[derive(Clone, Copy, Default)]
-    struct Flags {
-        ignore_case: bool,
-        multiline: bool,
-    }
-    let word = shorthand('w', classes, false);
-    let mut out = String::new();
-    let mut source = pattern.chars().peekable();
-    let mut flags = Flags::default();
-    let mut scopes = Vec::new();
-    while let Some(c) = source.next() {
-        match c {
-            '[' => out.push_str(&bracket(&mut source, classes, flags.ignore_case)?),
-            '(' => {
-                out.push('(');
-                if source.peek() == Some(&'?') {
-                    let mut look = source.clone();
-                    look.next();
-                    let mut header = String::from("?");
-                    while let Some(code) =
-                        look.next_if(|c| matches!(c, 'i' | 'm' | 's' | 'x' | '-'))
-                    {
-                        header.push(code);
+    let tree = Expr::parse_tree(pattern).map_err(|e| e.to_string())?;
+    let names = tree
+        .named_groups
+        .iter()
+        .map(|(name, index)| (*index, name.as_str()))
+        .collect();
+    let mut writer = Writer {
+        classes,
+        names,
+        next_group: 1,
+    };
+    writer.expression(&tree.expr)
+}
+
+struct Writer<'a> {
+    classes: &'a [String; 3],
+    names: HashMap<usize, &'a str>,
+    next_group: usize,
+}
+
+impl Writer<'_> {
+    fn expression(&mut self, expr: &Expr) -> Result<String> {
+        Ok(match expr {
+            Expr::Empty => String::new(),
+            Expr::Literal { val, casei } => {
+                let mut out = String::new();
+                for c in val.chars() {
+                    let mut set = ClassUnicode::new([ClassUnicodeRange::new(c, c)]);
+                    if *casei {
+                        fold(&mut set)?;
                     }
-                    if header.len() > 1 && matches!(look.peek(), Some(':' | ')')) {
-                        let end = look.next().ok_or("unfinished flags")?;
-                        if end == ':' {
-                            scopes.push(flags);
-                        }
-                        let mut enabled = true;
-                        for code in header.chars().skip(1) {
-                            match code {
-                                '-' => enabled = false,
-                                'i' => flags.ignore_case = enabled,
-                                'm' => flags.multiline = enabled,
-                                _ => {}
-                            }
-                        }
-                        out.push_str(&header);
-                        out.push(end);
-                        source = look;
-                        continue;
-                    }
-                    // Group names and named backreferences are syntax, never literals.
-                    let mut look = source.clone();
-                    if look.next() == Some('?') && look.next() == Some('P') {
-                        let delimiter = match look.next() {
-                            Some('<') => '>',
-                            Some('=') => ')',
-                            _ => return Err("invalid named group".into()),
-                        };
-                        let mut header = String::from("?P");
-                        header.push(if delimiter == '>' { '<' } else { '=' });
-                        loop {
-                            let code = look.next().ok_or("unfinished named group")?;
-                            header.push(code);
-                            if code == delimiter {
-                                break;
-                            }
-                        }
-                        out.push_str(&header);
-                        source = look;
-                        if delimiter == ')' {
-                            continue;
-                        }
-                    }
+                    out.push_str(&Hir::class(Class::Unicode(set)).to_string());
                 }
-                scopes.push(flags);
+                out
             }
-            ')' => {
-                flags = scopes.pop().ok_or("unbalanced regex group")?;
-                out.push(')');
+            Expr::Delegate { inner, casei } => parsed_class(inner, self.classes, *casei)?,
+            Expr::Any {
+                newline,
+                crlf: false,
+            } => if *newline { "(?s:.)" } else { "(?-s:.)" }.into(),
+            Expr::Concat(parts) => {
+                let mut out = String::new();
+                for part in parts {
+                    out.push_str(&self.expression(part)?);
+                }
+                out
             }
-            '$' => out.push_str(if flags.multiline {
-                r"(?=\n|\z)"
-            } else {
-                r"(?=\n?\z)"
-            }),
-            'i' | 'I' | 'İ' | 'ı' if flags.ignore_case => out.push_str("(?-i:[Iiİı])"),
-            '\\' => {
-                let escape = source.next().ok_or("unfinished regex escape")?;
-                match escape {
-                    'w' | 'W' | 'd' | 'D' | 's' | 'S' => {
-                        out.push_str(&shorthand(escape, classes, false))
-                    }
-                    'b' => {
-                        out.push_str(&format!(r"(?:(?<!{word})(?={word})|(?<={word})(?!{word}))"))
-                    }
-                    'B' => {
-                        out.push_str(&format!(r"(?:(?<!{word})(?!{word})|(?<={word})(?={word}))"))
-                    }
-                    'Z' => out.push_str(r"\z"),
-                    other => {
-                        out.push('\\');
-                        out.push(other);
-                    }
+            Expr::Alt(parts) => {
+                let arms = parts
+                    .iter()
+                    .map(|p| self.expression(p))
+                    .collect::<Result<Vec<_>>>()?;
+                format!("(?:{})", arms.join("|"))
+            }
+            Expr::Group(child) => {
+                let index = self.next_group;
+                self.next_group += 1;
+                let body = self.expression(child)?;
+                if let Some(name) = self.names.get(&index) {
+                    format!("(?P<{name}>{body})")
+                } else {
+                    format!("({body})")
                 }
             }
-            other => out.push(other),
-        }
+            Expr::LookAround(child, kind) => {
+                let prefix = match kind {
+                    LookAround::LookAhead => "?=",
+                    LookAround::LookAheadNeg => "?!",
+                    LookAround::LookBehind => "?<=",
+                    LookAround::LookBehindNeg => "?<!",
+                };
+                format!("({prefix}{})", self.expression(child)?)
+            }
+            Expr::Repeat {
+                child,
+                lo,
+                hi,
+                greedy,
+            } => {
+                let upper = if *hi == usize::MAX {
+                    String::new()
+                } else {
+                    hi.to_string()
+                };
+                format!(
+                    "(?:{}){{{lo},{upper}}}{}",
+                    self.expression(child)?,
+                    if *greedy { "" } else { "?" }
+                )
+            }
+            Expr::AtomicGroup(child) => format!("(?>{})", self.expression(child)?),
+            Expr::Backref {
+                group,
+                casei: false,
+            } => {
+                if let Some(name) = self.names.get(group) {
+                    format!("(?P={name})")
+                } else {
+                    format!(r"(?:\{group})")
+                }
+            }
+            Expr::Assertion(assertion) => match assertion {
+                Assertion::StartText => r"\A".into(),
+                Assertion::EndText => r"(?=\n?\z)".into(),
+                Assertion::EndTextIgnoreTrailingNewlines { crlf: false } => r"\z".into(),
+                Assertion::StartLine { crlf: false } => r"(?m:^)".into(),
+                Assertion::EndLine { crlf: false } => r"(?=\n|\z)".into(),
+                Assertion::WordBoundary | Assertion::NotWordBoundary => {
+                    let word = parsed_class(r"\w", self.classes, false)?;
+                    if matches!(assertion, Assertion::WordBoundary) {
+                        format!(r"(?:(?<!{word})(?={word})|(?<={word})(?!{word}))")
+                    } else {
+                        format!(r"(?:(?<!{word})(?!{word})|(?<={word})(?={word}))")
+                    }
+                }
+                _ => return Err(format!("unsupported Python assertion AST: {assertion:?}")),
+            },
+            _ => return Err(format!("unsupported Python regex AST: {expr:?}")),
+        })
     }
-    if !scopes.is_empty() {
-        return Err("unbalanced regex group".into());
-    }
-    Ok(out)
 }
 
 use regex_syntax::{
@@ -227,9 +214,10 @@ fn parsed_class(pattern: &str, classes: &[String; 3], ignore_case: bool) -> Resu
     let ast = ast::parse::Parser::new()
         .parse(pattern)
         .map_err(|e| e.to_string())?;
-    let Ast::ClassBracketed(class) = ast else {
-        return Err("expected a parsed bracketed Python class".into());
+    let set = match ast {
+        Ast::ClassBracketed(class) => bracketed(&class, classes, ignore_case)?,
+        Ast::ClassPerl(perl) => item(&ClassSetItem::Perl(*perl), classes, ignore_case)?,
+        _ => return Err("expected a parsed Python character class".into()),
     };
-    let set = bracketed(&class, classes, ignore_case)?;
     Ok(format!("(?-i:{})", Hir::class(Class::Unicode(set))))
 }
