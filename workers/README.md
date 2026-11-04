@@ -538,8 +538,15 @@ with a quota record and exit 0 instead of a failed run:
 
 `reset_ms` is the announced Unix time in milliseconds. It is the last event.
 The controller waits for that reset and the supervisor starts another attempt
-under the same operation key and generation. A 429 without a valid future reset
-still fails. The protocol includes no exception text or response body.
+under the same operation key and generation. The protocol includes no exception
+text or response body.
+
+A typed reply saying the model can't be served now ends the same way, with
+`reset_ms` set to a probe 15 minutes later (Q53, #745): 400 or 404 with error
+code `model_not_found`, 503, or 429 without a valid future reset. The step falls
+back down its ladder, and tries the model again after the probe time. Any other
+400 still fails. A postmortem run still ends this way only on announced quota,
+because it calls two models and the controller charges the request's model.
 
 Maker recall uses `[hindsight].endpoint` and `[hindsight].bank` from controller
 config. The model supplies only a query. One 30-second deadline covers connection,
