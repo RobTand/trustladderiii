@@ -91,7 +91,10 @@ def class_vectors(atom):
 
 def generate(policy, corpus):
     rng = random.Random(753)
-    seeds = list(dict.fromkeys(original_inputs() + branch_inputs() + corpus))
+    seeds = list(dict.fromkeys(original_inputs() + branch_inputs() + corpus + [
+        prefix + quote + FAKE + quote for prefix in ['r', 'b', 'f', 'u', 'rb', 'fr']
+        for quote in ['"', "'"]
+    ]))
     shards = [{'classes': [], 'inputs': []} for _ in range(SHARDS)]
     total_classes = 0
     for index, (name, pattern) in enumerate(expressions(policy)):
