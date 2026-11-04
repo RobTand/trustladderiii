@@ -44,8 +44,8 @@ def main():
         run(request, emit)
         return 0
     except Exception as error:
-        from tl3_workers.quota import reset_ms
-        reset = reset_ms(error, time.time()) if phase == "run" else None
+        from tl3_workers.quota import ending_ms
+        reset = ending_ms(error, time.time(), request["role"]) if phase == "run" else None
         if reset is not None:
             emit({"event": "quota", "role": request["role"], "reset_ms": reset})
             return 0
