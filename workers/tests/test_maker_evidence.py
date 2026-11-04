@@ -24,6 +24,7 @@ from message_invariants import write_turn as write_turn
 
 
 def test_done_reply_carries_the_run_tests_receipts(maker_request, monkeypatch):
+    maker_request["inputs"]["context_size"] = 150_000
     # #408: the evidence the maker cites lands in its reply for the reviewer,
     # for the tree that run tested, which is the committed head's tree (#432).
     fake = FakeMessagesListChatModel(responses=[
@@ -47,6 +48,7 @@ def test_done_reply_carries_the_run_tests_receipts(maker_request, monkeypatch):
 
 
 def test_runs_before_a_later_edit_are_not_evidence_for_the_head(maker_request, monkeypatch):
+    maker_request["inputs"]["context_size"] = 150_000
     # #432: run, edit, done. The run tested a tree the head no longer has.
     root = Path(maker_request["worktree"])
     maker_request["inputs"]["check_base_sha"] = git(root, "rev-parse", "HEAD")

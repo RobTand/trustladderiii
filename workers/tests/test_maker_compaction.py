@@ -1,8 +1,10 @@
 """Repeated maker compaction and recovery through the real worker graph."""
 
+from copy import deepcopy
 import json
 from pathlib import Path
 
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 import pytest
 
@@ -10,12 +12,60 @@ from tl3_workers import runtime
 from tl3_workers.contracts import validate
 from message_invariants import assert_tool_pairs
 import message_invariants
-from test_prompt_cache import capture_budget, finish_requested
-from test_turns import Killed, install, maker_visit, reply, rerun
 
 
 UNFINISHED = {"kind": "cant_meet", "report": "Final checks remain unfinished."}
 maker_request = message_invariants.maker_request
+
+
+class Killed(BaseException):
+    """An interruption that worker error handlers cannot catch."""
+
+
+class ContextModel(FakeMessagesListChatModel):
+    steps: list
+    calls: list = []
+    offered: bool = False
+
+    def bind_tools(self, tools, **kwargs):
+        self.offered = bool(tools) and kwargs.get("tool_choice") != "none"
+        return self
+
+    def _generate(self, messages, **kwargs):
+        self.calls.append((deepcopy(messages), self.offered))
+        self.offered = False
+        step = self.steps.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        self.responses, self.i = [step], 0
+        return super()._generate(messages, **kwargs)
+
+
+def install(monkeypatch, steps):
+    model = ContextModel(responses=[], steps=list(steps), calls=[])
+    monkeypatch.setattr(runtime, "create_model", lambda _: model)
+    return model
+
+
+def capture_budget(monkeypatch):
+    budgets = []
+    original = runtime.ExplorationMiddleware
+
+    def construct(*args, **kwargs):
+        budget = original(*args, **kwargs)
+        budgets.append(budget)
+        return budget
+
+    monkeypatch.setattr(runtime, "ExplorationMiddleware", construct)
+    return budgets
+
+
+def reply(value, *, input_tokens=100):
+    return AIMessage(**message_invariants.turn(value, input_tokens=input_tokens))
+
+
+def finish_requested(messages):
+    return any("budget is exhausted" in m.text for m in messages if m.type == "human")
 
 
 def edits(count):
@@ -64,7 +114,9 @@ def test_ineffective_compaction_reports_context_tokens(maker_request, monkeypatc
 
 @pytest.mark.parametrize("legacy_dimension", [None, "context_tokens", "input_tokens"])
 def test_recovered_maker_recompacts_and_resumes(maker_request, tmp_path, monkeypatch, legacy_dimension):
-    visit = maker_visit(maker_request, tmp_path)
+    maker_request["session_file"] = str(tmp_path / "maker.json")
+    maker_request["resume_session"] = False
+    visit = Path(maker_request["session_file"]).with_suffix(".visit")
     maker_request["inputs"]["context_size"] = 100_000
     budgets = capture_budget(monkeypatch)
     install(monkeypatch, [*edits(9), Killed()])
@@ -77,7 +129,10 @@ def test_recovered_maker_recompacts_and_resumes(maker_request, tmp_path, monkeyp
     saved["allowance"]["exhaustion"] = legacy_dimension
     visit.write_text(json.dumps(saved))
     spent = saved["allowance"]["spent"]
-    model, events = rerun(maker_request, monkeypatch, [reply(UNFINISHED, input_tokens=100)])
+    maker_request["operation"]["generation"] += 1
+    model = install(monkeypatch, [reply(UNFINISHED, input_tokens=100)])
+    events = []
+    runtime.run(maker_request, events.append)
     assert model.calls[0][1], "a recovered maker below its limits must retain tools"
     assert not finish_requested(model.calls[0][0])
     notice = next(m for m in reversed(model.calls[0][0]) if m.text.startswith("TL3 execution budget: "))
