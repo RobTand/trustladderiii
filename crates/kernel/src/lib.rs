@@ -491,6 +491,12 @@ impl Credit {
                 final(self).merge_credited == old(self).merge_credited,
                 final(self).start as int + final(self).earned as int + final(self).added as int
                     >= final(self).spent as int,
+                final(self).added as int == old(self).added as int + deposit as int
+                    + if cost as int > old(self).start as int + old(self).earned as int
+                        + old(self).added as int + deposit as int - old(self).spent as int {
+                        cost as int - (old(self).start as int + old(self).earned as int
+                            + old(self).added as int + deposit as int - old(self).spent as int)
+                    } else { 0int },
         ] {
             self.added += deposit as u32;
             self.pay(cost as u32);

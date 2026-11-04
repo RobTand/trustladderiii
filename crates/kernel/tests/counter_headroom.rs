@@ -9,7 +9,8 @@ fn fixture() -> World {
 /// #771: each independently exhausted machine counter closes the theorem scope.
 #[test]
 fn each_counter_has_its_own_headroom_check() {
-    let cases: [(&str, fn(&mut World)); 8] = [
+    type CounterCase = (&'static str, fn(&mut World));
+    let cases: [CounterCase; 8] = [
         ("generation", |w| w.nodes[0].generation = u64::MAX),
         ("next_seq", |w| w.nodes[0].next_seq = u64::MAX),
         ("next_ticket", |w| w.next_ticket = u64::MAX),
