@@ -5,8 +5,11 @@ patterns use a Rust enum, so adding a check requires an exhaustive dispatch arm.
 `unicode.rs` freezes the Python 3.14 Unicode 16.0 character ranges used by the
 Rust regex compatibility layer. The matching expressions retain Python syntax,
 including lookarounds, backreferences, and possessive quantifiers. The adapter
-expands Python's four-way I/i/İ/ı case equivalence in literals and classes, tracks
-scoped case/multiline flags, and translates strict `\Z` and soft `$` anchors.
+parses the complete expression with fancy-regex, then parses character classes
+with regex-syntax. Folding changes Unicode sets before negation; HIR serialization
+preserves literal hyphens and class boundaries. The parsed flags preserve scoped
+case/multiline behavior, and the adapter translates strict `\Z` and soft `$`
+anchors. Generation compiles every expression and aborts on unsupported syntax.
 
 Generate both committed consumers with the built controller CLI:
 
@@ -29,6 +32,10 @@ G0 keeps Python's span matching inside the exporter process. Controller output
 uses Rust matching. The shared matrix, corpus, planted forms, and a seeded
 proptest compare exact output. The migration test also fingerprints every
 original matching input, excluding the former Python source-file hash.
+An eight-shard generated conformance target mutates planted seeds with each
+expression's alphabet, every ASCII delimiter, whitespace, hyphens, and special
+Unicode folds. It compares both full production redactors. Every class occurrence
+also gets in-class and adjacent boundary witnesses under both case modes.
 Existing tracing tests cover structured carriers, truncation boundaries, and
 exporter behavior.
 
