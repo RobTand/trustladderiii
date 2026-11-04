@@ -60,3 +60,12 @@ Frozen regression controls and protected paths retain their existing rules.
 
 - agree: the reading holds. objections is empty.
 - disagree: specific objections, each tied to the issue or to missing evidence. Do not rewrite the request, settle the dispute, close an issue or decide a controller transition.
+
+## Merge prerequisites (#693)
+
+Independently compare ingest's `merge_prerequisites` with the original issue.
+Check each same-repository issue or PR number, its kind, and its verbatim
+source quote. Object to missing, invented, or misclassified prerequisites.
+If prerequisite code has not merged, that alone does not make the request
+not actionable. Preserve the remaining goals and let the request wait before
+planning. Ordinary references do not create prerequisites.

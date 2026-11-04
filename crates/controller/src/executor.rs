@@ -121,6 +121,7 @@ impl Delivery {
 /// when absent; `observation_shapes` enforces this.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
+    Prerequisite(crate::merge_dependencies::ExternalFact),
     ScratchSaved {
         node: NodeId,
         reference: String,
@@ -384,6 +385,17 @@ pub trait Executor {
         _number: u64,
     ) -> Result<tl3_github::Issue> {
         Err(crate::Error::Invalid("adapter cannot read issues"))
+    }
+    /// One read at declaration; subsequent changes arrive through GitHub ingress.
+    fn prerequisite(
+        &mut self,
+        _repository: &crate::Repository,
+        _kind: tl3_kernel::PrerequisiteKind,
+        _number: u64,
+    ) -> Result<tl3_kernel::DependencyStatus> {
+        Err(crate::Error::Invalid(
+            "adapter cannot read merge prerequisites",
+        ))
     }
     fn implementation(&self) -> &'static str {
         std::any::type_name::<Self>()

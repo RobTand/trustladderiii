@@ -98,6 +98,14 @@ impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
             None => self.fake.app_login(installation),
         }
     }
+    fn prerequisite(
+        &mut self,
+        repository: &tl3_controller::Repository,
+        kind: tl3_kernel::PrerequisiteKind,
+        number: u64,
+    ) -> Result<tl3_kernel::DependencyStatus> {
+        self.primary().prerequisite(repository, kind, number)
+    }
     fn implementation(&self) -> &'static str {
         match &self.real {
             Some(real) => real.implementation(),

@@ -31,6 +31,8 @@ pub struct Issue {
     pub title: String,
     pub body: Option<String>,
     pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_reason: Option<String>,
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub labels: Vec<Label>,

@@ -982,3 +982,13 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_merge_prerequisites",
+    srcs = ["test_merge_prerequisites.py"],
+    deps = [
+        ":conftest",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)

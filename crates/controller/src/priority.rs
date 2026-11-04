@@ -413,6 +413,7 @@ mod tests {
             title: "Fix the greeting".into(),
             body: None,
             state: "open".into(),
+            state_reason: None,
             updated_at: chrono::DateTime::from_timestamp(EPOCH + at, 0).unwrap(),
             labels: labels
                 .iter()

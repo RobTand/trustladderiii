@@ -222,6 +222,7 @@ pub(crate) fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<
             for issue in &changes.issues {
                 if issue.pull_request.is_none() {
                     let (labels, digest) = canonical_issue(issue);
+                    result.extend(prerequisite_issue(&repository, issue));
                     result.push(Input::IssueChanged(IssueChange {
                         delivery: format!(
                             "catch-up-issue:{}/{}:{}:{}:{}",
@@ -240,6 +241,9 @@ pub(crate) fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<
                         updated_at: issue.updated_at,
                     }));
                 }
+            }
+            for pr in &changes.pull_requests {
+                result.extend(prerequisite_pr(&repository, pr));
             }
             for comment in changes.comments {
                 // URLs were validated before advancing the durable catch-up cursor.
@@ -483,6 +487,56 @@ pub fn run(controller: &mut Controller, receiver: mpsc::Receiver<Input>) -> Resu
     .run(controller)
 }
 
+fn prerequisite_issue(repository: &Repository, issue: &tl3_github::Issue) -> Option<Input> {
+    prerequisite_input(
+        repository,
+        tl3_kernel::PrerequisiteKind::Issue,
+        issue.number,
+        crate::merge_dependencies::issue_status(issue),
+        &issue.updated_at.to_rfc3339(),
+    )
+}
+
+fn prerequisite_pr(repository: &Repository, pr: &tl3_github::PullRequest) -> Option<Input> {
+    prerequisite_input(
+        repository,
+        tl3_kernel::PrerequisiteKind::PullRequest,
+        pr.number,
+        if pr.merged_at.is_some() {
+            tl3_kernel::DependencyStatus::Delivered
+        } else {
+            tl3_kernel::DependencyStatus::Pending
+        },
+        &pr.updated_at.to_rfc3339(),
+    )
+}
+
+fn prerequisite_input(
+    repository: &Repository,
+    kind: tl3_kernel::PrerequisiteKind,
+    number: u64,
+    status: tl3_kernel::DependencyStatus,
+    at: &str,
+) -> Option<Input> {
+    if status == tl3_kernel::DependencyStatus::Pending {
+        return None;
+    }
+    Some(Input::Observation {
+        key: format!(
+            "prerequisite:{}/{}/{}:{kind:?}:{number}:{at}:{status:?}",
+            repository.owner.to_ascii_lowercase(),
+            repository.name.to_ascii_lowercase(),
+            repository.installation
+        ),
+        observation: Observation::Prerequisite(crate::merge_dependencies::ExternalFact {
+            repository: repository.clone(),
+            kind,
+            number,
+            status,
+        }),
+    })
+}
+
 fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
     match event {
         Some(Event::IssueLabeled {
@@ -508,7 +562,33 @@ fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
             ]
         }
         Some(Event::IssueChanged { context, issue, .. }) if issue.pull_request.is_none() => {
-            vec![Input::IssueChanged(issue_change(id, &context, &issue))]
+            let repo = Repository {
+                owner: context.repository.owner.login.clone(),
+                name: context.repository.name.clone(),
+                installation: context.installation_id,
+            };
+            let mut inputs = vec![Input::IssueChanged(issue_change(id, &context, &issue))];
+            inputs.extend(prerequisite_issue(&repo, &issue));
+            inputs
+        }
+        Some(
+            Event::PullRequestMerged {
+                context,
+                pull_request,
+                ..
+            }
+            | Event::PullRequestClosed {
+                context,
+                pull_request,
+                ..
+            },
+        ) => {
+            let repo = Repository {
+                owner: context.repository.owner.login,
+                name: context.repository.name,
+                installation: context.installation_id,
+            };
+            prerequisite_pr(&repo, &pull_request).into_iter().collect()
         }
         Some(Event::CommentCreated {
             context,
@@ -1012,5 +1092,30 @@ mod priority_tests {
                 if issue.labels == ["P1", "tl3"] && issue.label == "tl3")),
             "intake sees every label"
         );
+    }
+
+    #[test]
+    fn prerequisite_issue_closures_survive_webhooks_and_catch_up() {
+        let config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+        let bootstrap = Bootstrap::from_config(&config).unwrap();
+        let repository = bootstrap.repos[0].clone();
+        for (reason, expected) in [
+            ("completed", tl3_kernel::DependencyStatus::Delivered),
+            ("not_planned", tl3_kernel::DependencyStatus::Abandoned),
+        ] {
+            let body = json!({"action":"closed", "repository":{"id":9,"name":repository.name,"owner":{"id":3,"login":repository.owner}}, "installation":{"id":repository.installation}, "sender":{"id":7,"login":"requester"}, "issue":{"number":2761,"title":"Prerequisite", "body":null,"state":"closed","state_reason":reason,"updated_at":"2026-11-03T23:00:00Z","pull_request":null}});
+            let delivery = tl3_github::webhook::parse(
+                "prerequisite-closed",
+                "issues",
+                body.to_string().as_bytes(),
+            )
+            .unwrap();
+            let issue = serde_json::from_value(body["issue"].clone()).unwrap();
+            let webhook = inputs("prerequisite-closed", delivery.event, &bootstrap);
+            let catch_up = prerequisite_issue(&repository, &issue);
+            let fact = |input: &Input| matches!(input, Input::Observation { observation: Observation::Prerequisite(fact), .. } if fact.number == 2761 && fact.status == expected && fact.repository == repository);
+            assert!(webhook.iter().any(fact));
+            assert!(fact(&catch_up.unwrap()));
+        }
     }
 }

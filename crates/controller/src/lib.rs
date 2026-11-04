@@ -28,6 +28,7 @@ pub mod looks;
 #[path = "../tests/loom/mod.rs"]
 mod loom_tests;
 pub mod memory;
+pub mod merge_dependencies;
 mod narrowing;
 mod notices;
 mod postmortems;
@@ -1749,7 +1750,7 @@ impl Controller {
     fn apply(
         &mut self,
         snapshot: &Snapshot,
-        world: World,
+        mut world: World,
         event: Event,
         commit: &mut Commit,
     ) -> Result<()> {
@@ -1809,7 +1810,18 @@ impl Controller {
                 )
             })
         });
-        let (world, outputs) = tl3_kernel::step(world, event);
+        let mut dependency_outputs = Vec::new();
+        self.declare_merge_dependencies(&mut world, event, &mut dependency_outputs, commit)?;
+        let dependency_roots = merge_dependencies::changed_roots(&world, event);
+        let (mut world, mut outputs) = tl3_kernel::step(world, event);
+        outputs.splice(0..0, dependency_outputs);
+        self.announce_dependency_endings(
+            snapshot,
+            &mut world,
+            dependency_roots,
+            &mut outputs,
+            commit,
+        )?;
         if let Some((node, reason)) = closing_cause
             && world.nodes.get(node.0 as usize).is_some_and(|n| {
                 matches!(
@@ -1825,7 +1837,10 @@ impl Controller {
             ));
         }
         self.record_kernel_result(snapshot, world, outputs, commit)?;
-        commit.result = json!({"kernel_event": event});
+        if !commit.result.is_object() {
+            commit.result = json!({});
+        }
+        commit.result["kernel_event"] = json!(event);
         Ok(())
     }
 
@@ -2098,7 +2113,10 @@ impl Controller {
                 job_generation: n.job,
                 question: n.question,
                 marker_key: None,
-                note: None,
+                note: match output {
+                    Out::Notice { notice, .. } => merge_dependencies::dependency_note(notice),
+                    _ => None,
+                },
                 scope_removals: None,
                 question_context,
                 steering: None,
@@ -2576,6 +2594,10 @@ impl Controller {
         let mut outside_paths_total = 0;
         let mut detailed_review = false;
         let event = match observation {
+            Observation::Prerequisite(fact) => {
+                self.external_dependency_fact(snapshot, world, fact, commit)?;
+                return Ok(None);
+            }
             // Older controllers queued ScratchSaved after writing it with completion.
             Observation::ScratchSaved { .. }
             | Observation::ScratchPruned { .. }
@@ -3243,6 +3265,9 @@ impl Controller {
                         .rows
                         .push(put(document, node.0.to_string(), reply.clone()));
                 }
+                if role == "ingest" && reply["kind"] == "brief" {
+                    self.prepare_merge_dependencies(snapshot, world, node, &reply, commit)?;
+                }
                 if role == "ingest" {
                     commit.rows.push(put(
                         "goals",
@@ -3489,6 +3514,15 @@ impl Controller {
                     node.0.to_string(),
                     json!({"number": number, "id": id.get()}),
                 ));
+                let mut outputs = Vec::new();
+                self.announce_dependency_endings(
+                    snapshot,
+                    world,
+                    vec![node],
+                    &mut outputs,
+                    commit,
+                )?;
+                self.record_kernel_result(snapshot, world.clone(), outputs, commit)?;
                 return Ok(None);
             }
         };
@@ -3740,6 +3774,7 @@ fn observation_upstream(
             ..
         }) => None,
         Observation::GitHubComment { .. }
+        | Observation::Prerequisite(_)
         | Observation::LinkedRequest { .. }
         | Observation::PullRequest { .. } => Some(Upstream::GitHub),
         Observation::Classified { .. }

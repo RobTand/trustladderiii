@@ -904,3 +904,31 @@ MLflow clips some payloads and omits before/after edit trees; these counts use
 successful distinct edits as a proxy and new test selections where visible.
 Runtime progress instead checks actual confined file contents and normalized
 test results, excluding receipts, timing and tree identities.
+
+## Q59: root merge prerequisites before planning
+
+Approved by Rob, 2026-11-03, [#693](https://github.com/RobTand/trustladderiii/issues/693).
+
+Ingest declares same-repo issue or PR prerequisites with verbatim source quotes.
+Audit checks that list against the request. Missing code supplied by a declared
+prerequisite does not make the request not actionable. After ingest and audit,
+the root waits in Unplanned until every prerequisite is delivered. The wait
+holds no slot, file lock or spendable credit, and avoids planner and maker cost.
+
+Each declaration names an active TL3 request root or an external merge fact.
+A merged PR, an issue closed as completed, or a TL3 request closed as done
+delivers. A stopped request with an open issue stays pending and can later
+restart. An issue closed as not planned abandons, posts one note, and keeps
+the waiting request blocked until Rob changes or stops it. Status says
+"waiting for #N to merge". Planning after release uses current main.
+
+Facts are never stale or dropped and update dependencies in every phase.
+Declarations reconcile retained terminal facts before waiting, even when an
+active prerequisite root still exists. Re-ingest retains terminal outcomes and
+announcement identities for unchanged targets. A stop is announced once even
+when its issue stays open and its dependency status remains pending.
+No request gains prerequisites after it first starts planning. Cycles across
+requests are rejected with a plain note, and every ending is announced to
+waiters. These root merge prerequisites move from slice two into slice one.
+Planner reuse links, dependencies between leaves, splits, Children, Deciding
+and Escalated remain outside this change.

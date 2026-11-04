@@ -287,6 +287,22 @@ impl Supervisor {
             )?,
             _ => self.materials(delivery, store, snapshot)?,
         };
+        if role == "planner"
+            && let Some(provider) = &self.materials_provider
+            && materials["prerequisite_plan_generation"] != json!(delivery.generation)
+            && crate::snapshot::decode(snapshot)?
+                .dependencies()
+                .iter()
+                .any(|dependency| dependency.node == delivery.node())
+        {
+            // Ingest's cached checkout predates the wait. Pin this planning
+            // generation to main once, before materializing its worker checkout.
+            let fresh = provider.load(delivery)?;
+            materials["base_checkout"] = fresh["base_checkout"].clone();
+            materials["repo"] = fresh["repo"].clone();
+            materials["prerequisite_plan_generation"] = json!(delivery.generation);
+            store.put_worker_materials(&node, &materials)?;
+        }
         if role == "maker" && self.materials_provider.is_some() {
             let brief = store
                 .worker_document(&node, "briefs")?

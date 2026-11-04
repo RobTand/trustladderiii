@@ -53,7 +53,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             "sender":{"id":42,"login":"RobTand"},
             "issue":{"number":12,"title":"change","body":"request","state":"closed",
                 "state_reason":"completed","closed_by":{"id":42,"login":"RobTand"},
-                "closed_at":"2026-10-30T01:00:00Z"}
+                "closed_at":"2026-10-30T01:00:00Z", "updated_at":"2026-10-30T01:00:00Z"}
         });
         deliver(settings, &api, "issues", &issue_closed);
         deliver(settings, &api, "pull_request", &stale);

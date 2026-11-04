@@ -56,6 +56,17 @@ impl Executor for Spy {
         let _: Result<()> = self.hit("app_login", installation.to_string());
         Some(self.name.into())
     }
+    fn prerequisite(
+        &mut self,
+        repository: &tl3_controller::Repository,
+        kind: tl3_kernel::PrerequisiteKind,
+        number: u64,
+    ) -> Result<tl3_kernel::DependencyStatus> {
+        self.hit(
+            "prerequisite",
+            format!("{}/{}#{number}:{kind:?}", repository.owner, repository.name),
+        )
+    }
     fn implementation(&self) -> &'static str {
         let _: Result<()> = self.hit("implementation", String::new());
         self.name
@@ -211,6 +222,15 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
         assert!(router.wait_record("key", Path::new("checkout")).is_err());
         assert!(router.recover_deliveries(17, 29).is_err());
         assert!(router.issue(&question.repository, 17).is_err());
+        assert!(
+            router
+                .prerequisite(
+                    &question.repository,
+                    tl3_kernel::PrerequisiteKind::Issue,
+                    17
+                )
+                .is_err()
+        );
         assert!(router.retire(&mut store).is_err());
         assert_eq!(
             *calls.lock().unwrap(),
@@ -228,6 +248,14 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
                         "{}/{}#17",
                         question.repository.owner, question.repository.name
                     ),
+                ),
+                (
+                    primary,
+                    "prerequisite",
+                    format!(
+                        "{}/{}#17:Issue",
+                        question.repository.owner, question.repository.name
+                    )
                 ),
                 (primary, "retire", String::new()),
             ]

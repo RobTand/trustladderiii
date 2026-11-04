@@ -505,6 +505,11 @@ fn card(
         } else if node.effect.is_some_and(|effect| effect.cancelling) {
             // The node moved on; it waits only for the old delivery to settle.
             "a cancelled step to settle".into()
+        } else if let Some(number) = node
+            .waiting_prerequisite
+            .filter(|_| node.phase == Phase::Unplanned)
+        {
+            format!("waiting for #{number} to merge")
         } else if let Some(position) = pool_position.filter(|_| wait == Wait::AgentPool) {
             format!(
                 "{} ({priority}, {} in line)",

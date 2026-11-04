@@ -217,6 +217,37 @@
           "uniqueItems": true,
           "maxItems": 1024,
           "description": "Code-owned unsupported evidence requirements."
+        },
+        "merge_prerequisites": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "issue",
+                  "pull_request"
+                ]
+              },
+              "number": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "source_quote": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000
+              }
+            },
+            "required": [
+              "kind",
+              "number",
+              "source_quote"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Same-repository merge prerequisites explicitly required by the original issue, each with its verbatim source quote."
         }
       },
       "required": [

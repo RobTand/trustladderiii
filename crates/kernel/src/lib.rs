@@ -21,6 +21,8 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+mod dependencies;
+pub use dependencies::Dependency;
 mod footprint;
 mod ids;
 mod queries;
@@ -322,10 +324,21 @@ pub struct Credit {
     pub added: u32,
     pub spent: u32,
     pub merge_credited: bool,
+    /// Declared prerequisites withhold the ledger until planning admission.
+    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    pub withheld: bool,
 }
 
 impl Credit {
     pub fn balance(&self) -> i64 {
+        if self.withheld {
+            0
+        } else {
+            self.ledger_balance()
+        }
+    }
+
+    fn ledger_balance(&self) -> i64 {
         self.start as i64 + self.earned as i64 + self.added as i64 - self.spent as i64
     }
 
@@ -418,6 +431,10 @@ pub struct Node {
     /// retrying (Q54). A postmortem for it is owed as `needed_fix`.
     #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
     pub review_stop: Option<ReviewStop>,
+    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    pub planning_started: bool,
+    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    pub waiting_prerequisite: Option<u64>,
 }
 
 impl Node {
@@ -468,9 +485,12 @@ impl Node {
                 added: 0,
                 spent: 0,
                 merge_credited: false,
+                withheld: false,
             },
             priority: Priority::Unranked,
             review_stop: None,
+            planning_started: false,
+            waiting_prerequisite: None,
         }
     }
 
@@ -587,6 +607,8 @@ pub struct World {
     pub next_ticket: u64,
     pub next_question: u64,
     file_sets: Vec<Vec<FileId>>,
+    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    dependencies: Vec<Dependency>,
     /// Q54: a step that would retry the work stops the request for TL3
     /// review instead. Config sets it at every open, so it applies to open
     /// requests too.
@@ -688,7 +710,50 @@ impl Priority {
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+pub enum PrerequisiteKind {
+    Issue,
+    PullRequest,
+}
+
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+pub struct DependencyTarget {
+    pub kind: PrerequisiteKind,
+    pub number: u64,
+    pub request: Option<NodeId>,
+}
+
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+pub enum DependencyStatus {
+    Pending,
+    Delivered,
+    Abandoned,
+}
+
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Fact {
+    DependencyRemove {
+        kind: PrerequisiteKind,
+        number: u64,
+    },
+    Dependency {
+        target: DependencyTarget,
+        status: DependencyStatus,
+    },
     PrMerged {
         head: HeadId,
         checks_passed: bool,
@@ -806,6 +871,8 @@ pub enum NoteKind {
     PrDequeued,
     OutsidePush,
     LateMerge,
+    DependencyAbandoned { number: u64 },
+    DependencyCycle { number: u64 },
 }
 
 #[cfg_attr(
@@ -1018,6 +1085,7 @@ impl World {
             next_ticket: 0,
             next_question: 0,
             file_sets: Vec::new(),
+            dependencies: Vec::new(),
             fail_fast: false,
         }
     }
@@ -1033,6 +1101,14 @@ impl World {
         for n in &self.nodes {
             total += n.distance();
         }
+        total += self
+            .dependencies
+            .iter()
+            .filter(|d| {
+                d.status != DependencyStatus::Delivered
+                    && !self.nodes[d.node.0 as usize].phase.is_closed()
+            })
+            .count() as u64;
         total
     }
 
@@ -1095,6 +1171,29 @@ impl World {
                     node,
                     id: n.last_cmd + 1,
                     command,
+                });
+            }
+            if n.phase == Phase::Unplanned && !self.dependencies_delivered(node) {
+                let dependency = self
+                    .dependencies
+                    .iter()
+                    .find(|d| {
+                        d.node == node && (d.rejected || d.status != DependencyStatus::Delivered)
+                    })
+                    .unwrap();
+                if dependency.rejected || dependency.status == DependencyStatus::Abandoned {
+                    return Some(Event::Command {
+                        node,
+                        id: n.last_cmd + 1,
+                        command: Command::ChangeRequest,
+                    });
+                }
+                return Some(Event::Fact {
+                    node,
+                    fact: Fact::Dependency {
+                        target: dependency.target,
+                        status: DependencyStatus::Delivered,
+                    },
                 });
             }
             match n.current() {
@@ -1162,6 +1261,7 @@ impl World {
 
     /// `consistent`, naming the first rule a world breaks.
     pub fn check(&self) -> Result<(), Broken> {
+        self.check_dependencies()?;
         if self.gates.is_empty() || self.pool_capacity == 0 {
             return Err(Broken::Config);
         }
@@ -1425,8 +1525,36 @@ impl World {
             }
         }
 
+        if n.credit.withheld
+            && n.question.is_some_and(|q| {
+                !matches!(
+                    q.cont,
+                    Cont::Ingesting
+                        | Cont::Auditing
+                        | Cont::Unplanned
+                        | Cont::Stop(_)
+                        | Cont::Nowhere
+                )
+            })
+        {
+            return Err(Broken::Dependencies);
+        }
+        if n.credit.withheld
+            && (!n.credit.ready
+                || !matches!(
+                    n.phase,
+                    Phase::Ingesting
+                        | Phase::Auditing
+                        | Phase::Unplanned
+                        | Phase::AwaitingRob
+                        | Phase::Stopping(_)
+                        | Phase::Closed(_)
+                ))
+        {
+            return Err(Broken::Dependencies);
+        }
         // Credit. It is set up when ingest finishes, so everything after has it.
-        if n.credit.balance() < 0 {
+        if n.credit.ledger_balance() < 0 {
             return Err(Broken::Credit);
         }
         if !n.credit.ready {
@@ -1559,6 +1687,7 @@ pub enum Broken {
     Closed,
     Gate,
     ReviewStop,
+    Dependencies,
 }
 
 // proof map start
@@ -1607,6 +1736,8 @@ pub fn proof_of_event(event: &Event) -> &'static str {
             Fact::IncidentCleared { .. } => "apply_incident_cleared",
             Fact::UpstreamStalled => "apply_upstream_stalled",
             Fact::Priority(_) => "apply_priority",
+            Fact::Dependency { .. } => "apply_dependency",
+            Fact::DependencyRemove { .. } => "apply_dependency_remove",
         },
         Event::Command { command, .. } => match command {
             Command::Stop => "apply_stop",
@@ -1933,6 +2064,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
             }
             m.early_end = None;
             set_phase(m, Phase::Auditing);
+            w.withhold_dependency_credit(i);
         }
         Reply::IngestEarlyEnd(e) => {
             let m = &mut w.nodes[i];
@@ -1942,6 +2074,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
             }
             m.early_end = Some(e);
             set_phase(m, Phase::Auditing);
+            w.withhold_dependency_credit(i);
         }
         Reply::AuditAgrees => match w.nodes[i].early_end {
             Some(e) => enter_stopping(&mut w.nodes[i], e.outcome()),
@@ -2328,6 +2461,8 @@ fn effect_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
 
 fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
     match fact {
+        Fact::DependencyRemove { kind, number } => w.remove_dependency(i, kind, number),
+        Fact::Dependency { target, status } => w.dependency_fact(i, target, status, out),
         Fact::Priority(priority) => {
             if !w.nodes[i].phase.is_closed() {
                 w.nodes[i].priority = priority;
@@ -2701,10 +2836,13 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
         }
         Item::Await | Item::Merge | Item::Answer => false,
         Item::Admit => {
-            if n.paused || !admits(w, n.repo) {
+            if n.paused || !w.dependencies_delivered(NodeId(i as u64)) || !admits(w, n.repo) {
                 return false;
             }
-            set_phase(&mut w.nodes[i], Phase::Planning { must_split: false });
+            let m = &mut w.nodes[i];
+            m.credit.withheld = false;
+            m.planning_started = true;
+            set_phase(m, Phase::Planning { must_split: false });
             true
         }
         Item::Slot => {

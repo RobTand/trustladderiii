@@ -323,7 +323,8 @@ pub(crate) fn observation_context(
             .map(|row| crate::decode_stored::<crate::looks::AllowanceState>(row.value.clone()))
             .transpose()?
             .map(|state| state.delivery.node()),
-        Observation::ScratchPruned { .. }
+        Observation::Prerequisite(_)
+        | Observation::ScratchPruned { .. }
         | Observation::TraceLogsCapped { .. }
         | Observation::GitHubComment { .. }
         | Observation::Kernel(Event::NewRequest { .. } | Event::NewAdoption { .. }) => None,

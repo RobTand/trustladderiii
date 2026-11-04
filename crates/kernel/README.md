@@ -127,6 +127,49 @@ These are simplifications against the state table, all deliberate:
 - Production IDs are 64-bit newtypes. Proof assumptions bound heads below 8 and each repo to four file IDs.
 - Events name requests by stable `NodeId` indices.
 
+## Unplanned liveness with merge prerequisites
+
+The Unplanned implication is unchanged: every consistent settled world with an
+open request has an outside witness whose application strictly lowers the
+whole-world progress measure. The proofs partition that claim so Kani does not
+expand every phase of the other request through both `is_settled` and `witness`.
+
+- `progress_from_unplanned` keeps the original two-request, two-repo domain with
+  no dependencies. A paused root, an outstanding effect, or an incident gives
+  a direct outside witness. Otherwise the proof asserts that the world cannot
+  be settled: admission or a request occupying its gate can move. The witness
+  assertions still require existence and strict decrease of the same measure.
+- `progress_from_unplanned_delivered` and its `_one` companion prove the same
+  implication with exactly two and one delivered prerequisites on root 0. They
+  also check that available admission enters Planning and strictly lowers the
+  whole-world measure.
+- `progress_from_unplanned_waiting` and its `_one` companion use exactly two and
+  one prerequisites with arbitrary statuses, external or root targets, and
+  rejection flags, with at least one unresolved prerequisite. Admission cannot
+  move; the waiting root holds no slot, pool entry, ticket, worker run, or
+  spendable credit. These blocked-state
+  harnesses do not assert progress while a prerequisite is unresolved. The Fact
+  proofs separately check delivery and terminal latching; abandonment or
+  rejection requires Rob to change the request.
+
+The dependency harnesses retain arbitrary node fields and the original bounds
+on counters, credit, repos, gates, and file sets. Dependencies belong to root 0,
+which stands for an arbitrary waiting request by the same symmetry as the event
+proofs. The other root remains arbitrary. Each event proves that this other root is
+unchanged, then compares the changed root's distance plus its unresolved
+prerequisite count. The other root is the same common summand on both sides of
+the whole-world measure inequality, so this is the original strict decrease.
+The four fixed-length dependency domains cover all
+statuses and rejection flags for one or two prerequisites; zero prerequisites
+are covered separately. Every cover must be reached. Mutant runs deliberately
+block admission or remove dependency gating and must fail an assertion.
+
+These five harnesses use unwind 3 with unwinding assertions enabled. Direct
+`small_head` checks replace the equivalent five-element iterator in the shared
+world bounds, so that setup needs no larger loop bound. No head, node, or credit
+bounds change. Successful verification also checks that unwind 3 is sufficient
+for every loop and recursive path reached by each harness.
+
 ## Findings from the spike
 
 - **Proving a whole step at once is too big for Kani.** Every harness that did so hit PrismaBuild's one-hour limit, even for the simplest event. Proving one transition at a time takes about 2 to 12 minutes per proof and at most 25 GB.
