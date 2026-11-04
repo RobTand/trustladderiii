@@ -62,8 +62,8 @@ def main():
             # A URL pin can change without changing archive bytes. Both digest and
             # URL provenance are action inputs, so this must execute, not cache-hit.
             path = workspace.root / PINS
-            pin = path.read_text().replace('VERUS_SHA256 =',
-                'VERUS_URL = VERUS_URL + "?qualification=770"\nVERUS_SHA256 =', 1)
+            pin = path.read_text().replace('% (VERUS_VERSION, VERUS_VERSION)',
+                '% (VERUS_VERSION, VERUS_VERSION) + "?qualification=770"', 1)
             head = commit(workspace, PINS, pin)
             changed, deleted = workspace.changes(base, head)
             selected = bazel_gate.plan(changed, deleted, set(), set(), {PROOF})['selected']
@@ -89,7 +89,7 @@ def main():
                 commit(workspace, MODULE, path.read_text().replace(
                     '    delivered || acknowledgement', '    delivered && acknowledgement'))
             else:
-                commit(workspace, 'crates/mergify/proofs/delivery.rs', 'fn main() {}\n')
+                commit(workspace, 'crates/mergify/proofs/delivery.rs', 'use vstd::prelude::*;\nfn main() {}\n')
             statuses, text = run_proof(workspace, 'verus-' + args.case)
             assert statuses.get(PROOF) == 'FAILED', statuses
             if args.case == 'empty':
