@@ -169,10 +169,12 @@ impl Adapter {
                 if self.converge_approvals(&client, &repo, delivery, &checks)? {
                     return Ok(Completion::confirmed(vec![]));
                 }
-                // The dispatch boundary follows preflight. Persist before POST so a crash
-                // between sending and recording its outcome cannot authorize an automatic retry.
-                self.records
-                    .write(&attempt, &serde_json::to_vec(&ApprovalAttempt::Uncertain)?)?;
+                // Dispatch intent closes the crash window before POST. Uncertain is
+                // recorded only after a sent attempt returns an unknown outcome.
+                self.records.write(
+                    &attempt,
+                    &serde_json::to_vec(&ApprovalAttempt::Dispatching)?,
+                )?;
                 let check = self.runtime.block_on(client.post_check_run(
                     &repo,
                     &NewCheckRun {
