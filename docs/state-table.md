@@ -1,6 +1,6 @@
 # TL3 state table
 
-Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47, Q48, Q50 and Q51, and on 2026-11-02 with Q54, and on 2026-11-03 with the Q27 declared-symptom RED approval (#592) and Q39 postmortem lane (#642). Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
+Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47, Q48, Q50 and Q51, and on 2026-11-02 with Q54, and on 2026-11-03 with the Q27 declared-symptom RED approval (#592) and Q39 postmortem lane (#642), and on 2026-11-04 with the postmortem lane's ladder fallback (#759). Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
 
 **Changing the rules.** Any change to a rule in this file needs Rob's approval. That includes a new rule that comes from a bug Kani or a test finds. A clarification that changes no rule doesn't need it (Q27).
 
@@ -781,6 +781,8 @@ Slice one uses one account. Each agent run takes a ticket, then waits for a free
 - `tl3 status` and the console's cards show each waiting run's priority and place in line.
 
 Rob amended Q39 on 2026-11-03 (#642): "postmortems should not eat the same budget as everything else. Everything gets a postmortem regardless of budget." Every closed node owes a postmortem, including clean merges regardless of the former sample share (Q32 amended). Postmortems run in their own controller lane, at most two concurrently, oldest owed first. They never wait for or consume agent-pool capacity and have no daily allowance. Model quota for the models actually used, the failure-streak pause and recovery validation (#632), and the deadline still apply. Delivery grants are unchanged.
+
+The postmortem lane falls back down its ladder like any other role (Q53), amended on 2026-11-04 (#759) under Rob's 2026-11-03 decision above: "Everything gets a postmortem regardless of budget." The writer and the grade judges each run on the first model in the postmortem ladder that isn't out, the grade judges starting from its second entry. A model the provider can't serve counts as out until its probe. The lane claims while any postmortem model serves, and waits only while every one is out. Quota still applies to the models a run actually uses. This replaces #486's rule that a quota record on any postmortem model stops claims.
 
 From slice two on:
 

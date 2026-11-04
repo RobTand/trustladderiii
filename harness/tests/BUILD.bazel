@@ -1,17 +1,24 @@
-load("//tools/bazel:python.bzl", "tl3_py_test")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+# gazelle:resolve py _pytest.assertion.rewrite @tl3_pip//pytest
+load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
 
 exports_files(["fixtures/scratch/test_disk.py"])
 
 tl3_py_test(
     name = "test_git_environment",
     srcs = ["test_git_environment.py"],
-    deps = ["//harness/src/tl3_harness"],
+    deps = [
+        ":conftest",
+        "//harness/src/tl3_harness",
+    ],
 )
 
 tl3_py_test(
     name = "test_harness",
     srcs = ["test_harness.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -21,6 +28,7 @@ tl3_py_test(
     name = "test_inventory",
     srcs = ["test_inventory.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -30,6 +38,7 @@ tl3_py_test(
     name = "test_node_id_vectors",
     srcs = ["test_node_id_vectors.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -39,6 +48,7 @@ tl3_py_test(
     name = "test_parametrized_checks",
     srcs = ["test_parametrized_checks.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -47,13 +57,17 @@ tl3_py_test(
 tl3_py_test(
     name = "test_prepare_image",
     srcs = ["test_prepare_image.py"],
-    deps = ["@tl3_pip//pytest"],
+    deps = [
+        ":conftest",
+        "@tl3_pip//pytest",
+    ],
 )
 
 tl3_py_test(
     name = "test_report_limits",
     srcs = ["test_report_limits.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -63,6 +77,7 @@ tl3_py_test(
     name = "test_review_fixes",
     srcs = ["test_review_fixes.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -72,6 +87,7 @@ tl3_py_test(
     name = "test_scratch",
     srcs = ["test_scratch.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -81,6 +97,7 @@ tl3_py_test(
     name = "test_test_tool",
     srcs = ["test_test_tool.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
         "@tl3_pip//pytest_xdist",  # keep: runner.py loads it in a subprocess (#408)
@@ -100,6 +117,7 @@ tl3_py_test(
     name = "test_configuration_base",
     srcs = ["test_configuration_base.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -109,6 +127,7 @@ tl3_py_test(
     name = "test_protected_paths",
     srcs = ["test_protected_paths.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -118,6 +137,7 @@ tl3_py_test(
     name = "test_selected_regression",
     srcs = ["test_selected_regression.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -127,6 +147,7 @@ tl3_py_test(
     name = "test_check_feedback",
     srcs = ["test_check_feedback.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -136,6 +157,7 @@ tl3_py_test(
     name = "test_forced_reproduction",
     srcs = ["test_forced_reproduction.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -145,6 +167,7 @@ tl3_py_test(
     name = "test_always_tests",
     srcs = ["test_always_tests.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -154,6 +177,7 @@ tl3_py_test(
     name = "test_fork_forcing",
     srcs = ["test_fork_forcing.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -163,6 +187,7 @@ tl3_py_test(
     name = "test_selection_groups",
     srcs = ["test_selection_groups.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -172,6 +197,7 @@ tl3_py_test(
     name = "test_declared_symptom",
     srcs = ["test_declared_symptom.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
         "@tl3_pip//pytest_xdist",  # keep: runner.py loads it in a subprocess
@@ -182,6 +208,7 @@ tl3_py_test(
     name = "test_failure_phases",
     srcs = ["test_failure_phases.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -190,18 +217,23 @@ tl3_py_test(
 tl3_py_test(
     name = "test_disk_scratch",
     srcs = ["test_disk_scratch.py"],
-    deps = ["//harness/src/tl3_harness"],
+    deps = [
+        ":conftest",
+        "//harness/src/tl3_harness",
+    ],
 )
 
 tl3_py_test(
     name = "test_verify_disk_scratch",
     srcs = ["test_verify_disk_scratch.py"],
+    deps = [":conftest"],
 )
 
 tl3_py_test(
     name = "test_subject_observer",
     srcs = ["test_subject_observer.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -211,6 +243,7 @@ tl3_py_test(
     name = "test_summary_limits",
     srcs = ["test_summary_limits.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -220,6 +253,7 @@ tl3_py_test(
     name = "test_red_message",
     srcs = ["test_red_message.py"],
     deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
@@ -229,6 +263,45 @@ tl3_py_test(
     name = "test_contract_vectors",
     srcs = ["test_contract_vectors.py"],
     deps = [
+        ":conftest",
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+py_binary(
+    name = "core_vectors",
+    srcs = ["core_vectors.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_core_vectors",
+    srcs = ["test_core_vectors.py"],
+    deps = [
+        ":conftest",
+        ":core_vectors",
+        "@tl3_pip//pytest",
+    ],
+)
+
+py_library(
+    name = "conftest",
+    testonly = True,
+    srcs = ["conftest.py"],
+    visibility = ["//visibility:public"],
+    deps = ["@tl3_pip//pytest"],
+)
+
+tl3_py_test(
+    name = "test_durability",
+    srcs = ["test_durability.py"],
+    deps = [
+        ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],

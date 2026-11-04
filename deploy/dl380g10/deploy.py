@@ -346,7 +346,7 @@ def install(args):
     print("Tokenizer: pinned o200k_base installed and hash verified")
     introduced = install_release(home)
     private_dir(root / "bin")
-    for binary in ("tl3", "tl3d", "tl3-deploy"):
+    for binary in ("tl3", "tl3d", "tl3-deploy", "tl3-worker-supervisor"):
         write_file(root / "bin" / binary, (args.binaries / binary).read_bytes(), 0o700)
     private_dir(root / "deploy")
     write_file(root / "deploy/deploy.py", (HERE / "deploy.py").read_bytes())

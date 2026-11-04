@@ -43,8 +43,28 @@ fn open(
 }
 
 fn fixture(settings: &tl3_config::Store, planner: &[&str], limits: Value) -> Fixture {
+    fixture_at(settings, planner, limits, real_now(), false)
+}
+
+/// `start` is the controller clock's first reading. With `operations`, the
+/// controller has an operations issue for its notes.
+fn fixture_at(
+    settings: &tl3_config::Store,
+    planner: &[&str],
+    limits: Value,
+    start: u64,
+    operations: bool,
+) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let mut config = config(settings, root.path(), "quota-ladder");
+    if operations {
+        config.github.operations = Some(tl3_config::OperationsIssue {
+            owner: "RobTand".into(),
+            name: "trustladderiii".into(),
+            installation_id: 2,
+            number: 17,
+        });
+    }
     let model = |name: &str| {
         [&config.models.ingest[0], &config.models.audit[0]]
             .into_iter()
@@ -56,7 +76,7 @@ fn fixture(settings: &tl3_config::Store, planner: &[&str], limits: Value) -> Fix
     fs::write(root.path().join("entered.quota-models"), limits.to_string()).unwrap();
     let mut store = Store::open(settings).unwrap();
     materials(&mut store);
-    let clock = Clock(std::rc::Rc::new(std::cell::Cell::new(real_now())));
+    let clock = Clock(std::rc::Rc::new(std::cell::Cell::new(start)));
     let (mut controller, source) = open(settings, root.path(), &config, &clock);
     controller.intake(labelled()).unwrap();
     Fixture {
@@ -201,8 +221,8 @@ pub(super) fn planner_falls_back(settings: &tl3_config::Store) {
         status
             .quota_models
             .iter()
-            .any(|note| note.contains("default-model")),
-        "the status view notes the quota-limited model: {:?}",
+            .any(|note| note.contains("default-model is unavailable or out of quota until")),
+        "the status view notes the limited model, whether it is out of quota or unavailable (#759): {:?}",
         status.quota_models
     );
 }
@@ -394,10 +414,12 @@ pub(super) fn success_clears_quota_status(settings: &tl3_config::Store) {
             .any(|line| line.contains("default-model"))
     );
     assert!(
-        !tl3_controller::status::render_text(&status).contains("default-model is out of quota")
+        !tl3_controller::status::render_text(&status)
+            .contains("default-model is unavailable or out of quota")
     );
     assert!(
-        !tl3_controller::status::render_html(&status).contains("default-model is out of quota")
+        !tl3_controller::status::render_html(&status)
+            .contains("default-model is unavailable or out of quota")
     );
 }
 
@@ -448,6 +470,18 @@ pub(super) fn replay_keeps_later_quota(settings: &tl3_config::Store) {
 
 /// #745: the worker's probe window for a model the proxy can't serve (`quota.PROBE_S`).
 const PROBE_MS: u64 = 15 * 60 * 1000;
+/// #759: a bare 503's shorter probe (`quota.SHORT_PROBE_S`).
+const SHORT_PROBE_MS: u64 = 2 * 60 * 1000;
+/// #759: how long every entry of a ladder may be out before an operations note.
+const LADDER_OUT_MS: u64 = 30 * 60 * 1000;
+
+fn probe_ms(kind: &str) -> u64 {
+    if kind == "allowance_unverified" {
+        SHORT_PROBE_MS
+    } else {
+        PROBE_MS
+    }
+}
 
 /// #745 (Q53): a model the proxy can't serve falls back like quota, and its
 /// unavailability is recorded until a probe.
@@ -465,8 +499,9 @@ pub(super) fn unavailable_model_falls_back(settings: &tl3_config::Store, kind: &
     let probe = f
         .model_quota("default-model")
         .expect("the unavailability is recorded");
+    let window = probe_ms(kind);
     assert!(
-        (before + PROBE_MS..=real_now() + PROBE_MS).contains(&probe),
+        (before + window..=real_now() + window).contains(&probe),
         "{kind}: the record expires at the probe, {probe}"
     );
     f.controller.look_due().unwrap();
@@ -541,4 +576,87 @@ pub(super) fn request_error_fails(settings: &tl3_config::Store) {
         None,
         "and records no unavailability"
     );
+}
+
+impl Fixture {
+    /// Operations notes that every model in a ladder is out (#759).
+    fn ladder_notes(&mut self) -> Vec<String> {
+        self.store
+            .effects()
+            .unwrap()
+            .into_iter()
+            .filter_map(|effect| serde_json::from_value::<Delivery>(effect.payload).ok())
+            .filter(|delivery| {
+                matches!(
+                    delivery.output,
+                    Out::Comment {
+                        kind: tl3_controller::executor::CommentKind::OperationsNote,
+                        ..
+                    }
+                )
+            })
+            .map(|delivery| delivery.note.unwrap_or_default())
+            .collect()
+    }
+}
+
+/// #759: a proxy-wide outage doesn't wait silently. Once every entry of a
+/// role's ladder has been out for 30 minutes, one operations note says so.
+pub(super) fn whole_ladder_out_raises_an_operations_note(settings: &tl3_config::Store) {
+    // The controller's clock runs 40 minutes behind the worker's, so the
+    // probes the worker sets from its own clock outlast the bound.
+    let start = real_now() - 40 * 60 * 1000;
+    let mut f = fixture_at(
+        settings,
+        &["default-model", "alternate-model"],
+        json!({"planner": {"default-model": "allowance_unverified",
+            "alternate-model": "allowance_unverified"}}),
+        start,
+        true,
+    );
+    assert!(f.planner_ended("default-model"), "a 503 ends like quota");
+    f.controller.look_due().unwrap();
+    assert_eq!(f.planner_attempt(), 1, "falls back to the second model");
+    assert!(f.planner_ended("alternate-model"));
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.planner_attempt(),
+        1,
+        "every model is out, so the step waits"
+    );
+    assert_eq!(
+        f.ladder_notes(),
+        Vec::<String>::new(),
+        "no note before the bound"
+    );
+    let due: Vec<_> = f
+        .quota_waits()
+        .iter()
+        .filter_map(|w| w["due_ms"].as_u64())
+        .collect();
+    assert_eq!(due, [start + LADDER_OUT_MS], "the wait wakes at the bound");
+    f.clock.0.set(start + LADDER_OUT_MS - 1);
+    f.controller.look_due().unwrap();
+    assert!(f.ladder_notes().is_empty());
+    f.clock.0.set(start + LADDER_OUT_MS);
+    f.controller.look_due().unwrap();
+    f.step();
+    let notes = f.ladder_notes();
+    assert_eq!(notes.len(), 1, "one note: {notes:?}");
+    for part in [
+        "model_ladder_unavailable",
+        "planner",
+        "default-model",
+        "alternate-model",
+        "unavailable or out of quota",
+        "RobTand/tl3-sandbox#42",
+    ] {
+        assert!(notes[0].contains(part), "{part}: {}", notes[0]);
+    }
+    assert_eq!(f.planner_attempt(), 1, "the step still waits for a probe");
+    f.clock.0.set(start + LADDER_OUT_MS + 60_000);
+    f.controller.look_due().unwrap();
+    f.controller.look_now().unwrap();
+    f.step();
+    assert_eq!(f.ladder_notes().len(), 1, "the note is posted once");
 }

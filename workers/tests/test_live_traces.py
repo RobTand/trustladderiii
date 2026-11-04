@@ -156,6 +156,7 @@ def first_turn_live(server):
     return any(spans_of(trace, 'CHAT_MODEL') for trace in server.traces.values())
 
 
+@pytest.mark.durability
 def test_trace_is_visible_mid_run_and_final_after(request_doc, tmp_path, monkeypatch, children,
                                                  mlflow_server):
     turns = two_turn_request(request_doc, tmp_path, mlflow_server.uri)
@@ -199,6 +200,7 @@ def test_trace_is_visible_mid_run_and_final_after(request_doc, tmp_path, monkeyp
     assert Path(request_doc['trace']['wake']).exists(), 'a send that works wakes held flushes'
 
 
+@pytest.mark.durability
 def test_mlflow_outage_mid_run_keeps_the_run_and_the_durable_log(request_doc, tmp_path, monkeypatch,
                                                                   children, mlflow_server, capfd):
     turns = two_turn_request(request_doc, tmp_path, mlflow_server.uri)
@@ -235,6 +237,7 @@ FakeMessagesListChatModel._generate = held
 """
 
 
+@pytest.mark.durability
 def test_killed_worker_leaves_a_complete_crash_marked_trace(request_doc, tmp_path, mlflow_server):
     turns = two_turn_request(request_doc, tmp_path, mlflow_server.uri)
     script = tmp_path / 'scripted-model.json'
@@ -303,6 +306,7 @@ def closed_after_exit(request_doc, server, code):
     return server.only()
 
 
+@pytest.mark.durability
 def test_an_oversize_final_still_closes_a_finished_run_ok(request_doc, tmp_path, monkeypatch, children,
                                                           mlflow_server):
     from tl3_workers import tracing
@@ -314,6 +318,7 @@ def test_an_oversize_final_still_closes_a_finished_run_ok(request_doc, tmp_path,
     assert trace['tags']['outcome'] == 'succeeded' and trace['tags']['total_tokens'] == '36'
 
 
+@pytest.mark.durability
 def test_a_finish_that_fails_late_closes_with_the_real_outcome(request_doc, tmp_path, monkeypatch, children,
                                                                mlflow_server):
     from tl3_workers import tracing
@@ -330,6 +335,7 @@ def test_a_finish_that_fails_late_closes_with_the_real_outcome(request_doc, tmp_
     assert trace['tags']['outcome'] == 'succeeded' and trace['tags']['total_tokens'] == '36'
 
 
+@pytest.mark.durability
 def test_live_copies_of_a_long_run_match_what_the_final_keeps(request_doc, tmp_path, monkeypatch, children,
                                                               mlflow_server):
     import mlflow
@@ -377,6 +383,7 @@ def crafted_log(directory, uri, spans=1):
     return log
 
 
+@pytest.mark.durability
 def test_a_deliberately_stopped_worker_is_closed_as_stopped(tmp_path, mlflow_server):
     log = crafted_log(tmp_path / 'attempt', mlflow_server.uri)
     # stop_attempt marks a run the controller stops (Q49) before it kills it.
@@ -394,6 +401,7 @@ def identity(pid):
             'boot': Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
 
 
+@pytest.mark.durability
 def test_one_flusher_per_attempt(tmp_path, mlflow_server):
     log = crafted_log(tmp_path / 'attempt', mlflow_server.uri)
     claim = Path(str(log) + '.flushing')
@@ -407,6 +415,7 @@ def test_one_flusher_per_attempt(tmp_path, mlflow_server):
     assert not claim.exists(), 'a flusher releases its claim when it ends'
 
 
+@pytest.mark.durability
 def test_a_moved_log_is_marked_where_it_now_lives(tmp_path, mlflow_server):
     """Retirement can move a log while its flusher runs; the marker follows the
     open log, so the held copy isn't sent again."""

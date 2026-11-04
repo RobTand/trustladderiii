@@ -31,9 +31,7 @@ tl3_py_test(
     srcs = ["test_classifier.py"],
     deps = [
         ":conftest",
-        ":worker_process",
         "//workers/src",
-        "@tl3_pip//langchain_core",
         "@tl3_pip//pytest",
     ],
 )
@@ -1040,6 +1038,25 @@ tl3_py_test(
         ":conftest",
         "//workers/src",
         "@tl3_pip//jsonschema",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_tokenizer_parity_oracle",
+    srcs = ["test_tokenizer_parity_oracle.py"],
+    deps = [
+        ":conftest",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_durability",
+    srcs = ["test_durability.py"],
+    deps = [
+        ":conftest",
+        "//workers/src",
         "@tl3_pip//pytest",
     ],
 )

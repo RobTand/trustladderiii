@@ -16,6 +16,7 @@ from message_invariants import write_turn as write_turn
 @pytest.mark.parametrize('failure', ['killed', 'session-save'])
 @pytest.mark.parametrize('failures', [1, 2])
 @pytest.mark.parametrize('fix_round', [False, True])
+@pytest.mark.durability
 def test_new_generation_recovers_commit_before_reply(tmp_path, maker_request, monkeypatch, failure, failures, fix_round):
     root = Path(maker_request['worktree'])
     base = git(root, 'rev-parse', 'HEAD')
