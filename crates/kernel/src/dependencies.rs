@@ -112,7 +112,7 @@ pub(super) open spec fn delivery_key_ready(w: World, i: int, target: DependencyT
 
 /// #693 / #771: consistency and uniqueness supply the delivered-fact guards.
 pub(super) proof fn pending_ready(w: World, i: int, target: DependencyTarget)
-    requires dependencies_checked(w), 0 <= i < w.nodes@.len() <= u64::MAX as int,
+    requires dependencies_checked(w), 0 <= i < w.nodes@.len(), i <= u64::MAX as int,
         exists|k: int| 0 <= k < w.dependencies@.len()
             && w.dependencies@[k].node == NodeId(i as u64) && w.dependencies@[k].target == target
             && !w.dependencies@[k].rejected && w.dependencies@[k].status == DependencyStatus::Pending,

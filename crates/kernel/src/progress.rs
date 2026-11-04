@@ -444,7 +444,7 @@ spec fn fact_progress_input(w: World, i: int, fact: Fact) -> bool {
 
 /// #771: the actual witness branch supplies the fact handler's local guards.
 proof fn fact_witness_premises(w: World, i: int, fact: Fact)
-    requires 0 <= i < w.nodes@.len(), fact_progress_input(w, i, fact),
+    requires 0 <= i < w.nodes@.len(), i <= u64::MAX as int, fact_progress_input(w, i, fact),
     ensures node_checked(w, w.nodes@[i]),
         match fact {
             Fact::Dependency { target, status } => dependency_progress_input(w, i, target, status),
