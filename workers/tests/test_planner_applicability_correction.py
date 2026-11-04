@@ -101,7 +101,7 @@ def test_applicability_correction_only_adds_the_missing_subject(
     elif change == 'estimate':
         fixed['estimated_tool_turns'] = 41
     else:
-        check['forcing'] = {'symptom': 'A different condition.', 'environment': {'CASE': 'race'}}
+        check['forcing'] = {'symptom': 'A different condition.', 'environment': {'CASE': 'race'}, 'patches': []}
     model = planner_model(monkeypatch, applicability_plan, fixed)
     events = []
     runtime.run(planner_request, events.append)
