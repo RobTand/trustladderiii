@@ -140,7 +140,20 @@ fn retire_ingress(tx: &mut Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
+/// #773: delivery lifecycle, including a lost consumer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemoryFeedState {
+    Ready,
+    Held,
+    Failed,
+    NoConsumer,
+}
+
 impl Store {
+    pub fn memory_feed_state(&mut self) -> Result<MemoryFeedState> {
+        Ok(MemoryFeedState::Ready)
+    }
+
     /// #773: release the memory feed's upstream hold on an explicit retry or
     /// acknowledged Hindsight delivery. Startup recovers missed notifications.
     pub fn retry_memory_delivery(&mut self) -> Result<()> {

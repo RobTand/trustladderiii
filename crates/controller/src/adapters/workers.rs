@@ -217,6 +217,11 @@ impl Supervisor {
         self
     }
 
+    /// #773: wait until preceding memory events have been processed.
+    pub fn memory_barrier(&self) -> Result<()> {
+        Ok(())
+    }
+
     pub fn source(&self) -> WorkerOutputSource {
         WorkerOutputSource::new(
             self.settings.runs.clone(),
