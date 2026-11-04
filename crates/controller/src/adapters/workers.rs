@@ -199,7 +199,7 @@ impl Supervisor {
                 config.hindsight.clone(),
                 recall_breaker.clone(),
                 announcer.clone(),
-            ),
+            )?,
             recall_breaker,
             announcer,
         })
@@ -208,7 +208,9 @@ impl Supervisor {
     /// Post memory hides and retirements on the operations issue (#439).
     pub(crate) fn with_operations(self, issue: crate::memory::OperationsIssue) -> Self {
         *self.announcer.lock().unwrap() = Some(Box::new(issue));
-        self.memory.wake();
+        if let Err(error) = self.memory.wake() {
+            eprintln!("{error}");
+        }
         self
     }
 
@@ -219,7 +221,7 @@ impl Supervisor {
 
     /// #773: wait until preceding memory events have been processed.
     pub fn memory_barrier(&self) -> Result<()> {
-        Ok(())
+        self.memory.barrier()
     }
 
     pub fn source(&self) -> WorkerOutputSource {
@@ -1166,6 +1168,10 @@ impl Supervisor {
 }
 
 impl Executor for Supervisor {
+    fn probe_memory(&mut self) -> Result<()> {
+        self.memory.retry()
+    }
+
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.launch(delivery, false)
     }
@@ -1299,7 +1305,7 @@ impl Executor for Supervisor {
                 }
             }
         }
-        self.memory.wake();
+        self.memory.refresh(store)?;
         self.retire_sessions(store)?;
         match failure {
             Some(error) => Err(error),

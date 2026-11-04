@@ -1019,7 +1019,7 @@ impl Controller {
     /// The hook exposes durable boundaries for process-level fault injection.
     pub fn drive_once_with(&mut self, mut hook: impl FnMut(Boundary, &str)) -> Result<bool> {
         let snapshot = self.store.load()?;
-        if self.post_input_incident(&snapshot)? {
+        if self.reconcile_memory(&snapshot)? || self.post_input_incident(&snapshot)? {
             return Ok(true);
         }
         for row in snapshot

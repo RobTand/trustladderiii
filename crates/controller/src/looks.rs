@@ -472,6 +472,7 @@ impl Controller {
             .iter()
             .filter_map(|s| s.due_ms)
             .chain(reread)
+            .chain(crate::memory::next_probe_ms(&snapshot)?)
             .min()
             .map(|due| Duration::from_millis(due.saturating_sub(now))))
     }
@@ -490,6 +491,7 @@ impl Controller {
     }
 
     fn looks(&mut self, force: bool, key: Option<&str>) -> Result<()> {
+        self.look_memory_probe(force, key)?;
         self.retry_input_incident_posts()?;
         let mut snapshot = self.store.load()?;
         // Same-second priority rereads that are due share this timer (Q39).
@@ -605,7 +607,7 @@ impl Controller {
                         .probe(&state.delivery)
                     {
                         Ok(true) => {
-                            self.probe_passed(state)?;
+                            self.probe_passed(Some(state), state.incident.as_deref())?;
                             self.retry_held_effects(upstream(state.delivery.output));
                             self.rearm(state);
                         }
@@ -877,7 +879,7 @@ impl Controller {
                     self.retry_held_effects(upstream(state.delivery.output));
                 }
                 state.healthy = true;
-                self.probe_passed(state)?;
+                self.probe_passed(Some(state), state.incident.as_deref())?;
             }
             Ok(Look::Quota { reset_ms }) => {
                 state.quota_ms = Some(reset_ms);
@@ -915,7 +917,7 @@ impl Controller {
                         Ok(true) => {
                             state.healthy = true;
                             self.retry_held_effects(upstream(state.delivery.output));
-                            self.probe_passed(state)?;
+                            self.probe_passed(Some(state), state.incident.as_deref())?;
                         }
                         Ok(false) => self.rearm(state),
                         Err(error) => self.look_failed(state, error)?,
@@ -1240,15 +1242,19 @@ impl Controller {
         Ok(())
     }
 
-    fn probe_passed(&mut self, state: &AllowanceState) -> Result<()> {
-        let Some(id) = &state.incident else {
+    pub(crate) fn probe_passed(
+        &mut self,
+        state: Option<&AllowanceState>,
+        id: Option<&str>,
+    ) -> Result<()> {
+        let Some(id) = id else {
             return Ok(());
         };
         let snapshot = self.store.load()?;
         let Some(row) = snapshot
             .rows
             .iter()
-            .find(|r| r.table == "incidents" && r.id == *id)
+            .find(|r| r.table == "incidents" && r.id == id)
         else {
             return Ok(());
         };
@@ -1256,17 +1262,18 @@ impl Controller {
         if !incident.open || incident.needs_rob {
             return Ok(());
         }
-        if incident.effect.is_some() {
+        if incident.effect.is_some() || state.is_none() {
             incident.open = false;
             let mut commit =
                 Commit::new(format!("probe:{id}"), json!({"probe_passed":id}), &snapshot);
             self.retry_notice(&snapshot, &incident, &mut commit)?;
             commit
                 .rows
-                .push(put("incidents", id.clone(), json!(incident)));
+                .push(put("incidents", id.to_owned(), json!(incident)));
             self.store.commit(&commit)?;
             return Ok(());
         }
+        let state = state.expect("kernel incident has an allowance");
         let world = self.world()?;
         let node = &world.nodes[state.delivery.node().0 as usize];
         if node.waiting_incident && !node.incident_needs_rob {

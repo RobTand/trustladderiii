@@ -38,6 +38,20 @@ pub(crate) struct InputFailure {
     retry_after_ms: Option<u64>,
 }
 
+impl InputFailure {
+    pub(crate) fn memory(title: &str) -> Self {
+        Self {
+            scope: "memory".into(),
+            target: None,
+            title: title.into(),
+            posted: false,
+            attempted_epoch: None,
+            post_failure: None,
+            retry_after_ms: None,
+        }
+    }
+}
+
 pub(crate) fn recoverable(error: &Error) -> bool {
     !matches!(
         error,

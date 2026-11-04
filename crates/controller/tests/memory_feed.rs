@@ -179,7 +179,7 @@ fn retirement_wakes_do_not_retry_unavailable_hindsight() {
 
 /// #773: durable retry evidence arriving during a failed response is not lost.
 #[test]
-fn recovery_during_failed_delivery_resumes_without_a_controller_wake() {
+fn recovery_during_failed_delivery_keeps_explicit_retry_evidence() {
     let mut fixture = Fixture::new(true);
     fixture.available.store(true, Ordering::SeqCst);
     fixture.retry_signal();
