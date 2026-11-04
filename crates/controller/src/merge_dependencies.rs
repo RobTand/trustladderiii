@@ -670,6 +670,42 @@ mod tests {
         node
     }
 
+    /// #771: dependency reconciliation must use the same step headroom guard.
+    #[test]
+    fn dependency_steps_stop_at_counter_exhaustion() {
+        let mut db = Database::start();
+        let (_repo, mut c, repository) = fixture(&mut db, "dependency_headroom");
+        let node = intake(&mut c, &repository, 42);
+        let snapshot = c.snapshot().unwrap();
+        let mut world = crate::snapshot::decode(&snapshot).unwrap();
+        world.nodes[node.0 as usize].next_seq = u64::MAX;
+        let before = world.clone();
+        let mut outputs = Vec::new();
+        let mut commit = Commit::new("exhausted-dependency", json!({}), &snapshot);
+        apply_fact(
+            &mut world,
+            node,
+            Fact::Dependency {
+                target: DependencyTarget {
+                    kind: PrerequisiteKind::Issue,
+                    number: 2761,
+                    request: None,
+                },
+                status: DependencyStatus::Pending,
+            },
+            &mut outputs,
+            &mut commit,
+        );
+        assert_eq!(world, before);
+        assert!(outputs.is_empty());
+        assert!(commit.rows.iter().any(|row| matches!(
+            row,
+            RowChange::Put { table, value, .. }
+                if table == "incidents"
+                    && value["summary"] == "kernel counter headroom exhausted: next_seq"
+        )));
+    }
+
     fn event(c: &mut Controller, event: Event) {
         let snapshot = c.snapshot().unwrap();
         let world = crate::snapshot::decode(&snapshot).unwrap();
