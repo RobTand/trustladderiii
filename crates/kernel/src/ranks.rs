@@ -146,6 +146,70 @@ pub closed spec fn distance(n: Node) -> nat {
     }
 }
 
+/// #771: local moves left before this node blocks, independent of scheduling.
+/// Stopping has five agenda entries and closure, hence at most six moves.
+pub(super) open spec fn internal_height(n: Node) -> nat {
+    if n.phase is Closed { 0 }
+    else if n.waiting_incident { if n.ticket.is_some() { 1 } else { 0 } }
+    else if n.effect.is_some() { 0 }
+    else { match current_item(n) {
+        None => match n.phase {
+            Phase::Publishing => 1,
+            Phase::Stopping(_) => if n.question.is_none() { 1 } else { 0 },
+            _ => 0,
+        },
+        Some(Item::Admit) => if n.paused { 0 } else { 3 },
+        Some(Item::Slot) => if n.paused {
+            if n.ticket.is_some() { 1 } else { 0 }
+        } else { if n.ticket.is_some() { 3 } else { 4 } },
+        Some(Item::Start(_)) => if n.paused {
+            if holding(n.phase) || n.ticket.is_some() { 1 } else { 0 }
+        } else { if n.ticket.is_some() { 1 } else { 2 } },
+        Some(Item::Do(_) | Item::StartChecks | Item::StartRebase) => 1,
+        Some(Item::Release) => (6 - n.pos) as nat,
+        Some(Item::Teardown(_)) => if n.question.is_some() { 0 } else { (6 - n.pos) as nat },
+        _ => 0,
+    } }
+}
+
+/// #771: at most one phase change remains within a node's settle chain.
+pub(super) open spec fn generation_capacity(n: Node) -> nat {
+    if n.phase is Closed || n.waiting_incident || n.effect.is_some() { 0 }
+    else if pause_due(n) { 1 }
+    else { match current_item(n) {
+        Some(Item::Admit | Item::Slot) => if n.paused { 0 } else { 1 },
+        None => if n.phase == Phase::Publishing { 1 } else { 0 },
+        _ => 0,
+    } }
+}
+
+/// #771: emitting an effect blocks the node for the rest of settle.
+pub(super) open spec fn effect_capacity(n: Node) -> nat {
+    if n.phase is Closed || n.waiting_incident || n.effect.is_some() { 0 } else { 1 }
+}
+
+/// Q39 / #771: Ready can take a slot ticket followed by a pool ticket.
+pub(super) open spec fn ticket_capacity(n: Node) -> nat {
+    if n.phase is Closed || n.waiting_incident || n.effect.is_some() || n.paused { 0 }
+    else { match current_item(n) {
+        Some(Item::Slot) => if n.ticket.is_some() { 1 } else { 2 },
+        Some(Item::Admit) => 1,
+        Some(Item::Start(_)) => if n.ticket.is_some() { 0 } else { 1 },
+        _ => 0,
+    } }
+}
+
+pub(super) open spec fn merge_capacity(n: Node) -> nat {
+    if n.credit.merge_credited || n.phase is Closed { 0 } else { 1 }
+}
+
+/// #771: these are mathematical potentials, not additional machine counters.
+pub(super) proof fn local_capacities(n: Node)
+    ensures internal_height(n) <= 6, generation_capacity(n) <= 1,
+        effect_capacity(n) <= 1, ticket_capacity(n) <= 2, merge_capacity(n) <= 1,
+{
+}
+
 /// State-table progress measure with a mathematical sum, for any sequence size.
 pub(super) open spec fn node_total(nodes: Seq<Node>) -> nat
     decreases nodes.len(),

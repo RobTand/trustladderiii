@@ -2985,12 +2985,37 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
     advance_node(&mut w.nodes[i], &mut w.next_ticket, context, out)
 }
 
+kernel_fn! {
+    /// #771: actual local settle transition, for every scheduling decision.
 fn advance_node(
     node: &mut Node,
     next_ticket: &mut u64,
     context: AdvanceContext,
     out: &mut Outbox,
-) -> bool {
+)  -> (result: bool) [
+    requires old(out).len + 2 <= OUTBOX,
+        old(node).generation as int + generation_capacity(*old(node)) <= u64::MAX as int,
+        old(node).next_seq as int + effect_capacity(*old(node)) <= u64::MAX as int,
+        *old(next_ticket) as int + ticket_capacity(*old(node)) <= u64::MAX as int,
+        old(node).credit.earned as int + merge_capacity(*old(node)) <= u32::MAX as int,
+    ensures
+        result ==> internal_height(*final(node)) < internal_height(*old(node)),
+        super::ranks::distance(*final(node)) <= super::ranks::distance(*old(node)),
+        result ==> 4 * super::ranks::distance(*final(node)) + pending_rank(*final(node))
+            < 4 * super::ranks::distance(*old(node)) + pending_rank(*old(node)),
+        final(node).generation as int + generation_capacity(*final(node))
+            <= old(node).generation as int + generation_capacity(*old(node)),
+        final(node).next_seq as int + effect_capacity(*final(node))
+            <= old(node).next_seq as int + effect_capacity(*old(node)),
+        *final(next_ticket) as int + ticket_capacity(*final(node))
+            <= *old(next_ticket) as int + ticket_capacity(*old(node)),
+        final(node).credit.earned as int + merge_capacity(*final(node))
+            <= old(node).credit.earned as int + merge_capacity(*old(node)),
+        final(node).credit.start == old(node).credit.start,
+        final(node).credit.added == old(node).credit.added,
+        final(node).credit.spent == old(node).credit.spent,
+        !result ==> *final(node) == *old(node) && *final(next_ticket) == *old(next_ticket),
+] {
     let n = *node;
     if n.phase.is_closed() {
         return false;
@@ -3129,6 +3154,7 @@ fn advance_node(
         }
     }
 }
+}
 
 kernel_fn! {
     /// A paused leaf starts nothing new. In a holding phase it gives back its slot
@@ -3136,7 +3162,7 @@ kernel_fn! {
     // The pinned Verus frontend requires nested if-let instead of let chains.
     #[allow(clippy::collapsible_if)]
 fn pause_node(m: &mut Node) -> (result: bool) [
-requires old(m).generation < u64::MAX,
+requires holding(old(m).phase) ==> old(m).generation < u64::MAX,
 ensures final(m).generation as int <= old(m).generation as int + 1,
     final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
     final(m).question == old(m).question,
