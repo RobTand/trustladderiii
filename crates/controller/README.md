@@ -971,9 +971,9 @@ it holds no pool grant, and no delivery work waits on it.
   by Rob on 2026-11-03, #642).
 - **Quota and recovery.** `start_postmortem` asks the store for an owed row first.
   Entry 0 writes the postmortem and entry 1, if present, grades it. Each falls
-  back to the other while its `model_quotas` record hasn't expired, as other
-  roles fall back (Q53, #759), and the lane claims nothing only while every
-  entry is out. There is
+  down the whole ladder past models whose `model_quotas` record hasn't expired,
+  as other roles fall back (Q53, #759), and the lane claims nothing only while
+  every entry is out. There is
   no daily allowance. Three consecutive failures pause new claims. Recovery
   resets the failure boundary and retains every claim and outcome for audit.
   A single validation run must succeed before the lane resumes; failure pauses

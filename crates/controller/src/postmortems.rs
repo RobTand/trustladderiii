@@ -422,9 +422,10 @@ pub(crate) fn stalled(mut completion: Completion) -> Completion {
 /// The models whose quota the postmortem lane needs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PostmortemPace {
-    /// Entry 0 writes the postmortem; entry 1, if present, grades it. Each
-    /// falls back to the other while it is out, and only while both are out
-    /// is nothing claimed (#759).
+    /// Every entry of the postmortem ladder, in order. Entry 0 writes the
+    /// postmortem and entry 1, if present, grades it; each falls back down the
+    /// whole ladder past models that are out, so nothing is claimed only while
+    /// every entry is out (#759).
     pub models: Vec<String>,
 }
 
@@ -435,7 +436,6 @@ impl PostmortemPace {
                 .models
                 .postmortem
                 .iter()
-                .take(2)
                 .map(|model| model.name.clone())
                 .collect(),
         }
