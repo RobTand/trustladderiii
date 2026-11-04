@@ -32,7 +32,8 @@ def test_planner_exact_node_ids_agree_with_harness(vector, planner_request, monk
         check["node_ids"] = [vector["node_id"]]
     try:
         planner.check_reply(planner_request["inputs"], reply)
-        valid = "Checks must name exact pytest node IDs." not in reply["violations"]
+        valid = not any(error.startswith("Checks must name exact pytest node IDs.")
+                        for error in reply["violations"])
     except ValueError:
         valid = False
     assert valid == vector["valid"]

@@ -293,6 +293,7 @@
                 ]
               },
               "node_ids": {
+                "description": "Exact pytest function or method selectors, validated by tl3_harness.Check: tests/test_api.py::test_status or tests/test_api.py::TestAPI::test_status. An unparameterized function selects all its cases. Whole files, directories and globs are forbidden. Regression selectors must name existing base definitions.",
                 "type": "array",
                 "items": {
                   "type": "string",

@@ -25,7 +25,7 @@ from jsonschema import ValidationError
 from tl3_workers.evidence import forcing_capabilities, forcing_guidance
 from tl3_workers.contracts import model_facing, read_json, read_reply, schema, validate
 from tl3_workers.roles import ROLES
-from tl3_workers.roles.planner import EXPLORATION_DECLARATION, PlanConsistencyError
+from tl3_workers.roles.planner import EXPLORATION_DECLARATION, PlanConsistencyError, planner_schema_reply
 from tl3_workers.forcing_rehearsal import ForcingRehearsals
 from tl3_workers.tools import Worktree, build_tools
 from tl3_workers.memory import Summary, current
@@ -351,7 +351,7 @@ def _run(request, emit):
 
 
 def _checked(role, inputs, reply, *, worktree=None):
-    validate(role.reply_schema, reply)
+    validate(role.reply_schema, planner_schema_reply(reply) if role.name == 'planner' else reply)
     if role.check_reply is not None:
         if role.name == 'planner':
             role.check_reply(inputs, reply, rehearsals=getattr(worktree, 'forcing_rehearsals', None))
