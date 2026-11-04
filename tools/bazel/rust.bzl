@@ -46,7 +46,7 @@ _GATE_GROUPS = {"tl3-controller/github": ["flow", "notices"]}
 _SCENARIO_SHARDS = {
     "tl3-controller/github-flow": 50,
     "tl3-controller/github-notices": 32,
-    "tl3-controller/mergify": 8,
+    "tl3-controller/mergify": 16,
     "tl3-controller/publishing": 38,
     "tl3-controller/simulation": 16,
     "tl3-controller/workers": 8,
