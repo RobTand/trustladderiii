@@ -226,7 +226,7 @@ def outputs(result):
         'all_scopes': str(bool(result.get('all_scopes'))).lower(),
     }
     inputs_ok = not result.get('error') and not result.get('inputs') and not result.get('aborted_early')
-    if result.get('mode') in ('pr', 'batch-draft'):
+    if result.get('mode') in ('pr', 'batch-draft', 'proofs'):
         for language in ['rust', 'python']:
             verdict = result.get('verdicts', {}).get(language)
             values[language] = 'success' if inputs_ok and verdict in ('pass', 'skipped') else 'failure'
@@ -357,7 +357,7 @@ def main():
             sys.exit(str(error))
         return 0
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['pr', 'batch-draft', 'main'])
+    parser.add_argument('mode', choices=['pr', 'batch-draft', 'main', 'proofs'])
     parser.add_argument('--base', default='')
     parser.add_argument('--head', required=True)
     parser.add_argument('--branch', required=True)

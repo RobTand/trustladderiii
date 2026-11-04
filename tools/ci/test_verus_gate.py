@@ -32,3 +32,40 @@ class VerusGateTests(unittest.TestCase):
                         {'tags': ['rust', 'verus', 'manual']}, {'srcs': []}]:
             with self.subTest(changes=changes), self.assertRaises(RuntimeError):
                 checker([proof(**changes)])
+
+
+class RequiredRustCheckTests(unittest.TestCase):
+    def test_verus_failure_reaches_the_required_rust_aggregate(self):
+        import bazel_gate
+        import remote_gate
+        label = '//crates/mergify:verus_delivery'
+        verdicts, failed = bazel_gate.classify([label], {label: 'FAILED'}, {label})
+        self.assertEqual(failed['rust'], [label])
+        outputs = remote_gate.outputs({'mode': 'pr', 'verdicts': verdicts})
+        self.assertEqual(outputs['rust'], 'failure')
+        with self.assertRaisesRegex(RuntimeError, 'failed rust'):
+            remote_gate.aggregate('rust', {'bazel': {'result': 'failure',
+                'outputs': outputs | {'scopes_uploaded': 'true'}}})
+
+    def test_receipts_require_the_declared_positive_obligation_count(self):
+        for expected, verified in [(0, 0), (1, 0), (2, 1)]:
+            with self.subTest(expected=expected, verified=verified), self.assertRaises(RuntimeError):
+                bazel_parity.check_verus_receipt({'proofs': {'proof': {
+                    'kind': 'verus', 'expected_obligations': expected, 'verified': verified}}})
+        bazel_parity.check_verus_receipt({'proofs': {'proof': {
+            'kind': 'verus', 'expected_obligations': 2, 'verified': 2}}})
+
+    def test_nightly_executes_every_verus_proof_and_fails_on_any_failure(self):
+        from types import SimpleNamespace
+        import bazel_gate
+        label = '//crates/mergify:verus_delivery'
+        calls = []
+
+        def run(targets, config, metadata, log_name):
+            calls.append((targets, config))
+            return {label: 'FAILED'}
+
+        workspace = SimpleNamespace(verus_tests=lambda: {label}, test=run)
+        result = bazel_gate.gate_proofs(workspace, {})
+        self.assertEqual(calls, [([label], 'remote')])
+        self.assertEqual(result['verdicts']['rust'], 'fail')
