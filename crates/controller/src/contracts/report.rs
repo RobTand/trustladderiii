@@ -406,30 +406,63 @@ pub struct SymptomRun {
     pub target_hits: Option<BTreeMap<String, Count>>,
 }
 
-// Records are read through their raw JSON text: SymptomRecord is internally tagged, so serde
-// buffers it and an exit code's exact token is gone by the time Signed sees it.
+// SymptomRecord is internally tagged, so serde buffers it, and an exit code's exact token
+// is gone by the time Signed sees it. Each record is therefore read field by field: the
+// exit code as its raw token, every other field as a Value (exact for text and for Value
+// input alike), and the record is then parsed from those Values (#750 round 3 finding 5).
 fn exact_records<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Vec<SymptomRecord>, D::Error> {
-    use serde::de::Error as _;
-    use serde_json::value::RawValue;
-    #[derive(Deserialize)]
-    struct ExitCode<'a> {
-        #[serde(borrow)]
-        exit_code: &'a RawValue,
-    }
-    Vec::<Box<RawValue>>::deserialize(deserializer)?
-        .iter()
-        .map(|raw| {
-            let record: SymptomRecord =
-                serde_json::from_str(raw.get()).map_err(D::Error::custom)?;
-            if let SymptomRecord::Finish { .. } = record {
-                let token: ExitCode = serde_json::from_str(raw.get()).map_err(D::Error::custom)?;
-                Signed::check_token(token.exit_code.get()).map_err(D::Error::custom)?;
+    Ok(Vec::<ExactRecord>::deserialize(deserializer)?
+        .into_iter()
+        .map(|record| record.0)
+        .collect())
+}
+
+struct ExactRecord(SymptomRecord);
+
+impl<'de> Deserialize<'de> for ExactRecord {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Fields;
+        impl<'de> serde::de::Visitor<'de> for Fields {
+            type Value = ExactRecord;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a symptom record")
             }
-            Ok(record)
-        })
-        .collect()
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<ExactRecord, A::Error> {
+                use serde::de::Error as _;
+                use serde_json::{Value, value::RawValue};
+                let mut fields = serde_json::Map::new();
+                let mut exit_code = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    let value = if key == "exit_code" {
+                        let token: Box<RawValue> = map.next_value()?;
+                        let value: Value =
+                            serde_json::from_str(token.get()).map_err(A::Error::custom)?;
+                        exit_code = Some(token);
+                        value
+                    } else {
+                        map.next_value::<Value>()?
+                    };
+                    if fields.insert(key.clone(), value).is_some() {
+                        return Err(A::Error::custom(format!("duplicate field `{key}`")));
+                    }
+                }
+                let record: SymptomRecord =
+                    serde_json::from_value(Value::Object(fields)).map_err(A::Error::custom)?;
+                if let (SymptomRecord::Finish { .. }, Some(token)) = (&record, &exit_code) {
+                    Signed::check_token(token.get()).map_err(A::Error::custom)?;
+                }
+                Ok(ExactRecord(record))
+            }
+        }
+        deserializer.deserialize_map(Fields)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
