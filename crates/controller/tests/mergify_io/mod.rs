@@ -263,7 +263,7 @@ mod properties {
     use io::{Entry, Frame, Profile, Schedule};
     use proptest::{
         prelude::*,
-        test_runner::{Config, TestRunner},
+        test_runner::{Config, FileFailurePersistence, RngSeed, TestRunner},
     };
     const CASES: u32 = 256;
     fn tape() -> impl Strategy<Value = Vec<Frame>> {
@@ -283,7 +283,11 @@ mod properties {
         let mut runner = TestRunner::new(Config {
             cases: CASES,
             max_shrink_iters: 2048,
-            failure_persistence: None,
+            rng_seed: RngSeed::Fixed(0x751_760_2026),
+            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/mergify_io/proptest-regressions.txt"
+            )))),
             ..Config::default()
         });
         let strategy = (any::<u8>(), tape(), prop::collection::vec(0u8..7, 0..8)).prop_map(
@@ -307,13 +311,24 @@ mod properties {
             runs.get()
         );
     }
+    /// #760 batch 5: a reread can lose the timer after grace already passed.
+    #[test]
+    fn waiting_budget_disappears_after_grace() {
+        let s: Schedule =
+            serde_json::from_str(include_str!("waiting-budget-disappears.json")).unwrap();
+        io::compare(&s, Entry::Waiting).unwrap();
+    }
     /// #760: Waiting + queue label + Ready intent must sample recovery twice.
     #[test]
     fn recovery_file_can_appear_between_reads() {
         let mut runner = TestRunner::new(Config {
             cases: CASES,
             max_shrink_iters: 2048,
-            failure_persistence: None,
+            rng_seed: RngSeed::Fixed(0x751_760_2026),
+            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/mergify_io/proptest-regressions.txt"
+            )))),
             ..Config::default()
         });
         runner

@@ -1,0 +1,2 @@
+# Fixed RNG seed 0x7517602026 is in Config; minimized schedules also live in JSON fixtures.
+# Proptest appends newly found failing seeds here for review and commit.

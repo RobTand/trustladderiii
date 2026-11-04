@@ -10,7 +10,7 @@ use tl3_github::{
     CheckAnnotation, Comment, CommitStatus, Issue, RequiredChecks, RequiredStatusCheck, WorkflowRun,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) enum Profile {
     Plain,
     Flip,
@@ -28,12 +28,12 @@ pub(super) enum Entry {
     Command,
     Rerun,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct Frame {
     pub word: u16,
     pub elapsed_ms: u32,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct Schedule {
     pub profile: Profile,
     pub initial: u8,
