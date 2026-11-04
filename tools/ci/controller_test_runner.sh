@@ -22,6 +22,7 @@ if "$controller"; then
         echo "controller test setup: TL3_BINARY '$TL3_BINARY' is missing or not executable; build and supply the tl3 check-reply binary before running scenarios" >&2
         exit 1
     fi
+    TL3_BINARY=$(realpath "$TL3_BINARY")
     export TL3_BINARY
 fi
 exec "$binary" "$@"

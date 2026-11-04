@@ -1,2 +1,2 @@
 [target.'cfg(unix)']
-runner = ["bash", "tools/ci/controller_test_runner.sh"]
+runner = "tools/ci/controller_test_runner.sh"

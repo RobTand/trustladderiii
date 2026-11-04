@@ -47,8 +47,8 @@ def use_worker_python(launcher):
     os.environ['TL3_TEST_UV'] = str(uv)
 
 
-def list_tests(executable):
-    output = subprocess.run([executable, '--list', '--format=terse'], check=True, capture_output=True,
+def list_tests(command):
+    output = subprocess.run([*command, '--list', '--format=terse'], check=True, capture_output=True,
                             text=True, env=child_env()).stdout
     return libtest_shards.listed(output)
 
@@ -79,7 +79,7 @@ def main():
                  'total': int(os.environ['TEST_TOTAL_SHARDS'])}
         if harness == 'libtest':
             weights = json.loads(libtest_shards.WEIGHTS.read_text()).get(name, {})
-            selected = libtest_shards.select(list_tests(binary['command'][0]), weights,
+            selected = libtest_shards.select(list_tests(binary['command']), weights,
                                              shard['index'], shard['total'])
             arguments = ['--exact', *selected, *arguments]
         elif name not in SHARD_AWARE_BINARIES:
