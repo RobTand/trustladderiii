@@ -247,6 +247,10 @@ pub(super) open spec fn potential_prefix(nodes: Seq<Node>, end: nat,
     }
 }
 
+pub(super) open spec fn pool_users(nodes: Seq<Node>, end: nat) -> nat {
+    potential_prefix(nodes, end, |n: Node| if n.pool { 1nat } else { 0nat })
+}
+
 /// #771: one actual node update changes exactly its allocation potential.
 pub(super) proof fn potential_update(nodes: Seq<Node>, index: int,
     replacement: Node, end: nat, potential: spec_fn(Node) -> nat)

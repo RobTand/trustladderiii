@@ -3093,14 +3093,38 @@ kernel_fn! {
     }
 }
 
-fn pool_free(w: &World) -> bool {
+kernel_fn! {
+/// Q39 / #771: exact pool occupancy, with the checked open-node scan bound.
+fn pool_free(w: &World) -> (result: bool) [
+    requires open_prefix(w.nodes@, w.nodes@.len()) <= u32::MAX as int,
+        forall|i: int| 0 <= i < w.nodes@.len()
+            ==> (w.nodes@[i].pool ==> !(w.nodes@[i].phase is Closed)),
+    ensures result == (pool_users(w.nodes@, w.nodes@.len()) < w.pool_capacity),
+] {
     let mut runs = 0u32;
-    for n in &w.nodes {
+    let mut i = 0usize;
+    kernel_while! { (i < w.nodes.len()) [
+        invariant
+            i <= w.nodes.len(),
+            runs as int == pool_users(w.nodes@, i as nat),
+            runs as int <= open_prefix(w.nodes@, i as nat),
+            open_prefix(w.nodes@, w.nodes@.len()) <= u32::MAX as int,
+            forall|j: int| 0 <= j < w.nodes@.len()
+                ==> (w.nodes@[j].pool ==> !(w.nodes@[j].phase is Closed)),
+        decreases w.nodes.len() - i,
+    ] {
+        let n = &w.nodes[i];
+        kernel_proof! {
+            reveal(open_prefix);
+            open_prefix_monotone(w.nodes@, i as nat + 1, w.nodes@.len());
+        }
         if n.pool {
             runs += 1;
         }
-    }
+        i += 1;
+    } }
     runs < w.pool_capacity as u32
+}
 }
 
 /// Planning is admitted while fewer than W leaves wait for a slot in the repo.

@@ -1,3 +1,6 @@
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::*;
+
 macro_rules! id {
     ($name:ident) => {
         #[cfg_attr(

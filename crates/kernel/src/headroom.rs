@@ -15,6 +15,18 @@ pub closed spec fn open_prefix(nodes: Seq<Node>, end: nat) -> nat
     }
 }
 
+/// #771: scratch scans over a prefix cannot exceed the full open-node count.
+pub proof fn open_prefix_monotone(nodes: Seq<Node>, prefix: nat, end: nat)
+    requires prefix <= end <= nodes.len(),
+    ensures open_prefix(nodes, prefix) <= open_prefix(nodes, end),
+    decreases end - prefix,
+{
+    reveal(open_prefix);
+    if prefix < end {
+        open_prefix_monotone(nodes, prefix, (end - 1) as nat);
+    }
+}
+
 /// #771: the exact per-node reserve checked at the controller boundary.
 pub open spec fn node_headroom(node: Node) -> bool {
     node.generation as int + GENERATION_STEP_BUDGET <= u64::MAX as int
