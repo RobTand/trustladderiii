@@ -30,3 +30,12 @@ def no_network(monkeypatch):
 def fake_model_tool_binding(monkeypatch):
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
     monkeypatch.setattr(FakeMessagesListChatModel, "bind_tools", lambda self, tools, **kwargs: self)
+
+
+@pytest.fixture(autouse=True)
+def budget_binary(monkeypatch):
+    from pathlib import Path
+    root = Path(os.environ.get("TEST_SRCDIR", ".")) / "_main"
+    binary = root / "crates/controller/tl3"
+    if binary.is_file():
+        monkeypatch.setenv("TL3_BINARY", str(binary))

@@ -1,0 +1,1612 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "request": {
+    "$defs": {
+      "Message": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "calls": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "ai",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "calls"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "tool",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "other",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "oneOf": [
+      {
+        "additionalProperties": false,
+        "properties": {
+          "brief_tokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "context_tokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "file_tokens": {
+            "additionalProperties": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "fit_tokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "forecast",
+            "type": "string"
+          },
+          "overhead_tokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "problems": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "brief_tokens",
+          "file_tokens",
+          "overhead_tokens",
+          "fit_tokens",
+          "context_tokens",
+          "problems"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "checks": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "declared": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "exploration": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "files": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "finalization_turns": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "generated": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "generator": {
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "execution",
+            "type": "string"
+          },
+          "tool_turns": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "files",
+          "generated",
+          "checks",
+          "declared",
+          "generator",
+          "tool_turns",
+          "finalization_turns"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "context": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "input": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "kind": {
+            "const": "cutoff",
+            "type": "string"
+          },
+          "message_characters": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "output": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "prompt_characters": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reasoning": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "message_characters",
+          "prompt_characters",
+          "context"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "context": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "fallback_characters": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "input": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "kind": {
+            "const": "cutoff_sample",
+            "type": "string"
+          },
+          "output": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "prompt_characters": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reasoning": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "visible_characters": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "prompt_characters",
+          "context"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "bound": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "final": {
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "account",
+            "type": "string"
+          },
+          "no_progress": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "repairing": {
+            "type": "boolean"
+          },
+          "spent": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "turns": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "usage": {
+            "items": true,
+            "type": "array"
+          },
+          "weights": {
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "usage",
+          "bound",
+          "weights",
+          "spent",
+          "turns",
+          "no_progress",
+          "final",
+          "repairing"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "creation": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "charge",
+            "type": "string"
+          },
+          "read": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "weights": {
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "tokens",
+          "read",
+          "creation",
+          "weights"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "cache_active": {
+            "type": "boolean"
+          },
+          "compact_now": {
+            "type": "boolean"
+          },
+          "context": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "predict",
+            "type": "string"
+          },
+          "last_input": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "weights": {
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "context",
+          "last_input",
+          "cache_active",
+          "compact_now",
+          "weights"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "cache_active": {
+            "type": "boolean"
+          },
+          "context": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "estimate": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "finish_characters": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "history_bytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "reserve",
+            "type": "string"
+          },
+          "weights": {
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "estimate",
+          "context",
+          "history_bytes",
+          "finish_characters",
+          "cache_active",
+          "weights"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "estimate": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "context",
+            "type": "string"
+          },
+          "last_estimate": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "last_input": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "estimate",
+          "last_input"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "bytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "estimate",
+            "type": "string"
+          },
+          "messages": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "bytes",
+          "messages"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "before": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "compaction",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "before",
+          "after"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "compacted": {
+            "type": "boolean"
+          },
+          "context": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "context_size": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "has_ai": {
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "compact_now",
+            "type": "string"
+          },
+          "maker": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "maker",
+          "compacted",
+          "context",
+          "context_size",
+          "has_ai"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "compact_now": {
+            "type": "boolean"
+          },
+          "compacted": {
+            "type": "boolean"
+          },
+          "compacted_below": {
+            "type": "boolean"
+          },
+          "context": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "context_size": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "context_full",
+            "type": "string"
+          },
+          "maker": {
+            "type": "boolean"
+          },
+          "offset": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source_len": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "maker",
+          "compacted",
+          "compacted_below",
+          "compact_now",
+          "source_len",
+          "offset",
+          "context",
+          "context_size"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "history",
+            "type": "string"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/$defs/Message"
+            },
+            "type": "array"
+          },
+          "start": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "messages",
+          "start"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "done": {
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "reply",
+            "type": "string"
+          },
+          "unfinished": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "done",
+          "unfinished"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "exhaustion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "final": {
+            "type": "boolean"
+          },
+          "finalization_turns": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "finalizing": {
+            "type": "boolean"
+          },
+          "implementation_files": {
+            "type": "boolean"
+          },
+          "implementation_started": {
+            "type": "boolean"
+          },
+          "input_tokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "remaining",
+            "type": "string"
+          },
+          "last_progress_kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "maker": {
+            "type": "boolean"
+          },
+          "no_progress_turns": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "no_progress_window": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "spent": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tool_turns": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "turns": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "maker",
+          "turns",
+          "spent",
+          "tool_turns",
+          "input_tokens",
+          "finalization_turns",
+          "no_progress_window",
+          "no_progress_turns",
+          "implementation_files",
+          "implementation_started",
+          "finalizing",
+          "final"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "allowed": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "finalizing",
+            "type": "string"
+          },
+          "maker": {
+            "type": "boolean"
+          },
+          "no_progress": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reserve": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "turns": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "window": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "maker",
+          "turns",
+          "no_progress",
+          "allowed",
+          "window",
+          "reserve"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "allowed": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "context_full": {
+            "type": "boolean"
+          },
+          "input_limit": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "exhaustion",
+            "type": "string"
+          },
+          "maker": {
+            "type": "boolean"
+          },
+          "no_progress": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "predicted": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reserve": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "spent": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "turns": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "window": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "maker",
+          "turns",
+          "allowed",
+          "no_progress",
+          "window",
+          "context_full",
+          "spent",
+          "predicted",
+          "reserve",
+          "input_limit"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "allowed": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "in_flight": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "dropped",
+            "type": "string"
+          },
+          "reserve": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "spent": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "spent",
+          "in_flight",
+          "reserve",
+          "allowed"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "evidence_new": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "fresh": {
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "progress",
+            "type": "string"
+          },
+          "maker": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "window": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "maker",
+          "window",
+          "name",
+          "changed",
+          "fresh"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "final": {
+            "type": "boolean"
+          },
+          "finalizing": {
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "tool_allowed",
+            "type": "string"
+          },
+          "maker": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "repairing": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "maker",
+          "finalizing",
+          "final",
+          "repairing",
+          "name"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "restore",
+            "type": "string"
+          },
+          "maker": {
+            "type": "boolean"
+          },
+          "state": true
+        },
+        "required": [
+          "kind",
+          "state",
+          "maker"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "allowance": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "excerpt",
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "text",
+          "allowance"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "has_kept": {
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "retain_group",
+            "type": "string"
+          },
+          "overhead": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "size": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "size",
+          "overhead",
+          "available",
+          "has_kept"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "fields": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "clip_allowance",
+            "type": "string"
+          },
+          "overhead": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "available",
+          "overhead",
+          "fields"
+        ],
+        "type": "object"
+      }
+    ],
+    "title": "Request"
+  },
+  "responses": {
+    "account": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "cache_active": {
+          "type": "boolean"
+        },
+        "last_input": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "no_progress_turns": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "spent": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "turns": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "last_input",
+        "spent",
+        "cache_active",
+        "turns",
+        "no_progress_turns"
+      ],
+      "title": "Account",
+      "type": "object"
+    },
+    "charge": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "format": "uint64",
+      "minimum": 0,
+      "title": "uint64",
+      "type": "integer"
+    },
+    "clip_allowance": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "format": "uint64",
+      "minimum": 0,
+      "title": "uint64",
+      "type": "integer"
+    },
+    "compact_now": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "boolean",
+      "type": "boolean"
+    },
+    "compaction": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "boolean",
+      "type": "boolean"
+    },
+    "context": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "format": "uint64",
+      "minimum": 0,
+      "title": "uint64",
+      "type": "integer"
+    },
+    "context_full": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "boolean",
+      "type": "boolean"
+    },
+    "cutoff": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "boolean",
+      "type": "boolean"
+    },
+    "cutoff_sample": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "need_visible",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "need_fallback",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "done",
+              "type": "string"
+            },
+            "out_of_room": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "out_of_room"
+          ],
+          "type": "object"
+        }
+      ],
+      "title": "CutoffObservation"
+    },
+    "dropped": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "fits": {
+          "type": "boolean"
+        },
+        "spent": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "spent",
+        "fits"
+      ],
+      "title": "Dropped",
+      "type": "object"
+    },
+    "estimate": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "format": "uint64",
+      "minimum": 0,
+      "title": "uint64",
+      "type": "integer"
+    },
+    "excerpt": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "string",
+      "type": "string"
+    },
+    "execution": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "allowed_tool_turns": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "components": {
+          "additionalProperties": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "estimated_tool_turns": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "exploration_declared": {
+          "type": "boolean"
+        },
+        "finalization_turns": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fits": {
+          "type": "boolean"
+        },
+        "usable_tool_turns": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "allowed_tool_turns",
+        "finalization_turns",
+        "usable_tool_turns",
+        "estimated_tool_turns",
+        "components",
+        "exploration_declared",
+        "fits"
+      ],
+      "title": "ExecutionEvidence",
+      "type": "object"
+    },
+    "exhaustion": {
+      "$defs": {
+        "Dimension": {
+          "enum": [
+            "backstop",
+            "tool_turns",
+            "no_progress",
+            "context_tokens",
+            "input_tokens"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Dimension"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Nullable_Dimension"
+    },
+    "finalizing": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "boolean",
+      "type": "boolean"
+    },
+    "forecast": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "brief_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "context_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "file_tokens": {
+          "additionalProperties": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "fit_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fits": {
+          "type": "boolean"
+        },
+        "overhead_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tokenizer": {
+          "type": "string"
+        },
+        "tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "tokenizer",
+        "brief_tokens",
+        "file_tokens",
+        "overhead_tokens",
+        "tokens",
+        "fit_tokens",
+        "context_tokens",
+        "fits"
+      ],
+      "title": "ForecastEvidence",
+      "type": "object"
+    },
+    "history": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "end": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "interrupted": {
+          "type": "boolean"
+        },
+        "pending": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "pending",
+        "end",
+        "interrupted"
+      ],
+      "title": "History",
+      "type": "object"
+    },
+    "predict": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "format": "uint64",
+      "minimum": 0,
+      "title": "uint64",
+      "type": "integer"
+    },
+    "progress": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "boolean",
+      "type": "boolean"
+    },
+    "remaining": {
+      "$defs": {
+        "Counter": {
+          "additionalProperties": false,
+          "properties": {
+            "allowed": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "remaining": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "used": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "used",
+            "allowed",
+            "remaining"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "finalization_turns": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "implementation_due_at_tool_turn": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "implementation_started": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "input_tokens": {
+          "$ref": "#/$defs/Counter"
+        },
+        "last_progress_kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "no_progress_turns": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "no_progress_window": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "phase": {
+          "type": "string"
+        },
+        "tool_turns": {
+          "$ref": "#/$defs/Counter"
+        },
+        "warning": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "tool_turns",
+        "input_tokens",
+        "finalization_turns",
+        "phase"
+      ],
+      "title": "Remaining",
+      "type": "object"
+    },
+    "reply": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "boolean",
+      "type": "boolean"
+    },
+    "reserve": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "format": "uint64",
+      "minimum": 0,
+      "title": "uint64",
+      "type": "integer"
+    },
+    "restore": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": true,
+      "title": "Map_of_AnyValue",
+      "type": "object"
+    },
+    "retain_group": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "enum": [
+        "stop",
+        "clip",
+        "keep"
+      ],
+      "title": "GroupAction",
+      "type": "string"
+    },
+    "tool_allowed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "enum": [
+        "unavailable",
+        "reserve",
+        "allowed"
+      ],
+      "title": "ToolAction",
+      "type": "string"
+    }
+  }
+}

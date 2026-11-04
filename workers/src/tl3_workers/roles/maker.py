@@ -18,6 +18,7 @@ from langgraph.prebuilt import ToolNode
 from tl3_harness.selector_identity import selection_matches
 from tl3_workers.contracts import read_json, read_reply, registry, schema
 from tl3_workers.exploration import BudgetUnavailable, ExplorationBudget
+from tl3_workers.budget_check import check as budget_check, history_facts
 from tl3_workers.forecast import forecast_fit, measure_files, optional_encoding
 from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.pb_tests import TestSettings
@@ -172,30 +173,17 @@ RESUME_NOTE = ("The worker restarted during your last tool call. That call may h
 
 def _pending_calls(history, start):
     """Calls of the visit's last model turn that have no result yet."""
-    for index in range(len(history) - 1, start, -1):
-        if isinstance(history[index], AIMessage):
-            answered = {m.tool_call_id for m in history[index + 1:] if isinstance(m, ToolMessage)}
-            return [call for call in history[index].tool_calls if call["id"] not in answered]
+    pending = budget_check("history", messages=history_facts(history), start=start)["pending"]
+    for message in reversed(history[start + 1:]):
+        if isinstance(message, AIMessage):
+            return [call for call in message.tool_calls if call["id"] in pending]
     return []
 
 
 def _resumable(history, start):
-    """Cut an unfinished turn: keep the visit's inputs and complete tool call/result groups.
-
-    Also report whether the cut dropped a tool call that may already have run."""
-    end, interrupted = len(history), False
-    while end > start + 1:
-        first = end
-        while first > start + 1 and isinstance(history[first - 1], ToolMessage):
-            first -= 1
-        call = history[first - 1]
-        if (first < end and isinstance(call, AIMessage)
-                and sorted(c["id"] for c in call.tool_calls) == sorted(m.tool_call_id for m in history[first:end])):
-            break
-        if isinstance(call, AIMessage) and call.tool_calls:
-            interrupted = True
-        end = first - 1 if first < end else end - 1
-    return history[:end], interrupted
+    """Keep complete call/result groups according to the shared Rust decision."""
+    decision = budget_check("history", messages=history_facts(history), start=start)
+    return history[:decision["end"]], decision["interrupted"]
 
 
 def _load_visit(progress, visit):
@@ -275,7 +263,7 @@ def _budget_reply(request, allowance, history, worktree, reply):
     read_back = {call["args"].get("path") for call in final_calls if call["name"] == "read"}
     unfinished.extend("Final readback: " + path for path in changed if path not in read_back)
     unfinished = list(dict.fromkeys(unfinished))
-    if reply["kind"] == "done" and unfinished:
+    if budget_check("reply", done=reply["kind"] == "done", unfinished=bool(unfinished)):
         reply = {"kind": "cant_meet", "report": "Mandatory final verification remains unfinished."}
     remaining = allowance.remaining()
     diagnostic = {"kind": "execution_budget_exhausted", "dimension": allowance.exhaustion,

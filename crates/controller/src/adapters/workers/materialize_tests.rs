@@ -133,6 +133,7 @@ fn repository_orientation_and_ingest_replay() {
             fs::write(&inputs_path, inputs.to_string()).unwrap();
             let workers = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../workers");
             let output = Command::new(workers.join(".venv/bin/python"))
+                .env("TL3_BINARY", check_reply_binary().unwrap())
                 .arg(workers.join("tools/replay_repository_ingest.py"))
                 .arg(&inputs_path)
                 .arg(&checkout)

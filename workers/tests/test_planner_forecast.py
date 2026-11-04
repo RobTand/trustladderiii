@@ -103,17 +103,6 @@ def test_each_reply_has_code_forecast(tmp_path, planner_request, proposal, files
     validate("planner-reply", reply)
 
 
-@pytest.mark.parametrize("limit,fits", [(66, True), (65, False), (64, False)])
-def test_fit_boundary_uses_config(tmp_path, planner_request, limit, fits):
-    planner_request["inputs"]["forecast"]["fit_tokens"] = limit
-    result = run_reply(tmp_path, planner_request, LEAF)
-    assert result.exit_code == 0, result.stderr
-    forecast = result.events[-1]["reply"]["forecast"]
-    assert forecast["tokens"] == 65
-    assert forecast["fits"] is fits
-    assert forecast["fit_tokens"] == limit
-
-
 def test_forecast_reads_full_unicode_file_without_tool_truncation(tmp_path, planner_request):
     content = ("こんにちは 🌍 <|endoftext|>\r\n" * 700) + "last line"
     path = tmp_path / "worktree/greeting.py"

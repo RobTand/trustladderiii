@@ -50,7 +50,13 @@ pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
                     .as_array()
                     .unwrap()
                     .iter()
-                    .any(|check| check["status"] == "not_met") =>
+                    .any(|check| check["status"] == "not_met")
+                    || crate::budget::decision::reject_done(
+                        true,
+                        reply["budget_exhaustion"]["unfinished_obligations"]
+                            .as_array()
+                            .is_some_and(|items| !items.is_empty()),
+                    ) =>
             {
                 MappedReply::Kernel(Reply::MakerCantMeet)
             }
@@ -194,12 +200,30 @@ fn forecast(reply: &Value) -> Result<(u64, u64)> {
     let files = f["file_tokens"]
         .as_object()
         .ok_or(Error::Invalid("forecast files missing"))?;
-    let sum = files
-        .values()
-        .try_fold(0u64, |sum, v| sum.checked_add(v.as_u64()?))
-        .and_then(|n| n.checked_add(f["brief_tokens"].as_u64()?))
-        .and_then(|n| n.checked_add(f["overhead_tokens"].as_u64()?));
-    if sum != Some(tokens) || fit >= context || f["fits"].as_bool() != Some(tokens < fit) {
+    let expected = crate::budget::decide(crate::budget::Request::Forecast {
+        brief_tokens: f["brief_tokens"]
+            .as_u64()
+            .ok_or(Error::Invalid("inconsistent forecast evidence"))?,
+        file_tokens: files
+            .iter()
+            .map(|(path, value)| {
+                Ok((
+                    path.clone(),
+                    value
+                        .as_u64()
+                        .ok_or(Error::Invalid("inconsistent forecast evidence"))?,
+                ))
+            })
+            .collect::<Result<_>>()?,
+        overhead_tokens: f["overhead_tokens"]
+            .as_u64()
+            .ok_or(Error::Invalid("inconsistent forecast evidence"))?,
+        fit_tokens: fit,
+        context_tokens: context,
+        problems: 0,
+    })
+    .map_err(|_| Error::Invalid("inconsistent forecast evidence"))?;
+    if expected["tokens"] != tokens || fit >= context || f["fits"] != expected["fits"] {
         return Err(Error::Invalid("inconsistent forecast evidence"));
     }
     let declared: std::collections::BTreeSet<_> = if reply["kind"] == "split" {

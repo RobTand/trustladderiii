@@ -57,6 +57,7 @@ _SCENARIO_SHARDS = {
 # libtest-shards.json (#731). The controller library ran 362 tests serially in
 # one 249-324 s action.
 _LIBTEST_SHARDS = {
+    "tl3-controller/budget_parity": 3,
     "tl3-controller/tl3_controller": 8,
     "tl3-controller/redaction_generated": 8,
 }
@@ -81,8 +82,11 @@ _CONTROLLER_WORKERS = [
     "test_test_publishing",
     "test_test_workers",
     "test_test_writer_references",
+    "test_test_budget_parity",
 ]
 _CONTROLLER_BINARIES = {
+    "lib_test_tl3_controller": [":tl3"],
+    "test_test_budget_parity": [":tl3"],
     "test_test_worker_supervisor": [":tl3-worker-supervisor"],
     "test_test_workers": [":tl3"],
     "test_test_console_commands": [":tl3d"],
@@ -123,6 +127,7 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
+    "tests/budget_parity/main.rs": ["tests/budget_parity/*.py", "tests/budget_parity/*.txt"],
     "tests/redaction_parity.rs": ["tests/redaction_support/**"],
     "tests/redaction_generated.rs": ["tests/redaction_support/**"],
     "tests/worker_supervisor/main.rs": ["tests/worker_supervisor/legacy.py", "tests/worker_supervisor/restart.rs"],
