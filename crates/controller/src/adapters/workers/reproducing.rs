@@ -121,6 +121,31 @@ mod reply_defects {
     }
 
     #[test]
+    fn kind_tagged_node_ids_agree_with_harness_vectors() {
+        let vectors: Value = serde_json::from_str(include_str!(
+            "../../../../../harness/test-vectors/core/node-id.json"
+        ))
+        .unwrap();
+        assert_eq!(vectors["kind"], "node-id");
+        let cases = vectors["cases"].as_array().unwrap();
+        let mut checked = 0;
+        for case in cases {
+            if case["input"]["op"] != "grammar" {
+                continue;
+            }
+            let node = case["input"]["node_id"].as_str().unwrap();
+            assert_eq!(
+                exact_pytest_node_id(node),
+                case["expected"]["exact"].as_bool().unwrap(),
+                "node-id/{}: {node:?}",
+                case["id"]
+            );
+            checked += 1;
+        }
+        assert!(checked > 0, "node-id grammar vectors must execute");
+    }
+
+    #[test]
     fn exact_node_ids_agree_with_harness_vectors() {
         let vectors: Value = serde_json::from_str(include_str!(
             "../../../../../harness/test-vectors/pytest-node-ids.json"

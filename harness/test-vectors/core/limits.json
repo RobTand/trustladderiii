@@ -1,0 +1,895 @@
+{
+ "cases": [
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-0-0",
+   "input": {
+    "op": "options",
+    "parallel": 0,
+    "repeat": 0
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-0-1",
+   "input": {
+    "op": "options",
+    "parallel": 1,
+    "repeat": 0
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-0-2",
+   "input": {
+    "op": "options",
+    "parallel": 2,
+    "repeat": 0
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-0-4",
+   "input": {
+    "op": "options",
+    "parallel": 4,
+    "repeat": 0
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-0-5",
+   "input": {
+    "op": "options",
+    "parallel": 5,
+    "repeat": 0
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-0-2.0",
+   "input": {
+    "op": "options",
+    "parallel": 2.0,
+    "repeat": 0
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-0-False",
+   "input": {
+    "op": "options",
+    "parallel": false,
+    "repeat": 0
+   }
+  },
+  {
+   "expected": {
+    "value": [
+     1,
+     0
+    ]
+   },
+   "id": "options-1-0",
+   "input": {
+    "op": "options",
+    "parallel": 0,
+    "repeat": 1
+   }
+  },
+  {
+   "expected": {
+    "error": "Use parallel 2 to 4 xdist workers, or 0 for one pytest process"
+   },
+   "id": "options-1-1",
+   "input": {
+    "op": "options",
+    "parallel": 1,
+    "repeat": 1
+   }
+  },
+  {
+   "expected": {
+    "value": [
+     1,
+     2
+    ]
+   },
+   "id": "options-1-2",
+   "input": {
+    "op": "options",
+    "parallel": 2,
+    "repeat": 1
+   }
+  },
+  {
+   "expected": {
+    "value": [
+     1,
+     4
+    ]
+   },
+   "id": "options-1-4",
+   "input": {
+    "op": "options",
+    "parallel": 4,
+    "repeat": 1
+   }
+  },
+  {
+   "expected": {
+    "error": "Use parallel 2 to 4 xdist workers, or 0 for one pytest process"
+   },
+   "id": "options-1-5",
+   "input": {
+    "op": "options",
+    "parallel": 5,
+    "repeat": 1
+   }
+  },
+  {
+   "expected": {
+    "error": "Use parallel 2 to 4 xdist workers, or 0 for one pytest process"
+   },
+   "id": "options-1-2.0",
+   "input": {
+    "op": "options",
+    "parallel": 2.0,
+    "repeat": 1
+   }
+  },
+  {
+   "expected": {
+    "error": "Use parallel 2 to 4 xdist workers, or 0 for one pytest process"
+   },
+   "id": "options-1-False",
+   "input": {
+    "op": "options",
+    "parallel": false,
+    "repeat": 1
+   }
+  },
+  {
+   "expected": {
+    "value": [
+     10,
+     0
+    ]
+   },
+   "id": "options-10-0",
+   "input": {
+    "op": "options",
+    "parallel": 0,
+    "repeat": 10
+   }
+  },
+  {
+   "expected": {
+    "error": "Use parallel 2 to 4 xdist workers, or 0 for one pytest process"
+   },
+   "id": "options-10-1",
+   "input": {
+    "op": "options",
+    "parallel": 1,
+    "repeat": 10
+   }
+  },
+  {
+   "expected": {
+    "value": [
+     10,
+     2
+    ]
+   },
+   "id": "options-10-2",
+   "input": {
+    "op": "options",
+    "parallel": 2,
+    "repeat": 10
+   }
+  },
+  {
+   "expected": {
+    "value": [
+     10,
+     4
+    ]
+   },
+   "id": "options-10-4",
+   "input": {
+    "op": "options",
+    "parallel": 4,
+    "repeat": 10
+   }
+  },
+  {
+   "expected": {
+    "error": "Use parallel 2 to 4 xdist workers, or 0 for one pytest process"
+   },
+   "id": "options-10-5",
+   "input": {
+    "op": "options",
+    "parallel": 5,
+    "repeat": 10
+   }
+  },
+  {
+   "expected": {
+    "error": "Use parallel 2 to 4 xdist workers, or 0 for one pytest process"
+   },
+   "id": "options-10-2.0",
+   "input": {
+    "op": "options",
+    "parallel": 2.0,
+    "repeat": 10
+   }
+  },
+  {
+   "expected": {
+    "error": "Use parallel 2 to 4 xdist workers, or 0 for one pytest process"
+   },
+   "id": "options-10-False",
+   "input": {
+    "op": "options",
+    "parallel": false,
+    "repeat": 10
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-11-0",
+   "input": {
+    "op": "options",
+    "parallel": 0,
+    "repeat": 11
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-11-1",
+   "input": {
+    "op": "options",
+    "parallel": 1,
+    "repeat": 11
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-11-2",
+   "input": {
+    "op": "options",
+    "parallel": 2,
+    "repeat": 11
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-11-4",
+   "input": {
+    "op": "options",
+    "parallel": 4,
+    "repeat": 11
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-11-5",
+   "input": {
+    "op": "options",
+    "parallel": 5,
+    "repeat": 11
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-11-2.0",
+   "input": {
+    "op": "options",
+    "parallel": 2.0,
+    "repeat": 11
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-11-False",
+   "input": {
+    "op": "options",
+    "parallel": false,
+    "repeat": 11
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-1.0-0",
+   "input": {
+    "op": "options",
+    "parallel": 0,
+    "repeat": 1.0
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-1.0-1",
+   "input": {
+    "op": "options",
+    "parallel": 1,
+    "repeat": 1.0
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-1.0-2",
+   "input": {
+    "op": "options",
+    "parallel": 2,
+    "repeat": 1.0
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-1.0-4",
+   "input": {
+    "op": "options",
+    "parallel": 4,
+    "repeat": 1.0
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-1.0-5",
+   "input": {
+    "op": "options",
+    "parallel": 5,
+    "repeat": 1.0
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-1.0-2.0",
+   "input": {
+    "op": "options",
+    "parallel": 2.0,
+    "repeat": 1.0
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-1.0-False",
+   "input": {
+    "op": "options",
+    "parallel": false,
+    "repeat": 1.0
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-True-0",
+   "input": {
+    "op": "options",
+    "parallel": 0,
+    "repeat": true
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-True-1",
+   "input": {
+    "op": "options",
+    "parallel": 1,
+    "repeat": true
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-True-2",
+   "input": {
+    "op": "options",
+    "parallel": 2,
+    "repeat": true
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-True-4",
+   "input": {
+    "op": "options",
+    "parallel": 4,
+    "repeat": true
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-True-5",
+   "input": {
+    "op": "options",
+    "parallel": 5,
+    "repeat": true
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-True-2.0",
+   "input": {
+    "op": "options",
+    "parallel": 2.0,
+    "repeat": true
+   }
+  },
+  {
+   "expected": {
+    "error": "Use repeat 1 to 10 fresh pytest runs"
+   },
+   "id": "options-True-False",
+   "input": {
+    "op": "options",
+    "parallel": false,
+    "repeat": true
+   }
+  },
+  {
+   "expected": {
+    "collection_bytes": 37,
+    "validation": {
+     "value": null
+    }
+   },
+   "id": "plan-empty",
+   "input": {
+    "op": "plan-size",
+    "tests": []
+   }
+  },
+  {
+   "expected": {
+    "collection_bytes": 70,
+    "validation": {
+     "value": null
+    }
+   },
+   "id": "plan-deduplicated",
+   "input": {
+    "op": "plan-size",
+    "tests": [
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "collection_bytes": 45,
+    "validation": {
+     "value": null
+    }
+   },
+   "id": "plan-unicode",
+   "input": {
+    "op": "plan-size",
+    "tests": [
+     "\u00e9\ud83d\ude00"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "collection_bytes": 46,
+    "validation": {
+     "value": null
+    }
+   },
+   "id": "plan-surrogate",
+   "input": {
+    "op": "plan-size",
+    "tests": [
+     {
+      "python_codepoints": [
+       120,
+       55296
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "expected": {
+    "collection_bytes": 45,
+    "validation": {
+     "value": null
+    }
+   },
+   "id": "plan-escaped",
+   "input": {
+    "op": "plan-size",
+    "tests": [
+     "\"\\\n"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "collection_bytes": 4186149,
+    "validation": {
+     "value": null
+    }
+   },
+   "id": "phase-boundary-120-0",
+   "input": {
+    "char": "x",
+    "count": 4186110,
+    "op": "plan-size-repeat"
+   }
+  },
+  {
+   "expected": {
+    "collection_bytes": 4186150,
+    "validation": {
+     "error": "Check plan exceeds the 4194304-byte report limit; reduce the selected tests or parameter cases."
+    }
+   },
+   "id": "phase-boundary-120-1",
+   "input": {
+    "char": "x",
+    "count": 4186111,
+    "op": "plan-size-repeat"
+   }
+  },
+  {
+   "expected": {
+    "collection_bytes": 4186147,
+    "validation": {
+     "value": null
+    }
+   },
+   "id": "phase-boundary-128512-0",
+   "input": {
+    "char": "\ud83d\ude00",
+    "count": 1046527,
+    "op": "plan-size-repeat"
+   }
+  },
+  {
+   "expected": {
+    "collection_bytes": 4186151,
+    "validation": {
+     "error": "Check plan exceeds the 4194304-byte report limit; reduce the selected tests or parameter cases."
+    }
+   },
+   "id": "phase-boundary-128512-1",
+   "input": {
+    "char": "\ud83d\ude00",
+    "count": 1046528,
+    "op": "plan-size-repeat"
+   }
+  },
+  {
+   "expected": {
+    "value": null
+   },
+   "id": "check-plan-0",
+   "input": {
+    "count": 0,
+    "op": "check-plan"
+   }
+  },
+  {
+   "expected": {
+    "value": null
+   },
+   "id": "check-plan-1",
+   "input": {
+    "count": 1,
+    "op": "check-plan"
+   }
+  },
+  {
+   "expected": {
+    "value": null
+   },
+   "id": "check-plan-500",
+   "input": {
+    "count": 500,
+    "op": "check-plan"
+   }
+  },
+  {
+   "expected": {
+    "error": "Check plan exceeds the 8388608-byte result limit; reduce the selected tests or checks."
+   },
+   "id": "check-plan-2000",
+   "input": {
+    "count": 2000,
+    "op": "check-plan"
+   }
+  },
+  {
+   "expected": {
+    "error": "delay_seconds must be above 0 and at most 5"
+   },
+   "id": "delay-0",
+   "input": {
+    "forcing": {
+     "patches": [
+      {
+       "delay_seconds": 0,
+       "target": "pkg.func"
+      }
+     ],
+     "symptom": "delay"
+    },
+    "op": "forcing"
+   }
+  },
+  {
+   "expected": {
+    "value": {
+     "environment": {},
+     "patches": [
+      {
+       "delay_seconds": 1,
+       "target": "pkg.func"
+      }
+     ],
+     "symptom": "delay"
+    }
+   },
+   "id": "delay-1",
+   "input": {
+    "forcing": {
+     "patches": [
+      {
+       "delay_seconds": 1,
+       "target": "pkg.func"
+      }
+     ],
+     "symptom": "delay"
+    },
+    "op": "forcing"
+   }
+  },
+  {
+   "expected": {
+    "value": {
+     "environment": {},
+     "patches": [
+      {
+       "delay_seconds": 1.0,
+       "target": "pkg.func"
+      }
+     ],
+     "symptom": "delay"
+    }
+   },
+   "id": "delay-1.0",
+   "input": {
+    "forcing": {
+     "patches": [
+      {
+       "delay_seconds": 1.0,
+       "target": "pkg.func"
+      }
+     ],
+     "symptom": "delay"
+    },
+    "op": "forcing"
+   }
+  },
+  {
+   "expected": {
+    "error": "delay_seconds must be above 0 and at most 5"
+   },
+   "id": "delay-True",
+   "input": {
+    "forcing": {
+     "patches": [
+      {
+       "delay_seconds": true,
+       "target": "pkg.func"
+      }
+     ],
+     "symptom": "delay"
+    },
+    "op": "forcing"
+   }
+  },
+  {
+   "expected": {
+    "value": {
+     "environment": {},
+     "patches": [
+      {
+       "delay_seconds": 5,
+       "target": "pkg.func"
+      }
+     ],
+     "symptom": "delay"
+    }
+   },
+   "id": "delay-5",
+   "input": {
+    "forcing": {
+     "patches": [
+      {
+       "delay_seconds": 5,
+       "target": "pkg.func"
+      }
+     ],
+     "symptom": "delay"
+    },
+    "op": "forcing"
+   }
+  },
+  {
+   "expected": {
+    "error": "delay_seconds must be above 0 and at most 5"
+   },
+   "id": "delay-5.01",
+   "input": {
+    "forcing": {
+     "patches": [
+      {
+       "delay_seconds": 5.01,
+       "target": "pkg.func"
+      }
+     ],
+     "symptom": "delay"
+    },
+    "op": "forcing"
+   }
+  },
+  {
+   "expected": {
+    "value": {
+     "environment": {},
+     "patches": [
+      {
+       "delay_seconds": 1,
+       "target": "pkg.f\u00e9"
+      }
+     ],
+     "symptom": "delay"
+    }
+   },
+   "id": "target-pkg.f\u00e9",
+   "input": {
+    "forcing": {
+     "patches": [
+      {
+       "delay_seconds": 1,
+       "target": "pkg.f\u00e9"
+      }
+     ],
+     "symptom": "delay"
+    },
+    "op": "forcing"
+   }
+  },
+  {
+   "expected": {
+    "value": {
+     "environment": {},
+     "patches": [
+      {
+       "delay_seconds": 1,
+       "target": "pkg.f\u0661"
+      }
+     ],
+     "symptom": "delay"
+    }
+   },
+   "id": "target-pkg.f\u0661",
+   "input": {
+    "forcing": {
+     "patches": [
+      {
+       "delay_seconds": 1,
+       "target": "pkg.f\u0661"
+      }
+     ],
+     "symptom": "delay"
+    },
+    "op": "forcing"
+   }
+  },
+  {
+   "expected": {
+    "error": "a patch target must be a dotted module attribute: 'pkg.\u0661'"
+   },
+   "id": "target-pkg.\u0661",
+   "input": {
+    "forcing": {
+     "patches": [
+      {
+       "delay_seconds": 1,
+       "target": "pkg.\u0661"
+      }
+     ],
+     "symptom": "delay"
+    },
+    "op": "forcing"
+   }
+  },
+  {
+   "expected": {
+    "value": {
+     "environment": {},
+     "patches": [
+      {
+       "delay_seconds": 1,
+       "target": "pkg.fn"
+      }
+     ],
+     "symptom": "delay"
+    }
+   },
+   "id": "target-pkg.fn",
+   "input": {
+    "forcing": {
+     "patches": [
+      {
+       "delay_seconds": 1,
+       "target": "pkg.fn"
+      }
+     ],
+     "symptom": "delay"
+    },
+    "op": "forcing"
+   }
+  }
+ ],
+ "kind": "limits"
+}
