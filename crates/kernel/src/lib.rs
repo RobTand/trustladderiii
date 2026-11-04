@@ -2230,7 +2230,7 @@ pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<
     let passes = settle(&mut world, &mut out, None);
     kernel_proof! {
         reveal(step_budget);
-        if world_checked(before_step@) && witness_event(before_step@, event) {
+        if progress_input(before_step@, event) {
             reveal(world_checked);
             // Witness events never append a node or remove declarations.
             assert(dependencies::edges_indexable(after_apply@));
@@ -2281,7 +2281,7 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
                 && settle_shape(old(w).nodes@[j]) && stopping_effect_fits(old(w).nodes@[j])
                 && (old(w).nodes@[j].phase is Closed ==> old(w).nodes@[j].effect.is_none())
                 && footprint::valid_footprint(*old(w), old(w).nodes@[j].footprint),
-    ensures (world_checked(*old(w)) && witness_event(*old(w), event)
+    ensures (progress_input(*old(w), event)
             ==> progress_measure(*final(w)) < progress_measure(*old(w))
                 && dependencies::edges_indexable(*final(w))),
         forall|j: int| 0 <= j < final(w).nodes@.len() ==>
@@ -2311,7 +2311,8 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
             final(w).nodes@[j].generation == 0 && final(w).nodes@[j].next_seq == 0
             && final(w).nodes@[j].credit.start == 0 && final(w).nodes@[j].credit.earned == 0
             && final(w).nodes@[j].credit.added == 0 && final(w).nodes@[j].credit.spent == 0,
-] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table);] {
+] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table);
+    reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { before_apply = *w }
     match event {
         Event::NewAdoption {
@@ -2341,11 +2342,12 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
             if let Some(i) = w.index(node) {
                 on_reply(w, i, generation, reply, out);
                 kernel_proof! {
-                    if world_checked(before_apply@) && witness_event(before_apply@, event) {
+                    if progress_input(before_apply@, event) {
                         reveal(world_checked);
                         assert(chosen_for_node(before_apply@, i as int, event));
                         assert(w.nodes@ == before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
                         lift_node_progress(before_apply@, *w, i as int);
+                        dependencies::indexability_frame(before_apply@, *w);
                     }
                 }
             }
@@ -2354,11 +2356,12 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
             if let Some(i) = w.index(node) {
                 on_ack(w, i, seq, ack, out);
                 kernel_proof! {
-                    if world_checked(before_apply@) && witness_event(before_apply@, event) {
+                    if progress_input(before_apply@, event) {
                         reveal(world_checked);
                         assert(chosen_for_node(before_apply@, i as int, event));
                         assert(w.nodes@ == before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
                         lift_node_progress(before_apply@, *w, i as int);
+                        dependencies::indexability_frame(before_apply@, *w);
                     }
                 }
             }
@@ -2377,11 +2380,12 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
             if let Some(i) = w.index(node) {
                 on_command(w, i, id, command, out);
                 kernel_proof! {
-                    if world_checked(before_apply@) && witness_event(before_apply@, event) {
+                    if progress_input(before_apply@, event) {
                         reveal(world_checked);
                         assert(chosen_for_node(before_apply@, i as int, event));
                         assert(w.nodes@ == before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
                         lift_node_progress(before_apply@, *w, i as int);
+                        dependencies::indexability_frame(before_apply@, *w);
                     }
                 }
             }

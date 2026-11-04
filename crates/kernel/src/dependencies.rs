@@ -55,6 +55,15 @@ pub(super) proof fn indexable_definition(world: World)
     reveal(edges_indexable);
 }
 
+/// #771: event handlers that preserve the table and node count preserve indices.
+pub(super) proof fn indexability_frame(before: World, after: World)
+    requires edges_indexable(before), after.dependencies@ == before.dependencies@,
+        after.nodes@.len() == before.nodes@.len(),
+    ensures edges_indexable(after),
+{
+    reveal(edges_indexable);
+}
+
 /// #693 / #771: one declaration's existing consistency requirements.
 pub(super) open spec fn dependency_checked(world: World, dependency: Dependency) -> bool {
     let owner = world.nodes@[dependency.node.0 as int];

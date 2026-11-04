@@ -370,7 +370,7 @@ proof fn settle_measure(before: World, after: World)
 verus! {
 /// #771: public view of the source-connected outside event premise.
 pub closed spec fn progress_input(w: World, event: Event) -> bool {
-    world_checked(w) && witness_event(w, event)
+    world_checked(w) && fresh_commands(w) && witness_event(w, event)
 }
 /// #771: an event returned by the real outside-witness selector.
 spec fn witness_event(w: World, event: Event) -> bool {
