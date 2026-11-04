@@ -688,7 +688,7 @@ impl Case {
         )
         .unwrap()
     }
-    fn incident(&self, controller: &Controller) -> Option<String> {
+    fn incident(&self, controller: &mut Controller) -> Option<String> {
         controller
             .snapshot()
             .unwrap()
@@ -823,7 +823,7 @@ fn legacy_retry_intention_after_upgrade_is_ambiguous() {
         1,
         "legacy retry must not send B after re-epoching"
     );
-    assert!(case.incident(&controller).is_some());
+    assert!(case.incident(&mut controller).is_some());
 }
 
 /// #766, state-table delivery failures: GET failures before POST are ordinary retries.
@@ -866,7 +866,7 @@ fn ambiguous_approval_incident_resolves_on_matching_evidence() {
     let case = Case::new("ambiguity");
     let mut controller = case.timeout();
     assert!(
-        case.incident(&controller).is_some(),
+        case.incident(&mut controller).is_some(),
         "unknown POST outcome must be visible"
     );
     case.api.release();
@@ -875,7 +875,7 @@ fn ambiguous_approval_incident_resolves_on_matching_evidence() {
         controller.effect(&case.key).unwrap().unwrap().state,
         EffectState::Confirmed
     );
-    assert!(case.incident(&controller).is_none());
+    assert!(case.incident(&mut controller).is_none());
 }
 
 /// #766, Q27 approved 2026-11-04: clear authorizes B, late A converges after confirmation.
