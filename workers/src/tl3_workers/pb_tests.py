@@ -374,10 +374,9 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                         raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "proof_mismatch")
                 if tree is not None:
                     result["tree"] = tree
-                if result["status"] == "completed" and (
-                        forcing is not None and result.get("forcing") != forcing.as_json()
-                        or (forcing is not None or "selectors" in result)
-                        and not selection_matches(result.get("selectors"), selected)):
+                if forcing is not None and result["status"] == "completed" and (
+                        result.get("forcing") != forcing.as_json()
+                        or not selection_matches(result.get("selectors"), selected)):
                     raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "forcing_or_selection_mismatch")
                 if declared_symptom is not None and result.get("declared_symptom") != declared_symptom:
                     raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "symptom_mismatch")
