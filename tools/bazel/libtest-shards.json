@@ -362,6 +362,9 @@
   "store_support_tests::tests_share_one_server_but_never_a_database": 0.372,
   "stored_shape_tests::labelled_issues_serialize_labels_only_when_present": 0.0,
   "stored_shape_tests::old_request_rows_decode_and_new_fields_serialize_only_when_set": 0.0,
-  "stored_shape_tests::selection_displacement_carries_request_history_into_check_delivery": 0.02
+  "stored_shape_tests::selection_displacement_carries_request_history_into_check_delivery": 0.02,
+  "verification::tests::alarm_survives_restart_and_does_not_duplicate_or_reject": 0.187,
+  "verification::tests::detection_preserves_main_transaction_and_effects": 0.255,
+  "verification::tests::measure_complete_step_cost_and_allocations": 24.537
  }
 }
