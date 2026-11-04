@@ -198,7 +198,7 @@ class DiscoveryTests(unittest.TestCase):
     def test_failed_lint_stops_the_job(self):
         with patch.object(check, "run", side_effect=subprocess.CalledProcessError(1, "ruff")):
             with self.assertRaises(subprocess.CalledProcessError):
-                check.python([Path("tools/board.py")])
+                check.python([Path("tools/queue_pr.py")])
 
 
 class ScannerCompressionTests(unittest.TestCase):

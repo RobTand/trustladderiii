@@ -782,8 +782,7 @@ seconds. The worker never waits for either. Export failures and initialization
 failures log a fixed diagnostic to stderr, without exception details, and
 preserve the role's result. Deep Agents remains the engine. Stored traces aren't
 pruned yet; `deploy/dl380g10/README.md` gives their growth and how to reclaim
-space. `workers/tools/trial_live_traces.py` checks all of this against a real
-server, in the scratch experiment `tl3-430-scratch`, through PrismaBuild.
+space.
 
 ## Completion facts
 

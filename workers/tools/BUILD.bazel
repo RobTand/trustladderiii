@@ -1,5 +1,4 @@
 load("@rules_python//python:defs.bzl", "py_binary")
-load("//tools/bazel:python.bzl", "py_library")
 
 py_binary(
     name = "replay_repository_ingest",
@@ -8,75 +7,10 @@ py_binary(
     deps = ["//workers/tests:worker_process"],
 )
 
-py_binary(
-    name = "trial_tests",
-    srcs = ["trial_tests.py"],
-    visibility = ["//visibility:public"],
-    deps = ["//workers/src"],
-)
-
-py_library(
-    name = "verify_tests",
-    srcs = ["verify_tests.py"],
-    visibility = ["//visibility:public"],
-    deps = ["@tl3_pip//pytest"],
-)
-
 # Controller tests run these scripts with the worker interpreter.
 filegroup(
     name = "scripts",
     srcs = glob(["*.py"]),
-    visibility = ["//visibility:public"],
-)
-
-py_binary(
-    name = "replay_exploration",
-    srcs = ["replay_exploration.py"],
-    visibility = ["//visibility:public"],
-    deps = ["//workers/tests:worker_process"],
-)
-
-py_binary(
-    name = "replay_maker_context",
-    srcs = ["replay_maker_context.py"],
-    visibility = ["//visibility:public"],
-    deps = ["//workers/tests:worker_process"],
-)
-
-py_library(
-    name = "replay_usage",
-    srcs = ["replay_usage.py"],
-    visibility = ["//visibility:public"],
-    deps = ["//workers/src"],
-)
-
-py_binary(
-    name = "trial_tracing",
-    srcs = ["trial_tracing.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        "//workers/src",
-        "@tl3_pip//httpx",
-        "@tl3_pip//langchain_core",
-        "@tl3_pip//mlflow_skinny",
-        "@tl3_pip//protobuf",
-    ],
-)
-
-py_binary(
-    name = "trial_live_traces",
-    srcs = ["trial_live_traces.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        "//workers/src",
-        "@tl3_pip//httpx",
-        "@tl3_pip//mlflow_skinny",
-    ],
-)
-
-py_binary(
-    name = "cant_meet_audit",
-    srcs = ["cant_meet_audit.py"],
     visibility = ["//visibility:public"],
 )
 

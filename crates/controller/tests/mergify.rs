@@ -2925,7 +2925,6 @@ fn main() {
     }
     // Maximum group/case times from red 375b069c and load trials
     // 57b14abe, 20611f93 and 3359391c, rounded up to seconds.
-    // timings.py regenerates these weights from inventories and group timing logs.
     // The final nine entries are individually sharded waiting-requeue cases.
     let seconds = [
         1, 14, 2, 3, 14, 2, 44, 22, 14, 15, 3, 29, 2, 26, 9, 45, 43, 25, 9, 27, 8, 4, 3, 7, 3, 17,
