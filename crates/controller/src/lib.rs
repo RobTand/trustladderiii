@@ -37,6 +37,9 @@ mod narrowing;
 mod notices;
 pub mod postmortem_reply;
 mod postmortems;
+#[cfg(all(test, loom))]
+#[path = "../tests/support/ownership.rs"]
+mod startup_ownership;
 pub use postmortems::PostmortemPace;
 pub mod pr_body;
 pub mod priority;
