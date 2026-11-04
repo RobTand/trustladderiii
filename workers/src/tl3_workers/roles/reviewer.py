@@ -12,32 +12,14 @@ from langchain_openai import ChatOpenAI
 
 from tl3_workers.contracts import read_json, read_reply, validate
 from tl3_workers.roles.base import Role
+from tl3_workers.reply_check import check_reply as validate_reply
 from tl3_workers.session import ContextCharacters, is_unaccepted_session, out_of_room, save
 from tl3_workers.tools import build_tools
 from tl3_workers.turns import TurnControl, repaired
 
 
 def check_reply(inputs, reply):
-    if reply["verdict"] == "approve" and reply["head_sha"] != inputs["head_sha"]:
-        raise ValueError("approval names a head other than the reviewed head")
-    if reply["verdict"] == "out_of_room":
-        return
-    known = {
-        "goal": {goal["id"] for goal in inputs["goals"]},
-        "standing_rule": {rule["id"] for rule in inputs["standing_rules"]},
-    }
-    for finding in reply["blocking_findings"]:
-        citation = finding["citation"]
-        if citation["id"] not in known[citation["kind"]]:
-            raise ValueError("blocking finding cites an unknown goal or standing rule")
-        if citation == {"kind": "standing_rule", "id": "request-scope"}:
-            changed = (line for line in inputs.get("scope_diff", inputs["diff"]).splitlines()
-                       if line.startswith(("+", "-"))
-                       and not line.startswith(("+++", "---"))
-                       and sum(not char.isspace() for char in line[1:]) >= 8)
-            quoted = {line.strip() for line in finding["evidence"].splitlines()}
-            if not any(line in quoted for line in changed):
-                raise ValueError("scope blocker must quote a changed hunk")
+    validate_reply("reviewer", inputs, reply)
 
 
 def _pending_calls(history):

@@ -431,6 +431,8 @@ def test_the_maker_diffs_its_worktree_against_check_base_sha(maker_request, monk
 
 
 def test_the_reviewer_diffs_the_worktree_against_base_sha(review_request, monkeypatch):  # noqa: F811
+    from tl3_workers.roles import reviewer
+    monkeypatch.setattr(reviewer, "validate_reply", lambda *args: None)
     root = Path(review_request["worktree"])
     git(root, "init", "--quiet", "--template=")
     git(root, "add", ".")

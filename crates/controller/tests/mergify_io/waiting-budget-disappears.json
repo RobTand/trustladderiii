@@ -1,0 +1,64 @@
+{
+  "profile": "Waiting",
+  "initial": 48,
+  "frames": [
+    {
+      "word": 0,
+      "elapsed_ms": 0
+    },
+    {
+      "word": 0,
+      "elapsed_ms": 0
+    },
+    {
+      "word": 0,
+      "elapsed_ms": 0
+    },
+    {
+      "word": 0,
+      "elapsed_ms": 0
+    },
+    {
+      "word": 0,
+      "elapsed_ms": 0
+    },
+    {
+      "word": 0,
+      "elapsed_ms": 0
+    },
+    {
+      "word": 0,
+      "elapsed_ms": 0
+    },
+    {
+      "word": 0,
+      "elapsed_ms": 0
+    },
+    {
+      "word": 0,
+      "elapsed_ms": 0
+    },
+    {
+      "word": 0,
+      "elapsed_ms": 0
+    },
+    {
+      "word": 0,
+      "elapsed_ms": 0
+    },
+    {
+      "word": 0,
+      "elapsed_ms": 0
+    },
+    {
+      "word": 0,
+      "elapsed_ms": 0
+    },
+    {
+      "word": 509,
+      "elapsed_ms": 0
+    }
+  ],
+  "appears_at": 18446744073709551615,
+  "write_results": []
+}
