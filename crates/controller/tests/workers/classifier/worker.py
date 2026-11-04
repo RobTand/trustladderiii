@@ -25,6 +25,8 @@ class Model(FakeMessagesListChatModel):
         assert messages[0].text == prompt + "\n\nReply with one JSON object only: no prose, no code fences. It must match this schema:\n" + json.dumps(model_facing(schema("classifier-reply")), ensure_ascii=False)
         assert json.loads(messages[1].text) == request["inputs"]
         assert request["key_file"] not in str(messages)
+        if self.i == 2:
+            assert "restart is not offered for this request" in messages[-1].text
         return super()._generate(messages, **kwargs)
 
 
@@ -43,6 +45,6 @@ with patch.object(runtime, "create_model", lambda _: model), \
      patch.object(socket.socket, "connect", no_network), \
      patch.object(socket.socket, "connect_ex", no_network), \
      patch.object(socket, "getaddrinfo", no_network):
-    sys.stdin = io.StringIO(json.dumps(request))
+    sys.stdin = io.TextIOWrapper(io.BytesIO(json.dumps(request).encode()))
     sys.argv = ["tl3_workers", "run"]
     runpy.run_module("tl3_workers", run_name="__main__")

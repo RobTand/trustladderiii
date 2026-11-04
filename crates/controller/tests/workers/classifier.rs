@@ -5,10 +5,7 @@ use tl3_controller::classifier::validate;
 
 pub fn run() {
     for (name, scenario) in [
-        (
-            "classifier_golden_cases",
-            python_classifier_golden_cases as fn(),
-        ),
+        ("classifier_golden_cases", golden_cases as fn()),
         ("classifier_cli_contract", cli_contract),
         (
             "classifier_question_boundary",
@@ -19,7 +16,6 @@ pub fn run() {
             "classifier_reconciliation",
             parsed_reconciliation_exact_coverage,
         ),
-        ("classifier_python_parity", python_parity),
         ("classifier_real_worker_repair", real_worker_repair),
     ] {
         scenario();
@@ -32,7 +28,7 @@ fn inputs() -> Value {
         "state":{"closed":false,"phase":"Making","open_question":null}})
 }
 
-fn python_classifier_golden_cases() {
+fn golden_cases() {
     let cases: Vec<Value> = serde_json::from_str(include_str!("classifier/golden.json")).unwrap();
     assert!(
         cases.len() >= 90,
@@ -46,6 +42,37 @@ fn python_classifier_golden_cases() {
             let messages: Vec<_> = actual.err().map(|e| e.to_string()).into_iter().collect();
             assert_eq!(json!(messages), case["violations"], "{case}");
         }
+    }
+    // #746 retains the evaluation corpus's validity assertion in the Rust authority.
+    let corpus: Vec<Value> = serde_json::from_str(
+        &std::fs::read_to_string(
+            super::worker_package().join("src/tl3_workers/evaluation/classifier.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(corpus.len() >= 40);
+    for case in corpus {
+        let mut reply = case["expected"].clone();
+        let field = match reply["kind"].as_str().unwrap() {
+            "unsure" => Some("question"),
+            "complaint" => Some("summary"),
+            "change_request" => Some("new_text"),
+            "answer" => match reply["answer"].as_str().unwrap() {
+                "try_again" => Some("guidance"),
+                "change_request" => Some("new_text"),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(field) = field {
+            reply
+                .as_object_mut()
+                .unwrap()
+                .entry(field)
+                .or_insert(json!("Evaluation label"));
+        }
+        assert!(validate(&case["inputs"], &reply).is_ok(), "{case}");
     }
 }
 
@@ -99,25 +126,6 @@ fn command(mut command: Command, input: &Value) -> std::process::Output {
         String::from_utf8_lossy(&result.stderr)
     );
     result
-}
-
-fn python_parity() {
-    let cases: Value = serde_json::from_str(include_str!("classifier/golden.json")).unwrap();
-    let mut oracle = Command::new(super::worker_package().join(".venv/bin/python"));
-    oracle.args(["-c", include_str!("classifier/oracle.py")]);
-    let results: Vec<Vec<String>> =
-        serde_json::from_slice(&command(oracle, &cases).stdout).unwrap();
-    for (case, expected) in cases.as_array().unwrap().iter().zip(results) {
-        let mut cli = Command::new(env!("CARGO_BIN_EXE_tl3"));
-        cli.args(["check-reply", "classifier"]);
-        let actual: Value = serde_json::from_slice(&command(cli, case).stdout).unwrap();
-        if case["schema_invalid"] == true {
-            assert!(!actual["violations"].as_array().unwrap().is_empty());
-            assert!(!expected.is_empty());
-        } else {
-            assert_eq!(actual["violations"], json!(expected), "{case}");
-        }
-    }
 }
 
 fn real_worker_repair() {

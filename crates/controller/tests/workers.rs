@@ -365,7 +365,7 @@ fn main() {
     if env::args().nth(1).as_deref() == Some("--classifier-contracts") {
         prepare_workers();
         classifier::run();
-        println!("7 classifier scenarios passed; no skips");
+        println!("6 classifier scenarios passed; no skips");
         return;
     }
     if env::args().len() == 1 {

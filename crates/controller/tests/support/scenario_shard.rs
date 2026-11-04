@@ -27,7 +27,7 @@ worker_groups! {
     IngestAudit: 6,
     Launch: 4,
     Restart: 2,
-    Reply: 16,
+    Reply: 15,
     Memory: 10,
     Summaries: 3,
     Sessions: 4,
