@@ -450,9 +450,12 @@ impl Credit {
                 old(self).start as int + old(self).earned as int + old(self).added as int
                     >= old(self).spent as int,
                 old(self).withheld ==> cost == 0,
-                old(self).added as int + cost as int <= u32::MAX as int,
+                old(self).added as int + (if cost as int > (old(self).start as int + old(self).earned as int + old(self).added as int - old(self).spent as int) { cost as int - (old(self).start as int + old(self).earned as int + old(self).added as int - old(self).spent as int) } else { 0int }) <= u32::MAX as int,
                 old(self).spent as int + cost as int <= u32::MAX as int,
             ensures
+                final(self).added as int == old(self).added as int + (if cost as int > (old(self).start as int + old(self).earned as int + old(self).added as int - old(self).spent as int) { cost as int - (old(self).start as int + old(self).earned as int + old(self).added as int - old(self).spent as int) } else { 0int }),
+                final(self).ready == old(self).ready,
+                final(self).merge_credited == old(self).merge_credited,
                 final(self).added as int >= old(self).added as int,
                 final(self).added as int <= old(self).added as int + cost as int,
                 final(self).spent as int == old(self).spent as int + cost as int,
@@ -467,6 +470,29 @@ impl Credit {
                 self.added += short as u32;
             }
             self.spent += cost;
+        }
+    }
+    kernel_fn! {
+        /// Q18 / #771: a u8 AddCredit answer and its automatic top-up together
+        /// add at most 255. Valid questions cost at most one credit.
+        fn fund_and_pay(&mut self, deposit: u8, cost: u8) -> (result: ()) [
+            requires cost <= 1,
+                old(self).start as int + old(self).earned as int + old(self).added as int
+                    >= old(self).spent as int,
+                old(self).withheld ==> cost == 0,
+                old(self).added as int + 255 <= u32::MAX as int,
+                old(self).spent as int + cost as int <= u32::MAX as int,
+            ensures final(self).added as int >= old(self).added as int,
+                final(self).added as int <= old(self).added as int + 255,
+                final(self).spent as int == old(self).spent as int + cost as int,
+                final(self).start == old(self).start, final(self).earned == old(self).earned,
+                final(self).ready == old(self).ready, final(self).withheld == old(self).withheld,
+                final(self).merge_credited == old(self).merge_credited,
+                final(self).start as int + final(self).earned as int + final(self).added as int
+                    >= final(self).spent as int,
+        ] {
+            self.added += deposit as u32;
+            self.pay(cost as u32);
         }
     }
 }
@@ -2850,7 +2876,7 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer, out: &mut Outbox)
                 return;
             }
             match answer {
-                Answer::Continue => go_on(w, i, q, out),
+                Answer::Continue => go_on(w, i, q, 0, out),
                 Answer::TryAgain => {
                     let m = &mut w.nodes[i];
                     m.attempt = 1;
@@ -2864,12 +2890,12 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer, out: &mut Outbox)
                             cost: q.cost.max(1),
                             ..q
                         },
+                        0,
                         out,
                     );
                 }
                 Answer::AddCredit(k) => {
-                    w.nodes[i].credit.added += k as u32;
-                    go_on(w, i, q, out);
+                    go_on(w, i, q, k, out);
                 }
                 Answer::ChangeRequest => enter_stopping(&mut w.nodes[i], Outcome::Replaced),
                 Answer::Stop => enter_stopping(&mut w.nodes[i], Outcome::Stopped),
@@ -2881,9 +2907,9 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer, out: &mut Outbox)
 }
 
 /// Carry on to the question's continuation, paying what it costs.
-fn go_on(w: &mut World, i: usize, q: Question, out: &mut Outbox) {
+fn go_on(w: &mut World, i: usize, q: Question, deposit: u8, out: &mut Outbox) {
     let m = &mut w.nodes[i];
-    m.credit.pay(q.cost as u32);
+    m.credit.fund_and_pay(deposit, q.cost);
     m.question = None;
     match q.cont {
         Cont::Ingesting => set_phase(m, Phase::Ingesting),
