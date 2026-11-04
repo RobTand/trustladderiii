@@ -1,4 +1,5 @@
 mod prismabuild_fixture;
+#[path = "production/startup.rs"]
 mod startup;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
