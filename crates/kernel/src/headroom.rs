@@ -6,6 +6,11 @@ fn scan_step_budget(open_nodes: usize) -> Option<u32> {
     u32::try_from(open_nodes).ok()?.checked_add(1)
 }
 
+#[allow(dead_code)]
+fn settle_step_budget(_open_nodes: usize) -> Option<u32> {
+    Some(0)
+}
+
 /// #771: reserves for one external event followed by the complete settle loop.
 /// The event changes one node's generation at most twice; settle changes that
 /// node's phase at most once more. At most one effect is emitted by apply and
@@ -94,7 +99,7 @@ impl World {
 
 #[cfg(test)]
 mod tests {
-    use super::scan_step_budget;
+    use super::{scan_step_budget, settle_step_budget};
 
     /// #771: scratch u32 scans need room for every open node and one new root.
     #[test]
@@ -103,5 +108,14 @@ mod tests {
         assert_eq!(scan_step_budget(1024), Some(1025));
         assert_eq!(scan_step_budget(u32::MAX as usize - 1), Some(u32::MAX));
         assert_eq!(scan_step_budget(u32::MAX as usize), None);
+    }
+
+    /// #771: a changing settle pass consumes at least one of six moves per node.
+    #[test]
+    fn settle_budget_reserves_all_six_internal_moves_per_open_node() {
+        assert_eq!(settle_step_budget(0), Some(6));
+        assert_eq!(settle_step_budget(1024), Some(6150));
+        assert_eq!(settle_step_budget(715_827_881), Some(4_294_967_292));
+        assert_eq!(settle_step_budget(715_827_882), None);
     }
 }
