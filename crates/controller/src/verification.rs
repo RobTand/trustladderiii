@@ -86,6 +86,20 @@ impl Runtime {
             self.settle = None;
         }
     }
+    fn start(&mut self, commit: &mut Commit) {
+        if self.key != commit.event_key
+            || (commit.result.get("kernel_recording") != Some(&json!(true))
+                && commit.result.get("kernel_delta").is_none())
+        {
+            self.key = commit.event_key.clone();
+            self.steps.clear();
+            self.settle = None;
+        }
+        if !commit.result.is_object() {
+            commit.result = json!({});
+        }
+        commit.result["kernel_recording"] = json!(true);
+    }
     pub(crate) fn record(
         &mut self,
         snapshot: &Snapshot,
@@ -95,7 +109,7 @@ impl Runtime {
     ) -> Result<()> {
         use crate::compact::{CompactStep, Delta, Record};
         use crate::incremental::BASELINE_INTERVAL;
-        self.prepare(&commit.event_key);
+        self.start(commit);
         if self.steps.is_empty() {
             observe_result(world, None, commit, self.checker.check(world));
         }
@@ -139,6 +153,11 @@ impl Runtime {
         if !commit.result.is_object() {
             commit.result = json!({});
         }
+        commit
+            .result
+            .as_object_mut()
+            .expect("object")
+            .remove("kernel_recording");
         commit.result["kernel_delta"] = serde_json::to_value(record)?;
         commit.rows.retain(|r|!matches!(r,RowChange::Put {table,id,..} if table=="kernel_replay_state" && id=="cursor"));
         commit.rows.push(put(
@@ -156,7 +175,7 @@ pub(crate) fn checked_step(
     commit: &mut Commit,
     runtime: &mut Runtime,
 ) -> Result<(World, Vec<Out>)> {
-    runtime.prepare(&commit.event_key);
+    runtime.start(commit);
     let input = world.clone();
     let (world, outputs) = tl3_kernel::step(world, event);
     observe_result(&world, Some(event), commit, runtime.checker.check(&world));

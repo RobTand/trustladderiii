@@ -261,17 +261,21 @@ fn alarm_survives_restart_and_does_not_duplicate_or_reject() {
 /// outside the paired measurement. Both paths use the same disposable database.
 #[test]
 fn measure_complete_step_cost_and_allocations() {
-    use std::hint::black_box;
+    use std::{hint::black_box, io::Write, time::Instant};
     use tl3_kernel::{Node, Outcome, Phase};
     use tl3_store::{Revision, WorldRow};
     let mut db = Database::start();
-    // Keep routine debug verification narrow. The optimized BuildBuddy run
-    // measures the full scaling curve and allocation regions.
     let counts: &[usize] = if cfg!(debug_assertions) {
         &[256]
     } else {
         &[256, 1024, 4096]
     };
+    let phases: &[&str] = if cfg!(debug_assertions) {
+        &["ordinary"]
+    } else {
+        &["ordinary", "baseline"]
+    };
+    let probe = std::env::var_os("TL3_ALLOC_CHILD").is_some();
     for density in [4, 16] {
         for &count in counts {
             let settings = db.create("invariant_cost");
@@ -316,69 +320,100 @@ fn measure_complete_step_cost_and_allocations() {
             }
             let fixture = c.store.load().unwrap();
             let mut seed = Commit::new("fixture:seed", json!({}), &fixture);
+            seed.result = json!({"kernel_anchor":world});
             seed.rows = rows
                 .into_iter()
-                .map(|row| put(&row.table, row.id, row.value))
+                .map(|r| put(&r.table, r.id, r.value))
                 .collect();
+            seed.rows.push(put("kernel_replay_state","cursor".into(),json!({"index":1,"baseline_revision":fixture.revision.get()+1,"last_revision":fixture.revision.get()+1})));
             c.store.commit(&seed).unwrap();
-            let mut totals = [0u128; 2];
+            c.verification.checker.check(&world).unwrap();
             let iterations = if cfg!(debug_assertions) { 1 } else { 3 };
-            for turn in 0..iterations {
-                // Alternate ordering to reduce cache/order bias.
-                for mode in [turn % 2, 1 - turn % 2] {
-                    let s = c.store.load().unwrap();
-                    let input = snapshot::decode(&s).unwrap();
-                    let priority = if input.nodes[0].priority == Priority::P0 {
-                        Priority::P1
-                    } else {
-                        Priority::P0
-                    };
-                    let event = Event::Fact {
-                        node: NodeId(0),
-                        fact: Fact::Priority(priority),
-                    };
-                    let mut commit =
-                        Commit::new(format!("fixture:measured:{turn}:{mode}"), json!({}), &s);
-                    use std::{io::Write, time::Instant};
-                    let probe = std::env::var_os("TL3_ALLOC_CHILD").is_some();
-                    if probe {
-                        eprintln!(
-                            "allocation_case nodes={count} density={density} mode={mode} iteration={turn}"
-                        );
-                        std::io::stderr().write_all(b"TL3_ALLOC_START\n").unwrap();
-                    }
-                    let start = Instant::now();
-                    {
-                        if mode == 0 {
-                            c.apply_reference(&s, input, event, &mut commit).unwrap();
-                        } else {
-                            assert!(!c.post_kernel_alarm(&s).unwrap());
-                            c.apply(&s, input, event, &mut commit).unwrap();
+            for &phase in phases {
+                let mut totals = [0u128; 2];
+                let mut bytes = [0i64; 2];
+                for turn in 0..iterations {
+                    for mode in [turn % 2, 1 - turn % 2] {
+                        if mode == 1 && phase == "baseline" {
+                            let s = c.store.load().unwrap();
+                            let row = s
+                                .rows
+                                .iter()
+                                .find(|r| r.table == "kernel_replay_state")
+                                .unwrap();
+                            let mut value = row.value.clone();
+                            value["index"] = json!(crate::incremental::BASELINE_INTERVAL);
+                            let mut force = Commit::new(
+                                format!("fixture:baseline-counter:{turn}"),
+                                json!({}),
+                                &s,
+                            );
+                            force
+                                .rows
+                                .push(put("kernel_replay_state", "cursor".into(), value));
+                            c.store.commit(&force).unwrap();
+                            c.verification.checker.reference_due_for_measurement();
                         }
-                        // Include the real JSONB encoder, event-log write, row
-                        // upserts and transaction commit, not a serialization proxy.
-                        c.store.commit(&commit).unwrap();
-                        black_box(commit);
+                        let s = c.store.load().unwrap();
+                        let input = snapshot::decode(&s).unwrap();
+                        let priority = if input.nodes[0].priority == Priority::P0 {
+                            Priority::P1
+                        } else {
+                            Priority::P0
+                        };
+                        let event = Event::Fact {
+                            node: NodeId(0),
+                            fact: Fact::Priority(priority),
+                        };
+                        let key = format!("fixture:measured:{phase}:{turn}:{mode}");
+                        let mut commit = Commit::new(key.clone(), json!({}), &s);
+                        if probe {
+                            eprintln!(
+                                "allocation_case nodes={count} density={density} mode={mode} iteration={turn} phase={phase}"
+                            );
+                            std::io::stderr().write_all(b"TL3_ALLOC_START\n").unwrap();
+                        }
+                        let start = Instant::now();
+                        {
+                            if mode == 0 {
+                                c.apply_reference(&s, input, event, &mut commit).unwrap();
+                            } else {
+                                assert!(!c.post_kernel_alarm(&s).unwrap());
+                                c.apply(&s, input, event, &mut commit).unwrap();
+                            }
+                            c.store.commit(&commit).unwrap();
+                            black_box(commit);
+                        }
+                        let ns = start.elapsed().as_nanos();
+                        if probe {
+                            std::io::stderr().write_all(b"TL3_ALLOC_STOP\n").unwrap();
+                        }
+                        totals[mode] += ns;
+                        // Read actual JSONB payload sizes outside the measured region.
+                        // These exclude tuple/index overhead, WAL and TOAST compression.
+                        let mut reader = c.store.reader().unwrap();
+                        let mut tx = reader.transaction().unwrap();
+                        let event_bytes:i64=tx.query_one("SELECT pg_column_size(result)::bigint FROM tl3_events WHERE event_key=$1",&[&key]).unwrap().get(0);
+                        let state_bytes: i64 = if mode == 1 {
+                            tx.query_one("SELECT coalesce(sum(pg_column_size(value)),0)::bigint FROM tl3_world WHERE table_name='kernel_replay_state'",&[]).unwrap().get(0)
+                        } else {
+                            0
+                        };
+                        tx.commit().unwrap();
+                        bytes[mode] += event_bytes + state_bytes;
                     }
-                    let ns = start.elapsed().as_nanos();
-                    if probe {
-                        std::io::stderr().write_all(b"TL3_ALLOC_STOP\n").unwrap();
-                    }
-                    totals[mode] += ns;
                 }
+                println!(
+                    "complete_invariant_cost phase={phase} nodes={count} extra_rows_per_node={density} iterations={iterations} main_ns={} instrumented_ns={} added_ns={} added_jsonb_bytes={}",
+                    totals[0] / iterations as u128,
+                    totals[1] / iterations as u128,
+                    (totals[1] as i128 - totals[0] as i128) / iterations as i128,
+                    (bytes[1] - bytes[0]) / iterations as i64
+                );
             }
-            let base = totals[0];
-            let added = totals[1];
-            println!(
-                "complete_invariant_cost nodes={count} extra_rows_per_node={density} iterations={iterations} main_ns={} instrumented_ns={} added_ns={}",
-                base / iterations as u128,
-                added / iterations as u128,
-                (added as i128 - base as i128) / iterations as i128
-            );
         }
     }
-
-    if !cfg!(debug_assertions) && std::env::var_os("TL3_ALLOC_CHILD").is_none() {
+    if !cfg!(debug_assertions) && !probe {
         let probe = std::env::current_dir()
             .unwrap()
             .join("crates/controller/libtl3_allocation_counter.so");
@@ -400,8 +435,8 @@ fn measure_complete_step_cost_and_allocations() {
         let stderr = String::from_utf8(output.stderr).unwrap();
         assert_eq!(
             stderr.matches("TL3_ALLOC_RESULT").count(),
-            36,
-            "external allocation probe did not observe every measured region: {stderr}"
+            72,
+            "external probe missed a region: {stderr}"
         );
         println!("{stderr}");
     }

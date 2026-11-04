@@ -496,7 +496,7 @@ impl Controller {
         }
         self.verification.prepare(&commit.event_key);
         self.verification.settle = Some(world.clone());
-        commit.result = json!({"kernel_capacity_settle":true});
+        commit.result = json!({"kernel_capacity_settle":true,"kernel_recording":true});
         let (world, outputs) = tl3_kernel::settle_world(world);
         self.record_kernel_result(&snapshot, world, outputs, &mut commit)?;
         self.store.commit(&commit)?;

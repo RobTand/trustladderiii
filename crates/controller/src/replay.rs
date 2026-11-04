@@ -30,9 +30,7 @@ pub(crate) fn stored_snapshot(
     if let Some(value) = result.get("kernel_delta") {
         let record: crate::compact::Record =
             serde_json::from_value(value.clone()).map_err(|_| "invalid compact replay record")?;
-        return Ok(record.baseline.is_some().then_some(StoredSnapshot::Anchor(
-            record.baseline.expect("baseline present"),
-        )));
+        return Ok(record.baseline.map(StoredSnapshot::Anchor));
     }
     if let Some(anchor) = result.get("kernel_anchor") {
         return serde_json::from_value(anchor.clone())

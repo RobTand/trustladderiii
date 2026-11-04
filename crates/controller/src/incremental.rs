@@ -4,8 +4,6 @@ use tl3_kernel::{Node, World};
 
 /// Bound recovery to 127 intervening kernel commits while amortizing full baselines.
 pub const BASELINE_INTERVAL: u64 = 128;
-// The seeded RED disables this update; every observed resource change must count.
-const UPDATE_POOL_SUMMARY: bool = true;
 
 #[derive(Default)]
 pub struct Incremental {
@@ -33,7 +31,7 @@ fn add_count(counts: &mut BTreeMap<u64, usize>, key: u64, add: bool) -> (usize, 
 }
 impl Incremental {
     fn summary(&mut self, index: usize, node: &Node, add: bool, update_pool: bool) {
-        if node.pool && update_pool {
+        if node.pool {
             if add {
                 self.pool += 1;
             } else {
@@ -68,12 +66,11 @@ impl Incremental {
             let before = old.and_then(|w| w.nodes.get(index));
             let after = world.nodes.get(index);
             if before != after {
-                let update_pool = old.is_none() || UPDATE_POOL_SUMMARY;
                 if let Some(n) = before {
-                    self.summary(index, n, false, update_pool);
+                    self.summary(index, n, false);
                 }
                 if let Some(n) = after {
-                    self.summary(index, n, true, update_pool);
+                    self.summary(index, n, true);
                 }
                 if after.is_some() {
                     touched.push(index);
@@ -148,6 +145,10 @@ impl Incremental {
         }
         self.previous = Some(world.clone());
         result
+    }
+    #[cfg(test)]
+    pub(crate) fn reference_due_for_measurement(&mut self) {
+        self.steps = BASELINE_INTERVAL - 1;
     }
     fn consistent(&self, world: &World) -> Result<(), String> {
         if let Some(error) = &self.dependency_error {
