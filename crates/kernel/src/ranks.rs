@@ -494,7 +494,7 @@ impl Node {
         #[allow(clippy::collapsible_if)]
         pub fn distance(&self) -> (result: u64) [
             ensures result as int == node_distance(*self), result <= 4096,
-        ] proof [reveal(effect_distance); reveal(current_item);] {
+        ] proof [reveal(distance); reveal(effect_distance); reveal(current_item);] {
             if self.phase.is_closed() {
                 return 0;
             }
@@ -620,7 +620,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
-    ] proof [reveal(advance_post);] {
+    ] proof [reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.phase.is_closed() {
             return false;
@@ -649,7 +649,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post);] {
+    ] proof [reveal(advance_post); reveal(distance);] {
         let n = *node;
         match n.phase {
             Phase::Publishing => {
@@ -675,7 +675,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post);] {
+    ] proof [reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -695,7 +695,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post);] {
+    ] proof [reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -727,7 +727,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post);] {
+    ] proof [reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -750,7 +750,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post);] {
+    ] proof [reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -773,7 +773,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post);] {
+    ] proof [reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused || !context.admit {
             return false;
@@ -796,7 +796,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post);] {
+    ] proof [reveal(advance_post); reveal(distance);] {
         let n = *node;
         let Phase::Ready(r) = n.phase else {
             return false;
@@ -832,7 +832,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
-    ] proof [reveal(advance_post);] {
+    ] proof [reveal(advance_post); reveal(distance);] {
         let m = &mut *node;
         m.holds = false;
         m.pos += 1;
@@ -851,7 +851,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post);] {
+    ] proof [reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.question.is_some() {
             return false; // waiting for Rob
@@ -887,7 +887,7 @@ kernel_fn! {
             advance_post(*old(_node), *final(_node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(_node), _context),
-    ] proof [reveal(advance_post);] {
+    ] proof [reveal(advance_post); reveal(distance);] {
         false
     }
 }
