@@ -316,6 +316,7 @@ mod reference {
     adapter!();
     include!("reference.rs");
     mod ci_evidence {
+        use crate::mergify_io::io::mock_std as std;
         include!("reference-ci.rs");
     }
     mod waiting {
@@ -334,6 +335,7 @@ mod current {
     adapter!();
     include!("current.rs");
     mod ci_evidence {
+        use crate::mergify_io::io::mock_std as std;
         include!("current-ci.rs");
     }
     mod waiting {
