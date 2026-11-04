@@ -680,6 +680,71 @@ fn empty_healthy_ingress_wake_writes_no_feed_state() {
     assert!(fixture.attempts.try_recv().is_err());
 }
 
+/// #773: ordinary feed wakes and explicit retries expire HTTP-parked rows without delivery.
+#[test]
+fn real_feed_expires_parked_only_queues_on_wake_and_retry() {
+    let mut fixture = Fixture::new(false);
+    fixture.barrier();
+    fixture.available.store(true, Ordering::SeqCst);
+    fixture.retry_signal();
+    fixture.retire();
+    fixture.acknowledged();
+    assert_eq!(fixture.attempts.try_recv(), Ok(true));
+    let expired = "77300000-0000-0000-0000-000000000004";
+    let recent = "77300000-0000-0000-0000-000000000005";
+    for id in [expired, recent] {
+        fixture
+            .store
+            .queue_memory(id, &json!({"content":"parked"}))
+            .unwrap();
+        fixture.store.park_memory(id, 422).unwrap();
+    }
+    let mut sql = fixture.sql();
+    sql.execute("UPDATE tl3_memory_outbox SET parked_at = CURRENT_TIMESTAMP - INTERVAL '31 days' WHERE operation_id = $1", &[&expired]).unwrap();
+    assert!(fixture.store.pending_memories(0).unwrap().is_empty());
+    let version = fixture.store.memory_feed_version().unwrap();
+    fixture.retire();
+    fixture.barrier();
+    let remaining: Vec<String> = sql
+        .query(
+            "SELECT operation_id FROM tl3_memory_outbox ORDER BY sequence",
+            &[],
+        )
+        .unwrap()
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(
+        remaining,
+        [recent],
+        "an ordinary real-feed wake expires old parked rows while keeping recent ones"
+    );
+    fixture.retire();
+    fixture.barrier();
+    assert_eq!(
+        fixture.store.memory_feed_version().unwrap(),
+        version,
+        "expiry does not manufacture delivery state changes"
+    );
+    sql.execute("UPDATE tl3_memory_outbox SET parked_at = CURRENT_TIMESTAMP - INTERVAL '31 days' WHERE operation_id = $1", &[&recent]).unwrap();
+    fixture.retry_signal();
+    fixture.retire();
+    fixture.barrier();
+    let count: i64 = sql
+        .query_one("SELECT count(*) FROM tl3_memory_outbox", &[])
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        count, 0,
+        "an explicit retry also expires a parked-only queue"
+    );
+    assert_eq!(fixture.store.memory_feed_version().unwrap(), version);
+    assert!(
+        fixture.attempts.try_recv().is_err(),
+        "expiry does not contact Hindsight"
+    );
+}
+
 /// #773 / Q7: priority work arriving after an outage cannot inherit its failure.
 #[test]
 fn held_retain_keeps_its_outcome_lineage_when_a_curation_arrives() {
