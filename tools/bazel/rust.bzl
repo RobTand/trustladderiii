@@ -93,6 +93,7 @@ _CONTROLLER_BINARIES = {
     # Both groups compile github.rs, including its env!("CARGO_BIN_EXE_tl3d").
     "test_test_github-notices": [":tl3d"],
     "test_test_simulation": [":tl3", ":tl3d"],
+    "test_test_replay_store": [":tl3"],
 }
 # These tests stage the trusted harness into a sealed check action, even when
 # the queue fixture supplies the result instead of executing that action.

@@ -1056,10 +1056,32 @@ item's size using Postgres's JSONB text representation. Invalid JSON and oversiz
 the evidence and fail retirement so a later drain can retry.
 
 A separate thread drains the outbox into `[hindsight].bank`, which defaults to
-`tl3`. The bank must be separate from the coordinator's bank. The thread wakes
-at startup and at controller drains through a channel of capacity one. An
-outage leaves rows for the next controller wake or restart. It never polls on
-a timer and never makes a request wait for Hindsight.
+`tl3`. The bank must be separate from the coordinator's bank. Startup and
+controller drains send coalesced channel wakes. After a delivery error the
+thread holds the queued rows, ignoring ordinary drains. There is no private
+SQL listener or feed retry timer.
+
+The controller records an upstream incident, `Hindsight unavailable: N memories
+held`, and posts it through the existing operations-issue incident path. Other
+requests continue. Restore Hindsight or its credentials. The controller's
+existing earliest-deadline look schedules a probe after two minutes, matching
+#759's unavailable-model probe. The probe requests delivery with the saved
+operation UUIDs. A deadline does not clear the incident: acknowledged delivery
+and durable queue removal do. Failed probes rearm the same look. Recovery drains
+the queue and clears the incident automatically, without an operator command.
+`tl3 memory retry --config FILE` requests an earlier attempt through durable
+retry evidence and the existing ingress wake. Evidence arriving during a failed
+response survives that failure. A successful retain or curation from another
+process also requests an attempt. Restart retries the durable queue.
+
+Web status and `tl3 status` show `Feed` (`ready`, `delivering`, `held`, or
+`failed`), `Pending`, `Parked`, and `HTTP parked`. A lost consumer shows
+`failed (no consumer; restart tl3d)` and raises a TL3-side incident. Retry then
+returns an error instead of reporting success. A session advisory lock proves
+consumer presence without a heartbeat. Dropping the final supervisor handle
+sends a local stop and joins the thread before dependencies are released;
+shutdown needs no new database connection. The feed retains one writer session
+while idle and has no blocking SQL listener.
 
 The server's `/openapi.json`, read on 2026-10-30, documents
 `POST /v1/default/banks/{bank}/memories` with `async: true` and a client-supplied
@@ -1091,6 +1113,25 @@ Every flush deletes expired HTTP rows, including a flush with no pending rows.
 Existing parked rows begin their retention period when migration 9 runs.
 Transport failures and 5xx responses end the pass and leave rows pending for the
 next wake. A hung endpoint costs one request timeout per pass.
+
+Memory incidents follow Q7 by operation lineage. Retains use the stable operation
+UUID; curations use their durable sequence. A successful probe can clear the
+first incident. Only Rob can clear later incidents for that lineage, using the
+`clear incident ID` command on the operations issue. Probes and `memory retry`
+leave those operations held until clearance. Clearance is checked before each
+outgoing operation, so a preceding curation cannot release a retain's hold.
+Rob's clearance covers the current persisted outcome. Other operations get their own
+incident count. The attempted lineage is stored with the outcome, so priority
+work arriving later cannot inherit its failure. Legacy `memory` incidents keep
+their own scope. A reused first incident after restart rearms its recovery look.
+Later incidents have no probe deadline while waiting for Rob; his clearance
+arms an immediate recovery look in the same durable commit.
+Feed failure or panic wakes the existing worker ingress source, even if the
+source registers after the exit. Intentional joined shutdown sends no failure wake. Feed failure does not skip worker-session retirement.
+Migration 19 adds a runtime version marker so clearing an incident does not
+count the same failed attempt again. Migration 20 adds the attempted lineage.
+An empty healthy wake writes no feed state and sends no ingress notification.
+Migrations 18 and 19 stay unchanged.
 
 The active retry set holds at most 10,000 rows; new records beyond that limit
 park the oldest pending rows. After a successful retain drains the pending set,
@@ -1678,3 +1719,9 @@ parse proptests, and real-process repair/tool-denial test. Use
 `--test_arg=--classifier-contracts` for the classifier group alone. Python tests
 exercise only the shim with a fake executable and orchestration with the Rust
 validation boundary stubbed. They never depend on the real `tl3` binary.
+
+## Read-only store tools (#783)
+
+`tl3 store-stats --config FILE [--json]` prints table counts and event/world revisions, including the earliest decodable replay baseline. Both it and `tl3 replay-check --config FILE [--from EVENT]` use the runtime store credentials in a SQL-enforced READ ONLY, REPEATABLE READ transaction, without ownership or advisory locks.
+
+This branch does not record baselines or change the apply path. Existing legacy history without recorded snapshots fails explicitly; replay cannot verify it retroactively. For instrumented history, start with `--from` the first instrumented event inclusive and retain the matching binary. The baseline statistic means decodable stored data, not a verification pass.
