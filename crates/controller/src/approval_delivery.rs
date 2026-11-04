@@ -5,6 +5,7 @@ use crate::{
     looks, put,
 };
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use tl3_kernel::EffectKind;
 use tl3_store::{Commit, Effect, EffectState, RowChange, Snapshot};
 
@@ -102,54 +103,84 @@ impl Controller {
         &mut self,
         delivery: &crate::ingress::GitHubDelivery,
     ) -> Result<()> {
-        let crate::ingress::GitHubDelivery::Webhook(webhook) = delivery else {
-            return Ok(());
+        let updates = match delivery {
+            crate::ingress::GitHubDelivery::Webhook(webhook) => {
+                let Some(
+                    tl3_github::webhook::Event::CheckRunCompleted { context, check_run }
+                    | tl3_github::webhook::Event::CheckRunUpdated { context, check_run },
+                ) = &webhook.event
+                else {
+                    return Ok(());
+                };
+                vec![(
+                    crate::Repository {
+                        owner: context.repository.owner.login.clone(),
+                        name: context.repository.name.clone(),
+                        installation: context.installation_id,
+                    },
+                    webhook.id.clone(),
+                    check_run,
+                )]
+            }
+            crate::ingress::GitHubDelivery::CatchUp {
+                repository,
+                changes,
+            } => {
+                let mut updates = Vec::new();
+                for check in &changes.check_runs {
+                    let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(check)?));
+                    updates.push((
+                        repository.clone(),
+                        format!(
+                            "catch-up:{}/{}/{}:{}:{digest}",
+                            repository.owner, repository.name, repository.installation, check.id
+                        ),
+                        check,
+                    ));
+                }
+                updates
+            }
         };
-        let Some(
-            tl3_github::webhook::Event::CheckRunCompleted { context, check_run }
-            | tl3_github::webhook::Event::CheckRunUpdated { context, check_run },
-        ) = &webhook.event
-        else {
-            return Ok(());
-        };
-        let Some((key, head)) = check_run
-            .external_id
-            .as_deref()
-            .and_then(|id| id.rsplit_once(':'))
-        else {
-            return Ok(());
-        };
-        let Some(effect) = self.store.effect(key)? else {
-            return Ok(());
-        };
-        let approval: Delivery = crate::decode_stored(effect.payload)?;
-        if !is_approval(&approval)
-            || approval.head_sha.as_deref() != Some(head)
-            || check_run.head_sha != head
-            || approval.repository.installation != context.installation_id
-            || !approval
-                .repository
-                .owner
-                .eq_ignore_ascii_case(&context.repository.owner.login)
-            || !approval
-                .repository
-                .name
-                .eq_ignore_ascii_case(&context.repository.name)
-            || !self
-                .bootstrap
-                .github_repositories()
-                .contains(&approval.repository)
-        {
-            return Ok(());
+        for (repository, news, check_run) in updates {
+            let Some((key, head)) = check_run
+                .external_id
+                .as_deref()
+                .and_then(|id| id.rsplit_once(':'))
+            else {
+                continue;
+            };
+            let Some(effect) = self.store.effect(key)? else {
+                continue;
+            };
+            let approval: Delivery = crate::decode_stored(effect.payload)?;
+            if !is_approval(&approval)
+                || approval.head_sha.as_deref() != Some(head)
+                || check_run.head_sha != head
+                || approval.repository.installation != repository.installation
+                || !approval
+                    .repository
+                    .owner
+                    .eq_ignore_ascii_case(&repository.owner)
+                || !approval
+                    .repository
+                    .name
+                    .eq_ignore_ascii_case(&repository.name)
+                || !self
+                    .bootstrap
+                    .github_repositories()
+                    .contains(&approval.repository)
+            {
+                continue;
+            }
+            let snapshot = self.store.load()?;
+            let mut commit = Commit::new(
+                format!("approval-news:{news}"),
+                json!({"approval_news":key}),
+                &snapshot,
+            );
+            commit.rows.push(put(REPAIRS, key.into(), json!(approval)));
+            self.store.commit(&commit)?;
         }
-        let snapshot = self.store.load()?;
-        let mut commit = Commit::new(
-            format!("approval-news:{}", webhook.id),
-            json!({"approval_news":key}),
-            &snapshot,
-        );
-        commit.rows.push(put(REPAIRS, key.into(), json!(approval)));
-        self.store.commit(&commit)?;
         Ok(())
     }
 
