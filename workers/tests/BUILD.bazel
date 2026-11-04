@@ -968,3 +968,16 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_summary_identity",
+    srcs = ["test_summary_identity.py"],
+    deps = [
+        ":conftest",
+        ":pb_fixtures",
+        ":worker_process",
+        "//harness/src/tl3_harness",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
