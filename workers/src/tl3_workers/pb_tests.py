@@ -546,11 +546,6 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                 )
             else:
                 item["classification"] = "new" if outcome in ("passed", "missing") else "unverified"
-        while len(json.dumps(result).encode()) > SUMMARY_BYTES and result["tests"]:
-            passing = next((i for i in reversed(range(len(result["tests"])))
-                            if result["tests"][i]["outcome"] == "passed"), -1)
-            result["tests"].pop(passing)
-            result["note"] = "Truncated: test entries were cut. Totals include all head results."
-        return result
+        return bounded(result, limit=SUMMARY_BYTES)
 
     return run_tests
