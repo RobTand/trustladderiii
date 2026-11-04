@@ -2777,7 +2777,29 @@ fn recheck(w: &mut World, i: usize, target: Phase, out: &mut Outbox) {
 
 // ---------------------------------------------------------------- acknowledgements
 
-fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack, out: &mut Outbox) {
+kernel_fn! {
+/// Acknowledgement rows / #771: stale delivery keys stutter; retries stay bounded.
+fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 2,
+        final(w).nodes@[i as int].next_seq as int <= old(w).nodes@[i as int].next_seq as int + 1,
+        final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 2,
+] {
     let Some(e) = w.nodes[i].effect else { return };
     if e.seq != seq {
         return;
@@ -2795,6 +2817,7 @@ fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack, out: &mut Outbox) {
         }
         Ack::BodyPolicyRefused => effect_failed(w, i, e.kind, out),
     }
+}
 }
 
 kernel_fn! {
@@ -2885,7 +2908,28 @@ fn delivery_failed(w: &mut World, i: usize, kind: EffectKind,
 }
 }
 
-fn effect_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
+kernel_fn! {
+/// Permanent-effect-failure rows / #771: exactly one question, no credit change.
+fn effect_failed(w: &mut World, i: usize, kind: EffectKind,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        old(w).nodes@[i as int].generation < u64::MAX,
+        old(w).next_question < u64::MAX,
+    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int == old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len == old(out).len + 2,
+] {
     notice(out, i, Notice::Incident { needs_rob: true });
     if w.nodes[i].phase.is_stopping() {
         // Cleanup stays put, keeping what it holds, until Rob retries or marks the step handled.
@@ -2915,6 +2959,7 @@ fn effect_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
         },
     };
     ask_rob(w, i, QKind::EffectFailed, cont, 0, out);
+}
 }
 
 // ---------------------------------------------------------------- facts
