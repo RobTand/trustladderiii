@@ -55,6 +55,28 @@ CASES = [
     ('settle_dispatch', 'ranks.rs',
      'Item::Admit => advance_admit(node, next_ticket, context, out)',
      'Item::Admit => advance_idle(node, next_ticket, context, out)', 'advance_node'),
+    ('headroom_generation', 'headroom.rs',
+     'node.generation > u64::MAX - GENERATION_STEP_BUDGET',
+     'node.generation > u64::MAX - (GENERATION_STEP_BUDGET - 1)', 'node_counter_exhaustion'),
+    ('headroom_question', 'headroom.rs',
+     'self.next_question > u64::MAX - QUESTION_STEP_BUDGET',
+     'self.next_question >= u64::MAX - QUESTION_STEP_BUDGET', 'counter_exhaustion'),
+    ('headroom_open_count', 'headroom.rs',
+     'if !self.nodes[index].phase.is_closed()',
+     'if self.nodes[index].phase.is_closed()', 'counter_exhaustion'),
+    ('potential_sum', 'ranks.rs',
+     '+ potential(nodes[end as int - 1])', '+ 0'),
+    ('pool_count', 'lib.rs', 'runs += 1;', 'runs += 0;', 'pool_free'),
+    ('admission_count', 'lib.rs', 'waiting += 1;', 'waiting += 0;', 'admits'),
+    ('question_allocation', 'lib.rs', 'w.next_question += 1;',
+     'w.next_question += 2;', 'ask_rob'),
+    ('incident_generation', 'lib.rs', 'set_phase(m, Phase::Ready(r));',
+     'let _ = r;', 'raise_incident'),
+    ('run_retry_bound', 'lib.rs', 'm.generation += 1;', 'm.generation += 3;', 'run_failed'),
+    ('delivery_retry_bound', 'lib.rs', 'm.generation += 1;', 'm.generation += 3;', 'delivery_failed'),
+    ('prerequisite_query', 'dependencies.rs',
+     'd.rejected || d.status != DependencyStatus::Delivered',
+     'd.rejected && d.status != DependencyStatus::Delivered', 'dependencies_delivered'),
 
 ]
 
@@ -104,7 +126,7 @@ def main():
             rejected = result.returncode != 0 and re.search(
                 r'verification results:: [0-9]+ verified, [1-9][0-9]* errors', result.stdout
             ) and re.search(
-                r'precondition not satisfied|postcondition not satisfied|assertion failed|arithmetic overflow|arithmetic underflow',
+                r'precondition not satisfied|postcondition not satisfied|assertion failed|invariant not satisfied|arithmetic overflow|arithmetic underflow',
                 result.stdout,
             )
             if not rejected:
