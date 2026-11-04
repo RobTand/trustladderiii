@@ -51,8 +51,8 @@ def test_planner_schema_follower_succeeds_without_code_only_fields(
     assert actual['forecast']['fit_tokens'] == planner_request['inputs']['forecast']['fit_tokens']
     assert {key: value for key, value in actual.items()
             if key not in {'forecast', 'execution', 'violations'}} == proposal
-    assert actual['execution']['allowed_tool_turns'] == 64
-    assert actual['execution']['usable_tool_turns'] == 56
+    assert actual['execution']['allowed_tool_turns'] == 512
+    assert actual['execution']['usable_tool_turns'] == 512
     assert bool(actual['violations']) == (proposal['kind'] == 'split')
 
 

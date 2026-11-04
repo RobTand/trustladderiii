@@ -448,8 +448,9 @@ fn stop_with(source: Source, operations: bool) -> Stopped {
                     (Source::Budget, Role::Make) => ("maker", json!({"kind": "cant_meet",
                         "report": "Final verification remains unfinished.",
                         "budget_exhaustion": {
-                            "kind": "execution_budget_exhausted", "dimension": "tool_turns",
-                            "tool_turns": {"used": 64, "allowed": 64},
+                            "kind": "execution_budget_exhausted", "dimension": "no_progress",
+                            "no_progress_window": 16, "no_progress_turns": 16, "last_progress_kind": "edit",
+                            "tool_turns": {"used": 83, "allowed": 512},
                             "input_tokens": {"used": 123456, "allowed": 6000000},
                             "operation": {"node": 0, "generation": 0, "kind": "make"},
                             "preserved_work": {"head": "a".repeat(40), "tree": "b".repeat(40)},
@@ -648,7 +649,7 @@ fn maker_budget_exhaustion_reaches_the_stop_report_and_operations_notice() {
     assert_eq!(stopped.node.review_stop, Some(ReviewStop::MakerCantMeet));
     let diagnostic = &stopped.record["findings"]["budget_exhaustion"];
     assert_eq!(diagnostic["kind"], "execution_budget_exhausted");
-    assert_eq!(diagnostic["tool_turns"]["used"], 64);
+    assert_eq!(diagnostic["tool_turns"]["used"], 83);
     assert_eq!(diagnostic["preserved_work"]["tree"], "b".repeat(40));
     assert!(stopped.record["text"].as_str().unwrap().contains("budget"));
     let notes = operations_notes(&stopped.posted);
@@ -656,7 +657,11 @@ fn maker_budget_exhaustion_reaches_the_stop_report_and_operations_notice() {
     let text = notes[0].note.as_deref().unwrap();
     assert!(text.contains("execution_budget_exhausted"), "{text}");
     assert!(
-        text.contains("64/64") && text.contains("123456/6000000"),
+        text.contains("no-progress turns 16/16") && text.contains("last progress edit"),
+        "{text}"
+    );
+    assert!(
+        text.contains("83/512") && text.contains("123456/6000000"),
         "{text}"
     );
     assert!(
@@ -669,6 +674,21 @@ fn maker_budget_exhaustion_reaches_the_stop_report_and_operations_notice() {
     );
     let snapshot = stopped.controller.snapshot().unwrap();
     assert!(!snapshot.rows.iter().any(|r| r.table == "questions"));
+    let status =
+        tl3_controller::status::load(&mut tl3_store::Reader::open(&stopped.settings).unwrap())
+            .unwrap();
+    for rendered in [
+        tl3_controller::status::render_text(&status),
+        tl3_controller::status::render_html(&status),
+    ] {
+        assert!(
+            rendered.contains("execution_budget_exhausted (no_progress)"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("tool turns 83/512"), "{rendered}");
+        assert!(rendered.contains("no-progress turns 16/16"), "{rendered}");
+        assert!(rendered.contains("last progress edit"), "{rendered}");
+    }
     assert_operations_note(&stopped.posted, "maker_cant_meet");
 }
 

@@ -276,6 +276,9 @@ def _budget_reply(request, allowance, history, worktree, reply):
     diagnostic = {"kind": "execution_budget_exhausted", "dimension": allowance.exhaustion,
                   "tool_turns": {key: remaining["tool_turns"][key] for key in ("used", "allowed")},
                   "input_tokens": {key: remaining["input_tokens"][key] for key in ("used", "allowed")},
+                  "no_progress_window": remaining["no_progress_window"],
+                  "no_progress_turns": remaining["no_progress_turns"],
+                  "last_progress_kind": remaining["last_progress_kind"],
                   "operation": request["operation"], "preserved_work": {"head": head, "tree": tree},
                   "unfinished_obligations": unfinished}
     reply["budget_exhaustion"] = diagnostic
@@ -421,8 +424,8 @@ def run(model, request, worktree, emit):
         pending = {call["id"] for call in _pending_calls(history, start)}
         for call_id in [call_id for call_id in inflight if call_id not in pending]:
             del inflight[call_id]
-        # The whole history is rewritten and synced after every update, which is
-        # quadratic in turns; at the 64-turn cap that is a few megabytes per visit.
+        # The checkpoint includes progress fingerprints, so a resumed visit cannot
+        # earn more allowance by repeating calls whose messages were compacted.
         save(progress, {
             "version": VISIT_VERSION, "generation": visit, "start": start,
             "messages": messages_to_dict(history), "budget_exhausted": budget_exhausted,
@@ -581,8 +584,8 @@ ROLE = Role(
     prompt="maker.md",
     input_schema="maker-input",
     reply_schema="maker-reply",
-    exploration_budget=ExplorationBudget(tool_turns=64, input_tokens=6_000_000, history_bytes=65_536,
-                                         finalization_turns=8),
+    exploration_budget=ExplorationBudget(tool_turns=512, input_tokens=96_000_000, history_bytes=65_536,
+                                         finalization_turns=8, no_progress_window=16),
     tools={
         "list": "List worktree files needed to implement the declared plan.",
         "read": "Read worktree text to implement or self-check a goal.",

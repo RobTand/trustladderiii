@@ -17,6 +17,7 @@ fn request(id: u64, phase: Phase) -> Request {
         phase_since_ms: Some(NOW - 5 * MINUTE),
         progress: None,
         worker_failure: None,
+        budget_exhaustion: None,
         incidents: vec![],
         maker_model: None,
         question_context: None,

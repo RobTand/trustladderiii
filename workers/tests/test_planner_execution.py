@@ -22,7 +22,7 @@ def test_token_fitting_leaf_is_refused_when_execution_demand_exceeds_usable_budg
 
     monkeypatch.chdir(planner_request["worktree"])
     proposal = copy.deepcopy(LEAF)
-    proposal["files"].extend(f"source_{i}.py" for i in range(4))
+    proposal["files"].extend(f"source_{i}.py" for i in range(58))
     existing = Path("tests/test_existing.py")
     existing.write_text(existing.read_text() + "\n".join(f"def test_extra_{i}(): assert True" for i in range(4)))
     proposal["checks"].extend({"kind": "regression", "node_ids": [f"tests/test_existing.py::test_extra_{i}"],
@@ -31,11 +31,11 @@ def test_token_fitting_leaf_is_refused_when_execution_demand_exceeds_usable_budg
     assert proposal["forecast"]["fits"] is True, "the token forecast must stay truthful"
     assert any("execution budget" in item.lower() for item in proposal["violations"]), proposal
     execution = proposal["execution"]
-    assert execution["estimated_tool_turns"] > execution["usable_tool_turns"] == 56
-    assert execution["allowed_tool_turns"] == 64 and execution["finalization_turns"] == 8
+    assert execution["estimated_tool_turns"] > execution["usable_tool_turns"] == 512
+    assert execution["allowed_tool_turns"] == 512 and execution["finalization_turns"] == 8
 
 
-def test_seven_file_public_output_adoption_requires_a_split_before_maker_work(planner_request, monkeypatch):
+def test_seven_file_public_output_adoption_fits_without_execution_split(planner_request, monkeypatch):
     from tl3_workers.roles import planner
 
     # PB #2717: seven token-fitting files consumed 35 edits, 20 reads, seven
@@ -45,7 +45,8 @@ def test_seven_file_public_output_adoption_requires_a_split_before_maker_work(pl
     proposal["files"].extend(f"public_output_{i}.py" for i in range(5))
     planner.check_reply(planner_request["inputs"], proposal)
     assert proposal["forecast"]["fits"], "execution pressure must not falsify token fit"
-    assert any("execution budget" in item.lower() for item in proposal["violations"]), proposal
+    assert proposal["violations"] == [], proposal
+    assert proposal["execution"]["fits"]
     assert proposal["execution"]["estimated_tool_turns"] > 56
     split = {"kind": "split", "reason": "execution_budget", "estimated_exploration_turns": 0, "pieces": [
         {"brief": "Adopt the public output and prove behavior, including metadata.",
@@ -53,16 +54,16 @@ def test_seven_file_public_output_adoption_requires_a_split_before_maker_work(pl
         {"brief": "Finish adoption, preserve the interface and run final regressions.",
          "goal_ids": [0, 1], "files": proposal["files"][4:], "estimated_exploration_turns": 0}]}
     planner.check_reply(planner_request["inputs"], split)
-    assert split["violations"] == [], split
+    assert any("execution estimate fits" in item.lower() for item in split["violations"]), split
     assert {path for piece in split["pieces"] for path in piece["files"]} == set(proposal["files"])
     assert {goal for piece in split["pieces"] for goal in piece["goal_ids"]} == {0, 1}
     assert all(piece["fits"] for piece in split["execution"]["pieces"])
     assert split["execution"]["aggregate_tool_turns"] == sum(
         piece["estimated_tool_turns"] for piece in split["execution"]["pieces"])
-    assert split["execution"]["aggregate_allowed_tool_turns"] == 128
+    assert split["execution"]["aggregate_allowed_tool_turns"] == 1024
 
 
-def test_execution_fit_requires_declared_exploration_and_refuses_the_three_file_search_shape(planner_request, monkeypatch):
+def test_execution_fit_requires_declared_exploration_and_accepts_three_file_search(planner_request, monkeypatch):
     from tl3_workers import runtime
     from tl3_workers.forecast import execution_forecast
     from tl3_workers.roles import planner
@@ -82,8 +83,8 @@ def test_execution_fit_requires_declared_exploration_and_refuses_the_three_file_
     planner.check_reply(planner_request["inputs"], proposal)
     assert proposal["forecast"]["fits"] is True
     assert proposal["execution"]["components"]["exploration_operations"] == 43
-    assert proposal["execution"]["fits"] is False
-    assert any("execution budget" in item.lower() for item in proposal["violations"])
+    assert proposal["execution"]["fits"] is True
+    assert proposal["violations"] == []
 
 
 def test_execution_split_uses_existing_path_and_retains_aggregate_estimates(planner_request, monkeypatch):
@@ -97,7 +98,7 @@ def test_execution_split_uses_existing_path_and_retains_aggregate_estimates(plan
     assert proposal["forecast"]["fits"] is True
     assert proposal["violations"] == [], proposal
     assert proposal.get("execution", {}).get("aggregate_tool_turns") == 50, proposal
-    assert proposal["execution"]["aggregate_allowed_tool_turns"] == 128
+    assert proposal["execution"]["aggregate_allowed_tool_turns"] == 1024
     assert len(proposal["execution"]["pieces"]) == 2
     validate("planner-reply", proposal)
 
@@ -110,7 +111,7 @@ def test_execution_split_is_bounded_before_work(planner_request, monkeypatch, da
     planner_request["inputs"]["ingest"]["brief"] *= 100
     proposal = execution_split()
     if damage == "oversized_child":
-        proposal["pieces"][0]["estimated_tool_turns"] = 57
+        proposal["pieces"][0]["estimated_tool_turns"] = 513
     elif damage == "too_many":
         proposal["pieces"] *= 5
     else:
@@ -182,7 +183,7 @@ def test_request236_generated_builds_fit_with_inspection_and_all_source_checks(r
     assert execution["components"] == {
         "exploration_operations": 8, "file_operations": 9, "check_operations": 12,
         "scope_operations": 2, "generation_operations": 1, "generated_inspection_operations": 4}
-    assert (execution["allowed_tool_turns"], execution["usable_tool_turns"], execution["finalization_turns"]) == (64, 56, 8)
+    assert (execution["allowed_tool_turns"], execution["usable_tool_turns"], execution["finalization_turns"]) == (512, 512, 8)
     assert set(proposal["files"]) == {REQUEST236_TEST, *GENERATED_BUILDS}
     assert set(proposal["forecast"]["file_tokens"]) == set(proposal["files"])
     assert proposal["checks"] == checks
@@ -195,19 +196,19 @@ def test_request236_generated_builds_fit_with_inspection_and_all_source_checks(r
                 tree._check_write(name)
 
 
-@pytest.mark.parametrize("declared", [0, 80])
+@pytest.mark.parametrize("declared", [0, 560])
 def test_leaf_budget_violation_names_every_component_and_value(request236, declared):
     from tl3_workers.roles.planner import check_reply
 
     inputs, proposal, ledger = request236
     inputs["ingest"]["brief"] = "UNTRUSTED_REQUEST_TEXT"
-    proposal["estimated_exploration_turns"] = 31
+    proposal["estimated_exploration_turns"] = 500
     proposal["estimated_tool_turns"] = declared
     check_reply(inputs, proposal, rehearsals=ledger)
     execution = proposal["execution"]
-    assert execution["estimated_tool_turns"] == max(59, declared)
+    assert execution["estimated_tool_turns"] == max(528, declared)
     violation, = [item for item in proposal["violations"] if item.startswith("The leaf exceeds the execution budget:")]
-    assert f"estimated {execution['estimated_tool_turns']} tool turns, usable 56" in violation
+    assert f"estimated {execution['estimated_tool_turns']} tool turns, backstop 512" in violation
     for component, value in execution["components"].items():
         assert f"{component}={value}" in violation, violation
     assert "UNTRUSTED_REQUEST_TEXT" not in violation
@@ -217,16 +218,16 @@ def test_piece_budget_violation_names_every_component_and_value(request236):
     from tl3_workers.roles.planner import check_reply
 
     inputs, _, _ = request236
-    proposal = {"kind": "split", "reason": "execution_budget", "estimated_exploration_turns": 43,
+    proposal = {"kind": "split", "reason": "execution_budget", "estimated_exploration_turns": 600,
                 "pieces": [
                     {"brief": "UNTRUSTED_PIECE_TEXT", "goal_ids": [index], "files": [REQUEST236_TEST],
-                     "estimated_exploration_turns": exploration} for index, exploration in enumerate((43, 44))]}
+                     "estimated_exploration_turns": exploration} for index, exploration in enumerate((500, 501))]}
     check_reply(inputs, proposal)
     violations = [item for item in proposal["violations"] if item.startswith("Every execution-budget piece must fit")]
     assert len(violations) == 2
     for violation, execution in zip(violations, proposal["execution"]["pieces"]):
         assert not execution["fits"]
-        assert f"estimated {execution['estimated_tool_turns']} tool turns, usable 56" in violation
+        assert f"estimated {execution['estimated_tool_turns']} tool turns, backstop 512" in violation
         for component, value in execution["components"].items():
             assert f"{component}={value}" in violation, violation
         assert "UNTRUSTED_PIECE_TEXT" not in violation
@@ -241,8 +242,8 @@ def test_five_authored_files_keep_the_original_68_turn_estimate(request236):
     check_reply(inputs, proposal, rehearsals=ledger)
     assert proposal["execution"]["estimated_tool_turns"] == 68
     assert proposal["execution"]["components"]["file_operations"] == 45
-    assert proposal["execution"]["fits"] is False
-    assert any("execution budget" in item for item in proposal["violations"])
+    assert proposal["execution"]["fits"] is True
+    assert proposal["violations"] == []
 
 
 def test_generator_free_forecast_is_unchanged_even_for_generated_looking_names(request236):
@@ -253,8 +254,8 @@ def test_generator_free_forecast_is_unchanged_even_for_generated_looking_names(r
     proposal["files"].extend(GENERATED_BUILDS)
     check_reply(inputs, proposal, rehearsals=ledger)
     assert proposal["execution"] == {
-        "allowed_tool_turns": 64, "finalization_turns": 8, "usable_tool_turns": 56,
-        "estimated_tool_turns": 67, "exploration_declared": True, "fits": False,
+        "allowed_tool_turns": 512, "finalization_turns": 8, "usable_tool_turns": 512,
+        "estimated_tool_turns": 67, "exploration_declared": True, "fits": True,
         "components": {"exploration_operations": 8, "file_operations": 45,
                        "check_operations": 12, "scope_operations": 2, "generation_operations": 0}}
 
@@ -264,7 +265,7 @@ def test_generated_scope_and_inspection_are_deduplicated_for_each_split_child(re
 
     inputs, _, _ = request236
     inputs["forecast"]["generated_files"].extend(["**/BUILD.bazel", "BUILD.bazel"])
-    proposal = {"kind": "split", "reason": "execution_budget", "estimated_tool_turns": 65,
+    proposal = {"kind": "split", "reason": "execution_budget", "estimated_tool_turns": 513,
                 "estimated_exploration_turns": 8, "pieces": [
                     {"brief": "Prove document safety.", "goal_ids": [index], "files": [REQUEST236_TEST],
                      "estimated_exploration_turns": 8} for index in range(2)]}
@@ -294,7 +295,7 @@ def test_unrecognized_build_and_header_keep_manual_edit_cost_with_generator(requ
     assert proposal["execution"]["components"]["generated_inspection_operations"] == 4
 
 
-@pytest.mark.parametrize("declared, expected, fits", [(50, 50, True), (57, 57, False), (0, 36, True)])
+@pytest.mark.parametrize("declared, expected, fits", [(50, 50, True), (57, 57, True), (513, 513, False), (0, 36, True)])
 def test_generated_forecast_preserves_declared_work_and_structural_minimum(request236, declared, expected, fits):
     from tl3_workers.roles.planner import check_reply
 

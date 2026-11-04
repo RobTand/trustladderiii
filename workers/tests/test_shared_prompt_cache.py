@@ -74,7 +74,8 @@ def test_requests_share_wire_prefix_and_cache_but_keep_attempt_sessions(request_
         if role == "planner":
             budget = runtime.ROLES["maker"].exploration_budget
             expected["maker_budget"] = {"tool_turns": budget.tool_turns, "input_tokens": budget.input_tokens,
-                                       "finalization_turns": budget.finalization_turns}
+                                       "finalization_turns": budget.finalization_turns,
+                                       "no_progress_window": budget.no_progress_window}
         assert inputs == expected, "all existing inputs, including independent audit evidence, must survive"
         prefixes.append(json.dumps([system, shared], ensure_ascii=False).encode())
         assert runtime.role_prompt(runtime.ROLES[role]).splitlines()[0] in system["content"]

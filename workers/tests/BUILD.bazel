@@ -933,3 +933,15 @@ py_library(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_progress_budget",
+    srcs = ["test_progress_budget.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
