@@ -3988,6 +3988,7 @@ fn on_command(w: &mut World, i: usize, id: u64, command: Command,
     w.nodes[i].last_cmd = id;
     kernel_proof! {
         if node_checked(before_command@, before_command@.nodes@[i as int]) {
+            footprint::valid_under_table_growth(before_command@, *w, w.nodes@[i as int].footprint);
             assert(node_checked(*w, w.nodes@[i as int]));
         }
     }
