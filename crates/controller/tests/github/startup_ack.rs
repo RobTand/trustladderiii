@@ -7,7 +7,7 @@ use super::*;
 /// #777: force contention at the real durable-ingress boundary, before HTTP 202.
 fn receipt_store(settings: &tl3_config::Store) -> Store {
     let mut store = Store::open(settings).unwrap();
-    if env::var_os("TL3_TEST_STARTUP_ACK_CONTENTION").is_some() {
+    if env::var_os("TEST_STARTUP_ACK_CONTENTION").is_some() {
         store.set_boundary_hook(|point, key, _| {
             if point == tl3_store::SavePoint::ReceiveIngressBeforeCommit {
                 let started = Instant::now();
@@ -37,12 +37,25 @@ impl Respond for BlockCatchUp {
 }
 
 pub(super) fn run(database: &mut support::Database) {
+    let standalone = env::args().any(|arg| arg == "--startup-ack");
+    if standalone {
+        println!("startup ACK scenarios selected: 6");
+    }
     loop_scenarios(database);
     let during = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         during_catch_up(&database.create("startup_ack"));
     }));
-    before_source_run(&database.create("bound_ack"));
-    if let Err(error) = during {
+    let before = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        before_source_run(&database.create("bound_ack"));
+    }));
+    if standalone {
+        let passed = 4 + usize::from(during.is_ok()) + usize::from(before.is_ok());
+        println!(
+            "{passed} GitHub integration scenarios passed; 6 selected; {} failed; no skips",
+            6 - passed
+        );
+    }
+    if let Err(error) = during.and(before) {
         std::panic::resume_unwind(error);
     }
 }
