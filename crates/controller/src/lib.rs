@@ -4007,6 +4007,3 @@ mod publication_tests;
 
 #[cfg(test)]
 mod verification_reference;
-
-#[cfg(test)]
-mod verification_allocations;

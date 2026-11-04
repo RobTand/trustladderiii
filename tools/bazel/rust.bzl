@@ -101,6 +101,7 @@ _CONTROLLER_RUNTIME = {
     "test_test_redaction_generated": ["//workers/tests:redaction_generated"],
     "test_test_redaction_parity": ["//workers/tests:redaction_branches"],
     "lib_test_tl3_controller": [
+        "//crates/controller/tools:allocation_counter",
         "//harness:project_files",
         "//workers/tests:worker_process",
         "//workers/tools:scripts",

@@ -284,11 +284,12 @@ fn measure_complete_step_cost_and_allocations() {
                     id,
                     value,
                     version: Revision::ZERO,
+                    arrival: 0,
                 })
                 .collect();
             for node in 0..count {
                 for table in 0..density {
-                    rows.push(WorldRow {table:format!("fixture_metadata_{table}"),id:node.to_string(),value:json!({"state":"retained","node":node,"metadata":"representative payload"}),version:Revision::ZERO});
+                    rows.push(WorldRow {table:format!("fixture_metadata_{table}"),id:node.to_string(),value:json!({"state":"retained","node":node,"metadata":"representative payload"}),version:Revision::ZERO,arrival:0});
                 }
             }
             let s = Snapshot {
@@ -303,14 +304,23 @@ fn measure_complete_step_cost_and_allocations() {
                 node: NodeId(0),
                 fact: Fact::Priority(Priority::P0),
             };
-            let mut totals = [(0u128, 0u64, 0u64); 2];
+            let mut totals = [0u128; 2];
             let iterations = 3;
             for turn in 0..iterations {
                 // Alternate ordering to reduce cache/order bias.
                 for mode in [turn % 2, 1 - turn % 2] {
                     let input = world.clone();
                     let mut commit = Commit::new("fixture:measured", json!({}), &s);
-                    let measured = crate::verification_allocations::measure(|| {
+                    use std::{io::Write, time::Instant};
+                    let probe = std::env::var_os("TL3_ALLOC_CHILD").is_some();
+                    if probe {
+                        eprintln!(
+                            "allocation_case nodes={count} density={density} mode={mode} iteration={turn}"
+                        );
+                        std::io::stderr().write_all(b"TL3_ALLOC_START\n").unwrap();
+                    }
+                    let start = Instant::now();
+                    {
                         if mode == 0 {
                             c.apply_reference(&s, input, event, &mut commit).unwrap();
                         } else {
@@ -329,10 +339,12 @@ fn measure_complete_step_cost_and_allocations() {
                         }
                         black_box(serde_json::to_vec(&commit.result).unwrap());
                         black_box(commit);
-                    });
-                    totals[mode].0 += measured.0;
-                    totals[mode].1 += measured.1;
-                    totals[mode].2 += measured.2;
+                    }
+                    let ns = start.elapsed().as_nanos();
+                    if probe {
+                        std::io::stderr().write_all(b"TL3_ALLOC_STOP\n").unwrap();
+                    }
+                    totals[mode] += ns;
                 }
             }
             let base = totals[0];
@@ -346,5 +358,35 @@ fn measure_complete_step_cost_and_allocations() {
                 (added.2 as i128 - base.2 as i128) / iterations as i128
             );
         }
+    }
+
+    if std::env::var_os("TL3_COST_ALLOCATIONS").is_some()
+        && std::env::var_os("TL3_ALLOC_CHILD").is_none()
+    {
+        let probe = std::env::current_dir()
+            .unwrap()
+            .join("crates/controller/tools/libtl3_allocation_counter.so");
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "verification::tests::measure_complete_step_cost_and_allocations",
+                "--nocapture",
+            ])
+            .env("LD_PRELOAD", probe)
+            .env("TL3_ALLOC_CHILD", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(
+            stderr.matches("TL3_ALLOC_RESULT").count(),
+            36,
+            "external allocation probe did not observe every measured region: {stderr}"
+        );
+        println!("{stderr}");
     }
 }
