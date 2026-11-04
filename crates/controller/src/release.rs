@@ -15,19 +15,18 @@ pub fn id() -> String {
     if let Some(tree) = option_env!("TL3_RELEASE_TREE") {
         return tree.into();
     }
-    // #731: a Bazel-built test binary has no Git tree, and hashing it took about
-    // 3 s per postmortem case file. The running binary is fixed for the process.
-    if cfg!(test) {
-        static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-        DIGEST.get_or_init(binary_digest).clone()
-    } else {
-        binary_digest()
+    // The code a process runs is fixed for its life, even if a deploy replaces
+    // the file on disk, so the identity is decided once (#742). Hashing on every
+    // call also cost about 3 s per postmortem case file (#731). A failed read,
+    // such as EMFILE, is not cached: the next call reads again.
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    if let Some(digest) = DIGEST.get() {
+        return digest.clone();
     }
-}
-
-fn binary_digest() -> String {
     match std::env::current_exe().and_then(std::fs::read) {
-        Ok(binary) => format!("sha256:{:x}", Sha256::digest(binary)),
+        Ok(binary) => DIGEST
+            .get_or_init(|| format!("sha256:{:x}", Sha256::digest(binary)))
+            .clone(),
         Err(error) => {
             eprintln!("release identity unavailable: {error}");
             String::new()
