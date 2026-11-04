@@ -40,7 +40,8 @@ assertion rewriting and the production capture function. Phase cases feed
 captured tuples to the real `Reporter.pytest_runtest_logreport` fold.
 
 Wave B entry points are each case's `input` and `expected`. Rust currently
-consumes the exact node-ID grammar in `reproducing.rs`. The other consumers
+consumes the exact node-ID grammar in `reproducing.rs` and verifies that all
+seven files parse with serde_json. The other behavior consumers
 are unwritten until their ports exist, as #749 permits. No failing stub or
 manual Bazel target is added. This corpus adds no production implementation,
 proof or test pruning. Glob parity belongs to the later selection/config port;
