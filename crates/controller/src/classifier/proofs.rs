@@ -46,7 +46,7 @@ fn classification_total_and_sound() {
         ),
         (
             normal && c.kind == Kind::Answer && c.answer != Answer::Unclear && !c.answer_offered,
-            Violation::Answer,
+            Violation::UnofferedAnswer,
         ),
         (
             normal && c.kind == Kind::Answer && c.answer == Answer::AddCredit && !c.credit_integer,
@@ -97,7 +97,10 @@ fn classification_total_and_sound() {
     );
     kani::cover!(actual == Err(Violation::Closed), "closed controls rejected");
     kani::cover!(actual == Err(Violation::Question), "only current question");
-    kani::cover!(actual == Err(Violation::Answer), "only offered answer");
+    kani::cover!(
+        actual == Err(Violation::UnofferedAnswer),
+        "only offered answer"
+    );
     kani::cover!(actual == Err(Violation::Credit), "integer credit");
     kani::cover!(
         actual == Err(Violation::Complaint),

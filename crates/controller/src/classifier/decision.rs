@@ -53,7 +53,7 @@ pub enum Violation {
     RestartUnavailable,
     Closed,
     Question,
-    Answer,
+    UnofferedAnswer,
     Credit,
     Complaint,
     EmptyChange,
@@ -72,7 +72,7 @@ impl Violation {
             Self::RestartUnavailable => "restart is not offered for this request",
             Self::Closed => "closed requests allow only complaint, remark, unsure or restart",
             Self::Question => "reply answers a question that is not open",
-            Self::Answer => "reply selects an answer the question does not offer",
+            Self::UnofferedAnswer => "reply selects an answer the question does not offer",
             Self::Credit => "credit amount must be an integer",
             Self::Complaint => "complaints require a closed request",
             Self::EmptyChange => "a change requires new request text",
@@ -115,7 +115,7 @@ pub fn decide(c: Classification) -> Result<(), Violation> {
             return Err(Question);
         }
         if c.answer != Answer::Unclear && !c.answer_offered {
-            return Err(Answer);
+            return Err(UnofferedAnswer);
         }
         if c.answer == Answer::AddCredit && !c.credit_integer {
             return Err(Credit);
