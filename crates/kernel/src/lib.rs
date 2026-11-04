@@ -2645,7 +2645,15 @@ fn stop_for_review(m: &mut Node, step: ReviewStop) -> (result: ()) [
 }
 }
 
-fn failed_round(w: &mut World, i: usize, step: ReviewStop, out: &mut Outbox) {
+kernel_fn! {
+/// Failed-round rows / #771: the free fix and paid ladder share one-step bounds.
+fn failed_round(w: &mut World, i: usize, step: ReviewStop,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
+    ensures retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+] proof [reveal(retry_bounds);] {
     let m = &mut w.nodes[i];
     if m.round == 0 {
         // The fix round resumes the maker's session. It's free.
@@ -2655,10 +2663,18 @@ fn failed_round(w: &mut World, i: usize, step: ReviewStop, out: &mut Outbox) {
         next_rung(w, i, step, out);
     }
 }
+}
 
-/// The ladder after a failed fix round: a bigger budget, then a different
-/// model, then one re-plan, then Rob. Each step costs 1.
-fn next_rung(w: &mut World, i: usize, step: ReviewStop, out: &mut Outbox) {
+kernel_fn! {
+/// Q54 / #771: the ladder after a failed fix round costs at most one credit.
+/// It tries a bigger budget, another model, one re-plan, then asks Rob.
+fn next_rung(w: &mut World, i: usize, step: ReviewStop,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
+    ensures retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+] proof [reveal(retry_bounds);] {
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     if fail_fast {
@@ -2702,8 +2718,17 @@ fn next_rung(w: &mut World, i: usize, step: ReviewStop, out: &mut Outbox) {
         ask_rob(w, i, QKind::CantMeet, Cont::Ready(Resume::Making), 1, out);
     }
 }
+}
 
-fn out_of_room(w: &mut World, i: usize, step: ReviewStop, out: &mut Outbox) {
+kernel_fn! {
+/// Q54 / #771: exhaustion either stops, pays once to re-plan, or asks Rob.
+fn out_of_room(w: &mut World, i: usize, step: ReviewStop,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
+    ensures retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+] proof [reveal(retry_bounds);] {
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     if fail_fast {
@@ -2726,11 +2751,19 @@ fn out_of_room(w: &mut World, i: usize, step: ReviewStop, out: &mut Outbox) {
         );
     }
 }
+}
 
-/// Under `fail_fast` the planner never re-runs on `cant_meet` (Q54). The
-/// planner worker reports a broken rule as `cant_meet` too, so a plan that
-/// doesn't fit (`cant_meet` false) can't arise live and keeps today's rule.
-fn plan_retry(w: &mut World, i: usize, cant_meet: bool, out: &mut Outbox) {
+kernel_fn! {
+/// Q54 / #771: planner retries saturate their local retry count.
+/// Under `fail_fast`, `cant_meet` stops for review. A plan that does not fit
+/// keeps the existing retry rule; the live worker reports broken rules as `cant_meet`.
+fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
+    ensures retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+] proof [reveal(retry_bounds);] {
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     m.plan_retries = m.plan_retries.saturating_add(1);
@@ -2746,9 +2779,17 @@ fn plan_retry(w: &mut World, i: usize, cant_meet: bool, out: &mut Outbox) {
         ask_rob(w, i, QKind::CantMeet, Cont::Planning { must_split }, 1, out);
     }
 }
+}
 
-/// A new head or a fresh reviewer uses the same free recheck allowance.
-fn recheck(w: &mut World, i: usize, target: Phase, out: &mut Outbox) {
+kernel_fn! {
+/// Recheck rows / #771: a new head or reviewer uses the same free allowance.
+fn recheck(w: &mut World, i: usize, target: Phase,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
+    ensures retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+] proof [reveal(retry_bounds);] {
     let m = &mut w.nodes[i];
     m.rechecks = m.rechecks.saturating_add(1);
     let free = m.rechecks <= FREE_RECHECKS;
@@ -2774,6 +2815,7 @@ fn recheck(w: &mut World, i: usize, target: Phase, out: &mut Outbox) {
             out,
         );
     }
+}
 }
 
 // ---------------------------------------------------------------- acknowledgements

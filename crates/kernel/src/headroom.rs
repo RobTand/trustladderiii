@@ -66,6 +66,31 @@ pub open spec fn arithmetic_consistent(node: Node) -> bool {
             } && (node.credit.withheld ==> q.cost == 0),
         }
 }
+
+/// Q54 / #771: shared postcondition for the real paid-retry handlers.
+/// It bounds writes; it does not define an alternative transition relation.
+#[verifier::opaque]
+pub(super) closed spec fn retry_bounds(before: World, after: World, i: int,
+    out_before: usize, out_after: usize) -> bool {
+    after.nodes@.len() == before.nodes@.len()
+        && (forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> after.nodes@[j] == before.nodes@[j])
+        && after.nodes@[i].generation as int <= before.nodes@[i].generation as int + 1
+        && after.nodes@[i].next_seq == before.nodes@[i].next_seq
+        && after.nodes@[i].last_cmd == before.nodes@[i].last_cmd
+        && after.nodes@[i].credit.start == before.nodes@[i].credit.start
+        && after.nodes@[i].credit.earned == before.nodes@[i].credit.earned
+        && after.nodes@[i].credit.added == before.nodes@[i].credit.added
+        && after.nodes@[i].credit.spent as int <= before.nodes@[i].credit.spent as int + 1
+        && after.next_ticket == before.next_ticket
+        && after.next_question as int <= before.next_question as int + 1
+        && after.gates@ == before.gates@
+        && after.pool_capacity == before.pool_capacity
+        && after.fail_fast == before.fail_fast
+        && after.file_sets@ == before.file_sets@
+        && after.dependencies@ == before.dependencies@
+        && out_after as int <= out_before as int + 1
+}
 }
 
 // A step appends at most one node; Closed never becomes open again. Every
