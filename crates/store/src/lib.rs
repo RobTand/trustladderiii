@@ -649,8 +649,6 @@ impl Store {
         self.boundary_hook = Some(Box::new(hook));
     }
 
-    /// Hold a session advisory lock for the sole controller writer. Status readers
-    /// use ordinary connections. Dropping this connection releases ownership.
     /// Read a consistent world, pending outbox, ledger and intern dictionary, without replay.
     pub fn load(&mut self) -> Result<Snapshot> {
         let mut tx = read_transaction(&mut self.client)?;

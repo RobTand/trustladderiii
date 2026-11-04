@@ -342,7 +342,7 @@ impl Adapter {
                 File::open(&settings.records)?.sync_all()?;
             }
         }
-        // Staging processes are parent-bound and cannot outlive the exclusive store claim.
+        // Check the ownership session before each abandoned-staging removal.
         clean_inputs(&settings.records, ownership)?;
         for entry in fs::read_dir(&settings.records)? {
             let entry = entry?;
