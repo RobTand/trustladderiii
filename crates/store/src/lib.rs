@@ -44,6 +44,8 @@ pub enum Error {
     ActiveDeliveries,
     #[error("database migration differs from this binary or is newer")]
     MigrationMismatch,
+    #[error("controller ownership session was lost; abort startup")]
+    OwnershipLost,
     #[error("database not initialized")]
     NotInitialized,
     #[error("schema version {actual}, expected {expected}")]
@@ -57,6 +59,90 @@ pub struct Store {
     client: Client,
     settings: tl3_config::Store,
     boundary_hook: Option<BoundaryHook>,
+}
+
+const CONTROLLER_CLAIM: i64 = 0x544c33434f4e5452;
+
+/// Exclusive controller ownership, held by the same Postgres session throughout startup.
+/// #785: only this capability can migrate or admit destructive initialization.
+/// A successful check cannot atomically fence a later filesystem operation: the
+/// session can end between the check and the syscall, including within a rename
+/// or journal-write sequence. Initializers using auxiliary database sessions
+/// likewise have check-then-act protection, not an atomic fence on that session.
+/// Startup aborts when loss is detected; these checks
+/// do not prove that no filesystem mutation can occur after session termination.
+pub struct Ownership {
+    store: Store,
+}
+
+impl Ownership {
+    pub fn claim(mut store: Store) -> Result<Self> {
+        if !store
+            .client
+            .query_one("SELECT pg_try_advisory_lock($1)", &[&CONTROLLER_CLAIM])?
+            .get::<_, bool>(0)
+        {
+            return Err(Error::Invalid(
+                "controller ownership is still held by a Postgres session; exit and let the service manager restart after that session ends",
+            ));
+        }
+        Ok(Self { store })
+    }
+
+    /// Probe this session's existing lock, without reacquiring or reconnecting it.
+    pub fn ensure_held(&mut self) -> Result<()> {
+        let held = self.store.client.query_one(
+            "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND classid::bigint=1414280003 AND objid::bigint=1330533458 AND objsubid=1 AND granted)", &[]
+        ).map_err(|_| Error::OwnershipLost)?.get::<_, bool>(0);
+        if !held {
+            return Err(Error::OwnershipLost);
+        }
+        Ok(())
+    }
+
+    pub fn store(&mut self) -> &mut Store {
+        &mut self.store
+    }
+
+    /// Transfer the claimed session without closing it or releasing its lock.
+    pub fn into_store(self) -> Store {
+        self.store
+    }
+
+    pub fn migrate(&mut self) -> Result<()> {
+        self.ensure_held()?;
+        let mut tx = self.store.client.transaction()?;
+        tx.query_one(
+            "SELECT pg_advisory_xact_lock($1)",
+            &[&0x544c3353544f5245_i64],
+        )?;
+        tx.batch_execute("CREATE TABLE IF NOT EXISTS tl3_schema_migrations (version integer PRIMARY KEY, sql text NOT NULL)")?;
+        let applied = tx.query(
+            "SELECT version, sql FROM tl3_schema_migrations ORDER BY version",
+            &[],
+        )?;
+        for row in &applied {
+            let version: i32 = row.get(0);
+            let sql: String = row.get(1);
+            if !MIGRATIONS
+                .iter()
+                .any(|&(v, text)| v == version && text == sql)
+            {
+                return Err(Error::MigrationMismatch);
+            }
+        }
+        for &(version, sql) in MIGRATIONS {
+            if !applied.iter().any(|row| row.get::<_, i32>(0) == version) {
+                tx.batch_execute(sql)?;
+                tx.execute(
+                    "INSERT INTO tl3_schema_migrations VALUES ($1, $2)",
+                    &[&version, &sql],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
 }
 
 const _: fn() = || {
@@ -706,6 +792,15 @@ impl Store {
     /// Uses only the supplied settings. No environment or implicit credential file is read.
     /// Transport is local TCP or a Unix socket, without TLS.
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
+        let mut store = Self::connect(settings)?;
+        let mut tx = read_transaction(&mut store.client)?;
+        check_schema(&mut tx)?;
+        tx.commit()?;
+        Ok(store)
+    }
+
+    /// Connect without inspecting or changing the schema, for an ownership claim.
+    pub fn connect(settings: &tl3_config::Store) -> Result<Self> {
         let mut store = Self {
             client: connect(settings, false)?,
             boundary_hook: None,
@@ -715,7 +810,6 @@ impl Store {
             return Err(Error::Invalid("store requires Postgres fsync = on"));
         }
         store.client.batch_execute("SET synchronous_commit = on")?;
-        store.migrate()?;
         Ok(store)
     }
 
@@ -726,58 +820,6 @@ impl Store {
         hook: impl FnMut(SavePoint, &str, &serde_json::Value) + Send + 'static,
     ) {
         self.boundary_hook = Some(Box::new(hook));
-    }
-
-    /// Hold a session advisory lock for the sole controller writer. Status readers
-    /// use ordinary connections. Dropping this connection releases ownership.
-    pub fn claim_controller(&mut self) -> Result<()> {
-        if !self
-            .client
-            .query_one(
-                "SELECT pg_try_advisory_lock($1)",
-                &[&0x544c33434f4e5452_i64],
-            )?
-            .get::<_, bool>(0)
-        {
-            return Err(Error::Invalid(
-                "controller ownership is still held by a Postgres session; exit and let the service manager restart after that session ends",
-            ));
-        }
-        Ok(())
-    }
-
-    fn migrate(&mut self) -> Result<()> {
-        let mut tx = self.client.transaction()?;
-        tx.query_one(
-            "SELECT pg_advisory_xact_lock($1)",
-            &[&0x544c3353544f5245_i64],
-        )?;
-        tx.batch_execute("CREATE TABLE IF NOT EXISTS tl3_schema_migrations (version integer PRIMARY KEY, sql text NOT NULL)")?;
-        let applied = tx.query(
-            "SELECT version, sql FROM tl3_schema_migrations ORDER BY version",
-            &[],
-        )?;
-        for row in &applied {
-            let version: i32 = row.get(0);
-            let sql: String = row.get(1);
-            if !MIGRATIONS
-                .iter()
-                .any(|&(v, text)| v == version && text == sql)
-            {
-                return Err(Error::MigrationMismatch);
-            }
-        }
-        for &(version, sql) in MIGRATIONS {
-            if !applied.iter().any(|row| row.get::<_, i32>(0) == version) {
-                tx.batch_execute(sql)?;
-                tx.execute(
-                    "INSERT INTO tl3_schema_migrations VALUES ($1, $2)",
-                    &[&version, &sql],
-                )?;
-            }
-        }
-        tx.commit()?;
-        Ok(())
     }
 
     /// Read a consistent world, pending outbox, ledger and intern dictionary, without replay.
@@ -1770,6 +1812,7 @@ impl Listener {
 
     fn listen(settings: &tl3_config::Store, statement: &str) -> Result<Self> {
         let mut client = listen_config(settings)?.connect(NoTls)?;
+        check_schema(&mut read_transaction(&mut client)?)?;
         client.batch_execute(statement)?;
         Ok(Self { client })
     }
@@ -1801,9 +1844,11 @@ pub struct ConsoleCommands {
 
 impl ConsoleCommands {
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
-        Ok(Self {
-            client: connect(settings, false)?,
-        })
+        let mut client = connect(settings, false)?;
+        let mut tx = read_transaction(&mut client)?;
+        check_schema(&mut tx)?;
+        tx.commit()?;
+        Ok(Self { client })
     }
 
     /// File a command for tl3d. False when this id was already filed.

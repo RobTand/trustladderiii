@@ -1,3 +1,8 @@
+#[path = "support/ownership.rs"]
+mod startup_ownership;
+#[allow(dead_code)]
+#[path = "../../store/tests/support/mod.rs"]
+mod support;
 #[allow(dead_code)]
 mod worktree_fixture;
 

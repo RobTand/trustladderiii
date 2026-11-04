@@ -313,6 +313,8 @@ pub enum Boundary {
     AfterReconcile,
 }
 
+pub use tl3_store::Ownership;
+
 pub struct Controller {
     store: Store,
     adapters: Registry,
@@ -337,12 +339,29 @@ impl Controller {
     }
 
     pub fn open_with_clock(
-        mut store: Store,
+        store: Store,
         adapters: Registry,
         bootstrap: Bootstrap,
         clock: impl clock::Clock + 'static,
     ) -> Result<Self> {
-        store.claim_controller()?;
+        Self::open_owned_with_clock(Ownership::claim(store)?, adapters, bootstrap, clock)
+    }
+
+    pub fn open_owned(
+        ownership: Ownership,
+        adapters: Registry,
+        bootstrap: Bootstrap,
+    ) -> Result<Self> {
+        Self::open_owned_with_clock(ownership, adapters, bootstrap, clock::SystemClock)
+    }
+
+    fn open_owned_with_clock(
+        ownership: Ownership,
+        adapters: Registry,
+        bootstrap: Bootstrap,
+        clock: impl clock::Clock + 'static,
+    ) -> Result<Self> {
+        let mut store = ownership.into_store();
         let snapshot = store.load()?;
         if snapshot.rows.is_empty() {
             let world = World::new(

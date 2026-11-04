@@ -2017,8 +2017,25 @@ fn deployed_main_outstanding_post_survives_upgrade_stop_and_gap() {
             .any(|r| r.table.starts_with("approval_"))
     );
     drop(store);
-    // Store opening installs the new schema but must neither replay history nor
-    // depend on a controller/adapter owner. Stop arrives before the first new drive.
+    // #785: auxiliary opens refuse an old schema. Only the claimed session may
+    // install 0021; its migration must not replay history or create recovery rows.
+    assert!(matches!(
+        Store::open(&case.settings),
+        Err(tl3_store::Error::SchemaVersion { .. })
+    ));
+    let mut owner = tl3_store::Ownership::claim(Store::connect(&case.settings).unwrap()).unwrap();
+    owner.migrate().unwrap();
+    assert!(
+        !owner
+            .store()
+            .load()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "approval_dispatch_recovery")
+    );
+    drop(owner);
+    // Stop arrives before the first new controller drive/backfill on its claimed session.
     let mut controller = case.open();
     assert!(
         !controller

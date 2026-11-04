@@ -57,7 +57,12 @@ fn github_installation_and_synchronous_token_bridge() {
     let mut mismatch = identity.clone();
     mismatch.installation = 2;
     assert!(matches!(
-        adapter.serve_github(mismatch, &repo, github.clone()),
+        adapter.serve_github(
+            mismatch,
+            &repo,
+            github.clone(),
+            &mut crate::store_support::ownership()
+        ),
         Err(Error::Invalid("worktree GitHub installation mismatch"))
     ));
     assert!(adapter.repositories.is_empty());
@@ -77,7 +82,14 @@ fn github_installation_and_synchronous_token_bridge() {
             .expect(1)
             .mount(&server),
     );
-    adapter.serve_github(identity, &repo, github).unwrap();
+    adapter
+        .serve_github(
+            identity,
+            &repo,
+            github,
+            &mut crate::store_support::ownership(),
+        )
+        .unwrap();
     let served = &adapter.repositories[0];
     // Calls the adapter-owned runtime from the same synchronous context as execute.
     assert!(served.token().unwrap().is_some());
@@ -156,7 +168,12 @@ fn repo_conventions_unconfigured_worktrees_refuse_base() {
     let mut adapter = Real::new(fixture.root.path().join("worktrees"), 1).unwrap();
     assert!(
         adapter
-            .serve_local(fixture.delivery().repository, &fixture.path, &fixture.path)
+            .serve_local(
+                fixture.delivery().repository,
+                &fixture.path,
+                &fixture.path,
+                &mut crate::store_support::ownership()
+            )
             .is_err(),
         "an unconfigured worktree adapter must reject repository registration"
     );
