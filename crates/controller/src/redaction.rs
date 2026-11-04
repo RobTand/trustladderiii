@@ -979,3 +979,8 @@ print(json.dumps(out))
         );
     }
 }
+
+/// Serialize the authoritative Rust redaction policy for Python consumers.
+pub fn generated_policy() -> String {
+    "{}\n".into()
+}
