@@ -286,11 +286,11 @@ pub(super) proof fn potential_bound(nodes: Seq<Node>, end: nat,
 /// #771: the real local settle contracts consume these finite-world reserves.
 pub(super) proof fn settle_reserve_totals(nodes: Seq<Node>)
     ensures
-        potential_prefix(nodes, nodes.len(), internal_height) <= 6 * open_prefix(nodes, nodes.len()),
-        potential_prefix(nodes, nodes.len(), generation_capacity) <= open_prefix(nodes, nodes.len()),
-        potential_prefix(nodes, nodes.len(), effect_capacity) <= open_prefix(nodes, nodes.len()),
-        potential_prefix(nodes, nodes.len(), ticket_capacity) <= 2 * open_prefix(nodes, nodes.len()),
-        potential_prefix(nodes, nodes.len(), merge_capacity) <= open_prefix(nodes, nodes.len()),
+        potential_prefix(nodes, nodes.len(), |n: Node| internal_height(n)) <= 6 * open_prefix(nodes, nodes.len()),
+        potential_prefix(nodes, nodes.len(), |n: Node| generation_capacity(n)) <= open_prefix(nodes, nodes.len()),
+        potential_prefix(nodes, nodes.len(), |n: Node| effect_capacity(n)) <= open_prefix(nodes, nodes.len()),
+        potential_prefix(nodes, nodes.len(), |n: Node| ticket_capacity(n)) <= 2 * open_prefix(nodes, nodes.len()),
+        potential_prefix(nodes, nodes.len(), |n: Node| merge_capacity(n)) <= open_prefix(nodes, nodes.len()),
 {
     assert forall|i: int| 0 <= i < nodes.len() implies
         internal_height(nodes[i]) <= 6
@@ -302,11 +302,11 @@ pub(super) proof fn settle_reserve_totals(nodes: Seq<Node>)
             && generation_capacity(nodes[i]) == 0 && effect_capacity(nodes[i]) == 0
             && ticket_capacity(nodes[i]) == 0 && merge_capacity(nodes[i]) == 0)
     by { local_capacities(nodes[i]); }
-    potential_bound(nodes, nodes.len(), internal_height, 6);
-    potential_bound(nodes, nodes.len(), generation_capacity, 1);
-    potential_bound(nodes, nodes.len(), effect_capacity, 1);
-    potential_bound(nodes, nodes.len(), ticket_capacity, 2);
-    potential_bound(nodes, nodes.len(), merge_capacity, 1);
+    potential_bound(nodes, nodes.len(), |n: Node| internal_height(n), 6);
+    potential_bound(nodes, nodes.len(), |n: Node| generation_capacity(n), 1);
+    potential_bound(nodes, nodes.len(), |n: Node| effect_capacity(n), 1);
+    potential_bound(nodes, nodes.len(), |n: Node| ticket_capacity(n), 2);
+    potential_bound(nodes, nodes.len(), |n: Node| merge_capacity(n), 1);
 }
 }
 

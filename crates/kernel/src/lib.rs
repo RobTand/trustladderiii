@@ -2058,6 +2058,14 @@ kernel_fn! {
     fn set_phase(m: &mut Node, phase: Phase) -> (result: ()) [
         requires old(m).generation < u64::MAX,
         ensures
+            *final(m) == (Node {
+                generation: (old(m).generation + 1) as u64,
+                phase, pos: 0, ticket: None,
+                effect: match old(m).effect {
+                    Some(e) => Some(InFlight { cancelling: true, ..e }), None => None,
+                },
+                ..*old(m)
+            }),
             final(m).generation as int == old(m).generation as int + 1,
             final(m).phase == phase, final(m).pos == 0, final(m).ticket.is_none(),
             final(m).effect == match old(m).effect {
@@ -2080,26 +2088,70 @@ kernel_fn! {
     }
 }
 
-/// The run or job is over: release what it held.
-fn abandon_operation(m: &mut Node) {
+kernel_fn! {
+/// Q30 / #771: releasing an operation preserves all allocation counters.
+// The pinned Verus frontend requires nested if-let instead of let chains.
+#[allow(clippy::collapsible_if)]
+fn abandon_operation(m: &mut Node) -> (result: ()) [
+    ensures *final(m) == (Node {
+        run: None, job: None, pool: false,
+        effect: match old(m).effect {
+            Some(e) => Some(InFlight { cancelling: e.cancelling
+                || matches!(e.kind, EffectKind::StartRun(_)
+                    | EffectKind::SubmitChecks | EffectKind::StartRebase), ..e }),
+            None => None,
+        },
+        ..*old(m)
+    }),
+] {
     m.run = None;
     m.job = None;
     m.pool = false;
-    if let Some(e) = m.effect.as_mut()
-        && e.kind.starts_operation()
-    {
-        e.cancelling = true;
+    if let Some(e) = m.effect.as_mut() {
+        if e.kind.starts_operation() {
+            e.cancelling = true;
+        }
     }
 }
+}
 
-/// The run or job succeeded, which ends its failure lineage.
-fn end_operation(m: &mut Node) {
+kernel_fn! {
+/// #771: successful completion resets failures and preserves allocation counters.
+fn end_operation(m: &mut Node) -> (result: ()) [
+    ensures final(m).run.is_none(), final(m).job.is_none(), !final(m).pool,
+        final(m).run_failures == 0, final(m).run_incidents == 0,
+        final(m).phase == old(m).phase, final(m).pos == old(m).pos,
+        final(m).generation == old(m).generation, final(m).next_seq == old(m).next_seq,
+        final(m).credit == old(m).credit, final(m).question == old(m).question,
+        final(m).ticket == old(m).ticket,
+] {
     abandon_operation(m);
     m.run_failures = 0;
     m.run_incidents = 0;
 }
+}
 
-fn enter_stopping(m: &mut Node, outcome: Outcome) {
+kernel_fn! {
+/// Stop and replacement rows / #771: at most one generation is allocated.
+fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
+    requires !(old(m).phase is Closed || old(m).phase is Stopping)
+        ==> old(m).generation < u64::MAX,
+    ensures final(m).generation as int == old(m).generation as int
+            + if old(m).phase is Closed || old(m).phase is Stopping { 0int } else { 1int },
+        final(m).phase == match old(m).phase {
+            Phase::Closed(o) => Phase::Closed(o),
+            Phase::Stopping(o) => Phase::Stopping(if outcome == Outcome::Merged { outcome } else { o }),
+            _ => Phase::Stopping(outcome),
+        },
+        final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
+        final(m).last_cmd == old(m).last_cmd,
+        (old(m).phase is Closed || old(m).phase is Stopping) ==> *final(m) == (Node {
+            phase: final(m).phase, ..*old(m)
+        }),
+        !(old(m).phase is Closed || old(m).phase is Stopping) ==>
+            final(m).pos == 0 && final(m).ticket.is_none() && final(m).question.is_none()
+                && !final(m).waiting_incident && !final(m).incident_needs_rob,
+] {
     match m.phase {
         Phase::Closed(_) => {}
         Phase::Stopping(_) => {
@@ -2114,6 +2166,7 @@ fn enter_stopping(m: &mut Node, outcome: Outcome) {
             set_phase(m, Phase::Stopping(outcome));
         }
     }
+}
 }
 
 kernel_fn! {
