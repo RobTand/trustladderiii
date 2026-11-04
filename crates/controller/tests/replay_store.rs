@@ -114,6 +114,18 @@ fn fixture_log_read_only_cli_and_corrupt_snapshot() {
 
     // A valid but wrong snapshot must fail equality even though its invariants hold.
     let mut store = Store::open(&settings).unwrap();
+    for index in 0..130 {
+        let snapshot = store.load().unwrap();
+        store
+            .commit(&Commit::new(
+                format!("fixture:metadata:{index}"),
+                json!({}),
+                &snapshot,
+            ))
+            .unwrap();
+    }
+    assert!(replay::run(&mut reader, None).unwrap().events > 128);
+    let after = store.load().unwrap();
     let mut corrupt = Commit::new("fixture:corrupt-snapshot", json!({}), &after);
     let meta = after.rows.iter().find(|r| r.table == "kernel").unwrap();
     let mut value = meta.value.clone();
@@ -124,6 +136,10 @@ fn fixture_log_read_only_cli_and_corrupt_snapshot() {
         value,
     });
     store.commit(&corrupt).unwrap();
+    let snapshot = store.load().unwrap();
+    store
+        .commit(&Commit::new("fixture:later-metadata", json!({}), &snapshot))
+        .unwrap();
     let error = replay::run(&mut reader, None).unwrap_err().to_string();
     assert!(error.contains("fixture:corrupt-snapshot"), "{error}");
     assert!(error.contains("snapshot diverged"), "{error}");
