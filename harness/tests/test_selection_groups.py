@@ -72,6 +72,9 @@ def frozen_repo(tmp_path, monkeypatch):
     monkeypatch.setattr(execution, 'require_admission', lambda: None)
     monkeypatch.setattr(execution, 'container_command', real_runner)
     monkeypatch.setattr(execution.Progress, 'commit', lambda *_: None)
+    # Selection and report parsing need real writes, not crash durability.
+    # Per-record fsync can block on remote storage for thousands of records (#763).
+    monkeypatch.setattr(execution.os, 'fsync', lambda descriptor: None)
     monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(repo))
     yield repo, runs
     monkeypatch.setattr(execution, 'container_command', command)
