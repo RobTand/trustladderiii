@@ -1,6 +1,8 @@
 """TL3's adapter for bazel-diff exports and missing source-edge evidence."""
+import hashlib
 import json
 from pathlib import Path
+import re
 import subprocess
 
 from child_env import child_env
@@ -94,11 +96,69 @@ def ratchet(policy):
     return {key: value for key, value in policy.items() if key != 'edge_groups'}
 
 
+def allowlist_errors(current, previous):
+    errors = []
+    for key, reason in sorted(current.items()):
+        if not isinstance(reason, str) or not reason.strip():
+            errors.append(f'allowlist exception {key} needs a reason')
+        elif key not in previous and not re.search(
+                r'(?<!\w)#[1-9][0-9]*(?!\w)|'
+                r'https://github\.com/RobTand/trustladderiii/issues/[1-9][0-9]*(?![\w/])', reason):
+            errors.append(f'allowlist exception {key} needs a reason naming a program issue (#730, for example)')
+        if key in previous and previous[key] != reason:
+            errors.append(f'allowlist exception {key} reason cannot change')
+    return errors
+
+
+def source_moves(base, head, edge_diff):
+    """Pair unique byte-identical removed/added sources with source-edge evidence."""
+    identities = []
+    for graph, other, direction in ((base, head, 'removed'), (head, base, 'added')):
+        candidates = (graph['loc'].keys() - other['loc'].keys()) & {
+            dependency for _, dependency in edge_diff[direction]['rule_to_source']}
+        by_identity = {}
+        for source in sorted(candidates):
+            identity = graph.get('source_identities', {}).get(source)
+            if identity:
+                by_identity.setdefault(identity, []).append(source)
+        identities.append(by_identity)
+    old, new = identities
+    return dict(sorted((new[identity][0], old[identity][0]) for identity in old.keys() & new.keys()
+                       if len(old[identity]) == len(new[identity]) == 1))
+
+
+def moved_base(base, moves):
+    origins = {origin: destination for destination, origin in moves.items()}
+    return {**base,
+            'loc': {origins.get(source, source): weight for source, weight in base['loc'].items()},
+            'reach': {test: sorted(origins.get(source, source) for source in sources)
+                      for test, sources in base['reach'].items()},
+            'dependents': {origins.get(source, source): count for source, count in base['dependents'].items()}}
+
+
+def structural_reach_errors(base, head, allowlist):
+    # The pinned core's aggregate structural-reach diagnostic ignores reach:
+    # exceptions. Replace only that diagnostic; keep its edge attribution.
+    inherited = graph_impact.inherited_sources(base, head)
+    growth = {test: set(head['reach'][test]) - inherited.keys() - set(base['reach'][test])
+              for test in base['reach'].keys() & head['reach'].keys()
+              if f'reach:{test}' not in allowlist
+              and len(set(head['reach'][test]) - inherited.keys()) > len(base['reach'][test])}
+    gained = set().union(*growth.values()) if growth else set()
+    added = {tuple(edge) for rows in head['edge_diff']['added'].values() for edge in rows}
+    causes = graph_impact._causing_edges(head, added, gained, growth) if gained else []
+    if not causes:
+        return []
+    return ['existing test reach grew: ' + ', '.join(f'{test} +{len(growth[test])}' for test in sorted(growth))
+            + '; added edges: ' + ', '.join(f'{a} -> {b}' for a, b in causes)]
+
+
 def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, previous_policy=None,
           record_gains=False):
     head = {**head, **comparison_inputs(base, head)}
-    errors = graph_impact.allowlist_errors(allowlist or {}, previous_allowlist if previous_allowlist is not None
-                                          else allowlist or {})
+    allowlist = allowlist or {}
+    previous_allowlist = previous_allowlist if previous_allowlist is not None else allowlist
+    errors = allowlist_errors(allowlist, previous_allowlist)
     errors += graph_impact.baseline_errors(ratchet(policy), ratchet(previous_policy) if previous_policy else None)
     base_edges = set(map(tuple, base['edges']))
     # The core also checks absolute forbidden-edge exceptions. Supply those
@@ -109,9 +169,12 @@ def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, 
     comparison_policy = {**ratchet(policy), 'edge_groups': base_groups,
                          'figures': {key: value for key, value in policy['figures'].items() if key != 'scc_max'}}
     # SCC growth is checked component-by-component against base by compare().
-    errors += graph_impact.compare({**base, 'edge_groups': base_groups}, head, comparison_policy,
-                                   changed_tests=changed, allowlist=allowlist,
-                                   record_gains=record_gains)
+    moves = source_moves(base, head, head['edge_diff'])
+    comparison_base = moved_base(base, moves)
+    compared = graph_impact.compare({**comparison_base, 'edge_groups': base_groups}, head, comparison_policy,
+                                    changed_tests=changed, allowlist=allowlist, record_gains=record_gains)
+    errors += [error for error in compared if not error.startswith('existing test reach grew: ')]
+    errors += structural_reach_errors(comparison_base, head, allowlist)
     added = set(map(tuple, head['edges'])) - set(map(tuple, base['edges']))
     deps = {}
     for source, target in head['edges']:
@@ -122,11 +185,17 @@ def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, 
         targets.update(test for test in head['reach'] if closure(deps, test) & consumers)
     else:
         targets = set()
-    growth = sorted(((source, n - base['dependents'].get(source, 0))
-                     for source, n in head['dependents'].items() if n > base['dependents'].get(source, 0)),
+    growth = sorted(((source, n - comparison_base['dependents'].get(source, 0))
+                     for source, n in head['dependents'].items() if n > comparison_base['dependents'].get(source, 0)),
                     key=lambda row: (-row[1], row[0]))
     broad = {test for test in targets if any(f'{test} reach ' in error for error in errors)}
-    return {'summary': graph_impact.summary(base, head, policy['reach_budget']), 'errors': errors,
+    additions = {key: reason for key, reason in sorted(allowlist.items()) if key not in previous_allowlist}
+    summary = graph_impact.summary(base, head, policy['reach_budget'])
+    for key, reason in additions.items():
+        summary += f'\nAdded allowlist entry {key}: {reason}'
+    for destination, origin in moves.items():
+        summary += f'\nSource move {origin} -> {destination}'
+    return {'summary': summary, 'errors': errors, 'allowlist_additions': additions, 'source_moves': moves,
             'base': base, 'head': head, 'added_edges': [list(edge) for edge in sorted(added)],
             'edge_diff': head['edge_diff'], 'base_package_max_reach': head['base_package_max_reach'],
             'fanout_growth': [list(row) for row in growth],
@@ -205,9 +274,11 @@ def load(deps_file, hashes_file, tests, root):
             for label, values in json.loads(Path(deps_file).read_text()).items()}
     source_hashes = json.loads(Path(hashes_file).read_text())
     sources = source_labels(source_hashes)
-    loc = {label: len((Path(root) / path(label)).read_bytes().splitlines()) for label in sources}
+    content = {label: (Path(root) / path(label)).read_bytes() for label in sources}
+    loc = {label: len(data.splitlines()) for label, data in content.items()}
     reaches, edges, weights = graph_impact.read_deps(deps_file, tests, sources, loc=loc)
     graph = graph_impact.measure(reaches, edges, weights)
+    graph['source_identities'] = {label: hashlib.sha256(data).hexdigest() for label, data in content.items()}
     graph['test_packages'] = {test: package(test) for test in sorted(reaches)}
     graph['node_types'] = node_types(source_hashes)
     conftests = {node for node in deps if node.endswith((':conftest', ':conftest.py', '/conftest.py'))}
