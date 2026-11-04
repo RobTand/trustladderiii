@@ -171,18 +171,29 @@ proof fn delivered_record_progress(before: World, after: World, index: int)
         !(before.nodes@[before.dependencies@[index].node.0 as int].phase is Closed),
         after.dependencies@ == before.dependencies@.update(index, Dependency {
             status: DependencyStatus::Delivered, rejected: false, ..before.dependencies@[index] }),
-        after.nodes@.len() == before.nodes@.len(),
-        forall|j: int| 0 <= j < before.nodes@.len() ==> after.nodes@[j].phase == before.nodes@[j].phase,
-    ensures edges_indexable(after),
+        after.nodes@ == before.nodes@.update(before.dependencies@[index].node.0 as int,
+            Node { waiting_prerequisite: after.nodes@[before.dependencies@[index].node.0 as int].waiting_prerequisite,
+                credit: Credit { withheld: after.nodes@[before.dependencies@[index].node.0 as int].credit.withheld,
+                    ..before.nodes@[before.dependencies@[index].node.0 as int].credit },
+                ..before.nodes@[before.dependencies@[index].node.0 as int] }),
+    ensures edges_indexable(after), progress_measure(after) < progress_measure(before),
         (forall|j: int| 0 <= j < before.dependencies@.len()
             ==> dependency_weight(after, j) <= dependency_weight(before, j)),
         dependency_weight(after, index) < dependency_weight(before, index),
 {
     reveal(edges_indexable);
+    reveal(progress_measure);
+    reveal(distance);
+    let owner = before.dependencies@[index].node.0 as int;
+    sum_update(before.nodes@, owner, after.nodes@[owner]);
+    assert(distance(after.nodes@[owner]) == distance(before.nodes@[owner]));
     assert forall|j: int| 0 <= j < before.dependencies@.len() implies
         dependency_weight(after, j) <= dependency_weight(before, j) by {
         if j != index { assert(after.dependencies@[j] == before.dependencies@[j]); }
+        let n = before.dependencies@[j].node.0 as int;
+        if n != owner { assert(after.nodes@[n] == before.nodes@[n]); }
     }
+    dependency_sum_compare(before, after, before.dependencies@.len());
 }
 
 pub closed spec fn unseen_prefix(seen: Seq<bool>, end: nat) -> nat
@@ -627,11 +638,7 @@ impl World {
             edges_indexable(*old(self)), old(out).len < OUTBOX,
         ensures (dependency_progress_input(*old(self), i as int, target, status)
             ==> edges_indexable(*final(self))
-                && final(self).dependencies@.len() == old(self).dependencies@.len()
-                && (forall|j: int| 0 <= j < old(self).dependencies@.len() ==>
-                    dependency_weight(*final(self), j) <= dependency_weight(*old(self), j))
-                && (exists|j: int| 0 <= j < old(self).dependencies@.len()
-                    && dependency_weight(*final(self), j) < dependency_weight(*old(self), j))),
+                && progress_measure(*final(self)) < progress_measure(*old(self))),
             final(self).nodes@ == old(self).nodes@.update(i as int, Node {
             waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
             credit: Credit { withheld: final(self).nodes@[i as int].credit.withheld,

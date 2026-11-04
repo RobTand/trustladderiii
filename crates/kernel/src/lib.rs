@@ -3708,7 +3708,7 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
         final(w).fail_fast == old(w).fail_fast,
         final(w).file_sets@ == old(w).file_sets@,
         final(out).len <= old(out).len + 4,
-] proof [reveal(distance); reveal(world_checked); reveal(progress_measure);] {
+] proof [reveal(world_checked);] {
     kernel_snapshot! { before_fact = *w }
     kernel_proof! {
         if world_checked(*w) && chosen_for_node(*w, i as int, Event::Fact { node: NodeId(i as u64), fact }) {
@@ -3734,8 +3734,7 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
             match fact {
                 Fact::Dependency { target, status } => {
                     assert(dependency_progress_input(before_fact@, i as int, target, status));
-                    sum_update(before_fact@.nodes@, i as int, w.nodes@[i as int]);
-                    dependency_sum_compare(before_fact@, *w, before_fact@.dependencies@.len());
+                    assert(progress_measure(*w) < progress_measure(before_fact@));
                 },
                 _ => {
                     assert(w.nodes@ == before_fact@.nodes@.update(i as int, w.nodes@[i as int]));
