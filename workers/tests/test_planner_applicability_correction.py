@@ -150,3 +150,29 @@ def test_unrelated_subject_does_not_fix_the_omission(planner_request, applicabil
     assert len(model.calls) == 2
     diagnostic = failure_tags(caught.value)['failure_message']
     assert SUBJECT in diagnostic and 'repaired reply' in diagnostic
+
+
+@pytest.mark.parametrize('supported', [True, False])
+def test_empty_subject_omission_preserves_capability_preflight(
+        planner_request, applicability_plan, monkeypatch, supported):
+    from tl3_workers import runtime
+
+    applicability_plan['checks'][1]['proof']['subjects'] = []
+    applicability_plan['evidence_contract'] = []
+    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
+                  'artifacts': ['cas_receipt', 'terminal_verdict'], 'methods': ['subject_observer'],
+                  'protected_files': []}
+    planner_request['inputs']['tool_capabilities'] = [capability] if supported else []
+    fixed = corrected(applicability_plan)
+    model = planner_model(monkeypatch, applicability_plan, fixed)
+    events = []
+    runtime.run(planner_request, events.append)
+    if supported:
+        assert len(model.calls) == 2
+        assert events[-1]['reply']['violations'] == []
+        assert events[-1]['reply']['checks'] == fixed['checks']
+        assert events[-1]['reply']['evidence_contract'][0]['methods'] == ['subject_observer']
+    else:
+        assert len(model.calls) == 1, 'unsupported required proof is substantive before correction'
+        assert events[-1]['reply']['kind'] == 'cant_meet'
+        assert 'Unsupported evidence requirement' in events[-1]['reply']['report']
