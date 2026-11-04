@@ -1,5 +1,6 @@
 """A dropped model turn retries once; an invalid reply gets one tool-free repair turn."""
 import copy
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -17,6 +18,14 @@ from pb_fixtures import machine_cli, supported_fake_runtime as supported_fake_ru
 import test_prompt_cache
 import test_reviewer
 import test_workers
+
+
+@pytest.fixture(autouse=True)
+def classifier_validation_boundary(monkeypatch):
+    # These tests exercise turn orchestration. Rust owns classifier decisions.
+    monkeypatch.setitem(runtime.ROLES, "classifier", replace(
+        runtime.ROLES["classifier"], check_reply=None,
+    ))
 
 
 maker_request = test_maker.maker_request

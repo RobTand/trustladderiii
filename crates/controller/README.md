@@ -1662,6 +1662,8 @@ action removes the restartability guard in `decision.rs`; the same proof must
 fail its ordered-rule assertion. The unwind bound is 13 for the proof's twelve
 rule rows. Production decisions have no loops or collection-size bound.
 
-`//crates/controller:test_test_classifier` retains the Python oracle's golden
-cases, the CLI contract, and proptest checks of the parse boundary. The worker
-retains its prompt contract and one real-process repair/tool-denial test.
+`//crates/controller:test_test_workers` retains the golden cases, CLI contract,
+parse proptests, and real-process repair/tool-denial test. Use
+`--test_arg=--classifier-contracts` for the classifier group alone. Python tests
+exercise only the shim with a fake executable and orchestration with the Rust
+validation boundary stubbed. They never depend on the real `tl3` binary.

@@ -15,9 +15,6 @@ def prepare():
     os.environ.clear()
     os.environ.update(environment)
     os.environ.pop("PYTHONSAFEPATH", None)
-    checker = Path("crates/controller/tl3").resolve()
-    if checker.is_file():
-        os.environ["TL3_BINARY"] = str(checker)
     scratch = Path(os.environ['TEST_TMPDIR']).resolve()
     os.environ['HOME'] = str(scratch)
     os.environ['TMPDIR'] = str(scratch)
