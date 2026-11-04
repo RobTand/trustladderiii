@@ -129,6 +129,7 @@ def summary(repo, names, forcing=FORCING):
     return test_tool.run(repo, CONTAINER, tuple('test_product.py::test_' + name for name in names), forcing=forcing)
 
 
+@pytest.mark.durability
 def test_killed_child_counts_at_entry_and_still_requires_an_outer_assertion(repo):
     result = summary(repo, ['killed', 'zero'])
     assert result['status'] == 'completed', result
@@ -140,6 +141,7 @@ def test_killed_child_counts_at_entry_and_still_requires_an_outer_assertion(repo
     assert zero['delay_budget'] == {'applied_seconds': 0, 'exhausted': False}
 
 
+@pytest.mark.durability
 def test_child_closing_inherited_descriptors_keeps_hits_and_original_result(repo):
     forcing = Forcing.parse({'symptom': 'A slow callback.',
                              'patches': [{'target': TARGET, 'delay_seconds': 0.001}]})
@@ -149,6 +151,7 @@ def test_child_closing_inherited_descriptors_keeps_hits_and_original_result(repo
     assert [test['target_hits'][TARGET] for test in result['tests']] == [1, 0]
 
 
+@pytest.mark.durability
 def test_concurrent_children_share_budget_across_targets_and_keep_exact_hits(repo):
     result = summary(repo, ['budget', 'zero'])
     assert result['status'] == 'completed', result
@@ -160,6 +163,7 @@ def test_concurrent_children_share_budget_across_targets_and_keep_exact_hits(rep
     assert zero['delay_budget'] == {'applied_seconds': 0, 'exhausted': False}
 
 
+@pytest.mark.durability
 def test_spawned_interpreter_without_forcing_supplies_no_hit(repo):
     result = summary(repo, ['spawn'])
     assert result['status'] == 'completed', result
@@ -167,6 +171,7 @@ def test_spawned_interpreter_without_forcing_supplies_no_hit(repo):
     assert result['tests'][0]['target_hits'] == {TARGET: 0, 'product.other': 0}
 
 
+@pytest.mark.durability
 def test_killed_child_reservation_stays_consumed_and_next_node_gets_fresh_budget(repo):
     result = summary(repo, ['killed_budget', 'budget'])
     assert result['status'] == 'completed', result
@@ -175,6 +180,7 @@ def test_killed_child_reservation_stays_consumed_and_next_node_gets_fresh_budget
     assert result['tests'][1]['target_hits'] == {TARGET: 3, 'product.other': 3}
 
 
+@pytest.mark.durability
 def test_retired_journal_cannot_feed_the_next_node(tmp_path):
     old = runner.DelayAccounting(tmp_path, [TARGET])
     assert old.enter(TARGET, 4) == 4
@@ -192,6 +198,7 @@ def test_retired_journal_cannot_feed_the_next_node(tmp_path):
     (runner.DelayAccounting.record.pack(0, float('nan')), 'invalid'),
     (runner.DelayAccounting.record.pack(0, 6), 'invalid'),
 ])
+@pytest.mark.durability
 def test_malformed_journal_is_unusable_and_removed(tmp_path, data, reason):
     accounting = runner.DelayAccounting(tmp_path, [TARGET])
     Path(accounting.path).write_bytes(data)
@@ -201,11 +208,13 @@ def test_malformed_journal_is_unusable_and_removed(tmp_path, data, reason):
 
 
 @pytest.mark.parametrize('parallel', [2, 4])
+@pytest.mark.durability
 def test_forcing_cannot_mix_xdist_worker_evidence(repo, parallel):
     with pytest.raises(ValueError, match='without xdist'):
         test_tool.run(repo, CONTAINER, ('test_product.py',), parallel=parallel, forcing=FORCING)
 
 
+@pytest.mark.durability
 def test_independent_checking_keeps_killed_child_assertion_classification(repo):
     selection = {'tests': ['test_product.py::test_killed'], 'forcing': FORCING.as_json()}
     child = subprocess.run([sys.executable, '-I', '-B', str(RUNNER), json.dumps(selection), str(repo)],
@@ -217,6 +226,7 @@ def test_independent_checking_keeps_killed_child_assertion_classification(repo):
 
 
 @pytest.mark.parametrize('tamper', ['truncate', 'append', 'rewrite', 'replace', 'directory'])
+@pytest.mark.durability
 def test_journal_tampering_is_a_sticky_error_without_hit_evidence(repo, tamper):
     (repo / 'test_product.py').write_text('''
 from pathlib import Path
@@ -259,6 +269,7 @@ def test_tamper():
     assert item['target_hits'] == {}, item
 
 
+@pytest.mark.durability
 def test_replaced_journal_inode_stays_pinned_until_tamper_reporting(tmp_path, monkeypatch):
     created = []
     original = runner.tempfile.mkstemp
@@ -291,6 +302,7 @@ def test_replaced_journal_inode_stays_pinned_until_tamper_reporting(tmp_path, mo
         os.fstat(descriptor)
 
 
+@pytest.mark.durability
 def test_truncating_a_fork_childs_entries_cannot_hide_them_from_parent(tmp_path):
     accounting = runner.DelayAccounting(tmp_path, [TARGET])
     child = os.fork()
@@ -303,6 +315,7 @@ def test_truncating_a_fork_childs_entries_cannot_hide_them_from_parent(tmp_path)
         accounting.finish()
 
 
+@pytest.mark.durability
 def test_100k_calls_have_bounded_journal_io_and_finish_with_exact_count(tmp_path, monkeypatch):
     accounting = runner.DelayAccounting(tmp_path, [TARGET])
     original = runner.os.pread
@@ -333,6 +346,7 @@ def test_100k_calls_have_bounded_journal_io_and_finish_with_exact_count(tmp_path
         signal.signal(signal.SIGALRM, previous)
 
 
+@pytest.mark.durability
 def test_killed_accounting_writer_cannot_strand_the_next_caller(tmp_path):
     accounting = runner.DelayAccounting(tmp_path, [TARGET])
     reader, writer = os.pipe()

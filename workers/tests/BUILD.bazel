@@ -1052,3 +1052,13 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_durability",
+    srcs = ["test_durability.py"],
+    deps = [
+        ":conftest",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)

@@ -168,6 +168,7 @@ def test_dropped_call_counts_against_the_input_budget(request_doc, monkeypatch):
     assert budgets[0].spent > 1000, "the dropped call may have been billed"
 
 
+@pytest.mark.durability
 def test_maker_rerun_after_worker_failure_resumes_the_saved_session(maker_request, tmp_path, monkeypatch):
     maker_request["inputs"]["context_size"] = 150_000
     maker_request["session_file"] = str(tmp_path / "sessions/1/plan-0/attempt-1.json")
@@ -381,6 +382,7 @@ def interrupted(maker_request, monkeypatch, steps):
 
 
 @pytest.mark.parametrize("damage", ["unversioned", "future", "not_json", "bad_messages"])
+@pytest.mark.durability
 def test_unusable_visit_checkpoint_starts_the_visit_afresh(maker_request, tmp_path, monkeypatch, capsys, damage):
     visit = maker_visit(maker_request, tmp_path)
     interrupted(maker_request, monkeypatch, [ROLES["maker"][1], dropped(), dropped()])
@@ -427,6 +429,7 @@ def pb_scripts(tmp_path):
     return scripts
 
 
+@pytest.mark.durability
 def test_resume_reattaches_to_the_in_flight_test_action(maker_request, tmp_path, monkeypatch):
     from tl3_workers import pb_tests
 
@@ -455,6 +458,7 @@ def test_resume_reattaches_to_the_in_flight_test_action(maker_request, tmp_path,
     assert_tool_pairs(model.calls[0][0])
 
 
+@pytest.mark.durability
 def test_resume_warns_that_an_interrupted_file_tool_may_have_run(maker_request, tmp_path, monkeypatch):
     from tl3_workers import tools
 
@@ -477,6 +481,7 @@ def test_resume_warns_that_an_interrupted_file_tool_may_have_run(maker_request, 
     assert "may have run" in instruction.text
 
 
+@pytest.mark.durability
 def test_resume_keeps_compaction_and_cache_pricing(maker_request, tmp_path, monkeypatch):
     maker_visit(maker_request, tmp_path)
     maker_request["inputs"]["context_size"] = 100_000
@@ -507,6 +512,7 @@ def test_resume_keeps_compaction_and_cache_pricing(maker_request, tmp_path, monk
     assert seen == [(True, True)], "resumed calls are priced warm and do not compact again"
 
 
+@pytest.mark.durability
 def test_resume_keeps_an_exhausted_budget(maker_request, tmp_path, monkeypatch):
     from dataclasses import replace
     from tl3_workers.exploration import ExplorationBudget
@@ -552,6 +558,7 @@ def test_repair_prompt_caps_an_echoed_invalid_reply(tmp_path, monkeypatch):
     assert "oneOf" in repair.text
 
 
+@pytest.mark.durability
 def test_environment_evidence_survives_a_checkpoint_round_trip():
     from tl3_workers.tools import Evidence
 

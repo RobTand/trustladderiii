@@ -11,6 +11,7 @@ from tl3_workers.tools import build_tools
 
 
 @pytest.mark.parametrize("name", sorted(ROLES))
+@pytest.mark.durability
 def test_every_role_reports_durable_activity_and_reply(tmp_path, monkeypatch, name):
     (tmp_path / "greeting.py").write_text("hello")
 
@@ -37,6 +38,7 @@ def test_every_role_reports_durable_activity_and_reply(tmp_path, monkeypatch, na
     assert events[-1]["event"] == "reply"
 
 
+@pytest.mark.durability
 def test_failure_reports_safe_reason_before_propagating(tmp_path, monkeypatch):
     def failed(request):
         raise RuntimeError("Authorization: Bearer fixture-secret")
@@ -53,6 +55,7 @@ def test_failure_reports_safe_reason_before_propagating(tmp_path, monkeypatch):
     assert "fixture-secret" not in summary.read_text()
 
 
+@pytest.mark.durability
 def test_memory_write_failure_does_not_change_worker_reply(tmp_path, monkeypatch):
     class Model(FakeMessagesListChatModel):
         def bind_tools(self, tools, **kwargs):
