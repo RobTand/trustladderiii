@@ -3707,7 +3707,7 @@ fn fact_transition(w: &mut World, i: usize, fact: Fact,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 2,
-] proof [reveal(retry_bounds);] proof [reveal(distance);] {
+] proof [reveal(retry_bounds); reveal(distance);] {
     match fact {
         Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {}
         Fact::Priority(priority) => {
