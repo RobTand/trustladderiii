@@ -317,7 +317,8 @@ class DeployTests(unittest.TestCase):
         self.assertIn("MISSING tl3 status: binary verification failed", output)
         self.assertNotIn("Postgres reachable and migrated: binary verification failed", output)
         self.assertNotIn("Config::load including secret metadata: binary verification failed", output)
-        self.assertEqual(result, 2, output)
+        self.assertEqual(result, 1, output)
+        self.assertIn("Deployment check: 2 missing checks", output)
 
     def test_install_preserves_release_binary_manifest(self):
         binaries = self.home / "release"
