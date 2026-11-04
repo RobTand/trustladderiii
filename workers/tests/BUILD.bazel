@@ -33,6 +33,7 @@ tl3_py_test(
         ":conftest",
         ":worker_process",
         "//workers/src",
+        "@tl3_pip//jsonschema",
         "@tl3_pip//langchain_core",
         "@tl3_pip//pytest",
     ],
