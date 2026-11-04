@@ -88,7 +88,6 @@
         },
         "recommendations": {
           "type": "array",
-          "maxItems": 3,
           "items": {"$ref": "#/$defs/recommendation"}
         },
         "notes": {"type": "string", "maxLength": 2000},
