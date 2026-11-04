@@ -1029,18 +1029,18 @@ impl Outbox {
     }
 
     kernel_fn! {
-    fn push(&mut self, o: Out) -> (result: ()) [
-    requires old(self).len < OUTBOX,
-    ensures final(self).len == old(self).len + 1,
-        final(self).items@ == old(self).items@.update(old(self).len as int, Some(o)),
-    ] {
-            assert!(
-                self.len < OUTBOX,
-                "a transition emitted more than OUTBOX outputs"
-            );
-            self.items[self.len] = Some(o);
-            self.len += 1;
-        }
+        fn push(&mut self, o: Out) -> (result: ()) [
+        requires old(self).len < OUTBOX,
+        ensures final(self).len == old(self).len + 1,
+            final(self).items@ == old(self).items@.update(old(self).len as int, Some(o)),
+        ] {
+                assert!(
+                    self.len < OUTBOX,
+                    "a transition emitted more than OUTBOX outputs"
+                );
+                self.items[self.len] = Some(o);
+                self.len += 1;
+            }
     }
 
     /// The output in slot `i`, if any. Slots fill in order.
@@ -1186,15 +1186,15 @@ kernel_fn! {
 }
 
 kernel_fn! {
-fn notice(out: &mut Outbox, node: usize, value: Notice) -> (result: ()) [
-requires old(out).len < OUTBOX,
-ensures final(out).len == old(out).len + 1,
-] {
-    out.push(Out::Notice {
-        node: NodeId(node as u64),
-        notice: value,
-    });
-}
+    fn notice(out: &mut Outbox, node: usize, value: Notice) -> (result: ()) [
+    requires old(out).len < OUTBOX,
+    ensures final(out).len == old(out).len + 1,
+    ] {
+        out.push(Out::Notice {
+            node: NodeId(node as u64),
+            notice: value,
+        });
+    }
 }
 
 impl World {
@@ -2091,30 +2091,30 @@ kernel_fn! {
 }
 
 kernel_fn! {
-fn close_node(m: &mut Node, i: usize, outcome: Outcome, out: &mut Outbox) -> (result: ()) [
-requires old(m).credit.merge_credited || old(m).credit.earned < u32::MAX,
-    old(out).len + 2 <= OUTBOX,
-ensures final(m).phase == Phase::Closed(outcome), final(m).pos == 0,
-    final(m).ticket.is_none(),
-    final(m).generation == old(m).generation, final(m).next_seq == old(m).next_seq,
-    final(m).credit.earned as int == old(m).credit.earned as int
-        + if outcome == Outcome::Merged && !old(m).credit.merge_credited { 1int } else { 0int },
-    final(m).credit.merge_credited == (old(m).credit.merge_credited || outcome == Outcome::Merged),
-    final(m).credit.start == old(m).credit.start, final(m).credit.added == old(m).credit.added,
-    final(m).credit.spent == old(m).credit.spent,
-    final(out).len <= old(out).len + 2,
-] {
-    m.phase = Phase::Closed(outcome);
-    m.pos = 0;
-    m.ticket = None;
-    if outcome == Outcome::Merged {
-        merge_credit(m);
+    fn close_node(m: &mut Node, i: usize, outcome: Outcome, out: &mut Outbox) -> (result: ()) [
+    requires old(m).credit.merge_credited || old(m).credit.earned < u32::MAX,
+        old(out).len + 2 <= OUTBOX,
+    ensures final(m).phase == Phase::Closed(outcome), final(m).pos == 0,
+        final(m).ticket.is_none(),
+        final(m).generation == old(m).generation, final(m).next_seq == old(m).next_seq,
+        final(m).credit.earned as int == old(m).credit.earned as int
+            + if outcome == Outcome::Merged && !old(m).credit.merge_credited { 1int } else { 0int },
+        final(m).credit.merge_credited == (old(m).credit.merge_credited || outcome == Outcome::Merged),
+        final(m).credit.start == old(m).credit.start, final(m).credit.added == old(m).credit.added,
+        final(m).credit.spent == old(m).credit.spent,
+        final(out).len <= old(out).len + 2,
+    ] {
+        m.phase = Phase::Closed(outcome);
+        m.pos = 0;
+        m.ticket = None;
+        if outcome == Outcome::Merged {
+            merge_credit(m);
+        }
+        notice(out, i, Notice::Summary(outcome));
+        if outcome == Outcome::Replaced {
+            notice(out, i, Notice::FileReplacement);
+        }
     }
-    notice(out, i, Notice::Summary(outcome));
-    if outcome == Outcome::Replaced {
-        notice(out, i, Notice::FileReplacement);
-    }
-}
 }
 
 fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8, out: &mut Outbox) {
@@ -2151,47 +2151,47 @@ fn emit(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
 }
 
 kernel_fn! {
-/// #771: effect allocation increases next_seq by exactly one.
-fn emit_node(m: &mut Node, i: usize, kind: EffectKind, out: &mut Outbox) -> (result: ()) [
-requires old(m).next_seq < u64::MAX, old(out).len < OUTBOX,
-ensures *final(m) == (Node {
-    next_seq: (old(m).next_seq + 1) as u64,
-    effect: Some(InFlight { seq: old(m).next_seq, kind, cancelling: false }),
-    worktree: old(m).worktree || kind == EffectKind::PrepareWorktree,
-    pr_open: old(m).pr_open || kind == EffectKind::OpenPr,
-    had_pr: old(m).had_pr || kind == EffectKind::OpenPr,
-    ..*old(m)
-}),
-final(out).len == old(out).len + 1,
-] {
-    let seq = m.next_seq;
-    m.next_seq += 1;
-    m.effect = Some(InFlight {
-        seq,
-        kind,
-        cancelling: false,
-    });
-    match kind {
-        EffectKind::PrepareWorktree => m.worktree = true,
-        EffectKind::OpenPr => {
-            m.pr_open = true;
-            m.had_pr = true;
+    /// #771: effect allocation increases next_seq by exactly one.
+    fn emit_node(m: &mut Node, i: usize, kind: EffectKind, out: &mut Outbox) -> (result: ()) [
+    requires old(m).next_seq < u64::MAX, old(out).len < OUTBOX,
+    ensures *final(m) == (Node {
+        next_seq: (old(m).next_seq + 1) as u64,
+        effect: Some(InFlight { seq: old(m).next_seq, kind, cancelling: false }),
+        worktree: old(m).worktree || kind == EffectKind::PrepareWorktree,
+        pr_open: old(m).pr_open || kind == EffectKind::OpenPr,
+        had_pr: old(m).had_pr || kind == EffectKind::OpenPr,
+        ..*old(m)
+    }),
+    final(out).len == old(out).len + 1,
+    ] {
+        let seq = m.next_seq;
+        m.next_seq += 1;
+        m.effect = Some(InFlight {
+            seq,
+            kind,
+            cancelling: false,
+        });
+        match kind {
+            EffectKind::PrepareWorktree => m.worktree = true,
+            EffectKind::OpenPr => {
+                m.pr_open = true;
+                m.had_pr = true;
+            }
+            _ => {}
         }
-        _ => {}
+        let head = match kind {
+            EffectKind::Push | EffectKind::PostApproval | EffectKind::OpenPr | EffectKind::Enqueue => {
+                m.head
+            }
+            _ => None,
+        };
+        out.push(Out::Effect {
+            node: NodeId(i as u64),
+            seq,
+            kind,
+            head,
+        });
     }
-    let head = match kind {
-        EffectKind::Push | EffectKind::PostApproval | EffectKind::OpenPr | EffectKind::Enqueue => {
-            m.head
-        }
-        _ => None,
-    };
-    out.push(Out::Effect {
-        node: NodeId(i as u64),
-        seq,
-        kind,
-        head,
-    });
-}
 }
 
 // ---------------------------------------------------------------- replies
@@ -2986,229 +2986,229 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
 }
 
 kernel_fn! {
-    /// #771: actual local settle transition, for every scheduling decision.
-fn advance_node(
-    node: &mut Node,
-    next_ticket: &mut u64,
-    context: AdvanceContext,
-    out: &mut Outbox,
-)  -> (result: bool) [
-    requires old(out).len + 2 <= OUTBOX,
-        old(node).generation as int + generation_capacity(*old(node)) <= u64::MAX as int,
-        old(node).next_seq as int + effect_capacity(*old(node)) <= u64::MAX as int,
-        *old(next_ticket) as int + ticket_capacity(*old(node)) <= u64::MAX as int,
-        old(node).credit.earned as int + merge_capacity(*old(node)) <= u32::MAX as int,
-    ensures
-        result ==> internal_height(*final(node)) < internal_height(*old(node)),
-        super::ranks::distance(*final(node)) <= super::ranks::distance(*old(node)),
-        result ==> 4 * super::ranks::distance(*final(node)) + pending_rank(*final(node))
-            < 4 * super::ranks::distance(*old(node)) + pending_rank(*old(node)),
-        final(node).generation as int + generation_capacity(*final(node))
-            <= old(node).generation as int + generation_capacity(*old(node)),
-        final(node).next_seq as int + effect_capacity(*final(node))
-            <= old(node).next_seq as int + effect_capacity(*old(node)),
-        *final(next_ticket) as int + ticket_capacity(*final(node))
-            <= *old(next_ticket) as int + ticket_capacity(*old(node)),
-        final(node).credit.earned as int + merge_capacity(*final(node))
-            <= old(node).credit.earned as int + merge_capacity(*old(node)),
-        final(node).credit.start == old(node).credit.start,
-        final(node).credit.added == old(node).credit.added,
-        final(node).credit.spent == old(node).credit.spent,
-        !result ==> *final(node) == *old(node) && *final(next_ticket) == *old(next_ticket),
-] proof [reveal(ranks::distance); reveal(ranks::pending_rank);] {
-    let n = *node;
-    if n.phase.is_closed() {
-        return false;
-    }
-    if n.waiting_incident {
-        if n.ticket.is_some() {
-            node.ticket = None;
-            return true;
+        /// #771: actual local settle transition, for every scheduling decision.
+    fn advance_node(
+        node: &mut Node,
+        next_ticket: &mut u64,
+        context: AdvanceContext,
+        out: &mut Outbox,
+    ) -> (result: bool) [
+        requires old(out).len + 2 <= OUTBOX,
+            old(node).generation as int + generation_capacity(*old(node)) <= u64::MAX as int,
+            old(node).next_seq as int + effect_capacity(*old(node)) <= u64::MAX as int,
+            *old(next_ticket) as int + ticket_capacity(*old(node)) <= u64::MAX as int,
+            old(node).credit.earned as int + merge_capacity(*old(node)) <= u32::MAX as int,
+        ensures
+            result ==> internal_height(*final(node)) < internal_height(*old(node)),
+            super::ranks::distance(*final(node)) <= super::ranks::distance(*old(node)),
+            result ==> 4 * super::ranks::distance(*final(node)) + pending_rank(*final(node))
+                < 4 * super::ranks::distance(*old(node)) + pending_rank(*old(node)),
+            final(node).generation as int + generation_capacity(*final(node))
+                <= old(node).generation as int + generation_capacity(*old(node)),
+            final(node).next_seq as int + effect_capacity(*final(node))
+                <= old(node).next_seq as int + effect_capacity(*old(node)),
+            *final(next_ticket) as int + ticket_capacity(*final(node))
+                <= *old(next_ticket) as int + ticket_capacity(*old(node)),
+            final(node).credit.earned as int + merge_capacity(*final(node))
+                <= old(node).credit.earned as int + merge_capacity(*old(node)),
+            final(node).credit.start == old(node).credit.start,
+            final(node).credit.added == old(node).credit.added,
+            final(node).credit.spent == old(node).credit.spent,
+            !result ==> *final(node) == *old(node) && *final(next_ticket) == *old(next_ticket),
+    ] proof [reveal(ranks::distance); reveal(ranks::pending_rank);] {
+        let n = *node;
+        if n.phase.is_closed() {
+            return false;
         }
-        return false;
-    }
-    if n.effect.is_some() {
-        return false; // one effect in flight at a time
-    }
-    let Some(item) = n.current() else {
-        return match n.phase {
-            Phase::Publishing => {
-                set_phase(node, Phase::Queued);
-                true
-            }
-            Phase::Stopping(outcome) if n.question.is_none() => {
-                close_node(node, context.node, outcome, out);
-                true
-            }
-            _ => false,
-        };
-    };
-    match item {
-        Item::Do(kind) => {
-            if n.paused {
-                return pause_node(node);
-            }
-            emit_node(node, context.node, kind, out);
-            true
-        }
-        Item::Start(role) => {
-            if n.paused {
-                return pause_node(node);
-            }
-            if n.ticket.is_none() {
-                take_ticket_node(node, next_ticket);
+        if n.waiting_incident {
+            if n.ticket.is_some() {
+                node.ticket = None;
                 return true;
             }
-            if context.pool {
-                let m = &mut *node;
-                m.ticket = None;
-                m.pool = true;
-                m.run = Some(m.generation);
-                m.pos += 1;
-                emit_node(node, context.node, EffectKind::StartRun(role), out);
-                return true;
-            }
-            false
+            return false;
         }
-        Item::StartChecks => {
-            if n.paused {
-                return pause_node(node);
-            }
-            let m = &mut *node;
-            m.job = Some(m.generation);
-            m.pos += 1;
-            emit_node(node, context.node, EffectKind::SubmitChecks, out);
-            true
+        if n.effect.is_some() {
+            return false; // one effect in flight at a time
         }
-        Item::StartRebase => {
-            if n.paused {
-                return pause_node(node);
-            }
-            let m = &mut *node;
-            m.run = Some(m.generation);
-            m.pos += 1;
-            emit_node(node, context.node, EffectKind::StartRebase, out);
-            true
-        }
-        Item::Await | Item::Merge | Item::Answer => false,
-        Item::Admit => {
-            if n.paused || !context.admit {
-                return false;
-            }
-            let m = &mut *node;
-            m.credit.withheld = false;
-            m.planning_started = true;
-            set_phase(m, Phase::Planning { must_split: false });
-            true
-        }
-        Item::Slot => {
-            let Phase::Ready(r) = n.phase else {
-                return false;
-            };
-            if n.paused {
-                if n.ticket.is_some() {
-                    node.ticket = None;
-                    return true;
+        let Some(item) = n.current() else {
+            return match n.phase {
+                Phase::Publishing => {
+                    set_phase(node, Phase::Queued);
+                    true
                 }
-                return false;
-            }
-            if n.ticket.is_none() {
-                take_ticket_node(node, next_ticket);
-                return true;
-            }
-            if context.slot {
-                let m = &mut *node;
-                m.holds = true;
-                set_phase(m, r.phase());
-                return true;
-            }
-            false
-        }
-        Item::Release => {
-            let m = &mut *node;
-            m.holds = false;
-            m.pos += 1;
-            true
-        }
-        Item::Teardown(kind) => {
-            if n.question.is_some() {
-                return false; // waiting for Rob
-            }
-            let gone = match kind {
-                EffectKind::StopRun => n.run.is_none(),
-                EffectKind::WithdrawJob => n.job.is_none(),
-                EffectKind::ClosePr => !n.pr_open,
-                EffectKind::RemoveWorktree => !n.worktree,
+                Phase::Stopping(outcome) if n.question.is_none() => {
+                    close_node(node, context.node, outcome, out);
+                    true
+                }
                 _ => false,
             };
-            if gone {
-                let m = &mut *node;
-                if kind == EffectKind::StopRun {
-                    m.pool = false;
+        };
+        match item {
+            Item::Do(kind) => {
+                if n.paused {
+                    return pause_node(node);
                 }
+                emit_node(node, context.node, kind, out);
+                true
+            }
+            Item::Start(role) => {
+                if n.paused {
+                    return pause_node(node);
+                }
+                if n.ticket.is_none() {
+                    take_ticket_node(node, next_ticket);
+                    return true;
+                }
+                if context.pool {
+                    let m = &mut *node;
+                    m.ticket = None;
+                    m.pool = true;
+                    m.run = Some(m.generation);
+                    m.pos += 1;
+                    emit_node(node, context.node, EffectKind::StartRun(role), out);
+                    return true;
+                }
+                false
+            }
+            Item::StartChecks => {
+                if n.paused {
+                    return pause_node(node);
+                }
+                let m = &mut *node;
+                m.job = Some(m.generation);
                 m.pos += 1;
+                emit_node(node, context.node, EffectKind::SubmitChecks, out);
+                true
+            }
+            Item::StartRebase => {
+                if n.paused {
+                    return pause_node(node);
+                }
+                let m = &mut *node;
+                m.run = Some(m.generation);
+                m.pos += 1;
+                emit_node(node, context.node, EffectKind::StartRebase, out);
+                true
+            }
+            Item::Await | Item::Merge | Item::Answer => false,
+            Item::Admit => {
+                if n.paused || !context.admit {
+                    return false;
+                }
+                let m = &mut *node;
+                m.credit.withheld = false;
+                m.planning_started = true;
+                set_phase(m, Phase::Planning { must_split: false });
+                true
+            }
+            Item::Slot => {
+                let Phase::Ready(r) = n.phase else {
+                    return false;
+                };
+                if n.paused {
+                    if n.ticket.is_some() {
+                        node.ticket = None;
+                        return true;
+                    }
+                    return false;
+                }
+                if n.ticket.is_none() {
+                    take_ticket_node(node, next_ticket);
+                    return true;
+                }
+                if context.slot {
+                    let m = &mut *node;
+                    m.holds = true;
+                    set_phase(m, r.phase());
+                    return true;
+                }
+                false
+            }
+            Item::Release => {
+                let m = &mut *node;
+                m.holds = false;
+                m.pos += 1;
+                true
+            }
+            Item::Teardown(kind) => {
+                if n.question.is_some() {
+                    return false; // waiting for Rob
+                }
+                let gone = match kind {
+                    EffectKind::StopRun => n.run.is_none(),
+                    EffectKind::WithdrawJob => n.job.is_none(),
+                    EffectKind::ClosePr => !n.pr_open,
+                    EffectKind::RemoveWorktree => !n.worktree,
+                    _ => false,
+                };
+                if gone {
+                    let m = &mut *node;
+                    if kind == EffectKind::StopRun {
+                        m.pool = false;
+                    }
+                    m.pos += 1;
+                    return true;
+                }
+                emit_node(node, context.node, kind, out);
+                true
+            }
+        }
+    }
+}
+
+kernel_fn! {
+        /// A paused leaf starts nothing new. In a holding phase it gives back its slot
+        /// and files and waits in Ready, resuming at the step it reached. Q30 / #771.
+        // The pinned Verus frontend requires nested if-let instead of let chains.
+        #[allow(clippy::collapsible_if)]
+    fn pause_node(m: &mut Node) -> (result: bool) [
+    requires holding(old(m).phase) ==> old(m).generation < u64::MAX,
+    ensures final(m).generation as int <= old(m).generation as int + 1,
+        final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
+        final(m).question == old(m).question,
+        final(m).paused == old(m).paused, final(m).waiting_incident == old(m).waiting_incident,
+        if holding(old(m).phase) {
+            result && final(m).phase == Phase::Ready(match old(m).phase {
+                Phase::Making => Resume::Making,
+                Phase::Checking => Resume::Checking,
+                Phase::Reviewing => Resume::Reviewing,
+                Phase::Publishing | Phase::Queued => Resume::Publishing,
+                _ => Resume::Rebasing,
+            }) && final(m).pos == 0 && final(m).ticket.is_none()
+                && final(m).effect == match old(m).effect {
+                    Some(e) => Some(InFlight { cancelling: true, ..e }), None => None,
+                }
+        } else {
+            result == old(m).ticket.is_some()
+                && *final(m) == (Node { ticket: None, ..*old(m) })
+        },
+    ] {
+        if m.phase.holding() {
+            if let Some(r) = m.phase.resume() {
+                m.holds = false;
+                set_phase(m, Phase::Ready(r));
                 return true;
             }
-            emit_node(node, context.node, kind, out);
-            true
         }
-    }
-}
-}
-
-kernel_fn! {
-    /// A paused leaf starts nothing new. In a holding phase it gives back its slot
-    /// and files and waits in Ready, resuming at the step it reached. Q30 / #771.
-    // The pinned Verus frontend requires nested if-let instead of let chains.
-    #[allow(clippy::collapsible_if)]
-fn pause_node(m: &mut Node) -> (result: bool) [
-requires holding(old(m).phase) ==> old(m).generation < u64::MAX,
-ensures final(m).generation as int <= old(m).generation as int + 1,
-    final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
-    final(m).question == old(m).question,
-    final(m).paused == old(m).paused, final(m).waiting_incident == old(m).waiting_incident,
-    if holding(old(m).phase) {
-        result && final(m).phase == Phase::Ready(match old(m).phase {
-            Phase::Making => Resume::Making,
-            Phase::Checking => Resume::Checking,
-            Phase::Reviewing => Resume::Reviewing,
-            Phase::Publishing | Phase::Queued => Resume::Publishing,
-            _ => Resume::Rebasing,
-        }) && final(m).pos == 0 && final(m).ticket.is_none()
-            && final(m).effect == match old(m).effect {
-                Some(e) => Some(InFlight { cancelling: true, ..e }), None => None,
-            }
-    } else {
-        result == old(m).ticket.is_some()
-            && *final(m) == (Node { ticket: None, ..*old(m) })
-    },
-] {
-    if m.phase.holding() {
-        if let Some(r) = m.phase.resume() {
-            m.holds = false;
-            set_phase(m, Phase::Ready(r));
+        if m.ticket.is_some() {
+            m.ticket = None;
             return true;
         }
+        false
     }
-    if m.ticket.is_some() {
-        m.ticket = None;
-        return true;
-    }
-    false
-}
 }
 
 kernel_fn! {
-/// Q39 / #771: a place in line consumes exactly one global ticket.
-fn take_ticket_node(node: &mut Node, next_ticket: &mut u64) -> (result: ()) [
-requires *old(next_ticket) < u64::MAX,
-ensures *final(next_ticket) as int == *old(next_ticket) as int + 1,
-    *final(node) == (Node { ticket: Some(*old(next_ticket)), ..*old(node) }),
-] {
-    let t = *next_ticket;
-    *next_ticket += 1;
-    node.ticket = Some(t);
-}
+    /// Q39 / #771: a place in line consumes exactly one global ticket.
+    fn take_ticket_node(node: &mut Node, next_ticket: &mut u64) -> (result: ()) [
+    requires *old(next_ticket) < u64::MAX,
+    ensures *final(next_ticket) as int == *old(next_ticket) as int + 1,
+        *final(node) == (Node { ticket: Some(*old(next_ticket)), ..*old(node) }),
+    ] {
+        let t = *next_ticket;
+        *next_ticket += 1;
+        node.ticket = Some(t);
+    }
 }
 
 fn pool_free(w: &World) -> bool {
