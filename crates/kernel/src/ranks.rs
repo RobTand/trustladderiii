@@ -1,6 +1,6 @@
 //! Mathematical ranks for the executable state-table code, #771.
-//! These definitions contain no transition relation. Executable functions in
-//! lib.rs must prove their contracts against these ranks.
+//! These definitions contain no transition relation. Executable rank functions
+//! prove their contracts against these mathematical values.
 use super::*;
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
@@ -222,7 +222,10 @@ impl Node {
                 }
             }
             let rank = match self.phase {
-                Phase::AwaitingRob => self.question.map_or(3, |q| cont_rank(q.cont) + 1),
+                Phase::AwaitingRob => match self.question {
+                    Some(q) => cont_rank(q.cont) + 1,
+                    None => 3,
+                },
                 phase => rank(phase),
             };
             let len = agenda(self.phase).len() as u64;
