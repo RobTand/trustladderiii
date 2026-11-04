@@ -337,6 +337,7 @@ fn drain_pending(controller: &mut Controller) -> Result<bool> {
             if stored.source == crate::console::SOURCE {
                 crate::console::apply(controller, &stored)?;
             } else if let Some(delivery) = replay(&stored) {
+                controller.queue_approval_news(&delivery)?;
                 for input in translate(delivery, &controller.bootstrap) {
                     apply(controller, input)?;
                 }

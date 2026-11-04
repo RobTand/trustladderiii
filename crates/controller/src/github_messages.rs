@@ -17,6 +17,7 @@ impl Controller {
     ) -> Result<bool> {
         let Observation::GitHubComment {
             repository,
+            issue,
             comment,
             ..
         } = observation
@@ -34,12 +35,15 @@ impl Controller {
         {
             return Ok(false);
         }
+        let effect_key = tl3_github::GitHub::comment_effect_key(&comment.body)
+            .ok_or(Error::Invalid("message marker missing"))?;
         let id = format!(
-            "{}/{}/{}/{}",
+            "{}/{}/{}/{}/{}",
             repository.owner.to_ascii_lowercase(),
             repository.name.to_ascii_lowercase(),
             repository.installation,
-            comment.id
+            issue,
+            effect_key
         );
         let mut commit = Commit::new(format!("observe:{key}"), json!(observation), snapshot);
         commit.rows.push(put(TABLE, id, json!(observation)));
@@ -58,13 +62,47 @@ impl Controller {
             else {
                 return Err(Error::Invalid("invalid message reconciliation record"));
             };
+            let cleanup_key = format!("github-cleanup:{}", row.id);
+            if crate::looks::outage_waiting(snapshot, &cleanup_key) {
+                continue;
+            }
             if let Err(error) =
                 self.adapters
                     .get(Upstream::GitHub)?
                     .reconcile_message(&repository, issue, &comment)
             {
-                eprintln!("GitHub message reconciliation failed: {error}");
-                continue;
+                let failures = snapshot
+                    .rows
+                    .iter()
+                    .find(|r| r.table == "github_message_failures" && r.id == row.id)
+                    .and_then(|r| r.value.as_u64())
+                    .unwrap_or(0)
+                    .saturating_add(1);
+                let mut commit = Commit::new(
+                    format!(
+                        "github-cleanup-failed:{}:{}",
+                        row.id,
+                        snapshot.revision.get()
+                    ),
+                    json!({"cleanup_failed":row.id}),
+                    snapshot,
+                );
+                commit.rows.push(put(
+                    "github_message_failures",
+                    row.id.clone(),
+                    json!(failures % 2),
+                ));
+                if failures >= 2 || matches!(error, Error::Permanent { .. }) {
+                    let key = tl3_github::GitHub::comment_effect_key(&comment.body)
+                        .ok_or(Error::Invalid("cleanup marker missing"))?;
+                    if let Some(effect) = self.store.effect(&key)? {
+                        let delivery = crate::decode_stored(effect.payload)?;
+                        self.maintenance_incident(snapshot, &delivery, &cleanup_key, "message_cleanup",
+                            format!("GitHub message cleanup failed for {}/{} issue {}. Clear to retry deduplication.",repository.owner,repository.name,issue),&mut commit)?;
+                    }
+                }
+                self.store.commit(&commit)?;
+                return Ok(true);
             }
             let mut commit = Commit::new(
                 format!(
@@ -78,6 +116,14 @@ impl Controller {
             commit.rows.push(RowChange::Delete {
                 table: TABLE.into(),
                 id: row.id.clone(),
+            });
+            commit.rows.push(RowChange::Delete {
+                table: "github_message_failures".into(),
+                id: row.id.clone(),
+            });
+            commit.rows.push(RowChange::Delete {
+                table: "notice_incidents".into(),
+                id: cleanup_key,
             });
             self.store.commit(&commit)?;
             return Ok(true);

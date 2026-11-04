@@ -57,6 +57,16 @@ pub fn respond(
             state.check_posted();
             return Some(ResponseTemplate::new(state.created_status()).set_body_json(check));
         }
+        ("PATCH", path) if path.starts_with("/check-runs/") => {
+            let id: u64 = path.strip_prefix("/check-runs/")?.parse().ok()?;
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            let checks = state.checks_mut()?;
+            let check = checks.iter_mut().find(|check| check["id"] == id)?;
+            for (key, value) in body.as_object().unwrap() {
+                check[key] = value.clone();
+            }
+            check.clone()
+        }
         ("PATCH", "/pulls/100") => {
             let body: Value = serde_json::from_slice(&request.body).unwrap();
             let pull = state.pull_mut()?;

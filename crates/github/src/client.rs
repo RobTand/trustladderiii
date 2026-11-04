@@ -803,9 +803,45 @@ impl GitHub {
         {
             return Ok(existing);
         }
+        self.post_check_run(repo, check, None).await
+    }
+
+    /// POST only. The caller owns preflight and durable dispatch tracking.
+    pub async fn post_check_run(
+        &self,
+        repo: &str,
+        check: &NewCheckRun,
+        output: Option<&CheckOutput>,
+    ) -> Result<CheckRun, Error> {
+        if check.external_id.trim().is_empty()
+            || matches!(check.status, CheckStatus::Completed) != check.conclusion.is_some()
+        {
+            return Err(Error::Config(
+                "check needs an external id and a conclusion exactly when completed",
+            ));
+        }
+        let mut body = serde_json::to_value(check).map_err(|_| Error::Response)?;
+        if let Some(output) = output {
+            body["output"] = serde_json::to_value(output).map_err(|_| Error::Response)?;
+        }
         self.request(
             Method::POST,
             format!("{}/check-runs", repo_path(repo)?),
+            vec![],
+            Some(body),
+        )
+        .await
+    }
+
+    pub async fn update_check_run(
+        &self,
+        repo: &str,
+        id: u64,
+        check: &UpdateCheckRun,
+    ) -> Result<CheckRun, Error> {
+        self.request(
+            Method::PATCH,
+            format!("{}/check-runs/{id}", repo_path(repo)?),
             vec![],
             Some(serde_json::to_value(check).map_err(|_| Error::Response)?),
         )

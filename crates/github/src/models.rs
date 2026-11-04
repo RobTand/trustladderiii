@@ -219,6 +219,13 @@ pub struct NewCheckRun {
     pub conclusion: Option<CheckConclusion>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct UpdateCheckRun {
+    pub status: CheckStatus,
+    pub conclusion: CheckConclusion,
+    pub output: CheckOutput,
+}
+
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckStatus {

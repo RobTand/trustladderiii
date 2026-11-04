@@ -482,6 +482,7 @@ impl Controller {
 
     /// Restart and webhook-gap recovery may request a look without consuming time.
     pub fn look_now(&mut self) -> Result<()> {
+        self.recover_approvals(true)?;
         self.looks(true, None)
     }
 
@@ -1761,6 +1762,7 @@ pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
     match error {
         crate::Error::WorkerInputs(_) => crate::worker_inputs::CLASS,
         crate::Error::ChecksPending => CHECKS_PENDING,
+        crate::Error::ApprovalAmbiguous => crate::approval_delivery::AMBIGUOUS,
         crate::Error::RedactionInfra(_) => "redaction_infra",
         crate::Error::Quota { .. } => "quota",
         crate::Error::Permanent { class, .. } => class,
@@ -1793,7 +1795,10 @@ pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
 
 pub(crate) fn outage_waiting(snapshot: &Snapshot, key: &str) -> bool {
     snapshot.rows.iter().any(|r| {
-        r.table == "incidents" && r.value["open"] == true && r.value["effect"].as_str() == Some(key)
+        r.table == "incidents"
+            && r.value["open"] == true
+            && r.value["effect"].as_str() == Some(key)
+            && r.value["signature"]["class"] != crate::approval_delivery::AMBIGUOUS
     })
 }
 

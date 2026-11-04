@@ -7,6 +7,7 @@ compile_error!("the loom feature is only supported for library unit tests");
 extern crate self as tl3_controller;
 
 pub mod adoption;
+mod approval_delivery;
 pub mod findings;
 
 pub mod adapters;
@@ -112,6 +113,8 @@ pub enum Error {
     /// evidence of a legitimate wait, not a failure (Q52).
     #[error("required head checks are still pending")]
     ChecksPending,
+    #[error("approval check dispatch outcome unknown")]
+    ApprovalAmbiguous,
 }
 
 fn decode_stored<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
@@ -394,6 +397,7 @@ impl Controller {
         controller.reconcile_capacity()?;
         controller.cleanup_ended_looks()?;
         controller.recover_postmortems()?;
+        controller.recover_approvals(false)?;
         Ok(controller)
     }
 
@@ -1024,6 +1028,9 @@ impl Controller {
     /// The hook exposes durable boundaries for process-level fault injection.
     pub fn drive_once_with(&mut self, mut hook: impl FnMut(Boundary, &str)) -> Result<bool> {
         let snapshot = self.store.load()?;
+        if self.reconcile_approvals(&snapshot)? {
+            return Ok(true);
+        }
         if self.reconcile_messages(&snapshot)? {
             return Ok(true);
         }
@@ -1197,6 +1204,26 @@ impl Controller {
             }
             match effect.state {
                 EffectState::Intended => {
+                    if approval_delivery::is_approval(&delivery)
+                        && !snapshot.rows.iter().any(|r| {
+                            r.table == approval_delivery::AUTHORIZATIONS && r.id == effect.key
+                        })
+                        && self.approval_has_prior_dispatch(effect)?
+                    {
+                        match self.adapters.adapter(&delivery)?.reconcile(&delivery) {
+                            Ok(Reconciliation::Absent) => {}
+                            Ok(Reconciliation::Found(completion)) => {
+                                self.transition(effect, EffectState::Sent)?;
+                                self.complete(&effect.key, *completion)?;
+                                return Ok(true);
+                            }
+                            _ => {
+                                self.transition(effect, EffectState::Sent)?;
+                                self.approval_ambiguous(&delivery)?;
+                                return Ok(true);
+                            }
+                        }
+                    }
                     self.transition(effect, EffectState::Sent)?;
                     hook(Boundary::BeforeDispatch, &effect.key);
                     let current = self.store.load()?;
@@ -1209,6 +1236,10 @@ impl Controller {
                     match result {
                         Ok(completion) => {
                             self.complete(&effect.key, completion)?;
+                            return Ok(true);
+                        }
+                        Err(Error::ApprovalAmbiguous) => {
+                            self.approval_ambiguous(&delivery)?;
                             return Ok(true);
                         }
                         Err(Error::WorkerInputs(ref failure)) => {
@@ -1333,7 +1364,11 @@ impl Controller {
                                 progressed = true;
                             }
                         }
-                        Reconciliation::Pending => {}
+                        Reconciliation::Pending => {
+                            if approval_delivery::is_approval(&delivery) && !cancelling {
+                                progressed |= self.approval_ambiguous(&delivery)?;
+                            }
+                        }
                     }
                 }
                 EffectState::Confirmed | EffectState::Failed | EffectState::Cancelled => {
@@ -1470,7 +1505,9 @@ impl Controller {
 
     fn retire_effect(&mut self, snapshot: &Snapshot, row: &tl3_store::WorldRow) -> Result<()> {
         let delivery: Delivery = decode_stored(row.value.clone())?;
-        if executor::upstream(delivery.output) == executor::Upstream::Mergify {
+        if executor::upstream(delivery.output) == executor::Upstream::Mergify
+            || approval_delivery::is_approval(&delivery)
+        {
             self.adapters
                 .adapter(&delivery)?
                 .retire_delivery(&delivery)?;
@@ -1517,6 +1554,12 @@ impl Controller {
             from: effect.state,
             to,
         });
+        if to == EffectState::Sent && approval_delivery::is_approval(&delivery) {
+            commit.rows.push(RowChange::Delete {
+                table: approval_delivery::AUTHORIZATIONS.into(),
+                id: effect.key.clone(),
+            });
+        }
         // A pending-checks hold waits on check webhooks; it arms no silence timer.
         if to == EffectState::Uncertain
             && let Some(class) = self
@@ -1555,6 +1598,8 @@ impl Controller {
                 &mut commit,
             )?;
         }
+        queue_retirement(&mut commit, delivery);
+        looks::resolve_effect_incidents(&snapshot, &mut commit, |_, key| Ok(key == delivery.key))?;
         self.store.commit(&commit)?;
         self.remove_hold(delivery);
         Ok(())
@@ -1748,6 +1793,12 @@ impl Controller {
                 continue;
             }
             self.queue_observation(&snapshot, &mut commit, key, index, observation)?;
+        }
+        if matches!(
+            state,
+            EffectState::Confirmed | EffectState::Failed | EffectState::Cancelled
+        ) {
+            queue_retirement(&mut commit, &delivery);
         }
         evidence::retire_delivered(&snapshot, &mut commit, &delivery, completion.ack);
         self.store.commit(&commit)?;
@@ -2556,6 +2607,7 @@ impl Controller {
             if incident.open && incident.signature.class == postmortems::PAUSED {
                 self.reset_postmortem_pause(snapshot, commit);
             }
+            self.authorize_approval_retry(snapshot, &incident, commit);
             incident.open = false;
             if !self.retry_notice(snapshot, &incident, commit)? {
                 self.resume_incident_look(snapshot, &incident, commit)?;
@@ -3841,7 +3893,9 @@ fn observation_upstream(
 }
 
 fn queue_retirement(commit: &mut Commit, delivery: &Delivery) {
-    if executor::upstream(delivery.output) == executor::Upstream::Mergify {
+    if executor::upstream(delivery.output) == executor::Upstream::Mergify
+        || approval_delivery::is_approval(delivery)
+    {
         commit.rows.push(put(
             "retiring_effects",
             delivery.key.clone(),

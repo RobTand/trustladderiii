@@ -81,6 +81,23 @@ impl Executor for Fake {
         }
         self.0.deliver(&posted, Completion::confirmed(observations))
     }
+    fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        if crate::approval_delivery::is_approval(delivery) {
+            self.records.fence(self.epoch)?;
+            // Stop retires the local operation, never sends another approval.
+            // An outstanding remote POST may still land; webhook repair remains keyed.
+            return Ok(Reconciliation::Absent);
+        }
+        self.reconcile(delivery)
+    }
+
+    fn retire_delivery(&mut self, delivery: &Delivery) -> Result<()> {
+        if crate::approval_delivery::is_approval(delivery) {
+            self.retire_approval(delivery)?;
+        }
+        Ok(())
+    }
+
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         self.0.reconcile(delivery)
     }

@@ -1,7 +1,8 @@
 use super::*;
 use crate::publication_failure::{self, Endpoint};
 use tl3_github::{
-    CheckConclusion, CheckRun, CheckStatus, NewCheckRun, NewPullRequest, PullRequest,
+    CheckConclusion, CheckOutput, CheckRun, CheckStatus, NewCheckRun, NewPullRequest, PullRequest,
+    UpdateCheckRun,
 };
 use tl3_worktrees::CommitId;
 
@@ -9,6 +10,7 @@ pub const APPROVAL_CHECK: &str = "TL3 approval";
 
 #[derive(serde::Serialize, serde::Deserialize)]
 enum ApprovalAttempt {
+    Preflight,
     Uncertain,
     Refused,
 }
@@ -33,7 +35,7 @@ fn external_id(delivery: &Delivery) -> Result<String> {
     Ok(format!("{}:{}", delivery.key, head(delivery)?.as_str()))
 }
 
-fn approved(check: &CheckRun, client: &GitHub, delivery: &Delivery) -> Result<bool> {
+fn matches_approval(check: &CheckRun, client: &GitHub, delivery: &Delivery) -> Result<bool> {
     Ok(
         check.external_id.as_deref() == Some(external_id(delivery)?.as_str())
             && check
@@ -41,10 +43,23 @@ fn approved(check: &CheckRun, client: &GitHub, delivery: &Delivery) -> Result<bo
                 .as_ref()
                 .is_some_and(|app| app.id == client.app_id())
             && check.head_sha == head(delivery)?.as_str()
-            && check.name == APPROVAL_CHECK
-            && check.status == "completed"
-            && check.conclusion.as_deref() == Some("success"),
+            && check.name == APPROVAL_CHECK,
     )
+}
+
+fn approval_output() -> CheckOutput {
+    CheckOutput {
+        title: Some(APPROVAL_CHECK.into()),
+        summary: Some("This head passed TL3's required checks and independent review.".into()),
+        text: Some(String::new()),
+    }
+}
+
+fn approved(check: &CheckRun, client: &GitHub, delivery: &Delivery) -> Result<bool> {
+    Ok(matches_approval(check, client, delivery)?
+        && check.status == "completed"
+        && check.conclusion.as_deref() == Some("success")
+        && check.output.as_ref() == Some(&approval_output()))
 }
 
 fn binding(delivery: &Delivery, pull: &PullRequest) -> Completion {
@@ -142,14 +157,22 @@ impl Adapter {
                 kind: EffectKind::PostApproval,
                 ..
             } => {
-                let attempt = self
-                    .records
-                    .path(&external_id(delivery)?)
-                    .with_extension("approval");
-                // Persist before sending: a crash or timeout cannot prove absence.
+                let attempt = self.approval_path(delivery)?;
+                // Preflight has no outstanding mutation. A crash or read error here is retryable.
+                self.records
+                    .write(&attempt, &serde_json::to_vec(&ApprovalAttempt::Preflight)?)?;
+                let checks = self
+                    .runtime
+                    .block_on(client.check_runs(&repo, head(delivery)?.as_str()))
+                    .map_err(|error| publication_failure::http(error, Endpoint::HeadChecks))?;
+                if self.converge_approvals(&client, &repo, delivery, &checks)? {
+                    return Ok(Completion::confirmed(vec![]));
+                }
+                // The dispatch boundary follows preflight. Persist before POST so a crash
+                // between sending and recording its outcome cannot authorize an automatic retry.
                 self.records
                     .write(&attempt, &serde_json::to_vec(&ApprovalAttempt::Uncertain)?)?;
-                let check = self.runtime.block_on(client.create_check_run(
+                let check = self.runtime.block_on(client.post_check_run(
                     &repo,
                     &NewCheckRun {
                         name: APPROVAL_CHECK.into(),
@@ -158,18 +181,26 @@ impl Adapter {
                         status: CheckStatus::Completed,
                         conclusion: Some(CheckConclusion::Success),
                     },
+                    Some(&approval_output()),
                 ));
                 if matches!(&check, Err(tl3_github::Error::Http { status: 404 })) {
-                    // A definite refusal retains the existing bounded 404 retry.
                     self.records
                         .write(&attempt, &serde_json::to_vec(&ApprovalAttempt::Refused)?)?;
                 }
-                let check =
-                    check.map_err(|error| publication_failure::http(error, Endpoint::CheckRuns))?;
+                let check = match check {
+                    Ok(check) => check,
+                    Err(error)
+                        if matches!(
+                            error.failure_class(),
+                            tl3_github::FailureClass::Permanent(_)
+                        ) =>
+                    {
+                        return Err(publication_failure::http(error, Endpoint::CheckRuns));
+                    }
+                    Err(_) => return Err(Error::ApprovalAmbiguous),
+                };
                 if !approved(&check, &client, delivery)? {
-                    return Err(Error::Invalid(
-                        "GitHub approval evidence differs from the approved head",
-                    ));
+                    return Err(Error::ApprovalAmbiguous);
                 }
                 Ok(Completion::confirmed(vec![]))
             }
@@ -323,17 +354,11 @@ impl Adapter {
                     .runtime
                     .block_on(client.check_runs(&repo, head(delivery)?.as_str()))
                     .map_err(|error| publication_failure::http(error, Endpoint::HeadChecks))?;
-                if checks
-                    .iter()
-                    .any(|check| approved(check, &client, delivery).unwrap_or(false))
-                {
+                if self.converge_approvals(&client, &repo, delivery, &checks)? {
                     Some(Completion::confirmed(vec![]))
                 } else if self.approval_was_refused(delivery)? {
                     None
                 } else {
-                    // Once per head: an empty listing cannot prove that an
-                    // earlier timed-out POST has ended. Keep its original key
-                    // pending so a late check can confirm it without a retry.
                     return Ok(Reconciliation::Pending);
                 }
             }
@@ -383,6 +408,63 @@ impl Adapter {
             .unwrap_or(Reconciliation::Absent))
     }
 
+    fn approval_path(&self, delivery: &Delivery) -> Result<std::path::PathBuf> {
+        Ok(self
+            .records
+            .path(&external_id(delivery)?)
+            .with_extension("approval"))
+    }
+
+    pub(super) fn retire_approval(&self, delivery: &Delivery) -> Result<()> {
+        let path = self.approval_path(delivery)?;
+        match std::fs::remove_file(&path) {
+            Ok(()) => std::fs::File::open(
+                path.parent()
+                    .ok_or(Error::Invalid("approval directory missing"))?,
+            )?
+            .sync_all()?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        Ok(())
+    }
+
+    /// Q27, 2026-11-04: every own-app copy for this head/key has the intended state.
+    /// PATCH is idempotent; partial progress and concurrent reconcilers converge.
+    fn converge_approvals(
+        &self,
+        client: &GitHub,
+        repo: &str,
+        delivery: &Delivery,
+        checks: &[CheckRun],
+    ) -> Result<bool> {
+        let mut found = false;
+        for check in checks {
+            if !matches_approval(check, client, delivery)? {
+                continue;
+            }
+            found = true;
+            if !approved(check, client, delivery)? {
+                let updated = self
+                    .runtime
+                    .block_on(client.update_check_run(
+                        repo,
+                        check.id,
+                        &UpdateCheckRun {
+                            status: CheckStatus::Completed,
+                            conclusion: CheckConclusion::Success,
+                            output: approval_output(),
+                        },
+                    ))
+                    .map_err(|error| publication_failure::http(error, Endpoint::CheckRuns))?;
+                if !approved(&updated, client, delivery)? {
+                    return Err(Error::Invalid("approval update evidence differs"));
+                }
+            }
+        }
+        Ok(found)
+    }
+
     fn approval_was_refused(&self, delivery: &Delivery) -> Result<bool> {
         let path = self
             .records
@@ -391,7 +473,7 @@ impl Adapter {
         match std::fs::read(path) {
             Ok(bytes) => Ok(matches!(
                 serde_json::from_slice::<ApprovalAttempt>(&bytes)?,
-                ApprovalAttempt::Refused
+                ApprovalAttempt::Refused | ApprovalAttempt::Preflight
             )),
             // Legacy attempts have no record proving they were refused.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
