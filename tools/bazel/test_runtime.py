@@ -111,6 +111,33 @@ class PytestShardTests(unittest.TestCase):
             self.assertTrue(all(ran), f'every one of {total} shards runs a test')
             self.assertLessEqual(max(map(len, ran)) - min(map(len, ran)), 1, 'shards stay even')
 
+    def test_partition_ignores_collection_order(self):
+        """Each shard is its own process, so its collection order may differ (set or
+        hash-seeded parametrize). A test must still land in exactly one shard."""
+        sys.path.insert(0, str(HERE))
+        import python_runner
+
+        class Item:
+            def __init__(self, nodeid):
+                self.nodeid = nodeid
+
+        class Hook:
+            def pytest_deselected(self, items):
+                pass
+
+        class Config:
+            hook = Hook()
+
+        ids = [f'test_probe.py::test_case[{case}]' for case in range(8)]
+        for total in (2, 3, 5):
+            kept = []
+            for index in range(total):
+                order = ids if index % 2 == 0 else list(reversed(ids))
+                items = [Item(nodeid) for nodeid in order]
+                python_runner.Shard(index, total).pytest_collection_modifyitems(Config(), items)
+                kept.extend(item.nodeid for item in items)
+            self.assertEqual(sorted(kept), sorted(ids), f'{total} shards over a reordered collection')
+
     def test_runner_accepts_bazel_sharding(self):
         sys.path.insert(0, str(HERE))
         import python_runner
