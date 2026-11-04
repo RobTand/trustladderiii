@@ -26,6 +26,37 @@ impl World {
     }
 
     fn dependency_path(&self, from: NodeId, to: NodeId) -> bool {
+        if self.nodes.len() <= 64 {
+            // Most worlds fit in a bitset. Repeated edge relaxation reaches
+            // the same nodes as the unbounded traversal below, without allocation.
+            let mut seen = 1u64 << from.0;
+            loop {
+                if seen & (1u64 << to.0) != 0 {
+                    return true;
+                }
+                let before = seen;
+                for dependency in &self.dependencies {
+                    if !dependency.rejected
+                        && dependency.status == DependencyStatus::Pending
+                        && !self.nodes[dependency.node.0 as usize].phase.is_closed()
+                        && seen & (1u64 << dependency.node.0) != 0
+                        && let Some(target) = dependency.target.request
+                    {
+                        seen |= 1u64 << target.0;
+                    }
+                }
+                if seen == before {
+                    return false;
+                }
+            }
+        }
+        #[cfg(kani)]
+        {
+            // Proof worlds have at most three roots. Prove this before pruning
+            // the heap traversal, as for interned footprints.
+            assert!(false, "dependency proof entered the large-world traversal");
+            kani::assume(false);
+        }
         let mut seen = alloc::vec![false; self.nodes.len()];
         let mut pending = alloc::vec![from];
         while let Some(node) = pending.pop() {
@@ -64,6 +95,19 @@ impl World {
     }
 
     pub(super) fn check_dependencies(&self) -> Result<(), Broken> {
+        for (index, node) in self.nodes.iter().enumerate() {
+            if node.credit.withheld
+                && !self
+                    .dependencies
+                    .iter()
+                    .any(|d| d.node == NodeId(index as u64))
+            {
+                return Err(Broken::Dependencies);
+            }
+        }
+        if self.dependencies.is_empty() {
+            return Ok(());
+        }
         for (index, dependency) in self.dependencies.iter().enumerate() {
             let Some(owner) = self.index(dependency.node) else {
                 return Err(Broken::Dependencies);

@@ -123,15 +123,11 @@ fn root_status(world: &World, node: NodeId) -> DependencyStatus {
 fn apply_fact(
     world: &mut World,
     node: NodeId,
-    target: DependencyTarget,
-    status: DependencyStatus,
+    fact: Fact,
     outputs: &mut Vec<Out>,
     commit: &mut Commit,
 ) {
-    let event = Event::Fact {
-        node,
-        fact: Fact::Dependency { target, status },
-    };
+    let event = Event::Fact { node, fact };
     let (next, emitted) = tl3_kernel::step(world.clone(), event);
     *world = next;
     outputs.extend(emitted);
@@ -271,21 +267,15 @@ impl Controller {
             _ => None,
         });
         if let Some(declarations) = declarations {
-            let (next, emitted) = tl3_kernel::step(
-                world.clone(),
-                Event::Fact {
-                    node,
-                    fact: Fact::DependencyReset,
-                },
-            );
-            *world = next;
-            outputs.extend(emitted);
+            apply_fact(world, node, Fact::DependencyReset, outputs, commit);
             for declaration in decode_stored::<Vec<Declaration>>(declarations)? {
                 apply_fact(
                     world,
                     node,
-                    declaration.target,
-                    declaration.status,
+                    Fact::Dependency {
+                        target: declaration.target,
+                        status: declaration.status,
+                    },
                     outputs,
                     commit,
                 );
@@ -321,11 +311,13 @@ impl Controller {
                 apply_fact(
                     world,
                     dependency.node,
-                    DependencyTarget {
-                        request: root,
-                        ..dependency.target
+                    Fact::Dependency {
+                        target: DependencyTarget {
+                            request: root,
+                            ..dependency.target
+                        },
+                        status,
                     },
-                    status,
                     outputs,
                     commit,
                 );
@@ -376,8 +368,10 @@ impl Controller {
                 apply_fact(
                     world,
                     dependency.node,
-                    dependency.target,
-                    fact.status,
+                    Fact::Dependency {
+                        target: dependency.target,
+                        status: fact.status,
+                    },
                     &mut outputs,
                     commit,
                 );
@@ -618,6 +612,7 @@ mod tests {
             restarted,
             Reply::IngestEarlyEnd(EarlyEnd::AlreadyDone),
         );
+        reply(&mut c, restarted, Reply::AuditAgrees);
         assert_eq!(
             c.world().unwrap().nodes[1].phase,
             Phase::Planning { must_split: false }

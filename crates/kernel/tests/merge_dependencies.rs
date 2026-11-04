@@ -220,3 +220,30 @@ fn request_without_prerequisites_is_unchanged() {
     assert_eq!(world.nodes[0].phase, Phase::Planning { must_split: false });
     assert_eq!(world.nodes[0].credit.balance(), 4);
 }
+
+#[test]
+fn cycle_rejection_has_no_sixty_four_root_limit() {
+    let mut world = roots(65);
+    for node in 1..65 {
+        dependency(
+            &mut world,
+            NodeId(node),
+            target(node, Some(NodeId(node - 1))),
+            DependencyStatus::Pending,
+        );
+    }
+    let out = dependency(
+        &mut world,
+        NodeId(0),
+        target(65, Some(NodeId(64))),
+        DependencyStatus::Pending,
+    );
+    assert!(out.iter().any(|out| matches!(
+        out,
+        Out::Notice {
+            notice: Notice::Note(NoteKind::DependencyCycle { .. }),
+            ..
+        }
+    )));
+    assert!(world.dependency_graph_acyclic());
+}

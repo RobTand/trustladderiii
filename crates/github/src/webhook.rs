@@ -178,7 +178,7 @@ pub fn parse(delivery_id: &str, event_name: &str, body: &[u8]) -> Result<Deliver
         (event_name, action),
         (
             "issues",
-            "labeled" | "unlabeled" | "edited" | "closed" | "reopened" | "opened"
+            "labeled" | "unlabeled" | "edited" | "closed" | "reopened"
         ) | ("issue_comment", "created")
             | ("pull_request" | "merge_group", _)
             | (

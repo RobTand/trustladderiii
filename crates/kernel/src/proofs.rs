@@ -705,9 +705,11 @@ fn check_dependency_cycles() {
         });
     }
     kani::assume(world.consistent());
-    let from: u8 = kani::any();
+    // Roots are interchangeable. Fix the owner of the new edge, as the
+    // existing event proofs do, while both prior edges remain arbitrary.
+    let from: u8 = 0;
     let to: u8 = kani::any();
-    kani::assume(from < 3 && to < 3);
+    kani::assume(to < 3);
     let mut out = Outbox::new();
     apply(
         &mut world,
@@ -737,7 +739,11 @@ fn check_dependency_cycles() {
 }
 
 fn check_dependency_fact() {
-    let mut world = any_world(None);
+    // Dependency facts do no head or counter arithmetic, so this domain needs
+    // no small-counter assumptions. Both roots may be in any valid phase.
+    let mut world = World::new(&[3, 3], 2);
+    world.nodes = kani::vec::exact_vec::<Node, 2>();
+    kani::assume(world.consistent());
     let target = DependencyTarget {
         kind: PrerequisiteKind::Issue,
         number: 2761,

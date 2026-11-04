@@ -30,3 +30,13 @@ def test_prerequisite_quotes_are_checked_and_repairable():
     for prerequisites in [[{**good, "number": 1}], [good, good], [{**good, "source_quote": "#12 must merge first"}]]:
         with pytest.raises(MergePrerequisiteError, match="verbatim quote"):
             check_prerequisites(inputs, {"merge_prerequisites": prerequisites})
+
+
+def test_prerequisite_failure_keeps_its_repairable_message():
+    from tl3_workers.prerequisites import MergePrerequisiteError
+    from tl3_workers.tracing import failure_tags
+
+    assert failure_tags(MergePrerequisiteError()) == {
+        "failure_class": "MergePrerequisiteError",
+        "failure_message": MergePrerequisiteError.message,
+    }
