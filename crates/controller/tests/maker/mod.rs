@@ -235,7 +235,7 @@ fn observe(
                             kind: adapters::prismabuild::Kind::Demonstrating,
                             tests: vec!["test_greeting.py::test_hello".into()],
                             forcing: None,
-                            proof: Some(json!({"subjects": [], "observer_support": [], "red_message": "assert 'goodbye' == 'hello'"})),
+                            proof: Some(serde_json::from_value(json!({"subjects": [], "observer_support": [], "red_message": "assert 'goodbye' == 'hello'"})).unwrap()),
                             declared_symptom: None,
                         }],
                     },

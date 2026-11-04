@@ -19,6 +19,7 @@ from message_invariants import write_turn as write_turn
 
 
 @pytest.mark.parametrize('resume_requested', [False, True])
+@pytest.mark.durability
 def test_adopted_fix_round_without_session_starts_fresh(tmp_path, maker_request, resume_requested):
     root = Path(maker_request['worktree'])
     (root / 'author.txt').write_text('Keep the author commit.\n')
@@ -43,6 +44,7 @@ def test_adopted_fix_round_without_session_starts_fresh(tmp_path, maker_request,
 
 
 @pytest.mark.parametrize('session_path_supplied', [False, True])
+@pytest.mark.durability
 def test_accepted_maker_session_missing_fails_closed(tmp_path, maker_request, session_path_supplied):
     root = Path(maker_request['worktree'])
     before = git(root, 'rev-parse', 'HEAD')
@@ -64,6 +66,7 @@ def test_accepted_maker_session_missing_fails_closed(tmp_path, maker_request, se
     assert not session.with_suffix('.head').exists()
 
 
+@pytest.mark.durability
 def test_retry_after_crash_after_commit_reuses_the_round_commit(maker_request, monkeypatch, tmp_path):
     root = Path(maker_request['worktree'])
     base = git(root, 'rev-parse', 'HEAD')
@@ -94,6 +97,7 @@ def test_retry_after_crash_after_commit_reuses_the_round_commit(maker_request, m
 
 
 @pytest.mark.parametrize('failure', ['schema', 'stream'])
+@pytest.mark.durability
 def test_failed_run_preserves_the_last_clean_session(maker_request, monkeypatch, tmp_path, failure):
     maker_request['inputs']['context_size'] = 150000
     session = tmp_path / 'session.json'
@@ -131,6 +135,7 @@ def test_actionable_check_feedback_matches_the_input_contract(maker_request):
 
 @pytest.mark.parametrize('moved_head', [False, True])
 @pytest.mark.parametrize('new_edits', [False, True])
+@pytest.mark.durability
 def test_rebase_needs_changes_revisit_uses_its_own_checkpoint(
         maker_request, monkeypatch, tmp_path, moved_head, new_edits):
     root = Path(maker_request['worktree'])
@@ -169,6 +174,7 @@ def test_rebase_needs_changes_revisit_uses_its_own_checkpoint(
 
 @pytest.mark.parametrize('existing', [False, True])
 @pytest.mark.parametrize('usage_cutoff', [False, True])
+@pytest.mark.durability
 def test_out_of_room_never_saves_a_conversation(maker_request, monkeypatch, tmp_path, existing, usage_cutoff):
     session = tmp_path / 'session.json'
     maker_request['session_file'] = str(session)

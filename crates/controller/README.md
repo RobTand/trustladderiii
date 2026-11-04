@@ -4,7 +4,7 @@
 executors. Read [the architecture note](../../docs/architecture.md) for the
 transaction and recovery contracts.
 
-All commands use the same TOML configuration as `tl3-config`. The daemon runs
+Service commands use the same TOML configuration as `tl3-config`. The daemon runs
 production adapters by default, or simulation with `--simulate`. Status commands read the configured store
 and do not load GitHub or model credentials.
 
@@ -1666,3 +1666,37 @@ node's head or approved head, or the node closes. Neither path reaches the kerne
 failure or credit is charged, and the enqueue still waits for the check. Run
 `bash crates/controller/tools/verify-missing-checks.sh` through PrismaBuild for
 the focused scenarios.
+
+## Classifier reply checks
+
+`tl3 check-reply classifier` reads one JSON object `{ "inputs": ..., "reply": ... }`
+from stdin and writes `{ "violations": [...] }`. It needs no configuration or
+store. A valid classification has no violations; an invalid one has the first
+repair message, in the worker's original order. Malformed JSON or an unsupported
+role exits unsuccessfully. Both this command and controller acceptance call
+`classifier::validate`.
+
+The controller gives every worker `TL3_BINARY`, the `tl3` executable beside its
+own executable in the immutable release. Test drivers may supply that path
+explicitly. The worker's Python code only transports JSON and raises the
+returned repair message.
+
+The finite decision proof imports the production `decision.rs` directly through
+`src/classifier/kani.rs`. This avoids the kernel's intentionally disabled serde
+implementations under `cfg(kani)`. Until #726 provides a Bazel proof target, run
+this command inside an admitted PrismaBuild campaign action:
+
+```text
+kani crates/controller/src/classifier/kani.rs --harness proofs::classification_total_and_sound --exact --output-format regular -j 1
+```
+
+Require `VERIFICATION:- SUCCESSFUL` and all 14 cover checks. A separate disposable
+action removes the restartability guard in `decision.rs`; the same proof must
+fail its ordered-rule assertion. The unwind bound is 13 for the proof's twelve
+rule rows. Production decisions have no loops or collection-size bound.
+
+`//crates/controller:test_test_workers` retains the golden cases, CLI contract,
+parse proptests, and real-process repair/tool-denial test. Use
+`--test_arg=--classifier-contracts` for the classifier group alone. Python tests
+exercise only the shim with a fake executable and orchestration with the Rust
+validation boundary stubbed. They never depend on the real `tl3` binary.

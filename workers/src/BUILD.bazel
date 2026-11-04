@@ -94,6 +94,7 @@ py_library(
         "tl3_workers/prerequisites.py",
         "tl3_workers/quota.py",
         "tl3_workers/recall.py",
+        "tl3_workers/reply_check.py",
         "tl3_workers/retro.py",
         "tl3_workers/roles/__init__.py",
         "tl3_workers/roles/audit.py",
