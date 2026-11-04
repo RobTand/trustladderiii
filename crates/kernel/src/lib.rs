@@ -2152,11 +2152,14 @@ pub fn proofs_of_phase(phase: Phase) -> &'static [&'static str] {
 
 /// The kernel: apply one event, then settle.
 kernel_fn! {
-/// #771: the public executable step inherits the checked whole-step K bounds.
+/// #771: the real step is overflow-safe under the production checker's
+/// invariant, normalized file storage, and the enforced one-step reserves.
+/// `step_budget` bounds every kernel-owned counter and preserves command order.
 pub fn step(world: World, event: Event) -> (result: (World, Vec<Out>)) [
-    requires step_scope(world),
+    requires world_checked(world), world_headroom(world), storage_ordered(world),
     ensures step_budget(world, result.0),
 ] {
+    kernel_proof! { reveal(storage_ordered); checked_reserves(world); }
     let (world, out, _) = step_with_passes(world, event);
     (world, out)
 }
@@ -4216,8 +4219,8 @@ proof fn checked_reserves(w: World)
     reveal(open_prefix);
 }
 
-/// #771: intermediate source-level safety scope. These consistency clauses
-/// must be connected to the real checker before the final progress theorem.
+/// #771: arithmetic and storage projection of the production checker.
+/// `checked_reserves` proves this scope from `world_checked` and headroom.
 pub closed spec fn step_scope(w: World) -> bool {
     world_headroom(w) && footprint::ordered_table(w) && dependencies::edges_indexable(w)
         && forall|j: int| 0 <= j < w.nodes@.len() ==>
