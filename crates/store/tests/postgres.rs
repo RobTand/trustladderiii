@@ -23,6 +23,7 @@ fn main() {
             "mvp_schema_6_upgrades_to_hindsight",
             mvp_schema_6_upgrades_to_hindsight as fn(&tl3_config::Store),
         ),
+        ("dispatch_evidence_index_plan", dispatch_evidence_index_plan),
         ("worker_completion_facts", worker_completion_facts),
         ("review_fixes_worker_document", review_fixes_worker_document),
         (
@@ -2847,4 +2848,49 @@ fn postmortem_retries_and_pace(settings: &tl3_config::Store) {
         .unwrap()
         .get(0);
     assert!(failed_at, "done clears failed_at");
+}
+
+/// #766, Q27: negative dispatch lookups use indexes, independent of lifetime audit size.
+fn dispatch_evidence_index_plan(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let mut client = raw(settings);
+    let identity = json!({"repository":{"owner":"owner","name":"sandbox","installation":3},
+        "issue":1000001,"generation":0,"head_sha":"head", "output":{"Effect":{"node":0,"kind":"PostApproval"}}});
+    for size in [10_000_i64, 100_000] {
+        let first = if size == 10_000 { 1_i64 } else { 10_001 };
+        client.execute("INSERT INTO tl3_events(event_key,revision,epoch,payload,result)
+            SELECT 'history-'||n,n,0,jsonb_build_object('effect','effect-'||n,'to','Sent'),'null'::jsonb
+            FROM generate_series($1::bigint,$2::bigint) n", &[&first,&size]).unwrap();
+        client.execute("INSERT INTO tl3_effects(effect_key,epoch,kind,payload,state,created_revision,updated_revision)
+            SELECT 'effect-'||n,0,'github',jsonb_build_object('key','effect-'||n,
+            'repository',jsonb_build_object('owner','owner','name','sandbox','installation',3),
+            'issue',n,'generation',0,'head_sha','head','output',jsonb_build_object('Effect',jsonb_build_object('node',0,'kind','PostApproval'))),
+            'Sent',n,n FROM generate_series($1::bigint,$2::bigint) n", &[&first,&size]).unwrap();
+        client
+            .batch_execute("ANALYZE tl3_effects; ANALYZE tl3_events")
+            .unwrap();
+        let explain = format!("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {DISPATCH_EVIDENCE_QUERY}");
+        let plan: serde_json::Value = client
+            .query_one(&explain, &[&identity, &""])
+            .unwrap()
+            .get(0);
+        println!("DISPATCH_PLAN events={size} {plan}");
+        let started = Instant::now();
+        for _ in 0..10 {
+            assert!(!store.dispatched_effect_matching(&identity, "").unwrap());
+        }
+        println!(
+            "DISPATCH_TIMING events={size} negative_lookups=10 elapsed_us={}",
+            started.elapsed().as_micros()
+        );
+        let text = plan.to_string();
+        assert!(
+            !text.contains("Seq Scan"),
+            "dispatch lookup must be indexed: {text}"
+        );
+        assert!(
+            text.contains("Index"),
+            "EXPLAIN must show actual index access: {text}"
+        );
+    }
 }

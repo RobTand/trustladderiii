@@ -9,6 +9,9 @@ use postgres::{Client, IsolationLevel, NoTls, Row};
 pub use postgres::{Error as DatabaseError, Transaction};
 use std::{fs, time::Duration};
 
+/// #766: production query exposed for executable EXPLAIN regression evidence.
+pub const DISPATCH_EVIDENCE_QUERY: &str = "SELECT EXISTS (SELECT 1 FROM tl3_effects e WHERE e.payload @> $1 AND e.effect_key <> $2 AND EXISTS (SELECT 1 FROM tl3_events v WHERE v.payload->>'effect' = e.effect_key AND v.payload->>'to' = 'Sent'))";
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
@@ -801,10 +804,10 @@ impl Store {
         identity: &serde_json::Value,
         excluding: &str,
     ) -> Result<bool> {
-        Ok(self.client.query_one(
-            "SELECT EXISTS (SELECT 1 FROM tl3_effects e WHERE e.payload @> $1 AND e.effect_key <> $2 AND EXISTS (SELECT 1 FROM tl3_events v WHERE v.payload->>'effect' = e.effect_key AND v.payload->>'to' = 'Sent'))",
-            &[identity, &excluding],
-        )?.get(0))
+        Ok(self
+            .client
+            .query_one(DISPATCH_EVIDENCE_QUERY, &[identity, &excluding])?
+            .get(0))
     }
 
     /// Retirement commits retain comment IDs without loading their old payloads.

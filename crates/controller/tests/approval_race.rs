@@ -35,6 +35,7 @@ struct Checks {
     release_before_retry: bool,
     comments: Vec<Value>,
     fail_comment_reads: bool,
+    fail_comment_reads_once: bool,
 }
 
 impl Checks {
@@ -44,7 +45,7 @@ impl Checks {
         }
         if request.url.path() == "/repos/owner/sandbox/issues/12/comments" {
             if request.method == "GET" {
-                if self.fail_comment_reads {
+                if std::mem::take(&mut self.fail_comment_reads_once) || self.fail_comment_reads {
                     return ResponseTemplate::new(503);
                 }
                 return ResponseTemplate::new(200).set_body_json(json!(self.comments));
@@ -87,6 +88,16 @@ impl Checks {
             let response = check.clone();
             self.patches += 1;
             return ResponseTemplate::new(200).set_body_json(response);
+        }
+        if request.method == "GET"
+            && matches!(
+                request.url.path(),
+                "/repos/owner/sandbox/issues"
+                    | "/repos/owner/sandbox/issues/comments"
+                    | "/repos/owner/sandbox/issues/events"
+            )
+        {
+            return ResponseTemplate::new(200).set_body_json(json!([]));
         }
         github_fake::respond(request, request.url.path(), "/repos/owner/sandbox", self)
             .expect("unexpected GitHub request")
@@ -1677,4 +1688,135 @@ fn connect_failure_before_post_has_no_dispatch_evidence() {
         "a connection refused before send cannot be an outstanding POST"
     );
     assert!(matches!(failure.error, tl3_github::Error::Transport));
+}
+
+/// #766, state-table:307/:272: absent historical effects retain two-failure/probe recovery.
+#[test]
+fn missing_effect_cleanup_recovers_without_rob() {
+    let case = Case::new("cleanup_missing_effect");
+    let mut controller = case.open();
+    queue_duplicate_comments(&case, &mut controller);
+    // The upstream marker outlives its local effect. Do not delete immutable audit data.
+    let mut store = Store::open(&case.settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let mut change = tl3_store::Commit::new("orphan-cleanup", json!(null), &snapshot);
+    for row in snapshot
+        .rows
+        .iter()
+        .filter(|r| r.table == "github_message_reconciliations")
+    {
+        let mut value = row.value.clone();
+        value["GitHubComment"]["comment"]["body"] =
+            json!(format!("note\n\n{}", GitHub::marker("missing-history")));
+        change.rows.push(tl3_store::RowChange::Put {
+            table: row.table.clone(),
+            id: row.id.clone(),
+            value,
+        });
+    }
+    store.commit(&change).unwrap();
+    for comment in &mut case.api.0.lock().unwrap().comments {
+        comment["body"] = json!(format!("note\n\n{}", GitHub::marker("missing-history")));
+    }
+    assert!(store.effect("missing-history").unwrap().is_none());
+    case.api.0.lock().unwrap().fail_comment_reads_once = true;
+    // First drive coalesces the legacy work key, second makes the sole failing GET.
+    controller.drive_once().unwrap();
+    controller.drive_once().unwrap();
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents" && r.value["open"] == true),
+        "one transient orphan cleanup failure must not open an incident"
+    );
+    controller.look_now().unwrap();
+    drain(&mut controller);
+    assert_eq!(
+        case.api.0.lock().unwrap().comments.len(),
+        1,
+        "orphan cleanup must recover without Rob"
+    );
+}
+
+/// #766, Q27: a real gap catch-up must find closed-head late POSTs without a webhook.
+#[test]
+fn gap_catchup_repairs_late_approval_after_closure() {
+    let case = Case::new("closed_gap_approval");
+    let mut controller = case.timeout();
+    case.clear(&mut controller); // B lands; A is still outstanding beyond its timeout.
+    controller
+        .observe(
+            "stop-before-late-a",
+            tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+                node: case.delivery().node(),
+                id: 171,
+                command: tl3_kernel::Command::Stop,
+            }),
+        )
+        .unwrap();
+    drain(&mut controller);
+    assert!(matches!(
+        controller.world().unwrap().nodes[0].phase,
+        tl3_kernel::Phase::Closed(_)
+    ));
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "allowances"),
+        "closed requests have no active delivery allowances"
+    );
+    // The retained legacy request carries its old serialized output. Apply the real
+    // outstanding POST, rather than injecting check runs or a catch-up payload.
+    {
+        let mut api = case.api.0.lock().unwrap();
+        let request = api.held.as_mut().unwrap();
+        let mut body: Value = serde_json::from_slice(&request.body).unwrap();
+        body["output"] = json!({"title":"stale","summary":"stale","text":"stale"});
+        request.body = serde_json::to_vec(&body).unwrap();
+    }
+    case.api.release();
+    assert_eq!(case.api.0.lock().unwrap().visible.len(), 2);
+    let client = GitHub::new(
+        AppConfig {
+            id: 123,
+            slug: "factory".into(),
+            pem: include_str!("../../mergify/tests/fixtures/throwaway-key.pem").into(),
+            webhook_secret: "fixture".into(),
+        },
+        3,
+        ClientOptions {
+            api_url: format!("{}/", case.server.uri()).parse().unwrap(),
+            mutation_interval: Duration::ZERO,
+            max_retries: 0,
+            ..ClientOptions::default()
+        },
+    )
+    .unwrap();
+    let catchup = tl3_controller::ingress::CatchUp::new(BTreeMap::from([(3, client)])).unwrap();
+    let mut store = Store::open(&case.settings).unwrap();
+    // Recent cursor and empty pulls list exclude old closed PR updates.
+    store
+        .receive_catch_up(
+            "github-catch-up",
+            &[],
+            &json!(chrono::Utc::now() - chrono::Duration::minutes(1)),
+        )
+        .unwrap();
+    let inputs = catchup.pass(&mut store, &bootstrap()).unwrap();
+    for input in inputs {
+        tl3_controller::ingress::apply(&mut controller, input).unwrap();
+    }
+    drain(&mut controller);
+    case.assert_converged(2);
+    assert_eq!(
+        case.api.0.lock().unwrap().posts,
+        2,
+        "gap recovery never POSTs another approval"
+    );
 }
