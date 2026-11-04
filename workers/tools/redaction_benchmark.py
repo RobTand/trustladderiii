@@ -4,6 +4,7 @@ Run inside one PrismaBuild measurement action after building `tl3`:
 PYTHONPATH=workers/src python3.14 workers/tools/redaction_benchmark.py target/debug/tl3
 """
 import json
+import os
 from pathlib import Path
 import statistics
 import subprocess
@@ -22,11 +23,13 @@ def main():
         json.dumps({'command': 'curl -H "Authorization: Bearer sk-fixture7530123456789abcdef" https://example.invalid'}),
     ]
     samples = {'python': [], 'rust_cli': []}
+    loads = {'python': [], 'rust_cli': []}
     # Alternate order within one admitted measurement so drift affects both arms.
     for turn in range(24):
         text = texts[turn % len(texts)]
         expected = redactor.text(text, limit=len(text))
         for arm in (('python', 'rust_cli') if turn % 2 else ('rust_cli', 'python')):
+            loads[arm].append(os.getloadavg()[0])
             start = time.perf_counter_ns()
             if arm == 'python':
                 actual = redactor.text(text, limit=len(text))
@@ -40,7 +43,9 @@ def main():
                       'python': sys.version.split()[0],
                       'span_bytes': [len(text.encode()) for text in texts],
                       'results': {arm: {'median': statistics.median(values),
-                                        'min': min(values), 'max': max(values)}
+                                        'min': min(values), 'max': max(values),
+                                        'host_load_1m_min': min(loads[arm]),
+                                        'host_load_1m_max': max(loads[arm])}
                                   for arm, values in samples.items()}}, indent=2))
 
 
