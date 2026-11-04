@@ -104,6 +104,11 @@ impl Ownership {
         self.store
     }
 
+    /// Release ownership and return the same session for auxiliary use.
+    pub fn release(self) -> Result<Store> {
+        Ok(self.into_store())
+    }
+
     pub fn migrate(&mut self) -> Result<()> {
         self.ensure_held()?;
         let mut tx = self.store.client.transaction()?;
