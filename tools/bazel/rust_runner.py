@@ -2,12 +2,15 @@
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 # Import siblings by path: a crate's own tools/ directory can shadow ours.
 sys.path[:0] = [str(Path(__file__).parent), str(Path('tools/ci').resolve())]
 from runtime import prepare  # noqa: E402
+import libtest_shards  # noqa: E402
 import rust_gate  # noqa: E402
+from child_env import child_env  # noqa: E402
 
 # Must match WORKSPACE in tools/bazel/rust.bzl.
 WORKSPACE = Path('/tmp/tl3-workspace')
@@ -42,6 +45,12 @@ def use_worker_python(launcher):
     uv.write_text('#!/bin/sh\nset -eu\n[ "$1" = sync ]\n[ -x workers/.venv/bin/python ]\n')
     uv.chmod(0o755)
     os.environ['TL3_TEST_UV'] = str(uv)
+
+
+def list_tests(executable):
+    output = subprocess.run([executable, '--list', '--format=terse'], check=True, capture_output=True,
+                            text=True, env=child_env()).stdout
+    return libtest_shards.listed(output)
 
 
 def enforce_budget(results, config, runner, outputs, baseline=None, cpu_seconds=None, cpu_fallbacks=None):

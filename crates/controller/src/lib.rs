@@ -3882,6 +3882,9 @@ mod git_tests;
 mod store_support;
 
 #[cfg(test)]
+mod store_support_tests;
+
+#[cfg(test)]
 mod stored_shape_tests {
     use super::*;
 

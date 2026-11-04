@@ -162,7 +162,7 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     )
     py_test(
         name = name,
-        srcs = ["//tools/bazel:rust_runner.py", "//tools/bazel:runtime.py"],
+        srcs = ["//tools/bazel:rust_runner.py", "//tools/bazel:runtime.py", "//tools/bazel:libtest_shards.py"],
         main = "//tools/bazel:rust_runner.py",
         args = [
             "$(rootpath :%s_binary)" % name,

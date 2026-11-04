@@ -6,6 +6,7 @@ load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "libtest_shards.py",
     "python_runner.py",
     "requirements.txt",
     "runtime.py",
@@ -74,11 +75,20 @@ py_binary(
 )
 
 py_binary(
+    name = "libtest_shards",
+    srcs = ["libtest_shards.py"],
+    visibility = ["//visibility:public"],
+    deps = ["//tools/ci:shards"],
+)
+
+py_binary(
     name = "rust_runner",
     srcs = ["rust_runner.py"],
     visibility = ["//visibility:public"],
     deps = [
+        ":libtest_shards",
         ":runtime",
+        "//tools/ci:child_env",
         "//tools/ci:rust_gate",
     ],
 )
