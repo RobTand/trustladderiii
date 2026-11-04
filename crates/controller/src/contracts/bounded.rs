@@ -429,12 +429,13 @@ impl<const MIN: u64, const MAX: u64> JsonSchema for Integer<MIN, MAX> {
 /// A non-negative count, up to the largest u64.
 pub type Count = Integer<0, { u64::MAX }>;
 
-/// A signed integer within ±(2^63 - 1), such as a process exit code, kept as written.
+/// A signed 64-bit integer, such as a process exit code, kept as written.
 ///
-/// serde_json reads an integer literal outside i64/u64 as the nearest f64, while Python
-/// keeps it exact. Below i64::MIN that nearest f64 is -2^63 itself, so i64::MIN is left
-/// out: then every literal the f64 could stand for is out of range for both readers, and
-/// the two decide alike without arbitrary-precision numbers (#750 re-review finding 4).
+/// serde_json reads an integer literal outside i64/u64 as the nearest f64, and below
+/// i64::MIN that f64 is -2^63 itself, which is in range. Python keeps the literal exact and
+/// refuses it. So a value read from a number is checked again against its raw JSON token
+/// (`check_token`) wherever the token is still available; `SymptomRun` does this for every
+/// record's exit code (#750 round 3 finding 5).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Signed {
     value: i64,
@@ -442,21 +443,28 @@ pub struct Signed {
 }
 
 impl Signed {
-    pub const MIN: i64 = -i64::MAX;
-    pub const MAX: i64 = i64::MAX;
-
-    pub fn new(value: i64) -> Result<Self, String> {
-        Self::from_number(value.into())
+    pub fn new(value: i64) -> Self {
+        Self {
+            value,
+            number: value.into(),
+        }
     }
 
     pub fn from_number(number: serde_json::Number) -> Result<Self, String> {
         match integral(&number).and_then(|value| i64::try_from(value).ok()) {
-            Some(value) if value >= Self::MIN => Ok(Self { value, number }),
-            _ => Err(format!(
-                "expected an integer from {} to {}, found {number}",
-                Self::MIN,
-                Self::MAX
-            )),
+            Some(value) => Ok(Self { value, number }),
+            None => Err(format!("expected a 64-bit integer, found {number}")),
+        }
+    }
+
+    /// Refuse an integer literal outside i64 that a lossy read brought into range. A literal
+    /// with a fraction or exponent is a float in both serde_json and Python, and the f64
+    /// comparison already decides it the same way in both.
+    pub fn check_token(token: &str) -> Result<(), String> {
+        if token.contains(['.', 'e', 'E']) || token.parse::<i64>().is_ok() {
+            Ok(())
+        } else {
+            Err(format!("expected a 64-bit integer, found {token}"))
         }
     }
 
@@ -487,7 +495,7 @@ impl JsonSchema for Signed {
     }
 
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        json_schema!({"type": "integer", "minimum": Self::MIN, "maximum": Self::MAX})
+        json_schema!({"type": "integer", "minimum": i64::MIN, "maximum": i64::MAX})
     }
 }
 

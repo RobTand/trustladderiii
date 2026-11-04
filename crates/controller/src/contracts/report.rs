@@ -395,6 +395,7 @@ pub struct SymptomRun {
     pub outcome: RunOutcome,
     // SHA-256 of the records' sorted, compact JSON.
     pub sha256: Sha256Hex,
+    #[serde(deserialize_with = "exact_records")]
     pub records: Vec<SymptomRecord>,
     #[serde(
         default,
@@ -403,6 +404,32 @@ pub struct SymptomRun {
     )]
     #[schemars(with = "BTreeMap<String, Count>")]
     pub target_hits: Option<BTreeMap<String, Count>>,
+}
+
+// Records are read through their raw JSON text: SymptomRecord is internally tagged, so serde
+// buffers it and an exit code's exact token is gone by the time Signed sees it.
+fn exact_records<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<SymptomRecord>, D::Error> {
+    use serde::de::Error as _;
+    use serde_json::value::RawValue;
+    #[derive(Deserialize)]
+    struct ExitCode<'a> {
+        #[serde(borrow)]
+        exit_code: &'a RawValue,
+    }
+    Vec::<Box<RawValue>>::deserialize(deserializer)?
+        .iter()
+        .map(|raw| {
+            let record: SymptomRecord =
+                serde_json::from_str(raw.get()).map_err(D::Error::custom)?;
+            if let SymptomRecord::Finish { .. } = record {
+                let token: ExitCode = serde_json::from_str(raw.get()).map_err(D::Error::custom)?;
+                Signed::check_token(token.exit_code.get()).map_err(D::Error::custom)?;
+            }
+            Ok(record)
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

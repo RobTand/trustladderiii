@@ -6,7 +6,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
-    fs,
+    fs::{self, File},
     path::{Path, PathBuf},
 };
 use tl3_worktrees::{CommitId, Worktrees};
@@ -27,113 +27,219 @@ pub struct CheckRun {
 
 pub use crate::contracts::{Check, CheckKind as Kind};
 
-/// The trusted harness this controller stages, fixed when the controller starts.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The trusted harness this controller stages.
+///
+/// The configured path runs through `current`, which deploy.py's install_release switches
+/// without restarting tl3d, and collect_releases may later delete the release it pointed
+/// to (#750 review). So the adapter reads the harness modules once, at startup, from the
+/// release `current` resolves to then. Adapters start before `Controller::open` claims
+/// ownership, so loading only reads; the copy that staging uses is published under
+/// `copies` on first use, which only the owning controller reaches. Any failure leaves the
+/// harness unavailable for the run; nothing falls back to the configured path.
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Harness {
-    /// A private copy of the release's harness modules, which only this controller reads.
+    /// Read at startup and not yet published.
+    Loaded(Modules),
+    /// The published copy, which only this controller writes.
     Copied(PathBuf),
-    /// No harness could be copied at startup. Staging refuses until tl3d restarts.
+    /// Loading or publishing failed. Staging refuses until tl3d restarts.
     Unavailable(String),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Modules {
+    copies: PathBuf,
+    digest: String,
+    files: Vec<(std::ffi::OsString, Vec<u8>)>,
 }
 
 /// The refusal while the harness is unavailable.
 pub(crate) const HARNESS_UNAVAILABLE: &str =
     "the trusted harness was unavailable when tl3d started; install it, then restart tl3d";
 
+const PARTIAL: &str = ".partial-";
+
 impl Harness {
-    /// Copy the configured harness modules once, at startup, into `copies`, a directory
-    /// only this controller writes, keyed by their digest. The configured path runs through
-    /// `current`, which deploy.py's install_release switches without restarting tl3d, and
-    /// collect_releases may later delete the release it pointed to. Staging reads only the
-    /// copy, so neither changes what a running controller stages (#750 review). Any failure
-    /// leaves the harness unavailable for this run; nothing falls back to the configured path.
     pub(super) fn load(configured: &Path, copies: &Path) -> Self {
         Self::load_observed(configured, copies, &mut |_| {})
     }
 
-    /// Red (#750 round 3): the new API over the round-2 behaviour.
+    /// `after_read` runs after each module is read; tests switch `current` there.
     pub(super) fn load_observed(
         configured: &Path,
         copies: &Path,
         after_read: &mut dyn FnMut(&Path),
     ) -> Self {
-        match Self::copy(configured, copies, after_read) {
-            Ok(copy) => Self::Copied(copy),
-            Err(error) => {
-                let reason = format!("{}: {error}", configured.display());
-                eprintln!("PrismaBuild checks: {HARNESS_UNAVAILABLE} ({reason})");
-                Self::Unavailable(reason)
-            }
+        match Self::read(configured, after_read) {
+            Ok(files) => Self::Loaded(Modules {
+                copies: copies.to_owned(),
+                digest: digest(&files),
+                files,
+            }),
+            Err(error) => Self::unavailable(configured, error),
         }
     }
 
-    fn copy(
+    // stage() takes only the harness directory's own *.py files, so they are what is read.
+    fn read(
         configured: &Path,
-        copies: &Path,
         after_read: &mut dyn FnMut(&Path),
-    ) -> std::io::Result<PathBuf> {
-        use sha2::{Digest, Sha256};
-        // stage() takes only the harness directory's own *.py files, so they are the copy.
-        let mut modules = vec![];
-        for entry in fs::read_dir(configured)? {
+    ) -> std::io::Result<Vec<(std::ffi::OsString, Vec<u8>)>> {
+        // Resolve `current` once; every module is then read from that immutable release.
+        let release = configured.canonicalize()?;
+        let mut names = vec![];
+        for entry in fs::read_dir(&release)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().is_some_and(|v| v == "py") && fs::metadata(&path)?.is_file() {
-                modules.push((entry.file_name(), fs::read(&path)?));
-                after_read(&path);
+            if path.extension().is_some_and(|v| v == "py") && entry.file_type()?.is_file() {
+                names.push(entry.file_name());
             }
         }
-        if modules.is_empty() {
+        if names.is_empty() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "no harness modules",
             ));
         }
-        modules.sort();
-        let mut digest = Sha256::new();
-        for (name, bytes) in &modules {
-            digest.update(name.as_encoded_bytes());
-            digest.update([0]);
-            digest.update((bytes.len() as u64).to_be_bytes());
-            digest.update(bytes);
+        names.sort();
+        let mut files = vec![];
+        for name in names {
+            let path = release.join(&name);
+            files.push((name, fs::read(&path)?));
+            after_read(&path);
         }
-        let key = format!("{:x}", digest.finalize());
-        fs::create_dir_all(copies)?;
-        let copy = copies.join(&key[..16]);
-        if !copy.is_dir() {
-            // Written aside, then renamed, so a copy that exists is complete.
-            let partial = copies.join(format!(".partial-{}", std::process::id()));
-            if partial.exists() {
-                fs::remove_dir_all(&partial)?;
-            }
-            fs::create_dir(&partial)?;
-            for (name, bytes) in &modules {
-                fs::write(partial.join(name), bytes)?;
-            }
-            fs::rename(&partial, &copy)?;
-        }
-        // Earlier runs' copies are this controller's own and no longer read.
-        for entry in fs::read_dir(copies)? {
-            let path = entry?.path();
-            if path != copy {
-                let _ = fs::remove_dir_all(&path);
-            }
-        }
-        Ok(copy)
+        Ok(files)
     }
 
+    fn unavailable(configured: &Path, error: std::io::Error) -> Self {
+        let reason = format!("{}: {error}", configured.display());
+        eprintln!("PrismaBuild checks: {HARNESS_UNAVAILABLE} ({reason})");
+        Self::Unavailable(reason)
+    }
+
+    /// The copy staging reads. Called only while staging, so only by the owning controller.
     pub(super) fn path(&mut self) -> Result<PathBuf> {
         self.path_with(&mut |_| Ok(()))
     }
 
+    /// `before_rename` runs on the complete, synced partial copy; tests fail it there.
     pub(super) fn path_with(
         &mut self,
-        _before_rename: &mut dyn FnMut(&Path) -> std::io::Result<()>,
+        before_rename: &mut dyn FnMut(&Path) -> std::io::Result<()>,
     ) -> Result<PathBuf> {
-        match self {
-            Self::Copied(path) => Ok(path.clone()),
-            Self::Unavailable(_) => Err(Error::Invalid(HARNESS_UNAVAILABLE)),
+        if let Self::Loaded(modules) = self {
+            *self = match modules.publish(before_rename) {
+                Ok(copy) => Self::Copied(copy),
+                Err(error) => Self::unavailable(&modules.copies, error),
+            };
         }
+        match self {
+            Self::Copied(copy) => Ok(copy.clone()),
+            _ => Err(Error::Invalid(HARNESS_UNAVAILABLE)),
+        }
+    }
+}
+
+fn digest(files: &[(std::ffi::OsString, Vec<u8>)]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    for (name, bytes) in files {
+        digest.update((name.len() as u64).to_be_bytes());
+        digest.update(name.as_encoded_bytes());
+        digest.update((bytes.len() as u64).to_be_bytes());
+        digest.update(bytes);
+    }
+    format!("{:x}", digest.finalize())
+}
+
+fn sync_directory(path: &Path) -> std::io::Result<()> {
+    File::open(path)?.sync_all()
+}
+
+impl Modules {
+    // Publish once, under ownership: verify or write <copies>/<digest>, then sweep the rest.
+    fn publish(
+        &self,
+        before_rename: &mut dyn FnMut(&Path) -> std::io::Result<()>,
+    ) -> std::io::Result<PathBuf> {
+        fs::create_dir_all(&self.copies)?;
+        // A partial copy here was abandoned by an earlier process: only the owner writes here.
+        for entry in fs::read_dir(&self.copies)? {
+            let entry = entry?;
+            if entry.file_name().to_string_lossy().starts_with(PARTIAL)
+                && entry.file_type()?.is_dir()
+            {
+                fs::remove_dir_all(entry.path())?;
+            }
+        }
+        let copy = self.copies.join(&self.digest);
+        if !self.verified(&copy)? {
+            if copy.is_dir() {
+                fs::remove_dir_all(&copy)?;
+            } else if copy.symlink_metadata().is_ok() {
+                fs::remove_file(&copy)?;
+            }
+            let partial = self.copies.join(format!(
+                "{PARTIAL}{}-{}",
+                std::process::id(),
+                &self.digest[..16]
+            ));
+            let written = self.write(&partial, &copy, before_rename);
+            if written.is_err() {
+                let _ = fs::remove_dir_all(&partial);
+            }
+            written?;
+        }
+        // Only the current copy is kept: no other controller owns this directory.
+        for entry in fs::read_dir(&self.copies)? {
+            let entry = entry?;
+            if entry.path() == copy {
+                continue;
+            }
+            if entry.file_type()?.is_dir() {
+                fs::remove_dir_all(entry.path())?;
+            } else {
+                fs::remove_file(entry.path())?;
+            }
+        }
+        sync_directory(&self.copies)?;
+        Ok(copy)
+    }
+
+    fn write(
+        &self,
+        partial: &Path,
+        copy: &Path,
+        before_rename: &mut dyn FnMut(&Path) -> std::io::Result<()>,
+    ) -> std::io::Result<()> {
+        use std::io::Write;
+        fs::create_dir(partial)?;
+        for (name, bytes) in &self.files {
+            let mut file = File::create(partial.join(name))?;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+        }
+        sync_directory(partial)?;
+        before_rename(partial)?;
+        fs::rename(partial, copy)?;
+        sync_directory(&self.copies)
+    }
+
+    // An existing copy is reused only if it holds exactly these modules.
+    fn verified(&self, copy: &Path) -> std::io::Result<bool> {
+        if !copy.is_dir() {
+            return Ok(false);
+        }
+        let mut files = vec![];
+        for entry in fs::read_dir(copy)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                return Ok(false);
+            }
+            files.push((entry.file_name(), fs::read(entry.path())?));
+        }
+        files.sort();
+        Ok(digest(&files) == self.digest)
     }
 }
 
