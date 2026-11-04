@@ -4,6 +4,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 from tl3_harness import test_tool
 
 
@@ -30,14 +32,17 @@ def bounded(result, limit):
     return json.loads(child.stdout)
 
 
-def test_summary_exits_when_truncation_note_would_grow_the_envelope():
+def test_truncation_note_does_not_prevent_shrinking_the_envelope():
     result = test_tool.Summary().result
     result['tests'] = [{'test': str(i), 'outcome': 'passed', 'message': ''} for i in range(3)]
     result['totals']['passed'] = 3
-    observed = bounded(result, len(json.dumps(result).encode()) - 1)
-    assert observed['status'] == 'infrastructure_error', observed
-    assert observed['execution']['termination_reason'] == 'identity_exceeds_summary_limit'
+    limit = len(json.dumps(result).encode()) - 1
+    observed = bounded(result, limit)
+    assert observed['status'] == 'completed', observed
     assert observed['totals']['passed'] == 3
+    assert len(observed['tests']) < 3
+    assert len(json.dumps(observed).encode()) <= limit
+    assert 'Truncated' in observed['note']
 
 
 def test_digest_that_still_cannot_fit_exits_without_looping():
@@ -61,7 +66,8 @@ def test_digest_then_entry_removal_terminates_with_exact_identity():
     assert len(json.dumps(observed).encode()) <= 1000
 
 
-def test_error_dominated_group_removes_failures_but_keeps_totals_and_proof():
+@pytest.mark.parametrize('note', ['', 'Each group runs with its own declared source partition and execution settings.'])
+def test_error_dominated_group_removes_failures_but_keeps_totals_and_proof(note):
     module = 'tests/test_checkout_recovery_1465.py'
     proof = {'rule': 'subject-observer-v1', 'mode': 'pytest-outcome',
              'declaration': None, 'source_base_tree_sha256': 'a' * 64,
@@ -79,7 +85,8 @@ def test_error_dominated_group_removes_failures_but_keeps_totals_and_proof():
                             for index, outcome in enumerate(outcomes)])
     full_file['totals'].update(passed=25, failed=1, error=267)
     result = test_tool.Summary().result
-    result.update(groups=[control, full_file], totals={'passed': 25, 'failed': 2, 'error': 267, 'skipped': 0})
+    result.update(groups=[control, full_file], totals={'passed': 25, 'failed': 2, 'error': 267, 'skipped': 0},
+                  note=note)
     limit = test_tool.SUMMARY_BYTES
     assert len(json.dumps(result).encode()) > limit
 
