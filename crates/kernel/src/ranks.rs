@@ -246,49 +246,12 @@ impl Node {
             if let Some(e) = self.effect {
                 d += 1;
                 if !e.cancelling {
-                    match self.current() {
-                        Some(Item::Do(k)) => {
-                            if k == e.kind {
-                                kernel_proof! {
-                                    assert(self.effect == Some(e));
-                                    assert(current_item(*self) == Some(Item::Do(k))
-                                        || current_item(*self) == Some(Item::Teardown(k)));
-                                    assert(!e.cancelling);
-                                    assert(k == e.kind);
-                                    reveal(effect_distance);
-                                    assert(effect_distance(*self) == -1);
-                                }
-                                d -= 2;
-                            } else {
-                                kernel_proof! { assert(effect_distance(*self) == 1); }
-                            }
+                    if let Some(Item::Do(k) | Item::Teardown(k)) = self.current() {
+                        if k == e.kind {
+                            d -= 2;
                         }
-                        Some(Item::Teardown(k)) => {
-                            if k == e.kind {
-                                kernel_proof! {
-                                    assert(self.effect == Some(e));
-                                    assert(current_item(*self) == Some(Item::Do(k))
-                                        || current_item(*self) == Some(Item::Teardown(k)));
-                                    assert(!e.cancelling);
-                                    assert(k == e.kind);
-                                    reveal(effect_distance);
-                                    assert(effect_distance(*self) == -1);
-                                }
-                                d -= 2;
-                            } else {
-                                kernel_proof! { assert(effect_distance(*self) == 1); }
-                            }
-                        }
-                        _ => { kernel_proof! { assert(effect_distance(*self) == 1); } }
                     }
-                } else {
-                    kernel_proof! { assert(effect_distance(*self) == 1); }
                 }
-                kernel_proof! {
-                    assert(d as int == base_distance(*self) + effect_distance(*self));
-                }
-            } else {
-                kernel_proof! { assert(effect_distance(*self) == 0); }
             }
             kernel_proof! {
                 assert(d as int == base_distance(*self) + effect_distance(*self));
