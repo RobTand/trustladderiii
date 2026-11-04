@@ -6,7 +6,7 @@
 //! - `enqueue_ack_sound`: state-table Publishing, step 4 confirms before Queued.
 //! - `enqueue_stale_head`: Reviewing's Approved(head) row and #608's dispatch fence.
 //! - `enqueue_refused_sticky`: #608, preserve terminal command refusal handling.
-//! - `enqueue_write_ahead`: #608, persist intent before upstream dispatch.
+//! - `enqueue_write_ahead`: #608 and #751, save intent before the final read and dispatch.
 //! - `enqueue_recovery_grace`: #608, five-minute grace and one command per head.
 //! - `enqueue_dequeue_fresh`: #608, retain prior dequeue without reusing stale labels.
 //! - `enqueue_required_check`: Q47, distinguish code failures from runner failures.
@@ -208,7 +208,7 @@ proof!(enqueue_stale_head, {
         QueueEvent::Reconcile(read) => {
             read.head == Head::Other && read.queue != QueueState::Merged && !state.confirmed
         }
-        QueueEvent::Prepare { head, .. } | QueueEvent::RerunRead { head, .. } => {
+        QueueEvent::LabelRead { head, .. } | QueueEvent::RerunRead { head, .. } => {
             head == Head::Other
         }
         QueueEvent::DispatchCommand(read) => read.head == Head::Other,
@@ -368,7 +368,58 @@ proof!(enqueue_write_ahead, {
             );
         }
     }
-    let mut intent = false;
+    if let QueueEvent::Prepare {
+        dequeue_pending: false,
+        checks_ready: true,
+        queue_label,
+    } = event
+    {
+        if !refused(state) {
+            let command = state
+                .intent
+                .map_or(queue_label, |intent| intent.requeue.is_some());
+            assert_eq!(effects.len(), 2);
+            assert_eq!(
+                effects.get(1),
+                Some(Effect::Read(if command {
+                    Need::Command
+                } else {
+                    Need::LabelPull
+                })),
+                "final validation must follow saved intent"
+            );
+            if !command {
+                let head: Head = kani::any();
+                let open: bool = kani::any();
+                let merged: bool = kani::any();
+                let (validated, final_effects) =
+                    decide(next, QueueEvent::LabelRead { head, open, merged });
+                let expected = if head == Head::Other {
+                    Effect::Complete(Complete::Retryable)
+                } else if !open || merged {
+                    Effect::Error(Failure::PullClosed)
+                } else {
+                    Effect::Write(Write::Label)
+                };
+                assert_eq!(final_effects.len(), 1);
+                assert_eq!(
+                    first(&final_effects),
+                    expected,
+                    "final label validation misjudged"
+                );
+                assert_eq!(validated.intent, Some(Intent { requeue: None }));
+                kani::cover!(head == Head::Other, "stale final read follows saved intent");
+                kani::cover!(
+                    head == Head::Current && (!open || merged),
+                    "closed final read follows saved intent"
+                );
+            }
+        }
+    }
+    // LabelRead consumes the intent saved by the preceding Prepare transition.
+    // Its full-domain check also forbids label writes with a missing/wrong intent.
+    let mut intent = matches!(event, QueueEvent::LabelRead { .. })
+        && state.intent == Some(Intent { requeue: None });
     let mut recovery = false;
     let mut rerun = false;
     let mut label_write = false;

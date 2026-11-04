@@ -95,6 +95,7 @@ pub enum Need {
     CommandReply,
     HeadChecks,
     RerunPull,
+    LabelPull,
     RecoveryFile,
     RepairedHead,
     Dequeue,
@@ -112,6 +113,8 @@ pub enum Failure {
     RerunUnknown,
     RerunFinishing,
     PullChanged,
+    PullClosed,
+    IntentMissing,
 }
 impl Failure {
     pub fn class(self) -> &'static str {
@@ -124,6 +127,8 @@ impl Failure {
             Self::RerunUnknown => "workflow rerun acceptance is still unknown",
             Self::RerunFinishing => "workflow run is still finishing before rerun",
             Self::PullChanged => "PR changed before workflow rerun",
+            Self::PullClosed => "PR is closed",
+            Self::IntentMissing => "enqueue intent missing before final head validation",
         }
     }
 }
@@ -188,10 +193,15 @@ pub enum QueueEvent {
     },
     Reconcile(QueueRead),
     Prepare {
-        head: Head,
         dequeue_pending: bool,
         checks_ready: bool,
         queue_label: bool,
+    },
+    /// Sampled only after Prepare's SaveIntent and the shell's fence (#751).
+    LabelRead {
+        head: Head,
+        open: bool,
+        merged: bool,
     },
     RecoveryTick {
         eligible: bool,
@@ -446,14 +456,11 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
             out.push(Effect::Complete(completion));
         }
         QueueEvent::Prepare {
-            head,
             dequeue_pending,
             checks_ready,
             queue_label,
         } => {
-            if head != Head::Current {
-                out.push(Effect::Complete(Complete::Retryable));
-            } else if dequeue_pending {
+            if dequeue_pending {
                 out.push(Effect::Error(Failure::DequeuePending));
             } else if !checks_ready {
                 out.push(Effect::Error(Failure::ChecksPending));
@@ -465,9 +472,20 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
                 out.push(if intent.requeue.is_some() {
                     Effect::Read(Need::Command)
                 } else {
-                    Effect::Write(Write::Label)
+                    Effect::Read(Need::LabelPull)
                 });
             }
+        }
+        QueueEvent::LabelRead { head, open, merged } => {
+            out.push(if state.intent != Some(Intent { requeue: None }) {
+                Effect::Error(Failure::IntentMissing)
+            } else if head != Head::Current {
+                Effect::Complete(Complete::Retryable)
+            } else if !open || merged {
+                Effect::Error(Failure::PullClosed)
+            } else {
+                Effect::Write(Write::Label)
+            });
         }
         QueueEvent::RecoveryTick { eligible, now_ms } => {
             let recovery = state.recovery.get_or_insert(Recovery {

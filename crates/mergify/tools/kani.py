@@ -91,6 +91,8 @@ MUTANTS = [
     ("enqueue_stale_head", DECIDE + "enqueue.rs", "read.head != Head::Current\n                || !read.open", "!read.open"),
     ("enqueue_refused_sticky", DECIDE + "enqueue.rs", "if refused_intent {", "if false && refused_intent {"),
     ("enqueue_write_ahead", DECIDE + "enqueue.rs", "out.push(Effect::SaveIntent);\n                out.push(if intent.requeue.is_some()", "out.push(if intent.requeue.is_some()"),
+    ("enqueue_write_ahead", DECIDE + "enqueue.rs", "out.push(Effect::SaveIntent);\n                out.push(if intent.requeue.is_some() {\n                    Effect::Read(Need::Command)\n                } else {\n                    Effect::Read(Need::LabelPull)\n                });", "out.push(if intent.requeue.is_some() {\n                    Effect::Read(Need::Command)\n                } else {\n                    Effect::Read(Need::LabelPull)\n                });\n                out.push(Effect::SaveIntent);"),
+    ("enqueue_stale_head", DECIDE + "enqueue.rs", "} else if head != Head::Current {\n                Effect::Complete(Complete::Retryable)", "} else if false && head != Head::Current {\n                Effect::Complete(Complete::Retryable)"),
     ("enqueue_recovery_grace", DECIDE + "enqueue.rs", "                    now_ms.saturating_sub(since) >= GRACE_MS", "                    now_ms.saturating_sub(since) >= GRACE_MS / 2"),
     ("enqueue_dequeue_fresh", DECIDE + "enqueue.rs", "event.id > queued", "event.id >= queued"),
     ("enqueue_required_check", DECIDE + "enqueue.rs", "check.app == App::Actions", "check.app != App::Missing"),

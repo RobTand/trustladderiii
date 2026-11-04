@@ -390,12 +390,13 @@ impl Adapter {
                     &mut recovery,
                     lifecycle::QueueEvent::RecoveryTick {
                         eligible: false,
-                        now_ms: self.recovery_now_ms(),
+                        now_ms: 0,
                     },
                 )?;
             }
             return Ok(Reconciliation::Pending);
         }
+        let now_ms = self.recovery_now_ms();
         // Poll the saved timer without rereading the delivery archive. Dispatch
         // adopts historical commands again before consuming the head budget.
         let mut recovery = match self.recovery(delivery)? {
@@ -410,12 +411,12 @@ impl Adapter {
             &mut recovery,
             lifecycle::QueueEvent::RecoveryTick {
                 eligible: true,
-                now_ms: self.recovery_now_ms(),
+                now_ms,
             },
         )?;
         match effects.as_slice() {
             [lifecycle::Effect::Read(lifecycle::Need::Command)] => {
-                self.queue_command(delivery, true)
+                self.queue_command(delivery, Some(now_ms))
             }
             [lifecycle::Effect::Complete(lifecycle::Complete::Pending)] => {
                 Ok(Reconciliation::Pending)
@@ -427,8 +428,9 @@ impl Adapter {
     pub(super) fn queue_command(
         &mut self,
         delivery: &Delivery,
-        waiting: bool,
+        recovery_tick_ms: Option<u64>,
     ) -> Result<Reconciliation> {
+        let waiting = recovery_tick_ms.is_some();
         let mut recovery = self.command_budget(delivery)?;
         if let Some(result) = self.reconcile_command(delivery, &mut recovery)? {
             return Ok(result);
@@ -472,7 +474,7 @@ impl Adapter {
                 paused,
                 waiting,
                 eligible,
-                now_ms: self.recovery_now_ms(),
+                now_ms: recovery_tick_ms.unwrap_or_default(),
             }),
         );
         let next = next

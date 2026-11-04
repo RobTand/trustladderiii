@@ -394,7 +394,9 @@ impl From<&tl3_mergify::Observation> for Progress {
 }
 
 fn lifecycle_error(failure: lifecycle::Failure) -> Error {
-    if failure == lifecycle::Failure::ChecksPending {
+    if failure == lifecycle::Failure::PullClosed {
+        adapter_error(tl3_mergify::Error::PullRequestClosed)
+    } else if failure == lifecycle::Failure::ChecksPending {
         Error::ChecksPending
     } else {
         Error::Invalid(failure.class())
@@ -1085,7 +1087,7 @@ impl Executor for Adapter {
                     .then_some(Requeue::Ready),
             },
         };
-        let (_, effects) = lifecycle::decide(
+        let (prepared, effects) = lifecycle::decide(
             lifecycle::EnqueueState {
                 intent: Some(lifecycle::Intent {
                     requeue: attempt.requeue,
@@ -1093,13 +1095,13 @@ impl Executor for Adapter {
                 ..Default::default()
             },
             lifecycle::QueueEvent::Prepare {
-                head: lifecycle_head(state.pull_request.head.sha == head),
                 dequeue_pending: false,
                 checks_ready: true,
                 queue_label: issue.labels.iter().any(|label| label.name == QUEUE_LABEL),
             },
         );
-        for effect in effects {
+        let mut effects = std::collections::VecDeque::from(effects);
+        while let Some(effect) = effects.pop_front() {
             match effect {
                 lifecycle::Effect::SaveIntent => {
                     self.records.write(
@@ -1109,26 +1111,25 @@ impl Executor for Adapter {
                     self.fence(delivery)?;
                 }
                 lifecycle::Effect::Read(lifecycle::Need::Command) => {
-                    if let Reconciliation::Found(completion) =
-                        self.queue_command(delivery, false)?
-                    {
+                    if let Reconciliation::Found(completion) = self.queue_command(delivery, None)? {
                         return Ok(*completion);
                     }
                 }
+                lifecycle::Effect::Read(lifecycle::Need::LabelPull) => {
+                    let pull = self.runtime.block_on(github.pull_request(&repo, number))?;
+                    let (_, next) = lifecycle::decide(
+                        prepared,
+                        lifecycle::QueueEvent::LabelRead {
+                            head: lifecycle_head(pull.head.sha == head),
+                            open: pull.state == "open",
+                            merged: pull.merged_at.is_some(),
+                        },
+                    );
+                    effects.extend(next);
+                }
                 lifecycle::Effect::Write(lifecycle::Write::Label) => {
-                    match self
-                        .runtime
-                        .block_on(Mergify::new(github.clone()).queue(&repo, number, head))
-                    {
-                        Ok(()) => {}
-                        Err(tl3_mergify::Error::HeadChanged) => {
-                            return match self.completion(delivery, self.snapshot()?.as_ref())? {
-                                Reconciliation::Found(completion) => Ok(*completion),
-                                _ => Err(Error::Invalid("PR changed during enqueue")),
-                            };
-                        }
-                        Err(error) => return Err(adapter_error(error)),
-                    }
+                    self.runtime
+                        .block_on(github.add_label(&repo, number, QUEUE_LABEL))?;
                 }
                 lifecycle::Effect::Complete(lifecycle::Complete::Retryable) => {
                     return match self.completion(delivery, self.snapshot()?.as_ref())? {
@@ -1136,6 +1137,7 @@ impl Executor for Adapter {
                         _ => Err(Error::Invalid("PR changed during enqueue")),
                     };
                 }
+                lifecycle::Effect::Error(failure) => return Err(lifecycle_error(failure)),
                 _ => return Err(Error::Invalid("unexpected enqueue execution effect")),
             }
         }
