@@ -24,6 +24,9 @@ def test_collection_above_64_kib_has_a_normal_report(tmp_path, monkeypatch):
     monkeypatch.setattr(execution, 'container_command', lambda tree, container, tests: [
         sys.executable, '-I', '-B', str(RUNNER), json.dumps(tests), str(tree)])
     report = tmp_path / 'report.jsonl'
+    # This checks report framing, not crash durability. Remote fsync can stall
+    # on thousands of records; retain real journal writes and flushes here.
+    monkeypatch.setattr(execution.os, 'fsync', lambda descriptor: None)
     outcomes = execution.run_tree(tmp_path, IMAGE, ('test_many.py::test_many',), report, Progress())
     assert outcomes == {'test_many.py::test_many': Outcome.PASSED}
     collection = next(line for line in report.read_bytes().splitlines()

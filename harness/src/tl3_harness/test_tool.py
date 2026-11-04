@@ -6,6 +6,7 @@ import tempfile
 
 from .execution import Container, Progress, container_command, require_admission
 from .report import decode
+from .selector_identity import selector_identity
 from .model import Forcing
 from .forcing_ownership import valid_delay_budget
 from .supervision import ExecutionFailure, ExecutionOutcome, Supervised
@@ -39,11 +40,27 @@ def infrastructure(message, origin=None):
     return result
 
 
+def _summary_limit(result):
+    failure = ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, 'summary', 'identity_exceeds_summary_limit')
+    diagnostic = infrastructure(failure.message(), origin=result.get('origin'))
+    diagnostic.update(totals=result['totals'], execution=result.get('execution', failure.as_json()),
+                      note='Truncated: summary identity exceeds the envelope limit. No proof is available.')
+    for field in ('action_key', 'receipts'):
+        if field in result:
+            diagnostic[field] = result[field]
+    return diagnostic
+
+
 def bounded(result, *, limit=SUMMARY_BYTES - 2048):
-    # Bound the complete envelope after metadata is attached. Keep identity and
-    # retained entries exact; dropping a node makes the proof visibly incomplete.
-    while len(json.dumps(result).encode()) > limit:
-        if result['status'] != 'completed' and result.get('selectors'):
+    # Bound the envelope after metadata is attached. Digest the full selection
+    # before dropping result entries; the prefix is display text, never proof.
+    size = len(json.dumps(result).encode())
+    while size > limit:
+        selected = result.get('selectors')
+        compact = selector_identity(selected) if isinstance(selected, list) and result['status'] == 'completed' else None
+        if compact is not None and len(json.dumps(compact)) < len(json.dumps(selected)):
+            result['selectors'] = compact
+        elif result['status'] != 'completed' and isinstance(selected, list) and selected:
             result['selectors'].pop()
             result['selectors_omitted'] = result.get('selectors_omitted', 0) + 1
         elif result['tests']:
@@ -53,15 +70,14 @@ def bounded(result, *, limit=SUMMARY_BYTES - 2048):
         elif any(run.get('failed') for run in result.get('runs', ())):
             next(run for run in reversed(result['runs']) if run.get('failed'))['failed'].pop()
         else:
-            failure = ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, 'summary', 'identity_exceeds_summary_limit')
-            diagnostic = infrastructure(failure.message(), origin=result.get('origin'))
-            diagnostic.update(totals=result['totals'], execution=result.get('execution', failure.as_json()),
-                              note='Truncated: summary identity exceeds the envelope limit. No proof is available.')
-            for field in ('action_key', 'receipts'):
-                if field in result:
-                    diagnostic[field] = result[field]
-            return diagnostic
-        result['note'] = 'Truncated: selectors, test entries or run failure IDs were cut. Totals include all results.'
+            return _summary_limit(result)
+        result['note'] = 'Truncated: selectors were compacted or entries were cut. Totals include all results.'
+        reduced = len(json.dumps(result).encode())
+        # The encoded byte count is a decreasing natural number, including the
+        # truncation note. Every iteration shrinks it or exits without proof.
+        if reduced >= size:
+            return _summary_limit(result)
+        size = reduced
     return result
 
 
