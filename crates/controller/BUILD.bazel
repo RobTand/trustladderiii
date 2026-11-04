@@ -18,6 +18,7 @@ tl3_crate(
     ],
     bins = [
         "tl3",
+        "tl3-worker-supervisor",
         "tl3d",
     ],
     examples = {
