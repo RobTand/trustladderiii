@@ -2790,7 +2790,18 @@ fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack, out: &mut Outbox) {
     }
 }
 
-fn confirmed(m: &mut Node, kind: EffectKind) {
+kernel_fn! {
+/// Confirmed-effect rows / #771: at most one adoption generation is allocated.
+// The pinned Verus frontend requires nested if-let instead of let chains.
+#[allow(clippy::collapsible_if)]
+fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
+    requires old(m).generation < u64::MAX,
+    ensures final(m).generation as int <= old(m).generation as int + 1,
+        final(m).generation >= old(m).generation,
+        final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
+        final(m).question == old(m).question,
+        final(m).fx_failures == 0, final(m).fx_incidents == 0,
+] {
     m.fx_failures = 0;
     m.fx_incidents = 0;
     match kind {
@@ -2803,22 +2814,23 @@ fn confirmed(m: &mut Node, kind: EffectKind) {
         EffectKind::RemoveWorktree => m.worktree = false,
         _ => {}
     }
-    if !kind.starts_operation()
-        && let Some(Item::Do(k) | Item::Teardown(k)) = m.current()
-        && k == kind
-    {
-        if kind == EffectKind::PrepareWorktree
-            && !m.adopted
-            && let Some(head) = m.proposed
-        {
-            m.adopted = true;
-            m.head = Some(head);
-            m.checked = None;
-            set_phase(m, Phase::Checking);
-        } else {
-            m.pos += 1;
+    if !kind.starts_operation() {
+        if let Some(Item::Do(k) | Item::Teardown(k)) = m.current() {
+            if k == kind {
+                if kind == EffectKind::PrepareWorktree && !m.adopted {
+                    if let Some(head) = m.proposed {
+                        m.adopted = true;
+                        m.head = Some(head);
+                        m.checked = None;
+                        set_phase(m, Phase::Checking);
+                        return;
+                    }
+                }
+                m.pos += 1;
+            }
         }
     }
+}
 }
 
 kernel_fn! {
@@ -3154,7 +3166,14 @@ fn go_on(w: &mut World, i: usize, q: Question, deposit: u8, out: &mut Outbox) {
     }
 }
 
-fn mark_handled(m: &mut Node) {
+kernel_fn! {
+/// Cleanup question row / #771: handling cleanup allocates no monotone counter.
+fn mark_handled(m: &mut Node) -> (result: ()) [
+    ensures final(m).generation == old(m).generation,
+        final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
+        final(m).question == old(m).question,
+        final(m).phase == old(m).phase,
+] {
     if let Some(Item::Teardown(kind)) = m.current() {
         match kind {
             EffectKind::StopRun => {
@@ -3168,6 +3187,7 @@ fn mark_handled(m: &mut Node) {
         }
         m.pos += 1;
     }
+}
 }
 
 // ---------------------------------------------------------------- settle
