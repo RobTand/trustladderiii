@@ -24,3 +24,13 @@ def reset_ms(error, now):
         return math.ceil(reset * 1000)
     except (ValueError, TypeError, OverflowError):
         return None
+
+
+# Q53 (#745): how long a model that can't be served stays off its ladders before
+# a step tries it again.
+PROBE_S = 15 * 60
+
+
+def ending_ms(error, now, role):
+    """When the failed step's model may be tried again, or None for a failure."""
+    return reset_ms(error, now)
