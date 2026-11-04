@@ -586,10 +586,22 @@ pub(super) fn parse_reply(
         if progress(&value) {
             continue;
         }
-        if value.as_object().is_some_and(|o| o.len() == 3)
+        // #759: a postmortem's grade judges run on the case file's grade
+        // model, and only that model may be named as the one to charge.
+        let charged = match value.get("model") {
+            None => Some(None),
+            Some(model) if delivery.is_postmortem() && *model == inputs["grade_model"] => {
+                model.as_str().map(|model| Some(model.to_owned()))
+            }
+            Some(_) => None,
+        };
+        if value
+            .as_object()
+            .is_some_and(|o| o.len() == 3 + usize::from(value.get("model").is_some()))
             && value["event"] == "quota"
             && value["role"] == role
         {
+            let model = charged.ok_or(Error::Invalid("invalid quota model"))?;
             let reset_ms = value["reset_ms"]
                 .as_u64()
                 .filter(|v| *v > 0)
@@ -601,7 +613,7 @@ pub(super) fn parse_reply(
             return Ok(Observation::Quota {
                 key: delivery.key.clone(),
                 reset_ms,
-                model: None,
+                model,
             });
         }
         if !value.as_object().is_some_and(|o| o.len() == 3)

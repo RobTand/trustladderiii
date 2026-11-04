@@ -542,11 +542,23 @@ under the same operation key and generation. The protocol includes no exception
 text or response body.
 
 A typed reply saying the model can't be served now ends the same way, with
-`reset_ms` set to a probe 15 minutes later (Q53, #745): 400 or 404 with error
-code `model_not_found`, 503, or 429 without a valid future reset. The step falls
-back down its ladder, and tries the model again after the probe time. Any other
-400 still fails. A postmortem run still ends this way only on announced quota,
-because it calls two models and the controller charges the request's model.
+`reset_ms` set to a probe (Q53, #745, #759):
+
+- 400 or 404 with error code `model_not_found`, or 429 without a reset: 15 minutes later.
+- A bare 503, or a 429 whose announced reset is zero or already past: 2 minutes later.
+  CLIProxyAPI answers every model with 503 while it is down or restarting.
+
+The step falls back down its ladder, and tries the model again after the probe
+time. Any other 400 still fails.
+
+A postmortem run ends this way too, from its judges' typed causes. The judge
+client keeps the proxy's `model_not_found` code, which MLflow's error drops. When
+a grade judge failed, the event names the case file's grade model, the only
+model it may name, and the controller charges that model instead of the run's:
+
+```json
+{"event":"quota","role":"postmortem","reset_ms":1893456000000,"model":"claude-sonnet-5-5"}
+```
 
 Maker recall uses `[hindsight].endpoint` and `[hindsight].bank` from controller
 config. The model supplies only a query. One 30-second deadline covers connection,
