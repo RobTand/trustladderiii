@@ -3478,7 +3478,7 @@ fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
             && (!old(m).paused || old(m).phase is Stopping)
             && (current_item(*old(m)) == Some(Item::Do(kind))
                 || current_item(*old(m)) == Some(Item::Teardown(kind)))
-            ==> distance(*final(m)) + 2 <= distance(*old(m)),
+            ==> distance(*final(m)) + 2 <= distance(*old(m))),
         final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
         (settle_shape(*old(m))
             && (old(m).phase is Stopping ==> current_item(*old(m)) == Some(Item::Teardown(kind)))
