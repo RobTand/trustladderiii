@@ -365,9 +365,19 @@ const PLANNING_MODES: [&str; 6] = [
     "plan-bad-schema",
 ];
 
-fn finish_fixture(database: Database, group: &str) {
-    database.stop();
-    drop(database);
+/// One Postgres server per shard process, started by the first group that
+/// needs one (#742). Each group still creates its own databases, and the
+/// watchdog stops the server when the process exits. A server per group cost
+/// a shutdown checkpoint each, which timed out on contended executors.
+struct Fixture(Option<(Database, std::process::Child)>);
+
+impl Fixture {
+    fn database(&mut self) -> &mut Database {
+        &mut self.0.get_or_insert_with(Database::start_shared).0
+    }
+}
+
+fn finish_fixture(group: &str) {
     println!("test {group}_fixture_cleanup ... ok");
 }
 
@@ -601,9 +611,8 @@ fn main() {
         return;
     }
     if args.get(1).is_some_and(|s| s == "--maker-only") {
-        let mut maker_database = Some(database);
-        maker::run(&mut maker_database, &mut scenario_shard::Shard::unsharded());
-        maker_database.unwrap().stop();
+        database.stop();
+        maker::run(&mut Fixture(None), &mut scenario_shard::Shard::unsharded());
         return;
     }
     if args.get(1).is_some_and(|s| s == "--quota-ladder") {
@@ -2715,6 +2724,7 @@ fn external_wait_survives_restart(settings: &tl3_config::Store) {
 
 fn run_default() {
     let mut shard = scenario_shard::Shard::from_env();
+    let mut fixture = Fixture(None);
     shard.run(WorkerGroup::Router, || {
         maker::router_regression(false);
         println!("test maker_router_retire ... ok");
@@ -2723,7 +2733,7 @@ fn run_default() {
     });
     prepare_workers();
     shard.run(WorkerGroup::Waits, || {
-        let mut database = Database::start();
+        let database = fixture.database();
         quota_resumes_same_operation(&database.create("workers_quota"));
         println!("test announced_quota_resumes_same_operation_without_failure ... ok");
         clock_stops_stalled_worker(&database.create("workers_stall"));
@@ -2734,10 +2744,10 @@ fn run_default() {
         println!("test process_writer_sends_the_active_writer_prompt ... ok");
         missing_prompt_holds_launch(&database.create("missing_prompt"));
         println!("test missing_prompt_holds_the_launch_without_claiming_a_worker ... ok");
-        finish_fixture(database, "worker_waits");
+        finish_fixture("worker_waits");
     });
     shard.run(WorkerGroup::IngestMaterials, || {
-        let mut database = Database::start();
+        let database = fixture.database();
         for wrapped in [false, true] {
             linked_materials(
                 &database.create(&format!("linked_materials_{wrapped}")),
@@ -2752,35 +2762,33 @@ fn run_default() {
                 "test narrowed_request_ingest_carries_issue_scope_and_question_wrapped_{wrapped} ... ok"
             );
         }
-        database.stop();
     });
     shard.run(WorkerGroup::IngestAudit, || {
-        let mut database = Database::start();
+        let database = fixture.database();
         simulation(&database.create("workers_sim"));
         println!("test real_ingest_audit_reaches_unplanned_and_posts_goals ... ok");
-        finish_fixture(database, "ingest_audit");
+        finish_fixture("ingest_audit");
     });
     shard.run(WorkerGroup::Launch, || {
-        let mut database = Database::start();
+        let database = fixture.database();
         killed_worker(&database.create("workers_kill"));
         println!("test sigkill_worker_retry_is_idempotent_by_key ... ok");
         kernel_retries_killed_worker(&database.create("workers_kernel_retry"));
         println!("test sigkill_worker_failure_retries_through_kernel ... ok");
         late_launcher(&database.create("workers_late"));
         println!("test cancelled_late_launcher_cannot_start_a_second_copy ... ok");
-        finish_fixture(database, "worker_launch");
+        finish_fixture("worker_launch");
     });
     shard.run(WorkerGroup::RestartBlocked, || {
-        let mut database = Database::start();
+        let database = fixture.database();
         killed_controller(&database.create("controller_kill"), "blocked");
         println!("test sigkill_controller_reattaches_to_the_same_worker_blocked ... ok");
-        database.stop();
     });
     shard.run(WorkerGroup::Restart, || {
-        let mut database = Database::start();
+        let database = fixture.database();
         killed_controller(&database.create("planner_controller_kill"), "plan-blocked");
         println!("test sigkill_controller_reattaches_to_the_same_worker_plan-blocked ... ok");
-        finish_fixture(database, "worker_restart");
+        finish_fixture("worker_restart");
     });
     for (group, modes) in [
         (WorkerGroup::InvalidSchema, &INVALID_REPLIES[..4]),
@@ -2789,36 +2797,33 @@ fn run_default() {
         (WorkerGroup::InvalidForged, &INVALID_REPLIES[10..]),
     ] {
         shard.run(group, || {
-            let mut database = Database::start();
-            let settings = database.create("workers_invalid");
+            let database = fixture.database();
+            let settings = database.create(&format!("workers_invalid_{group:?}"));
             materials(&mut Store::open(&settings).unwrap());
             for mode in modes {
                 invalid_reply(&settings, mode);
                 println!("test schema_missing_nonzero_and_duplicate_replies_fail_{mode} ... ok");
             }
-            database.stop();
         });
     }
     shard.run(WorkerGroup::ReplyInvalid, || {
-        let mut database = Database::start();
+        let database = fixture.database();
         let settings = database.create("workers_invalid");
         materials(&mut Store::open(&settings).unwrap());
         diagnostic_failure(&settings);
         println!("test diagnostic_worker_failure_reaches_the_incident_and_status ... ok");
         stop_and_exit_gate(&database.create("workers_stop"));
         println!("test reply_requires_exit_zero_and_stop_waits_for_death ... ok");
-        database.stop();
     });
     shard.run(WorkerGroup::ReplyObjections, || {
-        let mut database = Database::start();
-        early_and_objections(&mut database);
+        let database = fixture.database();
+        early_and_objections(database);
         println!("test early_end_and_audit_disagreement_mapping ... ok");
         never_started(&database.create("workers_unclaimed"));
         println!("test unclaimed_crash_window_emits_no_failure_and_retries_same_key ... ok");
-        database.stop();
     });
     shard.run(WorkerGroup::Reply, || {
-        let mut database = Database::start();
+        let database = fixture.database();
         partial_crash(&database.create("workers_partial_crash"));
         println!("test partial_last_line_at_sigkill_keeps_only_complete_progress ... ok");
         killed_reply(&database.create("workers_reply_kill"));
@@ -2827,10 +2832,10 @@ fn run_default() {
         println!("test supervisor_death_keeps_live_worker_and_discards_unrecorded_exit ... ok");
         fake_stop(&database.create("workers_fake_stop"));
         println!("test stop_run_reaches_fake_delivery_and_uses_active_node_index ... ok");
-        finish_fixture(database, "worker_reply");
+        finish_fixture("worker_reply");
     });
     shard.run(WorkerGroup::Memory, || {
-        let mut database = Database::start();
+        let database = fixture.database();
         event_source(&database.create("workers_events"));
         println!("test source_run_wakes_on_new_run_output_and_exit_without_polling ... ok");
         bounded_startup(&database.create("workers_bounded"));
@@ -2845,10 +2850,9 @@ fn run_default() {
         println!("test bad_memory_never_blocks_retirement ... ok");
         retirement_review::feed_retirement_end_to_end(&database.create("memory_feed"));
         println!("test feed_retirement_end_to_end ... ok");
-        database.stop();
     });
     shard.run(WorkerGroup::MemoryRetirement, || {
-        let mut database = Database::start();
+        let database = fixture.database();
         retirement(&database.create("workers_retirement"));
         println!(
             "test retirement_requires_terminal_unwatched_effect_and_recovers_from_sigkill ... ok"
@@ -2861,39 +2865,38 @@ fn run_default() {
             &database.create("span_log_cap"),
         );
         println!("test trace_log_cap_raises_one_operations_incident ... ok");
-        finish_fixture(database, "worker_memory");
+        finish_fixture("worker_memory");
     });
     shard.run(WorkerGroup::Summaries, || {
-        let mut database = Database::start();
+        let database = fixture.database();
         retirement_review::summaries_and_states(&database.create("retirement_summaries"));
         println!("test retirement_states_keep_one_summary_until_closure ... ok");
         retirement_review::blocked_identities(&database.create("retirement_blocked"));
         println!("test retirement_skips_corrupt_and_foreign_identities_after_one_attempt ... ok");
-        finish_fixture(database, "worker_summaries");
+        finish_fixture("worker_summaries");
     });
     shard.run(WorkerGroup::Sessions, || {
-        let mut database = Database::start();
+        let database = fixture.database();
         for guard in ["inbox", "effect", "progress"] {
             retirement_review::session_guard(&database.create(&format!("session_{guard}")), guard);
             println!("test session_retirement_{guard}_guard ... ok");
         }
-        finish_fixture(database, "worker_sessions");
+        finish_fixture("worker_sessions");
     });
     shard.run(WorkerGroup::RetirementErrors, || {
-        let mut database = Database::start();
+        let database = fixture.database();
         retirement_review::session_unlink_error(&database.create("session_unlink"));
         println!("test session_retirement_logs_retains_and_retries_unlink_error ... ok");
         retirement_review::transient_io(&database.create("source_emfile"));
         println!("test live_source_fails_on_emfile_and_restart_reattaches ... ok");
-        database.stop();
     });
     shard.run(WorkerGroup::Retirement, || {
-        let mut database = Database::start();
+        let database = fixture.database();
         confirmed_absence(&database.create("workers_confirmed_absence"));
         println!("test confirmed_absence_reports_one_failure_and_retries_with_new_key ... ok");
         overflow(&database.create("workers_overflow"));
         println!("test inotify_overflow_rescans_active_runs_and_keeps_ingress_alive ... ok");
-        finish_fixture(database, "worker_retirement");
+        finish_fixture("worker_retirement");
     });
     for (mode, group) in PLANNING_MODES.into_iter().zip([
         WorkerGroup::PlanningNormal,
@@ -2904,51 +2907,41 @@ fn run_default() {
         WorkerGroup::PlanningBadSchema,
     ]) {
         shard.run(group, || {
-            let mut database = Database::start();
+            let database = fixture.database();
             planning::planning(&database.create(&mode.replace('-', "_")), mode);
             println!("test planner_leaf_narrowing_and_rule_retry_with_findings_{mode} ... ok");
-            database.stop();
         });
     }
     shard.run(WorkerGroup::PlanningRecall, || {
-        let mut database = Database::start();
+        let database = fixture.database();
         planning::memories(&database.create("plan_memories"));
         println!("test planner_memories_recall_and_flag ... ok");
         planning::stop(&database.create("planner_stop"));
         println!("test planner_stop ... ok");
-        database.stop();
     });
     shard.run(WorkerGroup::QuotaSuccesses, || {
-        let mut database = Database::start();
-        quota_successes(&mut database);
-        database.stop();
+        let database = fixture.database();
+        quota_successes(database);
     });
     shard.run(WorkerGroup::QuotaReplays, || {
-        let mut database = Database::start();
-        quota_replays(&mut database);
-        database.stop();
+        let database = fixture.database();
+        quota_replays(database);
     });
     shard.run(WorkerGroup::QuotaFallbacks, || {
-        let mut database = Database::start();
-        quota_fallbacks(&mut database);
-        database.stop();
+        let database = fixture.database();
+        quota_fallbacks(database);
     });
     shard.run(WorkerGroup::Planning, || {
-        let mut database = Database::start();
-        quota_removed_models(&mut database);
-        finish_fixture(database, "worker_planning");
+        let database = fixture.database();
+        quota_removed_models(database);
+        finish_fixture("worker_planning");
     });
     shard.run(WorkerGroup::Unavailable, || {
-        let mut database = Database::start();
-        unavailable_scenarios(&mut database);
-        finish_fixture(database, "worker_unavailable");
+        let database = fixture.database();
+        unavailable_scenarios(database);
+        finish_fixture("worker_unavailable");
     });
-    // Shards without a maker group never start its Postgres.
-    let mut database = None;
-    maker::run(&mut database, &mut shard);
-    if let Some(database) = database {
-        database.stop();
-    }
+    maker::run(&mut fixture, &mut shard);
     shard.run(WorkerGroup::MakerCleanup, || {
         println!("test maker_fixture_cleanup ... ok")
     });

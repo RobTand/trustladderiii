@@ -960,57 +960,54 @@ pub(super) fn repository_images(database: &mut Database) {
     println!("test maker_repository_image_override_and_global_fallback ... ok");
 }
 
-pub(super) fn run(database: &mut Option<Database>, shard: &mut super::scenario_shard::Shard) {
+pub(super) fn run(fixture: &mut super::Fixture, shard: &mut super::scenario_shard::Shard) {
     use super::scenario_shard::WorkerGroup;
-    fn started(database: &mut Option<Database>) -> &mut Database {
-        database.get_or_insert_with(Database::start)
-    }
 
     shard.run(WorkerGroup::MakerRepositoryImages, || {
-        repository_images(started(database))
+        repository_images(fixture.database())
     });
     shard.run(WorkerGroup::MakerAdoptedFix, || {
-        adopted_fix_without_session(&started(database).create("adopted_first_fix"));
+        adopted_fix_without_session(&fixture.database().create("adopted_first_fix"));
         println!("test adopted_first_fix_runs_real_maker_without_session ... ok");
     });
     shard.run(WorkerGroup::MakerReproducingFix, || {
-        real::reproducing_fix(&started(database).create("maker_reproducing_fix"), false);
+        real::reproducing_fix(&fixture.database().create("maker_reproducing_fix"), false);
         println!(
             "test review_fix_maps_findings_to_checks_and_carries_reasons_to_review_fix ... ok"
         );
     });
     shard.run(WorkerGroup::MakerReproducingRebase, || {
-        real::reproducing_fix(&started(database).create("maker_reproducing_rebase"), true);
+        real::reproducing_fix(&fixture.database().create("maker_reproducing_rebase"), true);
         println!(
             "test review_fix_maps_findings_to_checks_and_carries_reasons_to_review_rebase ... ok"
         );
     });
     shard.run(WorkerGroup::MakerDeclaredWait, || {
-        declared_wait(&started(database).create("maker_declared_wait"));
+        declared_wait(&fixture.database().create("maker_declared_wait"));
         println!("test maker_declared_wait_survives_recovery_and_runfailed_retry ... ok");
     });
     shard.run(WorkerGroup::MakerReviewFeedback, || {
-        real::review_feedback(&started(database).create("maker_review_feedback"));
+        real::review_feedback(&fixture.database().create("maker_review_feedback"));
         println!("test reviewer_blockers_reach_real_maker ... ok");
     });
     shard.run(WorkerGroup::MakerLegacySession, || {
-        legacy_session(&started(database).create("maker_legacy_session"));
+        legacy_session(&fixture.database().create("maker_legacy_session"));
         println!("test maker_legacy_session_fails_closed ... ok");
     });
     shard.run(WorkerGroup::MakerOutsidePaths, || {
-        real::outside_paths_bounded(&started(database).create("maker_outside_bounds"));
+        real::outside_paths_bounded(&fixture.database().create("maker_outside_bounds"));
         println!("test maker_outside_paths_bounded ... ok");
     });
     shard.run(WorkerGroup::MakerRecordedFailure, || {
-        real::recorded_failure_feedback(&started(database).create("maker_recorded_failure"));
+        real::recorded_failure_feedback(&fixture.database().create("maker_recorded_failure"));
         println!("test maker_recorded_pytest_message_reaches_fix_round ... ok");
     });
     shard.run(WorkerGroup::MakerAcceptance, || {
-        real::acceptance(&started(database).create("maker_real_worktrees"));
+        real::acceptance(&fixture.database().create("maker_real_worktrees"));
         println!("test maker_real_worktrees_and_recorded_harness ... ok");
     });
     shard.run(WorkerGroup::MakerControllerRestart, || {
-        real::survives_controller_restart(&started(database).create("maker_controller_restart"));
+        real::survives_controller_restart(&fixture.database().create("maker_controller_restart"));
         println!("test maker_run_survives_controller_restart ... ok");
     });
     for (new_edits, group) in [
@@ -1019,18 +1016,20 @@ pub(super) fn run(database: &mut Option<Database>, shard: &mut super::scenario_s
     ] {
         shard.run(group, || {
             real::rebase_revisit(
-                &started(database).create(&format!("maker_rebase_{new_edits}")),
+                &fixture
+                    .database()
+                    .create(&format!("maker_rebase_{new_edits}")),
                 new_edits,
             );
             println!("test maker_rebase_revisit_new_edits_{new_edits} ... ok");
         });
     }
     shard.run(WorkerGroup::MakerReplanRestart, || {
-        restart_after_replan(&started(database).create("maker_replan_restart"));
+        restart_after_replan(&fixture.database().create("maker_replan_restart"));
         println!("test maker_restart_at_attempt_one_after_replan_starts_fresh ... ok");
     });
     shard.run(WorkerGroup::MakerProcess, || {
-        process_contract(&started(database).create("maker_process"));
+        process_contract(&fixture.database().create("maker_process"));
         println!("test maker_recovery_invalid_output_and_stop ... ok");
     });
     for (mode, fail, group) in [
