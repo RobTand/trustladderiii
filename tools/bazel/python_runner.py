@@ -68,7 +68,7 @@ def main():
         # Light checks run these projects' pytest from the project directory.
         import pytest
         plugins = [Shard(*shard)] if shard else []
-        args = [str(module), '-v', '--durations=10']
+        args = [str(module), '-v', '--durations=10', *sys.argv[2:]]
         if delay := os.environ.get('TEST_SYNC_DELAY_SECONDS'):
             from sync_contention import SyncContention
             plugins.append(SyncContention(float(delay)))

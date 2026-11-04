@@ -74,7 +74,7 @@ def instrumented(tmp_path, monkeypatch):
     document["trace"] = {"log": str(log)}
     document["memory"] = {"summary_file": str(summary), "repo": "RobTand/tl3-sandbox",
                           "issue": 42, "request": "3", "epoch": 1}
-    # Keep the real durable OTLP export; no network shipper is needed to read it.
+    # Keep the real OTLP serialization; no network shipper is needed to read it.
     monkeypatch.setattr(tracing.SpanLog, "start_shipper", lambda self: None)
     monkeypatch.setattr(tracing.SpanLog, "finish", lambda self: os.close(self.fd))
     monkeypatch.setattr(postmortem, "SOURCE", lambda settings: FakeTraces([]))

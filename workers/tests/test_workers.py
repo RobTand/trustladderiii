@@ -446,6 +446,7 @@ def test_missing_usage_stays_unknown_and_local_failure_has_no_body(tmp_path, req
     assert "secret" not in completion.read_text()
 
 
+@pytest.mark.durability
 def test_real_process_writes_completion_without_changing_protocol(tmp_path, request_doc):
     completion = tmp_path / "facts.json"
     request_doc["trace"] = {"completion": str(completion)}
@@ -459,6 +460,7 @@ def test_real_process_writes_completion_without_changing_protocol(tmp_path, requ
     assert row["finished_ms"] >= row["started_ms"]
 
 
+@pytest.mark.durability
 def test_callback_checkpoints_usage_before_a_worker_can_be_killed(tmp_path, request_doc):
     from tl3_workers import facts
     completion = tmp_path / "facts.json"

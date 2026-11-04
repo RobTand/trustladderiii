@@ -16,6 +16,7 @@ from worker_process import generator_backend  # noqa: F401
 from worker_process import generator_repo  # noqa: F401
 
 
+@pytest.mark.durability
 def test_request_132_git_index_generation_lands_before_independent_check(generator_repo, generator_backend, tmp_path):
     tree, generate = configured_generator(generator_repo, tmp_path)
     with tree:
@@ -43,6 +44,7 @@ def test_request_132_git_index_generation_lands_before_independent_check(generat
 
 
 @pytest.mark.parametrize('damage', ['none', 'contract', 'source', 'receipt_tree'])
+@pytest.mark.durability
 def test_exhausted_maker_recovers_completed_generator_receipt_without_resubmission(
         generator_repo, generator_backend, tmp_path, damage):
     from langchain_core.messages import AIMessage, ToolMessage
@@ -207,6 +209,7 @@ def test_generator_refuses_unverified_or_stale_artifacts(
     assert (generator_repo / "tests/BUILD.bazel").read_bytes() == before
 
 
+@pytest.mark.durability
 def test_generator_reattaches_after_interrupted_import(generator_repo, generator_backend, tmp_path, monkeypatch):
     from tl3_workers import pb_generators
     original = pb_generators._import
@@ -400,6 +403,7 @@ def test_generator_repository_deadline_reaches_inner_and_outer_budgets(
 
 
 @pytest.mark.parametrize("change", ["cpus", "mem_gb", "deadline"])
+@pytest.mark.durability
 def test_generator_budget_change_cannot_reuse_a_checkpoint(
         generator_repo, generator_backend, tmp_path, change):
     tree, generate = configured_generator(generator_repo, tmp_path)
@@ -512,6 +516,7 @@ def test_generator_rejects_invalid_repository_deadline_before_submission(
     assert not generator_backend[0], "invalid trusted input must fail before PB submission"
 
 
+@pytest.mark.durability
 def test_failed_inner_generator_receipt_is_journaled_without_work_retry(
         generator_repo, generator_backend, tmp_path):
     (generator_repo / "generate.py").write_text("print('PRIVATE_DIAGNOSTIC')\nraise SystemExit(124)\n")

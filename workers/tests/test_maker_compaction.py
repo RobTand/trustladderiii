@@ -113,6 +113,7 @@ def test_ineffective_compaction_reports_context_tokens(maker_request, monkeypatc
 
 
 @pytest.mark.parametrize("legacy_dimension", [None, "context_tokens", "input_tokens"])
+@pytest.mark.durability
 def test_recovered_maker_recompacts_and_resumes(maker_request, tmp_path, monkeypatch, legacy_dimension):
     maker_request["session_file"] = str(tmp_path / "maker.json")
     maker_request["resume_session"] = False

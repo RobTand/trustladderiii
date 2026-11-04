@@ -236,6 +236,7 @@ def test_judges_see_only_redacted_capped_material_and_grades_are_logged(tmp_path
     assert (len(model.payloads), len(traces.logged)) == (calls, logged)
 
 
+@pytest.mark.durability
 def test_a_restart_after_judging_logs_only_the_missing_assessments(tmp_path, model,
                                                                    monkeypatch):
     traces = FakeTraces([source_trace("maker", 1_000_000_000, {})])
@@ -436,6 +437,7 @@ def test_invalid_output_never_becomes_successful_work(contract_boundary, bad, di
     assert not (workdir / "assessments.json").exists()
 
 
+@pytest.mark.durability
 def test_wrong_type_is_repaired_before_checkpoint_and_assessment(contract_boundary):
     document, traces, values, calls = contract_boundary
     values.extend([dict(written(0), went_wrong=["The maker skipped a test."]), written(0)])
@@ -464,6 +466,7 @@ def test_feedback_failure_names_stage_without_repair_or_provider_text(contract_b
 
 @pytest.mark.parametrize("artifact", ["reply.json", "judged.json"])
 @pytest.mark.parametrize("malformed", [False, True])
+@pytest.mark.durability
 def test_invalid_cached_work_is_rejected_before_judging_or_logging(
         contract_boundary, artifact, malformed):
     document, traces, values, calls = contract_boundary
@@ -480,6 +483,7 @@ def test_invalid_cached_work_is_rejected_before_judging_or_logging(
 
 
 @pytest.mark.parametrize("artifact", ["judged.json", "assessments.json", "reply.json"])
+@pytest.mark.durability
 def test_restart_after_each_valid_checkpoint_never_repeats_assessments(
         contract_boundary, monkeypatch, artifact):
     document, traces, values, calls = contract_boundary
@@ -503,6 +507,7 @@ def test_restart_after_each_valid_checkpoint_never_repeats_assessments(
     assert result["assessment_ids"] == ["a-1"]
 
 
+@pytest.mark.durability
 def test_ambiguous_assessment_response_is_reconciled_without_resubmit(contract_boundary):
     document, traces, values, calls = contract_boundary
     values.append(written(0))
@@ -660,6 +665,7 @@ def test_representative_repaired_postmortem_reaches_valid_final_envelope_once(
     ("assessments.json", '{"correctness": 42}'),
     ("assessment-pending.json", '{"correctness": {"unexpected": "object"}}'),
 ])
+@pytest.mark.durability
 def test_invalid_assessment_cache_fails_before_external_writes(contract_boundary, artifact, content):
     document, traces, values, calls = contract_boundary
     (Path(document["worktree"]) / "judged.json").write_text(json.dumps(reply(0)))
@@ -670,6 +676,7 @@ def test_invalid_assessment_cache_fails_before_external_writes(contract_boundary
     assert not traces.logged
 
 
+@pytest.mark.durability
 def test_restart_after_intent_before_post_resolves_to_one_assessment(contract_boundary, monkeypatch):
     document, traces, values, calls = contract_boundary
     values.append(written(0))
@@ -706,6 +713,7 @@ def test_assessment_key_is_stable_and_separates_each_identity_field():
         assert postmortem.assessment_key(*changed) != key
 
 
+@pytest.mark.durability
 def test_pending_lookup_rechecks_after_bounded_wait_before_any_post(contract_boundary, monkeypatch):
     document, traces, values, calls = contract_boundary
     values.append(written(0))
@@ -744,6 +752,7 @@ def test_pending_lookup_rechecks_after_bounded_wait_before_any_post(contract_bou
     assert json.loads((workdir / "assessment-pending.json").read_text()) == {}
 
 
+@pytest.mark.durability
 def test_stale_lookup_then_visible_assessment_resolves_without_another_post(
         contract_boundary, monkeypatch):
     document, traces, values, calls = contract_boundary
@@ -773,6 +782,7 @@ def test_stale_lookup_then_visible_assessment_resolves_without_another_post(
     assert result["assessment_ids"] == ["a-1"]
 
 
+@pytest.mark.durability
 def test_server_enforced_assessment_id_prevents_duplicate_when_both_lookups_are_stale(
         contract_boundary, monkeypatch):
     from types import SimpleNamespace

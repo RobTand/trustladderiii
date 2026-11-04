@@ -448,6 +448,7 @@ def test_failure_receipts_preserve_terminal_reason_without_inventing_test_start(
 
 
 @pytest.mark.parametrize('change', ['input', 'selectors', 'contract', 'identical'])
+@pytest.mark.durability
 def test_reattach_checks_staged_input_selection_and_execution_contract(submission, monkeypatch, change):
     from tl3_workers import pb_tests
     root, scripts = submission

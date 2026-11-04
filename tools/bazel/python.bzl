@@ -44,6 +44,8 @@ _PACKAGE_DEPS = {
 _MEASURED_SECONDS = {
     "harness/tests:test_review_fixes": 35,
     "harness/tests:test_selection_groups": 81,
+    # #768: unsharded zero-delay probe at b5556bc0 (860e4d94), 38.9 s.
+    "harness/tests:test_subject_observer": 39,
     "harness/tests:test_test_tool": 38,
     "workers/tests:test_large_files": 35,
     "workers/tests:test_maker": 48,
