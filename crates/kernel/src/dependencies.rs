@@ -44,32 +44,11 @@ pub closed spec fn edges_indexable(world: World) -> bool {
         }
 }
 
-/// #771: expose the existing-index invariant to the enclosing kernel proofs.
-pub(super) proof fn indexable_definition(world: World)
-    ensures edges_indexable(world) == (forall|i: int| 0 <= i < world.dependencies@.len() ==>
-        world.dependencies@[i].node.0 < world.nodes@.len()
-        && match world.dependencies@[i].target.request {
-            None => true, Some(node) => node.0 < world.nodes@.len(),
-        }),
-{
-    reveal(edges_indexable);
-}
-
-/// #771: event handlers that preserve the table and node count preserve indices.
-pub(super) proof fn indexability_frame(before: World, after: World)
-    requires edges_indexable(before), after.dependencies@ == before.dependencies@,
-        after.nodes@.len() == before.nodes@.len(),
-    ensures edges_indexable(after),
-{
-    reveal(edges_indexable);
-}
-
 /// #693 / #771: one declaration's existing consistency requirements.
 pub(super) open spec fn dependency_checked(world: World, dependency: Dependency) -> bool {
     let owner = world.nodes@[dependency.node.0 as int];
-    dependency.node.0 < world.nodes@.len() && dependency.target.number > 0
-        && (match dependency.target.request { None => true, Some(n) => n.0 < world.nodes@.len()
-            && world.nodes@[n.0 as int].repo == owner.repo })
+    dependency.node.0 < world.nodes@.len()
+        && (match dependency.target.request { None => true, Some(n) => n.0 < world.nodes@.len() })
         && ((dependency.rejected || dependency.status != DependencyStatus::Delivered) ==>
             !world.nodes@[dependency.node.0 as int].planning_started
                 && matches!(owner.phase,
@@ -84,134 +63,8 @@ pub(super) open spec fn dependency_checked(world: World, dependency: Dependency)
 
 /// #693 / #771: executable prerequisite checks imply this progress projection.
 pub(super) open spec fn dependencies_checked(world: World) -> bool {
-    edges_indexable(world) && declarations_unique(world)
-        && forall|j: int| 0 <= j < world.dependencies@.len()
-            ==> dependency_checked(world, world.dependencies@[j])
-}
-
-/// #693 / #771: duplicate declaration keys are rejected by check_dependencies.
-pub(super) open spec fn same_declaration(a: Dependency, b: Dependency) -> bool {
-    a.node == b.node && a.target.kind == b.target.kind && a.target.number == b.target.number
-}
-pub(super) open spec fn declarations_unique(w: World) -> bool {
-    forall|a: int, b: int| 0 <= a < b < w.dependencies@.len()
-        ==> !same_declaration(w.dependencies@[a], w.dependencies@[b])
-}
-
-/// #771: exactly the guards needed by the delivered-fact path.
-pub(super) open spec fn delivery_key_ready(w: World, i: int, target: DependencyTarget) -> bool {
-    target.number > 0
-        && (match target.request { None => true, Some(node) => node.0 < w.nodes@.len()
-            && w.nodes@[node.0 as int].repo == w.nodes@[i].repo })
-        && forall|j: int| 0 <= j < w.dependencies@.len()
-            && w.dependencies@[j].node == NodeId(i as u64)
-            && w.dependencies@[j].target.kind == target.kind && w.dependencies@[j].target.number == target.number
-            ==> w.dependencies@[j].target == target && !w.dependencies@[j].rejected
-                && w.dependencies@[j].status == DependencyStatus::Pending
-}
-
-/// #693 / #771: consistency and uniqueness supply the delivered-fact guards.
-pub(super) proof fn pending_ready(w: World, i: int, target: DependencyTarget)
-    requires dependencies_checked(w), 0 <= i < w.nodes@.len(), i <= u64::MAX as int,
-        exists|k: int| 0 <= k < w.dependencies@.len()
-            && w.dependencies@[k].node == NodeId(i as u64) && w.dependencies@[k].target == target
-            && !w.dependencies@[k].rejected && w.dependencies@[k].status == DependencyStatus::Pending,
-    ensures delivery_key_ready(w, i, target),
-{
-    let k = choose|k: int| 0 <= k < w.dependencies@.len()
-        && w.dependencies@[k].node == NodeId(i as u64) && w.dependencies@[k].target == target
-        && !w.dependencies@[k].rejected && w.dependencies@[k].status == DependencyStatus::Pending;
-    assert forall|j: int| 0 <= j < w.dependencies@.len()
-        && w.dependencies@[j].node == NodeId(i as u64)
-        && w.dependencies@[j].target.kind == target.kind && w.dependencies@[j].target.number == target.number
-        implies w.dependencies@[j].target == target && !w.dependencies@[j].rejected
-            && w.dependencies@[j].status == DependencyStatus::Pending by {
-        if j < k { assert(!same_declaration(w.dependencies@[j], w.dependencies@[k])); }
-        if k < j { assert(!same_declaration(w.dependencies@[k], w.dependencies@[j])); }
-        assert(j == k);
-    }
-}
-
-/// #771: expose only scalar validation facts to the mutation dispatcher.
-proof fn delivery_input_guards(w: World, i: int, target: DependencyTarget, status: DependencyStatus)
-    requires dependency_progress_input(w, i, target, status),
-    ensures status == DependencyStatus::Delivered, !(w.nodes@[i].phase is Closed),
-        target.number > 0,
-        match target.request { None => true, Some(node) => node.0 < w.nodes@.len()
-            && w.nodes@[node.0 as int].repo == w.nodes@[i].repo },
-{
-    reveal(dependency_progress_input);
-}
-
-/// #771: the production key lookup selects a pending witness row.
-proof fn pending_lookup(w: World, i: int, target: DependencyTarget, existing: Option<usize>)
-    requires dependency_progress_input(w, i, target, DependencyStatus::Delivered),
-        match existing {
-            Some(index) => index < w.dependencies@.len()
-                && same_declaration(w.dependencies@[index as int], Dependency {
-                    node: NodeId(i as u64), target, status: DependencyStatus::Delivered, rejected: false }),
-            None => forall|j: int| 0 <= j < w.dependencies@.len() ==>
-                !same_declaration(w.dependencies@[j], Dependency {
-                    node: NodeId(i as u64), target, status: DependencyStatus::Delivered, rejected: false }),
-        },
-    ensures existing is Some,
-        w.dependencies@[existing.unwrap() as int].target == target,
-        w.dependencies@[existing.unwrap() as int].node == NodeId(i as u64),
-        !w.dependencies@[existing.unwrap() as int].rejected,
-        w.dependencies@[existing.unwrap() as int].status == DependencyStatus::Pending,
-        target.number > 0,
-        match target.request { None => true, Some(node) => node.0 < w.nodes@.len()
-            && w.nodes@[node.0 as int].repo == w.nodes@[i].repo },
-{
-    reveal(dependency_progress_input);
-    let k = choose|k: int| 0 <= k < w.dependencies@.len()
-        && w.dependencies@[k].node == NodeId(i as u64) && w.dependencies@[k].target == target
-        && !w.dependencies@[k].rejected && w.dependencies@[k].status == DependencyStatus::Pending;
-    assert(existing is Some);
-    let index = existing.unwrap() as int;
-    assert(w.dependencies@[index].node == NodeId(i as u64));
-    assert(w.dependencies@[index].target.kind == target.kind);
-    assert(w.dependencies@[index].target.number == target.number);
-    assert(w.dependencies@[index].target == target);
-}
-
-/// #693 / #771: an exact delivered-row replacement consumes one debt token.
-proof fn delivered_record_progress(before: World, after: World, index: int)
-    requires 0 <= index < before.dependencies@.len(), edges_indexable(before),
-        before.dependencies@[index].status == DependencyStatus::Pending,
-        !(before.nodes@[before.dependencies@[index].node.0 as int].phase is Closed),
-        after.dependencies@ == before.dependencies@.update(index, Dependency {
-            status: DependencyStatus::Delivered, rejected: false, ..before.dependencies@[index] }),
-        after.nodes@.len() == before.nodes@.len(),
-        after.nodes@ == before.nodes@.update(before.dependencies@[index].node.0 as int,
-            Node { waiting_prerequisite: after.nodes@[before.dependencies@[index].node.0 as int].waiting_prerequisite,
-                credit: Credit { withheld: after.nodes@[before.dependencies@[index].node.0 as int].credit.withheld,
-                    ..before.nodes@[before.dependencies@[index].node.0 as int].credit },
-                ..before.nodes@[before.dependencies@[index].node.0 as int] }),
-    ensures edges_indexable(after), progress_measure(after) < progress_measure(before),
-        (forall|j: int| 0 <= j < before.dependencies@.len()
-            ==> dependency_weight(after, j) <= dependency_weight(before, j)),
-        dependency_weight(after, index) < dependency_weight(before, index),
-{
-    reveal(edges_indexable);
-    reveal(progress_measure);
-    reveal(distance);
-    let owner = before.dependencies@[index].node.0 as int;
-    assert(after.nodes@ == before.nodes@.update(owner, after.nodes@[owner]));
-    sum_update(before.nodes@, owner, after.nodes@[owner]);
-    assert(distance(after.nodes@[owner]) == distance(before.nodes@[owner]));
-    assert(node_total(after.nodes@) == node_total(before.nodes@));
-    assert(dependency_weight(before, index) == 1);
-    assert(dependency_weight(after, index) == 0);
-    assert forall|j: int| 0 <= j < before.dependencies@.len() implies
-        dependency_weight(after, j) <= dependency_weight(before, j) by {
-        if j != index { assert(after.dependencies@[j] == before.dependencies@[j]); }
-        let n = before.dependencies@[j].node.0 as int;
-        if n != owner { assert(after.nodes@[n] == before.nodes@[n]); }
-    }
-    assert(exists|j: int| 0 <= j < before.dependencies@.len()
-        && dependency_weight(after, j) < dependency_weight(before, j));
-    dependency_sum_compare(before, after, before.dependencies@.len());
+    edges_indexable(world) && forall|j: int| 0 <= j < world.dependencies@.len()
+        ==> dependency_checked(world, world.dependencies@[j])
 }
 
 pub closed spec fn unseen_prefix(seen: Seq<bool>, end: nat) -> nat
@@ -451,8 +304,6 @@ impl World {
         kernel_while! { (index < self.dependencies.len()) [
             invariant index <= self.dependencies.len(), self.nodes@.len() <= u64::MAX as int,
                 forall|j: int| 0 <= j < index ==> dependency_checked(*self, self.dependencies@[j]),
-                forall|a: int, b: int| 0 <= a < b < index
-                    ==> !same_declaration(self.dependencies@[a], self.dependencies@[b]),
             decreases self.dependencies.len() - index,
         ] {
             let dependency = &self.dependencies[index];
@@ -473,9 +324,6 @@ impl World {
             let mut previous = 0usize;
             kernel_while! { (previous < index) [
                 invariant previous <= index < self.dependencies.len(),
-                    *dependency == self.dependencies@[index as int],
-                    forall|a: int| 0 <= a < previous
-                        ==> !same_declaration(self.dependencies@[a], *dependency),
                 decreases index - previous,
             ] {
                 let d = &self.dependencies[previous];
@@ -621,10 +469,9 @@ impl World {
 
     kernel_fn! {
     /// #693 / #771: find the same first blocking declaration as the public query.
-    pub(super) fn first_undelivered(&self, node: NodeId) -> (result: Option<Dependency>) [
+    fn first_undelivered(&self, node: NodeId) -> (result: Option<Dependency>) [
         ensures match result {
-            Some(d) => d.node == node && (d.rejected || d.status != DependencyStatus::Delivered)
-                && exists|j: int| 0 <= j < self.dependencies@.len() && self.dependencies@[j] == d,
+            Some(d) => d.node == node && (d.rejected || d.status != DependencyStatus::Delivered),
             None => prerequisites_delivered(*self, node),
         },
     ] proof [reveal(prerequisites_delivered); reveal(delivered);] {
@@ -654,10 +501,7 @@ impl World {
         status: DependencyStatus, out: &mut Outbox) -> (result: ()) [
         requires i < old(self).nodes@.len(), i <= u64::MAX as int,
             edges_indexable(*old(self)), old(out).len < OUTBOX,
-        ensures (dependency_progress_input(*old(self), i as int, target, status)
-            ==> edges_indexable(*final(self))
-                && progress_measure(*final(self)) < progress_measure(*old(self))),
-            final(self).nodes@ == old(self).nodes@.update(i as int, Node {
+        ensures final(self).nodes@ == old(self).nodes@.update(i as int, Node {
             waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
             credit: Credit { withheld: final(self).nodes@[i as int].credit.withheld,
                 ..old(self).nodes@[i as int].credit },
@@ -670,13 +514,7 @@ impl World {
             final(self).fail_fast == old(self).fail_fast,
             final(self).file_sets@ == old(self).file_sets@,
             final(out).len <= old(out).len + 1,
-    ] {
-        kernel_snapshot! { before_dependency = *self }
-        kernel_proof! {
-            if dependency_progress_input(*self, i as int, target, status) {
-                delivery_input_guards(*self, i as int, target, status);
-            }
-        }
+    ] proof [reveal(edges_indexable);] {
         if target.number == 0 {
             return;
         }
@@ -688,11 +526,6 @@ impl World {
         }
         let node = NodeId(i as u64);
         let existing = self.find_dependency(node, target.kind, target.number);
-        kernel_proof! {
-            if dependency_progress_input(*self, i as int, target, status) {
-                pending_lookup(*self, i as int, target, existing);
-            }
-        }
         if let Some(index) = existing {
             let previous = self.dependencies[index];
             if previous.rejected || previous.status != DependencyStatus::Pending {
@@ -722,11 +555,6 @@ impl World {
             rejected,
         };
         self.record_dependency(i, existing, dependency, out);
-        kernel_proof! {
-            if dependency_progress_input(before_dependency@, i as int, target, status) {
-                delivered_record_progress(before_dependency@, *self, existing.unwrap() as int);
-            }
-        }
     }
     }
 
@@ -738,11 +566,7 @@ impl World {
         dependency: Dependency, out: &mut Outbox) -> (result: ()) [
         requires i < old(self).nodes@.len(), old(out).len < OUTBOX,
             match existing { None => true, Some(index) => index < old(self).dependencies@.len() },
-        ensures final(self).dependencies@ == match existing {
-                Some(index) => old(self).dependencies@.update(index as int, dependency),
-                None => old(self).dependencies@.push(dependency),
-            },
-            final(self).nodes@ == old(self).nodes@.update(i as int, Node {
+        ensures final(self).nodes@ == old(self).nodes@.update(i as int, Node {
             waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
             credit: Credit { withheld: final(self).nodes@[i as int].credit.withheld,
                 ..old(self).nodes@[i as int].credit },

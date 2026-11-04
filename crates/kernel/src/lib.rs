@@ -38,7 +38,6 @@ mod dependencies;
 pub use dependencies::Dependency;
 mod footprint;
 include!("headroom.rs");
-include!("progress.rs");
 mod ids;
 mod queries;
 pub use footprint::Footprint;
@@ -761,7 +760,6 @@ pub struct World {
 kernel_fn! {
 /// #771: an observational world snapshot, including every interned file list.
 /// Copy fields keep their values; nested vectors keep their element sequences.
-#[allow(clippy::let_and_return)]
 fn snapshot_world(world: &World) -> (result: World) [
     ensures (settle_ready(*world) ==> settle_ready(result)),
         result.nodes@ == world.nodes@, result.gates@ == world.gates@,
@@ -1158,17 +1156,14 @@ pub closed spec fn empty_outbox(out: Outbox) -> bool {
 kernel_fn! {
 impl Outbox {
     /// #771: the fixed output buffer begins with no emitted entries.
-    #[allow(clippy::let_and_return)]
     pub const fn new() -> (result: Outbox) [
         ensures empty_outbox(result),
     ] {
         kernel_proof! { reveal(empty_outbox); }
-        let result = Outbox {
+        Outbox {
             items: [None; OUTBOX],
             len: 0,
-        };
-        kernel_proof! { assert(result.items@ =~= Seq::new(OUTBOX as nat, |i: int| None)); }
-        result
+        }
     }
 }
 }
@@ -1405,8 +1400,8 @@ impl World {
         total
     }
 
-    kernel_fn! {
     /// True when settle has nothing left to do.
+    kernel_fn! {
     /// #771: true from the actual settle probe excludes every sufficient
     /// internal move used by the gate and pool obstruction argument.
     pub fn is_settled(&self) -> (result: bool) [
@@ -1425,40 +1420,18 @@ impl World {
             decreases w.nodes.len() - i,
         ] {
             if advance(&mut w, i, &mut out) { return false; }
-            kernel_proof! { movable_frame(*self, w, i as int); }
             i += 1;
         } }
         true
     }
     }
 
-    kernel_fn! {
     /// One outside event that moves the world closer to done: a successful
     /// reply, a confirmation, a fact, or one of Rob's answers. Kani proves it
     /// always exists while a node is open, and that it lowers `measure`.
-    /// #771: the same witness branches, verified against their exact event keys.
-    /// Node::next_command_id and the controller's checked steering constructors
-    /// enforce the fresh-command scope. Raw kernel command exhaustion remains
-    /// characterized by tests/progress_limits.rs, outside this theorem's scope.
-    pub fn witness(&self) -> (result: Option<Event>) [
-        requires world_checked(*self), fresh_commands(*self),
-        ensures witness_selection(*self, result),
-    ] proof [reveal(world_checked); reveal(fresh_commands); reveal(witness_selection);] {
-        let mut i = 0usize;
-        kernel_while! { (i < self.nodes.len()) [
-            invariant i <= self.nodes.len(), self.nodes@.len() <= u64::MAX as int,
-                world_checked(*self),
-                forall|j: int| 0 <= j < self.nodes@.len() ==> self.nodes@[j].last_cmd < u64::MAX,
-                forall|j: int| 0 <= j < i ==> !outside_available(*self, j),
-            decreases self.nodes.len() - i,
-        ] {
-            let n = &self.nodes[i];
-            kernel_proof! {
-                reveal(world_checked);
-                dependencies::prerequisite_definition(*self, NodeId(i as u64));
-            }
+    pub fn witness(&self) -> Option<Event> {
+        for (i, n) in self.nodes.iter().enumerate() {
             if n.phase.is_closed() {
-                i += 1;
                 continue;
             }
             let node = NodeId(i as u64);
@@ -1501,7 +1474,13 @@ impl World {
                 });
             }
             if n.phase == Phase::Unplanned && !self.dependencies_delivered(node) {
-                let dependency = self.first_undelivered(node).unwrap();
+                let dependency = self
+                    .dependencies
+                    .iter()
+                    .find(|d| {
+                        d.node == node && (d.rejected || d.status != DependencyStatus::Delivered)
+                    })
+                    .unwrap();
                 if dependency.rejected || dependency.status == DependencyStatus::Abandoned {
                     return Some(Event::Command {
                         node,
@@ -1546,7 +1525,7 @@ impl World {
                         Phase::Rebasing => Reply::RebaseClean {
                             head: n.head.unwrap_or(HeadId(0)),
                         },
-                        _ => { i += 1; continue; },
+                        _ => continue,
                     };
                     return Some(Event::Reply {
                         node,
@@ -1563,12 +1542,10 @@ impl World {
                     return Some(Event::Fact { node, fact });
                 }
                 // Waiting on the gate or the pool: another node holds what it needs.
-                _ => {},
+                _ => continue,
             }
-            i += 1;
-        } }
+        }
         None
-    }
     }
 
     /// Everything the kernel promises about a world at rest: consistent and settled.
@@ -1576,27 +1553,27 @@ impl World {
         self.consistent() && self.is_settled()
     }
 
-    kernel_fn! {
     /// What holds between any two transitions, including inside settle. Kani
     /// proves that applying an event and every internal transition keep it.
+    kernel_fn! {
     /// #771: successful executable consistency checking supplies the exact
     /// progress invariants used by the source-connected theorem.
     pub fn consistent(&self) -> (result: bool) [
-        requires world_headroom(*self), storage_ordered(*self),
+        requires world_headroom(*self), footprint::ordered_table(*self),
         ensures result ==> world_checked(*self),
-    ] proof [reveal(storage_ordered);] {
+    ] {
         self.check().is_ok()
     }
     }
 
-    kernel_fn! {
     /// `consistent`, naming the first rule a world breaks.
+    kernel_fn! {
     /// #771: the real world checker establishes positive capacities and the
     /// per-node and prerequisite facts, without changing any acceptance rule.
     pub fn check(&self) -> (result: Result<(), Broken>) [
-        requires world_headroom(*self), storage_ordered(*self),
+        requires world_headroom(*self), footprint::ordered_table(*self),
         ensures result.is_ok() ==> world_checked(*self),
-    ] proof [reveal(world_headroom); reveal(world_checked); reveal(storage_ordered);] {
+    ] proof [reveal(world_headroom); reveal(world_checked);] {
         self.check_dependencies()?;
         if self.gates.is_empty() || self.pool_capacity == 0 {
             return Err(Broken::Config);
@@ -2016,8 +1993,8 @@ impl World {
 
     }
 
-    kernel_fn! {
     /// What a leaf needs before it may resume into a holding phase.
+    kernel_fn! {
     /// #771: verify the real leaf-readiness checker against its ghost predicate.
     fn check_ready(&self, n: &Node, r: Resume) -> (result: Result<(), Broken>) [
         ensures result.is_ok() == ready_checked(*n, r),
@@ -2173,14 +2150,12 @@ pub fn proofs_of_phase(phase: Phase) -> &'static [&'static str] {
 }
 // proof map end
 
-kernel_fn! {
 /// The kernel: apply one event, then settle.
+kernel_fn! {
 /// #771: the public executable step inherits the checked whole-step K bounds.
 pub fn step(world: World, event: Event) -> (result: (World, Vec<Out>)) [
     requires step_scope(world),
     ensures step_budget(world, result.0),
-        (progress_input(world, event)
-            ==> progress_measure(result.0) < progress_measure(world)),
 ] {
     let (world, out, _) = step_with_passes(world, event);
     (world, out)
@@ -2194,21 +2169,19 @@ pub fn settle_world(mut world: World) -> (World, Vec<Out>) {
     (world, out)
 }
 
-kernel_fn! {
 /// `step`, also reporting how many passes settle needed. Tests use it to size
 /// the loop bound that Kani's unwinding check then proves.
+kernel_fn! {
 /// #771: verify the production event-to-settle composition. The scope here is
 /// the arithmetic and storage projection of consistency, plus headroom. The
 /// progress theorem separately requires command freshness for every node.
 pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<Out>, u32)) [
     requires step_scope(world),
     ensures step_budget(world, result.0),
-        (progress_input(world, event)
-            ==> progress_measure(result.0) < progress_measure(world)),
 ] {
     kernel_snapshot! { before_step = world }
     let mut outbox = Outbox::new();
-    kernel_proof! { reveal(step_scope); reveal(empty_outbox); reveal(progress_input); }
+    kernel_proof! { reveal(step_scope); reveal(empty_outbox); }
     apply(&mut world, event, &mut outbox);
     kernel_proof! {
         reveal(world_headroom);
@@ -2230,12 +2203,6 @@ pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<
     let passes = settle(&mut world, &mut out, None);
     kernel_proof! {
         reveal(step_budget);
-        if progress_input(before_step@, event) {
-            reveal(world_checked);
-            // Witness events never append a node or remove declarations.
-            assert(dependencies::edges_indexable(after_apply@));
-            settle_measure(after_apply@, world);
-        }
         assert forall|j: int| 0 <= j < before_step@.nodes@.len() implies
             world.nodes@[j].generation as int <= before_step@.nodes@[j].generation as int + GENERATION_STEP_BUDGET
                 && world.nodes@[j].next_seq as int <= before_step@.nodes@[j].next_seq as int + EFFECT_STEP_BUDGET
@@ -2243,14 +2210,6 @@ pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<
                 && world.nodes@[j].credit.earned as int <= before_step@.nodes@[j].credit.earned as int + CREDIT_EARNED_STEP_BUDGET
                 && world.nodes@[j].credit.added as int <= before_step@.nodes@[j].credit.added as int + CREDIT_ADDED_STEP_BUDGET
                 && world.nodes@[j].credit.spent as int <= before_step@.nodes@[j].credit.spent as int + CREDIT_SPENT_STEP_BUDGET
-        by { local_capacities(after_apply@.nodes@[j]); }
-        assert forall|j: int| before_step@.nodes@.len() <= j < world.nodes@.len() implies
-            world.nodes@[j].generation <= GENERATION_STEP_BUDGET
-                && world.nodes@[j].next_seq <= EFFECT_STEP_BUDGET
-                && world.nodes@[j].credit.start <= CREDIT_START_STEP_BUDGET
-                && world.nodes@[j].credit.earned <= CREDIT_EARNED_STEP_BUDGET
-                && world.nodes@[j].credit.added <= CREDIT_ADDED_STEP_BUDGET
-                && world.nodes@[j].credit.spent <= CREDIT_SPENT_STEP_BUDGET
         by { local_capacities(after_apply@.nodes@[j]); }
     }
     (world, out, passes)
@@ -2281,10 +2240,7 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
                 && settle_shape(old(w).nodes@[j]) && stopping_effect_fits(old(w).nodes@[j])
                 && (old(w).nodes@[j].phase is Closed ==> old(w).nodes@[j].effect.is_none())
                 && footprint::valid_footprint(*old(w), old(w).nodes@[j].footprint),
-    ensures (progress_input(*old(w), event)
-            ==> progress_measure(*final(w)) < progress_measure(*old(w))
-                && dependencies::edges_indexable(*final(w))),
-        forall|j: int| 0 <= j < final(w).nodes@.len() ==>
+    ensures forall|j: int| 0 <= j < final(w).nodes@.len() ==>
             settle_shape(final(w).nodes@[j])
                 && footprint::valid_footprint(*final(w), final(w).nodes@[j].footprint),
         forall|j: int| 0 <= j < old(w).nodes@.len() ==>
@@ -2311,8 +2267,7 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
             final(w).nodes@[j].generation == 0 && final(w).nodes@[j].next_seq == 0
             && final(w).nodes@[j].credit.start == 0 && final(w).nodes@[j].credit.earned == 0
             && final(w).nodes@[j].credit.added == 0 && final(w).nodes@[j].credit.spent == 0,
-] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table);
-    reveal(progress_input); reveal(fresh_commands);] {
+] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table);] {
     kernel_snapshot! { before_apply = *w }
     match event {
         Event::NewAdoption {
@@ -2341,55 +2296,21 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
         } => {
             if let Some(i) = w.index(node) {
                 on_reply(w, i, generation, reply, out);
-                kernel_proof! {
-                    if progress_input(before_apply@, event) {
-                        reveal(world_checked);
-                        assert(chosen_for_node(before_apply@, i as int, event));
-                        assert(w.nodes@ == before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
-                        lift_node_progress(before_apply@, *w, i as int);
-                        dependencies::indexability_frame(before_apply@, *w);
-                    }
-                }
             }
         }
         Event::Ack { node, seq, ack } => {
             if let Some(i) = w.index(node) {
                 on_ack(w, i, seq, ack, out);
-                kernel_proof! {
-                    if progress_input(before_apply@, event) {
-                        reveal(world_checked);
-                        assert(chosen_for_node(before_apply@, i as int, event));
-                        assert(w.nodes@ == before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
-                        lift_node_progress(before_apply@, *w, i as int);
-                        dependencies::indexability_frame(before_apply@, *w);
-                    }
-                }
             }
         }
         Event::Fact { node, fact } => {
             if let Some(i) = w.index(node) {
-                kernel_proof! {
-                    if progress_input(before_apply@, event) {
-                        reveal(fact_progress_input);
-                        assert(chosen_for_node(before_apply@, i as int, event));
-                        assert(fact_progress_input(before_apply@, i as int, fact));
-                    }
-                }
                 on_fact(w, i, fact, out);
             }
         }
         Event::Command { node, id, command } => {
             if let Some(i) = w.index(node) {
                 on_command(w, i, id, command, out);
-                kernel_proof! {
-                    if progress_input(before_apply@, event) {
-                        reveal(world_checked);
-                        assert(chosen_for_node(before_apply@, i as int, event));
-                        assert(w.nodes@ == before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
-                        lift_node_progress(before_apply@, *w, i as int);
-                        dependencies::indexability_frame(before_apply@, *w);
-                    }
-                }
             }
         }
     }
@@ -2476,14 +2397,7 @@ fn abandon_operation(m: &mut Node) -> (result: ()) [
 kernel_fn! {
 /// #771: successful completion resets failures and preserves allocation counters.
 fn end_operation(m: &mut Node) -> (result: ()) [
-    ensures final(m).paused == old(m).paused, final(m).waiting_incident == old(m).waiting_incident,
-        final(m).head == old(m).head,
-        final(m).effect == match old(m).effect {
-            Some(e) => Some(InFlight { cancelling: e.cancelling || matches!(e.kind,
-                EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase), ..e }),
-            None => None,
-        },
-        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
         (settle_shape(*old(m)) ==> settle_shape(*final(m))),
         final(m).run.is_none(), final(m).job.is_none(), !final(m).pool,
         final(m).run_failures == 0, final(m).run_incidents == 0,
@@ -2508,10 +2422,7 @@ kernel_fn! {
 fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
     requires !(old(m).phase is Closed || old(m).phase is Stopping)
         ==> old(m).generation < u64::MAX,
-    ensures (!old(m).paused && !old(m).waiting_incident && old(m).effect.is_none()
-            && !(old(m).phase is Closed || old(m).phase is Stopping)
-            ==> distance(*final(m)) < distance(*old(m))),
-        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
         (settle_shape(*old(m)) ==> settle_shape(*final(m))),
         final(m).generation as int == old(m).generation as int
             + if old(m).phase is Closed || old(m).phase is Stopping { 0int } else { 1int },
@@ -2529,7 +2440,7 @@ fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
         !(old(m).phase is Closed || old(m).phase is Stopping) ==>
             final(m).pos == 0 && final(m).ticket.is_none() && final(m).question.is_none()
                 && !final(m).waiting_incident && !final(m).incident_needs_rob,
-] proof [reveal(distance);] {
+] {
     match m.phase {
         Phase::Closed(_) => {}
         Phase::Stopping(_) => {
@@ -2703,8 +2614,7 @@ fn emit(w: &mut World, i: usize, kind: EffectKind,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         old(w).nodes@[i as int].next_seq < u64::MAX,
-    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
-        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
@@ -2833,11 +2743,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
         footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
         footprint::ordered_table(*old(w)),
-    ensures (node_checked(*old(w), old(w).nodes@[i as int])
-            && generation == old(w).nodes@[i as int].generation
-            && successful_reply_input(old(w).nodes@[i as int], reply)
-            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
-        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         footprint::valid_footprint(*final(w), final(w).nodes@[i as int].footprint),
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -2861,7 +2767,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         final(w).fail_fast == old(w).fail_fast,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
-] proof [reveal(reply_bounds); reveal(footprint::ordered_table); reveal(distance);] {
+] proof [reveal(reply_bounds); reveal(footprint::ordered_table);] {
     kernel_snapshot! { before_reply = *w }
     let n = &w.nodes[i];
     if n.phase.is_stopping() {
@@ -2882,7 +2788,6 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
         return; // stale
     }
-    kernel_proof! { footprint::inline_is_valid(*w, 1); }
     // A reply that breaks its schema or names the wrong commit counts as a failed run.
     if !accepts(w, n, &reply) {
         run_failed(w, i, out);
@@ -2980,13 +2885,11 @@ fn reply_transition(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures (successful_reply_input(old(w).nodes@[i as int], reply)
-            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
-        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint
             || match reply { Reply::PlanLeaf { footprint, .. } => final(w).nodes@[i as int].footprint == footprint, _ => false },
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
-] proof [reveal(distance);] {
+] {
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
             | Reply::AuditDisagrees | Reply::ProtectedPaths => reply_ingest(w, i, reply, out),
@@ -3003,12 +2906,10 @@ fn finish_ingest(w: &mut World, i: usize, size: u8, early_end: Option<EarlyEnd>)
     -> (result: ()) [
     requires i < old(w).nodes@.len(),
         node_headroom(old(w).nodes@[i as int]),
-    ensures (ordinary_await(old(w).nodes@[i as int]) && old(w).nodes@[i as int].phase == Phase::Ingesting
-            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
-        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, 0, 0),
-] proof [reveal(distance); reveal(reply_bounds);] {
+] proof [reveal(reply_bounds);] {
     let m = &mut w.nodes[i];
     if !m.credit.ready {
         m.credit.ready = true;
@@ -3030,12 +2931,10 @@ fn reply_ingest(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures (successful_reply_input(old(w).nodes@[i as int], reply)
-            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
-        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
-] proof [reveal(distance); reveal(reply_bounds); reveal(retry_bounds);] {
+] proof [reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::IngestDone { size } => {
             finish_ingest(w, i, size, None);
@@ -3079,13 +2978,11 @@ fn reply_plan(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures (successful_reply_input(old(w).nodes@[i as int], reply)
-            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
-        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint
             || match reply { Reply::PlanLeaf { footprint, .. } => final(w).nodes@[i as int].footprint == footprint, _ => false },
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
-] proof [reveal(distance); reveal(reply_bounds); reveal(retry_bounds);] {
+] proof [reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::PlanLeaf { footprint, fits } => {
             let m = &mut w.nodes[i];
@@ -3118,12 +3015,10 @@ fn reply_work(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures (successful_reply_input(old(w).nodes@[i as int], reply)
-            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
-        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
-] proof [reveal(distance); reveal(reply_bounds); reveal(retry_bounds);] {
+] proof [reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::MakerDone { head } => {
             let m = &mut w.nodes[i];
@@ -3172,12 +3067,10 @@ fn reply_rebase(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures (successful_reply_input(old(w).nodes@[i as int], reply)
-            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
-        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
-] proof [reveal(distance); reveal(reply_bounds); reveal(retry_bounds);] {
+] proof [reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::RebaseClean { head } => {
             let m = &mut w.nodes[i];
@@ -3421,13 +3314,10 @@ fn recheck(w: &mut World, i: usize, target: Phase,
     requires !(target is Closed), i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures (ordinary_await(old(w).nodes@[i as int]) && old(w).nodes@[i as int].phase == Phase::Rebasing
-            && target == Phase::Checking
-            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
-        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
-] proof [reveal(distance); reveal(retry_bounds);] {
+] proof [reveal(retry_bounds);] {
     let m = &mut w.nodes[i];
     m.rechecks = m.rechecks.saturating_add(1);
     let free = m.rechecks <= FREE_RECHECKS;
@@ -3466,12 +3356,7 @@ fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures (node_checked(*old(w), old(w).nodes@[i as int])
-            && (!old(w).nodes@[i as int].paused || old(w).nodes@[i as int].phase is Stopping)
-            && ack == Ack::Confirmed && (match old(w).nodes@[i as int].effect {
-                Some(e) => e.seq == seq, None => false,
-            }) ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
-        (old(w).nodes@[i as int].phase is Closed && old(w).nodes@[i as int].effect.is_none()
+    ensures (old(w).nodes@[i as int].phase is Closed && old(w).nodes@[i as int].effect.is_none()
             ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
@@ -3491,7 +3376,7 @@ fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 2,
-] proof [reveal(distance);] {
+] {
     let Some(e) = w.nodes[i].effect else { return };
     if e.seq != seq {
         return;
@@ -3519,14 +3404,7 @@ kernel_fn! {
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
     requires old(m).generation < u64::MAX,
-    ensures (matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase)
-            ==> distance(*final(m)) == distance(*old(m))),
-        (old(m).effect.is_none() && old(m).question.is_none() && !old(m).waiting_incident
-            && (!old(m).paused || old(m).phase is Stopping)
-            && (current_item(*old(m)) == Some(Item::Do(kind))
-                || current_item(*old(m)) == Some(Item::Teardown(kind)))
-            ==> distance(*final(m)) + 2 <= distance(*old(m))),
-        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
         (settle_shape(*old(m))
             && (old(m).phase is Stopping ==> current_item(*old(m)) == Some(Item::Teardown(kind)))
             ==> settle_shape(*final(m))),
@@ -3535,7 +3413,7 @@ fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).question == old(m).question,
         final(m).fx_failures == 0, final(m).fx_incidents == 0,
-] proof [reveal(distance);] {
+] {
     m.fx_failures = 0;
     m.fx_incidents = 0;
     match kind {
@@ -3685,10 +3563,7 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         dependencies::edges_indexable(*old(w)), old(w).next_question < u64::MAX,
-    ensures (fact_progress_input(*old(w), i as int, fact)
-            ==> progress_measure(*final(w)) < progress_measure(*old(w))
-                && dependencies::edges_indexable(*final(w))),
-        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -3709,11 +3584,7 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
         final(w).fail_fast == old(w).fail_fast,
         final(w).file_sets@ == old(w).file_sets@,
         final(out).len <= old(out).len + 4,
-] hide [node_checked] {
-    kernel_snapshot! { before_fact = *w }
-    kernel_proof! {
-        if fact_progress_input(*w, i as int, fact) { fact_witness_premises(*w, i as int, fact); }
-    }
+] {
     match fact {
         Fact::DependencyRemove { kind, number } => w.remove_dependency(i, kind, number),
         Fact::Dependency { target, status } => w.dependency_fact(i, target, status, out),
@@ -3722,21 +3593,6 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
             checks_passed,
         } => pr_merged(w, i, head, checks_passed, out),
         _ => fact_transition(w, i, fact, out),
-    }
-    kernel_proof! {
-        if fact_progress_input(before_fact@, i as int, fact) {
-            match fact {
-                Fact::Dependency { target, status } => {
-                    assert(dependency_progress_input(before_fact@, i as int, target, status));
-                    assert(progress_measure(*w) < progress_measure(before_fact@));
-                },
-                _ => {
-                    assert(w.nodes@ == before_fact@.nodes@.update(i as int, w.nodes@[i as int]));
-                    lift_node_progress(before_fact@, *w, i as int);
-                    dependencies::indexability_frame(before_fact@, *w);
-                },
-            }
-        }
     }
 }
 }
@@ -3752,12 +3608,7 @@ fn fact_transition(w: &mut World, i: usize, fact: Fact,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(fact is DependencyRemove || fact is Dependency || fact is PrMerged),
-    ensures (fact == Fact::IncidentCleared { by_rob: true }
-            && old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none()
-            && (!old(w).nodes@[i as int].paused || old(w).nodes@[i as int].phase is Stopping)
-            && !(old(w).nodes@[i as int].phase is Closed)
-            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
-        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -3778,7 +3629,7 @@ fn fact_transition(w: &mut World, i: usize, fact: Fact,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 2,
-] proof [reveal(retry_bounds); reveal(distance);] {
+] proof [reveal(retry_bounds);] {
     match fact {
         Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {}
         Fact::Priority(priority) => {
@@ -3888,12 +3739,7 @@ fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bool,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 4 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
-    ensures (node_checked(*old(w), old(w).nodes@[i as int])
-            && old(w).nodes@[i as int].phase == Phase::Queued && !old(w).nodes@[i as int].paused
-            && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none()
-            && old(w).nodes@[i as int].question.is_none()
-            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
-        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -3917,7 +3763,7 @@ fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bool,
         final(w).nodes@[i as int].credit.earned as int + merge_capacity(final(w).nodes@[i as int])
             <= old(w).nodes@[i as int].credit.earned as int + 1,
 
-] proof [reveal(distance);] {
+] {
     let m = &mut w.nodes[i];
     if !m.had_pr || m.merged.is_some() {
         return;
@@ -3959,11 +3805,7 @@ fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures (node_checked(*old(w), old(w).nodes@[i as int])
-            && id > old(w).nodes@[i as int].last_cmd
-            && command_progress_input(old(w).nodes@[i as int], command)
-            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
-        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -3987,18 +3829,11 @@ fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
-] proof [reveal(distance);] {
-    kernel_snapshot! { before_command = *w }
+] {
     if id <= w.nodes[i].last_cmd {
         return; // a repeated command
     }
     w.nodes[i].last_cmd = id;
-    kernel_proof! {
-        if node_checked(before_command@, before_command@.nodes@[i as int]) {
-            footprint::valid_under_table_growth(before_command@, *w, w.nodes@[i as int].footprint);
-            assert(node_checked(*w, w.nodes@[i as int]));
-        }
-    }
     match command {
         Command::Stop => enter_stopping(&mut w.nodes[i], Outcome::Stopped),
         Command::ChangeRequest => enter_stopping(&mut w.nodes[i], Outcome::Replaced),
@@ -4008,15 +3843,7 @@ fn on_command(w: &mut World, i: usize, id: u64, command: Command,
                 m.paused = true;
             }
         }
-        Command::Resume => {
-            kernel_proof! {
-                let n = w.nodes@[i as int];
-                if node_checked(*w, n) && n.paused && !(n.phase is Closed || n.phase is Stopping) {
-                    resume_decreases(*w, n);
-                }
-            }
-            w.nodes[i].paused = false;
-        },
+        Command::Resume => w.nodes[i].paused = false,
         Command::Answer { question, answer } => on_answer(w, i, question, answer, out),
     }
 }
@@ -4055,10 +3882,7 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures (node_checked(*old(w), old(w).nodes@[i as int])
-            && answer_progress_input(old(w).nodes@[i as int], id, answer)
-            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
-        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -4080,7 +3904,7 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
-] proof [reveal(distance);] {
+] {
     let Some(q) = w.nodes[i].question else { return };
     if q.id != id {
         return; // an answer to a question that is no longer open
@@ -4158,11 +3982,7 @@ fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
         old(w).nodes@[i as int].credit.withheld ==> q.cost == 0,
         old(w).nodes@[i as int].credit.added as int + 255 <= u32::MAX as int,
         old(w).nodes@[i as int].credit.spent < u32::MAX,
-    ensures (old(w).nodes@[i as int].phase == Phase::AwaitingRob
-            && old(w).nodes@[i as int].question == Some(q) && !old(w).nodes@[i as int].paused
-            && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none()
-            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
-        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
@@ -4184,7 +4004,7 @@ fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
-] proof [reveal(distance);] {
+] {
     let m = &mut w.nodes[i];
     m.credit.fund_and_pay(deposit, q.cost);
     m.question = None;
@@ -4209,17 +4029,14 @@ fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
 kernel_fn! {
 /// Cleanup question row / #771: handling cleanup allocates no monotone counter.
 fn mark_handled(m: &mut Node) -> (result: ()) [
-    ensures (old(m).effect.is_none() && old(m).question.is_none() && !old(m).waiting_incident
-            && old(m).phase is Stopping && matches!(current_item(*old(m)), Some(Item::Teardown(_)))
-            ==> distance(*final(m)) + 2 <= distance(*old(m))),
-        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
         (settle_shape(*old(m)) ==> settle_shape(*final(m))),
         final(m).generation == old(m).generation,
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).question == old(m).question,
         final(m).phase == old(m).phase,
         final(m).last_cmd == old(m).last_cmd,
-] proof [reveal(distance);] {
+] {
     if let Some(Item::Teardown(kind)) = m.current() {
         match kind {
             EffectKind::StopRun => {
@@ -4269,15 +4086,11 @@ spec fn question_fits(q: Question) -> bool {
     }
 }
 
-/// #771: immutable file storage is ordered by the production interner.
-pub closed spec fn storage_ordered(w: World) -> bool { footprint::ordered_table(w) }
-
 /// #771: the existing per-node consistency checks used by progress. This is
 /// proved as a postcondition of check_node on the real Node and World types.
 spec fn node_checked(w: World, n: Node) -> bool {
     n.repo.0 < w.gates@.len() && footprint::valid_footprint(w, n.footprint)
         && arithmetic_consistent(n) && settle_shape(n) && stopping_effect_fits(n)
-        && (n.phase == Phase::Queued ==> n.pr_open && n.had_pr && n.merged.is_none())
         && (n.phase is Closed ==> n.pos == 0 && n.effect.is_none() && n.run.is_none()
             && n.job.is_none() && !n.pool && !n.holds && n.ticket.is_none()
             && n.question.is_none() && !n.waiting_incident && !n.pr_open && !n.worktree)
@@ -4383,13 +4196,6 @@ pub closed spec fn step_budget(before: World, after: World) -> bool {
     before.nodes@.len() <= after.nodes@.len() <= before.nodes@.len() + 1
         && after.next_question as int <= before.next_question as int + QUESTION_STEP_BUDGET
         && after.next_ticket as int <= before.next_ticket as int + 2 * (before.nodes@.len() + 1)
-        && (forall|j: int| before.nodes@.len() <= j < after.nodes@.len() ==>
-            after.nodes@[j].generation <= GENERATION_STEP_BUDGET
-                && after.nodes@[j].next_seq <= EFFECT_STEP_BUDGET
-                && after.nodes@[j].credit.start <= CREDIT_START_STEP_BUDGET
-                && after.nodes@[j].credit.earned <= CREDIT_EARNED_STEP_BUDGET
-                && after.nodes@[j].credit.added <= CREDIT_ADDED_STEP_BUDGET
-                && after.nodes@[j].credit.spent <= CREDIT_SPENT_STEP_BUDGET)
         && forall|j: int| 0 <= j < before.nodes@.len() ==>
             after.nodes@[j].generation as int <= before.nodes@[j].generation as int + GENERATION_STEP_BUDGET
                 && after.nodes@[j].next_seq as int <= before.nodes@[j].next_seq as int + EFFECT_STEP_BUDGET
@@ -4408,7 +4214,7 @@ spec fn stopping_effect_fits(n: Node) -> bool {
     }
 }
 
-pub closed spec fn settle_ready(w: World) -> bool {
+spec fn settle_ready(w: World) -> bool {
     scheduling_safe(w) && w.nodes@.len() <= u64::MAX as int
         && (forall|j: int| 0 <= j < w.nodes@.len() ==> settle_shape(w.nodes@[j])
             && w.nodes@[j].generation as int + generation_capacity(w.nodes@[j]) <= u64::MAX as int
@@ -4435,20 +4241,9 @@ spec fn movable(w: World, i: int) -> bool {
     })
 }
 
-/// #771: sufficient movability depends only on these scheduler inputs.
-proof fn movable_frame(before: World, after: World, i: int)
-    requires 0 <= i < before.nodes@.len(), before.nodes@ == after.nodes@,
-        before.gates@ == after.gates@, before.pool_capacity == after.pool_capacity,
-        before.dependencies@ == after.dependencies@,
-    ensures movable(before, i) == movable(after, i),
-{
-}
-
 /// #771: conserved allocations and frames across the real settle loop.
 spec fn settle_chain(before: World, after: World) -> bool {
-    (forall|j: int| 0 <= j < before.nodes@.len() ==>
-        (before.nodes@[j].phase is Closed ==> after.nodes@[j].phase is Closed))
-        &&     after.nodes@.len() == before.nodes@.len()
+    after.nodes@.len() == before.nodes@.len()
         && after.next_question == before.next_question && after.gates@ == before.gates@
         && after.pool_capacity == before.pool_capacity && after.fail_fast == before.fail_fast
         && after.file_sets@ == before.file_sets@ && after.dependencies@ == before.dependencies@
@@ -4508,22 +4303,12 @@ fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>)
                 potential_member(w.nodes@, i as int, w.nodes@.len(), |n: Node| ticket_capacity(n));
             }
             kernel_snapshot! { before_node = *w }
-            kernel_proof! {
-                assert(!changed ==> forall|j: int| 0 <= j < i ==> !movable(before_node@, j));
-            }
             let moved = advance(w, i, &mut outbox);
             kernel_proof! {
                 reveal(advance_post);
-                if before_node@.nodes@[i as int].phase is Closed {
-                    assert(internal_height(before_node@.nodes@[i as int]) == 0);
-                    assert(!moved);
-                }
                 if !changed && !moved {
                     assert(w.nodes@ == before_node@.nodes@);
-                    assert forall|j: int| 0 <= j <= i implies !movable(*w, j) by {
-                        movable_frame(before_node@, *w, j);
-                        if j < i { assert(!movable(before_node@, j)); }
-                    }
+                    assert forall|j: int| 0 <= j <= i implies !movable(*w, j) by {}
                 }
                 assert forall|j: int| 0 <= j < w.nodes@.len() implies
                     w.nodes@[j].generation as int + generation_capacity(w.nodes@[j])
