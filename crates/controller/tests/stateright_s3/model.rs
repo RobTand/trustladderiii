@@ -96,7 +96,7 @@ impl Model for EffectModel {
     type Action = Action;
 
     fn init_states(&self) -> Vec<State> {
-        vec![State {
+        let initial = State {
             effects: self
                 .contracts
                 .iter()
@@ -120,7 +120,14 @@ impl Model for EffectModel {
             rejected: 0,
             stale_mutation: false,
             reconciled: None,
-        }]
+        };
+        let mut states = vec![initial.clone()];
+        if initial.effects.len() == 2 {
+            let mut same_epoch = initial;
+            same_epoch.effects[1].epoch = 1;
+            states.push(same_epoch);
+        }
+        states
     }
 
     fn actions(&self, state: &State, actions: &mut Vec<Action>) {
@@ -265,45 +272,48 @@ impl Model for EffectModel {
 
     fn properties(&self) -> Vec<Property<Self>> {
         let mut properties = vec![
-            Property::always("once effects mutate at most once per key", |_, s| {
+            Property::<Self>::always("once effects mutate at most once per key", |_, s| {
                 s.effects
                     .iter()
                     .all(|e| e.contract != Contract::Once || e.mutations <= 1)
             }),
-            Property::always("converging effects preserve their target", |_, s| {
+            Property::<Self>::always("converging effects preserve their target", |_, s| {
                 s.effects
                     .iter()
                     .all(|e| e.contract != Contract::Converges || e.mutations == 0 || e.at_target)
             }),
-            Property::always("reconciliation never deletes the last message", |_, s| {
+            Property::<Self>::always("reconciliation never deletes the last message", |_, s| {
                 s.effects
                     .iter()
                     .all(|e| e.contract != Contract::Message || !e.recorded || e.copies >= 1)
             }),
-            Property::always("a reconciled marker has exactly one copy", |_, s| {
+            Property::<Self>::always("a reconciled marker has exactly one copy", |_, s| {
                 s.reconciled.is_none_or(|key| s.effects[key].copies == 1)
             }),
-            Property::always("an older epoch never mutates upstream", |_, s| {
+            Property::<Self>::always("an older epoch never mutates upstream", |_, s| {
                 !s.stale_mutation
             }),
-            Property::eventually(
+            Property::<Self>::eventually(
                 "healthy fair delivery settles every eligible key",
                 |_, s| Self::settled(s),
             ),
-            Property::sometimes("two losses are reachable", |_, s| s.losses == MAX_LOSSES),
-            Property::sometimes("a duplicate delivery is reachable", |_, s| {
+            Property::<Self>::sometimes("two losses are reachable", |_, s| s.losses == MAX_LOSSES),
+            Property::<Self>::sometimes("a duplicate delivery is reachable", |_, s| {
                 s.duplicates == MAX_DUPLICATES
             }),
-            Property::sometimes("authoritative absence retries the same key", |_, s| {
+            Property::<Self>::sometimes("authoritative absence retries the same key", |_, s| {
                 s.retries > 0
             }),
-            Property::sometimes("upstream rejects a fenced delivery", |_, s| s.rejected > 0),
-            Property::sometimes("healthy completion is reachable without fencing", |_, s| {
-                s.effects.iter().all(|e| e.phase == Phase::Confirmed)
+            Property::<Self>::sometimes("upstream rejects a fenced delivery", |_, s| {
+                s.rejected > 0
             }),
+            Property::<Self>::sometimes(
+                "healthy completion is reachable without fencing",
+                |_, s| s.effects.iter().all(|e| e.phase == Phase::Confirmed),
+            ),
         ];
         if self.contracts.contains(&Contract::Message) {
-            properties.push(Property::sometimes(
+            properties.push(Property::<Self>::sometimes(
                 "a temporary duplicate message is reachable",
                 |_, s| s.effects.iter().any(|e| e.copies == 2),
             ));

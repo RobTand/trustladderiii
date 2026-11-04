@@ -35,13 +35,13 @@ References below name the inspected source at
 | `CommitSent`, `Dispatch` | `crates/controller/src/lib.rs:1190`, `drive_once_with` commits Sent before calling `execute`. |
 | `LoseResponse`, `MarkUncertain` | `crates/controller/src/lib.rs:1255`, transport error preserves Sent; line 1271 advances it to Uncertain. |
 | `ReadRecord` | `crates/controller/src/lib.rs:1298`, reconciliation returns Found, Absent, or Pending. Found completes the original key. |
-| `RetrySameKey` | `crates/controller/src/lib.rs:1332`, authoritative absence returns the existing effect to Intended. |
+| `RetrySameKey` | `crates/controller/src/lib.rs:1323`, authoritative absence returns the existing effect to Intended. |
 | `CommitConfirmed` | `crates/controller/src/lib.rs:1555`, `complete` commits the acknowledgement, transition, and resulting observations. |
 | `Deliver`, Once | `crates/controller/src/adapters/record.rs:33`, per-key reconciliation; `crates/prismabuild/src/submit.rs`, action-key submission; `crates/controller/src/adapters/github/publishing.rs`, approval external-id reconciliation. |
 | `Deliver`, Converges | `crates/controller/src/adapters/github/publishing.rs`, reconciliation against branch head and PR state; `crates/controller/src/adapters/mergify.rs`, queue-state reconciliation. |
 | `DuplicateDelivery`, Message | `crates/github/src/client.rs:677`, marker read before POST is not an atomic upstream deduplication operation. `crates/controller/tests/crash/upstreams.rs:246` explicitly persists two copies. |
 | `ReadRecord`, `ReconcileCopies` | `crates/github/src/client.rs:697`, `reconcile_comments` keeps the oldest app-owned marked comment and deletes extras. The same adapter operation can be called again after confirmation. |
-| `AdvanceFence`, `CancelStale`, fenced `Deliver` | `crates/controller/src/adapters/record.rs:44`, monotonic fence before writes; `crates/controller/src/lib.rs:1148`, stale delivery cancellation. |
+| `AdvanceFence`, `CancelStale`, fenced `Deliver` | `crates/controller/src/adapters/record.rs:42`, monotonic fence before writes; `crates/controller/src/lib.rs:1148`, stale delivery cancellation. |
 
 `LoseRequest` represents a failed attempt that made no upstream write. Only a
 subsequent authoritative Absent read permits retry. A lost response alone
@@ -52,7 +52,8 @@ are atomic in this abstraction. S1 owns their interior crash boundaries.
 
 Each run exhausts one or two keys, at most two network losses in total, and at
 most one duplicate delivery. It checks all three single-contract cases and
-all nine ordered two-contract combinations. Each key has its own resource or
+all nine ordered two-contract combinations, both within one epoch and across
+an epoch advance. Each key has its own resource or
 marker. Conflicting target writes to one resource and outside writers are
 outside this model.
 
