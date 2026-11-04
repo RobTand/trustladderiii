@@ -6,12 +6,16 @@ const PRIVATE: &str = "sk-planted687abcdefghijklmnop request-fragment-687";
 struct RecordedJudge {
     fake: Fake,
     reason: Value,
+    supervisor: Option<Supervisor>,
 }
 
 impl Executor for RecordedJudge {
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         if delivery.is_postmortem() {
-            return Ok(Completion::confirmed(vec![]));
+            return match &mut self.supervisor {
+                Some(supervisor) => supervisor.execute(delivery),
+                None => Ok(Completion::confirmed(vec![])),
+            };
         }
         self.fake.execute(delivery)
     }
@@ -19,6 +23,18 @@ impl Executor for RecordedJudge {
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         if !delivery.is_postmortem() {
             return self.fake.reconcile(delivery);
+        }
+        if let Some(supervisor) = &self.supervisor {
+            let (_, attempt) = latest(&supervisor.root(&delivery.key))?.unwrap();
+            let mut store = Store::open(&supervisor.store)?;
+            let before = store.pending_memories(0)?;
+            crate::memory::queue_attempt(&mut store, &delivery.key, &attempt)?;
+            assert_eq!(
+                store.pending_memories(0)?,
+                before,
+                "postmortem run diagnostics must not become Hindsight run records"
+            );
+            return inspect(&attempt, delivery);
         }
         let attempt = tempfile::tempdir().unwrap();
         write(&attempt.path().join("exit.json"), &json!({"code": 1}))?;
@@ -39,17 +55,44 @@ fn drain(controller: &mut crate::Controller) {
     panic!("controller failed to settle");
 }
 
-fn boundary_case(class: &str, status: Value, expected: &str) {
+fn boundary_case(class: &str, status: Value, expected: &str, launch: bool) {
     let root = tempfile::tempdir().unwrap();
     let mut db = Database::start();
     let mut config =
         tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
     config.store = db.create("judge_failure");
+    let supervisor = if launch {
+        config.workers.runs = root.path().join("runs");
+        config.workers.python = "/usr/bin/python3".into();
+        config.models.key_file = root.path().join("fixture-key");
+        fs::write(&config.models.key_file, PRIVATE).unwrap();
+        let launcher = root.path().join("judge-launcher.py");
+        fs::write(
+            &launcher,
+            r#"import json, sys
+from pathlib import Path
+attempt = Path(sys.argv[-1])
+request = json.loads((attempt / "request.json").read_text())
+if summary := request.get("memory", {}).get("summary_file"):
+    Path(summary).write_text(json.dumps({"outcome": "failed", "reason": {
+        "failure_class": "iteration_limit", "failure_stage": "postmortem judge failure"}}))
+(attempt / "exit.json").write_text(json.dumps({"code": 1}))
+print("claimed", flush=True)
+"#,
+        )
+        .unwrap();
+        config.workers.launcher =
+            vec!["/usr/bin/python3".into(), launcher.to_str().unwrap().into()];
+        Some(Supervisor::new(&config, &root.path().join("records")).unwrap())
+    } else {
+        None
+    };
     let mut registry = crate::adapters::simulation(root.path()).unwrap();
     registry.register(
         crate::executor::Upstream::Workers,
         RecordedJudge {
             fake: Fake::new(root.path()),
+            supervisor,
             reason: json!({"failure_class": class, "failure_http_status": status,
                 "failure_stage": "postmortem judge failure", "failure_message": PRIVATE}),
         },
@@ -167,7 +210,7 @@ macro_rules! judge_case {
     ($name:ident, $class:expr, $status:expr, $expected:expr) => {
         #[test]
         fn $name() {
-            boundary_case($class, $status, $expected);
+            boundary_case($class, $status, $expected, false);
         }
     };
 }
@@ -192,3 +235,8 @@ judge_case!(unknown_is_other, PRIVATE, Value::Null, "other");
 judge_case!(invalid_http_text, "http", json!(PRIVATE), "http");
 judge_case!(invalid_http_range, "http", json!("999"), "http");
 judge_case!(invalid_http_type, "http", json!(true), "http");
+
+#[test]
+fn launched_iteration_limit_reaches_the_pause_and_status() {
+    boundary_case("iteration_limit", Value::Null, "iteration_limit", true);
+}
