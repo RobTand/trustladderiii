@@ -61,7 +61,7 @@ fn github_installation_and_synchronous_token_bridge() {
             mismatch,
             &repo,
             github.clone(),
-            &crate::store_support::ownership()
+            &mut crate::store_support::ownership()
         ),
         Err(Error::Invalid("worktree GitHub installation mismatch"))
     ));
@@ -83,7 +83,12 @@ fn github_installation_and_synchronous_token_bridge() {
             .mount(&server),
     );
     adapter
-        .serve_github(identity, &repo, github, &crate::store_support::ownership())
+        .serve_github(
+            identity,
+            &repo,
+            github,
+            &mut crate::store_support::ownership(),
+        )
         .unwrap();
     let served = &adapter.repositories[0];
     // Calls the adapter-owned runtime from the same synchronous context as execute.
@@ -167,7 +172,7 @@ fn repo_conventions_unconfigured_worktrees_refuse_base() {
                 fixture.delivery().repository,
                 &fixture.path,
                 &fixture.path,
-                &crate::store_support::ownership()
+                &mut crate::store_support::ownership()
             )
             .is_err(),
         "an unconfigured worktree adapter must reject repository registration"

@@ -96,7 +96,8 @@ fn database(config: &tl3_config::Config) -> Result<()> {
             .batch_execute("CREATE DATABASE tl3 OWNER tl3")
             .map_err(|_| "database creation failed; reconcile before retrying")?;
     }
-    tl3_store::Store::open(settings)?;
+    let mut ownership = tl3_store::Ownership::claim(tl3_store::Store::connect(settings)?)?;
+    ownership.migrate()?;
     println!("Postgres: database exists, fsync on, migrations applied");
     // This runs on every tl3-postgres start, which tl3d and the status page
     // require. A console fault must never stop the database.

@@ -131,7 +131,7 @@ fn startup_rereads_a_finished_run_in_the_newer_shape_and_the_loop_survives() {
     let supervisor = Supervisor::new(
         &config,
         &root.path().join("records"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let mut source = supervisor.source();

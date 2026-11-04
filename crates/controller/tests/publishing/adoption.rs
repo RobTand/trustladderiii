@@ -120,7 +120,7 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
     let supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let mut source = supervisor.source();

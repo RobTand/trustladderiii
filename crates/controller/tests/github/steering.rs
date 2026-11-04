@@ -253,7 +253,7 @@ impl Drop for Daemon {
         let supervisor = adapters::workers::Supervisor::new(
             &config,
             &self.root.path().join("fakes"),
-            &crate::startup_ownership::ownership(),
+            &mut crate::startup_ownership::ownership(),
         )
         .unwrap();
         let epoch = self.store.load().unwrap().epoch.get();

@@ -146,6 +146,18 @@ impl Database {
     }
 
     pub fn create(&mut self, name: &str) -> tl3_config::Store {
+        let settings = self.create_uninitialized(name);
+        let mut ownership =
+            tl3_store::Ownership::claim(tl3_store::Store::connect(&settings).unwrap()).unwrap();
+        ownership.migrate().unwrap();
+        settings
+    }
+
+    #[allow(
+        dead_code,
+        reason = "Schema and migration regressions need an empty database"
+    )]
+    pub fn create_uninitialized(&mut self, name: &str) -> tl3_config::Store {
         self.runtime
             .block_on(self.postgres.create_database(name))
             .unwrap();

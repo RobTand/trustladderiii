@@ -95,7 +95,7 @@ print("claimed", flush=True)
             Supervisor::new(
                 &config,
                 &root.path().join("records"),
-                &crate::store_support::ownership(),
+                &mut crate::store_support::ownership(),
             )
             .unwrap(),
         )
@@ -301,7 +301,7 @@ print("claimed", flush=True)
     let supervisor = Supervisor::new(
         &config,
         &root.path().join("records"),
-        &crate::store_support::ownership(),
+        &mut crate::store_support::ownership(),
     )
     .unwrap();
     let mut registry = crate::adapters::simulation(root.path()).unwrap();

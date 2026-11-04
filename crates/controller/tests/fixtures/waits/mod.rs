@@ -41,7 +41,7 @@ pub fn adapter_with_bell(root: &Path, bell_url: &str) -> Adapter {
             priority: -10,
             result_tool: tool,
         },
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap()
 }

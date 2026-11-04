@@ -176,7 +176,7 @@ fn registry(
     fail: bool,
 ) -> (Registry, WorkerOutputSource, adapters::prismabuild::Source) {
     let mut registry = adapters::simulation(root).unwrap();
-    let real = Supervisor::new(config, root, &crate::startup_ownership::ownership()).unwrap();
+    let real = Supervisor::new(config, root, &mut crate::startup_ownership::ownership()).unwrap();
     let source = real.source();
     registry.register(
         Upstream::Workers,
@@ -198,7 +198,7 @@ fn registry(
     let checks = adapters::prismabuild::Adapter::new(
         client,
         settings,
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let checks_source = checks.source();
@@ -477,7 +477,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
         let mut supervisor = Supervisor::new(
             &config,
             &root.path().join("fakes"),
-            &crate::startup_ownership::ownership(),
+            &mut crate::startup_ownership::ownership(),
         )
         .unwrap();
         supervisor.retire(&mut store).unwrap();
@@ -748,7 +748,7 @@ fn process_contract(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     supervisor.execute(&delivery).unwrap();
@@ -763,7 +763,7 @@ fn process_contract(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     assert!(matches!(
@@ -781,7 +781,7 @@ fn process_contract(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     delivery.key = "maker-invalid".into();
@@ -791,7 +791,7 @@ fn process_contract(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     delivery.key = "maker-stop".into();
@@ -819,7 +819,7 @@ fn restart_after_replan(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     supervisor.execute(&delivery).unwrap();
@@ -844,7 +844,7 @@ fn restart_after_replan(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     supervisor.execute(&delivery).unwrap();
@@ -895,7 +895,7 @@ pub(super) fn adopted_fix_without_session(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     supervisor.execute(&delivery).unwrap();
@@ -930,7 +930,7 @@ pub(super) fn legacy_session(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     supervisor.execute(&delivery).unwrap();
@@ -956,7 +956,7 @@ pub(super) fn legacy_session(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let result = supervisor.execute(&delivery);
@@ -1000,7 +1000,7 @@ pub(super) fn repository_images(database: &mut Database) {
         let mut supervisor = Supervisor::new(
             &config,
             &root.path().join("fakes"),
-            &crate::startup_ownership::ownership(),
+            &mut crate::startup_ownership::ownership(),
         )
         .unwrap();
         supervisor.execute(&delivery).unwrap();

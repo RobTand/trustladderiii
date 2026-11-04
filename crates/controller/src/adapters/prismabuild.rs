@@ -265,15 +265,17 @@ fn retire_superseded(root: &Path, delivery: &Delivery) -> Result<()> {
     Ok(())
 }
 
-fn clean_inputs(root: &Path) -> Result<()> {
+fn clean_inputs(root: &Path, ownership: &mut crate::Ownership) -> Result<()> {
     for entry in fs::read_dir(root)? {
         let path = entry?.path();
         if path.extension().is_some_and(|ext| ext == "input") {
+            ownership.ensure_held()?;
             fs::remove_dir_all(path)?;
             File::open(root)?.sync_all()?;
         } else if path.extension().is_some_and(|ext| ext == "done")
             && !path.with_extension("job").exists()
         {
+            ownership.ensure_held()?;
             fs::remove_file(path)?;
             File::open(root)?.sync_all()?;
         }
@@ -306,8 +308,9 @@ impl Adapter {
     pub fn new(
         client: PrismaBuild,
         settings: Settings,
-        _ownership: &crate::Ownership,
+        ownership: &mut crate::Ownership,
     ) -> Result<Self> {
+        ownership.ensure_held()?;
         if !settings.records.is_absolute()
             || !settings.harness.is_absolute()
             || settings.python.is_empty()
@@ -329,20 +332,22 @@ impl Adapter {
                 File::open(&settings.records)?.sync_all()?;
                 let done = path.with_extension("done");
                 if done.try_exists()? {
+                    ownership.ensure_held()?;
                     fs::rename(&done, record_path(&settings.records, &job.delivery, "done"))?;
                     File::open(&root)?.sync_all()?;
                 }
+                ownership.ensure_held()?;
                 fs::rename(&path, record_path(&settings.records, &job.delivery, "job"))?;
                 File::open(&root)?.sync_all()?;
                 File::open(&settings.records)?.sync_all()?;
             }
         }
         // Staging processes are parent-bound and cannot outlive the exclusive store claim.
-        clean_inputs(&settings.records)?;
+        clean_inputs(&settings.records, ownership)?;
         for entry in fs::read_dir(&settings.records)? {
             let entry = entry?;
             if entry.file_type()?.is_dir() {
-                clean_inputs(&entry.path())?;
+                clean_inputs(&entry.path(), ownership)?;
             }
         }
         // Beside the records directory, whose subdirectories are node records.

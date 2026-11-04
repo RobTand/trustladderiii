@@ -29,7 +29,7 @@ pub use record::{delivered_notes, delivery_counts, delivery_epochs};
 pub fn simulation_with_workers(
     root: &Path,
     config: &tl3_config::Config,
-    ownership: &crate::Ownership,
+    ownership: &mut crate::Ownership,
 ) -> Result<(Registry, workers::WorkerOutputSource)> {
     let mut registry = simulation(root)?;
     let supervisor = workers::Supervisor::new(config, root, ownership)?;

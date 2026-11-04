@@ -140,7 +140,7 @@ impl Real {
         identity: Repository,
         repository: &Path,
         remote: &Path,
-        ownership: &crate::Ownership,
+        ownership: &mut crate::Ownership,
     ) -> Result<()> {
         self.serve(
             identity,
@@ -156,7 +156,7 @@ impl Real {
         identity: Repository,
         repository: &Path,
         github: tl3_github::GitHub,
-        ownership: &crate::Ownership,
+        ownership: &mut crate::Ownership,
     ) -> Result<()> {
         if github.installation_id() != identity.installation {
             return Err(Error::Invalid("worktree GitHub installation mismatch"));
@@ -175,8 +175,9 @@ impl Real {
         repository: &Path,
         remote: Remote,
         github: Option<tl3_github::GitHub>,
-        _ownership: &crate::Ownership,
+        ownership: &mut crate::Ownership,
     ) -> Result<()> {
+        ownership.ensure_held()?;
         if self
             .repositories
             .iter()
@@ -223,9 +224,11 @@ impl Real {
                 ));
             }
         } else {
+            ownership.ensure_held()?;
             write(&binding, &(&identity, &self.root))?;
         }
         let fence = read::<i64>(&journal.join("epoch.json"))?.unwrap_or(0);
+        ownership.ensure_held()?;
         write(&journal.join("epoch.json"), &fence.max(self.epoch))?;
         drop(guard);
         self.repositories.push(Served {

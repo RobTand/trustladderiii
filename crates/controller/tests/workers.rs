@@ -250,7 +250,7 @@ fn linked_materials(settings: &tl3_config::Store, wrapped: bool) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     supervisor.execute(&delivery).unwrap();
@@ -329,7 +329,7 @@ fn narrowed_materials(settings: &tl3_config::Store, wrapped: bool) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     supervisor.execute(&delivery).unwrap();
@@ -472,8 +472,9 @@ fn main() {
         let config = config(&settings, root, "normal");
         // This child emits only JSON on stdout. Its existing test database also
         // supplies ownership without a second fixture server's startup message.
-        let ownership = tl3_controller::Ownership::claim(Store::open(&settings).unwrap()).unwrap();
-        let supervisor = Supervisor::new(&config, &root.join("fakes"), &ownership).unwrap();
+        let mut ownership =
+            tl3_controller::Ownership::claim(Store::open(&settings).unwrap()).unwrap();
+        let supervisor = Supervisor::new(&config, &root.join("fakes"), &mut ownership).unwrap();
         let mut source = supervisor.source();
         let (tx, rx) = mpsc::channel();
         source
@@ -530,7 +531,7 @@ fn main() {
         Supervisor::new(
             &config,
             &root.join("fakes"),
-            &crate::startup_ownership::ownership(),
+            &mut crate::startup_ownership::ownership(),
         )
         .unwrap()
         .retire(&mut Store::open(&settings).unwrap())
@@ -1033,7 +1034,8 @@ fn worker_simulation(
         }
     }
     let mut registry = adapters::simulation(root).unwrap();
-    let supervisor = Supervisor::new(config, root, &crate::startup_ownership::ownership()).unwrap();
+    let supervisor =
+        Supervisor::new(config, root, &mut crate::startup_ownership::ownership()).unwrap();
     let source = supervisor.source();
     registry.register(
         tl3_controller::executor::Upstream::Workers,
@@ -1187,7 +1189,7 @@ fn simulation(settings: &tl3_config::Store) {
     let supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let mut replay = supervisor.source();
@@ -1294,8 +1296,12 @@ fn killed_worker(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let config = config(settings, root.path(), "blocked");
     materials(&mut Store::open(settings).unwrap());
-    let mut supervisor =
-        Supervisor::new(&config, root.path(), &crate::startup_ownership::ownership()).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        root.path(),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     let delivery = delivery();
     supervisor.execute(&delivery).unwrap();
     wait_for_signal(|| root.path().join("entered").exists());
@@ -1419,7 +1425,12 @@ fn invalid_replies(settings: &tl3_config::Store) {
 fn invalid_reply(settings: &tl3_config::Store, mode: &str) {
     let root = tempfile::tempdir().unwrap();
     let config = config(settings, root.path(), mode);
-    let mut supervisor = Supervisor::new(&config, root.path(), &crate::startup_ownership::ownership()).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        root.path(),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     supervisor.execute(&delivery()).unwrap();
     assert!(failed(&terminal(&mut supervisor, &delivery())), "{mode}");
 }
@@ -1479,8 +1490,12 @@ fn stop_and_exit_gate(settings: &tl3_config::Store) {
     materials(&mut Store::open(settings).unwrap());
     let root = tempfile::tempdir().unwrap();
     let config = config(settings, root.path(), "reply-before-exit");
-    let mut supervisor =
-        Supervisor::new(&config, root.path(), &crate::startup_ownership::ownership()).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        root.path(),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     let mut run = delivery();
     supervisor.execute(&run).unwrap();
     wait_for_signal(|| root.path().join("entered").exists());
@@ -1598,8 +1613,12 @@ fn late_launcher(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let config = config(settings, root.path(), "normal");
     materials(&mut Store::open(settings).unwrap());
-    let mut supervisor =
-        Supervisor::new(&config, root.path(), &crate::startup_ownership::ownership()).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        root.path(),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     let delivery = delivery();
     let attempt = root_for(&config, &delivery.key).join("attempt-00000000");
     fs::create_dir_all(&attempt).unwrap();
@@ -1636,7 +1655,7 @@ fn never_started(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let run = delivery();
@@ -1718,7 +1737,7 @@ fn killed_reply(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let run = delivery();
@@ -1764,7 +1783,7 @@ fn killed_supervisor(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let run = delivery();
@@ -1812,7 +1831,7 @@ fn fake_stop(settings: &tl3_config::Store) {
     let config = config(settings, root.path(), "blocked");
     let fakes = root.path().join("fakes");
     let mut supervisor =
-        Supervisor::new(&config, &fakes, &crate::startup_ownership::ownership()).unwrap();
+        Supervisor::new(&config, &fakes, &mut crate::startup_ownership::ownership()).unwrap();
     materials(&mut Store::open(settings).unwrap());
     let mut run = delivery();
     supervisor.execute(&run).unwrap();
@@ -1828,7 +1847,7 @@ fn fake_stop(settings: &tl3_config::Store) {
     fs::create_dir(&history).unwrap();
     fs::write(history.join("delivery.json"), "invalid history").unwrap();
     assert!(
-        Supervisor::new(&config, &fakes, &crate::startup_ownership::ownership()).is_ok(),
+        Supervisor::new(&config, &fakes, &mut crate::startup_ownership::ownership()).is_ok(),
         "startup must skip invalid history"
     );
     run.key = "effect:0:2".into();
@@ -1892,7 +1911,7 @@ fn event_source(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     supervisor.execute(&delivery()).unwrap();
@@ -1920,7 +1939,7 @@ fn partial_crash(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let run = delivery();
@@ -1955,7 +1974,7 @@ fn partial_crash(settings: &tl3_config::Store) {
     let mut replay = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap()
     .source();
@@ -2002,7 +2021,7 @@ fn clock_stops_stalled_worker(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
@@ -2093,7 +2112,7 @@ fn quota_resumes_same_operation(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
@@ -2285,7 +2304,7 @@ fn bounded_startup(settings: &tl3_config::Store) {
     let mut original = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     original.execute(&run).unwrap();
@@ -2376,7 +2395,7 @@ fn bounded_startup(settings: &tl3_config::Store) {
     let mut restarted = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let mut source = restarted.source();
@@ -2425,7 +2444,7 @@ fn retirement(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     supervisor.execute(&run).unwrap();
@@ -2544,7 +2563,7 @@ fn retirement(settings: &tl3_config::Store) {
     let mut restarted = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     restarted.retire(&mut store).unwrap();
@@ -2673,7 +2692,7 @@ fn overflow(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let mut run = delivery();
@@ -2767,7 +2786,7 @@ fn external_wait_survives_restart(settings: &tl3_config::Store) {
     let supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let mut source = supervisor.source();

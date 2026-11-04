@@ -25,7 +25,8 @@ impl tl3_controller::clock::Clock for Clock {
 }
 
 fn open(config: &tl3_config::Config, root: &Path, clock: Clock) -> (Controller, Supervisor) {
-    let supervisor = Supervisor::new(config, root, &crate::startup_ownership::ownership()).unwrap();
+    let supervisor =
+        Supervisor::new(config, root, &mut crate::startup_ownership::ownership()).unwrap();
     let mut registry = adapters::simulation(root).unwrap();
     registry.register(Upstream::Workers, supervisor.clone());
     let mut controller = Controller::open_with_clock(

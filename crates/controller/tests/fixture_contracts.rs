@@ -435,8 +435,7 @@ fn controller_restart_waits_for_the_old_postgres_session_and_releases_its_probe(
             .connect(postgres::NoTls)
             .unwrap()
     };
-    let mut old_owner = Store::open(&settings).unwrap();
-    old_owner.claim_controller().unwrap();
+    let old_owner = tl3_controller::Ownership::claim(Store::open(&settings).unwrap()).unwrap();
     let mut observer = connect();
     let mut waiter = connect();
     let waiter_pid: i32 = waiter
@@ -467,7 +466,7 @@ fn controller_restart_waits_for_the_old_postgres_session_and_releases_its_probe(
     };
     drop(old_owner);
     let waiter = waiting.join().unwrap();
-    let claim = Store::open(&settings).and_then(|mut store| store.claim_controller());
+    let claim = Store::open(&settings).and_then(tl3_store::Ownership::claim);
     drop(waiter);
     drop(observer);
     database.stop();

@@ -59,7 +59,7 @@ fn pending_migrations_cannot_change_a_live_owners_database() {
     let root = tempfile::tempdir().unwrap();
     let mut config = config(root.path());
     let mut database = support::Database::start();
-    config.store = database.create("legacy_owner");
+    config.store = database.create_uninitialized("legacy_owner");
     let mut old_owner = raw(&config.store);
     legacy(&mut old_owner);
     assert!(
@@ -84,10 +84,14 @@ fn pending_migrations_cannot_change_a_live_owners_database() {
 #[test]
 fn auxiliary_open_does_not_apply_pending_migrations() {
     let mut database = support::Database::start();
-    let settings = database.create("legacy_auxiliary");
+    let settings = database.create_uninitialized("legacy_auxiliary");
     let mut client = raw(&settings);
     legacy(&mut client);
     let before = legacy_snapshot(&mut client);
+    assert!(tl3_store::Reader::open(&settings).is_err());
+    assert!(tl3_store::Listener::open(&settings).is_err());
+    assert!(tl3_store::ConsoleCommands::open(&settings).is_err());
+    assert!(tl3_store::Prompts::open(&settings).is_err());
     let auxiliary = Store::open(&settings);
     assert_eq!(
         legacy_snapshot(&mut client),
@@ -120,14 +124,14 @@ fn lost_claim_prevents_prismabuild_cleanup() {
     let root = tempfile::tempdir().unwrap();
     let mut database = support::Database::start();
     let settings = database.create("lost_pb_claim");
-    let ownership = Ownership::claim(Store::open(&settings).unwrap()).unwrap();
+    let mut ownership = Ownership::claim(Store::open(&settings).unwrap()).unwrap();
     let (client, pb) = prismabuild_fixture::settings(root.path(), "done", "http://127.0.0.1:9/");
     let staged = pb.records.join("active.input/harness/check.py");
     fs::create_dir_all(staged.parent().unwrap()).unwrap();
     fs::write(&staged, b"owner bytes").unwrap();
     terminate_claim(&settings);
     let successor = Ownership::claim(Store::open(&settings).unwrap()).unwrap();
-    let result = adapters::prismabuild::Adapter::new(client, pb, &ownership);
+    let result = adapters::prismabuild::Adapter::new(client, pb, &mut ownership);
     assert_eq!(
         fs::read(&staged).ok().as_deref(),
         Some(b"owner bytes".as_slice()),
@@ -145,11 +149,11 @@ fn lost_claim_prevents_worker_initialization() {
     let mut config = config(root.path());
     let mut database = support::Database::start();
     config.store = database.create("lost_worker_claim");
-    let ownership = Ownership::claim(Store::open(&config.store).unwrap()).unwrap();
+    let mut ownership = Ownership::claim(Store::open(&config.store).unwrap()).unwrap();
     terminate_claim(&config.store);
     let successor = Ownership::claim(Store::open(&config.store).unwrap()).unwrap();
     let result =
-        adapters::workers::Supervisor::new(&config, &root.path().join("records"), &ownership);
+        adapters::workers::Supervisor::new(&config, &root.path().join("records"), &mut ownership);
     let count: i64 = raw(&config.store)
         .query_one("SELECT count(*) FROM tl3_prompt_versions", &[])
         .unwrap()

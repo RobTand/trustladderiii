@@ -166,20 +166,34 @@ impl Supervisor {
     pub fn new(
         config: &tl3_config::Config,
         records_root: &Path,
-        _ownership: &crate::Ownership,
+        ownership: &mut crate::Ownership,
     ) -> Result<Self> {
+        ownership.ensure_held()?;
         protocol::initialize_schemas()?;
         fs::create_dir_all(config.workers.runs.join(".ready"))?;
         fs::create_dir_all(records_root)?;
         let active = ActiveRuns::default();
         let mut store = Store::open(&config.store)?;
-        crate::prompts::seed(&mut store)?;
+        ownership.ensure_held()?;
+        store.seed_prompts_owned(crate::prompts::BUILTIN, ownership)?;
         for delivery in watched_deliveries(&mut store)? {
             let root = run_root(&config.workers.runs, &delivery.key);
-            match latest(&root).and_then(|attempt| match attempt {
-                Some((_, path)) => inspect_recorded(&path, &delivery, &mut store),
+            ownership.ensure_held()?;
+            let inspected = latest(&root).and_then(|attempt| match attempt {
+                Some((_, path)) => {
+                    let result = inspect_guarded(&path, &delivery, || {
+                        ownership.ensure_held().map_err(Into::into)
+                    })?;
+                    if !matches!(result, Reconciliation::Pending) {
+                        ownership.ensure_held()?;
+                        facts::record(&mut store, &delivery.key, &path)?;
+                    }
+                    Ok(result)
+                }
                 None => Ok(Reconciliation::Absent),
-            }) {
+            });
+            ownership.ensure_held()?;
+            match inspected {
                 Ok(Reconciliation::Pending) => {
                     active.add(&delivery, latest(&root)?.expect("pending attempt").0)
                 }
@@ -1455,13 +1469,23 @@ fn inspect_recorded(
 
 /// Inspect one attempt directory, rather than the run root or historical attempts.
 pub(super) fn inspect(attempt: &Path, delivery: &Delivery) -> Result<Reconciliation> {
+    inspect_guarded(attempt, delivery, || Ok(()))
+}
+
+fn inspect_guarded(
+    attempt: &Path,
+    delivery: &Delivery,
+    mut before_write: impl FnMut() -> Result<()>,
+) -> Result<Reconciliation> {
     // Claim cancellation closes the spawn-before-record crash window atomically.
     // A delayed launcher must lose this claim before it can start any worker.
+    before_write()?;
     cancel(&attempt.join("claim.json"))?;
     if alive(&attempt.join("claim.json"))? || alive(&attempt.join("process.json"))? {
         return Ok(Reconciliation::Pending);
     }
     // Fence a not-yet-scheduled worker wrapper before declaring it absent.
+    before_write()?;
     cancel(&attempt.join("process.json"))?;
     if alive(&attempt.join("process.json"))? {
         return Ok(Reconciliation::Pending);

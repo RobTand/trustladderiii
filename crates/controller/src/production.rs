@@ -27,7 +27,8 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
         .github
         .webhook_listen
         .ok_or(Error::Invalid("production requires github.webhook_listen"))?;
-    let ownership = crate::Ownership::claim(Store::open(&config.store)?)?;
+    let mut ownership = crate::Ownership::claim(Store::connect(&config.store)?)?;
+    ownership.migrate()?;
     register_owned(config, bootstrap, listen, ownership)
 }
 
@@ -67,13 +68,14 @@ fn register_owned(
         let path = repository_path(&config.worktrees_root, repo);
         fs::create_dir_all(&path)?;
         if !path.join("HEAD").exists() {
+            ownership.ensure_held()?;
             Worktrees::init_bare(&path)?;
         }
         worktrees.serve_github(
             repo.clone(),
             &path,
             clients[&repo.installation].clone(),
-            &ownership,
+            &mut ownership,
         )?;
     }
     let operations = bootstrap
@@ -89,7 +91,7 @@ fn register_owned(
         )?,
     };
     let supervisor =
-        adapters::workers::Supervisor::new(config, &records.join("workers"), &ownership)?
+        adapters::workers::Supervisor::new(config, &records.join("workers"), &mut ownership)?
             .with_materials(Materials {
                 clients: clients.clone(),
                 worktrees: config.worktrees_root.clone(),
@@ -148,7 +150,7 @@ fn register_owned(
                 args: vec![tools.join("pbwait.py").into()],
             },
         },
-        &ownership,
+        &mut ownership,
     )?;
     let pb = pb
         .with_repositories(&config.github.repos)

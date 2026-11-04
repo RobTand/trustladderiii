@@ -135,7 +135,7 @@ impl Fixture {
                 identity(),
                 &self.repo,
                 &self.remote,
-                &crate::startup_ownership::ownership(),
+                &mut crate::startup_ownership::ownership(),
             )
             .unwrap();
         adapter

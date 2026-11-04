@@ -130,8 +130,10 @@ fn main() {
         delivery
     };
     let config = tl3_config::Config::load(&args[4]).unwrap();
-    let ownership =
-        tl3_controller::Ownership::claim(tl3_store::Store::open(&config.store).unwrap()).unwrap();
+    let mut ownership =
+        tl3_controller::Ownership::claim(tl3_store::Store::connect(&config.store).unwrap())
+            .unwrap();
+    ownership.migrate().unwrap();
     let client = PrismaBuild::new(Options {
         queue_root: "/mnt/shared/prismabuild-fleet/pb-queue".into(),
         tool: Tool::published(),
@@ -166,7 +168,7 @@ fn main() {
                 args: vec!["/mnt/shared/prismabuild-fleet/repo/tools/pbwait.py".into()],
             },
         },
-        &ownership,
+        &mut ownership,
     )
     .unwrap();
     match args[1].as_str() {

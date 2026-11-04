@@ -59,7 +59,7 @@ pub(super) fn summaries_and_states(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let uncertain = seed(&mut store, &config, "uncertain", EffectState::Uncertain);
@@ -209,7 +209,7 @@ pub(super) fn blocked_identities(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     for (key, record) in [
@@ -232,7 +232,7 @@ pub(super) fn blocked_identities(settings: &tl3_config::Store) {
     let mut restarted = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     restarted.retire(&mut store).unwrap();
@@ -245,7 +245,7 @@ pub(super) fn io_child(settings: &tl3_config::Store, root: &Path) {
     let supervisor = Supervisor::new(
         &config,
         &root.join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let mut source = supervisor.source();
@@ -303,7 +303,7 @@ pub(super) fn transient_io(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     supervisor.execute(&run).unwrap();
@@ -340,7 +340,7 @@ pub(super) fn session_guard(settings: &tl3_config::Store, guard: &str) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let run = delivery();
@@ -439,7 +439,7 @@ pub(super) fn session_unlink_error(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     fs::set_permissions(&retained, fs::Permissions::from_mode(0o500)).unwrap();
@@ -478,7 +478,7 @@ pub(super) fn bad_memory_never_blocks_retirement(settings: &tl3_config::Store) {
         let mut supervisor = Supervisor::new(
             &config,
             &root.path().join("fakes"),
-            &crate::startup_ownership::ownership(),
+            &mut crate::startup_ownership::ownership(),
         )
         .unwrap();
         let run = seed(
@@ -557,7 +557,7 @@ pub(super) fn feed_retirement_end_to_end(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let run = seed(&mut store, &config, "memory-feed", EffectState::Confirmed);
@@ -590,7 +590,7 @@ pub(super) fn recall_key_request_wiring(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let run = delivery();
@@ -625,7 +625,7 @@ pub(super) fn memory_store_error_retries_retirement(settings: &tl3_config::Store
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let run = seed(
@@ -686,7 +686,7 @@ pub(super) fn retirement_keeps_an_unshipped_span_log(settings: &tl3_config::Stor
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let run = seed(&mut store, &config, "span-log", EffectState::Confirmed);

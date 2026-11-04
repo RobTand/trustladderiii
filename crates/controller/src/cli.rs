@@ -192,11 +192,12 @@ pub fn daemon() -> Result<()> {
         ));
     }
     let bootstrap = Bootstrap::from_config(&config)?;
-    let ownership = crate::Ownership::claim(Store::open(&config.store)?)?;
+    let mut ownership = crate::Ownership::claim(Store::connect(&config.store)?)?;
+    ownership.migrate()?;
     let mut sources = crate::ingress::Sources::default();
     let mut adapters = if workers {
         let (adapters, source) =
-            adapters::simulation_with_workers(&simulation, &config, &ownership)?;
+            adapters::simulation_with_workers(&simulation, &config, &mut ownership)?;
         sources.register(source);
         adapters
     } else {

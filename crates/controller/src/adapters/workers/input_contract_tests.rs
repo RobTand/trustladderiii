@@ -288,7 +288,7 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
     let supervisor = Supervisor::new(
         &config,
         &f.root.path().join("records"),
-        &crate::store_support::ownership(),
+        &mut crate::store_support::ownership(),
     )
     .unwrap()
     .with_materials(provider);

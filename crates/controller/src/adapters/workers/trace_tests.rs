@@ -301,7 +301,7 @@ fn a_wake_write_sweeps_held_logs_through_the_source() {
     let supervisor = Supervisor::new(
         &config,
         &root.path().join("records"),
-        &crate::store_support::ownership(),
+        &mut crate::store_support::ownership(),
     )
     .unwrap();
     let held = held(&config.workers.runs);

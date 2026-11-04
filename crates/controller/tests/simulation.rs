@@ -402,7 +402,12 @@ fn main() {
             continue;
         }
         shard.run(*name, || {
-            test(&database.create(name));
+            let settings = if name == &"status_is_read_only" {
+                database.create_uninitialized(name)
+            } else {
+                database.create(name)
+            };
+            test(&settings);
             println!("test {name} ... ok");
         });
     }
@@ -412,7 +417,7 @@ fn main() {
         return;
     }
     shard.run("status_requires_initialized_database", || {
-        status_requires_initialized_database(&database.create("status_fresh"));
+        status_requires_initialized_database(&database.create_uninitialized("status_fresh"));
         println!("test status_requires_initialized_database ... ok");
     });
     shard.run("status_page_and_command", || {
@@ -2184,6 +2189,10 @@ fn status_is_read_only(settings: &tl3_config::Store) {
         0,
         "status must not migrate an empty database"
     );
+    let mut ownership =
+        tl3_controller::Ownership::claim(Store::connect(settings).unwrap()).unwrap();
+    ownership.migrate().unwrap();
+    drop(ownership);
     let mut writer = Store::open(settings).unwrap();
     assert!(
         status::load(&mut Reader::open(settings).unwrap())

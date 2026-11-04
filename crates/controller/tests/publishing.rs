@@ -590,8 +590,12 @@ impl Server {
 fn pb(root: &Path) -> adapters::prismabuild::Adapter {
     let (client, mut settings) = prismabuild_fixture::settings(root, "done", "http://127.0.0.1:9/");
     settings.records = root.join("pb-records");
-    adapters::prismabuild::Adapter::new(client, settings, &crate::startup_ownership::ownership())
-        .unwrap()
+    adapters::prismabuild::Adapter::new(
+        client,
+        settings,
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap()
 }
 
 fn document(store: &mut Store, table: &str, value: Value) {
@@ -811,7 +815,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     let supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
-        &crate::startup_ownership::ownership(),
+        &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
     let mut source = supervisor.source();

@@ -85,7 +85,7 @@ impl Flow {
             },
             &repository,
             &remote,
-            &crate::startup_ownership::ownership(),
+            &mut crate::startup_ownership::ownership(),
         )
         .unwrap();
         let (mut registry, source, checks_source) = registry(&config, &root.join("fakes"), false);

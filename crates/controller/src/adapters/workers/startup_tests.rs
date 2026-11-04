@@ -71,7 +71,7 @@ fn planner_protected_paths_follow_the_request_repository() {
     let supervisor = Supervisor::new(
         &config,
         &f.root.path().join("records"),
-        &crate::store_support::ownership(),
+        &mut crate::store_support::ownership(),
     )
     .unwrap();
     for (name, own, foreign) in [
@@ -161,7 +161,7 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
     let supervisor = Supervisor::new(
         &config,
         &f.root.path().join("records"),
-        &crate::store_support::ownership(),
+        &mut crate::store_support::ownership(),
     )
     .unwrap();
     let mut store = Store::open(&config.store).unwrap();
@@ -245,7 +245,7 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
         let supervisor = Supervisor::new(
             &config,
             &f.root.path().join("demand-records"),
-            &crate::store_support::ownership(),
+            &mut crate::store_support::ownership(),
         )
         .unwrap();
         let request = supervisor
@@ -383,7 +383,7 @@ fn hostile_maker_head() {
             let supervisor = Supervisor::new(
                 &config,
                 &f.root.path().join("records"),
-                &crate::store_support::ownership(),
+                &mut crate::store_support::ownership(),
             )
             .unwrap()
             .with_materials(crate::production::Materials::fixture(
@@ -510,7 +510,7 @@ fn maker_checks_against_the_worktree_base(database: &str, stored_on: &str, resta
     let supervisor = Supervisor::new(
         &config,
         &f.root.path().join("records"),
-        &crate::store_support::ownership(),
+        &mut crate::store_support::ownership(),
     )
     .unwrap()
     .with_materials(crate::production::Materials::repository_fixture(
@@ -680,7 +680,7 @@ fn a_postmortem_request_carries_a_valid_case_file() {
     let supervisor = Supervisor::new(
         &config,
         &f.root.path().join("records"),
-        &crate::store_support::ownership(),
+        &mut crate::store_support::ownership(),
     )
     .unwrap();
     let request = supervisor
@@ -728,7 +728,7 @@ fn a_postmortem_request_falls_back_past_models_that_are_out() {
     let supervisor = Supervisor::new(
         &config,
         &f.root.path().join("records"),
-        &crate::store_support::ownership(),
+        &mut crate::store_support::ownership(),
     )
     .unwrap();
     let mut models = |out: &[(&str, u64)]| {
@@ -811,7 +811,7 @@ fn ingest_preflight_refuses_a_declared_protected_edit_without_launching_a_worker
     })).unwrap();
     let records = f.root.path().join("records");
     let mut supervisor =
-        Supervisor::new(&config, &records, &crate::store_support::ownership()).unwrap();
+        Supervisor::new(&config, &records, &mut crate::store_support::ownership()).unwrap();
     let mut delivery = f.delivery();
     delivery.epoch = store.load().unwrap().epoch.get();
     delivery.output = Out::Effect {
@@ -834,7 +834,7 @@ fn ingest_preflight_refuses_a_declared_protected_edit_without_launching_a_worker
     );
     drop(supervisor);
     let mut restarted =
-        Supervisor::new(&config, &records, &crate::store_support::ownership()).unwrap();
+        Supervisor::new(&config, &records, &mut crate::store_support::ownership()).unwrap();
     assert!(
         matches!(
             restarted.reconcile(&delivery).unwrap(),
@@ -879,7 +879,7 @@ fn t604_ingest_and_audit_get_authoritative_per_repository_request_branch() {
     let supervisor = Supervisor::new(
         &config,
         &f.root.path().join("records"),
-        &crate::store_support::ownership(),
+        &mut crate::store_support::ownership(),
     )
     .unwrap();
     for (name, branch) in [
@@ -1018,7 +1018,7 @@ fn t653_rejected_inputs_send_only_the_safe_diagnostic_to_tracing() {
     let supervisor = Supervisor::new(
         &config,
         &f.root.path().join("records"),
-        &crate::store_support::ownership(),
+        &mut crate::store_support::ownership(),
     )
     .unwrap();
     let mut store = Store::open(&config.store).unwrap();

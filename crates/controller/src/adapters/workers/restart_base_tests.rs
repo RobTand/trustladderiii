@@ -111,7 +111,7 @@ impl Restart {
         Supervisor::new(
             config,
             &repo.root.path().join("records"),
-            &crate::store_support::ownership(),
+            &mut crate::store_support::ownership(),
         )
         .unwrap()
         .with_materials(crate::production::Materials::repository_fixture(
