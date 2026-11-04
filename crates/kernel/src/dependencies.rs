@@ -519,7 +519,8 @@ impl World {
         requires i < old(self).nodes@.len(), i <= u64::MAX as int,
             edges_indexable(*old(self)), old(out).len < OUTBOX,
         ensures (dependencies_checked(*old(self)) && dependency_progress_input(*old(self), i as int, target, status)
-            ==> final(self).dependencies@.len() == old(self).dependencies@.len()
+            ==> edges_indexable(*final(self))
+                && final(self).dependencies@.len() == old(self).dependencies@.len()
                 && (forall|j: int| 0 <= j < old(self).dependencies@.len() ==>
                     dependency_weight(*final(self), j) <= dependency_weight(*old(self), j))
                 && (exists|j: int| 0 <= j < old(self).dependencies@.len()

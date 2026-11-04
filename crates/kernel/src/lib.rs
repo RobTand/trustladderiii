@@ -2208,7 +2208,7 @@ pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<
 ] {
     kernel_snapshot! { before_step = world }
     let mut outbox = Outbox::new();
-    kernel_proof! { reveal(step_scope); reveal(empty_outbox); }
+    kernel_proof! { reveal(step_scope); reveal(empty_outbox); reveal(progress_input); }
     apply(&mut world, event, &mut outbox);
     kernel_proof! {
         reveal(world_headroom);
@@ -2282,7 +2282,8 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
                 && (old(w).nodes@[j].phase is Closed ==> old(w).nodes@[j].effect.is_none())
                 && footprint::valid_footprint(*old(w), old(w).nodes@[j].footprint),
     ensures (world_checked(*old(w)) && witness_event(*old(w), event)
-            ==> progress_measure(*final(w)) < progress_measure(*old(w))),
+            ==> progress_measure(*final(w)) < progress_measure(*old(w))
+                && dependencies::edges_indexable(*final(w))),
         forall|j: int| 0 <= j < final(w).nodes@.len() ==>
             settle_shape(final(w).nodes@[j])
                 && footprint::valid_footprint(*final(w), final(w).nodes@[j].footprint),
@@ -3680,7 +3681,8 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
         dependencies::edges_indexable(*old(w)), old(w).next_question < u64::MAX,
     ensures (world_checked(*old(w))
             && chosen_for_node(*old(w), i as int, Event::Fact { node: NodeId(i as u64), fact })
-            ==> progress_measure(*final(w)) < progress_measure(*old(w))),
+            ==> progress_measure(*final(w)) < progress_measure(*old(w))
+                && dependencies::edges_indexable(*final(w))),
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,

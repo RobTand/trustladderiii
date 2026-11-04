@@ -403,6 +403,7 @@ fn kernel_progress(world: World) -> (result: (World, Vec<Out>))
 {
     proof {
         reveal(progress_scope);
+        reveal(progress_input);
         reveal(storage_ordered);
         checked_reserves(world);
         outside_branch_exists(world);
