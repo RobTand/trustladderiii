@@ -1186,13 +1186,13 @@ kernel_fn! {
 }
 
 kernel_fn! {
-fn notice(out: &mut Outbox, node: usize, notice: Notice) -> (result: ()) [
+fn notice(out: &mut Outbox, node: usize, value: Notice) -> (result: ()) [
 requires old(out).len < OUTBOX,
 ensures final(out).len == old(out).len + 1,
 ] {
     out.push(Out::Notice {
         node: NodeId(node as u64),
-        notice,
+        notice: value,
     });
 }
 }
