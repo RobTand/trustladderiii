@@ -115,6 +115,10 @@ const MIGRATIONS: &[(i32, &str)] = &[
     ),
     (17, include_str!("../migrations/0017_worker_facts.sql")),
     (18, include_str!("../migrations/0018_memory_feed.sql")),
+    (
+        19,
+        include_str!("../migrations/0019_memory_feed_version.sql"),
+    ),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -194,7 +198,7 @@ impl Store {
     pub fn claim_memory_feed(&mut self) -> Result<()> {
         self.client
             .query_one("SELECT pg_advisory_lock_shared(773, 1)", &[])?;
-        self.client.batch_execute("SET application_name = 'tl3-memory-feed'; INSERT INTO tl3_memory_feed (singleton, state) VALUES (true, 'delivering') ON CONFLICT (singleton) DO UPDATE SET state = 'delivering'")?;
+        self.client.batch_execute("SET application_name = 'tl3-memory-feed'; INSERT INTO tl3_memory_feed (singleton, state) VALUES (true, 'delivering') ON CONFLICT (singleton) DO UPDATE SET state = 'delivering', version = tl3_memory_feed.version + 1")?;
         Ok(())
     }
 
@@ -213,6 +217,14 @@ impl Store {
             .client
             .query_opt("SELECT retry FROM tl3_memory_feed WHERE singleton", &[])?
             .map_or(0, |row| row.get(0)))
+    }
+
+    /// #773: identify the persisted attempt outcome, so clearance is not a failure.
+    pub fn memory_feed_version(&mut self) -> Result<i64> {
+        Ok(self
+            .client
+            .query_one("SELECT version FROM tl3_memory_feed WHERE singleton", &[])?
+            .get(0))
     }
 
     /// #773: durable retry evidence wakes the controller's existing ingress source.
@@ -245,7 +257,7 @@ impl Store {
     pub fn set_memory_feed_state(&mut self, state: MemoryFeedState) -> Result<()> {
         let mut tx = self.client.transaction()?;
         let changed = tx.execute(
-            "UPDATE tl3_memory_feed SET state = $1 WHERE singleton AND state <> $1",
+            "UPDATE tl3_memory_feed SET state = $1, version = version + 1 WHERE singleton AND state <> $1",
             &[&state.as_str()],
         )?;
         if changed > 0 {

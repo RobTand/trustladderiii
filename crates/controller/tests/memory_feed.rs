@@ -323,18 +323,13 @@ fn retry_without_a_consumer_is_an_error() {
     );
 }
 
-/// #773: a lost feed session becomes visible and can be recreated by explicit retry.
+/// #773: a lost feed session is visible and retry refuses a missing consumer.
 #[test]
 fn feed_connection_failure_is_visible_and_retry_reports_no_consumer() {
     let mut fixture = Fixture::new(false);
     fixture.barrier();
     fixture.sql().query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND (application_name = 'tl3-memory-feed' OR query LIKE 'LISTEN tl3_memory_retry%')", &[]).unwrap();
-    let error = fixture
-        .supervisor
-        .as_mut()
-        .unwrap()
-        .retire(&mut fixture.store)
-        .unwrap_err();
+    let error = fixture.supervisor().memory_barrier().unwrap_err();
     assert!(
         error.to_string().contains("no consumer"),
         "the failure reaches supervision"
@@ -344,6 +339,16 @@ fn feed_connection_failure_is_visible_and_retry_reports_no_consumer() {
         fixture.store.memory_feed_state().unwrap(),
         MemoryFeedState::Failed,
         "lost feed session must expose failed state"
+    );
+    let (sender, receiver) = mpsc::channel();
+    let mut source = fixture.supervisor().source();
+    source.poll_once(&mut fixture.store, &sender).unwrap();
+    assert!(
+        matches!(
+            receiver.recv_timeout(WAIT),
+            Ok(tl3_controller::cli::Input::Wake)
+        ),
+        "source registration must replay an exit that already happened"
     );
     assert!(
         fixture
@@ -551,6 +556,13 @@ fn repeated_incident_for_the_same_memory_requires_rob_and_cannot_probe_clear() {
     assert!(
         fixture.attempts.try_recv().is_err(),
         "a later incident cannot retry before Rob clears it"
+    );
+    fixture.retry_signal();
+    fixture.retire();
+    fixture.barrier();
+    assert!(
+        fixture.attempts.try_recv().is_err(),
+        "an explicit memory retry cannot bypass Rob's clearance"
     );
 }
 

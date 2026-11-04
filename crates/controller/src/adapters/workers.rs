@@ -240,6 +240,7 @@ impl Supervisor {
             self.active.clone(),
         )
         .with_flusher(self.settings.launcher.clone(), self.settings.python.clone())
+        .with_memory(self.memory.exits())
     }
 
     fn fence(&self, delivery: &Delivery) -> Result<(Store, Snapshot)> {
@@ -1311,8 +1312,11 @@ impl Executor for Supervisor {
                 }
             }
         }
-        self.memory.refresh(store)?;
-        self.retire_sessions(store)?;
+        // Independent cleanup must run even when the feed has failed.
+        let memory = self.memory.refresh(store);
+        let sessions = self.retire_sessions(store);
+        memory?;
+        sessions?;
         match failure {
             Some(error) => Err(error),
             None => Ok(()),

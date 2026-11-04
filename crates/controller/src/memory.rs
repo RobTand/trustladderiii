@@ -1185,6 +1185,35 @@ struct FeedLife {
     retry: AtomicBool,
     held: AtomicBool,
     failed: AtomicBool,
+    exited: AtomicBool,
+    supervisor: Mutex<Option<crate::sync::mpsc::Sender<crate::cli::Input>>>,
+}
+
+/// Exit evidence is independent of the feed handle's cancellation ownership.
+#[derive(Clone)]
+pub(crate) struct FeedExit(Arc<FeedLife>);
+
+impl FeedExit {
+    pub(crate) fn supervise(&self, sender: &crate::sync::mpsc::Sender<crate::cli::Input>) {
+        let mut supervisor = self.0.supervisor.lock().unwrap();
+        if supervisor.is_none() {
+            *supervisor = Some(sender.clone());
+            // Registration racing exit must also deliver the wake.
+            if self.0.exited.load(Ordering::SeqCst) {
+                let _ = sender.send(crate::cli::Input::Wake);
+            }
+        }
+    }
+}
+
+impl FeedLife {
+    fn exited(&self) {
+        let supervisor = self.supervisor.lock().unwrap();
+        self.exited.store(true, Ordering::SeqCst);
+        if let Some(sender) = supervisor.as_ref() {
+            let _ = sender.send(crate::cli::Input::Wake);
+        }
+    }
 }
 
 impl FeedWake {
@@ -1225,12 +1254,16 @@ fn run_feed(
             FeedEvent::Wake => life.queued.store(false, Ordering::SeqCst),
         }
         let retry = life.retry.swap(false, Ordering::SeqCst);
-        if life.held.load(Ordering::SeqCst) {
-            if !retry {
-                continue;
-            }
-            store.set_memory_feed_state(tl3_store::MemoryFeedState::Delivering)?;
+        if life.held.load(Ordering::SeqCst) && !retry {
+            continue;
         }
+        // Q7: a later incident holds this lineage until Rob clears it.
+        if memory_needs_rob(&store.load()?, &memory_lineage(store)?)? {
+            life.held.store(true, Ordering::SeqCst);
+            store.set_memory_feed_state(tl3_store::MemoryFeedState::Held)?;
+            continue;
+        }
+        store.set_memory_feed_state(tl3_store::MemoryFeedState::Delivering)?;
         let delivery = deliver(store, settings, breaker);
         if let Some(announcer) = announcer.lock().unwrap().as_deref()
             && let Err(error) = announce(store, announcer)
@@ -1267,19 +1300,30 @@ impl Feed {
         let life = Arc::new(FeedLife::default());
         let thread_life = life.clone();
         let thread = std::thread::spawn(move || {
-            if let Err(error) = run_feed(
-                &mut store,
-                &hindsight,
-                &breaker,
-                &announcer,
-                &receiver,
-                &thread_life,
-            ) {
-                thread_life.failed.store(true, Ordering::SeqCst);
-                eprintln!("memory feed failed; no consumer; restart tl3d: {error}");
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_feed(
+                    &mut store,
+                    &hindsight,
+                    &breaker,
+                    &announcer,
+                    &receiver,
+                    &thread_life,
+                )
+            }));
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    thread_life.failed.store(true, Ordering::SeqCst);
+                    eprintln!("memory feed failed; no consumer; restart tl3d: {error}");
+                }
+                Err(_) => {
+                    thread_life.failed.store(true, Ordering::SeqCst);
+                    eprintln!("memory feed panicked; no consumer; restart tl3d");
+                }
             }
             // Release the consumer lock before disconnecting pending barriers.
             drop(store);
+            thread_life.exited();
             drop(receiver);
         });
         let feed = Self(Arc::new(FeedWake {
@@ -1290,6 +1334,10 @@ impl Feed {
         }));
         feed.wake()?;
         Ok(feed)
+    }
+
+    pub(crate) fn exits(&self) -> FeedExit {
+        FeedExit(self.0.life.clone())
     }
 
     pub(crate) fn refresh(&self, store: &mut Store) -> Result<()> {
@@ -1369,6 +1417,32 @@ pub(crate) fn next_probe_ms(snapshot: &tl3_store::Snapshot) -> Result<Option<u64
         .transpose()
 }
 
+fn memory_lineage(store: &mut Store) -> Result<String> {
+    if let Some((sequence, ..)) = store.pending_memory_curations()?.first() {
+        return Ok(format!("memory:curation:{sequence}"));
+    }
+    Ok(store.pending_memories(0)?.first().map_or_else(
+        || "memory:empty".into(),
+        |(_, operation, _)| format!("memory:retain:{operation}"),
+    ))
+}
+
+fn memory_needs_rob(snapshot: &tl3_store::Snapshot, lineage: &str) -> Result<bool> {
+    for row in snapshot.rows.iter().filter(|row| row.table == "incidents") {
+        let incident: crate::looks::Incident = crate::decode_stored(row.value.clone())?;
+        if incident.open
+            && incident.needs_rob
+            && incident
+                .input_failure
+                .as_ref()
+                .is_some_and(|failure| failure.memory_lineage(lineage))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 impl crate::Controller {
     pub(crate) fn reconcile_memory(&mut self, snapshot: &tl3_store::Snapshot) -> Result<bool> {
         use crate::looks::{Cause, Incident, IncidentSignature};
@@ -1388,7 +1462,7 @@ impl crate::Controller {
                 )
         });
         if state == MemoryFeedState::Ready {
-            if let Some(incident) = open.next() {
+            if let Some(incident) = open.find(|incident| !incident.needs_rob) {
                 self.probe_passed(None, Some(&incident.id))?;
                 return Ok(true);
             }
@@ -1410,26 +1484,74 @@ impl crate::Controller {
         if !matches!(state, MemoryFeedState::Held | MemoryFeedState::Failed) {
             return Ok(false);
         }
-        let (class, cause, summary) = if state == MemoryFeedState::Held {
+        let version = self.store.memory_feed_version()?;
+        let lineage = if state == MemoryFeedState::Held {
+            memory_lineage(&mut self.store)?
+        } else {
+            "memory:feed".into()
+        };
+        let count = incidents
+            .iter()
+            .filter(|incident| {
+                incident
+                    .input_failure
+                    .as_ref()
+                    .is_some_and(|failure| failure.memory_lineage(&lineage))
+            })
+            .count() as u64
+            + 1;
+        let needs_rob =
+            crate::looks::incident_needs_rob(crate::looks::IncidentCause::ReadFailure {
+                incidents: count,
+            });
+        let (class, cause, mut summary) = if state == MemoryFeedState::Held {
             let pending = self.store.pending_memory_count()?;
             (
                 "hindsight_unavailable",
                 Cause::Upstream,
                 format!(
-                    "Hindsight unavailable: {pending} memories held. Restore Hindsight or its credentials. The controller probes in two minutes and drains automatically after acknowledgement; `tl3 memory retry --config FILE` requests an earlier attempt. Other requests can continue."
+                    "Hindsight unavailable: {pending} memories held. Restore Hindsight or its credentials. Other requests can continue."
                 ),
             )
         } else {
             ("memory_feed_failed", Cause::Tl3, "Memory feed failed: no consumer. Restart tl3d to reattach the durable queue. Other requests can continue.".into())
         };
-        if let Some(previous) = open.find(|incident| incident.signature.class == class) {
+        if let Some(previous) = open.find(|incident| {
+            incident.signature.class == class
+                && incident
+                    .input_failure
+                    .as_ref()
+                    .is_some_and(|failure| failure.memory_lineage(&lineage))
+        }) {
+            // A reused incident keeps its original escalation decision.
+            if previous.needs_rob {
+                summary.push_str(&format!(
+                    " Only Rob can clear this later incident: `clear incident {}`.",
+                    previous.id
+                ));
+            } else if state == MemoryFeedState::Held {
+                summary.push_str(" The controller probes in two minutes and drains automatically after acknowledgement; `tl3 memory retry --config FILE` requests an earlier attempt.");
+            }
+            let probe_armed = next_probe_ms(snapshot)?.is_some();
             if previous.summary == summary
-                && (state != MemoryFeedState::Failed || next_probe_ms(snapshot)?.is_none())
+                && (probe_armed == (state == MemoryFeedState::Held))
+                && previous.input_failure.as_ref().is_some_and(|failure| {
+                    failure.memory_lineage(&lineage) && failure.memory_version == Some(version)
+                })
             {
                 return Ok(false);
             }
             let mut incident = previous.clone();
             incident.summary = summary;
+            incident.input_failure = Some(crate::input_errors::InputFailure::memory(
+                "Hindsight memory delivery",
+                &lineage,
+                version,
+            ));
+            // Preserve posting evidence when updating health or rearming a probe.
+            if let Some(failure) = previous.input_failure.as_ref() {
+                incident.input_failure = Some(failure.with_memory_lineage(&lineage, version));
+            }
             let mut commit = Commit::new(
                 format!("memory-health:{}", snapshot.revision.get()),
                 json!({"memory_health":true}),
@@ -1440,6 +1562,15 @@ impl crate::Controller {
                 incident.id.clone(),
                 json!(incident),
             ));
+            if state == MemoryFeedState::Held && !probe_armed {
+                commit.rows.push(crate::put(
+                    MEMORY_PROBES,
+                    MEMORY_PROBE.into(),
+                    json!(MemoryProbe {
+                        due_ms: self.now_ms().saturating_add(PROBE_MS)
+                    }),
+                ));
+            }
             if state == MemoryFeedState::Failed && next_probe_ms(snapshot)?.is_some() {
                 commit.rows.push(RowChange::Delete {
                     table: MEMORY_PROBES.into(),
@@ -1449,15 +1580,34 @@ impl crate::Controller {
             self.store.commit(&commit)?;
             return Ok(true);
         }
+        // Rob's clearance is not another delivery failure. Wait for a new
+        // attempt outcome before creating another incident for this lineage.
+        if incidents.iter().any(|incident| {
+            !incident.open
+                && incident.input_failure.as_ref().is_some_and(|failure| {
+                    failure.memory_lineage(&lineage) && failure.memory_version == Some(version)
+                })
+        }) {
+            return Ok(false);
+        }
         let id = crate::looks::incident_id(snapshot, "memory");
+        if needs_rob {
+            summary.push_str(&format!(
+                " Only Rob can clear this later incident: `clear incident {id}`."
+            ));
+        } else if state == MemoryFeedState::Held {
+            summary.push_str(" The controller probes in two minutes and drains automatically after acknowledgement; `tl3 memory retry --config FILE` requests an earlier attempt.");
+        }
         let incident = Incident {
             id: id.clone(),
             node: None,
             input_failure: Some(crate::input_errors::InputFailure::memory(
                 "Hindsight memory delivery",
+                &lineage,
+                version,
             )),
             open: true,
-            needs_rob: false,
+            needs_rob,
             blocking: false,
             summary,
             signature: IncidentSignature {
@@ -1509,10 +1659,11 @@ impl crate::Controller {
         }
         // This schedules one real operation under its original UUID. A probe
         // deadline never manufactures healthy evidence or clears the hold.
-        if let Err(error) = self
-            .adapters
-            .get(crate::executor::Upstream::Workers)?
-            .probe_memory()
+        if !memory_needs_rob(&snapshot, &memory_lineage(&mut self.store)?)?
+            && let Err(error) = self
+                .adapters
+                .get(crate::executor::Upstream::Workers)?
+                .probe_memory()
         {
             eprintln!("Hindsight memory probe failed: {error}");
         }

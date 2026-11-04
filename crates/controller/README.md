@@ -1114,6 +1114,17 @@ Existing parked rows begin their retention period when migration 9 runs.
 Transport failures and 5xx responses end the pass and leave rows pending for the
 next wake. A hung endpoint costs one request timeout per pass.
 
+Memory incidents follow Q7 by operation lineage. Retains use the stable operation
+UUID; curations use their durable sequence. A successful probe can clear the
+first incident. Only Rob can clear later incidents for that lineage, using the
+`clear incident ID` command on the operations issue. Probes and `memory retry`
+leave those operations held until clearance. Other operations get their own
+incident count. A reused incident after restart always rearms its recovery look.
+Feed-thread exit wakes the existing worker ingress source, even if the source
+registers after the exit. Feed failure does not skip worker-session retirement.
+Migration 19 adds a runtime version marker so clearing an incident does not
+count the same failed attempt again. Migration 18 stays unchanged.
+
 The active retry set holds at most 10,000 rows; new records beyond that limit
 park the oldest pending rows. After a successful retain drains the pending set,
 the same flush requeues capacity-parked rows oldest first, within the cap, and
