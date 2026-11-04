@@ -72,6 +72,9 @@ def frozen_repo(tmp_path, monkeypatch):
     monkeypatch.setattr(execution, 'require_admission', lambda: None)
     monkeypatch.setattr(execution, 'container_command', real_runner)
     monkeypatch.setattr(execution.Progress, 'commit', lambda *_: None)
+    # Selection and report parsing need real writes, not crash durability.
+    # Per-record fsync can block on remote storage for thousands of records (#763).
+    monkeypatch.setattr(execution.os, 'fsync', lambda descriptor: None)
     monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(repo))
     yield repo, runs
     monkeypatch.setattr(execution, 'container_command', command)
@@ -84,6 +87,15 @@ def head(repo, value=1):
 
 def selected(repo, base, commit, limit=400, plan=PLAN, container=CONTAINER, failures=()):
     return execution.run_checks(repo, base, commit, plan, container=container, selected_tests=limit, selected_failures=failures)
+
+
+def test_selection_fixture_does_not_wait_for_report_storage(monkeypatch, request):
+    def unavailable_storage(descriptor):
+        pytest.fail('selection fixture reached blocking report fsync (#763)')
+
+    monkeypatch.setattr(execution.os, 'fsync', unavailable_storage)
+    fixture = request.getfixturevalue('frozen_repo')
+    test_complete_fixture_unit_retries_without_manufacturing_393_unused_rows(fixture)
 
 
 def test_complete_fixture_unit_retries_without_manufacturing_393_unused_rows(frozen_repo):
