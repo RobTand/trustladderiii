@@ -357,7 +357,7 @@ proof!(enqueue_write_ahead, {
     if let QueueEvent::Prepare {
         dequeue_pending: false,
         checks_ready: true,
-        ..
+        queue_label,
     } = event
     {
         if !refused(state) {
@@ -366,15 +366,6 @@ proof!(enqueue_write_ahead, {
                 Effect::SaveIntent,
                 "intent must precede final head validation"
             );
-        }
-    }
-    if let QueueEvent::Prepare {
-        dequeue_pending: false,
-        checks_ready: true,
-        queue_label,
-    } = event
-    {
-        if !refused(state) {
             let command = state
                 .intent
                 .map_or(queue_label, |intent| intent.requeue.is_some());

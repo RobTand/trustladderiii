@@ -1,4 +1,6 @@
 //! #751 extraction equivalence: a crash must preserve the old adapter's replay inputs.
+//! The golden was verified on pre-extraction e3292d911a with this exact schedule
+//! and test overlay 9993368ff8, not generated from the decision core.
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

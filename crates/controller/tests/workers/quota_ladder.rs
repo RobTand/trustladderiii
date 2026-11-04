@@ -142,6 +142,28 @@ impl Fixture {
         assert_eq!(node.run_failures, 0, "quota is not a failure");
         assert_eq!(node.plan_retries, 0, "quota spends no planning retry");
     }
+    /// Wait until the planner run on this model ended, and say whether it
+    /// ended like quota rather than as a failed run.
+    fn planner_ended(&mut self, model: &str) -> bool {
+        wait(|| {
+            self.step();
+            let node = self.controller.world().unwrap().nodes[0];
+            self.planner_models()
+                .last()
+                .is_some_and(|last| last == model)
+                && (!self.quota_waits().is_empty()
+                    || node.run_failures > 0
+                    || node.run_incidents > 0)
+                && !self
+                    .controller
+                    .snapshot()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "inbox")
+        });
+        !self.quota_waits().is_empty()
+    }
     fn model_quota(&mut self, model: &str) -> Option<u64> {
         self.controller
             .snapshot()
@@ -421,5 +443,102 @@ pub(super) fn replay_keeps_later_quota(settings: &tl3_config::Store) {
         f.controller.snapshot().unwrap().revision,
         revision,
         "the same ending is idempotent"
+    );
+}
+
+/// #745: the worker's probe window for a model the proxy can't serve (`quota.PROBE_S`).
+const PROBE_MS: u64 = 15 * 60 * 1000;
+
+/// #745 (Q53): a model the proxy can't serve falls back like quota, and its
+/// unavailability is recorded until a probe.
+pub(super) fn unavailable_model_falls_back(settings: &tl3_config::Store, kind: &str) {
+    let mut f = fixture(
+        settings,
+        &["default-model", "alternate-model"],
+        json!({"planner": {"default-model": kind}}),
+    );
+    let before = real_now();
+    assert!(
+        f.planner_ended("default-model"),
+        "{kind}: the unavailable model ends like quota, not as a failed run"
+    );
+    let probe = f
+        .model_quota("default-model")
+        .expect("the unavailability is recorded");
+    assert!(
+        (before + PROBE_MS..=real_now() + PROBE_MS).contains(&probe),
+        "{kind}: the record expires at the probe, {probe}"
+    );
+    f.controller.look_due().unwrap();
+    assert_eq!(f.planner_attempt(), 1, "the next model starts at once");
+    f.finish_planning();
+    assert_eq!(f.planner_models(), ["default-model", "alternate-model"]);
+}
+
+/// #745: once the record expires, the step tries the first entry again.
+pub(super) fn unavailable_model_is_probed_after_expiry(settings: &tl3_config::Store) {
+    let mut f = fixture(
+        settings,
+        &["default-model", "alternate-model"],
+        json!({"planner": {"default-model": "model_not_found", "alternate-model": "retry_limit"}}),
+    );
+    assert!(
+        f.planner_ended("default-model"),
+        "the first model ends like quota"
+    );
+    f.controller.look_due().unwrap();
+    assert_eq!(f.planner_attempt(), 1, "falls back to the second model");
+    assert!(
+        f.planner_ended("alternate-model"),
+        "the second model ends like quota"
+    );
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.planner_attempt(),
+        1,
+        "every model is out, so the step waits"
+    );
+    let probe = f.model_quota("default-model").unwrap();
+    assert!(probe < f.model_quota("alternate-model").unwrap());
+    // The proxy routes the first model again.
+    fs::write(
+        f.root.path().join("entered.quota-models"),
+        json!({"planner": {"alternate-model": "retry_limit"}}).to_string(),
+    )
+    .unwrap();
+    f.clock.0.set(probe - 1);
+    f.controller.look_due().unwrap();
+    assert_eq!(f.planner_attempt(), 1, "no probe before the record expires");
+    f.clock.0.set(probe);
+    f.controller.look_due().unwrap();
+    assert_eq!(f.planner_attempt(), 2, "the expiry wakes the step");
+    f.finish_planning();
+    assert_eq!(
+        f.planner_models(),
+        ["default-model", "alternate-model", "default-model"],
+        "the probe runs the first entry again"
+    );
+    assert_eq!(
+        f.model_quota("default-model"),
+        None,
+        "the probed model's reply ends its record"
+    );
+}
+
+/// #745: a 400 the request caused is a failed run, with no fallback.
+pub(super) fn request_error_fails(settings: &tl3_config::Store) {
+    let mut f = fixture(
+        settings,
+        &["default-model", "alternate-model"],
+        json!({"planner": {"default-model": "bad_request"}}),
+    );
+    assert!(
+        !f.planner_ended("default-model"),
+        "a request-caused 400 fails the run"
+    );
+    assert_eq!(
+        f.model_quota("default-model"),
+        None,
+        "and records no unavailability"
     );
 }

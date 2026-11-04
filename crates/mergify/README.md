@@ -177,7 +177,9 @@ proptest round-trips in `tests/parse.rs`.
 ordered effect list. Ordinary builds use a `Vec`; Kani uses a three-slot
 outbox. `Read` effects request only the next necessary input. `SaveIntent`,
 `SaveRecovery` and `SaveRerun` precede their upstream writes. The adapter stops
-if a save fails.
+if a save fails. Label dispatch follows `SaveIntent`, the shell fence, then a
+fresh `LabelRead` validation. Recovery samples time after eligibility and
+before command-history reads; dispatch reuses that tick.
 
 The state is a projection, not a new storage format. The controller still
 reads and writes the same `.intent`, `.applied`, `.reruns`, head recovery and
@@ -191,7 +193,7 @@ range over their full domains. Unwind 4 covers the three effect slots and
 loop exit. The recovery harness checks timer expiry and two consecutive
 command dispatches. It does not prove crash/restart interleavings, file I/O,
 command-key adoption, annotation parsing, or check/run selection. Keep all
-183 controller scenarios until those assertions have their own coverage.
+185 controller scenarios until those assertions have their own coverage.
 
 `tools/kani.py verify NAME` rejects that harness's seeded mutants and then
 proves the restored source. Run it only inside an admitted PrismaBuild action
