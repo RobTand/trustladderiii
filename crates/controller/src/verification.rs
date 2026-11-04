@@ -44,8 +44,13 @@ struct Alarm {
 }
 
 /// #783 / Q27: observe the real result without changing world or outputs.
-pub(crate) fn observe(world: &World, event: Option<Event>, commit: &mut Commit) {
-    let Err(rule) = check_world(world) else {
+fn observe_result(
+    world: &World,
+    event: Option<Event>,
+    commit: &mut Commit,
+    result: std::result::Result<(), String>,
+) {
+    let Err(rule) = result else {
         return;
     };
     let node = event.and_then(|event| {
@@ -66,32 +71,96 @@ pub(crate) fn observe(world: &World, event: Option<Event>, commit: &mut Commit) 
         .push(json!({"node":node,"event":event,"rule":rule}));
 }
 
+#[derive(Default)]
+pub(crate) struct Runtime {
+    checker: crate::incremental::Incremental,
+    key: String,
+    steps: Vec<(World, Event, World)>,
+    pub(crate) settle: Option<World>,
+}
+impl Runtime {
+    pub(crate) fn prepare(&mut self, key: &str) {
+        if self.key != key {
+            self.key = key.into();
+            self.steps.clear();
+            self.settle = None;
+        }
+    }
+    pub(crate) fn record(
+        &mut self,
+        snapshot: &Snapshot,
+        previous: &World,
+        world: &World,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        use crate::compact::{CompactStep, Delta, Record};
+        use crate::incremental::BASELINE_INTERVAL;
+        self.prepare(&commit.event_key);
+        if self.steps.is_empty() {
+            observe_result(world, None, commit, self.checker.check(world));
+        }
+        let state = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "kernel_replay_state" && r.id == "cursor");
+        let index = state.and_then(|r| r.value["index"].as_u64()).unwrap_or(0);
+        let revision = snapshot.revision.get() + 1;
+        let baseline = index.is_multiple_of(BASELINE_INTERVAL);
+        let baseline_revision = if baseline {
+            revision
+        } else {
+            state
+                .and_then(|r| r.value["baseline_revision"].as_i64())
+                .unwrap_or(revision)
+        };
+        let mut cursor = previous;
+        let mut steps = Vec::with_capacity(self.steps.len());
+        for (input, event, after) in &self.steps {
+            steps.push(CompactStep {
+                preparation: Delta::between(cursor, input),
+                event: *event,
+                after: Delta::between(input, after),
+            });
+            cursor = after;
+        }
+        let record = Record {
+            format: 1,
+            baseline: baseline.then(|| previous.clone()),
+            baseline_revision,
+            previous_kernel_revision: state.and_then(|r| r.value["last_revision"].as_i64()),
+            event_count: steps.len(),
+            steps,
+            settle: self
+                .settle
+                .as_ref()
+                .map(|input| Delta::between(previous, input)),
+            final_delta: Delta::between(cursor, world),
+        };
+        if !commit.result.is_object() {
+            commit.result = json!({});
+        }
+        commit.result["kernel_delta"] = serde_json::to_value(record)?;
+        commit.rows.retain(|r|!matches!(r,RowChange::Put {table,id,..} if table=="kernel_replay_state" && id=="cursor"));
+        commit.rows.push(put(
+            "kernel_replay_state",
+            "cursor".into(),
+            json!({"index":index+1,"baseline_revision":baseline_revision,"last_revision":revision}),
+        ));
+        Ok(())
+    }
+}
+
 pub(crate) fn checked_step(
     world: World,
     event: Event,
     commit: &mut Commit,
+    runtime: &mut Runtime,
 ) -> Result<(World, Vec<Out>)> {
-    // Serialize the borrowed input once; do not clone two entire Worlds for the audit.
-    let input = serde_json::to_value(&world)?;
+    runtime.prepare(&commit.event_key);
+    let input = world.clone();
     let (world, outputs) = tl3_kernel::step(world, event);
-    observe(&world, Some(event), commit);
-    if !commit.result.is_object() {
-        commit.result = json!({});
-    }
-    let steps = commit
-        .result
-        .as_object_mut()
-        .expect("object")
-        .entry("kernel_steps")
-        .or_insert_with(|| json!([]));
-    let mut record = serde_json::Map::new();
-    record.insert("input".into(), input);
-    record.insert("event".into(), json!(event));
-    record.insert("after".into(), serde_json::to_value(&world)?);
-    steps
-        .as_array_mut()
-        .expect("step array")
-        .push(serde_json::Value::Object(record));
+    observe_result(&world, Some(event), commit, runtime.checker.check(&world));
+    runtime.steps.push((input, event, world.clone()));
     Ok((world, outputs))
 }
 

@@ -44,9 +44,14 @@ fn intake(c: &mut Controller, number: u64) {
 }
 fn without_instrumentation(mut c: Commit) -> String {
     c.rows
-        .retain(|r| !matches!(r,RowChange::Put {table,..} if table == "kernel_alarms"));
+        .retain(|r| !matches!(r,RowChange::Put {table,..} if matches!(table.as_str(), "kernel_alarms" | "kernel_replay_state")));
     if let Some(result) = c.result.as_object_mut() {
-        for key in ["kernel_replay", "kernel_steps", "kernel_alarms"] {
+        for key in [
+            "kernel_replay",
+            "kernel_steps",
+            "kernel_alarms",
+            "kernel_delta",
+        ] {
             result.remove(key);
         }
     }

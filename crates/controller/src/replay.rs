@@ -27,6 +27,13 @@ pub(crate) enum StoredSnapshot {
 pub(crate) fn stored_snapshot(
     result: &serde_json::Value,
 ) -> Result<Option<StoredSnapshot>, &'static str> {
+    if let Some(value) = result.get("kernel_delta") {
+        let record: crate::compact::Record =
+            serde_json::from_value(value.clone()).map_err(|_| "invalid compact replay record")?;
+        return Ok(record.baseline.is_some().then_some(StoredSnapshot::Anchor(
+            record.baseline.expect("baseline present"),
+        )));
+    }
     if let Some(anchor) = result.get("kernel_anchor") {
         return serde_json::from_value(anchor.clone())
             .map(StoredSnapshot::Anchor)
@@ -56,6 +63,18 @@ pub fn check_record(
             record.receipt.revision.get()
         )
     };
+    if let Some(value) = result.get("kernel_delta") {
+        let compact: crate::compact::Record =
+            serde_json::from_value(value.clone()).map_err(|_| {
+                fail(&format!(
+                    "unverifiable from revision {}: invalid compact replay record",
+                    record.receipt.revision.get()
+                ))
+            })?;
+        return crate::compact::check(&compact, previous, record.receipt.revision.get())
+            .map(Some)
+            .map_err(|e| fail(&e));
+    }
     if result.get("kernel_violation").is_some() {
         return Err(fail("recorded kernel invariant violation"));
     }
@@ -76,7 +95,7 @@ pub fn check_record(
                 || record.payload.get("gate_capacity").is_some()
             {
                 return Err(fail(
-                    "historical snapshot unavailable; choose --from at an instrumented event",
+                    "legacy history without recorded snapshots; historical snapshot unavailable; choose --from at an instrumented event",
                 ));
             }
             return Ok(None);
@@ -157,6 +176,7 @@ pub fn run(reader: &mut tl3_store::Reader, from: Option<&str>) -> crate::Result<
         }
     };
     let mut previous = None;
+    let mut last_kernel_revision = None;
     let mut report = Report {
         events: 0,
         steps: 0,
@@ -179,7 +199,24 @@ pub fn run(reader: &mut tl3_store::Reader, from: Option<&str>) -> crate::Result<
                     "event {last_key}: missing initial anchor; choose --from explicitly"
                 )));
             }
+            if let Some(compact) = record.receipt.result.get("kernel_delta") {
+                let expected = compact["previous_kernel_revision"].as_i64();
+                if last_kernel_revision.is_some()
+                    && expected.is_some()
+                    && expected != last_kernel_revision
+                {
+                    return Err(Error::Replay(format!(
+                        "unverifiable from revision {}: missing kernel delta after revision {}",
+                        record.receipt.revision.get(),
+                        last_kernel_revision.unwrap()
+                    )));
+                }
+            }
             if let Some(world) = check_record(&record, previous.as_ref()).map_err(Error::Replay)? {
+                last_kernel_revision = Some(record.receipt.revision.get());
+                report.steps += record.receipt.result["kernel_delta"]["event_count"]
+                    .as_u64()
+                    .unwrap_or(0);
                 report.steps += record.receipt.result["kernel_replay"]["steps"]
                     .as_array()
                     .map_or(0, |steps| steps.len() as u64);

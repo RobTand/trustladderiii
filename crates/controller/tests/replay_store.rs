@@ -50,7 +50,7 @@ fn fixture_log_read_only_cli_and_corrupt_snapshot() {
     let events = reader.events_after(tl3_store::Revision::ZERO, 128).unwrap();
     let step = events
         .iter()
-        .find(|e| e.receipt.result.get("kernel_replay").is_some())
+        .find(|e| e.receipt.result.get("kernel_delta").is_some())
         .unwrap();
     let from_key = replay::run(&mut reader, Some(&step.key)).unwrap();
     let from_revision =

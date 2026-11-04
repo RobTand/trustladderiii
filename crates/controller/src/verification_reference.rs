@@ -1,5 +1,4 @@
-// Test-only reference copied from rust-fv 3704f839c2. Only the two method names
-// and the call between them differ. Keep until #783 integrates.
+// Test-only reference from rust-fv 3fd37e0d. Only method names/visibility differ.
 use crate::*;
 impl Controller {
     pub(crate) fn apply_reference(

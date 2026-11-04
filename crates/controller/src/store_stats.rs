@@ -42,7 +42,7 @@ pub fn read(tx: &mut tl3_store::Transaction<'_>) -> crate::Result<Stats> {
     // Use exactly replay's decoder, rather than an approximation of its schema.
     let mut cursor = 0i64;
     let replay_from_revision = 'search: loop {
-        let records=tx.query("SELECT revision, result FROM tl3_events WHERE revision > $1 AND (result ? 'kernel_anchor' OR result ? 'kernel_replay') ORDER BY revision LIMIT 32",&[&cursor]).map_err(tl3_store::Error::from)?;
+        let records=tx.query("SELECT revision, result FROM tl3_events WHERE revision > $1 AND (result ? 'kernel_anchor' OR result ? 'kernel_replay' OR result ? 'kernel_delta') ORDER BY revision LIMIT 32",&[&cursor]).map_err(tl3_store::Error::from)?;
         if records.is_empty() {
             break None;
         }

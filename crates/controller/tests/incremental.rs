@@ -97,3 +97,125 @@ fn generated_sequences_match_full_checker() {
         )
         .unwrap();
 }
+
+/// #783: every periodic baseline plus its compact deltas reconstructs full snapshots.
+#[test]
+fn replay_from_every_baseline_matches_full_snapshots() {
+    use proptest::{
+        prelude::*,
+        test_runner::{Config, RngSeed, TestRunner},
+    };
+    use tl3_controller::{
+        compact::{CompactStep, Delta, Record},
+        incremental::BASELINE_INTERVAL,
+    };
+    let mut runner = TestRunner::new(Config {
+        cases: 24,
+        rng_seed: RngSeed::Fixed(0x0783_2026_1204),
+        failure_persistence: None,
+        ..Config::default()
+    });
+    runner
+        .run(
+            &proptest::collection::vec(any::<u8>(), 130..260),
+            |sequence| {
+                let mut w = world();
+                let mut records = Vec::new();
+                let mut snapshots = Vec::new();
+                let mut baseline_revision = 1;
+                for (i, action) in sequence.into_iter().enumerate() {
+                    let before = w.clone();
+                    let node = NodeId(action as u64 % w.nodes.len() as u64);
+                    let event = if action % 3 == 0 {
+                        w.witness().unwrap_or(Event::Fact {
+                            node,
+                            fact: Fact::Priority(Priority::P0),
+                        })
+                    } else {
+                        Event::Fact {
+                            node,
+                            fact: Fact::Priority(Priority::P1),
+                        }
+                    };
+                    w = tl3_kernel::step(w, event).0;
+                    let baseline = (i as u64).is_multiple_of(BASELINE_INTERVAL);
+                    if baseline {
+                        baseline_revision = i as i64 + 1;
+                    }
+                    let record = Record {
+                        format: 1,
+                        baseline: baseline.then(|| before.clone()),
+                        baseline_revision,
+                        previous_kernel_revision: i.checked_sub(1).map(|n| n as i64 + 1),
+                        event_count: 1,
+                        steps: vec![CompactStep {
+                            preparation: Delta::between(&before, &before),
+                            event,
+                            after: Delta::between(&before, &w),
+                        }],
+                        settle: None,
+                        final_delta: Delta::between(&w, &w),
+                    };
+                    records.push(record);
+                    snapshots.push(w.clone());
+                }
+                for start in (0..records.len()).step_by(BASELINE_INTERVAL as usize) {
+                    let mut prior = None;
+                    for i in start..records.len() {
+                        let actual = tl3_controller::compact::check(
+                            &records[i],
+                            prior.as_ref(),
+                            i as i64 + 1,
+                        )
+                        .unwrap();
+                        prop_assert_eq!(&actual, &snapshots[i]);
+                        prior = Some(actual);
+                    }
+                }
+                let mut missing = records[1].clone();
+                missing.steps.clear();
+                prop_assert!(
+                    tl3_controller::compact::check(&missing, Some(&snapshots[0]), 2)
+                        .unwrap_err()
+                        .contains("unverifiable from revision 2")
+                );
+                prop_assert!(
+                    tl3_controller::compact::check(&records[1], None, 2)
+                        .unwrap_err()
+                        .contains("baseline required")
+                );
+                Ok(())
+            },
+        )
+        .unwrap();
+}
+
+/// #783: node-local corruption also round-trips, without normalizing invalid worlds.
+#[test]
+fn invalid_world_delta_roundtrip_and_constant_size() {
+    use tl3_controller::compact::Delta;
+    let before = world();
+    let mut after = before.clone();
+    after.nodes[0].pos = u8::MAX;
+    let delta = Delta::between(&before, &after);
+    let mut restored = before.clone();
+    delta.apply(&mut restored).unwrap();
+    assert_eq!(restored, after);
+    assert_eq!(check_world(&restored), check_world(&after));
+    let mut sizes = Vec::new();
+    for count in [256, 1024, 4096] {
+        let mut before = before.clone();
+        let mut closed = tl3_kernel::Node::new(RepoId(0));
+        closed.phase = tl3_kernel::Phase::Closed(tl3_kernel::Outcome::Stopped);
+        before.nodes.resize(count, closed);
+        let mut after = before.clone();
+        after.nodes[0].priority = Priority::P0;
+        let delta = Delta::between(&before, &after);
+        assert_eq!(delta.nodes.puts.len(), 1);
+        sizes.push(serde_json::to_vec(&delta).unwrap().len());
+    }
+    assert!(
+        sizes.iter().max().unwrap() - sizes.iter().min().unwrap() < 16,
+        "ordinary delta grew with retained nodes: {sizes:?}"
+    );
+}

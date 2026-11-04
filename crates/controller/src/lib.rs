@@ -16,6 +16,7 @@ mod branches;
 pub mod classifier;
 pub mod cli;
 pub mod clock;
+pub mod compact;
 pub mod console;
 pub mod contracts;
 mod decisions;
@@ -313,6 +314,7 @@ pub enum Boundary {
 
 pub struct Controller {
     store: Store,
+    verification: verification::Runtime,
     adapters: Registry,
     bootstrap: Bootstrap,
     github_translators: Vec<ingress::Translation>,
@@ -388,6 +390,7 @@ impl Controller {
         }
         let mut controller = Self {
             store,
+            verification: verification::Runtime::default(),
             adapters,
             bootstrap,
             github_translators: Vec::new(),
@@ -491,7 +494,9 @@ impl Controller {
                 serde_json::to_value(repository)?,
             ));
         }
-        commit.result = json!({"kernel_settle":world});
+        self.verification.prepare(&commit.event_key);
+        self.verification.settle = Some(world.clone());
+        commit.result = json!({"kernel_capacity_settle":true});
         let (world, outputs) = tl3_kernel::settle_world(world);
         self.record_kernel_result(&snapshot, world, outputs, &mut commit)?;
         self.store.commit(&commit)?;
@@ -1828,7 +1833,8 @@ impl Controller {
         let mut dependency_outputs = Vec::new();
         self.declare_merge_dependencies(&mut world, event, &mut dependency_outputs, commit)?;
         let dependency_roots = merge_dependencies::changed_roots(&world, event);
-        let (mut world, mut outputs) = verification::checked_step(world, event, commit)?;
+        let (mut world, mut outputs) =
+            verification::checked_step(world, event, commit, &mut self.verification)?;
         outputs.splice(0..0, dependency_outputs);
         self.announce_dependency_endings(
             snapshot,
@@ -1866,27 +1872,9 @@ impl Controller {
         outputs: Vec<Out>,
         commit: &mut Commit,
     ) -> Result<()> {
-        // Dependency steps are checked individually. Capacity reconciliation
-        // has no step record and still needs a scan. Detection never gates writes.
-        if commit.result["kernel_steps"]
-            .as_array()
-            .is_none_or(Vec::is_empty)
-        {
-            verification::observe(&world, None, commit);
-        }
         let previous = snapshot::decode(snapshot)?;
-        if !commit.result.is_object() {
-            commit.result = json!({});
-        }
-        let steps = commit
-            .result
-            .as_object_mut()
-            .expect("object")
-            .remove("kernel_steps")
-            .unwrap_or_else(|| json!([]));
-        let mut replay = json!({"before": previous, "after": world});
-        replay["steps"] = steps;
-        commit.result["kernel_replay"] = replay;
+        self.verification
+            .record(snapshot, &previous, &world, commit)?;
         let before = snapshot::encode(&previous)?;
         for (index, node) in world.nodes.iter().enumerate() {
             if !matches!(node.phase, tl3_kernel::Phase::Planning { .. })

@@ -4,8 +4,8 @@ use tl3_kernel::{Node, World};
 
 /// Bound recovery to 127 intervening kernel commits while amortizing full baselines.
 pub const BASELINE_INTERVAL: u64 = 128;
-// RED mutant: deliberately leave pool usage stale after the first observation.
-const UPDATE_POOL_SUMMARY: bool = false;
+// The seeded RED disables this update; every observed resource change must count.
+const UPDATE_POOL_SUMMARY: bool = true;
 
 #[derive(Default)]
 pub struct Incremental {

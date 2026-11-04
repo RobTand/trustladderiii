@@ -241,6 +241,7 @@ fn retain_fact(
 }
 
 fn apply_fact(
+    runtime: &mut crate::verification::Runtime,
     world: &mut World,
     node: NodeId,
     fact: Fact,
@@ -248,7 +249,7 @@ fn apply_fact(
     commit: &mut Commit,
 ) -> Result<()> {
     let event = Event::Fact { node, fact };
-    let (next, emitted) = crate::verification::checked_step(world.clone(), event, commit)?;
+    let (next, emitted) = crate::verification::checked_step(world.clone(), event, commit, runtime)?;
     *world = next;
     outputs.extend(emitted);
     if !commit.result.is_object() {
@@ -415,6 +416,7 @@ impl Controller {
                     })
                 {
                     apply_fact(
+                        &mut self.verification,
                         world,
                         node,
                         Fact::DependencyRemove {
@@ -428,6 +430,7 @@ impl Controller {
             }
             for declaration in declarations {
                 apply_fact(
+                    &mut self.verification,
                     world,
                     node,
                     Fact::Dependency {
@@ -551,6 +554,7 @@ impl Controller {
                     || unannounced
                 {
                     apply_fact(
+                        &mut self.verification,
                         world,
                         dependency.node,
                         Fact::Dependency {
@@ -605,6 +609,7 @@ impl Controller {
                     .is_some_and(|r| same_repository(&r.repo, &fact.repository))
             {
                 apply_fact(
+                    &mut self.verification,
                     world,
                     dependency.node,
                     Fact::Dependency {
