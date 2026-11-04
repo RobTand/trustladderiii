@@ -86,7 +86,14 @@ def verify(binary, sysroot, root, selected=None):
                '--sysroot', str(sysroot), str(root), '--edition', '2024']
     if selected:
         module, function = selected
-        command.extend(['--verify-only-module', module, '--verify-function', f'*::{function}'])
+        owner = {
+            'push': 'Outbox',
+            'ticket_step_budget': 'World',
+            'counter_exhaustion': 'World',
+            'dependencies_delivered': 'World',
+        }.get(function)
+        target = f'{owner}::{function}' if owner else function
+        command.extend(['--verify-only-module', module, '--verify-function', target])
     return subprocess.run(
         command,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False,
