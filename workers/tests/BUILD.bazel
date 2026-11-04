@@ -992,3 +992,17 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_maker_compaction",
+    srcs = ["test_maker_compaction.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        ":test_prompt_cache",
+        ":test_turns",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)

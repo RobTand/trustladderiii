@@ -286,3 +286,27 @@ impl Controller {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::budget_text;
+    use serde_json::json;
+
+    #[test]
+    fn context_budget_diagnostic_keeps_its_dimension_and_compaction_facts() {
+        let text = budget_text(&json!({
+            "kind": "execution_budget_exhausted", "dimension": "context_tokens",
+            "tool_turns": {"used": 140, "allowed": 512},
+            "input_tokens": {"used": 1195993, "allowed": 96000000},
+            "no_progress_turns": 9, "no_progress_window": 16,
+            "last_progress_kind": "edit", "compaction_count": 2, "context_fraction": 0.75
+        }))
+        .unwrap();
+        assert!(
+            text.contains("execution_budget_exhausted (context_tokens)"),
+            "{text}"
+        );
+        assert!(text.contains("compactions 2"), "{text}");
+        assert!(text.contains("context fraction 0.75"), "{text}");
+    }
+}
