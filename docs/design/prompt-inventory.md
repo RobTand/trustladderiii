@@ -37,8 +37,20 @@ PR 3 condenses planner.md from the text that landed with #691, #692 (#698) and #
 - L2 (grep RE2, glob directory) is deleted. The tool descriptions state it. `test_prompt_limits` now pins that no prompt repeats it.
 - L43-L44 stay in `forcing_rehearsal.GUIDANCE` only.
 - The planner gets the ASD-STE100 line. `test_prompt_style` covers all eight roles.
+- The #710 review restored seven planner rules, each pinned once by `test_planner_keeps_each_rule_once`: the smaller token forecast for every ordinary split piece, one check per goal in piece estimates, no restored allowance after a split, the generated-change ban conflict, decision_context in the trust list, the decision-text boundary, and "uncovered" edit declarations. The obligation rules now match `evidence.proof_applicability` exactly. A forcing is allowed. A module or enclosing definition covers a subject. An observer "any" goal can take part in an assertion rehearsal. `test_each_stated_rule_is_what_proof_applicability_does` runs each rule against the validator.
 
-Planner, o200k_base, main 7ebf1469 to PR 3: 4,500 to 2,797 words; prompt 6,167 to 3,590 tokens (-42%); total as received 11,858 to 9,281 tokens (-22%). The other roles do not change.
+Deleted planner instructions that other stages or code now enforce:
+
+| Deleted instruction | Enforced by |
+|---|---|
+| #552 owner assignment: maker owns edits, scope and self-checks; checking owns controller proof, Q55 included; publishing owns branch and PR actions. The planner and the maker cannot relabel a goal. | Ingest assigns `stage`; audit.md objects to a wrong stage or a lost obligation. The planner reply schema has no goal or stage field. `roles/maker.py` refuses changes to downstream goals. `roles/planner.py` requires checks only for maker and checking goals. |
+| Publication details: non_draft, body_lines exactly once, proof, branch or branch_prefix, full original wording. | The `publication` object in `ingest-reply.json`. `evidence.branch_objections` (audit disagrees, planning stops). The Publishing stage checks the body with `pr_body::validate` (`crates/controller/src/pr_body.rs`) in `adapters/github/publishing.rs`. |
+| Controller PR creation and Q55 proof are supported system actions, not missing maker capabilities. | Publishing creates the PR (`adapters/github/publishing.rs`). The Checking harness (`tl3_harness`) runs Q55 proof, and planning requires a rehearse_forcing receipt (`roles/planner.py`, "Q55 check lacks a matching forcing rehearsal receipt"). The maker prompt states that PR creation and later checks belong to downstream stages. |
+| Do not invent Git or PR evidence executors for ordinary publication. | `evidence.preflight` refuses each requirement whose tool, executor or dimension is not in tool_capabilities ("Unsupported evidence requirement"), and planning returns cant_meet. |
+| Declared symptom: the same forcing and settings on base and head, and no campaign extension or retry. | `tl3_harness/symptoms.py` `judge_symptom` requires exactly `repeat` runs on the base, the forced head and the ordinary head under one declaration. `forcing_rehearsal.identity` binds a receipt to the exact declaration, and a cached candidate returns its recorded result. |
+| Declared symptom: the required artifacts cas_receipt, logs, sha and terminal_verdict. | `evidence.preflight` adds the declared_symptom method requirement with those artifacts to every planned contract. |
+
+Planner, o200k_base, main 7ebf1469 to PR 3 after the review: 4,500 to 2,900 words; prompt 6,167 to 3,719 tokens (-40%); total as received 11,858 to 9,410 tokens (-21%). The other roles do not change.
 
 
 Baseline: origin/main 4767af43 (prompts identical to d96b7da2). Classes:
