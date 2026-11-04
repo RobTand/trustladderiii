@@ -63,6 +63,8 @@ pub(crate) fn check(reply: &Value, current: crate::findings::CurrentReview<'_>) 
                         .is_some_and(|reason| (1..=160).contains(&reason.chars().count()))
                 })
                 .ok_or(Error::Invalid("a reproduction needs proof.red_message"))?;
+            let declaration = serde_json::from_value(proof.clone())
+                .map_err(|_| Error::Invalid("a reproduction needs a valid proof declaration"))?;
             item["tests"] = json!(tests);
             item["proof"] = proof.clone();
             checks.push(Check {
@@ -70,7 +72,7 @@ pub(crate) fn check(reply: &Value, current: crate::findings::CurrentReview<'_>) 
                 kind: Kind::Reproducing,
                 tests,
                 forcing: None,
-                proof: Some(proof.clone()),
+                proof: Some(declaration),
                 declared_symptom: None,
             });
         } else {
@@ -108,7 +110,10 @@ mod reply_defects {
         let mut reply = json!({"reproductions":[{"finding_id":"f", "tests":["test_greeting.py::test_empty"], "proof":proof}]});
         let current = || crate::findings::current_review(&feedback, 1, Some("head"));
         let fixes = check(&reply, current()).unwrap();
-        assert_eq!(fixes.checks[0].proof.as_ref(), Some(&proof));
+        assert_eq!(
+            serde_json::to_value(fixes.checks[0].proof.as_ref().unwrap()).unwrap(),
+            proof
+        );
         assert_eq!(fixes.evidence["findings"][0]["proof"], proof);
         reply["reproductions"][0]
             .as_object_mut()

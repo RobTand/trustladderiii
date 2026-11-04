@@ -870,7 +870,7 @@ fn stage_owned_handover_keeps_fail_fast_and_independent_checking() {
                             name: "forced-deep-path".into(),
                             kind: adapters::prismabuild::Kind::Demonstrating,
                             tests: vec!["test_deep.py::test_deep_path".into()],
-                            forcing: Some(forcing()),
+                            forcing: Some(serde_json::from_value(forcing())?),
                             proof: None,
                             declared_symptom: None,
                         }],
@@ -933,7 +933,7 @@ fn stage_owned_handover_keeps_fail_fast_and_independent_checking() {
             }
             assert_eq!(
                 d.checks.as_ref().unwrap().plan[0].forcing,
-                Some(forcing()),
+                Some(serde_json::from_value(forcing()).unwrap()),
                 "forcing reaches independent Checking unchanged"
             );
             let passed = !matches!(self.mode, "base-passes" | "forced-head-fails");
