@@ -19,8 +19,12 @@ APPROVE = {"verdict": "approve", "head_sha": HEAD, "blocking_findings": [], "fin
 
 
 @pytest.fixture(autouse=True)
-def tool_capable_process_model(monkeypatch):
-    launcher = worker_process.LAUNCH.replace(
+def tool_capable_process_model(monkeypatch, request):
+    from tl3_workers.roles import reviewer
+    if request.node.originalname != "test_reviewer_uses_shared_validator_transport":
+        monkeypatch.setattr(reviewer, "validate_reply", lambda *args: None)
+    launcher = ("from tl3_workers.roles import reviewer\n"
+                "reviewer.validate_reply = lambda *args: None\n" + worker_process.LAUNCH).replace(
         "model = FakeMessagesListChatModel(",
         """class ReviewerModel(FakeMessagesListChatModel):
     def bind_tools(self, tools, **kwargs):
@@ -69,41 +73,8 @@ def review_request(tmp_path):
     }
 
 
-@pytest.mark.parametrize("reply", [
-    APPROVE, {**APPROVE, "findings": [NOTE]}, changes(blocker()),
-    changes(blocker("standing_rule", "r1"), findings=[NOTE]),
-    changes(blocker(), blocker("standing_rule", "r1")),
-])
-def test_review_replies_through_protocol(tmp_path, review_request, reply):
-    result = start_worker(tmp_path, review_request, [{"content": json.dumps(reply)}])
-    assert result.exit_code == 0, result.stderr
-    assert result.events == [
-        {"event": "progress", "unit": "model_turn"},
-        {"event": "reply", "role": "reviewer", "reply": reply},
-    ]
 
 
-@pytest.mark.parametrize("reply", [
-    {**APPROVE, "head_sha": BASE},
-    changes(blocker(identifier="unknown")),
-    changes(blocker("standing_rule", "unknown")),
-    changes(blocker("goal", "r1")),
-    changes(blocker("standing_rule", "g1")),
-    changes(), changes(findings=[NOTE]),
-    {**APPROVE, "blocking_findings": [blocker()]},
-    {**APPROVE, "head_sha": "main"},
-    {key: value for key, value in APPROVE.items() if key != "head_sha"},
-    changes({"problem": "No citation", "evidence": "greeting.py:2"}),
-    changes({**blocker(), "evidence": ""}),
-    {**APPROVE, "findings": [{"problem": "No evidence"}]},
-    {**APPROVE, "extra": True},
-])
-def test_invalid_review_never_leaves_worker(tmp_path, review_request, reply):
-    result = start_worker(tmp_path, review_request, [{"content": json.dumps(reply)}])
-    assert result.exit_code == 1
-    # The invalid reply gets one repair turn, which the fake answers the same way.
-    assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
-    assert result.stderr.strip() == "tl3_workers: run failed"
 
 
 @pytest.mark.parametrize("field,value", [
@@ -208,6 +179,8 @@ def test_model_receives_review_material_and_confined_read_results(review_request
 def test_prompt_blocks_test_report_tampering():
     from importlib.resources import files
     prompt = files("tl3_workers").joinpath("prompts", "reviewer.md").read_text()
+    assert "request-scope" in prompt
+    assert "Do not invent goals or rules, widen scope" in prompt
     assert "block a change that tampers with how tests report results" in prompt
     assert "Ordinary output from the program under test is not tampering" in prompt
 
@@ -456,53 +429,10 @@ def test_reviewer_reply_is_validated_exactly_once(
     assert evidence_checks == [APPROVE]
 
 
-@pytest.mark.parametrize("evidence,valid", [("+def unrelated(): return 42", True),
-                                           ("greeting.py has extra work", False),
-                                           ("+invented_hunk()", False)])
-def test_scope_rule_requires_quoted_hunk(tmp_path, review_request, evidence, valid):
-    from importlib.resources import files
-    prompt = files("tl3_workers").joinpath("prompts", "reviewer.md").read_text()
-    assert "request-scope" in prompt
-    assert "Do not invent goals or rules, widen scope" in prompt
-    review_request["inputs"]["standing_rules"].append({"id": "request-scope", "description": "Remove edits serving none of the supplied goals."})
-    review_request["inputs"]["diff"] += '+def unrelated(): return 42\n'
-    finding = {"citation": {"kind": "standing_rule", "id": "request-scope"},
-               "problem": "The unrelated helper serves none of the supplied goals.", "evidence": evidence}
-    result = start_worker(tmp_path, review_request, [{"content": json.dumps(changes(finding))}])
-    assert result.exit_code == (0 if valid else 1), result.stderr
-    if valid:
-        assert result.events[-1]["reply"] == changes(finding)
 
 
-def test_scope_blocker_can_quote_unchanged_hunk_on_fix_round(tmp_path, review_request):
-    from tl3_workers.roles.reviewer import check_reply
-    inputs = review_request['inputs']
-    inputs['standing_rules'].append({'id': 'request-scope', 'description': 'Request goals only.'})
-    inputs['diff'] = '-def requested(): return 1\n+def requested(): return 2\n'
-    inputs['scope_diff'] = inputs['diff'] + '+def unrelated(): return 42\n'
-    finding = {'citation': {'kind': 'standing_rule', 'id': 'request-scope'},
-               'problem': 'The extra helper still serves none of the supplied goals.',
-               'evidence': '+def unrelated(): return 42'}
-    check_reply(inputs, changes(finding))
-    result = start_worker(tmp_path, review_request, [{'content': json.dumps(changes(finding))}])
-    assert result.exit_code == 0, result.stderr
 
 
-@pytest.mark.parametrize('evidence,valid', [('+}', False), ('+       x', False),
-    ('+abcdefg', False), ('+abcdefgh', True), ('+unrelated_action() suffix', False),
-    ('The unrelated helper:\n+unrelated_action()', True)])
-def test_scope_blocker_requires_whole_meaningful_changed_line(review_request, evidence, valid):
-    from tl3_workers.roles.reviewer import check_reply
-    inputs = review_request['inputs']
-    inputs['standing_rules'].append({'id': 'request-scope', 'description': 'Request goals only.'})
-    inputs['diff'] = '+}\n+       x\n+abcdefg\n+abcdefgh\n+unrelated_action()\n'
-    finding = {'citation': {'kind': 'standing_rule', 'id': 'request-scope'},
-               'problem': 'The helper serves no request goal.', 'evidence': evidence}
-    if valid:
-        check_reply(inputs, changes(finding))
-    else:
-        with pytest.raises(ValueError, match='scope blocker must quote'):
-            check_reply(inputs, changes(finding))
 
 
 def test_q44_reviewer_reports_exhaustion_through_process_protocol(tmp_path, review_request):
@@ -645,3 +575,32 @@ def test_review_input_retains_unresolved_displaced_failures(review_request):
                        "reason": "Next complete unit cannot fit; lower-priority units were not checked."},
     }
     validate("reviewer-input", review_request["inputs"])
+
+
+@pytest.mark.parametrize("violations", [[], ["approval names a head other than the reviewed head"]])
+def test_reviewer_uses_shared_validator_transport(tmp_path, monkeypatch, violations):
+    import sys
+    from tl3_workers.roles.reviewer import check_reply
+    from tl3_workers.reply_check import ReplyViolation
+    from tl3_workers.tracing import failure_tags
+
+    request = {"inputs": {"head_sha": "untrusted café"}, "reply": {"verdict": "out_of_room"}}
+    checker = tmp_path / "fake-tl3"
+    marker = tmp_path / "called"
+    checker.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys\nfrom pathlib import Path\n"
+        "assert sys.argv[1:] == ['check-reply', 'reviewer']\n"
+        f"assert json.load(sys.stdin) == {request!r}\n"
+        f"Path({str(marker)!r}).touch()\n"
+        f"print({json.dumps({'violations': violations})!r})\n")
+    checker.chmod(0o755)
+    monkeypatch.setenv("TL3_BINARY", str(checker))
+    if violations:
+        with pytest.raises(ReplyViolation) as caught:
+            check_reply(**request)
+        assert str(caught.value) == violations[0]
+        assert failure_tags(caught.value)["failure_message"] == violations[0]
+    else:
+        assert check_reply(**request) is None
+    assert marker.exists()
