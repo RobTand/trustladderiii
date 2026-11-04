@@ -400,8 +400,14 @@ mod hostile_tests {
                 "custody":"in-process", "verdict":"pass",
                 "tests":[{"test":"tests/test_rechecked.py", "passed":true, "base":"passed", "head":"passed", "pre_existing":false},
                          {"test":"tests/test_unverified.py", "passed":false, "base":"passed", "head":"no-report", "pre_existing":false}],
-                "selection":{"limit":500,"charged_cases":480,"head_units":[["tests/test_rechecked.py"]],
-                    "skipped_units":[["tests/test_old.py"]], "skipped_checked":false}}]});
+                "selection":{"policy":"complete-unit prefix by import distance, path, and declaration order",
+                    "limit":500,"charged_cases":480,
+                    "base_units":[{"members":["tests/test_rechecked.py"], "cases":480,
+                        "outcomes":{"tests/test_rechecked.py":"passed"}}],
+                    "head_units":[["tests/test_rechecked.py"]],
+                    "skipped_units":[["tests/test_old.py"]], "skipped_checked":false,
+                    "saturation":{"unit":["tests/test_old.py"], "cases":null, "remaining":20,
+                        "reason":"Next complete unit cannot fit; lower-priority units were not checked."}}}]});
         let value = inputs(&f.delivery(), &mut store, &snapshot, None).unwrap();
         assert!(value.get("edited_selected_tests").is_none());
         assert_eq!(

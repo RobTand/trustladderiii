@@ -137,13 +137,13 @@
                 "$ref": "#/$defs/strings"
               },
               "forcing": {
-                "$ref": "planner-reply.json#/$defs/forcing"
+                "$ref": "check-report.json#/$defs/Forcing"
               },
               "proof": {
-                "$ref": "planner-reply.json#/$defs/proof"
+                "$ref": "check-report.json#/$defs/ProofDeclaration"
               },
               "declared_symptom": {
-                "$ref": "planner-reply.json#/$defs/declared_symptom"
+                "$ref": "check-report.json#/$defs/DeclaredSymptom"
               }
             },
             "required": [

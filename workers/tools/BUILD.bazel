@@ -23,3 +23,10 @@ py_binary(
         "@tl3_pip//langchain_core",
     ],
 )
+
+py_binary(
+    name = "redaction_benchmark",
+    srcs = ["redaction_benchmark.py"],
+    visibility = ["//visibility:public"],
+    deps = ["//workers/src"],
+)
