@@ -44,6 +44,8 @@ pub struct Status {
     pub unassigned_incidents: Vec<String>,
     /// Q53: models unavailable or out of quota until their probe or reset.
     pub quota_models: Vec<String>,
+    /// #783: durable detection alarms, independent of kernel incidents.
+    pub kernel_alarms: Vec<String>,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -133,7 +135,26 @@ fn clearable(incident: &board::CardIncident) -> String {
 /// The status page is a plain view of the console's board.
 pub fn load(reader: &mut Reader) -> Result<Status> {
     let mut tx = reader.transaction()?;
-    let board = board::read(&mut tx, chrono::Utc::now().timestamp_millis(), None)?;
+    let mut kernel_alarms: Vec<String> = tx
+        .query(
+            "SELECT value->>'summary' FROM tl3_world WHERE table_name = $1 ORDER BY row_id",
+            &[&crate::verification::ALARMS],
+        )
+        .map_err(tl3_store::Error::from)?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect();
+    let board = match board::read(&mut tx, chrono::Utc::now().timestamp_millis(), None) {
+        Ok(board) => Some(board),
+        // Keep alarms visible even when main's existing snapshot loader refuses
+        // an invalid world. Never relax that loader or hide database failures.
+        Err(crate::Error::Invalid("invalid stored kernel world")) if !kernel_alarms.is_empty() => {
+            kernel_alarms
+                .push("Request details unavailable: stored kernel world is invalid.".into());
+            None
+        }
+        Err(error) => return Err(error),
+    };
     let counts = tx.query_one("SELECT count(*) FILTER (WHERE parked_reason IS NULL), count(*) FILTER (WHERE parked_reason IS NOT NULL), count(*) FILTER (WHERE parked_reason = 'http') FROM tl3_memory_outbox", &[]).map_err(tl3_store::Error::from)?;
     let health = tx
         .query_opt(
@@ -193,8 +214,8 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
         postmortem_owed: postmortem_counts.get(1),
         postmortem_blocked,
         requests: board
-            .cards
             .iter()
+            .flat_map(|board| &board.cards)
             .map(|card| RequestStatus {
                 issue: format!("{}#{}: {}", card.repo, card.issue, card.title),
                 phase: card.phase.clone(),
@@ -205,7 +226,12 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
             })
             .collect(),
         memory,
-        unassigned_incidents: board.unassigned_incidents.iter().map(clearable).collect(),
+        unassigned_incidents: board
+            .iter()
+            .flat_map(|board| &board.unassigned_incidents)
+            .map(clearable)
+            .collect(),
+        kernel_alarms,
         quota_models,
     })
 }
@@ -248,7 +274,7 @@ pub fn render_text(status: &Status) -> String {
             writeln!(output, "{}", plain(incident)).expect("write to string");
         }
     }
-    for note in &status.quota_models {
+    for note in status.kernel_alarms.iter().chain(&status.quota_models) {
         writeln!(output, "{}", plain(note)).expect("write to string");
     }
     writeln!(
@@ -306,7 +332,7 @@ pub fn render_html(status: &Status) -> String {
         }
         output.push_str("</ul>");
     }
-    for note in &status.quota_models {
+    for note in status.kernel_alarms.iter().chain(&status.quota_models) {
         write!(output, "<p>{}</p>", escape_html(&plain(note))).expect("write to string");
     }
     write!(
@@ -388,6 +414,7 @@ mod tests {
             postmortem_owed: 0,
             postmortem_blocked: None,
             unassigned_incidents: vec![],
+            kernel_alarms: vec!["KERNEL INVARIANT ALARM: fixture".into()],
             quota_models: vec![],
             memory: MemoryStatus::default(),
             requests: vec![

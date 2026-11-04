@@ -194,7 +194,58 @@ fn store_stats_exact_counts_no_values_and_read_only() {
     let json = serde_json::to_string(&stats).unwrap();
     assert!(!json.contains(secret));
     assert!(!json.contains("secret-row"));
+    let text = tl3_controller::store_stats::render_text(&stats);
+    assert!(!text.contains(secret));
+    assert!(!text.contains("secret-row"));
+    assert!(text.starts_with("metric\ttable\tcount\tmin_revision\tmax_revision\n"));
+    let root = tempfile::tempdir().unwrap();
+    let source = include_str!("../../config/example.toml")
+        .replace("port = 5432", &format!("port = {}", settings.port))
+        .replace(
+            "database = \"tl3\"",
+            &format!("database = {:?}", settings.database),
+        )
+        .replace("user = \"tl3\"", "user = \"postgres\"")
+        .replace(
+            "# password_file = \"/run/tl3/postgres-password\"",
+            &format!(
+                "password_file = {:?}",
+                settings.password_file.as_ref().unwrap()
+            ),
+        );
+    let config = root.path().join("stats.toml");
+    std::fs::write(&config, source).unwrap();
+    let before = store.load().unwrap();
+    for as_json in [false, true] {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_tl3"));
+        command.args(["store-stats", "--config"]).arg(&config);
+        if as_json {
+            command.arg("--json");
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(!stdout.contains(secret));
+        assert!(!stdout.contains("secret-row"));
+        assert!(!String::from_utf8_lossy(&output.stderr).contains(secret));
+        if as_json {
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&stdout).unwrap(),
+                serde_json::to_value(&stats).unwrap()
+            );
+        } else {
+            assert_eq!(stdout, text);
+        }
+    }
+    let after = store.load().unwrap();
+    assert_eq!(before.revision, after.revision);
+    assert_eq!(before.rows, after.rows);
     let mut tx = reader.transaction().unwrap();
+    assert_eq!(tl3_controller::store_stats::read(&mut tx).unwrap(), stats);
     assert_eq!(
         tx.query_one("SHOW transaction_isolation", &[])
             .unwrap()

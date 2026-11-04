@@ -17,6 +17,32 @@ pub struct ReplayRecord {
     pub after: World,
 }
 
+/// The stored starting snapshot, shared by replay and counts-only diagnostics.
+/// Availability means a decodable anchor or complete ReplayRecord; it does not
+/// certify the suffix. Replay still checks its invariants and every real step.
+pub(crate) enum StoredSnapshot {
+    Anchor(World),
+    Replay(ReplayRecord),
+}
+pub(crate) fn stored_snapshot(
+    result: &serde_json::Value,
+) -> Result<Option<StoredSnapshot>, &'static str> {
+    if let Some(anchor) = result.get("kernel_anchor") {
+        return serde_json::from_value(anchor.clone())
+            .map(StoredSnapshot::Anchor)
+            .map(Some)
+            .map_err(|_| "invalid anchor");
+    }
+    result
+        .get("kernel_replay")
+        .map(|value| {
+            serde_json::from_value(value.clone())
+                .map(StoredSnapshot::Replay)
+                .map_err(|_| "invalid replay record")
+        })
+        .transpose()
+}
+
 /// #783: replay real kernel steps, compare each snapshot, and retain chain continuity.
 pub fn check_record(
     record: &EventRecord,
@@ -33,30 +59,29 @@ pub fn check_record(
     if result.get("kernel_violation").is_some() {
         return Err(fail("recorded kernel invariant violation"));
     }
-    if let Some(anchor) = result.get("kernel_anchor") {
-        if previous.is_some() {
-            return Err(fail("unexpected replay anchor"));
+    let replay = match stored_snapshot(result).map_err(fail)? {
+        Some(StoredSnapshot::Anchor(world)) => {
+            if previous.is_some() {
+                return Err(fail("unexpected replay anchor"));
+            }
+            crate::verification::check_world(&world)
+                .map_err(|rule| fail(&format!("invariant {rule}")))?;
+            return Ok(Some(world));
         }
-        let world: World =
-            serde_json::from_value(anchor.clone()).map_err(|_| fail("invalid anchor"))?;
-        crate::verification::check_world(&world)
-            .map_err(|rule| fail(&format!("invariant {rule}")))?;
-        return Ok(Some(world));
-    }
-    let Some(value) = result.get("kernel_replay") else {
-        if result.get("kernel_event").is_some()
-            || result.get("dependency_events").is_some()
-            || record.payload.get("initialize").is_some()
-            || record.payload.get("gate_capacity").is_some()
-        {
-            return Err(fail(
-                "historical snapshot unavailable; choose --from at an instrumented event",
-            ));
+        Some(StoredSnapshot::Replay(replay)) => replay,
+        None => {
+            if result.get("kernel_event").is_some()
+                || result.get("dependency_events").is_some()
+                || record.payload.get("initialize").is_some()
+                || record.payload.get("gate_capacity").is_some()
+            {
+                return Err(fail(
+                    "historical snapshot unavailable; choose --from at an instrumented event",
+                ));
+            }
+            return Ok(None);
         }
-        return Ok(None);
     };
-    let replay: ReplayRecord =
-        serde_json::from_value(value.clone()).map_err(|_| fail("invalid replay record"))?;
     crate::verification::check_world(&replay.before)
         .map_err(|rule| fail(&format!("baseline invariant {rule}")))?;
     if previous.is_some_and(|previous| previous != &replay.before) {

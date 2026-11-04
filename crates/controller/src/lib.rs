@@ -111,8 +111,6 @@ pub enum Error {
     RedactionInfra(#[source] std::io::Error),
     #[error("upstream quota exhausted")]
     Quota { retry_after: std::time::Duration },
-    #[error("kernel invariant {rule} failed after {event:?}")]
-    KernelInvariant { event: Option<Event>, rule: String },
     #[error("replay-check: {0}")]
     Replay(String),
     /// The enqueue guard is waiting for required checks to report. This is
@@ -1030,6 +1028,9 @@ impl Controller {
     /// The hook exposes durable boundaries for process-level fault injection.
     pub fn drive_once_with(&mut self, mut hook: impl FnMut(Boundary, &str)) -> Result<bool> {
         let snapshot = self.store.load()?;
+        if self.post_kernel_alarm(&snapshot)? {
+            return Ok(true);
+        }
         if self.post_input_incident(&snapshot)? {
             return Ok(true);
         }
@@ -1075,20 +1076,6 @@ impl Controller {
         }
         if let Some(row) = snapshot.rows.iter().find(|r| r.table == "inbox") {
             let observation: Observation = decode_stored(row.value.clone())?;
-            if input_errors::observation_context(&snapshot, &observation)?
-                .2
-                .is_some_and(|node| verification::held(&snapshot, node))
-            {
-                let mut commit =
-                    Commit::new(format!("hold:{}", row.id), row.value.clone(), &snapshot);
-                commit.rows.push(RowChange::Delete {
-                    table: "inbox".into(),
-                    id: row.id.clone(),
-                });
-                commit.result = json!({"kernel_held":true});
-                self.store.commit(&commit)?;
-                return Ok(true);
-            }
             let mut waiting_for_queue = false;
             if let Observation::Queue(fact) = &observation
                 && fact.needs_queue_ack()
@@ -1122,7 +1109,6 @@ impl Controller {
                 let mut world = snapshot::decode(&snapshot)?;
                 let mut commit =
                     Commit::new(format!("consume:{}", row.id), row.value.clone(), &snapshot);
-                verification::prepare(&snapshot, &mut commit);
                 match self.translate(&snapshot, &mut world, observation.clone(), &mut commit) {
                     Ok(Some(event)) => self.apply(&snapshot, world, event, &mut commit)?,
                     Ok(None) => {}
@@ -1166,9 +1152,6 @@ impl Controller {
         let world = snapshot::decode(&snapshot)?;
         for effect in &snapshot.pending_effects {
             let delivery = hydrate(effect, &snapshot)?;
-            if verification::held(&snapshot, delivery.node()) {
-                continue;
-            }
             // ClosePr removes the queue label without waiting for Mergify admission reads.
             let closing_queue = executor::upstream(delivery.output) == executor::Upstream::Mergify
                 && matches!(
@@ -1779,33 +1762,6 @@ impl Controller {
     fn apply(
         &mut self,
         snapshot: &Snapshot,
-        world: World,
-        event: Event,
-        commit: &mut Commit,
-    ) -> Result<()> {
-        verification::prepare(snapshot, commit);
-        if snapshot
-            .rows
-            .iter()
-            .any(|row| row.table == "kernel_holds" && row.id == "all")
-            || verification::event_node(event)
-                .is_some_and(|node| verification::held(snapshot, node))
-        {
-            *commit = Commit::new(commit.event_key.clone(), commit.event.clone(), snapshot);
-            commit.result = json!({"kernel_held":true});
-            return Ok(());
-        }
-        match self.apply_checked(snapshot, world, event, commit) {
-            Err(Error::KernelInvariant { event, rule }) => {
-                verification::reject(snapshot, event, &rule, commit)
-            }
-            result => result,
-        }
-    }
-
-    fn apply_checked(
-        &mut self,
-        snapshot: &Snapshot,
         mut world: World,
         event: Event,
         commit: &mut Commit,
@@ -1907,26 +1863,15 @@ impl Controller {
         outputs: Vec<Out>,
         commit: &mut Commit,
     ) -> Result<()> {
-        // checked_step already checked the last result, including dependency
-        // steps. Direct capacity reconciliation still needs its own scan.
+        // Dependency steps are checked individually. Capacity reconciliation
+        // has no step record and still needs a scan. Detection never gates writes.
         if commit.result["kernel_steps"]
             .as_array()
             .is_none_or(Vec::is_empty)
-            && let Err(rule) = verification::check_world(&world)
         {
-            return verification::reject(snapshot, None, &rule, commit);
+            verification::observe(&world, None, commit);
         }
         let previous = snapshot::decode(snapshot)?;
-        if previous.nodes.iter().enumerate().any(|(index, node)| {
-            verification::held(snapshot, NodeId(index as u64))
-                && world.nodes.get(index) != Some(node)
-        }) {
-            *commit = Commit::new(commit.event_key.clone(), commit.event.clone(), snapshot);
-            commit.result = json!({"kernel_replay": crate::replay::ReplayRecord {
-                before: previous.clone(), steps: vec![], after: previous,
-            }, "kernel_held":true});
-            return Ok(());
-        }
         if !commit.result.is_object() {
             commit.result = json!({});
         }
@@ -2502,6 +2447,7 @@ impl Controller {
             }
         }
         self.retire_ended_effect_looks(snapshot, &world, commit)?;
+        verification::record_alarms(snapshot, commit);
         Ok(())
     }
 
@@ -2622,9 +2568,6 @@ impl Controller {
         inbox: String,
         commit: &mut Commit,
     ) -> Result<()> {
-        if incident.signature.class == verification::CLASS {
-            verification::release(snapshot, &incident.id, commit);
-        }
         if incident.blocking {
             commit.rows.push(put(
                 "inbox",
@@ -4066,3 +4009,6 @@ mod publication_tests;
 
 #[cfg(test)]
 mod verification_reference;
+
+#[cfg(test)]
+mod verification_allocations;
