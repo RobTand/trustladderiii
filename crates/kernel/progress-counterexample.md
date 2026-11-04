@@ -2,9 +2,10 @@
 
 Ticket #771 uses the lead's enforced-scope decision. No state-table rule changes.
 The progress preconditions are consistency, settledness, an open request,
-`World::headroom_ok()`, and `last_cmd < u64::MAX` for every node. The complete
-progress theorem and the per-step counter bounds remain proof obligations.
-Existing Kani harnesses and tests stay.
+`World::headroom_ok()`, and `last_cmd < u64::MAX` for every node. The complete progress theorem and the per-step counter bounds remain proof
+obligations. The rank functions, credit operations and every local settle case
+now have verified contracts over their actual executable bodies. Existing Kani
+harnesses and tests stay.
 
 The controller now allocates command IDs through `Node::next_command_id`, using
 `checked_add`. Exhaustion raises `command ids exhausted for request N` without
@@ -75,8 +76,11 @@ At the exhausted ID it cannot. Proving more gate or phase lemmas over that
 projection would not repair this failed correspondence.
 
 The pinned Verus toolchain and spike sources remain at the locations recorded in
-`/home/rob/tmp/tl3-build/rust-fv/verus-spike.md`. No new Verus result is claimed
-by this note. The counterexample runs the real kernel instead.
+`/home/rob/tmp/tl3-build/rust-fv/verus-spike.md`. The source-connected runner is
+`verus/run.sh`. Action `5991cf68394bfff558c5bfdc7a239ed5d689dc9e675dbfcadee2739b9bf16a17`
+verified 85 obligations at `b6082bca7b`, including the real local settle cases.
+That count includes generated type obligations. It does not mean that 85
+progress theorems have been delivered. The whole-world theorem remains open.
 
 ## Counter audit and proposed step reserves
 
@@ -93,7 +97,7 @@ does not discharge it.
 | `generation` | u64 | 3 | At least about 6.15e18 events affecting one request. Apply can increment twice; settle adds at most one phase change. |
 | `next_seq` | u64 | 2 | At least about 9.22e18 events affecting one request under this conservative bound. Apply and settle can each emit at most one effect per node. |
 | `next_question` | u64 | 1 | About 1.84e19 events globally. Allocations occur only in apply. |
-| `next_ticket` | u64 | `2 * (nodes.len() + 1)` | Depends on world size; two tickets per node per settle, including a possible new node. A fixed K independent of node count would be unsound. |
+| `next_ticket` | u64 | `2 * (nodes.len() + 1)` | At least about 4.61e18 events before the conservative headroom check can fail from an empty world. See the charging argument below. |
 | `credit.start` | u32 | 258 | Initialized once to at most `u8::MAX + RESERVE`; fresh requests cannot exhaust it. |
 | `credit.earned` | u32 | 1 | Merge credit applies once per request; fresh requests cannot exhaust it. |
 | `credit.added` | u32 | 255 | About 16.8 million maximal AddCredit answers. This includes automatic top-ups, which add at most one for a continuation. |
@@ -125,10 +129,29 @@ Production raw observation sources inspected:
   rejects raw Commands as well as raw Ack/NewRequest/NewAdoption.
 
 The u8 attempt, round, retry and incident fields are bounded by consistency or
-saturating operations. Their arithmetic, the u32 scratch scan/pass counters and
-the mathematical whole-world rank still need explicit proof treatment. In
-particular, `admits` counts Ready waiters in u32; persistent counter headroom
-alone does not bound that count for arbitrary world sizes.
+saturating operations. Their apply-side arithmetic still needs composition
+proofs. The helper also scopes the u32 scratch scans and settle-pass counter.
+It reserves `open_nodes + 1` scan entries and `6 * (open_nodes + 1)` moves,
+including one possible new root. This admits at most 715,827,881 open nodes.
+Closed nodes may be arbitrarily numerous within the checked ticket reserve.
+The existing Kani worlds have at most four nodes, so this enforced bound keeps
+the current guarantee. It is an explicit cardinality scope, not a claim about
+an unrestricted finite world.
+
+Each local settle case proves a decreasing height at most six and allocation
+potentials at most one generation, one effect, two tickets and one merge credit.
+These statements quantify over every scheduling decision, with no world-size
+bound. Both normal Rust and Verus compile those same case bodies. The read-only
+scheduler wrapper and the complete apply/settle composition remain to verify.
+
+For global tickets, the per-step reserve scales with node count, but the lifetime
+count still needs about 2^64 events. Charge an allocation against the local ticket
+potential. Settle consumes that potential, while one apply can raise it by at
+most two on its selected node, or append one new node with potential one.
+Starting empty, after E events `next_ticket <= 2E` and `nodes.len() <= E`.
+Thus the reserved total is at most `4E + 2`. Exhausting it requires about
+4.61e18 events. This is the charging argument to formalize when proving apply's
+frame and composing the local contracts; it is not yet a delivered theorem.
 
 Q30 and Q39 still accept starvation. The theorem concerns the existence of
 some progress event, with no per-request fairness claim.
