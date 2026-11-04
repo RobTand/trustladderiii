@@ -884,6 +884,10 @@ the waiting request blocked until Rob changes or stops it. Status says
 "waiting for #N to merge". Planning after release uses current main.
 
 Facts are never stale or dropped and update dependencies in every phase.
+Declarations reconcile retained terminal facts before waiting, even when an
+active prerequisite root still exists. Re-ingest retains terminal outcomes and
+announcement identities for unchanged targets. A stop is announced once even
+when its issue stays open and its dependency status remains pending.
 No request gains prerequisites after it first starts planning. Cycles across
 requests are rejected with a plain note, and every ending is announced to
 waiters. These root merge prerequisites move from slice two into slice one.

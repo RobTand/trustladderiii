@@ -29,15 +29,20 @@ const LIMIT: u64 = 1 << 40;
 /// Credit stays far below overflow too.
 const CREDIT_LIMIT: u32 = 1 << 30;
 
+fn small_head(head: Option<HeadId>) -> bool {
+    head.is_none_or(|head| head.0 < 8)
+}
+
 fn small(n: &Node) -> bool {
     n.generation < LIMIT
         && n.next_seq < LIMIT
         && n.last_cmd < LIMIT
         && n.repo.0 < 2
-        && [n.proposed, n.head, n.checked, n.approved, n.merged]
-            .into_iter()
-            .flatten()
-            .all(|h| h.0 < 8)
+        && small_head(n.proposed)
+        && small_head(n.head)
+        && small_head(n.checked)
+        && small_head(n.approved)
+        && small_head(n.merged)
         && n.credit.start < CREDIT_LIMIT
         && n.credit.earned < CREDIT_LIMIT
         && n.credit.added < CREDIT_LIMIT
@@ -52,6 +57,10 @@ fn small(n: &Node) -> bool {
 /// Any consistent world, which may be partway through settling. With a phase
 /// given, request 0 is in it.
 fn any_world(phase: Option<Phase>) -> World {
+    any_world_with_dependencies(phase, Vec::new())
+}
+
+fn any_world_with_dependencies(phase: Option<Phase>, dependencies: Vec<Dependency>) -> World {
     let mut nodes: Vec<Node> = kani::vec::exact_vec::<Node, 2>();
     if let Some(phase) = phase {
         nodes[0].phase = phase;
@@ -66,7 +75,7 @@ fn any_world(phase: Option<Phase>) -> World {
         next_ticket: kani::any(),
         next_question: kani::any(),
         file_sets: Vec::new(),
-        dependencies: Vec::new(),
+        dependencies,
         fail_fast: kani::any(),
     };
     kani::assume(world.pool_capacity <= 2);
@@ -75,7 +84,9 @@ fn any_world(phase: Option<Phase>) -> World {
     kani::assume(small(&world.nodes[0]) && small(&world.nodes[1]));
     // With an empty dependency table consistency already requires this new
     // flag to be false. State it early so the solver can prune the credit path.
-    kani::assume(!world.nodes[0].credit.withheld && !world.nodes[1].credit.withheld);
+    if world.dependencies.is_empty() {
+        kani::assume(!world.nodes[0].credit.withheld && !world.nodes[1].credit.withheld);
+    }
     kani::assume(world.consistent());
     world
 }
@@ -574,6 +585,208 @@ fn check_witness(phase: Phase) {
     }
 }
 
+// The original Unplanned implication, proved by exhaustive cases. A direct
+// outside witness proves strict progress even before the other root settles.
+// Otherwise a delivered root or its gate occupant must still have an internal
+// transition, so the premise "the world is settled" is false.
+fn check_unplanned_progress(world: World) {
+    let n = &world.nodes[0];
+    if n.paused || n.effect.is_some() || n.waiting_incident {
+        kani::cover!(
+            world.nodes[1].phase.is_closed(),
+            "a settled Unplanned world exists"
+        );
+        check_unplanned_witness(world);
+    } else {
+        let mut after = world.clone();
+        let mut out = Outbox::new();
+        let admitted = advance(&mut after, 0, &mut out);
+        if admitted {
+            assert_eq!(after.nodes[0].phase, Phase::Planning { must_split: false });
+            assert_unplanned_measure_decreases(&world, &after);
+        }
+        if !admitted {
+            let gate_occupant =
+                matches!(world.nodes[1].phase, Phase::Ready(_)) && world.nodes[1].ticket.is_some();
+            assert!(gate_occupant);
+            if gate_occupant {
+                assert!(advance(&mut after, 1, &mut out), "a gate occupant can move");
+            }
+        }
+        kani::cover!(admitted, "an unblocked root enters planning");
+        kani::cover!(!admitted, "a gate occupant can move instead");
+    }
+}
+
+// Construct one concrete event per branch before applying it. Equality with
+// the actual witness proves that this is the original witness property, while
+// avoiding mutation paths for every phase of the other request.
+fn check_unplanned_witness(world: World) {
+    let n = world.nodes[0];
+    let node = NodeId(0);
+    if n.paused {
+        check_unplanned_event(
+            world,
+            Event::Command {
+                node,
+                id: n.last_cmd + 1,
+                command: Command::Resume,
+            },
+        );
+    } else if let Some(effect) = n.effect {
+        check_unplanned_event(
+            world,
+            Event::Ack {
+                node,
+                seq: effect.seq,
+                ack: Ack::Confirmed,
+            },
+        );
+    } else if n.waiting_incident {
+        check_unplanned_event(
+            world,
+            Event::Fact {
+                node,
+                fact: Fact::IncidentCleared { by_rob: true },
+            },
+        );
+    } else {
+        let dependency = *world
+            .dependencies
+            .iter()
+            .find(|d| d.node == node && (d.rejected || d.status != DependencyStatus::Delivered))
+            .expect("a blocked Unplanned root has an unresolved prerequisite");
+        if dependency.rejected || dependency.status == DependencyStatus::Abandoned {
+            check_unplanned_event(
+                world,
+                Event::Command {
+                    node,
+                    id: n.last_cmd + 1,
+                    command: Command::ChangeRequest,
+                },
+            );
+        } else {
+            check_unplanned_event(
+                world,
+                Event::Fact {
+                    node,
+                    fact: Fact::Dependency {
+                        target: dependency.target,
+                        status: DependencyStatus::Delivered,
+                    },
+                },
+            );
+        }
+    }
+}
+
+fn unplanned_measure(world: &World) -> u64 {
+    assert!(world.dependencies.iter().all(|d| d.node == NodeId(0)));
+    world.nodes[0].distance()
+        + world
+            .dependencies
+            .iter()
+            .filter(|d| {
+                d.status != DependencyStatus::Delivered && !world.nodes[0].phase.is_closed()
+            })
+            .count() as u64
+}
+
+// The other root is an identical common summand in the whole-world measure.
+// Comparing only the changed contribution avoids expanding its arbitrary phase
+// through distance twice. This is the same strict whole-world inequality.
+fn assert_unplanned_measure_decreases(before: &World, after: &World) {
+    assert_eq!(before.nodes.len(), 2);
+    assert_eq!(after.nodes.len(), 2);
+    assert_eq!(after.nodes[1], before.nodes[1]);
+    assert!(unplanned_measure(after) < unplanned_measure(before));
+}
+
+fn check_unplanned_event(world: World, event: Event) {
+    let witness = world.witness();
+    assert_eq!(witness, Some(event.clone()));
+    kani::cover!(
+        witness.is_some(),
+        "an Unplanned root has an outside progress witness"
+    );
+    let before = unplanned_measure(&world);
+    let other = world.nodes[1];
+    let mut after = world;
+    let mut out = Outbox::new();
+    apply(&mut after, event, &mut out);
+    assert_eq!(after.nodes[1], other);
+    assert!(unplanned_measure(&after) < before);
+}
+
+// One or two prerequisites owned by root 0. Root identity is symmetric, as in
+// the event proofs. Other node fields, counters, repos, and credit retain the
+// original any_world bounds. Statuses, rejection, and external/root targets
+// vary before consistency is assumed; no prerequisite facts are assumed away.
+fn any_unplanned_dependencies<const N: usize>(delivered: bool) -> World {
+    let mut dependencies = Vec::with_capacity(N);
+    for index in 0..N {
+        let request = if kani::any() {
+            let target: u8 = kani::any();
+            kani::assume(target < 2);
+            Some(NodeId(u64::from(target)))
+        } else {
+            None
+        };
+        dependencies.push(Dependency {
+            node: NodeId(0),
+            target: DependencyTarget {
+                kind: kani::any(),
+                number: index as u64 + 1,
+                request,
+            },
+            status: if delivered {
+                DependencyStatus::Delivered
+            } else {
+                kani::any()
+            },
+            rejected: !delivered && kani::any(),
+        });
+    }
+    if !delivered {
+        kani::assume(
+            dependencies
+                .iter()
+                .any(|d| d.rejected || d.status != DependencyStatus::Delivered),
+        );
+    }
+    any_world_with_dependencies(Some(Phase::Unplanned), dependencies)
+}
+
+fn check_unplanned_waiting<const N: usize>() {
+    let world = any_unplanned_dependencies::<N>(false);
+    assert!(!world.dependencies_delivered(NodeId(0)));
+    let mut after = world.clone();
+    let mut out = Outbox::new();
+    assert!(!advance(&mut after, 0, &mut out));
+    assert!(after == world && out.is_empty());
+    let n = &after.nodes[0];
+    assert!(!n.holds && !n.pool && n.ticket.is_none() && n.run.is_none());
+    assert_eq!(n.credit.balance(), 0);
+    kani::cover!(
+        world
+            .dependencies
+            .iter()
+            .any(|d| d.status == DependencyStatus::Pending && !d.rejected),
+        "pending prerequisites block admission"
+    );
+    kani::cover!(
+        world
+            .dependencies
+            .iter()
+            .any(|d| d.status == DependencyStatus::Abandoned),
+        "abandoned prerequisites block admission"
+    );
+    kani::cover!(
+        world.dependencies.iter().any(|d| d.rejected),
+        "rejected cycles block admission"
+    );
+}
+
 fn reply(reply: Reply) -> Event {
     match &reply {
         Reply::MakerDone { head } | Reply::Approved { head } | Reply::RebaseClean { head } => {
@@ -829,21 +1042,54 @@ fn check_dependency_registration() {
     );
 }
 
-fn check_dependency_reset() {
+fn check_dependency_remove() {
     let mut world = waiting_dependency_world();
     world.nodes[0].phase = kani::any();
+    let retained = Dependency {
+        target: DependencyTarget {
+            number: 2762,
+            ..world.dependencies[0].target
+        },
+        status: if kani::any() {
+            DependencyStatus::Abandoned
+        } else {
+            DependencyStatus::Delivered
+        },
+        ..world.dependencies[0]
+    };
+    world.dependencies.push(retained);
     kani::assume(world.consistent());
     let phase = world.nodes[0].phase;
-    apply(&mut world, fact(Fact::DependencyReset), &mut Outbox::new());
-    assert_eq!(world.dependencies.is_empty(), phase == Phase::Ingesting);
+    let target = world.dependencies[0].target;
+    apply(
+        &mut world,
+        fact(Fact::DependencyRemove {
+            kind: target.kind,
+            number: target.number,
+        }),
+        &mut Outbox::new(),
+    );
+    assert_eq!(
+        world.dependencies.len(),
+        if phase == Phase::Ingesting { 1 } else { 2 }
+    );
+    assert_eq!(
+        *world.dependencies.last().unwrap(),
+        retained,
+        "retained prerequisites keep their terminal outcome and identity"
+    );
     require_consistent(&world);
     kani::cover!(
-        world.dependencies.is_empty(),
-        "re-ingest clears declarations"
+        world.dependencies.len() == 1,
+        "re-ingest removes a changed declaration"
     );
     kani::cover!(
-        !world.dependencies.is_empty(),
+        world.dependencies.len() == 2,
         "other phases preserve declarations"
+    );
+    kani::cover!(
+        retained.status == DependencyStatus::Abandoned,
+        "abandoned never reverts during re-ingest"
     );
 }
 
@@ -899,7 +1145,7 @@ proof!(
     3,
     check_dependency_registration()
 );
-proof!(apply_dependency_reset, 2, check_dependency_reset());
+proof!(apply_dependency_remove, 3, check_dependency_remove());
 proof!(dependency_no_cycle, 4, check_dependency_cycles());
 proof!(
     dependency_waiting_holds_nothing,
@@ -1213,7 +1459,31 @@ proof!(
 // No dead states, one phase at a time.
 proof!(progress_from_ingesting, check_witness(Phase::Ingesting));
 proof!(progress_from_auditing, check_witness(Phase::Auditing));
-proof!(progress_from_unplanned, check_witness(Phase::Unplanned));
+proof!(
+    progress_from_unplanned,
+    3,
+    check_unplanned_progress(any_world(Some(Phase::Unplanned)))
+);
+proof!(
+    progress_from_unplanned_delivered,
+    3,
+    check_unplanned_progress(any_unplanned_dependencies::<2>(true))
+);
+proof!(
+    progress_from_unplanned_delivered_one,
+    3,
+    check_unplanned_progress(any_unplanned_dependencies::<1>(true))
+);
+proof!(
+    progress_from_unplanned_waiting,
+    3,
+    check_unplanned_waiting::<2>()
+);
+proof!(
+    progress_from_unplanned_waiting_one,
+    3,
+    check_unplanned_waiting::<1>()
+);
 proof!(
     progress_from_planning,
     check_witness(Phase::Planning {

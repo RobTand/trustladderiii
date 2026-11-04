@@ -746,7 +746,10 @@ pub enum DependencyStatus {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Fact {
-    DependencyReset,
+    DependencyRemove {
+        kind: PrerequisiteKind,
+        number: u64,
+    },
     Dependency {
         target: DependencyTarget,
         status: DependencyStatus,
@@ -1734,7 +1737,7 @@ pub fn proof_of_event(event: &Event) -> &'static str {
             Fact::UpstreamStalled => "apply_upstream_stalled",
             Fact::Priority(_) => "apply_priority",
             Fact::Dependency { .. } => "apply_dependency",
-            Fact::DependencyReset => "apply_dependency_reset",
+            Fact::DependencyRemove { .. } => "apply_dependency_remove",
         },
         Event::Command { command, .. } => match command {
             Command::Stop => "apply_stop",
@@ -2458,7 +2461,7 @@ fn effect_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
 
 fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
     match fact {
-        Fact::DependencyReset => w.reset_dependencies(i),
+        Fact::DependencyRemove { kind, number } => w.remove_dependency(i, kind, number),
         Fact::Dependency { target, status } => w.dependency_fact(i, target, status, out),
         Fact::Priority(priority) => {
             if !w.nodes[i].phase.is_closed() {

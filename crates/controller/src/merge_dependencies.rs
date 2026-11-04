@@ -120,6 +120,73 @@ fn root_status(world: &World, node: NodeId) -> DependencyStatus {
     }
 }
 
+fn fact_key(repo: &Repository, kind: PrerequisiteKind, number: u64) -> String {
+    format!(
+        "{}/{}/{}/{kind:?}/{number}",
+        repo.owner.to_ascii_lowercase(),
+        repo.name.to_ascii_lowercase(),
+        repo.installation
+    )
+}
+
+fn stored_row(snapshot: &Snapshot, commit: &Commit, table: &str, id: &str) -> Option<Value> {
+    commit
+        .rows
+        .iter()
+        .rev()
+        .find_map(|row| match row {
+            RowChange::Put {
+                table: t,
+                id: key,
+                value,
+            } if t == table && key == id => Some(value.clone()),
+            _ => None,
+        })
+        .or_else(|| {
+            snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == table && r.id == id)
+                .map(|r| r.value.clone())
+        })
+}
+
+fn retained_fact(
+    snapshot: &Snapshot,
+    commit: &Commit,
+    repo: &Repository,
+    kind: PrerequisiteKind,
+    number: u64,
+) -> Result<Option<ExternalFact>> {
+    stored_row(
+        snapshot,
+        commit,
+        "prerequisite_facts",
+        &fact_key(repo, kind, number),
+    )
+    .map(decode_stored::<ExternalFact>)
+    .transpose()
+    .map(|fact| fact.filter(|f| f.status != DependencyStatus::Pending))
+}
+
+fn retain_fact(
+    snapshot: &Snapshot,
+    commit: &mut Commit,
+    fact: ExternalFact,
+) -> Result<ExternalFact> {
+    if let Some(previous) =
+        retained_fact(snapshot, commit, &fact.repository, fact.kind, fact.number)?
+    {
+        return Ok(previous);
+    }
+    commit.rows.push(put(
+        "prerequisite_facts",
+        fact_key(&fact.repository, fact.kind, fact.number),
+        json!(fact),
+    ));
+    Ok(fact)
+}
+
 fn apply_fact(
     world: &mut World,
     node: NodeId,
@@ -208,18 +275,36 @@ impl Controller {
                 ));
             }
             let root = bound_root(&requests, snapshot, &request.repo, kind, number);
-            let status = match root {
-                Some(root)
-                    if !world.nodes[root.0 as usize].phase.is_closed()
-                        || root_status(world, root) == DependencyStatus::Delivered =>
-                {
-                    root_status(world, root)
-                }
-                _ => self
-                    .adapters
-                    .get(executor::Upstream::GitHub)?
-                    .prerequisite(&request.repo, kind, number)?,
-            };
+            let status =
+                if let Some(fact) = retained_fact(snapshot, commit, &request.repo, kind, number)? {
+                    fact.status
+                } else {
+                    let observed = if root
+                        .is_some_and(|root| root_status(world, root) == DependencyStatus::Delivered)
+                    {
+                        DependencyStatus::Delivered
+                    } else {
+                        self.adapters
+                            .get(executor::Upstream::GitHub)?
+                            .prerequisite(&request.repo, kind, number)?
+                    };
+                    let status = if observed == DependencyStatus::Pending {
+                        root.map_or(observed, |root| root_status(world, root))
+                    } else {
+                        observed
+                    };
+                    retain_fact(
+                        snapshot,
+                        commit,
+                        ExternalFact {
+                            repository: request.repo.clone(),
+                            kind,
+                            number,
+                            status,
+                        },
+                    )?
+                    .status
+                };
             declarations.push(Declaration {
                 target: DependencyTarget {
                     kind,
@@ -267,8 +352,27 @@ impl Controller {
             _ => None,
         });
         if let Some(declarations) = declarations {
-            apply_fact(world, node, Fact::DependencyReset, outputs, commit);
-            for declaration in decode_stored::<Vec<Declaration>>(declarations)? {
+            let declarations = decode_stored::<Vec<Declaration>>(declarations)?;
+            for dependency in world.dependencies().to_vec() {
+                if dependency.node == node
+                    && !declarations.iter().any(|d| {
+                        d.target.kind == dependency.target.kind
+                            && d.target.number == dependency.target.number
+                    })
+                {
+                    apply_fact(
+                        world,
+                        node,
+                        Fact::DependencyRemove {
+                            kind: dependency.target.kind,
+                            number: dependency.target.number,
+                        },
+                        outputs,
+                        commit,
+                    );
+                }
+            }
+            for declaration in declarations {
                 apply_fact(
                     world,
                     node,
@@ -292,8 +396,50 @@ impl Controller {
         commit: &mut Commit,
     ) -> Result<()> {
         let requests = bindings(snapshot, commit)?;
+        // Root completion must remain observable even when no waiter exists yet.
+        for (&root, request) in &requests {
+            if root_status(world, root) == DependencyStatus::Delivered {
+                retain_fact(
+                    snapshot,
+                    commit,
+                    ExternalFact {
+                        repository: request.repo.clone(),
+                        kind: PrerequisiteKind::Issue,
+                        number: request.issue,
+                        status: DependencyStatus::Delivered,
+                    },
+                )?;
+                if let Some(pr) = request.proposed.as_ref() {
+                    retain_fact(
+                        snapshot,
+                        commit,
+                        ExternalFact {
+                            repository: request.repo.clone(),
+                            kind: PrerequisiteKind::PullRequest,
+                            number: pr.number,
+                            status: DependencyStatus::Delivered,
+                        },
+                    )?;
+                }
+                if let Some(number) =
+                    stored_row(snapshot, commit, "pull_requests", &root.0.to_string())
+                        .and_then(|pr| pr["number"].as_u64())
+                {
+                    retain_fact(
+                        snapshot,
+                        commit,
+                        ExternalFact {
+                            repository: request.repo.clone(),
+                            kind: PrerequisiteKind::PullRequest,
+                            number,
+                            status: DependencyStatus::Delivered,
+                        },
+                    )?;
+                }
+            }
+        }
         for dependency in world.dependencies().to_vec() {
-            if dependency.status != DependencyStatus::Pending || dependency.rejected {
+            if dependency.rejected {
                 continue;
             }
             let Some(request) = requests.get(&dependency.node) else {
@@ -306,8 +452,36 @@ impl Controller {
                 dependency.target.kind,
                 dependency.target.number,
             );
-            let status = root.map_or(DependencyStatus::Pending, |node| root_status(world, node));
-            if root != dependency.target.request || status != DependencyStatus::Pending {
+            let status = retained_fact(
+                snapshot,
+                commit,
+                &request.repo,
+                dependency.target.kind,
+                dependency.target.number,
+            )?
+            .map_or_else(
+                || root.map_or(DependencyStatus::Pending, |node| root_status(world, node)),
+                |fact| fact.status,
+            );
+            let ending = root
+                .filter(|root| world.nodes[root.0 as usize].phase.is_closed())
+                .map(|root| {
+                    format!(
+                        "{}:{}:{}:{:?}:{}",
+                        root.0,
+                        world.nodes[root.0 as usize].generation,
+                        dependency.node.0,
+                        dependency.target.kind,
+                        dependency.target.number
+                    )
+                });
+            let unannounced = ending
+                .as_ref()
+                .is_some_and(|id| stored_row(snapshot, commit, "dependency_endings", id).is_none());
+            if (dependency.status == DependencyStatus::Pending
+                && (root != dependency.target.request || status != DependencyStatus::Pending))
+                || unannounced
+            {
                 apply_fact(
                     world,
                     dependency.node,
@@ -321,6 +495,13 @@ impl Controller {
                     outputs,
                     commit,
                 );
+            }
+            if unannounced {
+                commit.rows.push(put(
+                    "dependency_endings",
+                    ending.unwrap(),
+                    json!({"status":status}),
+                ));
             }
         }
         Ok(())
@@ -344,18 +525,7 @@ impl Controller {
                 "merge prerequisite fact is outside served repositories",
             ));
         }
-        commit.rows.push(put(
-            "prerequisite_facts",
-            format!(
-                "{}/{}/{}/{:?}/{}",
-                fact.repository.owner.to_ascii_lowercase(),
-                fact.repository.name.to_ascii_lowercase(),
-                fact.repository.installation,
-                fact.kind,
-                fact.number
-            ),
-            json!(fact),
-        ));
+        let fact = retain_fact(snapshot, commit, fact)?;
         let requests = bindings(snapshot, commit)?;
         let mut outputs = Vec::new();
         for dependency in world.dependencies().to_vec() {
@@ -401,6 +571,9 @@ mod tests {
         config.limits.w = 3;
         let bootstrap = Bootstrap::from_config(&config).unwrap();
         let repository = bootstrap.repos[0].clone();
+        for number in [42, 2761, 2772, 2779] {
+            crate::adapters::github::set_fake_issue(&repo.root.path().join("fakes"), &serde_json::from_value(json!({"number":number,"title":"Prerequisite","body":null,"state":"open","updated_at":"2026-11-03T23:00:00Z"})).unwrap());
+        }
         let controller = Controller::open(
             tl3_store::Store::open(&config.store).unwrap(),
             crate::adapters::simulation(&repo.root.path().join("fakes")).unwrap(),

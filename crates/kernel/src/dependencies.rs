@@ -197,14 +197,20 @@ impl World {
         }
     }
 
-    pub(super) fn reset_dependencies(&mut self, i: usize) {
+    pub(super) fn remove_dependency(&mut self, i: usize, kind: PrerequisiteKind, number: u64) {
         if self.nodes[i].phase != Phase::Ingesting || self.nodes[i].planning_started {
             return;
         }
-        self.dependencies.retain(|d| d.node != NodeId(i as u64));
-        let n = &mut self.nodes[i];
-        n.waiting_prerequisite = None;
-        n.credit.withheld = false;
+        let node = NodeId(i as u64);
+        self.dependencies
+            .retain(|d| d.node != node || d.target.kind != kind || d.target.number != number);
+        self.nodes[i].waiting_prerequisite = self
+            .dependencies
+            .iter()
+            .find(|d| d.node == node && (d.rejected || d.status != DependencyStatus::Delivered))
+            .map(|d| d.target.number);
+        self.nodes[i].credit.withheld =
+            !self.dependencies_delivered(node) && self.nodes[i].credit.ready;
     }
 
     pub(super) fn dependency_fact(

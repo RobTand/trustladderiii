@@ -222,7 +222,7 @@ pub(crate) fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<
             for issue in &changes.issues {
                 if issue.pull_request.is_none() {
                     let (labels, digest) = canonical_issue(issue);
-                    result.push(prerequisite_issue(&repository, issue));
+                    result.extend(prerequisite_issue(&repository, issue));
                     result.push(Input::IssueChanged(IssueChange {
                         delivery: format!(
                             "catch-up-issue:{}/{}:{}:{}:{}",
@@ -243,7 +243,7 @@ pub(crate) fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<
                 }
             }
             for pr in &changes.pull_requests {
-                result.push(prerequisite_pr(&repository, pr));
+                result.extend(prerequisite_pr(&repository, pr));
             }
             for comment in changes.comments {
                 // URLs were validated before advancing the durable catch-up cursor.
@@ -487,7 +487,7 @@ pub fn run(controller: &mut Controller, receiver: mpsc::Receiver<Input>) -> Resu
     .run(controller)
 }
 
-fn prerequisite_issue(repository: &Repository, issue: &tl3_github::Issue) -> Input {
+fn prerequisite_issue(repository: &Repository, issue: &tl3_github::Issue) -> Option<Input> {
     prerequisite_input(
         repository,
         tl3_kernel::PrerequisiteKind::Issue,
@@ -497,7 +497,7 @@ fn prerequisite_issue(repository: &Repository, issue: &tl3_github::Issue) -> Inp
     )
 }
 
-fn prerequisite_pr(repository: &Repository, pr: &tl3_github::PullRequest) -> Input {
+fn prerequisite_pr(repository: &Repository, pr: &tl3_github::PullRequest) -> Option<Input> {
     prerequisite_input(
         repository,
         tl3_kernel::PrerequisiteKind::PullRequest,
@@ -517,8 +517,11 @@ fn prerequisite_input(
     number: u64,
     status: tl3_kernel::DependencyStatus,
     at: &str,
-) -> Input {
-    Input::Observation {
+) -> Option<Input> {
+    if status == tl3_kernel::DependencyStatus::Pending {
+        return None;
+    }
+    Some(Input::Observation {
         key: format!(
             "prerequisite:{}/{}/{}:{kind:?}:{number}:{at}:{status:?}",
             repository.owner.to_ascii_lowercase(),
@@ -531,7 +534,7 @@ fn prerequisite_input(
             number,
             status,
         }),
-    }
+    })
 }
 
 fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
@@ -564,10 +567,9 @@ fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
                 name: context.repository.name.clone(),
                 installation: context.installation_id,
             };
-            vec![
-                Input::IssueChanged(issue_change(id, &context, &issue)),
-                prerequisite_issue(&repo, &issue),
-            ]
+            let mut inputs = vec![Input::IssueChanged(issue_change(id, &context, &issue))];
+            inputs.extend(prerequisite_issue(&repo, &issue));
+            inputs
         }
         Some(
             Event::PullRequestMerged {
@@ -586,7 +588,7 @@ fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
                 name: context.repository.name,
                 installation: context.installation_id,
             };
-            vec![prerequisite_pr(&repo, &pull_request)]
+            prerequisite_pr(&repo, &pull_request).into_iter().collect()
         }
         Some(Event::CommentCreated {
             context,
@@ -1113,7 +1115,7 @@ mod priority_tests {
             let catch_up = prerequisite_issue(&repository, &issue);
             let fact = |input: &Input| matches!(input, Input::Observation { observation: Observation::Prerequisite(fact), .. } if fact.number == 2761 && fact.status == expected && fact.repository == repository);
             assert!(webhook.iter().any(fact));
-            assert!(fact(&catch_up));
+            assert!(fact(&catch_up.unwrap()));
         }
     }
 }
