@@ -92,21 +92,31 @@ fn corpus_seeded_proptest_matches_python() {
     };
     let corpus = shared_inputs();
     let mut runner = TestRunner::new(Config {
-        cases: 64,
+        cases: 1,
+        max_shrink_iters: 64,
         rng_seed: RngSeed::Fixed(753),
         failure_persistence: None,
         ..Config::default()
     });
-    let strategy = (0..corpus.len(), 0usize..4, 0usize..4);
+    // One property round compares 64 generated spans through one Python boundary call.
+    // Shrinking retains the same parity predicate over a smaller-valued batch.
+    let strategy = prop::collection::vec((0..corpus.len(), 0usize..4, 0usize..4), 64);
     runner
-        .run(&strategy, |(index, depth, padding)| {
-            let mut input = corpus[index].clone();
-            for _ in 0..depth {
-                input = serde_json::to_string(&input).unwrap();
+        .run(&strategy, |cases| {
+            let inputs = cases
+                .into_iter()
+                .map(|(index, depth, padding)| {
+                    let mut input = corpus[index].clone();
+                    for _ in 0..depth {
+                        input = serde_json::to_string(&input).unwrap();
+                    }
+                    format!("{}{}{}", "\n".repeat(padding), input, "\n".repeat(padding))
+                })
+                .collect::<Vec<_>>();
+            let expected = python_redact(&inputs);
+            for (input, expected) in inputs.iter().zip(expected) {
+                prop_assert_eq!(tl3_controller::redaction::text(input).unwrap(), expected);
             }
-            input = format!("{}{}{}", "\n".repeat(padding), input, "\n".repeat(padding));
-            let expected = python_redact(&[input.clone()]).pop().unwrap();
-            prop_assert_eq!(tl3_controller::redaction::text(&input).unwrap(), expected);
             Ok(())
         })
         .unwrap();
