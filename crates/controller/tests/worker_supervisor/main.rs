@@ -1,3 +1,5 @@
+mod restart;
+
 use serde_json::Value;
 use std::{
     fs,
@@ -214,7 +216,7 @@ fn old_claims_fence_duplicate_and_cancelled_launches() {
 }
 
 #[test]
-fn real_trace_conforms_across_restart_duplicate_and_new_generation() {
+fn real_trace_conforms_across_disconnect_duplicate_and_lost_exit() {
     for legacy in [false, true] {
         let old = tempfile::tempdir().unwrap();
         // Pipe EOF, rather than a delay, releases the real worker after the controller disconnects.
@@ -271,12 +273,6 @@ fn real_trace_conforms_across_restart_duplicate_and_new_generation() {
         assert_eq!(exit_code(old.path()), 0);
         let worker = check_identity(old.path(), "process.json");
         assert!(!Path::new(&format!("/proc/{}", worker["pid"])).exists());
-        let newer = tempfile::tempdir().unwrap();
-        fixture(newer.path(), "print('new generation')");
-        let mut next = command(newer.path()).spawn().unwrap();
-        claimed(&mut next);
-        assert!(next.wait().unwrap().success());
-        let current = fs::read(newer.path().join("exit.json")).unwrap();
         // Replay the real attempt's durable records as a restarted controller
         // would find them. A duplicate cannot change any recorded bytes.
         let replay = tempfile::tempdir().unwrap();
@@ -309,12 +305,10 @@ fn real_trace_conforms_across_restart_duplicate_and_new_generation() {
         }
         assert!(!replay.path().join("stdout.jsonl").exists());
         // A lost exit stays absent: the surviving claim forbids re-execution
-        // and the old attempt cannot overwrite the newer attempt's outcome.
         fs::remove_file(replay.path().join("exit.json")).unwrap();
         assert!(command(replay.path()).output().unwrap().status.success());
         assert!(!replay.path().join("exit.json").exists());
         assert!(!replay.path().join("stdout.jsonl").exists());
-        assert_eq!(fs::read(newer.path().join("exit.json")).unwrap(), current);
     }
 }
 
