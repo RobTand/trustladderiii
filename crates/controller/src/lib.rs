@@ -42,7 +42,7 @@ pub mod prompts;
 mod protected_requests;
 pub mod publication_failure;
 mod question_findings;
-mod redaction;
+pub mod redaction;
 pub mod release;
 mod review_stops;
 mod scope;

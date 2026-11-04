@@ -434,8 +434,8 @@ pub type Count = Integer<0, { u64::MAX }>;
 /// serde_json reads an integer literal outside i64/u64 as the nearest f64, and below
 /// i64::MIN that f64 is -2^63 itself, which is in range. Python keeps the literal exact and
 /// refuses it. So a value read from a number is checked again against its raw JSON token
-/// (`check_token`) wherever the token is still available; `SymptomRun` does this for every
-/// record's exit code (#750 round 3 finding 5).
+/// (`check_token`) wherever the token is still available; `SymptomRecord`'s own
+/// `Deserialize` does this for its exit code (#750 rounds 3 and 4).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Signed {
     value: i64,

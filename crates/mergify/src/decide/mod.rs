@@ -15,6 +15,7 @@
 //! floats and no target-specific code, so its proofs hold on amd64 and arm64.
 
 pub mod check;
+pub mod delivery_step;
 pub mod facts;
 pub mod observe;
 pub mod translate;
