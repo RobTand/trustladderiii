@@ -2154,14 +2154,14 @@ kernel_fn! {
 /// #771: effect allocation increases next_seq by exactly one.
 fn emit_node(m: &mut Node, i: usize, kind: EffectKind, out: &mut Outbox) -> (result: ()) [
 requires old(m).next_seq < u64::MAX, old(out).len < OUTBOX,
-ensures *final(m) == Node {
+ensures *final(m) == (Node {
     next_seq: (old(m).next_seq + 1) as u64,
     effect: Some(InFlight { seq: old(m).next_seq, kind, cancelling: false }),
     worktree: old(m).worktree || kind == EffectKind::PrepareWorktree,
     pr_open: old(m).pr_open || kind == EffectKind::OpenPr,
     had_pr: old(m).had_pr || kind == EffectKind::OpenPr,
     ..*old(m)
-},
+}),
 final(out).len == old(out).len + 1,
 ] {
     let seq = m.next_seq;
@@ -3180,7 +3180,7 @@ ensures final(m).generation as int <= old(m).generation as int + 1,
             }
     } else {
         result == old(m).ticket.is_some()
-            && *final(m) == Node { ticket: None, ..*old(m) }
+            && *final(m) == (Node { ticket: None, ..*old(m) })
     },
 ] {
     if m.phase.holding() {
@@ -3203,7 +3203,7 @@ kernel_fn! {
 fn take_ticket_node(node: &mut Node, next_ticket: &mut u64) -> (result: ()) [
 requires *old(next_ticket) < u64::MAX,
 ensures *final(next_ticket) as int == *old(next_ticket) as int + 1,
-    *final(node) == Node { ticket: Some(*old(next_ticket)), ..*old(node) },
+    *final(node) == (Node { ticket: Some(*old(next_ticket)), ..*old(node) }),
 ] {
     let t = *next_ticket;
     *next_ticket += 1;
