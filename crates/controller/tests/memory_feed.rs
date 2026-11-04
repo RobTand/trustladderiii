@@ -377,3 +377,210 @@ fn shutdown_needs_no_new_database_connection_and_leaves_no_listener() {
         "drop must join the thread and close its listener without a fresh connection"
     );
 }
+
+fn controller(fixture: &Fixture, clock: &FakeClock) -> tl3_controller::Controller {
+    use tl3_controller::{Bootstrap, Controller, adapters, executor::Upstream};
+    let mut registry = adapters::simulation(fixture._scratch.path()).unwrap();
+    registry.register(Upstream::Workers, fixture.supervisor().clone());
+    Controller::open_with_clock(
+        Store::open(&fixture.settings).unwrap(),
+        registry,
+        Bootstrap::from_config(&fixture.config).unwrap(),
+        clock.clone(),
+    )
+    .unwrap()
+}
+
+fn hindsight_incident(controller: &mut tl3_controller::Controller) -> tl3_store::WorldRow {
+    controller
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|row| {
+            row.table == "incidents"
+                && row.value["open"] == true
+                && row.value["signature"]["class"] == "hindsight_unavailable"
+        })
+        .expect("an open Hindsight incident")
+}
+
+fn kill_consumer(fixture: &Fixture) {
+    fixture.sql().query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND application_name = 'tl3-memory-feed'", &[]).unwrap();
+}
+
+/// #773 / Q7: reusing an incident after consumer restart must rearm its probe.
+#[test]
+fn outage_consumer_death_and_restart_rearms_automatic_recovery() {
+    let mut fixture = Fixture::new(false);
+    fixture.barrier();
+    let clock = FakeClock(std::rc::Rc::new(std::cell::Cell::new(1_000_000)));
+    let mut ctl = controller(&fixture, &clock);
+    drain(&mut ctl);
+    let first = hindsight_incident(&mut ctl).id;
+    kill_consumer(&fixture);
+    assert!(fixture.supervisor().memory_barrier().is_err());
+    drain(&mut ctl);
+    assert_eq!(ctl.next_look_in().unwrap(), None);
+    drop(ctl);
+    drop(fixture.supervisor.take());
+    fixture.supervisor =
+        Some(Supervisor::new(&fixture.config, &fixture._scratch.path().join("records")).unwrap());
+    assert!(!fixture.attempts.recv_timeout(WAIT).unwrap());
+    fixture.barrier();
+    let mut ctl = controller(&fixture, &clock);
+    drain(&mut ctl);
+    assert_eq!(hindsight_incident(&mut ctl).id, first);
+    assert_eq!(
+        ctl.next_look_in().unwrap(),
+        Some(Duration::from_secs(120)),
+        "a reused held incident must have an armed recovery probe"
+    );
+    ctl.look_now().unwrap();
+    fixture.barrier();
+    assert!(!fixture.attempts.recv_timeout(WAIT).unwrap());
+    fixture.available.store(true, Ordering::SeqCst);
+    clock.0.set(clock.0.get() + 120_000);
+    ctl.look_due().unwrap();
+    fixture.acknowledged();
+    drain(&mut ctl);
+    assert!(
+        ctl.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .all(|row| row.table != "incidents" || row.value["open"] != true)
+    );
+}
+
+/// #773: thread exit wakes settled ingress, with no manual retirement call.
+#[test]
+fn failed_feed_wakes_its_supervisor_without_manual_retirement() {
+    let mut fixture = Fixture::new(true);
+    let (sender, receiver) = mpsc::channel();
+    let mut source = fixture.supervisor().source();
+    source.poll_once(&mut fixture.store, &sender).unwrap();
+    while receiver.try_recv().is_ok() {}
+    kill_consumer(&fixture);
+    *fixture.response.0.lock().unwrap() = true;
+    fixture.response.1.notify_all();
+    assert!(fixture.supervisor().memory_barrier().is_err());
+    assert!(
+        matches!(
+            receiver.recv_timeout(WAIT),
+            Ok(tl3_controller::cli::Input::Wake)
+        ),
+        "feed exit must wake its settled supervisor"
+    );
+    assert_eq!(
+        fixture.store.memory_feed_state().unwrap(),
+        MemoryFeedState::Failed
+    );
+}
+
+/// #773: feed failure cannot skip independent worker-session cleanup.
+#[test]
+fn failed_feed_still_retires_worker_sessions_and_returns_the_feed_error() {
+    let mut fixture = Fixture::new(false);
+    fixture.barrier();
+    let session = fixture.config.workers.runs.join("sessions/773");
+    std::fs::create_dir_all(&session).unwrap();
+    let snapshot = fixture.store.load().unwrap();
+    let mut commit =
+        tl3_store::Commit::new("closed-session-773", json!({"fixture":true}), &snapshot);
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "nodes".into(),
+        id: "773".into(),
+        value: json!({"phase":{"Closed":"Done"}}),
+    });
+    fixture.store.commit(&commit).unwrap();
+    assert!(fixture.store.can_retire_worker_session("773").unwrap());
+    kill_consumer(&fixture);
+    assert!(fixture.supervisor().memory_barrier().is_err());
+    let result = fixture
+        .supervisor
+        .as_mut()
+        .unwrap()
+        .retire(&mut fixture.store);
+    assert!(result.is_err_and(|error| error.to_string().contains("no consumer")));
+    assert!(
+        !session.exists(),
+        "independent session cleanup must still run after feed failure"
+    );
+}
+
+/// #773 / Q7: escalation follows operation UUID lineage, across incident clearances.
+#[test]
+fn repeated_incident_for_the_same_memory_requires_rob_and_cannot_probe_clear() {
+    let mut fixture = Fixture::new(false);
+    fixture.barrier();
+    let clock = FakeClock(std::rc::Rc::new(std::cell::Cell::new(1_000_000)));
+    let mut ctl = controller(&fixture, &clock);
+    drain(&mut ctl);
+    let first = hindsight_incident(&mut ctl);
+    assert_eq!(first.value["needs_rob"], false);
+    // Retain a closed historical incident for this still-pending operation.
+    fixture.sql().execute("UPDATE tl3_world SET value = jsonb_set(value, '{open}', 'false') WHERE table_name = 'incidents' AND row_id = $1", &[&first.id]).unwrap();
+    clock.0.set(clock.0.get() + 120_000);
+    ctl.look_due().unwrap();
+    fixture.barrier();
+    drain(&mut ctl);
+    let second = hindsight_incident(&mut ctl);
+    assert_eq!(
+        second.value["needs_rob"], true,
+        "only Rob clears a later incident for the same operation lineage"
+    );
+    assert!(
+        second.value["summary"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("clear incident {}", second.id))
+    );
+    fixture.available.store(true, Ordering::SeqCst);
+    while fixture.attempts.try_recv().is_ok() {}
+    clock.0.set(clock.0.get() + 120_000);
+    ctl.look_due().unwrap();
+    fixture.barrier();
+    drain(&mut ctl);
+    assert_eq!(hindsight_incident(&mut ctl).id, second.id);
+    assert_eq!(
+        fixture.store.pending_memory_count().unwrap(),
+        1,
+        "a later incident holds the operation until Rob clears it"
+    );
+    assert!(
+        fixture.attempts.try_recv().is_err(),
+        "a later incident cannot retry before Rob clears it"
+    );
+}
+
+/// #773 / Q7: a different operation starts its own incident lineage.
+#[test]
+fn a_different_memory_operation_gets_its_own_first_incident() {
+    let mut fixture = Fixture::new(false);
+    fixture.barrier();
+    let clock = FakeClock(std::rc::Rc::new(std::cell::Cell::new(1_000_000)));
+    let mut ctl = controller(&fixture, &clock);
+    drain(&mut ctl);
+    let first = hindsight_incident(&mut ctl);
+    fixture.available.store(true, Ordering::SeqCst);
+    clock.0.set(clock.0.get() + 120_000);
+    ctl.look_due().unwrap();
+    fixture.acknowledged();
+    drain(&mut ctl);
+    fixture.available.store(false, Ordering::SeqCst);
+    let next = "77300000-0000-0000-0000-000000000002";
+    fixture
+        .store
+        .queue_memory(next, &json!({"content":"another operation"}))
+        .unwrap();
+    fixture.retire();
+    fixture.barrier();
+    drain(&mut ctl);
+    let second = hindsight_incident(&mut ctl);
+    assert_ne!(
+        first.value["input_failure"]["scope"], second.value["input_failure"]["scope"],
+        "distinct operation UUIDs have distinct lineages"
+    );
+    assert_eq!(second.value["needs_rob"], false);
+}
