@@ -179,6 +179,8 @@ def test_model_receives_review_material_and_confined_read_results(review_request
 def test_prompt_blocks_test_report_tampering():
     from importlib.resources import files
     prompt = files("tl3_workers").joinpath("prompts", "reviewer.md").read_text()
+    assert "request-scope" in prompt
+    assert "Do not invent goals or rules, widen scope" in prompt
     assert "block a change that tampers with how tests report results" in prompt
     assert "Ordinary output from the program under test is not tampering" in prompt
 

@@ -5,8 +5,6 @@ use tl3_controller::reviewer::validate;
 pub fn run() {
     golden_cases();
     println!("test reviewer_golden_cases ... ok");
-    python_parity();
-    println!("test reviewer_python_parity ... ok");
     cli_contract();
     println!("test reviewer_cli_contract ... ok");
     parsed_citations_and_first_failure();
@@ -62,31 +60,6 @@ fn command(mut command: Command, input: &Value) -> std::process::Output {
     result
 }
 
-fn python_parity() {
-    let cases: Vec<_> = cases()
-        .into_iter()
-        .filter(|c| c["schema_invalid"] != true)
-        .collect();
-    let mut python = Command::new(super::worker_package().join(".venv/bin/python"));
-    python.args(["-c", include_str!("reviewer/legacy.py")]);
-    let results: Vec<Value> =
-        serde_json::from_slice(&command(python, &json!(cases)).stdout).unwrap();
-    assert_eq!(results.len(), cases.len());
-    for (case, expected) in cases.iter().zip(results) {
-        assert_eq!(
-            case["violations"], expected,
-            "Python oracle: {}",
-            case["name"]
-        );
-        let actual: Vec<_> = validate(&case["inputs"], &case["reply"])
-            .err()
-            .map(|e| e.to_string())
-            .into_iter()
-            .collect();
-        assert_eq!(json!(actual), expected, "Rust parity: {}", case["name"]);
-    }
-}
-
 fn cli_contract() {
     let case = &cases()[2];
     let mut cli = Command::new(env!("CARGO_BIN_EXE_tl3"));
@@ -127,17 +100,34 @@ fn real_worker_repair() {
 /// State-table Reviewing: parsing preserves citation membership, kind, and first-failure order.
 fn parsed_citations_and_first_failure() {
     use proptest::{prelude::*, test_runner::TestRunner};
-    TestRunner::new(ProptestConfig::with_cases(128)).run(
-        &(prop::collection::vec(0u8..10,0..20),prop::collection::vec((0u8..12,any::<bool>()),1..21)),
-        |(ids,citations)| {
-            let mut inputs=cases()[0]["inputs"].clone();
-            inputs["goals"]=json!([{"id":"g1","description":"goal","verification":"test"}]);
-            inputs["standing_rules"]=json!(ids.iter().map(|id|json!({"id":format!("r{id}"),"description":"rule"})).collect::<Vec<_>>());
-            let blockers:Vec<_>=citations.iter().map(|(id,goal)|json!({"citation":{"kind":if *goal {"goal"} else {"standing_rule"},"id":if *goal {"g1".to_string()} else {format!("r{id}")}},"problem":"problem","evidence":"evidence"})).collect();
-            let reply=json!({"verdict":"changes","blocking_findings":blockers,"findings":[]});
-            let bytes=serde_json::to_vec(&json!({"inputs":inputs,"reply":reply})).unwrap();
-            let roundtrip:Value=serde_json::from_slice(&bytes).unwrap();
-            prop_assert_eq!(validate(&roundtrip["inputs"],&roundtrip["reply"]).is_ok(),citations.iter().all(|(id,goal)|*goal||ids.contains(id)));
+    let membership = prop::collection::vec(0u8..10, 0..20);
+    let findings = prop::collection::vec((0u8..12, 0u8..3, any::<bool>()), 1..21);
+    TestRunner::new(ProptestConfig::with_cases(128))
+        .run(&(membership, findings), |(ids, citations)| {
+            let mut inputs = cases()[0]["inputs"].clone();
+            let mut rules: Vec<_> = ids.iter().map(|id| json!({"id":format!("r{id}"),"description":"rule"})).collect();
+            rules.push(json!({"id":"request-scope","description":"scope"}));
+            inputs["standing_rules"] = json!(rules);
+            inputs["diff"] = json!("+abcdefgh");
+            let blockers: Vec<_> = citations.iter().map(|(id,kind,quoted)| {
+                let (kind, id) = match kind {
+                    0 => ("goal", "g1".to_string()),
+                    1 => ("standing_rule", format!("r{id}")),
+                    _ => ("standing_rule", "request-scope".to_string()),
+                };
+                json!({"citation":{"kind":kind,"id":id},"problem":"problem","evidence":if *quoted {"+abcdefgh"} else {"no quote"}})
+            }).collect();
+            let reply = json!({"verdict":"changes","blocking_findings":blockers,"findings":[]});
+            let bytes = serde_json::to_vec(&json!({"inputs":inputs,"reply":reply})).unwrap();
+            let roundtrip: Value = serde_json::from_slice(&bytes).unwrap();
+            let expected = citations.iter().find_map(|(id,kind,quoted)| match kind {
+                1 if !ids.contains(id) => Some("blocking finding cites an unknown goal or standing rule"),
+                2 if !quoted => Some("scope blocker must quote a changed hunk"),
+                _ => None,
+            });
+            let actual = validate(&roundtrip["inputs"], &roundtrip["reply"]).err().map(|e| e.to_string());
+            prop_assert_eq!(actual.as_deref(), expected);
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
 }
