@@ -69,3 +69,24 @@ class RequiredRustCheckTests(unittest.TestCase):
         result = bazel_gate.gate_proofs(workspace, {})
         self.assertEqual(calls, [([label], 'remote')])
         self.assertEqual(result['verdicts']['rust'], 'fail')
+
+    def test_post_merge_runs_verus_only_in_the_amd64_pass(self):
+        from types import SimpleNamespace
+        import bazel_gate
+        proof_label, ordinary = '//crates/mergify:verus_delivery', '//harness/tests:test_harness'
+        calls = []
+
+        def run(targets, config, metadata, log_name):
+            calls.append((set(targets), config))
+            return dict.fromkeys(targets, 'PASSED')
+
+        workspace = SimpleNamespace(
+            ensure_commit=lambda sha: None, changes=lambda base, head: ({'docs/bazel.md'}, set()),
+            bazel_diff=lambda base, head: set(), checkout=lambda sha: None,
+            tests=lambda: {proof_label, ordinary}, used_sources=set,
+            rust_tests=lambda: {proof_label}, verus_tests=lambda: {proof_label},
+            test=run, budget_warnings=lambda statuses: [], inputs_check=lambda: [])
+        result = bazel_gate.gate_main(workspace, 'base', 'head', {})
+        self.assertEqual(calls, [({proof_label, ordinary}, 'remote'), ({ordinary}, 'remote-arm64')])
+        self.assertFalse(any(result['architectures']['amd64']['failed'].values()))
+        self.assertFalse(any(result['architectures']['arm64']['failed'].values()))
