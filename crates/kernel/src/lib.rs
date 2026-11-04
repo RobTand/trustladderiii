@@ -2814,7 +2814,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         final(w).fail_fast == old(w).fail_fast,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
-] proof [reveal(reply_bounds); reveal(footprint::ordered_table);] proof [reveal(distance);] {
+] proof [reveal(reply_bounds); reveal(footprint::ordered_table); reveal(distance);] {
     kernel_snapshot! { before_reply = *w }
     let n = &w.nodes[i];
     if n.phase.is_stopping() {
