@@ -81,10 +81,14 @@ CASES = [
 ]
 
 
-def verify(binary, sysroot, root):
+def verify(binary, sysroot, root, selected=None):
+    command = [str(binary), '--num-threads', '1', '--rlimit', '30',
+               '--sysroot', str(sysroot), str(root), '--edition', '2024']
+    if selected:
+        module, function = selected
+        command.extend(['--verify-only-module', module, '--verify-function', f'*::{function}'])
     return subprocess.run(
-        [str(binary), '--num-threads', '1', '--rlimit', '30', '--sysroot', str(sysroot),
-         str(root), '--edition', '2024'],
+        command,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False,
     )
 
@@ -94,6 +98,8 @@ def main():
     parser.add_argument('verifier', type=Path)
     parser.add_argument('sysroot', type=Path)
     parser.add_argument('--case', choices=[case[0] for case in CASES], action='append')
+    parser.add_argument('--full-mutants', action='store_true',
+                        help='reverify every function for each mutant, after the full baseline')
     args = parser.parse_args()
     kernel = Path(__file__).resolve().parents[1]
     baseline = verify(args.verifier, args.sysroot, kernel / 'verus/progress.rs')
@@ -120,8 +126,17 @@ def main():
             mutated = before[:start] + selected.replace(old, new, 1) + before[end:]
             source.write_text(mutated)
             digest = hashlib.sha256(mutated.encode()).hexdigest()
-            result = verify(args.verifier, args.sysroot, copy / 'verus/progress.rs')
-            print(f'CASE {name} source_sha256={digest} exit={result.returncode}', flush=True)
+            # The unmodified full baseline above proves every callee contract.
+            # A scoped mutant changes only this function's actual body. Recheck
+            # that body against its contract; unscoped seeds still recheck all.
+            selected = None
+            if scope and not args.full_mutants:
+                module = {'ranks.rs': 'kernel::ranks',
+                          'dependencies.rs': 'kernel::dependencies'}.get(filename, 'kernel')
+                selected = (module, scope[0])
+            result = verify(args.verifier, args.sysroot, copy / 'verus/progress.rs', selected)
+            print(f'CASE {name} source_sha256={digest} target={selected} '
+                  f'exit={result.returncode}', flush=True)
             print(result.stdout, flush=True)
             rejected = result.returncode != 0 and re.search(
                 r'verification results:: [0-9]+ verified, [1-9][0-9]* errors', result.stdout
