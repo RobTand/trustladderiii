@@ -73,6 +73,8 @@ pub open spec fn arithmetic_consistent(node: Node) -> bool {
 pub(super) closed spec fn retry_bounds(before: World, after: World, i: int,
     out_before: usize, out_after: usize) -> bool {
     (settle_shape(before.nodes@[i]) ==> settle_shape(after.nodes@[i]))
+        && after.nodes@[i].repo == before.nodes@[i].repo
+        && after.nodes@[i].footprint == before.nodes@[i].footprint
         && after.nodes@.len() == before.nodes@.len()
         && (forall|j: int| 0 <= j < before.nodes@.len() && j != i
             ==> after.nodes@[j] == before.nodes@[j])
@@ -99,6 +101,7 @@ pub(super) closed spec fn retry_bounds(before: World, after: World, i: int,
 pub(super) closed spec fn reply_bounds(before: World, after: World, i: int,
     out_before: usize, out_after: usize) -> bool {
     (settle_shape(before.nodes@[i]) ==> settle_shape(after.nodes@[i]))
+        && after.nodes@[i].repo == before.nodes@[i].repo
         && after.nodes@.len() == before.nodes@.len()
         && (forall|j: int| 0 <= j < before.nodes@.len() && j != i
             ==> after.nodes@[j] == before.nodes@[j])

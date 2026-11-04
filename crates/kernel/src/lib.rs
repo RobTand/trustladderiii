@@ -2251,7 +2251,8 @@ fn abandon_operation(m: &mut Node) -> (result: ()) [
 kernel_fn! {
 /// #771: successful completion resets failures and preserves allocation counters.
 fn end_operation(m: &mut Node) -> (result: ()) [
-    ensures (settle_shape(*old(m)) ==> settle_shape(*final(m))),
+    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+        (settle_shape(*old(m)) ==> settle_shape(*final(m))),
         final(m).run.is_none(), final(m).job.is_none(), !final(m).pool,
         final(m).run_failures == 0, final(m).run_incidents == 0,
         final(m).phase == old(m).phase, final(m).pos == old(m).pos,
@@ -2275,7 +2276,8 @@ kernel_fn! {
 fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
     requires !(old(m).phase is Closed || old(m).phase is Stopping)
         ==> old(m).generation < u64::MAX,
-    ensures (settle_shape(*old(m)) ==> settle_shape(*final(m))),
+    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+        (settle_shape(*old(m)) ==> settle_shape(*final(m))),
         final(m).generation as int == old(m).generation as int
             + if old(m).phase is Closed || old(m).phase is Stopping { 0int } else { 1int },
         final(m).phase == match old(m).phase {
@@ -2419,7 +2421,9 @@ fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         holding(old(w).nodes@[i as int].phase) ==>
             old(w).nodes@[i as int].generation < u64::MAX,
-    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
@@ -2464,7 +2468,9 @@ fn emit(w: &mut World, i: usize, kind: EffectKind,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         old(w).nodes@[i as int].next_seq < u64::MAX,
-    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
         final(w).nodes@[i as int].next_seq as int == old(w).nodes@[i as int].next_seq as int + 1,
@@ -2591,7 +2597,9 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
         footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
         footprint::ordered_table(*old(w)),
-    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        footprint::valid_footprint(*final(w), final(w).nodes@[i as int].footprint),
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
@@ -2641,8 +2649,19 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         footprint::valid_under_table_growth(before_operation@, *w, w.nodes@[i as int].footprint);
     }
     match reply {
-        Reply::MakerNeedsFiles { files, fits } => reply_files(w, i, files, fits, out),
-        _ => reply_transition(w, i, reply, out),
+        Reply::MakerNeedsFiles { files, fits } => {
+            kernel_proof! { footprint::valid_under_table_growth(before_operation@, *w, files); }
+            reply_files(w, i, files, fits, out);
+        }
+        _ => {
+            reply_transition(w, i, reply, out);
+            kernel_proof! {
+                if let Reply::PlanLeaf { footprint, .. } = reply {
+                    footprint::valid_under_table_growth(before_operation@, *w, footprint);
+                }
+                footprint::valid_under_table_growth(before_operation@, *w, before_operation@.nodes@[i as int].footprint);
+            }
+        }
     }
 }
 }
@@ -2657,7 +2676,9 @@ fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
         footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
         footprint::valid_footprint(*old(w), files), footprint::ordered_table(*old(w)),
-    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        footprint::valid_footprint(*final(w), final(w).nodes@[i as int].footprint),
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
@@ -2713,7 +2734,10 @@ fn reply_transition(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint
+            || match reply { Reply::PlanLeaf { footprint, .. } => final(w).nodes@[i as int].footprint == footprint, _ => false },
+        reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
 ] {
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
@@ -2731,7 +2755,9 @@ fn finish_ingest(w: &mut World, i: usize, size: u8, early_end: Option<EarlyEnd>)
     -> (result: ()) [
     requires i < old(w).nodes@.len(),
         node_headroom(old(w).nodes@[i as int]),
-    ensures reply_bounds(*old(w), *final(w), i as int, 0, 0),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        reply_bounds(*old(w), *final(w), i as int, 0, 0),
 ] proof [reveal(reply_bounds);] {
     let m = &mut w.nodes[i];
     if !m.credit.ready {
@@ -2754,7 +2780,9 @@ fn reply_ingest(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
 ] proof [reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::IngestDone { size } => {
@@ -2799,7 +2827,10 @@ fn reply_plan(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint
+            || match reply { Reply::PlanLeaf { footprint, .. } => final(w).nodes@[i as int].footprint == footprint, _ => false },
+        reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
 ] proof [reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::PlanLeaf { footprint, fits } => {
@@ -2833,7 +2864,9 @@ fn reply_work(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
 ] proof [reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::MakerDone { head } => {
@@ -2883,7 +2916,9 @@ fn reply_rebase(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
 ] proof [reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::RebaseClean { head } => {
@@ -2923,7 +2958,9 @@ fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
         old(w).nodes@[i as int].generation as int + 2 <= u64::MAX as int,
         old(w).nodes@[i as int].run_failures <= 1,
         old(w).nodes@[i as int].run_incidents <= 2,
-    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
@@ -2963,7 +3000,8 @@ kernel_fn! {
 /// It asks Rob nothing; the summary offers `restart`, as for any stop (Q49).
 fn stop_for_review(m: &mut Node, step: ReviewStop) -> (result: ()) [
     requires old(m).generation < u64::MAX,
-    ensures (settle_shape(*old(m)) ==> settle_shape(*final(m))),
+    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+        (settle_shape(*old(m)) ==> settle_shape(*final(m))),
         final(m).generation as int <= old(m).generation as int + 1,
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).last_cmd == old(m).last_cmd, final(m).review_stop == Some(step),
@@ -2980,7 +3018,9 @@ fn failed_round(w: &mut World, i: usize, step: ReviewStop,
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
 ] proof [reveal(retry_bounds);] {
     let m = &mut w.nodes[i];
     if m.round == 0 {
@@ -3002,7 +3042,9 @@ fn next_rung(w: &mut World, i: usize, step: ReviewStop,
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
 ] proof [reveal(retry_bounds);] {
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
@@ -3056,7 +3098,9 @@ fn out_of_room(w: &mut World, i: usize, step: ReviewStop,
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
 ] proof [reveal(retry_bounds);] {
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
@@ -3091,7 +3135,9 @@ fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
 ] proof [reveal(retry_bounds);] {
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
@@ -3117,7 +3163,9 @@ fn recheck(w: &mut World, i: usize, target: Phase,
     requires !(target is Closed), i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
 ] proof [reveal(retry_bounds);] {
     let m = &mut w.nodes[i];
     m.rechecks = m.rechecks.saturating_add(1);
@@ -3157,7 +3205,9 @@ fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures (settle_shape(old(w).nodes@[i as int]) && stopping_effect_fits(old(w).nodes@[i as int])
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) && stopping_effect_fits(old(w).nodes@[i as int])
             ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
@@ -3201,7 +3251,8 @@ kernel_fn! {
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
     requires old(m).generation < u64::MAX,
-    ensures (settle_shape(*old(m))
+    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+        (settle_shape(*old(m))
             && (old(m).phase is Stopping ==> current_item(*old(m)) == Some(Item::Teardown(kind)))
             ==> settle_shape(*final(m))),
         final(m).generation as int <= old(m).generation as int + 1,
@@ -3250,7 +3301,9 @@ fn delivery_failed(w: &mut World, i: usize, kind: EffectKind,
         old(w).nodes@[i as int].next_seq < u64::MAX,
         old(w).nodes@[i as int].fx_failures <= 1,
         old(w).nodes@[i as int].fx_incidents <= 2,
-    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
@@ -3295,7 +3348,9 @@ fn effect_failed(w: &mut World, i: usize, kind: EffectKind,
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
         old(w).nodes@[i as int].generation < u64::MAX,
         old(w).next_question < u64::MAX,
-    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
@@ -3355,7 +3410,9 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         dependencies::edges_indexable(*old(w)), old(w).next_question < u64::MAX,
-    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
@@ -3397,7 +3454,9 @@ fn fact_transition(w: &mut World, i: usize, fact: Fact,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(fact is DependencyRemove || fact is Dependency || fact is PrMerged),
-    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
@@ -3525,7 +3584,9 @@ fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bool,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 4 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
-    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
@@ -3588,7 +3649,9 @@ fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
@@ -3662,7 +3725,9 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
@@ -3759,7 +3824,9 @@ fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
         old(w).nodes@[i as int].credit.withheld ==> q.cost == 0,
         old(w).nodes@[i as int].credit.added as int + 255 <= u32::MAX as int,
         old(w).nodes@[i as int].credit.spent < u32::MAX,
-    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
@@ -3804,7 +3871,8 @@ fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
 kernel_fn! {
 /// Cleanup question row / #771: handling cleanup allocates no monotone counter.
 fn mark_handled(m: &mut Node) -> (result: ()) [
-    ensures (settle_shape(*old(m)) ==> settle_shape(*final(m))),
+    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+        (settle_shape(*old(m)) ==> settle_shape(*final(m))),
         final(m).generation == old(m).generation,
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).question == old(m).question,
