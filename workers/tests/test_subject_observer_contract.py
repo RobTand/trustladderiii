@@ -336,6 +336,10 @@ def test_review696_module_selector_reaches_exact_node_violation_before_applicabi
                         {'kind': 'regression', 'node_ids': [subject_path + '::test_wrong_head'], 'goal_ids': [1]}]}
     validate('planner-reply', reply)
     check_reply(inputs, reply)
-    assert len(reply['violations']) == 1, reply
-    assert reply['violations'][0].startswith('Checks must name exact pytest node IDs')
+    exact = [m for m in reply['violations'] if m.startswith('Checks must name exact pytest node IDs')]
+    assert len(exact) == 1, reply
+    # #691: proof rules are validated alongside selectors, so a proof on a regression check is also named.
+    allowed = {exact[0]} | ({'A subject/observer proof requires a demonstrating or reproducing check.'}
+                            if kind == 'regression' else set())
+    assert set(reply['violations']) <= allowed, reply
     assert calls == []
