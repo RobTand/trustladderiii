@@ -3740,6 +3740,7 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
                 _ => {
                     assert(w.nodes@ == before_fact@.nodes@.update(i as int, w.nodes@[i as int]));
                     lift_node_progress(before_fact@, *w, i as int);
+                    dependencies::indexability_frame(before_fact@, *w);
                 },
             }
         }
