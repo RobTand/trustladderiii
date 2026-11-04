@@ -1,6 +1,8 @@
 use alloc::vec::Vec;
 
 use crate::{FileId, World};
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::*;
 
 #[cfg_attr(
     all(feature = "serde", not(kani)),
@@ -24,6 +26,25 @@ enum Repr {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Footprint(Repr);
 
+#[cfg(verus_keep_ghost)]
+verus! {
+/// State-table file grants / #771: exact views of the executable representation.
+pub closed spec fn footprint_empty(footprint: Footprint) -> bool {
+    footprint.0 == Repr::Inline(0)
+}
+
+pub closed spec fn inline_footprint(bits: u64) -> Footprint {
+    Footprint(Repr::Inline(bits))
+}
+
+pub closed spec fn valid_footprint(world: World, footprint: Footprint) -> bool {
+    match footprint.0 {
+        Repr::Inline(_) => true,
+        Repr::Interned(index) => index < world.file_sets@.len(),
+    }
+}
+}
+
 impl Default for Footprint {
     fn default() -> Self {
         Self(Repr::Inline(0))
@@ -31,12 +52,22 @@ impl Default for Footprint {
 }
 
 impl Footprint {
-    pub fn is_empty(self) -> bool {
-        self == Self::default()
+    kernel_fn! {
+    /// #771: only the canonical inline empty set is the empty handle.
+    pub fn is_empty(self) -> (result: bool) [
+        ensures result == footprint_empty(self),
+    ] {
+        matches!(self.0, Repr::Inline(0))
+    }
     }
 
-    pub(crate) fn inline(bits: u64) -> Self {
+    kernel_fn! {
+    /// #771: an inline file mask keeps its exact executable representation.
+    pub(crate) fn inline(bits: u64) -> (result: Self) [
+        ensures result == inline_footprint(bits),
+    ] {
         Self(Repr::Inline(bits))
+    }
     }
 }
 
@@ -84,11 +115,16 @@ impl World {
         &self.file_sets
     }
 
-    pub(crate) fn has_footprint(&self, footprint: Footprint) -> bool {
+    kernel_fn! {
+    /// #771: a file handle is inline or names an existing immutable file set.
+    pub(crate) fn has_footprint(&self, footprint: Footprint) -> (result: bool) [
+        ensures result == valid_footprint(*self, footprint),
+    ] {
         match footprint.0 {
             Repr::Inline(_) => true,
             Repr::Interned(index) => index < self.file_sets.len(),
         }
+    }
     }
 
     pub(crate) fn footprints_disjoint(&self, a: Footprint, b: Footprint) -> bool {

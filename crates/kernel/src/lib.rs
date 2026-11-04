@@ -2669,6 +2669,7 @@ fn failed_round(w: &mut World, i: usize, step: ReviewStop,
 kernel_fn! {
 /// Q54 / #771: the ladder after a failed fix round costs at most one credit.
 /// It tries a bigger budget, another model, one re-plan, then asks Rob.
+#[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 fn next_rung(w: &mut World, i: usize, step: ReviewStop,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
