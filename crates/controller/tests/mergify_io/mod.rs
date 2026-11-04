@@ -9,7 +9,8 @@ use tl3_controller::{
     adapters::mergify::{Evidence, Progress, RequiredCheck},
 };
 use tl3_github::{CheckRun, IssueActivity, PullRequest};
-use tl3_kernel::{Ack, EffectKind, NodeId, Out};
+use tl3_kernel::{Ack, EffectKind, NodeId};
+use tl3_controller::executor::Output as Out;
 use tl3_mergify::{
     QUEUE_LABEL, QueueState,
     decide::{enqueue as lifecycle, facts},
@@ -150,7 +151,7 @@ fn checks_settled(state: &tl3_mergify::Observation) -> bool {
     ))
 }
 mod tl3_store {
-    pub use super::io::Store;
+    pub(super) use super::io::Store;
 }
 
 macro_rules! adapter {
