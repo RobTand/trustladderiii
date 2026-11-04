@@ -53,6 +53,15 @@ pub(crate) struct Modules {
     files: Vec<(std::ffi::OsString, Vec<u8>)>,
 }
 
+/// A point in publishing a copy at which a test can stop it, as a crash would.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Publication {
+    /// The partial copy is complete and synced, not yet renamed.
+    Written,
+    /// The copy is renamed into place; its parent is not yet synced.
+    Renamed,
+}
+
 /// The refusal while the harness is unavailable.
 pub(crate) const HARNESS_UNAVAILABLE: &str =
     "the trusted harness was unavailable when tl3d started; install it, then restart tl3d";
@@ -122,13 +131,13 @@ impl Harness {
         self.path_with(&mut |_| Ok(()))
     }
 
-    /// `before_rename` runs on the complete, synced partial copy; tests fail it there.
+    /// `interrupt` runs at each publication step; tests fail it there, as a crash would.
     pub(super) fn path_with(
         &mut self,
-        before_rename: &mut dyn FnMut(&Path) -> std::io::Result<()>,
+        interrupt: &mut dyn FnMut(Publication) -> std::io::Result<()>,
     ) -> Result<PathBuf> {
         if let Self::Loaded(modules) = self {
-            *self = match modules.publish(before_rename) {
+            *self = match modules.publish(interrupt) {
                 Ok(copy) => Self::Copied(copy),
                 Err(error) => Self::unavailable(&modules.copies, error),
             };
@@ -160,7 +169,7 @@ impl Modules {
     // Publish once, under ownership: verify or write <copies>/<digest>, then sweep the rest.
     fn publish(
         &self,
-        before_rename: &mut dyn FnMut(&Path) -> std::io::Result<()>,
+        interrupt: &mut dyn FnMut(Publication) -> std::io::Result<()>,
     ) -> std::io::Result<PathBuf> {
         fs::create_dir_all(&self.copies)?;
         // A partial copy here was abandoned by an earlier process: only the owner writes here.
@@ -184,7 +193,7 @@ impl Modules {
                 std::process::id(),
                 &self.digest[..16]
             ));
-            let written = self.write(&partial, &copy, before_rename);
+            let written = self.write(&partial, &copy, interrupt);
             if written.is_err() {
                 let _ = fs::remove_dir_all(&partial);
             }
@@ -210,7 +219,7 @@ impl Modules {
         &self,
         partial: &Path,
         copy: &Path,
-        before_rename: &mut dyn FnMut(&Path) -> std::io::Result<()>,
+        interrupt: &mut dyn FnMut(Publication) -> std::io::Result<()>,
     ) -> std::io::Result<()> {
         use std::io::Write;
         fs::create_dir(partial)?;
@@ -220,8 +229,9 @@ impl Modules {
             file.sync_all()?;
         }
         sync_directory(partial)?;
-        before_rename(partial)?;
+        interrupt(Publication::Written)?;
         fs::rename(partial, copy)?;
+        interrupt(Publication::Renamed)?;
         sync_directory(&self.copies)
     }
 
@@ -696,6 +706,38 @@ mod tests {
             listing(&copies),
             [copy.file_name().unwrap().to_string_lossy().into_owned()]
         );
+    }
+
+    /// Encodes: #750 round 4 finding 2. A crash after the rename, or a failed fsync of the
+    /// parent, leaves a completed copy behind. The next owner reclaims every completed copy
+    /// except the one it is about to use, so interrupted startups across releases leave at
+    /// most one.
+    #[test]
+    fn interrupted_startups_leave_at_most_one_completed_copy() {
+        let f = crate::git_tests::Repo::new();
+        let root = f.root.path().join("tl3");
+        let configured = releases(&root);
+        let copies = f.root.path().join("records-harness");
+        for release in ["a", "b", "a", "b"] {
+            switch_current(&root, release);
+            let mut interrupted = Harness::load(&configured, &copies);
+            let failed = interrupted.path_with(&mut |step| match step {
+                Publication::Renamed => Err(std::io::Error::other("crashed after the rename")),
+                Publication::Written => Ok(()),
+            });
+            assert!(matches!(failed, Err(Error::Invalid(HARNESS_UNAVAILABLE))));
+            assert!(
+                listing(&copies).len() <= 1,
+                "completed copies pile up: {:?}",
+                listing(&copies)
+            );
+        }
+        let mut working = Harness::load(&configured, &copies);
+        assert_eq!(
+            staged_release(&f, &mut working, "input-after").unwrap(),
+            release("b")
+        );
+        assert_eq!(listing(&copies).len(), 1);
     }
 
     #[test]

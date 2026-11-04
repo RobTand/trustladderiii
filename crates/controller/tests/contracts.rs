@@ -1621,7 +1621,7 @@ fn the_newest_released_set_captures_the_current_contract() {
 /// type. workers/tests/test_check_report_vectors.py runs the same cases.
 #[test]
 fn raw_numbers_parse_as_pythons_validator_decides() {
-    use tl3_controller::contracts::report::{CollectionSaturation, SymptomRun};
+    use tl3_controller::contracts::report::{CollectionSaturation, SymptomRecord, SymptomRun};
     #[derive(serde::Deserialize)]
     struct Case {
         definition: String,
@@ -1647,12 +1647,18 @@ fn raw_numbers_parse_as_pythons_validator_decides() {
             }
             // Records reach the controller inside a symptom run, which reads each one's raw
             // text, so an exit code is checked exactly (#750 round 3 finding 5).
-            "SymptomRecord" => serde_json::from_str::<SymptomRun>(&format!(
-                r#"{{"side":"base","run":1,"outcome":"passed","sha256":"{}","records":[{}]}}"#,
-                "0".repeat(64),
-                case.document
-            ))
-            .is_ok(),
+            // A record is checked exactly on its own and inside its symptom run (#750 round 4).
+            "SymptomRecord" => {
+                let direct = serde_json::from_str::<SymptomRecord>(&case.document).is_ok();
+                let wrapped = serde_json::from_str::<SymptomRun>(&format!(
+                    r#"{{"side":"base","run":1,"outcome":"passed","sha256":"{}","records":[{}]}}"#,
+                    "0".repeat(64),
+                    case.document
+                ))
+                .is_ok();
+                assert_eq!(direct, wrapped, "direct and wrapped: {}", case.document);
+                direct
+            }
             other => panic!("no Rust type for {other}"),
         };
         assert_eq!(parsed, case.valid, "{} {}", case.definition, case.document);
