@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import random
 import statistics
+import sys
 import time
 import types
 
@@ -103,6 +104,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=OUTPUT)
     parser.add_argument("--benchmark", action="store_true")
+    parser.add_argument("--check", action="store_true", help="check the selected oracle without writing it")
     args = parser.parse_args()
     tokenizer, pin = encoding()
     cases = list(corpus())
@@ -121,9 +123,22 @@ def main():
                               "median_ms": statistics.median(durations) * 1000, "calls": 5}), flush=True)
     record = {"python_tiktoken": "0.14.0", "bpe_sha256": pin, "pattern": tokenizer._pat_str,
               "random_seed": 748, "cases": cases}
-    args.output.write_text(json.dumps(record, ensure_ascii=True, indent=2) + "\n")
-    print(f"wrote {len(cases)} cases to {args.output}", flush=True)
+    generated = (json.dumps(record, ensure_ascii=True, indent=2) + "\n").encode()
+    if args.check:
+        try:
+            committed = args.output.read_bytes()
+        except FileNotFoundError:
+            print(f"oracle missing: {args.output}", file=sys.stderr)
+            return 1
+        if generated != committed:
+            print(f"oracle drift: {args.output}; regenerate with tokenizer_oracle.py", file=sys.stderr)
+            return 1
+        print(f"checked {len(cases)} cases in {args.output}", flush=True)
+    else:
+        args.output.write_bytes(generated)
+        print(f"wrote {len(cases)} cases to {args.output}", flush=True)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
