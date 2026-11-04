@@ -629,6 +629,32 @@ fn late_comment_after_confirmation_is_deduplicated_on_github_news() {
     drop(controller);
     api.0.lock().unwrap().fail_comment_reads = false;
     let mut controller = open(&settings, root.path(), Some(&server.uri()));
+    if let Some(incident) = controller.snapshot().unwrap().rows.iter().find(|r| {
+        r.table == "incidents"
+            && r.value["open"] == true
+            && r.value["signature"]["class"] == "message_cleanup"
+    }) {
+        controller
+            .observe(
+                "clear-restarted-cleanup",
+                tl3_controller::executor::Observation::GitHubComment {
+                    repository: bootstrap().repos[0].clone(),
+                    issue: 12,
+                    comment: tl3_github::Comment {
+                        id: 902,
+                        body: format!("clear incident {}", incident.id),
+                        user: tl3_github::Actor {
+                            id: 42,
+                            login: "rob".into(),
+                        },
+                        created_at: chrono::DateTime::UNIX_EPOCH,
+                        updated_at: chrono::DateTime::UNIX_EPOCH,
+                        issue_url: "https://api.github.com/repos/owner/sandbox/issues/12".into(),
+                    },
+                },
+            )
+            .unwrap();
+    }
     assert!((0..30).any(|_| !controller.drive_once().unwrap()));
     assert_eq!(
         api.0.lock().unwrap().comments.len(),
