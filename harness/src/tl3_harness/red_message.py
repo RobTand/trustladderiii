@@ -42,7 +42,7 @@ def assertion_reason(error, assertion):
         # Manual AssertionError and pytest.fail keep their entire message.
         message, boundary, _ = reason.partition('\nassert ')
         if boundary:
-            reason = message
+            reason = message.replace('\n  ', '\n')
     return reason
 
 
@@ -62,7 +62,7 @@ def source_tokens(source):
 
 def capture(error, declared: str | None) -> tuple[str, RedMessageMatch | None]:
     assertion = rewritten_assertion(error)
-    reason = assertion_reason(error, assertion)[:1000]
+    reason = assertion_reason(error, assertion)
     if declared is None:
         return reason, None
     if reason == declared:
