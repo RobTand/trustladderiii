@@ -24,6 +24,38 @@ CASES = [
     ('sum_update', 'ranks.rs',
      'node_total(nodes.drop_last()) + distance(nodes.last())',
      'node_total(nodes.drop_last()) + 0'),
+    ('credit_deposit', 'lib.rs', 'self.added += deposit as u32;', 'self.added += 0;'),
+    ('phase_generation', 'lib.rs', 'm.generation += 1;', 'm.generation += 0;', 'set_phase'),
+    ('merge_credit', 'lib.rs', 'm.credit.earned += 1;', 'm.credit.earned += 0;', 'merge_credit'),
+    ('effect_sequence', 'lib.rs', 'm.next_seq += 1;', 'm.next_seq += 0;', 'emit_node'),
+    ('ticket_allocation', 'lib.rs', '*next_ticket += 1;', '*next_ticket += 0;', 'take_ticket_node'),
+    ('outbox_length', 'lib.rs', 'self.len += 1;', 'self.len += 0;', 'push'),
+    ('scan_budget', 'headroom.rs', 'checked_add(1)', 'checked_add(0)', 'scan_step_budget'),
+    ('settle_budget', 'headroom.rs', 'checked_mul(6)', 'checked_mul(5)', 'settle_step_budget'),
+    ('ticket_budget', 'headroom.rs', 'checked_mul(2)', 'checked_mul(1)', 'ticket_step_budget'),
+    ('local_capacities', 'ranks.rs',
+     'Some(Item::Teardown(_)) => if n.question.is_some() { 0 } else { (6 - n.pos) as nat }',
+     'Some(Item::Teardown(_)) => if n.question.is_some() { 0 } else { (7 - n.pos) as nat }'),
+    ('settle_blocked', 'ranks.rs', 'node.ticket = None;', 'let _ = node.ticket;', 'advance_blocked'),
+    ('settle_finished', 'ranks.rs', 'set_phase(node, Phase::Queued);',
+     'let _ = Phase::Queued;', 'advance_finished'),
+    ('settle_do', 'ranks.rs', 'emit_node(node, context.node, kind, out);',
+     'let _ = kind;', 'advance_do'),
+    ('settle_start', 'ranks.rs', 'take_ticket_node(node, next_ticket);',
+     'let _ = next_ticket;', 'advance_start'),
+    ('settle_checks', 'ranks.rs', 'm.pos += 1;', 'm.pos += 0;', 'advance_checks'),
+    ('settle_rebase', 'ranks.rs', 'm.pos += 1;', 'm.pos += 0;', 'advance_rebase'),
+    ('settle_admit', 'ranks.rs', 'set_phase(m, Phase::Planning { must_split: false });',
+     'let _ = m;', 'advance_admit'),
+    ('settle_slot', 'ranks.rs', 'take_ticket_node(node, next_ticket);',
+     'let _ = next_ticket;', 'advance_slot'),
+    ('settle_release', 'ranks.rs', 'm.pos += 1;', 'm.pos += 0;', 'advance_release'),
+    ('settle_teardown', 'ranks.rs', 'm.pos += 1;', 'm.pos += 0;', 'advance_teardown'),
+    ('settle_idle', 'ranks.rs', 'false', 'true', 'advance_idle'),
+    ('settle_dispatch', 'ranks.rs',
+     'Item::Admit => advance_admit(node, next_ticket, context, out)',
+     'Item::Admit => advance_idle(node, next_ticket, context, out)', 'advance_node'),
+
 ]
 
 
@@ -48,7 +80,7 @@ def main():
         r'verification results:: [1-9][0-9]* verified, 0 errors', baseline.stdout
     ):
         raise SystemExit('baseline did not verify; mutant rejection would be ambiguous')
-    for name, filename, old, new in CASES:
+    for name, filename, old, new, *scope in CASES:
         if args.case and name not in args.case:
             continue
         with tempfile.TemporaryDirectory(prefix=f't771-{name}-') as scratch:
@@ -56,9 +88,14 @@ def main():
             shutil.copytree(kernel, copy)
             source = copy / 'src' / filename
             before = source.read_text()
-            if old not in before:
-                raise SystemExit(f'{name}: seed no longer matches the executable source')
-            mutated = before.replace(old, new, 1)
+            start = before.index(f'fn {scope[0]}(') if scope else 0
+            end = before.find('kernel_fn! {', start) if scope else -1
+            if end < 0:
+                end = len(before)
+            selected = before[start:end]
+            if old not in selected:
+                raise SystemExit(f'{name}: seed no longer matches the selected source')
+            mutated = before[:start] + selected.replace(old, new, 1) + before[end:]
             source.write_text(mutated)
             digest = hashlib.sha256(mutated.encode()).hexdigest()
             result = verify(args.verifier, args.sysroot, copy / 'verus/progress.rs')
@@ -67,7 +104,7 @@ def main():
             rejected = result.returncode != 0 and re.search(
                 r'verification results:: [0-9]+ verified, [1-9][0-9]* errors', result.stdout
             ) and re.search(
-                r'postcondition not satisfied|assertion failed|arithmetic overflow|arithmetic underflow',
+                r'precondition not satisfied|postcondition not satisfied|assertion failed|arithmetic overflow|arithmetic underflow',
                 result.stdout,
             )
             if not rejected:
