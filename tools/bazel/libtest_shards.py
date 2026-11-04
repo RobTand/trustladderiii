@@ -65,8 +65,19 @@ def measured(binary, lines):
 
 
 def measured_groups(binary, lines):
-    """Seconds per scenario group from scenario_shard.rs's `scenario group NAME: Xs` lines."""
-    raise NotImplementedError('#742: measure scenario groups')
+    """Seconds per scenario group from scenario_shard.rs's `scenario group NAME: Xs` lines.
+
+    Every group runs in exactly one shard of a run; across runs the largest time wins.
+    """
+    prefix = re.compile(r'^\[' + re.escape(binary) + r'\] scenario group (\w+): ([0-9.]+)s\s*$')
+    seconds = {}
+    for line in lines:
+        match = prefix.match(line)
+        if match:
+            seconds[match[1]] = max(seconds.get(match[1], 0.0), round(float(match[2]), 3))
+    if not seconds:
+        raise RuntimeError(f'No {binary} scenario groups in the logs')
+    return dict(sorted(seconds.items()))
 
 
 def main():

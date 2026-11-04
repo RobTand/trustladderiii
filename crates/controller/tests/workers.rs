@@ -353,6 +353,58 @@ fn narrowed_materials(settings: &tl3_config::Store, wrapped: bool) {
     );
 }
 
+const PLANNING_MODES: [&str; 6] = [
+    "normal",
+    "plan-split",
+    "plan-invalid",
+    "plan-cant-meet",
+    "plan-bad-split",
+    "plan-bad-schema",
+];
+
+fn store_settings(settings: &tl3_config::Store) -> Value {
+    json!({"host": settings.host, "port": settings.port, "database": settings.database, "user": settings.user, "password_file": settings.password_file, "connect_timeout_secs": settings.connect_timeout_secs})
+}
+
+/// Variants of one scenario are independent: each has its own database on this
+/// fixture's server and its own temporary root. Run them as concurrent child
+/// processes, which also isolates each variant's daemon worker source (#742).
+/// Two at once fit the CPUs this target reserves (tools/bazel/test_sizing.bzl).
+fn concurrently(database: &mut Database, scenario: &str, variants: &[&str]) {
+    let root = tempfile::tempdir().unwrap();
+    let children: Vec<_> = variants
+        .iter()
+        .map(|variant| {
+            let settings = database.create(&format!("{scenario}_{variant}").replace('-', "_"));
+            let path = root.path().join(format!("{variant}.json"));
+            fs::write(
+                &path,
+                serde_json::to_vec(&store_settings(&settings)).unwrap(),
+            )
+            .unwrap();
+            (*variant, path)
+        })
+        .collect();
+    let pending = std::sync::Mutex::new(children.iter());
+    thread::scope(|scope| {
+        for _ in 0..2 {
+            scope.spawn(|| {
+                loop {
+                    let Some((variant, settings)) = pending.lock().unwrap().next() else {
+                        break;
+                    };
+                    let status = Command::new(env::current_exe().unwrap())
+                        .args(["--variant", scenario, variant])
+                        .arg(settings)
+                        .status()
+                        .unwrap();
+                    assert!(status.success(), "{scenario} variant {variant} failed");
+                }
+            });
+        }
+    });
+}
+
 fn finish_fixture(database: Database, group: &str) {
     database.stop();
     drop(database);
@@ -472,6 +524,23 @@ fn main() {
             .unwrap();
         return;
     }
+    if args.get(1).is_some_and(|s| s == "--variant") {
+        // The parent prepared the worker runtime and created this database.
+        let settings: tl3_config::Store =
+            serde_json::from_slice(&fs::read(&args[4]).unwrap()).unwrap();
+        let variant = args[3].as_str();
+        match args[2].as_str() {
+            "planning" => planning::planning(&settings, variant),
+            "controller-kill" => killed_controller(&settings, variant),
+            "invalid-reply" => {
+                materials(&mut Store::open(&settings).unwrap());
+                invalid_reply(&settings, variant)
+            }
+            "reproducing-fix" => maker::reproducing_fix(&settings, variant == "rebase"),
+            _ => panic!("unknown scenario variant"),
+        }
+        return;
+    }
     prepare_workers();
     let mut database = Database::start();
     if args
@@ -489,14 +558,7 @@ fn main() {
         return;
     }
     if args.get(1).is_some_and(|arg| arg == "--gate-planning") {
-        for mode in [
-            "normal",
-            "plan-split",
-            "plan-invalid",
-            "plan-cant-meet",
-            "plan-bad-split",
-            "plan-bad-schema",
-        ] {
+        for mode in PLANNING_MODES {
             planning::planning(&database.create(&mode.replace('-', "_")), mode);
         }
         planning::memories(&database.create("plan_memories"));
@@ -593,8 +655,9 @@ fn main() {
         return;
     }
     if args.get(1).is_some_and(|s| s == "--maker-only") {
-        maker::run(&mut database, &mut scenario_shard::Shard::unsharded());
-        database.stop();
+        let mut maker_database = Some(database);
+        maker::run(&mut maker_database, &mut scenario_shard::Shard::unsharded());
+        maker_database.unwrap().stop();
         return;
     }
     if args.get(1).is_some_and(|s| s == "--quota-ladder") {
@@ -785,18 +848,34 @@ fn missing_prompt_holds_launch(settings: &tl3_config::Store) {
 }
 
 fn quota_scenarios(database: &mut Database) {
+    quota_successes(database);
+    quota_replays(database);
+    quota_fallbacks(database);
+    quota_removed_models(database);
+}
+
+fn quota_successes(database: &mut Database) {
     quota_ladder::success_clears_quota(&database.create("quota_success"));
     println!("test quota_success_clears_record ... ok");
     quota_ladder::success_clears_quota_status(&database.create("quota_status"));
     println!("test quota_success_clears_status ... ok");
+}
+
+fn quota_replays(database: &mut Database) {
     quota_ladder::later_quota_is_recorded(&database.create("quota_later"));
     println!("test quota_later_ending_records_again ... ok");
     quota_ladder::replay_keeps_later_quota(&database.create("quota_replay"));
     println!("test quota_replayed_success_keeps_later_record ... ok");
+}
+
+fn quota_fallbacks(database: &mut Database) {
     quota_ladder::planner_falls_back(&database.create("quota_planner_fallback"));
     println!("test quota_planner_falls_back_to_next_model ... ok");
     quota_ladder::whole_ladder_waits(&database.create("quota_whole_ladder"));
     println!("test quota_whole_ladder_waits_for_earliest_reset ... ok");
+}
+
+fn quota_removed_models(database: &mut Database) {
     quota_ladder::removed_model_resumes_on_open(&database.create("quota_removed"), false);
     println!("test quota_wait_for_removed_model_resumes_on_open ... ok");
     quota_ladder::removed_model_resumes_on_open(&database.create("quota_removed_legacy"), true);
@@ -1236,30 +1315,40 @@ fn killed_controller(settings: &tl3_config::Store, mode: &str) {
     assert!(store.worker_document("0", "briefs").unwrap().is_some());
 }
 
+const INVALID_REPLIES: [&str; 13] = [
+    "bad-schema",
+    "nonzero",
+    "missing",
+    "duplicate",
+    "duplicate-key",
+    "wrong-role",
+    "malformed",
+    "partial",
+    "oversized-size",
+    "forged-fit",
+    "forged-context",
+    "forged-overhead",
+    "forged-files",
+];
+
 fn invalid_replies(settings: &tl3_config::Store) {
     materials(&mut Store::open(settings).unwrap());
-    for mode in [
-        "bad-schema",
-        "nonzero",
-        "missing",
-        "duplicate",
-        "duplicate-key",
-        "wrong-role",
-        "malformed",
-        "partial",
-        "oversized-size",
-        "forged-fit",
-        "forged-context",
-        "forged-overhead",
-        "forged-files",
-    ] {
-        let root = tempfile::tempdir().unwrap();
-        let config = config(settings, root.path(), mode);
-        let mut supervisor = Supervisor::new(&config, root.path()).unwrap();
-        supervisor.execute(&delivery()).unwrap();
-        assert!(failed(&terminal(&mut supervisor, &delivery())), "{mode}");
+    for mode in INVALID_REPLIES {
+        invalid_reply(settings, mode);
     }
+    diagnostic_failure(settings);
+}
 
+/// The supervisor only reads the request materials from the store.
+fn invalid_reply(settings: &tl3_config::Store, mode: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), mode);
+    let mut supervisor = Supervisor::new(&config, root.path()).unwrap();
+    supervisor.execute(&delivery()).unwrap();
+    assert!(failed(&terminal(&mut supervisor, &delivery())), "{mode}");
+}
+
+fn diagnostic_failure(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let config = config(settings, root.path(), "diagnostic-failure");
     let (registry, mut source) =
@@ -2683,7 +2772,7 @@ fn run_default() {
         println!("test missing_prompt_holds_the_launch_without_claiming_a_worker ... ok");
         finish_fixture(database, "worker_waits");
     });
-    shard.run(WorkerGroup::IngestAudit, || {
+    shard.run(WorkerGroup::IngestMaterials, || {
         let mut database = Database::start();
         for wrapped in [false, true] {
             linked_materials(
@@ -2699,6 +2788,10 @@ fn run_default() {
                 "test narrowed_request_ingest_carries_issue_scope_and_question_wrapped_{wrapped} ... ok"
             );
         }
+        database.stop();
+    });
+    shard.run(WorkerGroup::IngestAudit, || {
+        let mut database = Database::start();
         simulation(&database.create("workers_sim"));
         println!("test real_ingest_audit_reaches_unplanned_and_posts_goals ... ok");
         finish_fixture(database, "ingest_audit");
@@ -2715,21 +2808,35 @@ fn run_default() {
     });
     shard.run(WorkerGroup::Restart, || {
         let mut database = Database::start();
-        killed_controller(&database.create("controller_kill"), "blocked");
-        killed_controller(&database.create("planner_controller_kill"), "plan-blocked");
+        concurrently(
+            &mut database,
+            "controller-kill",
+            &["blocked", "plan-blocked"],
+        );
         println!("test sigkill_controller_reattaches_to_the_same_worker ... ok");
         finish_fixture(database, "worker_restart");
     });
-    shard.run(WorkerGroup::Reply, || {
+    shard.run(WorkerGroup::ReplyInvalid, || {
         let mut database = Database::start();
-        invalid_replies(&database.create("workers_invalid"));
+        concurrently(&mut database, "invalid-reply", &INVALID_REPLIES);
+        let settings = database.create("workers_invalid");
+        materials(&mut Store::open(&settings).unwrap());
+        diagnostic_failure(&settings);
         println!("test schema_missing_nonzero_and_duplicate_replies_fail ... ok");
         stop_and_exit_gate(&database.create("workers_stop"));
         println!("test reply_requires_exit_zero_and_stop_waits_for_death ... ok");
+        database.stop();
+    });
+    shard.run(WorkerGroup::ReplyObjections, || {
+        let mut database = Database::start();
         early_and_objections(&mut database);
         println!("test early_end_and_audit_disagreement_mapping ... ok");
         never_started(&database.create("workers_unclaimed"));
         println!("test unclaimed_crash_window_emits_no_failure_and_retries_same_key ... ok");
+        database.stop();
+    });
+    shard.run(WorkerGroup::Reply, || {
+        let mut database = Database::start();
         partial_crash(&database.create("workers_partial_crash"));
         println!("test partial_last_line_at_sigkill_keeps_only_complete_progress ... ok");
         killed_reply(&database.create("workers_reply_kill"));
@@ -2756,6 +2863,10 @@ fn run_default() {
         println!("test bad_memory_never_blocks_retirement ... ok");
         retirement_review::feed_retirement_end_to_end(&database.create("memory_feed"));
         println!("test feed_retirement_end_to_end ... ok");
+        database.stop();
+    });
+    shard.run(WorkerGroup::MemoryRetirement, || {
+        let mut database = Database::start();
         retirement(&database.create("workers_retirement"));
         println!(
             "test retirement_requires_terminal_unwatched_effect_and_recovers_from_sigkill ... ok"
@@ -2786,42 +2897,62 @@ fn run_default() {
         }
         finish_fixture(database, "worker_sessions");
     });
-    shard.run(WorkerGroup::Retirement, || {
+    shard.run(WorkerGroup::RetirementErrors, || {
         let mut database = Database::start();
         retirement_review::session_unlink_error(&database.create("session_unlink"));
         println!("test session_retirement_logs_retains_and_retries_unlink_error ... ok");
         retirement_review::transient_io(&database.create("source_emfile"));
         println!("test live_source_fails_on_emfile_and_restart_reattaches ... ok");
+        database.stop();
+    });
+    shard.run(WorkerGroup::Retirement, || {
+        let mut database = Database::start();
         confirmed_absence(&database.create("workers_confirmed_absence"));
         println!("test confirmed_absence_reports_one_failure_and_retries_with_new_key ... ok");
         overflow(&database.create("workers_overflow"));
         println!("test inotify_overflow_rescans_active_runs_and_keeps_ingress_alive ... ok");
         finish_fixture(database, "worker_retirement");
     });
-    shard.run(WorkerGroup::Planning, || {
+    shard.run(WorkerGroup::PlanningModes, || {
         let mut database = Database::start();
-        for mode in [
-            "normal",
-            "plan-split",
-            "plan-invalid",
-            "plan-cant-meet",
-            "plan-bad-split",
-            "plan-bad-schema",
-        ] {
-            planning::planning(&database.create(&mode.replace('-', "_")), mode);
-        }
+        concurrently(&mut database, "planning", &PLANNING_MODES);
         println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
+        database.stop();
+    });
+    shard.run(WorkerGroup::PlanningRecall, || {
+        let mut database = Database::start();
         planning::memories(&database.create("plan_memories"));
         println!("test planner_memories_recall_and_flag ... ok");
         planning::stop(&database.create("planner_stop"));
         println!("test planner_stop ... ok");
-        quota_scenarios(&mut database);
+        database.stop();
+    });
+    shard.run(WorkerGroup::QuotaSuccesses, || {
+        let mut database = Database::start();
+        quota_successes(&mut database);
+        database.stop();
+    });
+    shard.run(WorkerGroup::QuotaReplays, || {
+        let mut database = Database::start();
+        quota_replays(&mut database);
+        database.stop();
+    });
+    shard.run(WorkerGroup::QuotaFallbacks, || {
+        let mut database = Database::start();
+        quota_fallbacks(&mut database);
+        database.stop();
+    });
+    shard.run(WorkerGroup::Planning, || {
+        let mut database = Database::start();
+        quota_removed_models(&mut database);
         finish_fixture(database, "worker_planning");
     });
-    let mut database = Database::start();
+    // Shards without a maker group never start its Postgres.
+    let mut database = None;
     maker::run(&mut database, &mut shard);
-    database.stop();
-    drop(database);
+    if let Some(database) = database {
+        database.stop();
+    }
     shard.run(WorkerGroup::MakerCleanup, || {
         println!("test maker_fixture_cleanup ... ok")
     });
