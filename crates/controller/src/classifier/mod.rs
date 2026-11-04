@@ -100,10 +100,7 @@ pub fn check_reply(role: Option<&str>) -> crate::Result<()> {
     std::io::stdin().read_to_end(&mut bytes)?;
     let request = crate::adapters::workers::json::parse(&bytes)
         .map_err(|_| crate::Error::Invalid("invalid check-reply JSON"))?;
-    let validation =
-        crate::adapters::workers::protocol::classifier_schema(&request["inputs"], false)
-            .and_then(|()| validate(&request["inputs"], &request["reply"]));
-    let violations = match validation {
+    let violations = match validate(&request["inputs"], &request["reply"]) {
         Ok(()) => Vec::new(),
         Err(crate::Error::Invalid(message)) => vec![message],
         Err(error) => return Err(error),
