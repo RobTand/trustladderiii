@@ -95,6 +95,7 @@ def remote(name):
         toolchain = Path(directory) / "rustc-nightly-x86_64-unknown-linux-gnu/rustc"
         (kani / "toolchain").symlink_to(toolchain, target_is_directory=True)
         os.environ["LD_LIBRARY_PATH"] = str(toolchain / "lib")
+        os.environ["PATH"] = str(kani / "bin") + os.pathsep + os.environ.get("PATH", os.defpath)
         verifier = str(kani / "bin/kani-driver")
         print(json.dumps({"kani": "0.68.0", "archive_sha256": digest,
                           "rustc_archive_sha256": rustc_digest}), flush=True)
