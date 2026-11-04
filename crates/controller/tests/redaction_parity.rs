@@ -132,3 +132,26 @@ fn corpus_seeded_proptest_matches_python() {
         })
         .unwrap();
 }
+
+/// #753 re-review: folding must preserve the literal trailing hyphen in BEARER's class.
+#[test]
+fn bearer_hyphens_redact_identically() {
+    let inputs = [
+        "Basic zE9p-R4cV7x",
+        "Basıc zE9p-R4cV7x",
+        "Basİc zE9pR4cV7x-tail",
+        "Basic zE9pR4cV7x-tail",
+    ]
+    .map(str::to_owned);
+    for (input, expected) in inputs.iter().zip(python_redact(&inputs)) {
+        assert_eq!(
+            expected,
+            format!("{} [REDACTED]", input.split_once(' ').unwrap().0)
+        );
+        assert_eq!(
+            tl3_controller::redaction::text(input).unwrap(),
+            expected,
+            "{input:?}"
+        );
+    }
+}
