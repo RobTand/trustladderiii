@@ -148,6 +148,13 @@ fn write(
         mode
     });
     mutation(op, args, bytes, mode == 0, change);
+    with(|r| {
+        r.calls
+            .last_mut()
+            .unwrap()
+            .result
+            .extend_from_slice(&[mode])
+    });
     if mode == 0 {
         Ok(())
     } else {
@@ -609,14 +616,14 @@ impl Mergify {
 fn github_frame(op: &str, args: &str) -> ::std::result::Result<Frame, ::tl3_github::Error> {
     let f = read(op, args);
     if f.word & 256 != 0 {
-        return Err(::tl3_github::Error::Http {
-            status: match (f.word >> 5) % 4 {
-                0 => 403,
-                1 => 404,
-                2 => 422,
-                _ => 500,
-            },
-        });
+        let status = match (f.word >> 5) % 4 {
+            0 => 403,
+            1 => 404,
+            2 => 422,
+            _ => 500,
+        };
+        returned(&json!({"error": status}));
+        return Err(::tl3_github::Error::Http { status });
     };
     Ok(f)
 }
@@ -792,7 +799,7 @@ impl GitHub {
         branch: &str,
     ) -> ::std::result::Result<RequiredChecks, ::tl3_github::Error> {
         let f = github_frame("github.requirements", &format!("{repo}@{branch}"))?;
-        Ok(RequiredChecks {
+        let result = RequiredChecks {
             checks: if matches!(
                 profile(),
                 Profile::Rerun | Profile::Classic | Profile::Missing
@@ -810,7 +817,11 @@ impl GitHub {
                 vec![]
             },
             unavailable: vec![],
-        })
+        };
+        returned(
+            &json!({"checks":result.checks.iter().map(|c|json!({"context":c.context,"integration_id":c.integration_id})).collect::<Vec<_>>(),"unavailable":result.unavailable}),
+        );
+        Ok(result)
     }
     pub async fn commit_statuses(
         &self,
@@ -837,14 +848,21 @@ impl GitHub {
         id: u64,
     ) -> ::std::result::Result<Vec<CheckAnnotation>, ::tl3_github::Error> {
         let f = github_frame("github.annotations", &format!("{repo}/{id}"))?;
-        Ok(if f.word & 1 == 0 {
+        let result = if f.word & 1 == 0 {
             vec![CheckAnnotation {
                 annotation_level: "failure".into(),
                 message: "The runner has lost communication with the server".into(),
             }]
         } else {
             vec![]
-        })
+        };
+        returned(
+            &result
+                .iter()
+                .map(|a| json!({"annotation_level":a.annotation_level,"message":a.message}))
+                .collect::<Vec<_>>(),
+        );
+        Ok(result)
     }
     pub async fn workflow_runs(
         &self,
@@ -852,7 +870,9 @@ impl GitHub {
         head: &str,
     ) -> ::std::result::Result<Vec<WorkflowRun>, ::tl3_github::Error> {
         let f = github_frame("github.runs", &format!("{repo}@{head}"))?;
-        Ok(vec![run_value(&f)])
+        let result = vec![run_value(&f)];
+        returned(&result);
+        Ok(result)
     }
     pub async fn workflow_run(
         &self,
@@ -860,7 +880,9 @@ impl GitHub {
         id: u64,
     ) -> ::std::result::Result<WorkflowRun, ::tl3_github::Error> {
         let f = github_frame("github.run", &format!("{repo}/{id}"))?;
-        Ok(run_value(&f))
+        let result = run_value(&f);
+        returned(&result);
+        Ok(result)
     }
     pub async fn add_label(
         &self,
@@ -941,7 +963,7 @@ impl GitHub {
             "FAILED tests/test_queue.py::case"
         }
         .to_owned();
-        returned(&text);
+        returned(&(text.as_str(), f.word & 2 != 0));
         Ok(::tl3_github::JobLogTail {
             text,
             truncated: f.word & 2 != 0,

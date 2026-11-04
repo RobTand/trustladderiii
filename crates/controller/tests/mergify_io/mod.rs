@@ -363,12 +363,12 @@ mod properties {
             (any::<u16>(), 0u32..300_002).prop_map(|(word, elapsed_ms)| Frame { word, elapsed_ms });
         prop_oneof![
             2 => Just(vec![]),
-            3 => (0usize..48, frame.clone()).prop_map(|(prefix, frame)| {
+            3 => (0usize..128, frame.clone()).prop_map(|(prefix, frame)| {
                 let mut tape = vec![Frame { word: 0, elapsed_ms: 0 }; prefix];
                 tape.push(frame);
                 tape
             }),
-            3 => prop::collection::vec(frame, 0..48),
+            3 => prop::collection::vec(frame, 0..128),
         ]
     }
     fn check(entry: Entry, profile: Profile) {
@@ -386,7 +386,7 @@ mod properties {
             any::<u8>(),
             tape(),
             prop::collection::vec(0u8..7, 0..8),
-            prop::collection::vec(0u8..4, 0..8),
+            prop::collection::vec(0u8..4, 0..48),
         )
             .prop_map(
                 move |(initial, frames, write_results, file_results)| Schedule {
@@ -562,14 +562,15 @@ mod properties {
         for word in [1024, 2048, 4096] {
             let mut s = stable(Profile::Plain);
             over(&mut s, "file.read", ".json", 0, word);
-            io::compare(&s, Entry::Reconcile).unwrap();
-            io::require_error(&s, Entry::Reconcile);
+            io::compare(&s, Entry::Completion).unwrap();
+            io::require_error(&s, Entry::Completion);
         }
         for failure in [1, 2, 3] {
             let mut s = stable(Profile::Label);
             s.file_results = vec![failure];
             io::compare(&s, Entry::Execute).unwrap();
             io::require_error(&s, Entry::Execute);
+            io::require_ops(&s, Entry::Execute, &["file.create"]);
         }
     }
     #[test]

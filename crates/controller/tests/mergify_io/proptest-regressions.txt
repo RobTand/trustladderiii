@@ -1,2 +1,5 @@
 # Fixed RNG seed 0x7517602026 is in Config; minimized schedules also live in JSON fixtures.
+# Additional pinned replay seed = SHA-256(waiting-budget-disappears.json).
+# This seed adds deterministic coverage; the JSON fixture replays the exact failure.
+cc ea011decb8665d7e57239cde8a590a320ff910c3e714a92f0b0009bba336b9a0
 # Proptest appends newly found failing seeds here for review and commit.
