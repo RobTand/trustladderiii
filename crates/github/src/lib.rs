@@ -3,6 +3,7 @@
 mod client;
 pub mod message;
 mod models;
+pub mod status;
 pub mod webhook;
 
 pub use client::{

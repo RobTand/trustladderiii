@@ -131,3 +131,42 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
   --env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 \
   -- bash crates/mergify/tools/verify.sh
 ```
+
+## Queue decisions and their proofs
+
+`src/decide` holds the queue adapter's decisions as pure functions over small
+enums (#735). The client here and the adapter in `crates/controller` read
+GitHub, parse its strings into these types, and act on the result.
+
+- `check`: a check run as enums: status, conclusion, app, name and head. Check
+  names and app IDs are interned per read, so grouping compares integers.
+- `observe`: which queue check describes a PR, and the queue state.
+- `facts`: which facts a queue read yields. That includes the Q52 missing-check
+  rule, the #447 blocked queue, merge evidence and a person's dequeue or close.
+- `translate`: how a queue fact reaches the kernel. Setup evidence (Q52, #447,
+  unreadable checks) only opens or clears incidents. It never becomes a kernel
+  fact, so it never counts a failure or charges credit.
+
+`tl3-github`'s `status` module maps REST status codes to failure classes.
+
+The decisions do no I/O and have no `unsafe`, no floats and no target-specific
+code, so their proofs hold on amd64 and arm64.
+
+`src/decide/proofs.rs` and `crates/github/src/status.rs` hold one Kani harness
+per property. Lists hold at most three checks or events. Three entries give
+every shape the grouping rules tell apart: a newer, an older or an equal ID in
+the same group, and another group. Every harness has cover checks and a seeded
+mutant in `tools/kani.py`. The tool fails a harness whose covers are not all
+satisfied, and a mutant the harness does not reject.
+
+Until #726 gives each harness a Bazel target, run the proofs on PrismaBuild
+from a clean checkout:
+
+```bash
+python3 crates/mergify/tools/kani.py manifest > /home/rob/tmp/tl3-mergify-kani.json
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --transport pool --max-inflight 2 /home/rob/tmp/tl3-mergify-kani.json
+```
+
+Inside an admitted action, `kani.py prove [NAME...]` proves harnesses and
+`kani.py mutants [NAME...]` checks each seeded mutant. The string parsers have
+proptest round-trips in `tests/parse.rs`.

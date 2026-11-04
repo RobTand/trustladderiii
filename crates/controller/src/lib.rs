@@ -2645,29 +2645,24 @@ impl Controller {
                     return Ok(None);
                 };
                 use adapters::mergify::Evidence;
+                use tl3_mergify::decide::translate::{self as queue, KernelFact, Route};
                 let current = &world.nodes[node.0 as usize];
-                if matches!(current.phase, tl3_kernel::Phase::Closed(_))
-                    && (!matches!(fact.evidence, Evidence::Merged { .. })
-                        || current.merged.is_some())
-                {
+                let view = queue::NodeView {
+                    phase: match current.phase {
+                        tl3_kernel::Phase::Publishing => queue::Phase::Publishing,
+                        tl3_kernel::Phase::Queued => queue::Phase::Queued,
+                        tl3_kernel::Phase::Closed(_) => queue::Phase::Closed,
+                        _ => queue::Phase::Other,
+                    },
+                    merged: current.merged.is_some(),
+                    enqueue_pending: current.effect.is_some_and(|effect| {
+                        effect.kind == tl3_kernel::EffectKind::Enqueue && !effect.cancelling
+                    }),
+                };
+                // A closed node takes only a merge it has not recorded. A later
+                // active enqueue must still be able to consume head evidence.
+                if !queue::admit(fact.evidence.kind(), view) {
                     return Ok(None);
-                }
-                if matches!(
-                    fact.evidence,
-                    Evidence::CiFailed {
-                        head_check: true,
-                        ..
-                    }
-                ) {
-                    let can_consume = current.phase == tl3_kernel::Phase::Queued
-                        || current.phase == tl3_kernel::Phase::Publishing
-                            && current.effect.is_some_and(|effect| {
-                                effect.kind == tl3_kernel::EffectKind::Enqueue && !effect.cancelling
-                            });
-                    // A later active enqueue must still be able to consume this head evidence.
-                    if !can_consume {
-                        return Ok(None);
-                    }
                 }
                 if let Evidence::CiFailed {
                     head,
@@ -2704,99 +2699,105 @@ impl Controller {
                                         })
                                     })
                         });
-                    if outside || repeated {
-                        *infra = outside && !repeated;
-                    }
-                    details.decision = Some(
-                        if repeated {
-                            "repeated_test"
-                        } else if outside {
-                            "outside_change"
-                        } else {
-                            "upstream_classification"
-                        }
-                        .into(),
-                    );
+                    let (classified, decision) = queue::classify_ci(*infra, outside, repeated);
+                    *infra = classified;
+                    details.decision = Some(decision.as_str().into());
                 }
                 let value = json!(&fact);
-                if let Evidence::CiFailed { head, .. }
-                | Evidence::Conflict { head, .. }
-                | Evidence::DequeuedByCommand { head, .. } = &fact.evidence
-                {
-                    let observed = self.head(node, head)?;
-                    if world.nodes[node.0 as usize].head != Some(observed) {
-                        commit.rows.push(put("queue_facts", identity, value));
-                        return Ok(None);
+                let head_current = match &fact.evidence {
+                    Evidence::CiFailed { head, .. }
+                    | Evidence::Conflict { head, .. }
+                    | Evidence::DequeuedByCommand { head, .. } => {
+                        Some(self.head(node, head)?) == world.nodes[node.0 as usize].head
                     }
-                }
-                let fact = match fact.evidence {
-                    Evidence::ChecksUnavailable { permissions } => {
-                        self.check_setup_incident(snapshot, commit, node, &permissions)?;
-                        commit.rows.push(put("queue_facts", identity, value));
-                        return Ok(None);
+                    _ => true,
+                };
+                let approved_head = match &fact.evidence {
+                    Evidence::CheckMissing { head, .. } | Evidence::QueueBlocked { head, .. } => {
+                        commit_sha(snapshot, current.approved) == Some(head)
                     }
-                    // Q52 rows: neither one reaches the kernel, so no failure or credit is charged.
-                    Evidence::CheckMissing { head, required } => {
-                        let enqueue_pending = current.phase == tl3_kernel::Phase::Publishing
-                            && current.effect.is_some_and(|effect| {
-                                effect.kind == tl3_kernel::EffectKind::Enqueue && !effect.cancelling
-                            });
-                        if enqueue_pending && commit_sha(snapshot, current.approved) == Some(&head)
-                        {
-                            self.missing_check_incident(snapshot, commit, node, &head, &required)?;
+                    _ => false,
+                };
+                let kernel =
+                    match queue::route(fact.evidence.kind(), view, head_current, approved_head) {
+                        Route::Record => {
                             commit.rows.push(put("queue_facts", identity, value));
+                            return Ok(None);
                         }
-                        return Ok(None);
-                    }
-                    Evidence::QueueBlocked {
-                        head,
-                        conditions,
-                        failed,
-                    } => {
-                        let waiting = current.phase == tl3_kernel::Phase::Queued
-                            || current.phase == tl3_kernel::Phase::Publishing
-                                && current.effect.is_some_and(|effect| {
-                                    effect.kind == tl3_kernel::EffectKind::Enqueue
-                                        && !effect.cancelling
-                                });
-                        if waiting && commit_sha(snapshot, current.approved) == Some(&head) {
-                            self.queue_blocked_incident(
-                                snapshot,
-                                commit,
-                                node,
-                                &head,
-                                &conditions,
-                                &failed,
-                            )?;
-                            commit.rows.push(put("queue_facts", identity, value));
+                        Route::Skip => return Ok(None),
+                        Route::Kernel(kernel) => kernel,
+                        // Setup rows (Q52, #447): none reaches the kernel, so no
+                        // failure or credit is charged.
+                        Route::SetupIncident
+                        | Route::MissingIncident
+                        | Route::BlockedIncident
+                        | Route::ClearIncident => {
+                            match fact.evidence {
+                                Evidence::ChecksUnavailable { permissions } => {
+                                    self.check_setup_incident(
+                                        snapshot,
+                                        commit,
+                                        node,
+                                        &permissions,
+                                    )?;
+                                    commit.rows.push(put("queue_facts", identity, value));
+                                }
+                                Evidence::CheckMissing { head, required } => {
+                                    self.missing_check_incident(
+                                        snapshot, commit, node, &head, &required,
+                                    )?;
+                                    commit.rows.push(put("queue_facts", identity, value));
+                                }
+                                Evidence::QueueBlocked {
+                                    head,
+                                    conditions,
+                                    failed,
+                                } => {
+                                    self.queue_blocked_incident(
+                                        snapshot,
+                                        commit,
+                                        node,
+                                        &head,
+                                        &conditions,
+                                        &failed,
+                                    )?;
+                                    commit.rows.push(put("queue_facts", identity, value));
+                                }
+                                Evidence::CheckReported { head, required } => {
+                                    let id =
+                                        looks::missing_check_incident_id(node, &head, &required);
+                                    if let Some(row) = snapshot.rows.iter().find(|row| {
+                                        row.table == "incidents"
+                                            && row.id == id
+                                            && row.value["open"] == true
+                                    }) {
+                                        let mut incident: looks::Incident =
+                                            decode_stored(row.value.clone())?;
+                                        incident.open = false;
+                                        commit.rows.push(put("incidents", id, json!(incident)));
+                                    }
+                                }
+                                _ => {
+                                    return Err(Error::Invalid(
+                                        "only setup evidence routes to an incident",
+                                    ));
+                                }
+                            }
+                            return Ok(None);
                         }
-                        return Ok(None);
-                    }
-                    Evidence::CheckReported { head, required } => {
-                        let id = looks::missing_check_incident_id(node, &head, &required);
-                        if let Some(row) = snapshot.rows.iter().find(|row| {
-                            row.table == "incidents" && row.id == id && row.value["open"] == true
-                        }) {
-                            let mut incident: looks::Incident = decode_stored(row.value.clone())?;
-                            incident.open = false;
-                            commit.rows.push(put("incidents", id, json!(incident)));
+                    };
+                let fact = match (kernel, fact.evidence) {
+                    (KernelFact::PrMerged { checks_passed }, Evidence::Merged { head, .. }) => {
+                        Fact::PrMerged {
+                            head: self.head(node, &head)?,
+                            checks_passed,
                         }
-                        return Ok(None);
                     }
-                    Evidence::Merged {
-                        head,
-                        checks_passed,
-                    } => Fact::PrMerged {
-                        head: self.head(node, &head)?,
-                        checks_passed,
-                    },
-                    Evidence::CiFailed { infra, .. } => Fact::CiFailed { infra },
-                    Evidence::Conflict { .. } => Fact::Conflict,
-                    Evidence::DequeuedByPerson { .. } | Evidence::DequeuedByCommand { .. } => {
-                        Fact::PrDequeuedByPerson
-                    }
-                    Evidence::ClosedByPerson { .. } => Fact::PrClosedByPerson,
-                    Evidence::PushByOther { head } => {
+                    (KernelFact::CiFailed { infra }, _) => Fact::CiFailed { infra },
+                    (KernelFact::Conflict, _) => Fact::Conflict,
+                    (KernelFact::PrDequeuedByPerson, _) => Fact::PrDequeuedByPerson,
+                    (KernelFact::PrClosedByPerson, _) => Fact::PrClosedByPerson,
+                    (KernelFact::PushByOther, Evidence::PushByOther { head }) => {
                         let previous_sha = current.head.and_then(|head| {
                             snapshot
                                 .interned
@@ -2816,6 +2817,11 @@ impl Controller {
                         Fact::PushByOther {
                             head: self.head(node, &head)?,
                         }
+                    }
+                    _ => {
+                        return Err(Error::Invalid(
+                            "queue evidence routed to another kernel fact",
+                        ));
                     }
                 };
                 commit.rows.push(put("queue_facts", identity, value));
