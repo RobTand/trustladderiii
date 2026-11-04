@@ -1161,10 +1161,12 @@ impl Outbox {
         ensures empty_outbox(result),
     ] {
         kernel_proof! { reveal(empty_outbox); }
-        Outbox {
+        let result = Outbox {
             items: [None; OUTBOX],
             len: 0,
-        }
+        };
+        kernel_proof! { assert(result.items@ =~= Seq::new(OUTBOX as nat, |i: int| None)); }
+        result
     }
 }
 }
@@ -1421,6 +1423,7 @@ impl World {
             decreases w.nodes.len() - i,
         ] {
             if advance(&mut w, i, &mut out) { return false; }
+            kernel_proof! { movable_frame(*self, w, i as int); }
             i += 1;
         } }
         true
@@ -2615,7 +2618,8 @@ fn emit(w: &mut World, i: usize, kind: EffectKind,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         old(w).nodes@[i as int].next_seq < u64::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
@@ -4242,6 +4246,15 @@ spec fn movable(w: World, i: int) -> bool {
     })
 }
 
+/// #771: sufficient movability depends only on these scheduler inputs.
+proof fn movable_frame(before: World, after: World, i: int)
+    requires 0 <= i < before.nodes@.len(), before.nodes@ == after.nodes@,
+        before.gates@ == after.gates@, before.pool_capacity == after.pool_capacity,
+        before.dependencies@ == after.dependencies@,
+    ensures movable(before, i) == movable(after, i),
+{
+}
+
 /// #771: conserved allocations and frames across the real settle loop.
 spec fn settle_chain(before: World, after: World) -> bool {
     after.nodes@.len() == before.nodes@.len()
@@ -4304,12 +4317,18 @@ fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>)
                 potential_member(w.nodes@, i as int, w.nodes@.len(), |n: Node| ticket_capacity(n));
             }
             kernel_snapshot! { before_node = *w }
+            kernel_proof! {
+                assert(!changed ==> forall|j: int| 0 <= j < i ==> !movable(before_node@, j));
+            }
             let moved = advance(w, i, &mut outbox);
             kernel_proof! {
                 reveal(advance_post);
                 if !changed && !moved {
                     assert(w.nodes@ == before_node@.nodes@);
-                    assert forall|j: int| 0 <= j <= i implies !movable(*w, j) by {}
+                    assert forall|j: int| 0 <= j <= i implies !movable(*w, j) by {
+                        movable_frame(before_node@, *w, j);
+                        if j < i { assert(!movable(before_node@, j)); }
+                    }
                 }
                 assert forall|j: int| 0 <= j < w.nodes@.len() implies
                     w.nodes@[j].generation as int + generation_capacity(w.nodes@[j])
