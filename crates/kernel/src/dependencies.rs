@@ -469,9 +469,10 @@ impl World {
 
     kernel_fn! {
     /// #693 / #771: find the same first blocking declaration as the public query.
-    fn first_undelivered(&self, node: NodeId) -> (result: Option<Dependency>) [
+    pub(super) fn first_undelivered(&self, node: NodeId) -> (result: Option<Dependency>) [
         ensures match result {
-            Some(d) => d.node == node && (d.rejected || d.status != DependencyStatus::Delivered),
+            Some(d) => d.node == node && (d.rejected || d.status != DependencyStatus::Delivered)
+                && exists|j: int| 0 <= j < self.dependencies@.len() && self.dependencies@[j] == d,
             None => prerequisites_delivered(*self, node),
         },
     ] proof [reveal(prerequisites_delivered); reveal(delivered);] {

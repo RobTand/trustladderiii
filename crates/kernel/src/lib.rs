@@ -761,6 +761,7 @@ pub struct World {
 kernel_fn! {
 /// #771: an observational world snapshot, including every interned file list.
 /// Copy fields keep their values; nested vectors keep their element sequences.
+#[allow(clippy::let_and_return)]
 fn snapshot_world(world: &World) -> (result: World) [
     ensures (settle_ready(*world) ==> settle_ready(result)),
         result.nodes@ == world.nodes@, result.gates@ == world.gates@,
@@ -1157,6 +1158,7 @@ pub closed spec fn empty_outbox(out: Outbox) -> bool {
 kernel_fn! {
 impl Outbox {
     /// #771: the fixed output buffer begins with no emitted entries.
+    #[allow(clippy::let_and_return)]
     pub const fn new() -> (result: Outbox) [
         ensures empty_outbox(result),
     ] {
@@ -1430,12 +1432,37 @@ impl World {
     }
     }
 
+    kernel_fn! {
     /// One outside event that moves the world closer to done: a successful
     /// reply, a confirmation, a fact, or one of Rob's answers. Kani proves it
     /// always exists while a node is open, and that it lowers `measure`.
-    pub fn witness(&self) -> Option<Event> {
-        for (i, n) in self.nodes.iter().enumerate() {
+    /// #771: the same witness branches, verified against their exact event keys.
+    /// Node::next_command_id and the controller's checked steering constructors
+    /// enforce the fresh-command scope. Raw kernel command exhaustion remains
+    /// characterized by tests/progress_limits.rs, outside this theorem's scope.
+    pub fn witness(&self) -> (result: Option<Event>) [
+        requires world_checked(*self), self.nodes@.len() <= u64::MAX as int,
+            forall|j: int| 0 <= j < self.nodes@.len() ==> self.nodes@[j].last_cmd < u64::MAX,
+        ensures match result {
+            Some(event) => exists|j: int| 0 <= j < self.nodes@.len() && chosen_for_node(*self, j, event),
+            None => forall|j: int| 0 <= j < self.nodes@.len() ==> !outside_available(*self, j),
+        },
+    ] proof [reveal(world_checked);] {
+        let mut i = 0usize;
+        kernel_while! { (i < self.nodes.len()) [
+            invariant i <= self.nodes.len(), self.nodes@.len() <= u64::MAX as int,
+                world_checked(*self),
+                forall|j: int| 0 <= j < self.nodes@.len() ==> self.nodes@[j].last_cmd < u64::MAX,
+                forall|j: int| 0 <= j < i ==> !outside_available(*self, j),
+            decreases self.nodes.len() - i,
+        ] {
+            let n = &self.nodes[i];
+            kernel_proof! {
+                reveal(world_checked);
+                dependencies::prerequisite_definition(*self, NodeId(i as u64));
+            }
             if n.phase.is_closed() {
+                i += 1;
                 continue;
             }
             let node = NodeId(i as u64);
@@ -1478,13 +1505,7 @@ impl World {
                 });
             }
             if n.phase == Phase::Unplanned && !self.dependencies_delivered(node) {
-                let dependency = self
-                    .dependencies
-                    .iter()
-                    .find(|d| {
-                        d.node == node && (d.rejected || d.status != DependencyStatus::Delivered)
-                    })
-                    .unwrap();
+                let dependency = self.first_undelivered(node).unwrap();
                 if dependency.rejected || dependency.status == DependencyStatus::Abandoned {
                     return Some(Event::Command {
                         node,
@@ -1529,7 +1550,7 @@ impl World {
                         Phase::Rebasing => Reply::RebaseClean {
                             head: n.head.unwrap_or(HeadId(0)),
                         },
-                        _ => continue,
+                        _ => { i += 1; continue; },
                     };
                     return Some(Event::Reply {
                         node,
@@ -1546,10 +1567,12 @@ impl World {
                     return Some(Event::Fact { node, fact });
                 }
                 // Waiting on the gate or the pool: another node holds what it needs.
-                _ => continue,
+                _ => {},
             }
-        }
+            i += 1;
+        } }
         None
+    }
     }
 
     /// Everything the kernel promises about a world at rest: consistent and settled.
