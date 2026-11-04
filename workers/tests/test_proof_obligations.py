@@ -144,48 +144,101 @@ def planner_prompt():
 def test_planner_prompt_states_the_obligation_to_check_mapping():
     # PQ #3299 (#648 PR 3): the planner cited observer-new goals on regression checks and on
     # existing tests it edited, so proof applicability refused the completed plan.
+    # test_each_stated_rule_is_what_proof_applicability_does checks each rule against the code.
     prompt = planner_prompt()
-    assert "Cite that goal only on demonstrating checks." in prompt
-    assert ("Never cite it on a regression or behavior-preserving check, on a check with a forcing "
-            "or declared_symptom, or in rehearse_forcing goal_ids.") in prompt
-    assert "lists every obligation subject in proof.subjects and gives proof.red_message" in prompt
-    assert "every node_id of that check is a new test that the maker adds" in prompt
-    assert "An existing test cannot prove it, also when the plan edits it." in prompt
+    for rule in (
+        "Cite that goal only on demonstrating checks without declared_symptom.",
+        "Never cite it on a regression or behavior-preserving check. A forcing is allowed.",
+        "gives proof.red_message and covers every obligation subject in proof.subjects",
+        "A subject is covered by itself or by its enclosing module or definition.",
+        "every node_id of that check is a new test that the maker adds",
+        "An existing test cannot prove it, also when the plan edits it.",
+        'For observer "new", never cite the goal in rehearse_forcing goal_ids.',
+        'For observer "any", an existing test can be the observer.',
+        "rehearse_forcing goal_ids can cite it for an assertion campaign, never with declared_symptom.",
+    ):
+        assert rule in prompt, rule
 
 
-def _pq3299_shaped_plan(cite_obligations_everywhere):
+SUBMIT = "tools/dispatch.py::Gateway::submit"
+NEW = "tests/test_new.py::test_submit_reads_the_record"
+OLD = "tests/test_old.py::test_edited_producer"
+PROOF = {"subjects": [SUBMIT], "observer_support": [], "red_message": "submit returned another key"}
+FORCING = {"symptom": "The record is late.", "environment": {"CASE": "late"}}
+SYMPTOM = {"node": OLD, "exception": "builtins.TimeoutError", "phase": "call", "repeat": 2, "parallel": 0}
+
+
+def _obligation_goal(observer):
+    return {"description": "Migrate submit.", "verification": "test",
+            "proof_obligation": {"kind": "assertion", "observer": observer, "subjects": [SUBMIT],
+                                 "source": "issue.body", "quote": "Migrate submit."}}
+
+
+# (prompt rule, observer, check, campaign, accepted). A campaign is a rehearse_forcing call.
+RULES = [
+    ("demonstrating", "new", {"kind": "demonstrating", "node_ids": [NEW], "proof": PROOF}, False, True),
+    ("not regression", "any", {"kind": "regression", "node_ids": [OLD]}, False, False),
+    ("not behavior-preserving", "any", {"kind": "behavior-preserving", "node_ids": [OLD]}, False, False),
+    ("forcing allowed", "any", {"kind": "demonstrating", "node_ids": [OLD], "proof": PROOF,
+                                "forcing": FORCING}, False, True),
+    ("not declared_symptom", "any", {"kind": "demonstrating", "node_ids": [OLD], "proof": PROOF,
+                                     "declared_symptom": SYMPTOM}, False, False),
+    ("red_message", "new", {"kind": "demonstrating", "node_ids": [NEW],
+                            "proof": {**PROOF, "red_message": ""}}, False, False),
+    ("every subject", "new", {"kind": "demonstrating", "node_ids": [NEW],
+                              "proof": {**PROOF, "subjects": ["tools/dispatch.py::Gateway::wait"]}}, False, False),
+    ("enclosing module", "new", {"kind": "demonstrating", "node_ids": [NEW],
+                                 "proof": {**PROOF, "subjects": ["tools/dispatch.py"]}}, False, True),
+    ("enclosing definition", "new", {"kind": "demonstrating", "node_ids": [NEW],
+                                     "proof": {**PROOF, "subjects": ["tools/dispatch.py::Gateway"]}}, False, True),
+    ("new: no existing test", "new", {"kind": "demonstrating", "node_ids": [OLD], "proof": PROOF}, False, False),
+    ("any: existing test", "any", {"kind": "demonstrating", "node_ids": [OLD], "proof": PROOF}, False, True),
+    ("new: no rehearsal", "new", {"kind": "demonstrating", "node_ids": [OLD]}, True, False),
+    ("any: assertion rehearsal", "any", {"kind": "demonstrating", "node_ids": [OLD]}, True, True),
+    ("any: no symptom rehearsal", "any", {"kind": "demonstrating", "node_ids": [OLD],
+                                          "declared_symptom": SYMPTOM}, True, False),
+]
+
+
+@pytest.mark.parametrize("rule, observer, check, campaign, accepted", RULES, ids=[rule[0] for rule in RULES])
+def test_each_stated_rule_is_what_proof_applicability_does(rule, observer, check, campaign, accepted):
+    from tl3_workers.evidence import proof_applicability
+
+    errors = proof_applicability([_obligation_goal(observer)], [{**check, "goal_ids": [0]}],
+                                 {OLD}.__contains__, campaign=campaign)
+    assert (errors == []) is accepted, errors
+
+
+def _pq3299_shaped_plan(cite_obligations_everywhere, campaign):
     """Goal 1 has an observer-new obligation; goal 2 keeps edited tests green."""
-    goals = [{"description": "Add the adapter.", "verification": "test"},
-             {"description": "Migrate submit.", "verification": "test",
-              "proof_obligation": {"kind": "assertion", "observer": "new",
-                                   "subjects": ["tools/dispatch.py::Gateway::submit"],
-                                   "source": "issue.body", "quote": "Migrate submit."}},
+    goals = [{"description": "Add the adapter.", "verification": "test"}, _obligation_goal("new"),
              {"description": "Keep the named existing tests green.", "verification": "review"}]
-    proof = {"subjects": ["tools/dispatch.py::Gateway::submit"], "observer_support": [],
-             "red_message": "submit returned a key the record did not name"}
     obligation = [1] if cite_obligations_everywhere else []
+    if campaign:
+        # The rehearse_forcing call that PQ #3299's planner made for edited existing tests.
+        return goals, [{"kind": "demonstrating", "node_ids": [OLD], "goal_ids": [0, *obligation]}]
     checks = [
-        {"kind": "demonstrating", "node_ids": ["tests/test_new.py::test_submit_reads_the_record"],
-         "goal_ids": [0, 1], "proof": proof},
-        {"kind": "demonstrating", "node_ids": ["tests/test_old.py::test_edited_producer"],
-         "goal_ids": [2, *obligation], "proof": proof},
+        {"kind": "demonstrating", "node_ids": [NEW], "goal_ids": [0, 1], "proof": PROOF},
+        {"kind": "demonstrating", "node_ids": [OLD], "goal_ids": [2, *obligation], "proof": PROOF},
         {"kind": "regression", "node_ids": ["tests/test_old.py::test_unchanged_verdict"],
          "goal_ids": [2, *obligation]},
     ]
     return goals, checks
 
 
+@pytest.mark.parametrize("campaign", [False, True], ids=["plan", "rehearsal"])
 @pytest.mark.parametrize("follows_prompt", [False, True])
-def test_the_prompt_mapping_is_what_proof_applicability_accepts(follows_prompt):
+def test_the_prompt_mapping_is_what_proof_applicability_accepts(follows_prompt, campaign):
     from tl3_workers.evidence import proof_applicability
 
-    goals, checks = _pq3299_shaped_plan(cite_obligations_everywhere=not follows_prompt)
-    on_base = {"tests/test_old.py::test_edited_producer", "tests/test_old.py::test_unchanged_verdict"}
-    errors = proof_applicability(goals, checks, on_base.__contains__)
+    goals, checks = _pq3299_shaped_plan(not follows_prompt, campaign)
+    on_base = {OLD, "tests/test_old.py::test_unchanged_verdict"}
+    errors = proof_applicability(goals, checks, on_base.__contains__, campaign=campaign)
     if follows_prompt:
         assert errors == []
     else:
-        # The two refusals PQ #3299's planner trace received.
-        assert any("requires a new deterministic observer; an existing base test is insufficient" in e
-                   for e in errors), errors
+        # The refusals PQ #3299's planner trace received.
         assert any("requires an assertion observer" in e for e in errors), errors
+        if not campaign:
+            assert any("requires a new deterministic observer; an existing base test is insufficient" in e
+                       for e in errors), errors
