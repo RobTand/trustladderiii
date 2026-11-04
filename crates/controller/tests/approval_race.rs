@@ -1195,3 +1195,51 @@ fn cleanup_failures_raise_an_incident_and_wait_for_clear() {
     assert_eq!(case.api.0.lock().unwrap().comments.len(), 1);
     assert_eq!(case.api.0.lock().unwrap().comments[0]["id"], 1);
 }
+
+/// #766, Q27: catch-up news repairs terminal approvals when a late webhook was missed.
+#[test]
+fn catchup_repairs_approval_copies_after_confirmation() {
+    let case = Case::new("approval_catchup");
+    let mut controller = case.timeout();
+    case.api.release();
+    drain(&mut controller);
+    assert_eq!(
+        controller.effect(&case.key).unwrap().unwrap().state,
+        EffectState::Confirmed
+    );
+    case.corrupt_copies(2);
+    let delivery = tl3_controller::ingress::GitHubDelivery::CatchUp {
+        repository: bootstrap().repos[0].clone(),
+        changes: Box::new(tl3_github::RepoChanges {
+            repository: "owner/sandbox".into(),
+            issues: vec![],
+            comments: vec![],
+            labels: vec![],
+            closed: vec![],
+            pull_requests: vec![],
+            check_suites: vec![],
+            check_runs: case
+                .api
+                .0
+                .lock()
+                .unwrap()
+                .visible
+                .iter()
+                .cloned()
+                .map(|c| serde_json::from_value(c).unwrap())
+                .collect(),
+        }),
+    };
+    Store::open(&case.settings)
+        .unwrap()
+        .receive_ingress(
+            "github-catchup",
+            "late-check-catchup",
+            "catch-up",
+            &serde_json::to_vec(&delivery).unwrap(),
+        )
+        .unwrap();
+    tl3_controller::ingress::drain(&mut controller).unwrap();
+    drain(&mut controller);
+    case.assert_converged(2);
+}
