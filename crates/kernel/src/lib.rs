@@ -3056,7 +3056,36 @@ fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bool, out: &m
 
 // ---------------------------------------------------------------- commands
 
-fn on_command(w: &mut World, i: usize, id: u64, command: Command, out: &mut Outbox) {
+kernel_fn! {
+/// Command rows / #771: repeated IDs stutter; accepted IDs are assigned verbatim.
+/// Freshness is enforced by controller constructors, not by this raw kernel API.
+fn on_command(w: &mut World, i: usize, id: u64, command: Command,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit.start == old(w).nodes@[i as int].credit.start,
+        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
+        final(w).nodes@[i as int].credit.added as int <= old(w).nodes@[i as int].credit.added as int + 255,
+        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
+        final(w).nodes@[i as int].last_cmd == if id > old(w).nodes@[i as int].last_cmd {
+            id
+        } else { old(w).nodes@[i as int].last_cmd },
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 1,
+] {
     if id <= w.nodes[i].last_cmd {
         return; // a repeated command
     }
@@ -3073,6 +3102,7 @@ fn on_command(w: &mut World, i: usize, id: u64, command: Command, out: &mut Outb
         Command::Resume => w.nodes[i].paused = false,
         Command::Answer { question, answer } => on_answer(w, i, question, answer, out),
     }
+}
 }
 
 kernel_fn! {
@@ -3100,7 +3130,33 @@ fn allowed(kind: QKind, answer: Answer) -> (result: bool) [
 }
 }
 
-fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer, out: &mut Outbox) {
+kernel_fn! {
+/// Question answer rows / #771: one clarification or one paid continuation.
+fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit.start == old(w).nodes@[i as int].credit.start,
+        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
+        final(w).nodes@[i as int].credit.added as int <= old(w).nodes@[i as int].credit.added as int + 255,
+        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 1,
+] {
     let Some(q) = w.nodes[i].question else { return };
     if q.id != id {
         return; // an answer to a question that is no longer open
@@ -3162,6 +3218,7 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer, out: &mut Outbox)
         }
         _ => {}
     }
+}
 }
 
 kernel_fn! {

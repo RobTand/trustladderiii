@@ -49,6 +49,23 @@ pub closed spec fn world_headroom(world: World) -> bool {
         && forall|i: int| 0 <= i < world.nodes@.len()
             ==> node_headroom(world.nodes@[i])
 }
+
+/// #771: arithmetic facts required by the existing consistency checks.
+/// This is not the full consistency invariant. In particular it says nothing
+/// about gate ownership, operation identity, footprints or dependencies.
+pub open spec fn arithmetic_consistent(node: Node) -> bool {
+    node.run_failures <= 1 && node.fx_failures <= 1
+        && node.run_incidents <= 2 && node.fx_incidents <= 2
+        && node.credit.start as int + node.credit.earned as int + node.credit.added as int
+            >= node.credit.spent as int
+        && match node.question {
+            None => true,
+            Some(q) => q.cost == match q.kind {
+                QKind::CantMeet | QKind::OutOfCredit => 1u8,
+                _ => 0u8,
+            } && (node.credit.withheld ==> q.cost == 0),
+        }
+}
 }
 
 // A step appends at most one node; Closed never becomes open again. Every
