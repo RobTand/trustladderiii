@@ -3981,10 +3981,16 @@ fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
 ] proof [reveal(distance);] {
+    kernel_snapshot! { before_command = *w }
     if id <= w.nodes[i].last_cmd {
         return; // a repeated command
     }
     w.nodes[i].last_cmd = id;
+    kernel_proof! {
+        if node_checked(before_command@, before_command@.nodes@[i as int]) {
+            assert(node_checked(*w, w.nodes@[i as int]));
+        }
+    }
     match command {
         Command::Stop => enter_stopping(&mut w.nodes[i], Outcome::Stopped),
         Command::ChangeRequest => enter_stopping(&mut w.nodes[i], Outcome::Replaced),
@@ -3994,7 +4000,15 @@ fn on_command(w: &mut World, i: usize, id: u64, command: Command,
                 m.paused = true;
             }
         }
-        Command::Resume => w.nodes[i].paused = false,
+        Command::Resume => {
+            kernel_proof! {
+                let n = w.nodes@[i as int];
+                if node_checked(*w, n) && n.paused && !(n.phase is Closed || n.phase is Stopping) {
+                    resume_decreases(*w, n);
+                }
+            }
+            w.nodes[i].paused = false;
+        },
         Command::Answer { question, answer } => on_answer(w, i, question, answer, out),
     }
 }

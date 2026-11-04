@@ -413,3 +413,21 @@ fn kernel_progress(world: World) -> (result: (World, Vec<Out>))
     step(world, event.unwrap())
 }
 }
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// Pause rows / #771: removing a pause lowers the exact executable distance,
+/// including a holding node whose next internal move would return it to Ready.
+proof fn resume_decreases(w: World, n: Node)
+    requires node_checked(w, n), n.paused, !(n.phase is Closed || n.phase is Stopping),
+    ensures distance(Node { paused: false, ..n }) < distance(n),
+{
+    reveal(distance);
+    match n.phase {
+        Phase::Ingesting | Phase::Auditing | Phase::Unplanned | Phase::Planning { .. }
+            | Phase::Ready(_) | Phase::Making | Phase::Checking | Phase::Reviewing
+            | Phase::Publishing | Phase::Queued | Phase::Rebasing | Phase::AwaitingRob
+            | Phase::Stopping(_) | Phase::Closed(_) => {},
+    }
+}
+}
