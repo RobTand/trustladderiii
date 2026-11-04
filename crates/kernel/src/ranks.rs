@@ -307,7 +307,8 @@ pub(super) proof fn potential_bound(nodes: Seq<Node>, end: nat,
         if nodes[end as int - 1].phase is Closed {
             assert(value == 0);
         } else {
-            assert(prefix + value <= per_open * (open + 1)) by(nonlinear_arith);
+            assert(prefix <= per_open * open && value <= per_open
+                ==> prefix + value <= per_open * (open + 1)) by(nonlinear_arith);
         }
     }
 }
