@@ -2238,6 +2238,14 @@ pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<
                 && world.nodes@[j].credit.added as int <= before_step@.nodes@[j].credit.added as int + CREDIT_ADDED_STEP_BUDGET
                 && world.nodes@[j].credit.spent as int <= before_step@.nodes@[j].credit.spent as int + CREDIT_SPENT_STEP_BUDGET
         by { local_capacities(after_apply@.nodes@[j]); }
+        assert forall|j: int| before_step@.nodes@.len() <= j < world.nodes@.len() implies
+            world.nodes@[j].generation <= GENERATION_STEP_BUDGET
+                && world.nodes@[j].next_seq <= EFFECT_STEP_BUDGET
+                && world.nodes@[j].credit.start <= CREDIT_START_STEP_BUDGET
+                && world.nodes@[j].credit.earned <= CREDIT_EARNED_STEP_BUDGET
+                && world.nodes@[j].credit.added <= CREDIT_ADDED_STEP_BUDGET
+                && world.nodes@[j].credit.spent <= CREDIT_SPENT_STEP_BUDGET
+        by { local_capacities(after_apply@.nodes@[j]); }
     }
     (world, out, passes)
 }
@@ -2424,7 +2432,14 @@ fn abandon_operation(m: &mut Node) -> (result: ()) [
 kernel_fn! {
 /// #771: successful completion resets failures and preserves allocation counters.
 fn end_operation(m: &mut Node) -> (result: ()) [
-    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+    ensures final(m).paused == old(m).paused, final(m).waiting_incident == old(m).waiting_incident,
+        final(m).head == old(m).head,
+        final(m).effect == match old(m).effect {
+            Some(e) => Some(InFlight { cancelling: e.cancelling || matches!(e.kind,
+                EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase), ..e }),
+            None => None,
+        },
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
         (settle_shape(*old(m)) ==> settle_shape(*final(m))),
         final(m).run.is_none(), final(m).job.is_none(), !final(m).pool,
         final(m).run_failures == 0, final(m).run_incidents == 0,
@@ -2771,7 +2786,11 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
         footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
         footprint::ordered_table(*old(w)),
-    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+            && generation == old(w).nodes@[i as int].generation
+            && successful_reply_input(old(w).nodes@[i as int], reply)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         footprint::valid_footprint(*final(w), final(w).nodes@[i as int].footprint),
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -2816,6 +2835,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
         return; // stale
     }
+    kernel_proof! { footprint::inline_is_valid(*w, 1); }
     // A reply that breaks its schema or names the wrong commit counts as a failed run.
     if !accepts(w, n, &reply) {
         run_failed(w, i, out);
@@ -2913,7 +2933,9 @@ fn reply_transition(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (successful_reply_input(old(w).nodes@[i as int], reply)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint
             || match reply { Reply::PlanLeaf { footprint, .. } => final(w).nodes@[i as int].footprint == footprint, _ => false },
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
@@ -2934,7 +2956,9 @@ fn finish_ingest(w: &mut World, i: usize, size: u8, early_end: Option<EarlyEnd>)
     -> (result: ()) [
     requires i < old(w).nodes@.len(),
         node_headroom(old(w).nodes@[i as int]),
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (ordinary_await(old(w).nodes@[i as int]) && old(w).nodes@[i as int].phase == Phase::Ingesting
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, 0, 0),
 ] proof [reveal(reply_bounds);] {
@@ -2959,7 +2983,9 @@ fn reply_ingest(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (successful_reply_input(old(w).nodes@[i as int], reply)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
 ] proof [reveal(reply_bounds); reveal(retry_bounds);] {
@@ -3006,7 +3032,9 @@ fn reply_plan(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (successful_reply_input(old(w).nodes@[i as int], reply)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint
             || match reply { Reply::PlanLeaf { footprint, .. } => final(w).nodes@[i as int].footprint == footprint, _ => false },
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
@@ -3043,7 +3071,9 @@ fn reply_work(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (successful_reply_input(old(w).nodes@[i as int], reply)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
 ] proof [reveal(reply_bounds); reveal(retry_bounds);] {
@@ -3095,7 +3125,9 @@ fn reply_rebase(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (successful_reply_input(old(w).nodes@[i as int], reply)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
 ] proof [reveal(reply_bounds); reveal(retry_bounds);] {
@@ -3342,7 +3374,10 @@ fn recheck(w: &mut World, i: usize, target: Phase,
     requires !(target is Closed), i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (ordinary_await(old(w).nodes@[i as int]) && old(w).nodes@[i as int].phase == Phase::Rebasing
+            && target == Phase::Checking
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
 ] proof [reveal(retry_bounds);] {
@@ -4224,6 +4259,13 @@ pub closed spec fn step_budget(before: World, after: World) -> bool {
     before.nodes@.len() <= after.nodes@.len() <= before.nodes@.len() + 1
         && after.next_question as int <= before.next_question as int + QUESTION_STEP_BUDGET
         && after.next_ticket as int <= before.next_ticket as int + 2 * (before.nodes@.len() + 1)
+        && (forall|j: int| before.nodes@.len() <= j < after.nodes@.len() ==>
+            after.nodes@[j].generation <= GENERATION_STEP_BUDGET
+                && after.nodes@[j].next_seq <= EFFECT_STEP_BUDGET
+                && after.nodes@[j].credit.start <= CREDIT_START_STEP_BUDGET
+                && after.nodes@[j].credit.earned <= CREDIT_EARNED_STEP_BUDGET
+                && after.nodes@[j].credit.added <= CREDIT_ADDED_STEP_BUDGET
+                && after.nodes@[j].credit.spent <= CREDIT_SPENT_STEP_BUDGET)
         && forall|j: int| 0 <= j < before.nodes@.len() ==>
             after.nodes@[j].generation as int <= before.nodes@[j].generation as int + GENERATION_STEP_BUDGET
                 && after.nodes@[j].next_seq as int <= before.nodes@[j].next_seq as int + EFFECT_STEP_BUDGET

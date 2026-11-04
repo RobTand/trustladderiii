@@ -234,3 +234,15 @@ spec fn chosen_for_node(w: World, i: int, event: Event) -> bool {
     } }
 }
 }
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #771: a successful outside reply is selected only after direct blockers.
+spec fn ordinary_await(n: Node) -> bool {
+    current_item(n) == Some(Item::Await) && !n.paused && n.effect.is_none()
+        && !n.waiting_incident && n.question.is_none()
+}
+spec fn successful_reply_input(n: Node, reply: Reply) -> bool {
+    ordinary_await(n) && successful_reply(n) == Some(reply)
+}
+}
