@@ -67,22 +67,53 @@ fn paused_unplanned(last_cmd: u64) -> World {
     world
 }
 
-/// State-table progress witness and Q27: this claim needs a counter headroom rule.
+/// State-table progress witness and Q27: exhausted command IDs refute #771's claim.
 #[test]
-fn settled_open_world_has_a_progress_witness_at_max_command_id() {
+fn max_command_id_refutes_the_unrestricted_progress_witness() {
     let world = paused_unplanned(u64::MAX);
-    let before = world.measure();
-    let witness = std::panic::catch_unwind(|| world.witness());
-    assert!(
-        witness.is_ok(),
-        "a consistent settled open world must construct its progress witness"
-    );
-    let event = witness.unwrap().expect("an open world has a witness");
-    let after = send(world, event);
-    assert!(
-        after.measure() < before,
-        "the progress witness must strictly lower the whole-world measure"
-    );
+    assert_eq!(world.measure(), 28 * 64 + 2 + 8);
+    match std::panic::catch_unwind(|| world.witness()) {
+        Err(payload) => {
+            let message = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(String::as_str));
+            assert_eq!(message, Some("attempt to add with overflow"));
+        }
+        Ok(witness) => {
+            let event = witness.expect("the release witness wraps its command ID");
+            assert_eq!(
+                event,
+                Event::Command {
+                    node: NodeId(0),
+                    id: 0,
+                    command: Command::Resume,
+                }
+            );
+            let after = send(world.clone(), event);
+            assert_eq!(after, world, "the wrapped witness is ignored");
+        }
+    }
+}
+
+/// Facts and commands in every phase: even Stop cannot bypass an exhausted ID.
+#[test]
+fn exhausted_command_ids_ignore_resume_stop_and_replacement() {
+    let world = paused_unplanned(u64::MAX);
+    for id in [0, u64::MAX - 1, u64::MAX] {
+        for command in [Command::Resume, Command::Stop, Command::ChangeRequest] {
+            let (after, out) = step(
+                world.clone(),
+                Event::Command {
+                    node: NodeId(0),
+                    id,
+                    command,
+                },
+            );
+            assert_eq!(after, world);
+            assert!(out.is_empty());
+        }
+    }
 }
 
 /// State-table progress witness: one remaining command ID is enough to resume.
