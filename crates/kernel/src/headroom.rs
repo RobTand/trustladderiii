@@ -18,13 +18,26 @@ pub closed spec fn open_prefix(nodes: Seq<Node>, end: nat) -> nat
 /// #771: scratch scans over a prefix cannot exceed the full open-node count.
 pub proof fn open_prefix_monotone(nodes: Seq<Node>, prefix: nat, end: nat)
     requires prefix <= end <= nodes.len(),
-    ensures open_prefix(nodes, prefix) <= open_prefix(nodes, end),
+    ensures open_prefix(nodes, prefix) <= open_prefix(nodes, end)
+        <= open_prefix(nodes, prefix) + (end - prefix),
     decreases end - prefix,
 {
     reveal(open_prefix);
     if prefix < end {
         open_prefix_monotone(nodes, prefix, (end - 1) as nat);
     }
+}
+
+/// #771: an event cannot reopen a Closed node, so only an appended root
+/// can increase the open-node scratch reserve.
+pub(super) proof fn open_prefix_compare(before: Seq<Node>, after: Seq<Node>, end: nat)
+    requires end <= before.len(), end <= after.len(),
+        forall|j: int| 0 <= j < end ==> (before[j].phase is Closed ==> after[j].phase is Closed),
+    ensures open_prefix(after, end) <= open_prefix(before, end),
+    decreases end,
+{
+    reveal(open_prefix);
+    if end > 0 { open_prefix_compare(before, after, (end - 1) as nat); }
 }
 
 /// #771: the exact per-node reserve checked at the controller boundary.

@@ -2082,13 +2082,47 @@ pub fn settle_world(mut world: World) -> (World, Vec<Out>) {
 
 /// `step`, also reporting how many passes settle needed. Tests use it to size
 /// the loop bound that Kani's unwinding check then proves.
-pub fn step_with_passes(mut world: World, event: Event) -> (World, Vec<Out>, u32) {
+kernel_fn! {
+/// #771: verify the production event-to-settle composition. The scope here is
+/// the arithmetic and storage projection of consistency, plus headroom. The
+/// progress theorem separately requires command freshness for every node.
+pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<Out>, u32)) [
+    requires step_scope(world),
+    ensures step_budget(world, result.0),
+] {
+    kernel_snapshot! { before_step = world }
     let mut outbox = Outbox::new();
+    kernel_proof! { reveal(step_scope); reveal(empty_outbox); }
     apply(&mut world, event, &mut outbox);
+    kernel_proof! {
+        reveal(world_headroom);
+        open_prefix_compare(before_step@.nodes@, world.nodes@, before_step@.nodes@.len());
+        open_prefix_monotone(world.nodes@, before_step@.nodes@.len(), world.nodes@.len());
+        settle_reserve_totals(world.nodes@);
+        assert forall|j: int| 0 <= j < world.nodes@.len() implies
+            world.nodes@[j].generation as int + generation_capacity(world.nodes@[j]) <= u64::MAX as int
+                && world.nodes@[j].next_seq as int + effect_capacity(world.nodes@[j]) <= u64::MAX as int
+                && world.nodes@[j].credit.earned as int + merge_capacity(world.nodes@[j]) <= u32::MAX as int
+        by { local_capacities(world.nodes@[j]); }
+        assert(settle_ready(world));
+    }
+    kernel_snapshot! { after_apply = world }
     let mut out = Vec::new();
     outbox.drain_into(&mut out);
     let passes = settle(&mut world, &mut out, None);
+    kernel_proof! {
+        reveal(step_budget);
+        assert forall|j: int| 0 <= j < before_step@.nodes@.len() implies
+            world.nodes@[j].generation as int <= before_step@.nodes@[j].generation as int + GENERATION_STEP_BUDGET
+                && world.nodes@[j].next_seq as int <= before_step@.nodes@[j].next_seq as int + EFFECT_STEP_BUDGET
+                && world.nodes@[j].credit.start as int <= before_step@.nodes@[j].credit.start as int + CREDIT_START_STEP_BUDGET
+                && world.nodes@[j].credit.earned as int <= before_step@.nodes@[j].credit.earned as int + CREDIT_EARNED_STEP_BUDGET
+                && world.nodes@[j].credit.added as int <= before_step@.nodes@[j].credit.added as int + CREDIT_ADDED_STEP_BUDGET
+                && world.nodes@[j].credit.spent as int <= before_step@.nodes@[j].credit.spent as int + CREDIT_SPENT_STEP_BUDGET
+        by { local_capacities(after_apply@.nodes@[j]); }
+    }
     (world, out, passes)
+}
 }
 
 /// `step`, also returning the world after the event and after every internal
@@ -2112,8 +2146,16 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
         dependencies::edges_indexable(*old(w)), old(out).len + 4 <= OUTBOX,
         forall|j: int| 0 <= j < old(w).nodes@.len()
             ==> arithmetic_consistent(old(w).nodes@[j])
+                && settle_shape(old(w).nodes@[j]) && stopping_effect_fits(old(w).nodes@[j])
+                && (old(w).nodes@[j].phase is Closed ==> old(w).nodes@[j].effect.is_none())
                 && footprint::valid_footprint(*old(w), old(w).nodes@[j].footprint),
-    ensures old(w).nodes@.len() <= final(w).nodes@.len() <= old(w).nodes@.len() + 1,
+    ensures forall|j: int| 0 <= j < final(w).nodes@.len() ==>
+            settle_shape(final(w).nodes@[j])
+                && footprint::valid_footprint(*final(w), final(w).nodes@[j].footprint),
+        forall|j: int| 0 <= j < old(w).nodes@.len() ==>
+            (old(w).nodes@[j].phase is Closed ==> final(w).nodes@[j].phase is Closed)
+                && final(w).nodes@[j].repo == old(w).nodes@[j].repo,
+        old(w).nodes@.len() <= final(w).nodes@.len() <= old(w).nodes@.len() + 1,
         final(w).next_ticket == old(w).next_ticket,
         final(w).next_question as int <= old(w).next_question as int + 1,
         final(w).gates@ == old(w).gates@, final(w).pool_capacity == old(w).pool_capacity,
@@ -2135,6 +2177,7 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
             && final(w).nodes@[j].credit.start == 0 && final(w).nodes@[j].credit.earned == 0
             && final(w).nodes@[j].credit.added == 0 && final(w).nodes@[j].credit.spent == 0,
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table);] {
+    kernel_snapshot! { before_apply = *w }
     match event {
         Event::NewAdoption {
             repo,
@@ -2177,6 +2220,18 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
         Event::Command { node, id, command } => {
             if let Some(i) = w.index(node) {
                 on_command(w, i, id, command, out);
+            }
+        }
+    }
+    kernel_proof! {
+        assert forall|j: int| 0 <= j < w.nodes@.len() implies
+            footprint::valid_footprint(*w, w.nodes@[j].footprint) by {
+            if j < before_apply@.nodes@.len() {
+                if w.nodes@[j].footprint == before_apply@.nodes@[j].footprint {
+                    footprint::valid_under_table_growth(before_apply@, *w, w.nodes@[j].footprint);
+                }
+            } else {
+                footprint::inline_is_valid(*w, 0);
             }
         }
     }
@@ -2597,7 +2652,8 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
         footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
         footprint::ordered_table(*old(w)),
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         footprint::valid_footprint(*final(w), final(w).nodes@[i as int].footprint),
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
@@ -3205,7 +3261,9 @@ fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (old(w).nodes@[i as int].phase is Closed && old(w).nodes@[i as int].effect.is_none()
+            ==> final(w).nodes@[i as int].phase is Closed),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) && stopping_effect_fits(old(w).nodes@[i as int])
             ==> settle_shape(final(w).nodes@[i as int])),
@@ -3410,7 +3468,8 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         dependencies::edges_indexable(*old(w)), old(w).next_question < u64::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
@@ -3454,7 +3513,8 @@ fn fact_transition(w: &mut World, i: usize, fact: Fact,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(fact is DependencyRemove || fact is Dependency || fact is PrMerged),
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
@@ -3584,7 +3644,8 @@ fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bool,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 4 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
@@ -3649,7 +3710,8 @@ fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
@@ -3725,7 +3787,8 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
@@ -3899,6 +3962,32 @@ fn mark_handled(m: &mut Node) -> (result: ()) [
 
 #[cfg(verus_keep_ghost)]
 verus! {
+/// #771: intermediate source-level safety scope. These consistency clauses
+/// must be connected to the real checker before the final progress theorem.
+pub closed spec fn step_scope(w: World) -> bool {
+    world_headroom(w) && footprint::ordered_table(w) && dependencies::edges_indexable(w)
+        && forall|j: int| 0 <= j < w.nodes@.len() ==>
+            arithmetic_consistent(w.nodes@[j]) && settle_shape(w.nodes@[j])
+                && stopping_effect_fits(w.nodes@[j])
+                && (w.nodes@[j].phase is Closed ==> w.nodes@[j].effect.is_none())
+                && footprint::valid_footprint(w, w.nodes@[j].footprint)
+}
+
+/// #771: proven per-step K values for the executable kernel-owned ledgers.
+/// New nodes begin at zero before settle and fit the same constant budgets.
+pub closed spec fn step_budget(before: World, after: World) -> bool {
+    before.nodes@.len() <= after.nodes@.len() <= before.nodes@.len() + 1
+        && after.next_question as int <= before.next_question as int + QUESTION_STEP_BUDGET
+        && after.next_ticket as int <= before.next_ticket as int + 2 * (before.nodes@.len() + 1)
+        && forall|j: int| 0 <= j < before.nodes@.len() ==>
+            after.nodes@[j].generation as int <= before.nodes@[j].generation as int + GENERATION_STEP_BUDGET
+                && after.nodes@[j].next_seq as int <= before.nodes@[j].next_seq as int + EFFECT_STEP_BUDGET
+                && after.nodes@[j].credit.start as int <= before.nodes@[j].credit.start as int + CREDIT_START_STEP_BUDGET
+                && after.nodes@[j].credit.earned as int <= before.nodes@[j].credit.earned as int + CREDIT_EARNED_STEP_BUDGET
+                && after.nodes@[j].credit.added as int <= before.nodes@[j].credit.added as int + CREDIT_ADDED_STEP_BUDGET
+                && after.nodes@[j].credit.spent as int <= before.nodes@[j].credit.spent as int + CREDIT_SPENT_STEP_BUDGET
+}
+
 /// #771: reserve for the remaining local settle chains, with mathematical sums.
 /// #771: check_node requires every live stopping effect to fit its teardown.
 spec fn stopping_effect_fits(n: Node) -> bool {
