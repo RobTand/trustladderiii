@@ -635,7 +635,8 @@ pub(crate) mod contract_vectors {
         paths
     }
 
-    /// The current harness's vectors, then each earlier release's under `released/<version>`:
+    /// The current harness's vectors, then each released set that
+    /// `harness/test-vectors/released-contracts.json` lists, with its report version:
     /// a controller resumes checks the previous release staged (#750 review finding 2).
     pub(crate) fn parsed() -> Vec<Parsed> {
         let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -646,21 +647,21 @@ pub(crate) mod contract_vectors {
             .iter()
             .map(|path| parse_vector(path, "tl3.checks.v1", ""))
             .collect();
-        let released = directory.join("released");
-        let mut versions: Vec<_> = std::fs::read_dir(&released)
-            .unwrap_or_else(|error| panic!("{}: {error}", released.display()))
-            .map(|entry| entry.unwrap().path())
-            .collect();
-        versions.sort();
-        for version in versions {
-            let label = version.file_name().unwrap().to_string_lossy().into_owned();
-            let paths = json_files(&version);
-            assert!(!paths.is_empty(), "{label}: no released vectors");
-            parsed.extend(
-                paths
-                    .iter()
-                    .map(|path| parse_vector(path, &label, &format!("released/{label}/"))),
-            );
+        let manifest: Value = serde_json::from_slice(
+            &std::fs::read(directory.join("../released-contracts.json")).unwrap(),
+        )
+        .unwrap();
+        for set in manifest["sets"].as_array().unwrap() {
+            let name = set["set"].as_str().unwrap();
+            let paths = json_files(&directory.join("released").join(name));
+            assert!(!paths.is_empty(), "{name}: no released vectors");
+            parsed.extend(paths.iter().map(|path| {
+                parse_vector(
+                    path,
+                    set["version"].as_str().unwrap(),
+                    &format!("released/{name}/"),
+                )
+            }));
         }
         parsed
     }

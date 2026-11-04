@@ -17,7 +17,7 @@ pub const MESSAGE_CHARS: usize = 1000;
 
 // The report version the trusted action writes (action.py). A report can outlive the
 // controller that staged its check: PrismaBuild actions finish across a deploy, and each
-// controller stages only its own release's harness (checks::pinned_harness). So:
+// controller stages only its own release's harness (checks::Harness::pin). So:
 // - a controller accepts the current version and the previous one;
 // - a report shape the previous controller would refuse, or that this controller would
 //   refuse from the previous harness, gets a new version, and fields it adds stay

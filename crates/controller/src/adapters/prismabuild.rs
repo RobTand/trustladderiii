@@ -104,6 +104,8 @@ pub struct Adapter {
     runtime: tokio::runtime::Runtime,
     keys: tokio::sync::broadcast::Sender<NodeId>,
     records_lock: Arc<Mutex<()>>,
+    /// The harness fixed at startup (`checks::Harness::pin`).
+    harness: checks::Harness,
 }
 
 fn adapter_error(error: tl3_prismabuild::Error) -> crate::Error {
@@ -301,7 +303,7 @@ impl Adapter {
             })
     }
 
-    pub fn new(client: PrismaBuild, mut settings: Settings) -> Result<Self> {
+    pub fn new(client: PrismaBuild, settings: Settings) -> Result<Self> {
         if !settings.records.is_absolute()
             || !settings.harness.is_absolute()
             || settings.python.is_empty()
@@ -312,7 +314,6 @@ impl Adapter {
                 "invalid PrismaBuild adapter settings",
             ));
         }
-        settings.harness = checks::pinned_harness(&settings.harness)?;
         fs::create_dir_all(&settings.records)?;
         // Upgrade flat bindings once, preserving completions before moving their jobs.
         for entry in fs::read_dir(&settings.records)? {
@@ -340,7 +341,18 @@ impl Adapter {
                 clean_inputs(&entry.path())?;
             }
         }
+        // Beside the records directory, whose subdirectories are node records.
+        let copies = settings.records.with_file_name(format!(
+            "{}-harness",
+            settings
+                .records
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        ));
+        let harness = checks::Harness::pin(&settings.harness, &copies);
         Ok(Self {
+            harness,
             client,
             settings,
             images: super::images::Images::default(),
@@ -482,7 +494,7 @@ impl Adapter {
         staged.checks = Some(run.clone());
         let changed_paths = checks::stage(
             &input,
-            &self.settings.harness,
+            self.harness.path()?,
             &staged,
             image,
             &self.protected_paths(&delivery.repository),

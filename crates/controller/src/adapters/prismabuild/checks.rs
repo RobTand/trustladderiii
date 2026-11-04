@@ -41,12 +41,71 @@ pub(crate) const HARNESS_UNAVAILABLE: &str =
     "the trusted harness was unavailable when tl3d started; install it, then restart tl3d";
 
 impl Harness {
-    /// Red (#750 re-review): a stub that still stages through the configured path.
-    pub(super) fn pin(configured: &Path, _copies: &Path) -> Self {
-        match configured.canonicalize() {
-            Ok(pinned) => Self::Copied(pinned),
-            Err(_) => Self::Copied(configured.to_owned()),
+    /// Copy the configured harness modules once, at startup, into `copies`, a directory
+    /// only this controller writes, keyed by their digest. The configured path runs through
+    /// `current`, which deploy.py's install_release switches without restarting tl3d, and
+    /// collect_releases may later delete the release it pointed to. Staging reads only the
+    /// copy, so neither changes what a running controller stages (#750 review). Any failure
+    /// leaves the harness unavailable for this run; nothing falls back to the configured path.
+    pub(super) fn pin(configured: &Path, copies: &Path) -> Self {
+        match Self::copy(configured, copies) {
+            Ok(copy) => Self::Copied(copy),
+            Err(error) => {
+                let reason = format!("{}: {error}", configured.display());
+                eprintln!("PrismaBuild checks: {HARNESS_UNAVAILABLE} ({reason})");
+                Self::Unavailable(reason)
+            }
         }
+    }
+
+    fn copy(configured: &Path, copies: &Path) -> std::io::Result<PathBuf> {
+        use sha2::{Digest, Sha256};
+        // stage() takes only the harness directory's own *.py files, so they are the copy.
+        let mut modules = vec![];
+        for entry in fs::read_dir(configured)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().is_some_and(|v| v == "py") && fs::metadata(&path)?.is_file() {
+                modules.push((entry.file_name(), fs::read(&path)?));
+            }
+        }
+        if modules.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no harness modules",
+            ));
+        }
+        modules.sort();
+        let mut digest = Sha256::new();
+        for (name, bytes) in &modules {
+            digest.update(name.as_encoded_bytes());
+            digest.update([0]);
+            digest.update((bytes.len() as u64).to_be_bytes());
+            digest.update(bytes);
+        }
+        let key = format!("{:x}", digest.finalize());
+        fs::create_dir_all(copies)?;
+        let copy = copies.join(&key[..16]);
+        if !copy.is_dir() {
+            // Written aside, then renamed, so a copy that exists is complete.
+            let partial = copies.join(format!(".partial-{}", std::process::id()));
+            if partial.exists() {
+                fs::remove_dir_all(&partial)?;
+            }
+            fs::create_dir(&partial)?;
+            for (name, bytes) in &modules {
+                fs::write(partial.join(name), bytes)?;
+            }
+            fs::rename(&partial, &copy)?;
+        }
+        // Earlier runs' copies are this controller's own and no longer read.
+        for entry in fs::read_dir(copies)? {
+            let path = entry?.path();
+            if path != copy {
+                let _ = fs::remove_dir_all(&path);
+            }
+        }
+        Ok(copy)
     }
 
     pub(super) fn path(&self) -> Result<&Path> {
@@ -54,15 +113,6 @@ impl Harness {
             Self::Copied(path) => Ok(path),
             Self::Unavailable(_) => Err(Error::Invalid(HARNESS_UNAVAILABLE)),
         }
-    }
-}
-
-/// The pre-review pin, kept until the adapter moves to `Harness`.
-pub(super) fn pinned_harness(harness: &Path) -> Result<PathBuf> {
-    match harness.canonicalize() {
-        Ok(pinned) => Ok(pinned),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(harness.to_owned()),
-        Err(error) => Err(error.into()),
     }
 }
 

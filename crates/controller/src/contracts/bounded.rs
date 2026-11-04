@@ -429,7 +429,12 @@ impl<const MIN: u64, const MAX: u64> JsonSchema for Integer<MIN, MAX> {
 /// A non-negative count, up to the largest u64.
 pub type Count = Integer<0, { u64::MAX }>;
 
-/// A signed 64-bit integer, such as a process exit code, kept as written.
+/// A signed integer within ±(2^63 - 1), such as a process exit code, kept as written.
+///
+/// serde_json reads an integer literal outside i64/u64 as the nearest f64, while Python
+/// keeps it exact. Below i64::MIN that nearest f64 is -2^63 itself, so i64::MIN is left
+/// out: then every literal the f64 could stand for is out of range for both readers, and
+/// the two decide alike without arbitrary-precision numbers (#750 re-review finding 4).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Signed {
     value: i64,
@@ -437,17 +442,21 @@ pub struct Signed {
 }
 
 impl Signed {
-    pub fn new(value: i64) -> Self {
-        Self {
-            value,
-            number: value.into(),
-        }
+    pub const MIN: i64 = -i64::MAX;
+    pub const MAX: i64 = i64::MAX;
+
+    pub fn new(value: i64) -> Result<Self, String> {
+        Self::from_number(value.into())
     }
 
     pub fn from_number(number: serde_json::Number) -> Result<Self, String> {
         match integral(&number).and_then(|value| i64::try_from(value).ok()) {
-            Some(value) => Ok(Self { value, number }),
-            None => Err(format!("expected a 64-bit integer, found {number}")),
+            Some(value) if value >= Self::MIN => Ok(Self { value, number }),
+            _ => Err(format!(
+                "expected an integer from {} to {}, found {number}",
+                Self::MIN,
+                Self::MAX
+            )),
         }
     }
 
@@ -478,7 +487,7 @@ impl JsonSchema for Signed {
     }
 
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        json_schema!({"type": "integer", "minimum": i64::MIN, "maximum": i64::MAX})
+        json_schema!({"type": "integer", "minimum": Self::MIN, "maximum": Self::MAX})
     }
 }
 
@@ -648,11 +657,57 @@ constant!(
     true
 );
 
-constant!(
-    /// The runner's record protocol version, `1`.
-    RecordSchemaVersion,
-    1
-);
+/// The runner's record protocol version, `1`. JSON Schema's `const` compares numbers by
+/// value, so `1.0` is the same constant; the number is kept as written, because the record
+/// is hashed (#750 re-review finding 5).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordSchemaVersion(serde_json::Number);
+
+impl RecordSchemaVersion {
+    pub fn new() -> Self {
+        Self(1u64.into())
+    }
+
+    pub fn from_number(number: serde_json::Number) -> Result<Self, String> {
+        if integral(&number) == Some(1) {
+            Ok(Self(number))
+        } else {
+            Err(format!("expected 1, found {number}"))
+        }
+    }
+}
+
+impl Default for RecordSchemaVersion {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Serialize for RecordSchemaVersion {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for RecordSchemaVersion {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_number(serde_json::Number::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+impl JsonSchema for RecordSchemaVersion {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        "RecordSchemaVersion".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({"const": 1})
+    }
+}
 
 /// Schema-only marker for a field that must be present and may be `null`.
 /// Pair it with `#[serde(deserialize_with = "required_nullable")]` on an `Option<T>`.

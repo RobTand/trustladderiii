@@ -1,0 +1,11 @@
+{
+ "sets": [
+  {
+   "set": "tl3.checks.v1-11bf8fba4c",
+   "version": "tl3.checks.v1",
+   "harness_commit": "11bf8fba4cc1e944dda175154a3b5b8d0848afa9",
+   "harness_src_tree": "d0f5806be050e4dd0146bac675fc2c63dc4e28d9",
+   "check_report_sha256": "a6e7345f6f45d7145aeb9288920b05063b52c5786f063a92b194d43da8da685f"
+  }
+ ]
+}
