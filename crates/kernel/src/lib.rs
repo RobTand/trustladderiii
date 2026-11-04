@@ -48,6 +48,7 @@ pub use queries::Wait;
 mod proofs;
 
 /// Starting credit is the request's size in leaves plus this reserve.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const RESERVE: u32 = 3;
 /// Rechecks after clean rebases that cost nothing, per leaf.
 pub const FREE_RECHECKS: u8 = 3;

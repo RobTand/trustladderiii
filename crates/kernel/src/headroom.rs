@@ -73,29 +73,36 @@ kernel_fn! {
 /// can increment once more through `set_phase`. Other apply paths increment
 /// at most once. `advance_node` has at most one further phase change per node.
 /// Thus 2 + 1 = 3 is a conservative per-step bound.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const GENERATION_STEP_BUDGET: u64 = 3;
 /// #771: u64 effect-sequence reserve. Apply can retry one effect through
 /// `delivery_failed`; settle can emit at most once per node because that effect
 /// blocks further moves. Reserving 1 + 1 = 2 also covers their composition.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const EFFECT_STEP_BUDGET: u64 = 2;
 /// #771: u64 question reserve. Apply chooses at most one of `ask_rob`, cleanup
 /// failure's question, or one clarifying question. Settle allocates none.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const QUESTION_STEP_BUDGET: u64 = 1;
 /// #771: u32 starting-credit reserve. Ingest initializes this field once to
 /// `size + RESERVE`, where size is u8, or `1 + RESERVE` for an early end.
 /// The largest assignment is 255 + 3 = 258; it never accumulates deposits.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const CREDIT_START_STEP_BUDGET: u32 = u8::MAX as u32 + crate::RESERVE;
 /// #771: u32 added-credit reserve. `Credit::fund_and_pay` combines a u8 deposit
 /// with the continuation's automatic top-up. A valid continuation costs <= 1.
 /// A nonzero deposit covers that cost; a zero deposit tops up by at most one.
 /// Therefore the combined increase is <= 255, including automatic top-ups.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const CREDIT_ADDED_STEP_BUDGET: u32 = u8::MAX as u32;
 /// #771: u32 spent-credit reserve. Apply either spends one credit directly or
 /// pays one question continuation; settle spends none. Valid questions cost
 /// zero or one, as checked by `World::check_node`.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const CREDIT_SPENT_STEP_BUDGET: u32 = 1;
 /// #771: u32 earned-credit reserve. `merge_credit` increases this field by one
 /// and latches `merge_credited`, preventing another increase during the step.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const CREDIT_EARNED_STEP_BUDGET: u32 = 1;
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
