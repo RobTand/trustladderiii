@@ -286,6 +286,10 @@ fn main() {
             postmortems::lane_falls_back_while_one_model_serves,
         ),
         (
+            "postmortem_lane_waits_only_while_every_configured_model_is_out",
+            postmortems::lane_waits_only_while_every_configured_model_is_out,
+        ),
+        (
             "postmortem_claims_without_daily_limit",
             postmortems::claims_without_daily_limit,
         ),
@@ -375,6 +379,11 @@ fn main() {
         ("postmortem_failures_are_fixed_classes", 1, 3),
         ("postmortem_failed_runs_retry_then_pause", 1, 5),
         ("postmortem_lane_falls_back_while_one_model_serves", 1, 5),
+        (
+            "postmortem_lane_waits_only_while_every_configured_model_is_out",
+            1,
+            4,
+        ),
         ("postmortem_claims_without_daily_limit", 1, 4),
         ("postmortem_stalls_fail_with_no_progress", 1, 4),
         ("postmortem_result_in_the_inbox_survives_a_restart", 1, 2),
