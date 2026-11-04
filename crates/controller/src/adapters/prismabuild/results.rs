@@ -746,3 +746,111 @@ mod selected_failure_tests {
         );
     }
 }
+
+/// #734: the harness's own golden reports (`harness/test-vectors/contracts`), read through
+/// the controller's real result path, so a shape changed on one side alone turns red.
+#[cfg(test)]
+pub(crate) mod contract_vectors {
+    use super::*;
+    use serde_json::{Value, json};
+    use std::io::Write;
+
+    pub(crate) struct Parsed {
+        pub name: String,
+        pub vector: Value,
+        pub report: bool,
+        pub pass: bool,
+        /// The stored report's results, which review sends on unchanged as `checks`.
+        pub results: Vec<Value>,
+        pub failed_tests: Vec<FailedTest>,
+    }
+
+    pub(crate) fn parsed() -> Vec<Parsed> {
+        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../harness/test-vectors/contracts");
+        let mut paths: Vec<_> = std::fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "json")
+            })
+            .collect();
+        paths.sort();
+        assert!(paths.len() >= 7, "harness contract vectors are missing");
+        paths.iter().map(|path| parse_vector(path)).collect()
+    }
+
+    fn parse_vector(path: &std::path::Path) -> Parsed {
+        let name = path.file_stem().unwrap().to_string_lossy().into_owned();
+        let vector: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let request = &vector["request"];
+        let mut run =
+            json!({"repository":"/served", "base_sha":request["base"], "plan":request["plan"]});
+        if !request["reviewed"].is_null() {
+            run["reviewed_sha"] = request["reviewed"].clone();
+        }
+        let job: Job = serde_json::from_value(json!({
+            "action": "a".repeat(64),
+            "delivery": {"key":request["effect_key"], "epoch":1,
+                "output":{"Effect":{"node":0,"kind":"SubmitChecks","seq":1,"head":null}},
+                "generation":1, "head_sha":request["head"],
+                "repository":{"owner":"RobTand","name":"tl3-sandbox","installation":1},
+                "issue":734, "pull_request":null, "paths":[], "attempt":1, "round":0},
+            "run": run,
+            "changed_paths": [],
+            "selected_tests": request["selected_tests"],
+            "always_tests": request.get("always_tests").cloned().unwrap_or(json!([])),
+        }))
+        .unwrap_or_else(|error| panic!("{name}: the vector's request is not a check job: {error}"));
+        // The envelope the trusted action prints around result_json (action.py).
+        let line = format!(
+            "TL3_CHECKS {}\n",
+            json!({"schema":"tl3.checks.v1", "effect_key":request["effect_key"],
+                "base":request["base"], "head":request["head"], "reviewed":request["reviewed"],
+                "results":vector["results"]})
+        );
+        let mut log = tempfile::NamedTempFile::new().unwrap();
+        log.write_all(line.as_bytes()).unwrap();
+        let ending: Ending = serde_json::from_value(json!({
+            "action_key": "a".repeat(64), "status":"executed", "succeeded":true, "exit_code":0,
+            "result": {"verified":true, "receipt_sha256":"b".repeat(64), "stdout": {
+                "path":log.path(), "bytes":line.len(),
+                "sha256":format!("{:x}", Sha256::digest(line.as_bytes()))}},
+        }))
+        .unwrap();
+        let (report, pass, results, failed_tests, failure) = evidence(ending, &job).unwrap();
+        assert_eq!(failure, None, "{name}");
+        Parsed {
+            name,
+            vector,
+            report,
+            pass,
+            results,
+            failed_tests,
+        }
+    }
+
+    #[test]
+    fn controller_accepts_every_harness_vector_and_keeps_its_shape() {
+        for parsed in parsed() {
+            let name = &parsed.name;
+            assert!(
+                parsed.report,
+                "{name}: results.rs refused the harness report; the vector and the parser disagree"
+            );
+            assert_eq!(
+                Value::Array(parsed.results),
+                parsed.vector["results"],
+                "{name}: the stored report must keep every key the harness reports, unchanged"
+            );
+            let verdicts = parsed.vector["results"].as_array().unwrap();
+            assert_eq!(
+                parsed.pass,
+                verdicts.iter().all(|result| result["verdict"] == "pass"),
+                "{name}"
+            );
+            assert_eq!(parsed.pass, parsed.failed_tests.is_empty(), "{name}");
+        }
+    }
+}

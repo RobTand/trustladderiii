@@ -1027,3 +1027,14 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_check_report_vectors",
+    srcs = ["test_check_report_vectors.py"],
+    deps = [
+        ":conftest",
+        "//workers/src",
+        "@tl3_pip//jsonschema",
+        "@tl3_pip//pytest",
+    ],
+)
