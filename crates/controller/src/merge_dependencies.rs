@@ -489,7 +489,7 @@ mod tests {
         c.store.commit(&commit).unwrap();
     }
 
-    fn ingest(c: &mut Controller, node: NodeId, numbers: &[u64]) {
+    fn ingest_brief(c: &mut Controller, node: NodeId, numbers: &[u64]) {
         let quote = format!(
             "Merge prerequisites: {}",
             numbers
@@ -515,6 +515,10 @@ mod tests {
                 reply: json!({"kind":"brief", "brief":"Implement after prerequisites merge", "goals":[{"description":"Implement", "verification":"test"}], "memory_ids":[], "files":[], "forecast":{"tokenizer":"o200k_base", "brief_tokens":1,"file_tokens":{},"overhead_tokens":0,"tokens":1,"fit_tokens":100,"context_tokens":150,"fits":true}, "merge_prerequisites": numbers.iter().map(|n| json!({"kind":"issue", "number":n,"source_quote":quote})).collect::<Vec<_>>()}),
             },
         );
+    }
+
+    fn ingest(c: &mut Controller, node: NodeId, numbers: &[u64]) {
+        ingest_brief(c, node, numbers);
         reply(c, node, Reply::AuditAgrees);
     }
 
@@ -642,6 +646,123 @@ mod tests {
             .count();
         assert_eq!(notes, 1);
         assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Unplanned);
+    }
+
+    #[test]
+    fn declaration_reconciles_already_observed_delivery_for_active_root() {
+        let mut db = Database::start();
+        let (_repo, mut c, repo) = fixture(&mut db, "observed_delivery");
+        intake(&mut c, &repo, 2761);
+        external(&mut c, &repo, 2761, DependencyStatus::Delivered);
+        external(&mut c, &repo, 2761, DependencyStatus::Pending);
+        let waiter = intake(&mut c, &repo, 42);
+        ingest(&mut c, waiter, &[2761]);
+        let world = c.world().unwrap();
+        assert_eq!(world.dependencies()[0].status, DependencyStatus::Delivered);
+        assert_eq!(
+            world.nodes[waiter.0 as usize].phase,
+            Phase::Planning { must_split: false }
+        );
+    }
+
+    #[test]
+    fn declaration_reconciles_already_observed_abandonment_for_active_root() {
+        let mut db = Database::start();
+        let (_repo, mut c, repo) = fixture(&mut db, "observed_abandonment");
+        intake(&mut c, &repo, 2761);
+        external(&mut c, &repo, 2761, DependencyStatus::Abandoned);
+        external(&mut c, &repo, 2761, DependencyStatus::Pending);
+        let waiter = intake(&mut c, &repo, 42);
+        ingest(&mut c, waiter, &[2761]);
+        assert_eq!(
+            c.world().unwrap().dependencies()[0].status,
+            DependencyStatus::Abandoned
+        );
+        assert_eq!(
+            c.world().unwrap().nodes[waiter.0 as usize].phase,
+            Phase::Unplanned
+        );
+    }
+
+    #[test]
+    fn reingest_retains_abandonment_and_announces_once() {
+        let mut db = Database::start();
+        let (_repo, mut c, repo) = fixture(&mut db, "reingest_abandoned");
+        intake(&mut c, &repo, 2761);
+        let waiter = intake(&mut c, &repo, 42);
+        ingest_brief(&mut c, waiter, &[2761]);
+        external(&mut c, &repo, 2761, DependencyStatus::Abandoned);
+        reply(&mut c, waiter, Reply::AuditDisagrees);
+        assert_eq!(
+            c.world().unwrap().nodes[waiter.0 as usize].phase,
+            Phase::Ingesting
+        );
+        ingest(&mut c, waiter, &[2761]);
+        assert_eq!(
+            c.world().unwrap().dependencies()[0].status,
+            DependencyStatus::Abandoned
+        );
+        assert_eq!(
+            c.world().unwrap().nodes[waiter.0 as usize].phase,
+            Phase::Unplanned
+        );
+        assert_eq!(
+            c.snapshot()
+                .unwrap()
+                .pending_effects
+                .iter()
+                .filter(|r| r.payload.to_string().contains("DependencyAbandoned"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn stopped_root_announces_once_even_when_status_stays_pending() {
+        let mut db = Database::start();
+        let (_repo, mut c, repo) = fixture(&mut db, "stop_announcement");
+        let root = intake(&mut c, &repo, 2761);
+        let waiter = intake(&mut c, &repo, 42);
+        ingest(&mut c, waiter, &[2761]);
+        let revision = c.snapshot().unwrap().revision;
+        event(
+            &mut c,
+            Event::Command {
+                node: root,
+                id: 1,
+                command: Command::Stop,
+            },
+        );
+        confirm(&mut c, root);
+        let announcements = |c: &mut Controller| {
+            c.store
+                .events_after(revision, 100)
+                .unwrap()
+                .iter()
+                .flat_map(|r| {
+                    r.receipt.result["dependency_events"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default()
+                })
+                .filter(|e| {
+                    e["Fact"]["node"] == json!(waiter)
+                        && e["Fact"]["fact"]["Dependency"]["status"] == "Pending"
+                })
+                .count()
+        };
+        assert_eq!(
+            announcements(&mut c),
+            1,
+            "a stopped open prerequisite announces its ending"
+        );
+        external(&mut c, &repo, 99, DependencyStatus::Delivered);
+        confirm(&mut c, root);
+        assert_eq!(announcements(&mut c), 1, "an ending is announced only once");
+        assert_eq!(
+            c.world().unwrap().nodes[waiter.0 as usize].phase,
+            Phase::Unplanned
+        );
     }
 
     #[test]

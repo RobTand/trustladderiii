@@ -615,8 +615,18 @@ fn deliver(settings: &tl3_config::Store, _api: &Server, event: &str, body: &Valu
     );
     let first = format!("{identity}-1");
     let second = format!("{identity}-2");
-    assert_eq!(post(address, &first, event, body), 202);
-    assert_eq!(post(address, &first, event, body), 202);
+    assert_eq!(
+        post(address, &first, event, body),
+        202,
+        "event {event}, action {}",
+        body["action"]
+    );
+    assert_eq!(
+        post(address, &first, event, body),
+        202,
+        "event {event}, action {}",
+        body["action"]
+    );
     assert_eq!(post(address, &second, event, body), 202);
     control.stop();
     handle.join().unwrap().unwrap();
