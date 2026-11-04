@@ -67,7 +67,7 @@ duplicate supervisors, lost exit records, and two contenders for one claim:
 | A surviving owner publishes exactly one exit after worker exit and reaping; duplicates cannot overwrite it | `crates/controller/src/bin/tl3-worker-supervisor.rs:65`, wait/reap; `:66`, output fsync; `:71`, exit publication; `:130`, rename |
 | A lost exit remains absence, never fabricated success; a live owner or worker prevents absence | `crates/controller/src/adapters/workers.rs:1445`, liveness checks; `:1453`, exit read and absent result |
 | Restart preserves the independently scoped owner and its recorded identity, including a worker exit during disconnection | `crates/controller/src/adapters/workers.rs:1114`, launcher setup; `:1428`, recorded reconciliation; `crates/controller/src/bin/tl3-worker-supervisor.rs:48`, handshake; `:65`, wait/reap |
-| An outcome is accepted at most once for its operation, and an older generation cannot affect a newer one | `crates/controller/src/adapters/workers.rs:1073`, attempt selection; `:1130`, pinned launch record; `crates/controller/src/lib.rs:3072`, reply-generation guard |
+| An outcome is accepted at most once for its operation, and an older generation cannot affect a newer one | `crates/controller/src/adapters/workers.rs:1073`, attempt selection; `:1127`, pinned launch record; `crates/controller/src/lib.rs:3072`, reply-generation guard |
 | Every launched child is eventually reaped | `crates/controller/src/bin/tl3-worker-supervisor.rs:65`, owner wait; Linux adoption and reaping after owner death is an explicit external assumption |
 
 The proof must state atomic link/rename, successful fsync durability, eventual
