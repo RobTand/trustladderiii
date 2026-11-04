@@ -1833,6 +1833,9 @@ fn reconciled_failure(settings: &tl3_config::Store) {
             raw(settings)
                 .batch_execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
                 .unwrap();
+            let mut ownership =
+                tl3_controller::Ownership::claim(Store::connect(settings).unwrap()).unwrap();
+            ownership.migrate().unwrap();
         }
         let (mut controller, fault) = faulty(settings, root.path(), Fault::Found(ack));
         controller.intake(labelled()).unwrap();
