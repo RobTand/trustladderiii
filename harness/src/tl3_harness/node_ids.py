@@ -1,7 +1,7 @@
 """Pytest function selectors shared by collection and report validation."""
 
 
-MAX_ALWAYS_TESTS = 19
+MAX_ALWAYS_TESTS = 20
 
 
 def selects(requested: str, collected: str) -> bool:
@@ -22,7 +22,7 @@ def validate_always_tests(tests):
             raise ValueError("always_tests must contain strings")
         path, *names = test.split("::")
         if (not path.endswith(".py") or path.startswith(("/", "-"))
-                or any(char in path for char in "\\[]")
+                or any(char in path for char in "\\:*?[]")
                 or any(part in ("", ".", "..") for part in path.split("/"))
                 or not all(names) or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in test)):
             raise ValueError(f"not a repo-relative pytest file or node ID: {test!r}")
