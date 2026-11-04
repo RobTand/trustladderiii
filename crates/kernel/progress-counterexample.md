@@ -48,7 +48,7 @@ missing command or make the unchanged state strictly decrease.
 
 The control fixture uses `u64::MAX - 1`. Its actual Resume witness has ID
 `u64::MAX`, and applying it strictly lowers the whole-world measure. The
-counterexample needs one root, one repository, and seven outside events. It does
+counterexample needs one root, one repository, and six outside events. It does
 not depend on a huge world or a long replay.
 
 ## What a ghost rank can and cannot fix
