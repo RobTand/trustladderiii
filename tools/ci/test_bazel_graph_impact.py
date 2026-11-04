@@ -1,10 +1,28 @@
 """The Bazel adapter must use the same exported edges that select tests."""
 import unittest
+import hashlib
+import json
+from pathlib import Path
+import tempfile
 
 import bazel_graph_impact as adapter
 
 
 class BazelGraphTests(unittest.TestCase):
+    def test_load_records_file_content_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'pkg').mkdir()
+            content = b'fn contracts() {}\n'
+            (root / 'pkg/lib.rs').write_bytes(content)
+            deps = root / 'deps.json'
+            deps.write_text(json.dumps({'//pkg:test': ['//pkg:lib.rs'], '//pkg:lib.rs': []}))
+            hashes = root / 'hashes.json'
+            hashes.write_text(json.dumps({'//pkg:test': 'Rule#test', '//pkg:lib.rs': 'SourceFile#file'}))
+            measured, _, _ = adapter.load(deps, hashes, ['//pkg:test'], root)
+            self.assertEqual(measured.get('source_identities'),
+                             {'//pkg:lib.rs': hashlib.sha256(content).hexdigest()})
+
     def test_comparison_inputs_keep_package_ceiling_at_base(self):
         base = adapter.from_deps(
             {'//crates/controller:existing': ['//pkg:a.py', '//pkg:b.py'],

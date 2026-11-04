@@ -63,8 +63,42 @@ PR's original merge base.
 
 The empty `tools/ci/graph-impact-allowlist.json` maps exception keys to nonempty
 reasons. Keys are `reach:<test-label>`, `edge:<group>:<consumer> -> <dependency>`, `figure:u_pct`, `figure:loc_u_pct`,
-or `scc:<sorted,comma-separated-members>`. Compared with base, entries may only
-be deleted. Reasons cannot change. The initial empty list permits no exceptions.
+or `scc:<sorted,comma-separated-members>`. New entries must name a program issue
+with `#730` syntax or a full TL3 GitHub issue URL. For example:
+
+```json
+{
+  "reach://crates/controller:test_contracts": "Extract contracts into a crate for #730."
+}
+```
+
+The Gate summary prints every entry added relative to base, with its reason,
+even when another check fails. Existing reasons cannot change. Entries can be
+deleted. A `reach:` entry excuses both the test's package reach budget and its
+structural reach growth. It does not excuse existing-source fan-out growth,
+cycles, or forbidden edges. Those checks keep their existing rules.
+
+The TL3 adapter matches source moves using the typed edge diff and SHA-256 of
+the file bytes read at each revision. A match needs a removed rule-to-source
+edge, an added rule-to-source edge, and exactly one production source with that
+content hash in each revision's full source universe. Surviving and unused
+duplicates make the identity ambiguous before move candidates are selected.
+The origin must disappear from the head source universe. Copies, edited files,
+ambiguous matches, and files without source-edge evidence receive no move match.
+Exact content identity avoids filename guesses and Git rename similarity
+thresholds.
+
+For comparison only, the adapter maps each matched destination's reach and
+fan-out back to its origin label. Base package ownership remains unchanged, so
+a move credits only that file. Unrelated additions in the destination package
+cannot inherit a fabricated base peer. Unmatched new sources still count as
+growth when other sources disappear, unless they inherit an original base
+package's fan-out or have a reach exception. Additional consumers of a moved
+file still count as fan-out growth. Comparison-only identity paths connect the
+original labels to actual added edges for diagnostics. The exported graphs,
+SCCs, edge diffs, and U figures remain unchanged.
+The summary lists each matched move, and `source_moves` in the result maps
+destinations to origins.
 
 CI runs the check on BuildBuddy through the in-repo Run API client,
 [`tools/ci/remote_gate.py`](../tools/ci/remote_gate.py). For an agent run on
@@ -94,4 +128,7 @@ It does not estimate runtime savings or whether a cut preserves behavior.
 `tools/ci/graph_impact.py` is vendored byte-identically from PrismaQuant. Its
 commit and SHA-256 are recorded in `graph-impact-core.json` and checked by a
 test. TL3's adapter owns source classification, the supplemental source edges,
-conftest rule dependencies, and crate reports. Cross-repo imports are unnecessary.
+conftest rule dependencies, crate reports, reasoned exceptions, and move identity.
+This Bazel export adapter stays in Python alongside the pinned Python core;
+it does not add a second graph implementation or change the shared core.
+Cross-repo imports are unnecessary.
