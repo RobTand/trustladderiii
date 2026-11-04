@@ -312,7 +312,10 @@ impl Adapter {
                 {
                     Some(Completion::confirmed(vec![]))
                 } else {
-                    None
+                    // Once per head: an empty listing cannot prove that an
+                    // earlier timed-out POST has ended. Keep its original key
+                    // pending so a late check can confirm it without a retry.
+                    return Ok(Reconciliation::Pending);
                 }
             }
             Out::Effect {
