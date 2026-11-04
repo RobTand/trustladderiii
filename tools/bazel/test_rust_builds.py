@@ -158,7 +158,7 @@ class RustDependencyTests(unittest.TestCase):
 
     def test_measured_controller_shard_configuration(self):
         for name, count in [("workers", 8), ("publishing", 38),
-                            ("mergify", 8), ("github-flow", 50),
+                            ("mergify", 50), ("github-flow", 50),
                             ("github-notices", 32), ("simulation", 16),
                             ("core_defects", 0)]:
             with self.subTest(name=name):
