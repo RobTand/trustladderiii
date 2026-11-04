@@ -562,11 +562,12 @@ def test_context_only_buildbuddy_prompt_fixture(request_doc, monkeypatch):
     reply = events[-1]["reply"]
     assert reply["evidence_contract"] == []
     assert reply["evidence_errors"] == []
-    # #648 condensed ingest and audit; the planner keeps its wording until it is condensed. The
-    # executor's features, always_tests among them, reach ingest and audit in tool_capabilities.
+    # #648 condensed every role. The executor's features, always_tests among them, reach the
+    # roles in tool_capabilities; the planner names always_tests because it plans around them.
     statements = {
-        "planner": ("Only evidence the request requires belongs in evidence_contract.",
-                    "history, context, non-goals or examples", "the earlier BuildBuddy run showed", "always_tests"),
+        "planner": ("Include only evidence that the request requires.",
+                    "history, context, a non-goal or an example", '"The earlier BuildBuddy run showed a failure" is context',
+                    "always_tests"),
         "ingest": ("Include only evidence that the request requires.",
                    "history, context, a non-goal or an example", '"The earlier BuildBuddy run showed a failure" is context'),
         "audit": ("Include only evidence that the request requires.",

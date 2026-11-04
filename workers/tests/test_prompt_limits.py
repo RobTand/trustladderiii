@@ -54,28 +54,19 @@ def test_every_stated_byte_limit_is_one_the_code_enforces(name):
         assert number in enforced, f"{name} states a {number}-byte limit the code does not enforce"
 
 
-# What the code does with `path` (see test_file_tools.py), as prompts and tool descriptions say it.
-GREP_PATH = "grep's path may be a file or a directory"
-GREP_PATTERN = "grep's pattern is an RE2 regular expression, with no backreferences or lookarounds"
-GREP_LITERAL = "set literal to true to search text as written"
-GLOB_PATH = "glob's path must be a directory"
+# What the code does with `path` (see test_file_tools.py) is stated in the tool descriptions.
 SHARED_TOOLS = ("grep", "glob")
 # Every grep argument that is not self-explanatory must be named wherever grep is described.
 GREP_OPTIONS = sorted(set(inspect.signature(Worktree.grep).parameters) - {"self", "pattern", "path", "offset"})
 
 
-# #648: the maker and reviewer prompts leave grep and glob to their tool descriptions, which
-# test_role_tool_descriptions_describe_the_path_argument checks.
-@pytest.mark.parametrize("name", ["planner.md"])
-def test_prompts_describe_the_path_argument_of_grep_and_glob(name):
+# #648: the prompts leave grep's and glob's arguments to their tool descriptions, which
+# test_role_tool_descriptions_describe_the_path_argument checks. No prompt may contradict them.
+@pytest.mark.parametrize("name", PROMPTS)
+def test_prompts_leave_the_path_argument_of_grep_and_glob_to_the_tools(name):
     prompt = prompt_text(name)
-    assert GREP_PATH in prompt
-    assert GREP_PATTERN in prompt
-    assert GREP_LITERAL in prompt
-    assert GLOB_PATH in prompt
-    assert "Python" not in GREP_PATTERN and "not a regular expression" not in prompt
-    for option in GREP_OPTIONS:
-        assert option in prompt
+    assert "not a regular expression" not in prompt
+    assert "grep's path must be a directory" not in prompt
 
 
 @pytest.mark.parametrize("role", sorted(ROLES))

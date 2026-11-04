@@ -27,6 +27,19 @@ These changes go beyond the drafts. Wording pins in the tests showed rules the d
 
 Measured with `workers/tools/measure_prompts.py`. The table is in the PR body.
 
+## Applied in PR 3
+
+PR 3 condenses planner.md from the text that landed with #691, #692 (#698) and #696, not from the v1 draft. Changes from the L table:
+
+- A "Source proof obligations" section states the obligation-to-check mapping in four numbered rules (#662, PQ #3299). Cite an obligation goal only on demonstrating checks. List every obligation subject and give proof.red_message. For observer "new", every node_id is a new test that the maker adds; an existing test cannot prove it, also when the plan edits it. `test_proof_obligations` pins the rules and checks that the mapping is the one `evidence.proof_applicability` accepts.
+- L38 (helper mode) is gone. The subject/observer rule (#645) replaces it in "Subjects and observers", with red_message required before any assertion RED (#694).
+- Kept exactly: the #682 structural floor terms, the progress-based backstop terms (no-progress window, finalization reserve), exact node IDs without parameter suffix (#691), the byte limits, and every CAPABILITIES phrase.
+- L2 (grep RE2, glob directory) is deleted. The tool descriptions state it. `test_prompt_limits` now pins that no prompt repeats it.
+- L43-L44 stay in `forcing_rehearsal.GUIDANCE` only.
+- The planner gets the ASD-STE100 line. `test_prompt_style` covers all eight roles.
+
+Planner, o200k_base, main 7ebf1469 to PR 3: 4,500 to 2,797 words; prompt 6,167 to 3,590 tokens (-42%); total as received 11,858 to 9,281 tokens (-22%). The other roles do not change.
+
 
 Baseline: origin/main 4767af43 (prompts identical to d96b7da2). Classes:
 
