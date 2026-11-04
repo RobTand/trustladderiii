@@ -39,7 +39,42 @@ impl World {
     }
 
     pub fn counter_exhaustion(&self) -> Option<CounterExhaustion> {
-        // Red-phase stub. The boundary tests require checking every counter.
+        let tickets = self.ticket_step_budget();
+        if tickets.is_none_or(|budget| self.next_ticket > u64::MAX - budget) {
+            return Some(CounterExhaustion {
+                node: None,
+                counter: "next_ticket",
+            });
+        }
+        if self.next_question > u64::MAX - QUESTION_STEP_BUDGET {
+            return Some(CounterExhaustion {
+                node: None,
+                counter: "next_question",
+            });
+        }
+        for (index, node) in self.nodes.iter().enumerate() {
+            let counter = if node.generation > u64::MAX - GENERATION_STEP_BUDGET {
+                Some("generation")
+            } else if node.next_seq > u64::MAX - EFFECT_STEP_BUDGET {
+                Some("next_seq")
+            } else if node.credit.start > u32::MAX - CREDIT_START_STEP_BUDGET {
+                Some("credit.start")
+            } else if node.credit.earned > u32::MAX - CREDIT_EARNED_STEP_BUDGET {
+                Some("credit.earned")
+            } else if node.credit.added > u32::MAX - CREDIT_ADDED_STEP_BUDGET {
+                Some("credit.added")
+            } else if node.credit.spent > u32::MAX - CREDIT_SPENT_STEP_BUDGET {
+                Some("credit.spent")
+            } else {
+                None
+            };
+            if let Some(counter) = counter {
+                return Some(CounterExhaustion {
+                    node: Some(NodeId(index as u64)),
+                    counter,
+                });
+            }
+        }
         None
     }
 }

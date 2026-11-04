@@ -21,6 +21,9 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+#[macro_use]
+mod verification;
+
 mod dependencies;
 pub use dependencies::Dependency;
 mod footprint;
@@ -440,9 +443,18 @@ pub struct Node {
 }
 
 impl Node {
-    /// #771: allocate a fresh command ID without wrapping at exhaustion.
-    pub fn next_command_id(&self) -> Option<u64> {
-        self.last_cmd.checked_add(1)
+    kernel_fn! {
+        /// #771: allocate a fresh command ID without wrapping at exhaustion.
+        pub fn next_command_id(&self) -> (id: Option<u64>) [
+            ensures
+                match id {
+                    None => self.last_cmd == u64::MAX,
+                    Some(next) => self.last_cmd < u64::MAX
+                        && next as int == self.last_cmd as int + 1,
+                },
+        ] {
+            self.last_cmd.checked_add(1)
+        }
     }
 
     pub fn new(repo: RepoId) -> Node {
