@@ -28,6 +28,7 @@ struct Checks {
     visible: Vec<Value>,
     refuse_next_read: bool,
     fail_check_reads: bool,
+    exhaust_check_quota: bool,
     patches: usize,
     fail_patch_after: Option<usize>,
     apply_first: bool,
@@ -157,7 +158,16 @@ impl Respond for Api {
                 state.apply(&first);
             }
         }
-        state.apply(request)
+        let response = state.apply(request);
+        if state.exhaust_check_quota
+            && request.method == "GET"
+            && request.url.path().ends_with("/check-runs")
+        {
+            return response
+                .insert_header("x-ratelimit-remaining", "0")
+                .insert_header("retry-after", "120");
+        }
+        response
     }
 }
 
@@ -181,6 +191,7 @@ impl Respond for ConcurrentApi {
 struct TargetGitHub {
     real: adapters::github::Adapter,
     other: adapters::github::Fake,
+    legacy: bool,
 }
 
 impl TargetGitHub {
@@ -204,7 +215,11 @@ impl TargetGitHub {
 
 impl Executor for TargetGitHub {
     fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
-        self.target(delivery).execute(delivery)
+        let result = self.target(delivery).execute(delivery);
+        if self.legacy && matches!(result, Err(tl3_controller::Error::ApprovalAmbiguous)) {
+            return Err(tl3_github::Error::Transport.into());
+        }
+        result
     }
     fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
         self.target(delivery).reconcile(delivery)
@@ -219,7 +234,13 @@ impl Executor for TargetGitHub {
         self.target(delivery).retire_delivery(delivery)
     }
     fn look(&mut self, delivery: &Delivery) -> tl3_controller::Result<Look> {
-        self.target(delivery).look(delivery)
+        let result = self.target(delivery).look(delivery);
+        // The pre-#766 adapter returned Absent after an empty HTTP listing,
+        // without a durable attempt record. Exercise the actual allowance retry.
+        if self.legacy && matches!(result, Ok(Look::Pending)) {
+            return Ok(Look::Absent);
+        }
+        result
     }
     fn app_login(&self, installation: u64) -> Option<String> {
         self.real.app_login(installation)
@@ -250,6 +271,14 @@ fn bootstrap() -> Bootstrap {
 }
 
 fn open(settings: &tl3_config::Store, root: &Path, uri: Option<&str>) -> Controller {
+    open_mode(settings, root, uri, false)
+}
+fn open_mode(
+    settings: &tl3_config::Store,
+    root: &Path,
+    uri: Option<&str>,
+    legacy: bool,
+) -> Controller {
     let mut registry = adapters::simulation(&root.join("fakes")).unwrap();
     if let Some(uri) = uri {
         let client = GitHub::new(
@@ -272,6 +301,7 @@ fn open(settings: &tl3_config::Store, root: &Path, uri: Option<&str>) -> Control
         registry.register(
             Upstream::GitHub,
             TargetGitHub {
+                legacy,
                 real: adapters::github::Adapter::new(
                     BTreeMap::from([(3, client)]),
                     adapters::workers::FakeWriter,
@@ -1138,7 +1168,7 @@ fn cleanup_is_coalesced_by_issue_and_effect_key() {
 
 /// #766, state-table:307: every second retryable cleanup failure raises an incident.
 #[test]
-fn cleanup_failures_raise_an_incident_and_wait_for_clear() {
+fn cleanup_first_incident_recovers_on_linked_probe() {
     let case = Case::new("cleanup_incident");
     let mut controller = case.open();
     queue_duplicate_comments(&case, &mut controller);
@@ -1165,32 +1195,17 @@ fn cleanup_failures_raise_an_incident_and_wait_for_clear() {
         .expect("second retryable cleanup failure must raise an incident");
     let id = incident.id.clone();
     case.api.0.lock().unwrap().fail_comment_reads = false;
+    controller.look_now().unwrap();
     drain(&mut controller);
-    assert_eq!(
-        case.api.0.lock().unwrap().comments.len(),
-        2,
-        "cleanup waits for explicit incident clear"
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents" && r.id == id && r.value["open"] == true),
+        "the first cleanup incident must clear on its successful linked probe"
     );
-    controller
-        .observe(
-            "clear-cleanup",
-            tl3_controller::executor::Observation::GitHubComment {
-                repository: bootstrap().repos[0].clone(),
-                issue: 12,
-                comment: tl3_github::Comment {
-                    id: 901,
-                    body: format!("clear incident {id}"),
-                    user: tl3_github::Actor {
-                        id: 42,
-                        login: "rob".into(),
-                    },
-                    created_at: chrono::DateTime::UNIX_EPOCH,
-                    updated_at: chrono::DateTime::UNIX_EPOCH,
-                    issue_url: "https://api.github.com/repos/owner/sandbox/issues/12".into(),
-                },
-            },
-        )
-        .unwrap();
     drain(&mut controller);
     assert_eq!(case.api.0.lock().unwrap().comments.len(), 1);
     assert_eq!(case.api.0.lock().unwrap().comments[0]["id"], 1);
@@ -1242,4 +1257,183 @@ fn catchup_repairs_approval_copies_after_confirmation() {
     tl3_controller::ingress::drain(&mut controller).unwrap();
     drain(&mut controller);
     case.assert_converged(2);
+}
+
+/// #766, Q27: a legacy allowance creates B; A's unknown dispatch follows it across upgrade.
+#[test]
+fn legacy_allowance_replacement_after_upgrade_requires_authorization() {
+    let case = Case::new("legacy_replacement");
+    let mut controller = open_mode(
+        &case.settings,
+        case.root.path(),
+        Some(&case.server.uri()),
+        true,
+    );
+    drain(&mut controller);
+    assert_eq!(case.api.0.lock().unwrap().posts, 1);
+    controller.look_key(&case.key).unwrap();
+    assert_eq!(
+        controller.effect(&case.key).unwrap().unwrap().state,
+        EffectState::Cancelled
+    );
+    let replacement = controller
+        .snapshot()
+        .unwrap()
+        .pending_effects
+        .iter()
+        .find(|e| {
+            let d: Delivery = serde_json::from_value(e.payload.clone()).unwrap();
+            matches!(
+                d.output,
+                Output::Effect {
+                    kind: EffectKind::PostApproval,
+                    ..
+                }
+            )
+        })
+        .unwrap()
+        .key
+        .clone();
+    assert_ne!(
+        replacement, case.key,
+        "the real legacy Ack::Retryable must allocate a new key"
+    );
+    drop(controller);
+    let mut store = Store::open(&case.settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let mut upgrade = tl3_store::Commit::new(
+        "legacy-upgrade-replacement",
+        json!({"upgrade":true}),
+        &snapshot,
+    );
+    upgrade.next_epoch = Some(tl3_store::Epoch::try_from(snapshot.epoch.get() + 1).unwrap());
+    // Old versions did not write any new approval policy metadata.
+    for row in &snapshot.rows {
+        if row.table.starts_with("approval_") || row.table == "incidents" {
+            upgrade.rows.push(tl3_store::RowChange::Delete {
+                table: row.table.clone(),
+                id: row.id.clone(),
+            });
+        }
+    }
+    store.commit(&upgrade).unwrap();
+    drop(store);
+    for entry in std::fs::read_dir(case.root.path().join("github")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|e| e == "approval") {
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+    let mut controller = case.open();
+    drain(&mut controller);
+    assert_eq!(
+        case.api.0.lock().unwrap().posts,
+        1,
+        "B must inherit A's dispatch ambiguity before any new POST"
+    );
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents"
+                && r.value["effect"] == replacement
+                && r.value["open"] == true)
+    );
+}
+
+/// #766, delivery failures: preflight can exhaust quota without sending the POST.
+#[test]
+fn quota_exhausted_by_preflight_is_not_dispatch_ambiguity() {
+    let case = Case::new("preflight_last_quota");
+    case.api.0.lock().unwrap().exhaust_check_quota = true;
+    let mut controller = case.open();
+    drain(&mut controller);
+    assert_eq!(case.api.0.lock().unwrap().posts, 0);
+    assert!(
+        case.incident(&mut controller).is_none(),
+        "local quota refusal did not send a POST and must not require human authorization"
+    );
+    drop(controller);
+    {
+        let mut api = case.api.0.lock().unwrap();
+        api.exhaust_check_quota = false;
+        api.apply_first = true;
+    }
+    let mut controller = case.open();
+    controller.look_key(&case.key).unwrap();
+    drain(&mut controller);
+    assert_eq!(case.api.0.lock().unwrap().posts, 1);
+}
+
+/// #766, state-table:307: failed terminal PATCHes retain a bounded retry and linked probe.
+#[test]
+fn terminal_repair_failure_has_incident_and_timer_recovery() {
+    let case = Case::new("repair_timer");
+    case.api.0.lock().unwrap().apply_first = true;
+    let mut controller = case.open();
+    drain(&mut controller);
+    case.corrupt_copies(3);
+    case.api.0.lock().unwrap().fail_patch_after = Some(1);
+    case.check_news(
+        &mut controller,
+        case.api.0.lock().unwrap().visible[2].clone(),
+    );
+    drain(&mut controller);
+    let snapshot = controller.snapshot().unwrap();
+    let incident = snapshot
+        .rows
+        .iter()
+        .find(|r| {
+            r.table == "incidents"
+                && r.value["signature"]["class"] == "approval_repair"
+                && r.value["open"] == true
+        })
+        .expect("two failed terminal repairs must raise a visible incident");
+    assert!(
+        snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == "allowances" && r.value["incident"] == incident.id),
+        "repair must have an existing-timer recovery wake"
+    );
+    assert!(controller.next_look_in().unwrap().is_some());
+    drop(controller);
+    case.api.0.lock().unwrap().fail_patch_after = None;
+    let mut controller = case.open();
+    controller.look_now().unwrap();
+    drain(&mut controller);
+    case.assert_converged(3);
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "approval_reconciliations")
+    );
+}
+
+/// #766: retired effect history must never require a historical adapter at startup.
+#[test]
+fn retired_approval_history_does_not_block_open_without_adapter() {
+    let case = Case::new("retired_no_adapter");
+    case.api.0.lock().unwrap().apply_first = true;
+    let mut controller = case.open();
+    drain(&mut controller);
+    assert_eq!(
+        controller.effect(&case.key).unwrap().unwrap().state,
+        EffectState::Confirmed
+    );
+    drop(controller);
+    let result = Controller::open(
+        Store::open(&case.settings).unwrap(),
+        tl3_controller::executor::Registry::default(),
+        bootstrap(),
+    );
+    assert!(
+        result.is_ok(),
+        "retired history must not require its old GitHub adapter"
+    );
 }
