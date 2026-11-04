@@ -63,10 +63,10 @@ impl Footprint {
 
     kernel_fn! {
     /// #771: an inline file mask keeps its exact executable representation.
-    pub(crate) fn inline(bits: u64) -> (result: Self) [
+    pub(crate) fn inline(bits: u64) -> (result: Footprint) [
         ensures result == inline_footprint(bits),
     ] {
-        Self(Repr::Inline(bits))
+        Footprint(Repr::Inline(bits))
     }
     }
 }
