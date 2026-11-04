@@ -263,27 +263,6 @@ py_binary(
 )
 
 py_binary(
-    name = "graph_impact_proof",
-    srcs = ["graph_impact_proof.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":bazel_gate",
-        ":bazel_graph_impact",
-    ],
-)
-
-py_binary(
-    name = "graph_impact_replay",
-    srcs = ["graph_impact_replay.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":bazel_gate",
-        ":bazel_graph_impact",
-        "//tools/ci:child_env",
-    ],
-)
-
-py_binary(
     name = "child_env",
     srcs = ["child_env.py"],
     visibility = ["//visibility:public"],

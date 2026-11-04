@@ -72,25 +72,8 @@ failure. Printed output does not advance that contract.
 
 ## Verification
 
-From a clean commit, submit the worker and harness suites through PrismaBuild:
-
-```sh
-python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
-  --cwd "$PWD" --anywhere --cpus 2 --demand mem_gb=4 --priority -10 \
-  --env PATH=/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin \
-  --env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 \
-  --env UV_CONCURRENT_DOWNLOADS=2 --env UV_CONCURRENT_BUILDS=2 --detach -- \
-  /home/rob/.local/bin/uv run --project workers --locked --no-editable \
-  --python 3.14+gil python workers/tools/verify_tests.py
-```
-
-Use `pbwait.py --endings --until cleaned ACTION_KEY` and inspect verified logs
-and receipt evidence. The suite uses fake `pbrun.py` and `pbwait.py`; it never
-submits recursively. The runner tests execute fixture pytest directly inside
-that admitted action.
-
-For a real trial, install both packages and run `workers/tools/trial_tests.py
-IMAGE_DIGEST` from the submitting session, outside any admitted action. It calls
-the actual factory on a tiny uncommitted worktree and submits one action. Its
-summary must show one containment test passed, one deliberate assertion failed,
-and one test skipped. The script returns nonzero for any other result.
+The Gate runs the worker and harness suites as Bazel tests
+(`//workers/tests:test_pb_tests` and its neighbours). The suites use fake
+`pbrun.py` and `pbwait.py`; they never submit recursively, and the runner tests
+execute fixture pytest directly. Run narrow targets on BuildBuddy, as
+[the Bazel guide](../docs/bazel.md#running-tests) describes.
