@@ -35,4 +35,9 @@ export VERUS_Z3_PATH="$work/verus-x86-linux/z3"
 "$work/verus-x86-linux/verus" --version
 "$VERUS_Z3_PATH" --version
 "$work/rust/bin/rustc" --version
-/usr/bin/time -v "$work/verus-x86-linux/verus" --num-threads 1 --rlimit 30 --sysroot "$work/rust" "${1:-crates/kernel/verus/progress.rs}" "${@:2}"
+if [[ ${1:-} == --mutants ]]; then
+  shift
+  /usr/bin/time -v python3 crates/kernel/tools/progress_mutants.py "$work/verus-x86-linux/verus" "$work/rust" "$@"
+else
+  /usr/bin/time -v "$work/verus-x86-linux/verus" --num-threads 1 --rlimit 30 --sysroot "$work/rust" "${1:-crates/kernel/verus/progress.rs}" "${@:2}"
+fi

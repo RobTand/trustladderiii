@@ -27,7 +27,7 @@ use vstd::prelude::*;
 mod verification;
 
 #[cfg(verus_keep_ghost)]
-mod progress_specs;
+pub mod progress_specs;
 #[cfg(verus_keep_ghost)]
 use progress_specs::*;
 
@@ -110,14 +110,14 @@ impl Resume {
         pub fn phase(self) -> (result: Phase) [
             ensures result == resumed_phase(self),
         ] {
-        match self {
-            Resume::Making => Phase::Making,
-            Resume::Checking => Phase::Checking,
-            Resume::Reviewing => Phase::Reviewing,
-            Resume::Publishing => Phase::Publishing,
-            Resume::Rebasing => Phase::Rebasing,
+            match self {
+                Resume::Making => Phase::Making,
+                Resume::Checking => Phase::Checking,
+                Resume::Reviewing => Phase::Reviewing,
+                Resume::Publishing => Phase::Publishing,
+                Resume::Rebasing => Phase::Rebasing,
+            }
         }
-    }
     }
 }
 
@@ -147,24 +147,24 @@ pub enum Phase {
 
 impl Phase {
     kernel_fn! {
-    /// The phases in which a leaf holds a slot and its files.
+        /// The phases in which a leaf holds a slot and its files.
         pub fn holding(self) -> (result: bool) [
             ensures result == holding(self),
         ] {
-        matches!(
-            self,
-            Phase::Making
-                | Phase::Checking
-                | Phase::Reviewing
-                | Phase::Publishing
-                | Phase::Queued
-                | Phase::Rebasing
-        )
-    }
+            matches!(
+                self,
+                Phase::Making
+                    | Phase::Checking
+                    | Phase::Reviewing
+                    | Phase::Publishing
+                    | Phase::Queued
+                    | Phase::Rebasing
+            )
+        }
     }
 
     kernel_fn! {
-    /// Where a holding leaf picks up again after waiting in Ready.
+        /// Where a holding leaf picks up again after waiting in Ready.
         pub fn resume(self) -> (result: Option<Resume>) [
             ensures result == match self {
                 Phase::Making => Some(Resume::Making),
@@ -175,31 +175,31 @@ impl Phase {
                 _ => None,
             },
         ] {
-        match self {
-            Phase::Making => Some(Resume::Making),
-            Phase::Checking => Some(Resume::Checking),
-            Phase::Reviewing => Some(Resume::Reviewing),
-            Phase::Publishing | Phase::Queued => Some(Resume::Publishing),
-            Phase::Rebasing => Some(Resume::Rebasing),
-            _ => None,
+            match self {
+                Phase::Making => Some(Resume::Making),
+                Phase::Checking => Some(Resume::Checking),
+                Phase::Reviewing => Some(Resume::Reviewing),
+                Phase::Publishing | Phase::Queued => Some(Resume::Publishing),
+                Phase::Rebasing => Some(Resume::Rebasing),
+                _ => None,
+            }
         }
-    }
     }
 
     kernel_fn! {
         pub fn is_closed(self) -> (result: bool) [
             ensures result == (self is Closed),
         ] {
-        matches!(self, Phase::Closed(_))
-    }
+            matches!(self, Phase::Closed(_))
+        }
     }
 
     kernel_fn! {
         fn is_stopping(self) -> (result: bool) [
             ensures result == (self is Stopping),
         ] {
-        matches!(self, Phase::Stopping(_))
-    }
+            matches!(self, Phase::Stopping(_))
+        }
     }
 
     pub fn name(self) -> &'static str {
@@ -266,16 +266,16 @@ pub enum EffectKind {
 
 impl EffectKind {
     kernel_fn! {
-    /// Effects that start an operation. The operation's reply moves the node on.
+        /// Effects that start an operation. The operation's reply moves the node on.
         fn starts_operation(self) -> (result: bool) [
             ensures result == matches!(self, EffectKind::StartRun(_)
                 | EffectKind::SubmitChecks | EffectKind::StartRebase),
         ] {
-        matches!(
-            self,
-            EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase
-        )
-    }
+            matches!(
+                self,
+                EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase
+            )
+        }
     }
 }
 
@@ -610,110 +610,113 @@ impl Node {
         fn current(&self) -> (result: Option<Item>) [
             ensures result == current_item(*self),
         ] {
-        agenda(self.phase).get(self.pos as usize).copied()
-    }
+            agenda(self.phase).get(self.pos as usize).copied()
+        }
     }
 
     kernel_fn! {
-    /// A paused leaf whose next step would start work, and which settle will
-    /// move to Ready instead.
+        /// A paused leaf whose next step would start work, and which settle will
+        /// move to Ready instead.
         fn pause_move_due(&self) -> (result: bool) [
             ensures result == pause_due(*self),
         ] {
-        self.paused
-            && self.phase.holding()
-            && !self.waiting_incident
-            && self.effect.is_none()
-            && matches!(
-                self.current(),
-                Some(Item::Do(_) | Item::Start(_) | Item::StartChecks | Item::StartRebase)
-            )
-    }
+            self.paused
+                && self.phase.holding()
+                && !self.waiting_incident
+                && self.effect.is_none()
+                && matches!(
+                    self.current(),
+                    Some(Item::Do(_) | Item::Start(_) | Item::StartChecks | Item::StartRebase)
+                )
+        }
     }
 
     kernel_fn! {
-    /// Bookkeeping settle still owes the node without moving it closer to
-    /// done: a move to Ready because it's paused (3), taking a place in line
-    /// (2), or giving one back (1).
+        /// Bookkeeping settle still owes the node without moving it closer to
+        /// done: a move to Ready because it's paused (3), taking a place in line
+        /// (2), or giving one back (1).
         fn pending(&self) -> (result: u64) [
             ensures result as int == pending_rank(*self), result <= 3,
-        ] {
-        if self.phase.is_closed() {
-            return 0;
-        }
-        if self.waiting_incident {
-            return if self.ticket.is_some() { 1 } else { 0 };
-        }
-        if self.effect.is_some() {
-            return 0;
-        }
-        if self.pause_move_due() {
-            return 3;
-        }
-        match self.current() {
-            Some(Item::Start(_) | Item::Slot) => match (self.paused, self.ticket) {
-                (false, None) => 2,
-                (true, Some(_)) => 1,
+        ] proof [reveal(progress_specs::pending_rank);] {
+            if self.phase.is_closed() {
+                return 0;
+            }
+            if self.waiting_incident {
+                return if self.ticket.is_some() { 1 } else { 0 };
+            }
+            if self.effect.is_some() {
+                return 0;
+            }
+            if self.pause_move_due() {
+                return 3;
+            }
+            match self.current() {
+                Some(Item::Start(_) | Item::Slot) => match (self.paused, self.ticket) {
+                    (false, None) => 2,
+                    (true, Some(_)) => 1,
+                    _ => 0,
+                },
                 _ => 0,
-            },
-            _ => 0,
+            }
         }
-    }
     }
 
     kernel_fn! {
-    /// Falls with every internal transition settle takes. Kani proves it, so
-    /// settle ends for any number of requests.
+        /// Falls with every internal transition settle takes. Kani proves it, so
+        /// settle ends for any number of requests.
         pub fn settle_rank(&self) -> (result: u64) [
             ensures result as int == 4 * progress_specs::distance(*self) + pending_rank(*self),
                 result <= 16387,
         ] {
-        4 * self.distance() + self.pending()
-    }
+            4 * self.distance() + self.pending()
+        }
     }
 
     kernel_fn! {
-    /// Distance to Closed. Each witnessed event lowers the world's total, and
-    /// no internal transition raises it.
+        /// Distance to Closed. Each witnessed event lowers the world's total, and
+        /// no internal transition raises it.
+        // The pinned Verus frontend requires nested if-let instead of let chains.
+        #[allow(clippy::collapsible_if)]
         pub fn distance(&self) -> (result: u64) [
             ensures result as int == progress_specs::distance(*self), result <= 4096,
-        ] {
-        if self.phase.is_closed() {
-            return 0;
-        }
-        if self.pause_move_due()
-            && let Some(r) = self.phase.resume()
-        {
-            // Counted as the paused Ready it is about to become.
-            return rank(Phase::Ready(r)) * 64 + 2 + 8;
-        }
-        let rank = match self.phase {
-            Phase::AwaitingRob => self.question.map_or(3, |q| cont_rank(q.cont) + 1),
-            phase => rank(phase),
-        };
-        let len = agenda(self.phase).len() as u64;
-        let pos = (self.pos as u64).min(len);
-        let mut d = rank * 64 + 2 * (len - pos);
-        if let Some(e) = self.effect {
-            d += 1;
-            if !e.cancelling
-                && let Some(Item::Do(k) | Item::Teardown(k)) = self.current()
-                && k == e.kind
-            {
-                d -= 2;
+        ] proof [reveal(progress_specs::distance);] {
+            if self.phase.is_closed() {
+                return 0;
             }
+            if self.pause_move_due() {
+                if let Some(r) = self.phase.resume() {
+                    // Counted as the paused Ready it is about to become.
+                    return rank(Phase::Ready(r)) * 64 + 2 + 8;
+                }
+            }
+            let rank = match self.phase {
+                Phase::AwaitingRob => self.question.map_or(3, |q| cont_rank(q.cont) + 1),
+                phase => rank(phase),
+            };
+            let len = agenda(self.phase).len() as u64;
+            let pos = (self.pos as u64).min(len);
+            let mut d = rank * 64 + 2 * (len - pos);
+            if let Some(e) = self.effect {
+                d += 1;
+                if !e.cancelling {
+                    if let Some(Item::Do(k) | Item::Teardown(k)) = self.current() {
+                        if k == e.kind {
+                            d -= 2;
+                        }
+                    }
+                }
+            }
+            if self.paused && !self.phase.is_stopping() {
+                d += 8;
+            }
+            if self.waiting_incident {
+                d += 8;
+            }
+            if self.question.is_some() && self.phase.is_stopping() {
+                d += 4;
+            }
+            d
         }
-        if self.paused && !self.phase.is_stopping() {
-            d += 8;
-        }
-        if self.waiting_incident {
-            d += 8;
-        }
-        if self.question.is_some() && self.phase.is_stopping() {
-            d += 4;
-        }
-        d
-    }
     }
 }
 
@@ -1154,36 +1157,36 @@ kernel_fn! {
     fn agenda(phase: Phase) -> (result: &'static [Item]) [
         ensures result@ == items(phase), result.len() <= 5,
     ] {
-    use EffectKind as K;
-    use Item as I;
-    match phase {
-        Phase::Ingesting => &[I::Start(Role::Ingest), I::Await],
-        Phase::Auditing => &[I::Start(Role::Audit), I::Await],
-        Phase::Unplanned => &[I::Admit],
-        Phase::Planning { .. } => &[I::Start(Role::Plan), I::Await],
-        Phase::Ready(_) => &[I::Slot],
-        Phase::Making => &[I::Do(K::PrepareWorktree), I::Start(Role::Make), I::Await],
-        Phase::Checking => &[I::StartChecks, I::Await],
-        Phase::Reviewing => &[I::Start(Role::Review), I::Await],
-        Phase::Publishing => &[
-            I::Do(K::Push),
-            I::Do(K::PostApproval),
-            I::Do(K::OpenPr),
-            I::Do(K::Enqueue),
-        ],
-        Phase::Queued => &[I::Merge],
-        Phase::Rebasing => &[I::StartRebase, I::Await],
-        Phase::AwaitingRob => &[I::Answer],
-        Phase::Stopping(_) => &[
-            I::Teardown(K::StopRun),
-            I::Teardown(K::WithdrawJob),
-            I::Teardown(K::ClosePr),
-            I::Release,
-            I::Teardown(K::RemoveWorktree),
-        ],
-        Phase::Closed(_) => &[],
+        use EffectKind as K;
+        use Item as I;
+        match phase {
+            Phase::Ingesting => &[I::Start(Role::Ingest), I::Await],
+            Phase::Auditing => &[I::Start(Role::Audit), I::Await],
+            Phase::Unplanned => &[I::Admit],
+            Phase::Planning { .. } => &[I::Start(Role::Plan), I::Await],
+            Phase::Ready(_) => &[I::Slot],
+            Phase::Making => &[I::Do(K::PrepareWorktree), I::Start(Role::Make), I::Await],
+            Phase::Checking => &[I::StartChecks, I::Await],
+            Phase::Reviewing => &[I::Start(Role::Review), I::Await],
+            Phase::Publishing => &[
+                I::Do(K::Push),
+                I::Do(K::PostApproval),
+                I::Do(K::OpenPr),
+                I::Do(K::Enqueue),
+            ],
+            Phase::Queued => &[I::Merge],
+            Phase::Rebasing => &[I::StartRebase, I::Await],
+            Phase::AwaitingRob => &[I::Answer],
+            Phase::Stopping(_) => &[
+                I::Teardown(K::StopRun),
+                I::Teardown(K::WithdrawJob),
+                I::Teardown(K::ClosePr),
+                I::Release,
+                I::Teardown(K::RemoveWorktree),
+            ],
+            Phase::Closed(_) => &[],
+        }
     }
-}
 }
 
 /// Where a retried run starts again in its phase's agenda.
@@ -1199,38 +1202,38 @@ kernel_fn! {
         ensures result as int == phase_rank(phase), result <= 32,
         decreases if phase is Ready { 1nat } else { 0nat },
     ] {
-    match phase {
-        Phase::Closed(_) => 0,
-        Phase::Stopping(_) => 2,
-        Phase::Queued => 4,
-        Phase::Publishing => 6,
-        Phase::Reviewing => 10,
-        Phase::Checking => 14,
-        Phase::Rebasing => 18,
-        Phase::Making => 22,
-        Phase::Ready(r) => rank(r.phase()) + 2,
-        Phase::Planning { .. } => 26,
-        Phase::Unplanned => 28,
-        Phase::Auditing => 30,
-        Phase::Ingesting => 32,
-        Phase::AwaitingRob => 3,
+        match phase {
+            Phase::Closed(_) => 0,
+            Phase::Stopping(_) => 2,
+            Phase::Queued => 4,
+            Phase::Publishing => 6,
+            Phase::Reviewing => 10,
+            Phase::Checking => 14,
+            Phase::Rebasing => 18,
+            Phase::Making => 22,
+            Phase::Ready(r) => rank(r.phase()) + 2,
+            Phase::Planning { .. } => 26,
+            Phase::Unplanned => 28,
+            Phase::Auditing => 30,
+            Phase::Ingesting => 32,
+            Phase::AwaitingRob => 3,
+        }
     }
-}
 }
 
 kernel_fn! {
     fn cont_rank(cont: Cont) -> (result: u64) [
         ensures result as int == continuation_rank(cont), result <= 32,
     ] {
-    match cont {
-        Cont::Ingesting => 32,
-        Cont::Auditing => 30,
-        Cont::Unplanned => 28,
-        Cont::Planning { .. } => 26,
-        Cont::Ready(r) => rank(Phase::Ready(r)),
-        Cont::Stop(_) | Cont::Nowhere => 2,
+        match cont {
+            Cont::Ingesting => 32,
+            Cont::Auditing => 30,
+            Cont::Unplanned => 28,
+            Cont::Planning { .. } => 26,
+            Cont::Ready(r) => rank(Phase::Ready(r)),
+            Cont::Stop(_) | Cont::Nowhere => 2,
+        }
     }
-}
 }
 
 fn notice(out: &mut Outbox, node: usize, notice: Notice) {

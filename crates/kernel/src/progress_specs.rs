@@ -5,7 +5,7 @@ use super::*;
 use vstd::prelude::*;
 
 verus! {
-pub(super) open spec fn resumed_phase(r: Resume) -> Phase {
+pub open spec fn resumed_phase(r: Resume) -> Phase {
     match r {
         Resume::Making => Phase::Making,
         Resume::Checking => Phase::Checking,
@@ -15,7 +15,7 @@ pub(super) open spec fn resumed_phase(r: Resume) -> Phase {
     }
 }
 
-pub(super) open spec fn phase_rank(p: Phase) -> nat
+pub open spec fn phase_rank(p: Phase) -> nat
     decreases if p is Ready { 1nat } else { 0nat },
 {
     match p {
@@ -36,7 +36,7 @@ pub(super) open spec fn phase_rank(p: Phase) -> nat
     }
 }
 
-pub(super) open spec fn continuation_rank(c: Cont) -> nat {
+pub open spec fn continuation_rank(c: Cont) -> nat {
     match c {
         Cont::Ingesting => 32,
         Cont::Auditing => 30,
@@ -74,7 +74,7 @@ pub(super) open spec fn current_item(n: Node) -> Option<Item> {
     if n.pos < items(n.phase).len() { Some(items(n.phase)[n.pos as int]) } else { None }
 }
 
-pub(super) open spec fn holding(p: Phase) -> bool {
+pub open spec fn holding(p: Phase) -> bool {
     matches!(p, Phase::Making | Phase::Checking | Phase::Reviewing
         | Phase::Publishing | Phase::Queued | Phase::Rebasing)
 }
@@ -85,7 +85,7 @@ pub(super) open spec fn pause_due(n: Node) -> bool {
             | Item::StartChecks | Item::StartRebase))
 }
 
-pub(super) open spec fn pending_rank(n: Node) -> nat {
+pub closed spec fn pending_rank(n: Node) -> nat {
     if n.phase is Closed { 0 }
     else if n.waiting_incident { if n.ticket.is_some() { 1 } else { 0 } }
     else if n.effect.is_some() { 0 }
@@ -100,7 +100,7 @@ pub(super) open spec fn pending_rank(n: Node) -> nat {
     } }
 }
 
-pub(super) open spec fn distance(n: Node) -> nat {
+pub closed spec fn distance(n: Node) -> nat {
     if n.phase is Closed { 0 }
     else if pause_due(n) {
         phase_rank(Phase::Ready(match n.phase {
@@ -122,8 +122,10 @@ pub(super) open spec fn distance(n: Node) -> nat {
         let pos = if n.pos < len { n.pos as nat } else { len };
         let effect = match n.effect {
             None => 0int,
-            Some(e) => 1 - if !e.cancelling && matches!(current_item(n),
-                Some(Item::Do(k) | Item::Teardown(k)) if k == e.kind) { 2int } else { 0int },
+            Some(e) => 1 - if !e.cancelling && match current_item(n) {
+                Some(Item::Do(k) | Item::Teardown(k)) => k == e.kind,
+                _ => false,
+            } { 2int } else { 0int },
         };
         (rank * 64 + 2 * (len - pos) + effect
             + if n.paused && !(n.phase is Stopping) { 8int } else { 0int }
