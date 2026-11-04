@@ -294,6 +294,12 @@ pub fn flush(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usiz
     let mut after = 0;
     loop {
         for (sequence, id, item) in pending {
+            // Q7: a preceding curation cannot authorize this operation's retry.
+            if memory_needs_rob(&store.load()?, &format!("memory:retain:{id}"))? {
+                return Err(Error::Invalid(
+                    "memory delivery waits for Rob to clear its incident",
+                ));
+            }
             after = sequence;
             let result: Result<()> = crate::executor::runtime()?.block_on(async {
                 let mut request = client
@@ -1127,6 +1133,11 @@ fn curate(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usize> 
     let mut count = 0;
     while !pending.is_empty() {
         for (sequence, memory_id, state, reason) in pending {
+            if memory_needs_rob(&store.load()?, &format!("memory:curation:{sequence}"))? {
+                return Err(Error::Invalid(
+                    "memory curation waits for Rob to clear its incident",
+                ));
+            }
             let url = bank_url(settings, &[&memory_id])?;
             let status = crate::executor::runtime()?.block_on(async {
                 let mut request = client

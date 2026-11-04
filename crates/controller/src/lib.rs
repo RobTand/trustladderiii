@@ -2547,6 +2547,13 @@ impl Controller {
                 })),
             ));
         } else {
+            // Q7: clearance covers the current persisted memory outcome, even
+            // if the feed finished another held attempt before this comment.
+            if let Some(failure) = incident.input_failure.as_mut()
+                && failure.memory_version.is_some()
+            {
+                failure.memory_version = Some(self.store.memory_feed_version()?);
+            }
             if incident.open && incident.signature.class == postmortems::PAUSED {
                 self.reset_postmortem_pause(snapshot, commit);
             }

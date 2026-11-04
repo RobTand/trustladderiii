@@ -1118,7 +1118,9 @@ Memory incidents follow Q7 by operation lineage. Retains use the stable operatio
 UUID; curations use their durable sequence. A successful probe can clear the
 first incident. Only Rob can clear later incidents for that lineage, using the
 `clear incident ID` command on the operations issue. Probes and `memory retry`
-leave those operations held until clearance. Other operations get their own
+leave those operations held until clearance. Clearance is checked before each
+outgoing operation, so a preceding curation cannot release a retain's hold.
+Rob's clearance covers the current persisted outcome. Other operations get their own
 incident count. A reused incident after restart always rearms its recovery look.
 Feed-thread exit wakes the existing worker ingress source, even if the source
 registers after the exit. Feed failure does not skip worker-session retirement.
