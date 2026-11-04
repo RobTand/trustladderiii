@@ -856,8 +856,9 @@ from 0.45 s and 67 MB with `mlflow-tracing`. The role runs no Deep Agents graph.
   The run's `memory.json` stores the same integers in `judge_runs`, with a
   `grade` or `postmortem` stage, on success and failure. Postmortem summaries
   also retain the safe failure class for reconciliation and pause/status titles.
-  These diagnostic summaries do not enqueue Hindsight run records; postmortem
-  lessons still reach Hindsight through the stored result.
+  Every role, including postmortems, retains one Hindsight run record per
+  attempt. Repeated queueing and retirement replay reuse the attempt's identity;
+  postmortem lessons also reach Hindsight through the stored result.
 - **Recommendations (#486).** TL1's rule holds: a recommendation's `target` is a
   file the release ships, as a path from the repository root, and its `before`
   text appears there exactly once. The role drops any other recommendation and
