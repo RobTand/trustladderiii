@@ -25,7 +25,9 @@ def test_discovered_roles_have_prompts_and_schemas_without_orphans():
                if path.name.endswith(".py") and not path.name.startswith("_")
                and path.name != "base.py"}
     assert set(ROLES) == modules
-    expected_schemas = {"request.json", "decision-context.json"}
+    # check-report.json is generated from the controller's Rust contract types (#741).
+    expected_schemas = {"request.json", "decision-context.json", "check-report.json"}
+    Draft202012Validator.check_schema(schema("check-report"))
     Draft202012Validator.check_schema(schema("decision-context"))
     role_pattern = schema("request")["properties"]["role"]
     assert "enum" not in role_pattern
