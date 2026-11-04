@@ -240,32 +240,38 @@ fn retain_fact(
     Ok(fact)
 }
 
-fn apply_fact(
-    world: &mut World,
-    node: NodeId,
-    fact: Fact,
-    outputs: &mut Vec<Out>,
-    commit: &mut Commit,
-) {
-    let event = Event::Fact { node, fact };
-    let (next, emitted) = tl3_kernel::step(world.clone(), event);
-    *world = next;
-    outputs.extend(emitted);
-    if !commit.result.is_object() {
-        commit.result = json!({});
-    }
-    commit
-        .result
-        .as_object_mut()
-        .unwrap()
-        .entry("dependency_events")
-        .or_insert_with(|| json!([]))
-        .as_array_mut()
-        .unwrap()
-        .push(json!(event));
-}
-
 impl Controller {
+    fn apply_fact(
+        &self,
+        snapshot: &Snapshot,
+        world: &mut World,
+        node: NodeId,
+        fact: Fact,
+        outputs: &mut Vec<Out>,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        if !self.kernel_headroom(snapshot, world, commit)? {
+            return Ok(());
+        }
+        let event = Event::Fact { node, fact };
+        let (next, emitted) = tl3_kernel::step(world.clone(), event);
+        *world = next;
+        outputs.extend(emitted);
+        if !commit.result.is_object() {
+            commit.result = json!({});
+        }
+        commit
+            .result
+            .as_object_mut()
+            .unwrap()
+            .entry("dependency_events")
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+            .unwrap()
+            .push(json!(event));
+        Ok(())
+    }
+
     pub(crate) fn prepare_merge_dependencies(
         &mut self,
         snapshot: &Snapshot,
@@ -378,6 +384,7 @@ impl Controller {
 
     pub(crate) fn declare_merge_dependencies(
         &self,
+        snapshot: &Snapshot,
         world: &mut World,
         event: Event,
         outputs: &mut Vec<Out>,
@@ -413,7 +420,8 @@ impl Controller {
                             && d.target.number == dependency.target.number
                     })
                 {
-                    apply_fact(
+                    self.apply_fact(
+                        snapshot,
                         world,
                         node,
                         Fact::DependencyRemove {
@@ -422,11 +430,12 @@ impl Controller {
                         },
                         outputs,
                         commit,
-                    );
+                    )?;
                 }
             }
             for declaration in declarations {
-                apply_fact(
+                self.apply_fact(
+                    snapshot,
                     world,
                     node,
                     Fact::Dependency {
@@ -435,7 +444,7 @@ impl Controller {
                     },
                     outputs,
                     commit,
-                );
+                )?;
             }
         }
         Ok(())
@@ -549,7 +558,8 @@ impl Controller {
                         || status != DependencyStatus::Pending))
                     || unannounced
                 {
-                    apply_fact(
+                    self.apply_fact(
+                        snapshot,
                         world,
                         dependency.node,
                         Fact::Dependency {
@@ -561,7 +571,7 @@ impl Controller {
                         },
                         outputs,
                         commit,
-                    );
+                    )?;
                 }
                 if unannounced {
                     commit.rows.push(put(
@@ -603,7 +613,8 @@ impl Controller {
                     .transpose()?
                     .is_some_and(|r| same_repository(&r.repo, &fact.repository))
             {
-                apply_fact(
+                self.apply_fact(
+                    snapshot,
                     world,
                     dependency.node,
                     Fact::Dependency {
@@ -612,7 +623,7 @@ impl Controller {
                     },
                     &mut outputs,
                     commit,
-                );
+                )?;
             }
         }
         self.announce_dependency_endings(snapshot, world, Vec::new(), &mut outputs, commit)?;
@@ -682,7 +693,8 @@ mod tests {
         let before = world.clone();
         let mut outputs = Vec::new();
         let mut commit = Commit::new("exhausted-dependency", json!({}), &snapshot);
-        apply_fact(
+        c.apply_fact(
+            &snapshot,
             &mut world,
             node,
             Fact::Dependency {
@@ -695,7 +707,8 @@ mod tests {
             },
             &mut outputs,
             &mut commit,
-        );
+        )
+        .unwrap();
         assert_eq!(world, before);
         assert!(outputs.is_empty());
         assert!(commit.rows.iter().any(|row| matches!(

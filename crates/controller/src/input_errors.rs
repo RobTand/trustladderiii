@@ -53,6 +53,24 @@ fn post_backoff_ms(class: &str) -> u64 {
 }
 
 impl Controller {
+    pub(crate) fn kernel_headroom(
+        &self,
+        snapshot: &Snapshot,
+        world: &tl3_kernel::World,
+        commit: &mut Commit,
+    ) -> Result<bool> {
+        let Some(exhausted) = world.counter_exhaustion() else {
+            return Ok(true);
+        };
+        self.counter_exhausted(
+            snapshot,
+            commit,
+            exhausted.node,
+            format!("kernel counter headroom exhausted: {}", exhausted.counter),
+        )?;
+        Ok(false)
+    }
+
     pub(crate) fn counter_exhausted(
         &self,
         snapshot: &Snapshot,

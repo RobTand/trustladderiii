@@ -958,6 +958,7 @@ pub enum Out {
 
 /// Most outputs one transition emits. A late merge with an unapproved head
 /// emits four notices, the most of any transition.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const OUTBOX: usize = 5;
 
 /// The outputs of one transition: one event applied, or one internal

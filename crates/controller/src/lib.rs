@@ -473,6 +473,10 @@ impl Controller {
                 "fail_fast": fail_fast_change, "repositories": additions}),
             &snapshot,
         );
+        if !self.kernel_headroom(&snapshot, &world, &mut commit)? {
+            self.store.commit(&commit)?;
+            return Ok(());
+        }
         for (index, repository) in additions {
             self.store
                 .intern_repo(&repository.owner, &repository.name)?;
@@ -1756,13 +1760,8 @@ impl Controller {
         event: Event,
         commit: &mut Commit,
     ) -> Result<()> {
-        if let Some(exhausted) = world.counter_exhaustion() {
-            return self.counter_exhausted(
-                snapshot,
-                commit,
-                exhausted.node,
-                format!("kernel counter headroom exhausted: {}", exhausted.counter),
-            );
+        if !self.kernel_headroom(snapshot, &world, commit)? {
+            return Ok(());
         }
         // A dequeue receipt can precede queue admission, where the kernel
         // intentionally ignores it. Only an accepted Resume releases that hold.
@@ -1821,7 +1820,16 @@ impl Controller {
             })
         });
         let mut dependency_outputs = Vec::new();
-        self.declare_merge_dependencies(&mut world, event, &mut dependency_outputs, commit)?;
+        self.declare_merge_dependencies(
+            snapshot,
+            &mut world,
+            event,
+            &mut dependency_outputs,
+            commit,
+        )?;
+        if !self.kernel_headroom(snapshot, &world, commit)? {
+            return self.record_kernel_result(snapshot, world, dependency_outputs, commit);
+        }
         let dependency_roots = merge_dependencies::changed_roots(&world, event);
         let (mut world, mut outputs) = tl3_kernel::step(world, event);
         outputs.splice(0..0, dependency_outputs);
