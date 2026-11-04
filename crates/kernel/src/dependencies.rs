@@ -4,6 +4,7 @@ use super::*;
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Dependency {
     pub node: NodeId,

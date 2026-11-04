@@ -49,6 +49,7 @@ pub const FREE_RECHECKS: u8 = 3;
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Outcome {
@@ -64,6 +65,7 @@ pub enum Outcome {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum EarlyEnd {
@@ -87,6 +89,7 @@ impl EarlyEnd {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Resume {
@@ -113,6 +116,7 @@ impl Resume {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Phase {
@@ -190,6 +194,7 @@ impl Phase {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Role {
@@ -204,6 +209,7 @@ pub enum Role {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum EffectKind {
@@ -241,6 +247,7 @@ impl EffectKind {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct InFlight {
@@ -254,6 +261,7 @@ pub struct InFlight {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum QKind {
@@ -271,6 +279,7 @@ pub enum QKind {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum ReviewStop {
@@ -290,6 +299,7 @@ pub enum ReviewStop {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Cont {
@@ -306,6 +316,7 @@ pub enum Cont {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Question {
@@ -322,6 +333,7 @@ pub struct Question {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Credit {
@@ -371,6 +383,7 @@ impl Credit {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Node {
@@ -609,6 +622,7 @@ impl Node {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Gate {
@@ -619,6 +633,7 @@ pub struct Gate {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct World {
     pub nodes: Vec<Node>,
@@ -641,6 +656,7 @@ pub struct World {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Reply {
@@ -688,6 +704,7 @@ pub enum Reply {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Ack {
@@ -703,6 +720,7 @@ pub enum Ack {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Priority {
@@ -729,6 +747,7 @@ impl Priority {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum PrerequisiteKind {
@@ -740,6 +759,7 @@ pub enum PrerequisiteKind {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct DependencyTarget {
@@ -752,6 +772,7 @@ pub struct DependencyTarget {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum DependencyStatus {
@@ -764,6 +785,7 @@ pub enum DependencyStatus {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Fact {
@@ -801,6 +823,7 @@ pub enum Fact {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Answer {
@@ -818,6 +841,7 @@ pub enum Answer {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Command {
@@ -832,6 +856,7 @@ pub enum Command {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 // A plain tag. Without it, Q39's Priority field let rustc hide the event's
@@ -884,6 +909,7 @@ pub enum Event {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NoteKind {
     UnapprovedMerge,
@@ -900,6 +926,7 @@ pub enum NoteKind {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Notice {
     Ask { question: u64 },
@@ -914,6 +941,7 @@ pub enum Notice {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Out {
     Effect {
@@ -940,6 +968,7 @@ pub const OUTBOX: usize = 5;
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Outbox {
     items: [Option<Out>; OUTBOX],
@@ -994,6 +1023,7 @@ impl Outbox {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Item {
     /// Emit the effect and wait for its acknowledgement.
@@ -1688,6 +1718,7 @@ impl World {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Broken {
     Config,

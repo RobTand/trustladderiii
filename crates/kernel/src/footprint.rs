@@ -6,6 +6,7 @@ use crate::{FileId, World};
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Repr {
     Inline(u64),
@@ -17,6 +18,7 @@ enum Repr {
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Footprint(Repr);
 

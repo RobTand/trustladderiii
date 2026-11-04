@@ -4,6 +4,7 @@ macro_rules! id {
             all(feature = "serde", not(kani)),
             derive(serde::Serialize, serde::Deserialize)
         )]
+        #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
         #[cfg_attr(kani, derive(kani::Arbitrary))]
         pub struct $name(pub u64);
