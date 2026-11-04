@@ -1,7 +1,7 @@
 use crate::{Controller, Error, Repository, Request, Result, decode_stored, executor, put};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use tl3_kernel::{
     DependencyStatus, DependencyTarget, Event, Fact, NodeId, NoteKind, Out, Outcome, Phase,
     PrerequisiteKind, Reply, World,
@@ -62,7 +62,12 @@ fn history_row(row: &tl3_store::WorldRow) -> &tl3_store::WorldRow {
 
 fn bindings(snapshot: &Snapshot, commit: &Commit) -> Result<BTreeMap<NodeId, Request>> {
     let mut requests = BTreeMap::new();
-    for row in snapshot.rows.iter().map(history_row).filter(|row| row.table == "requests") {
+    for row in snapshot
+        .rows
+        .iter()
+        .map(history_row)
+        .filter(|row| row.table == "requests")
+    {
         requests.insert(
             NodeId(
                 row.id
@@ -128,6 +133,42 @@ fn root_status(world: &World, node: NodeId) -> DependencyStatus {
         DependencyStatus::Delivered
     } else {
         DependencyStatus::Pending
+    }
+}
+
+pub(crate) fn changed_roots(world: &World, event: Event) -> Vec<NodeId> {
+    match event {
+        Event::NewRequest { .. } | Event::NewAdoption { .. } => {
+            vec![NodeId(world.nodes.len() as u64)]
+        }
+        Event::Fact {
+            node,
+            fact: Fact::PrMerged { .. },
+        } if world.nodes.get(node.0 as usize).is_some_and(|n| {
+            n.had_pr
+                && n.merged.is_none()
+                && (!n.phase.is_closed()
+                    || matches!(n.phase, Phase::Closed(Outcome::Stopped | Outcome::Replaced)))
+        }) =>
+        {
+            vec![node]
+        }
+        Event::Reply {
+            node,
+            generation,
+            reply: Reply::IngestDone { .. },
+        } if world.nodes.get(node.0 as usize).is_some_and(|n| {
+            n.phase == Phase::Ingesting && n.generation == generation && n.run == Some(generation)
+        }) =>
+        {
+            world
+                .dependencies()
+                .iter()
+                .filter(|d| d.node == node && !d.rejected)
+                .filter_map(|d| d.target.request)
+                .collect()
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -404,116 +445,131 @@ impl Controller {
         &self,
         snapshot: &Snapshot,
         world: &mut World,
+        mut roots: Vec<NodeId>,
         outputs: &mut Vec<Out>,
         commit: &mut Commit,
     ) -> Result<()> {
-        let requests = bindings(snapshot, commit)?;
-        // Root completion must remain observable even when no waiter exists yet.
-        for (&root, request) in &requests {
-            if root_status(world, root) == DependencyStatus::Delivered {
-                retain_fact(
-                    snapshot,
-                    commit,
-                    ExternalFact {
-                        repository: request.repo.clone(),
-                        kind: PrerequisiteKind::Issue,
-                        number: request.issue,
-                        status: DependencyStatus::Delivered,
-                    },
-                )?;
-                if let Some(pr) = request.proposed.as_ref() {
-                    retain_fact(
-                        snapshot,
-                        commit,
-                        ExternalFact {
-                            repository: request.repo.clone(),
-                            kind: PrerequisiteKind::PullRequest,
-                            number: pr.number,
-                            status: DependencyStatus::Delivered,
-                        },
-                    )?;
-                }
-                if let Some(number) =
-                    stored_row(snapshot, commit, "pull_requests", &root.0.to_string())
-                        .and_then(|pr| pr["number"].as_u64())
+        let mut seen = BTreeSet::new();
+        let mut output_cursor = 0;
+        loop {
+            // Delivery may settle another ending. Consume its Summary too.
+            for output in &outputs[output_cursor..] {
+                if let Out::Notice {
+                    node,
+                    notice: tl3_kernel::Notice::Summary(_),
+                } = output
                 {
+                    roots.push(*node);
+                }
+            }
+            output_cursor = outputs.len();
+            let Some(root) = roots.pop() else { break };
+            if !seen.insert(root) || world.nodes.get(root.0 as usize).is_none() {
+                continue;
+            }
+            let Some(request) = stored_row(snapshot, commit, "requests", &root.0.to_string())
+                .map(decode_stored::<Request>)
+                .transpose()?
+            else {
+                continue;
+            };
+            let mut identities = vec![(PrerequisiteKind::Issue, request.issue)];
+            if let Some(pr) = &request.proposed {
+                identities.push((PrerequisiteKind::PullRequest, pr.number));
+            }
+            if let Some(number) = stored_row(snapshot, commit, "pull_requests", &root.0.to_string())
+                .and_then(|pr| pr["number"].as_u64())
+                && !identities.contains(&(PrerequisiteKind::PullRequest, number))
+            {
+                identities.push((PrerequisiteKind::PullRequest, number));
+            }
+            // Persist on the transition, even when no current request waits.
+            if root_status(world, root) == DependencyStatus::Delivered {
+                for &(kind, number) in &identities {
                     retain_fact(
                         snapshot,
                         commit,
                         ExternalFact {
                             repository: request.repo.clone(),
-                            kind: PrerequisiteKind::PullRequest,
+                            kind,
                             number,
                             status: DependencyStatus::Delivered,
                         },
                     )?;
                 }
             }
-        }
-        for dependency in world.dependencies().to_vec() {
-            if dependency.rejected {
-                continue;
-            }
-            let Some(request) = requests.get(&dependency.node) else {
-                continue;
-            };
-            let root = bound_root(
-                &requests,
-                snapshot,
-                &request.repo,
-                dependency.target.kind,
-                dependency.target.number,
-            );
-            let status = retained_fact(
-                snapshot,
-                commit,
-                &request.repo,
-                dependency.target.kind,
-                dependency.target.number,
-            )?
-            .map_or_else(
-                || root.map_or(DependencyStatus::Pending, |node| root_status(world, node)),
-                |fact| fact.status,
-            );
-            let ending = root
-                .filter(|root| world.nodes[root.0 as usize].phase.is_closed())
-                .map(|root| {
-                    format!(
-                        "{}:{}:{}:{:?}:{}",
-                        root.0,
-                        world.nodes[root.0 as usize].generation,
-                        dependency.node.0,
-                        dependency.target.kind,
-                        dependency.target.number
-                    )
-                });
-            let unannounced = ending
-                .as_ref()
-                .is_some_and(|id| stored_row(snapshot, commit, "dependency_endings", id).is_none());
-            if (dependency.status == DependencyStatus::Pending
-                && (root != dependency.target.request || status != DependencyStatus::Pending))
-                || unannounced
-            {
-                apply_fact(
-                    world,
-                    dependency.node,
-                    Fact::Dependency {
-                        target: DependencyTarget {
-                            request: root,
-                            ..dependency.target
-                        },
-                        status,
-                    },
-                    outputs,
+            let affected = world
+                .dependencies()
+                .iter()
+                .copied()
+                .filter(|d| {
+                    !d.rejected
+                        && (d.target.request == Some(root)
+                            || identities.contains(&(d.target.kind, d.target.number)))
+                })
+                .collect::<Vec<_>>();
+            for dependency in affected {
+                let Some(waiter) =
+                    stored_row(snapshot, commit, "requests", &dependency.node.0.to_string())
+                        .map(decode_stored::<Request>)
+                        .transpose()?
+                else {
+                    continue;
+                };
+                if !same_repository(&request.repo, &waiter.repo) {
+                    continue;
+                }
+                // An older root's late merge delivers the issue, but must not
+                // replace a newer binding established by a restart.
+                let bound = dependency.target.request.map_or(root, |old| old.max(root));
+                let status = retained_fact(
+                    snapshot,
                     commit,
-                );
-            }
-            if unannounced {
-                commit.rows.push(put(
-                    "dependency_endings",
-                    ending.unwrap(),
-                    json!({"status":status}),
-                ));
+                    &waiter.repo,
+                    dependency.target.kind,
+                    dependency.target.number,
+                )?
+                .map_or_else(|| root_status(world, bound), |fact| fact.status);
+                let ending = (bound == root && world.nodes[root.0 as usize].phase.is_closed())
+                    .then(|| {
+                        format!(
+                            "{}:{}:{}:{:?}:{}",
+                            root.0,
+                            world.nodes[root.0 as usize].generation,
+                            dependency.node.0,
+                            dependency.target.kind,
+                            dependency.target.number
+                        )
+                    });
+                let unannounced = ending.as_ref().is_some_and(|id| {
+                    stored_row(snapshot, commit, "dependency_endings", id).is_none()
+                });
+                if (dependency.status == DependencyStatus::Pending
+                    && (Some(bound) != dependency.target.request
+                        || status != DependencyStatus::Pending))
+                    || unannounced
+                {
+                    apply_fact(
+                        world,
+                        dependency.node,
+                        Fact::Dependency {
+                            target: DependencyTarget {
+                                request: Some(bound),
+                                ..dependency.target
+                            },
+                            status,
+                        },
+                        outputs,
+                        commit,
+                    );
+                }
+                if unannounced {
+                    commit.rows.push(put(
+                        "dependency_endings",
+                        ending.unwrap(),
+                        json!({"status":status}),
+                    ));
+                }
             }
         }
         Ok(())
@@ -538,13 +594,13 @@ impl Controller {
             ));
         }
         let fact = retain_fact(snapshot, commit, fact)?;
-        let requests = bindings(snapshot, commit)?;
         let mut outputs = Vec::new();
         for dependency in world.dependencies().to_vec() {
             if dependency.target.kind == fact.kind
                 && dependency.target.number == fact.number
-                && requests
-                    .get(&dependency.node)
+                && stored_row(snapshot, commit, "requests", &dependency.node.0.to_string())
+                    .map(decode_stored::<Request>)
+                    .transpose()?
                     .is_some_and(|r| same_repository(&r.repo, &fact.repository))
             {
                 apply_fact(
@@ -559,7 +615,7 @@ impl Controller {
                 );
             }
         }
-        self.announce_dependency_endings(snapshot, world, &mut outputs, commit)?;
+        self.announce_dependency_endings(snapshot, world, Vec::new(), &mut outputs, commit)?;
         self.record_kernel_result(snapshot, world.clone(), outputs, commit)
     }
 }
@@ -961,13 +1017,13 @@ mod tests {
         let active = intake(&mut c, &repo, 42);
         let snapshot = c.snapshot().unwrap();
         let mut world = c.world().unwrap();
-        let completed = world.nodes[root.0 as usize].clone();
+        let completed = world.nodes[root.0 as usize];
         assert_eq!(completed.phase, Phase::Closed(Outcome::AlreadyDone));
         let mut request = crate::request(&snapshot, root).unwrap();
         let mut commit = Commit::new("completed-history", json!(null), &snapshot);
         for number in 0..127 {
             let id = world.nodes.len().to_string();
-            world.nodes.push(completed.clone());
+            world.nodes.push(completed);
             request.issue = 10_000 + number;
             commit.rows.push(put("requests", id, json!(request)));
         }
@@ -978,12 +1034,18 @@ mod tests {
         c.store.commit(&commit).unwrap();
         assert!(c.world().unwrap().dependencies().is_empty());
         HISTORY_ROWS.set(0);
-        event(&mut c, Event::Fact {
-            node: active,
-            fact: Fact::Priority(tl3_kernel::Priority::Unranked),
-        });
-        assert_eq!(HISTORY_ROWS.get(), 0,
-            "an unrelated event must not read dependency history, even with 128 completed roots");
+        event(
+            &mut c,
+            Event::Fact {
+                node: active,
+                fact: Fact::Priority(tl3_kernel::Priority::Unranked),
+            },
+        );
+        assert_eq!(
+            HISTORY_ROWS.get(),
+            0,
+            "an unrelated event must not read dependency history, even with 128 completed roots"
+        );
     }
 
     #[test]
@@ -995,13 +1057,23 @@ mod tests {
         reply(&mut c, root, Reply::AuditAgrees);
         let snapshot = c.snapshot().unwrap();
         let commit = Commit::new("check-retained", json!(null), &snapshot);
-        assert_eq!(retained_fact(&snapshot, &commit, &repo, PrerequisiteKind::Issue, 2761)
-            .unwrap().unwrap().status, DependencyStatus::Delivered);
+        assert_eq!(
+            retained_fact(&snapshot, &commit, &repo, PrerequisiteKind::Issue, 2761)
+                .unwrap()
+                .unwrap()
+                .status,
+            DependencyStatus::Delivered
+        );
         let waiter = intake(&mut c, &repo, 42);
         ingest(&mut c, waiter, &[2761]);
-        assert_eq!(c.world().unwrap().dependencies()[0].status, DependencyStatus::Delivered);
-        assert_eq!(c.world().unwrap().nodes[waiter.0 as usize].phase,
-            Phase::Planning { must_split: false });
+        assert_eq!(
+            c.world().unwrap().dependencies()[0].status,
+            DependencyStatus::Delivered
+        );
+        assert_eq!(
+            c.world().unwrap().nodes[waiter.0 as usize].phase,
+            Phase::Planning { must_split: false }
+        );
     }
 
     #[test]
@@ -1011,11 +1083,27 @@ mod tests {
         let root = intake(&mut c, &repo, 2761);
         reply(&mut c, root, Reply::IngestEarlyEnd(EarlyEnd::AlreadyDone));
         reply(&mut c, root, Reply::AuditAgrees);
-        observation(&mut c, Observation::PullRequest { node: root, number: 998 });
+        observation(
+            &mut c,
+            Observation::PullRequest {
+                node: root,
+                number: 998,
+            },
+        );
         let snapshot = c.snapshot().unwrap();
         let commit = Commit::new("check-retained", json!(null), &snapshot);
-        assert_eq!(retained_fact(&snapshot, &commit, &repo, PrerequisiteKind::PullRequest, 998)
-            .unwrap().map(|fact| fact.status), Some(DependencyStatus::Delivered));
+        assert_eq!(
+            retained_fact(
+                &snapshot,
+                &commit,
+                &repo,
+                PrerequisiteKind::PullRequest,
+                998
+            )
+            .unwrap()
+            .map(|fact| fact.status),
+            Some(DependencyStatus::Delivered)
+        );
     }
 
     #[test]

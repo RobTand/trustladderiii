@@ -1812,9 +1812,16 @@ impl Controller {
         });
         let mut dependency_outputs = Vec::new();
         self.declare_merge_dependencies(&mut world, event, &mut dependency_outputs, commit)?;
+        let dependency_roots = merge_dependencies::changed_roots(&world, event);
         let (mut world, mut outputs) = tl3_kernel::step(world, event);
         outputs.splice(0..0, dependency_outputs);
-        self.announce_dependency_endings(snapshot, &mut world, &mut outputs, commit)?;
+        self.announce_dependency_endings(
+            snapshot,
+            &mut world,
+            dependency_roots,
+            &mut outputs,
+            commit,
+        )?;
         if let Some((node, reason)) = closing_cause
             && world.nodes.get(node.0 as usize).is_some_and(|n| {
                 matches!(
@@ -3507,6 +3514,15 @@ impl Controller {
                     node.0.to_string(),
                     json!({"number": number, "id": id.get()}),
                 ));
+                let mut outputs = Vec::new();
+                self.announce_dependency_endings(
+                    snapshot,
+                    world,
+                    vec![node],
+                    &mut outputs,
+                    commit,
+                )?;
+                self.record_kernel_result(snapshot, world.clone(), outputs, commit)?;
                 return Ok(None);
             }
         };
