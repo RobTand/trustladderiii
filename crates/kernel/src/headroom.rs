@@ -1,6 +1,9 @@
-use crate::{NodeId, World};
+// Included in the kernel module so contracts can inspect its private storage.
 #[cfg(verus_keep_ghost)]
-use vstd::prelude::*;
+verus! {
+/// #771: public ghost view of the executable world's node-vector length.
+pub closed spec fn world_node_count(world: World) -> nat { world.nodes@.len() }
+}
 
 // A step appends at most one node; Closed never becomes open again. Every
 // u32 scan in admits/pool_free counts only open nodes in a consistent world.
@@ -73,8 +76,8 @@ impl World {
         /// The reserve includes the one new node that apply can append.
         pub fn ticket_step_budget(&self) -> (result: Option<u64>) [
             ensures match result {
-                Some(budget) => budget as int == 2 * (self.nodes@.len() + 1),
-                None => 2 * (self.nodes@.len() + 1) > u64::MAX as int,
+                Some(budget) => budget as int == 2 * (world_node_count(*self) + 1),
+                None => 2 * (world_node_count(*self) + 1) > u64::MAX as int,
             },
         ] {
             u64::try_from(self.nodes.len())
