@@ -283,3 +283,46 @@ spec fn command_progress_input(n: Node, command: Command) -> bool {
         })
 }
 }
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #693 / #771: delivery of an existing pending prerequisite is an outside
+/// witness. Rejected and abandoned declarations instead select ChangeRequest.
+spec fn dependency_progress_input(w: World, i: int, target: DependencyTarget,
+    status: DependencyStatus) -> bool {
+    !(w.nodes@[i].phase is Closed) && status == DependencyStatus::Delivered
+        && exists|k: int| 0 <= k < w.dependencies@.len()
+            && w.dependencies@[k].node == NodeId(i as u64) && w.dependencies@[k].target == target
+            && !w.dependencies@[k].rejected && w.dependencies@[k].status == DependencyStatus::Pending
+}
+
+/// #771: one summand of the production measure's prerequisite count.
+spec fn dependency_weight(w: World, j: int) -> nat {
+    if w.dependencies@[j].status != DependencyStatus::Delivered
+        && !(w.nodes@[w.dependencies@[j].node.0 as int].phase is Closed) { 1nat } else { 0nat }
+}
+
+spec fn dependency_total(w: World, end: nat) -> nat
+    recommends end <= w.dependencies@.len(),
+    decreases end,
+{
+    if end == 0 { 0 } else { dependency_total(w, (end - 1) as nat) + dependency_weight(w, end as int - 1) }
+}
+
+/// #771: the mathematical version of World::measure has no sum overflow.
+pub closed spec fn progress_measure(w: World) -> nat {
+    node_total(w.nodes@) + dependency_total(w, w.dependencies@.len())
+}
+
+/// #771: pointwise nonincrease, including one strict summand, lifts to the sum.
+proof fn dependency_sum_compare(before: World, after: World, end: nat)
+    requires end <= before.dependencies@.len(), end <= after.dependencies@.len(),
+        forall|j: int| 0 <= j < end ==> dependency_weight(after, j) <= dependency_weight(before, j),
+    ensures dependency_total(after, end) <= dependency_total(before, end),
+        (exists|j: int| 0 <= j < end && dependency_weight(after, j) < dependency_weight(before, j))
+            ==> dependency_total(after, end) < dependency_total(before, end),
+    decreases end,
+{
+    if end > 0 { dependency_sum_compare(before, after, (end - 1) as nat); }
+}
+}
