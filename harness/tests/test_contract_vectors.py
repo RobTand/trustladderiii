@@ -98,6 +98,15 @@ SCENARIOS = {
         head={'pkg/core.py': 'def value():\n    return 1  # changed\n'},
         plan=[plan_check('other stays green', 'regression', ['tests/test_other.py::test_other'])],
         selected_tests=50),
+    # #741: a one-test budget admits the first importing unit and records the saturated suffix.
+    'selection-saturated': dict(
+        base={'pkg/__init__.py': '', 'pkg/core.py': 'def value():\n    return 1\n',
+              'tests/test_core.py': 'from pkg import core\n\ndef test_core():\n    assert core.value() == 1\n',
+              'tests/test_more.py': 'from pkg import core\n\ndef test_more():\n    assert core.value() > 0\n',
+              'tests/test_other.py': OTHER},
+        head={'pkg/core.py': 'def value():\n    return 1  # changed\n'},
+        plan=[plan_check('other stays green', 'regression', ['tests/test_other.py::test_other'])],
+        selected_tests=1),
     # #592/#626: a declared symptom carries every run's records as evidence.
     'declared-symptom': dict(
         base={'tests/test_original.py': SYMPTOM},

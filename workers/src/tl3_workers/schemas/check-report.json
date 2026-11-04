@@ -1,0 +1,1127 @@
+{
+  "$defs": {
+    "CheckKind": {
+      "enum": [
+        "demonstrating",
+        "regression",
+        "behavior-preserving",
+        "reproducing"
+      ],
+      "type": "string"
+    },
+    "CheckResult": {
+      "additionalProperties": false,
+      "properties": {
+        "custody": {
+          "$ref": "#/$defs/Custody"
+        },
+        "declared_symptom": {
+          "$ref": "#/$defs/DeclaredSymptom"
+        },
+        "forcing": {
+          "$ref": "#/$defs/Forcing"
+        },
+        "kind": {
+          "$ref": "#/$defs/CheckKind"
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "proof": {
+          "$ref": "#/$defs/ProofReceipt"
+        },
+        "selection": {
+          "$ref": "#/$defs/Selection"
+        },
+        "symptom_evidence": {
+          "$ref": "#/$defs/SymptomEvidence"
+        },
+        "tests": {
+          "items": {
+            "$ref": "#/$defs/TestResult"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict"
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "verdict",
+        "custody",
+        "tests"
+      ],
+      "type": "object"
+    },
+    "CollectionSaturation": {
+      "additionalProperties": false,
+      "properties": {
+        "cases": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "remaining": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unit": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "unit",
+        "cases",
+        "remaining"
+      ],
+      "type": "object"
+    },
+    "Custody": {
+      "enum": [
+        "in-process"
+      ],
+      "type": "string"
+    },
+    "DeclaredSymptom": {
+      "additionalProperties": false,
+      "properties": {
+        "exception": {
+          "pattern": "^[A-Za-z_]\\w*(\\.[A-Za-z_]\\w*)+$",
+          "type": "string"
+        },
+        "node": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "parallel": {
+          "enum": [
+            0,
+            2,
+            3,
+            4
+          ]
+        },
+        "phase": {
+          "$ref": "#/$defs/SymptomPhase"
+        },
+        "repeat": {
+          "maximum": 10,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node",
+        "exception",
+        "phase",
+        "repeat",
+        "parallel"
+      ],
+      "type": "object"
+    },
+    "DelayBudget": {
+      "additionalProperties": false,
+      "properties": {
+        "applied_seconds": {
+          "maximum": 10,
+          "minimum": 0,
+          "type": "number"
+        },
+        "exhausted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "applied_seconds",
+        "exhausted"
+      ],
+      "type": "object"
+    },
+    "Forcing": {
+      "additionalProperties": false,
+      "description": "A forced reproduction (#393): the declarative condition the harness applies, outside the test, to recreate a flake. Only on demonstrating checks.",
+      "properties": {
+        "environment": {
+          "additionalProperties": {
+            "maxLength": 1000,
+            "type": "string"
+          },
+          "maxProperties": 8,
+          "propertyNames": {
+            "pattern": "^[A-Z_][A-Z0-9_]{0,63}$"
+          },
+          "type": "object"
+        },
+        "patches": {
+          "items": {
+            "additionalProperties": false,
+            "maxProperties": 2,
+            "minProperties": 2,
+            "properties": {
+              "delay_seconds": {
+                "exclusiveMinimum": 0,
+                "maximum": 5,
+                "type": "number"
+              },
+              "raises": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "returns": {},
+              "target": {
+                "maxLength": 200,
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$",
+                "type": "string"
+              },
+              "value": {}
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "symptom": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "symptom",
+        "environment",
+        "patches"
+      ],
+      "type": "object"
+    },
+    "ForcingRefusal": {
+      "additionalProperties": false,
+      "properties": {
+        "owner_category": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/ForcingValidation"
+        },
+        "reason": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "resolved_module": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "target": {
+          "maxLength": 4096,
+          "type": "string"
+        }
+      },
+      "required": [
+        "phase",
+        "target",
+        "resolved_module",
+        "owner_category",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "ForcingValidation": {
+      "enum": [
+        "forcing_validation"
+      ],
+      "type": "string"
+    },
+    "MissingName": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      ]
+    },
+    "Outcome": {
+      "enum": [
+        "passed",
+        "assertion",
+        "added-name",
+        "error",
+        "skipped",
+        "missing",
+        "uncollected",
+        "no-report"
+      ],
+      "type": "string"
+    },
+    "PhaseEvidence": {
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "base": {
+          "$ref": "#/$defs/PhaseRun"
+        },
+        "head": {
+          "$ref": "#/$defs/PhaseRun"
+        },
+        "head_forced": {
+          "$ref": "#/$defs/PhaseRun"
+        }
+      },
+      "type": "object"
+    },
+    "PhaseFact": {
+      "additionalProperties": false,
+      "properties": {
+        "assertion": {
+          "type": "boolean"
+        },
+        "exception": {
+          "maxLength": 200,
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/PhaseOutcome"
+        }
+      },
+      "required": [
+        "outcome",
+        "exception",
+        "assertion"
+      ],
+      "type": "object"
+    },
+    "PhaseName": {
+      "enum": [
+        "setup",
+        "call",
+        "teardown"
+      ],
+      "type": "string"
+    },
+    "PhaseOutcome": {
+      "enum": [
+        "passed",
+        "failed",
+        "skipped"
+      ],
+      "type": "string"
+    },
+    "PhaseRun": {
+      "additionalProperties": false,
+      "properties": {
+        "call": {
+          "$ref": "#/$defs/PhaseFact"
+        },
+        "setup": {
+          "$ref": "#/$defs/PhaseFact"
+        },
+        "teardown": {
+          "$ref": "#/$defs/PhaseFact"
+        },
+        "test": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "test",
+        "setup",
+        "teardown"
+      ],
+      "type": "object"
+    },
+    "ProofDeclaration": {
+      "additionalProperties": false,
+      "properties": {
+        "observer_support": {
+          "items": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|::|$))[^\\\\\\u0000\\r\\n]+\\.py(?:::[A-Za-z_][A-Za-z_0-9]*)*$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "red_message": {
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        },
+        "subjects": {
+          "items": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|::|$))[^\\\\\\u0000\\r\\n]+\\.py(?:::[A-Za-z_][A-Za-z_0-9]*)*$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "subjects",
+        "observer_support",
+        "red_message"
+      ],
+      "type": "object"
+    },
+    "ProofMode": {
+      "enum": [
+        "head-observer",
+        "pytest-outcome"
+      ],
+      "type": "string"
+    },
+    "ProofReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "base_tree_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "declaration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProofDeclaration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "delay_budget": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "$ref": "#/$defs/DelayBudget"
+            },
+            "type": "object"
+          },
+          "type": "object"
+        },
+        "head_tree_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/ProofMode"
+        },
+        "observer_sha256": {
+          "additionalProperties": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": "object"
+        },
+        "red_message_matches": {
+          "additionalProperties": {
+            "$ref": "#/$defs/RedMessageMatch"
+          },
+          "type": "object"
+        },
+        "rule": {
+          "$ref": "#/$defs/ProofRule"
+        },
+        "source_base_tree_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "subjects": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SubjectDigests"
+          },
+          "type": "object"
+        },
+        "support_sha256": {
+          "additionalProperties": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "rule",
+        "declaration",
+        "mode",
+        "subjects",
+        "observer_sha256",
+        "support_sha256",
+        "source_base_tree_sha256",
+        "base_tree_sha256",
+        "head_tree_sha256"
+      ],
+      "type": "object"
+    },
+    "ProofRule": {
+      "enum": [
+        "subject-observer-v1"
+      ],
+      "type": "string"
+    },
+    "RecordFailure": {
+      "additionalProperties": false,
+      "properties": {
+        "exception": {
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/PhaseName"
+        },
+        "source": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "exception",
+        "phase",
+        "source"
+      ],
+      "type": "object"
+    },
+    "RecordOutcome": {
+      "enum": [
+        "passed",
+        "failed",
+        "error",
+        "skipped"
+      ],
+      "type": "string"
+    },
+    "RedMessageMatch": {
+      "enum": [
+        "message",
+        "source-assertion"
+      ],
+      "type": "string"
+    },
+    "ReportSchema": {
+      "enum": [
+        "tl3.checks.v1"
+      ],
+      "type": "string"
+    },
+    "RunOutcome": {
+      "enum": [
+        "passed",
+        "symptom",
+        "unrelated",
+        "unavailable"
+      ],
+      "type": "string"
+    },
+    "SelectedUnit": {
+      "additionalProperties": false,
+      "properties": {
+        "cases": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "members": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "outcomes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Outcome"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "members",
+        "cases",
+        "outcomes"
+      ],
+      "type": "object"
+    },
+    "Selection": {
+      "additionalProperties": false,
+      "properties": {
+        "base_units": {
+          "items": {
+            "$ref": "#/$defs/SelectedUnit"
+          },
+          "type": "array"
+        },
+        "charged_cases": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "head_units": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "limit": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "policy": {
+          "type": "string"
+        },
+        "saturation": {
+          "$ref": "#/$defs/SelectionSaturation"
+        },
+        "skipped_checked": {
+          "type": "boolean"
+        },
+        "skipped_units": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "policy",
+        "limit",
+        "charged_cases",
+        "base_units",
+        "head_units",
+        "skipped_units",
+        "skipped_checked",
+        "saturation"
+      ],
+      "type": "object"
+    },
+    "SelectionSaturation": {
+      "additionalProperties": false,
+      "properties": {
+        "cases": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "remaining": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unit": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "unit",
+        "cases",
+        "remaining",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "SubjectDigests": {
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "head": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "base",
+        "head"
+      ],
+      "type": "object"
+    },
+    "SymptomEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "type": "string"
+        },
+        "declaration": {
+          "$ref": "#/$defs/DeclaredSymptom"
+        },
+        "forcing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Forcing"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "head": {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "type": "string"
+        },
+        "runs": {
+          "items": {
+            "$ref": "#/$defs/SymptomRun"
+          },
+          "maxItems": 30,
+          "type": "array"
+        }
+      },
+      "required": [
+        "base",
+        "head",
+        "forcing",
+        "declaration",
+        "runs"
+      ],
+      "type": "object"
+    },
+    "SymptomPhase": {
+      "enum": [
+        "call",
+        "setup"
+      ],
+      "type": "string"
+    },
+    "SymptomRecord": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "event": {
+              "const": "start",
+              "type": "string"
+            },
+            "schema": {
+              "const": 1
+            }
+          },
+          "required": [
+            "event",
+            "schema"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "event": {
+              "const": "finish",
+              "type": "string"
+            },
+            "exit_code": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "exit_code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "event": {
+              "const": "collection",
+              "type": "string"
+            },
+            "saturation": {
+              "$ref": "#/$defs/CollectionSaturation"
+            },
+            "tests": {
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "tests"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "delay_budget": {
+              "$ref": "#/$defs/DelayBudget"
+            },
+            "event": {
+              "const": "result",
+              "type": "string"
+            },
+            "failures": {
+              "items": {
+                "$ref": "#/$defs/RecordFailure"
+              },
+              "type": "array"
+            },
+            "forcing_refusal": {
+              "$ref": "#/$defs/ForcingRefusal"
+            },
+            "forcing_tampered": {
+              "const": true
+            },
+            "message": {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            "outcome": {
+              "$ref": "#/$defs/RecordOutcome"
+            },
+            "target_hits": {
+              "additionalProperties": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "test": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "event",
+            "test",
+            "outcome",
+            "message",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "assertion": {
+              "type": "boolean"
+            },
+            "event": {
+              "const": "phase",
+              "type": "string"
+            },
+            "exception": {
+              "maxLength": 300,
+              "type": "string"
+            },
+            "exception_type": {
+              "maxLength": 200,
+              "type": "string"
+            },
+            "message": {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            "missing": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/MissingName"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "outcome": {
+              "$ref": "#/$defs/PhaseOutcome"
+            },
+            "test": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "when": {
+              "$ref": "#/$defs/PhaseName"
+            }
+          },
+          "required": [
+            "event",
+            "test",
+            "when",
+            "outcome",
+            "assertion",
+            "missing"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "event": {
+              "const": "collection-error",
+              "type": "string"
+            },
+            "exception": {
+              "maxLength": 300,
+              "type": "string"
+            },
+            "message": {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            "missing": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/MissingName"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "test": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "event"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "event": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "message": {
+              "maxLength": 1000,
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "event": {
+              "const": "plan-error",
+              "type": "string"
+            },
+            "message": {
+              "maxLength": 1000,
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "message"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SymptomRun": {
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/RunOutcome"
+        },
+        "records": {
+          "items": {
+            "$ref": "#/$defs/SymptomRecord"
+          },
+          "type": "array"
+        },
+        "run": {
+          "maximum": 10,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "side": {
+          "$ref": "#/$defs/SymptomSide"
+        },
+        "target_hits": {
+          "additionalProperties": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "side",
+        "run",
+        "outcome",
+        "sha256",
+        "records"
+      ],
+      "type": "object"
+    },
+    "SymptomSide": {
+      "enum": [
+        "base",
+        "head",
+        "ordinary-head"
+      ],
+      "type": "string"
+    },
+    "TestResult": {
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "head": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "head_forced": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "message": {
+          "default": "",
+          "maxLength": 1000,
+          "type": "string"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "phases": {
+          "$ref": "#/$defs/PhaseEvidence"
+        },
+        "pre_existing": {
+          "type": "boolean"
+        },
+        "test": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "test",
+        "base",
+        "head",
+        "pre_existing",
+        "passed"
+      ],
+      "type": "object"
+    },
+    "Verdict": {
+      "enum": [
+        "pass",
+        "fail",
+        "infrastructure-failure"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/check-report.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "base": {
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+      "type": "string"
+    },
+    "effect_key": {
+      "type": "string"
+    },
+    "head": {
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+      "type": "string"
+    },
+    "results": {
+      "items": {
+        "$ref": "#/$defs/CheckResult"
+      },
+      "type": "array"
+    },
+    "reviewed": {
+      "anyOf": [
+        {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "schema": {
+      "$ref": "#/$defs/ReportSchema"
+    }
+  },
+  "required": [
+    "schema",
+    "effect_key",
+    "base",
+    "head",
+    "reviewed",
+    "results"
+  ],
+  "type": "object"
+}

@@ -24,6 +24,7 @@ tl3-github = { path = "../github" }
 tl3-mergify = { path = "../mergify" }
 chrono = { version = "0.4", features = ["serde"] }
 ts-rs = { version = "12", features = ["no-serde-warnings"] }
+schemars = "1"
 
 tl3-worktrees = { path = "../worktrees" }
 
@@ -38,6 +39,7 @@ postgresql_embedded = { version = "0.22", default-features = false, features = [
 tempfile = "3"
 hmac = "0.12"
 hex = "0.4"
+proptest = { version = "1", default-features = false, features = ["std"] }
 
 [[example]]
 name = "tl3-deploy"

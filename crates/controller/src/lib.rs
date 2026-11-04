@@ -16,6 +16,7 @@ mod branches;
 pub mod cli;
 pub mod clock;
 pub mod console;
+pub mod contracts;
 mod decisions;
 pub mod evidence;
 pub mod executor;
