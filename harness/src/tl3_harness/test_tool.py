@@ -88,12 +88,14 @@ def bounded(result, *, limit=SUMMARY_BYTES - 2048):
     # entries too, without changing any group's proof, totals or receipts.
     summaries = list(_summaries(result))
     size = len(json.dumps(result).encode())
+    if size > limit:
+        # Account for notices once, before measuring each shrinking iteration.
+        for summary in summaries:
+            summary['note'] = 'Truncated: selectors were compacted or entries were cut. Totals include all results.'
+        size = len(json.dumps(result).encode())
     while size > limit:
-        changed = _shrink(summaries)
-        if changed is None:
+        if _shrink(summaries) is None:
             return _summary_limit(result)
-        result['note'] = 'Truncated: selectors were compacted or entries were cut. Totals include all results.'
-        changed['note'] = result['note']
         reduced = len(json.dumps(result).encode())
         # The encoded byte count is a decreasing natural number, including the
         # truncation note. Every iteration shrinks it or exits without proof.
