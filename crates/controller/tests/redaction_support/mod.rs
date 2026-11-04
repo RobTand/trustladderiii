@@ -26,10 +26,11 @@ pub fn python_command() -> Command {
 
 pub fn shared_inputs() -> Vec<String> {
     let mut matrix: Vec<String> =
-        serde_json::from_str(include_str!("../src/redaction/matrix.json")).unwrap();
+        serde_json::from_str(include_str!("../../src/redaction/matrix.json")).unwrap();
     assert_eq!(matrix.len(), 196);
     matrix.extend(
-        serde_json::from_str::<Vec<String>>(include_str!("../src/redaction/corpus.json")).unwrap(),
+        serde_json::from_str::<Vec<String>>(include_str!("../../src/redaction/corpus.json"))
+            .unwrap(),
     );
     matrix
 }

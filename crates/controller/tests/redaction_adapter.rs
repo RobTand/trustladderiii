@@ -169,7 +169,14 @@ fn every_pattern_alternative_is_hit_in_both_engines() {
 /// #753 re-review: unsupported class constructs must stop generation, without a text fallback.
 #[test]
 fn unsupported_class_syntax_is_rejected() {
-    for pattern in [r"[a&&b]", r"[a--b]", r"[a[b]]", r"[\p{Greek}]"] {
+    for pattern in [
+        r"[a&&b]",
+        r"[a--b]",
+        r"[a[b]]",
+        r"[\p{Greek}]",
+        r"(?i)(a)\1",
+        r"x\z",
+    ] {
         assert!(
             compatibility::translate(pattern, &classes()).is_err(),
             "{pattern}"
