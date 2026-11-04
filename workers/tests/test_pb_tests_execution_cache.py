@@ -15,6 +15,7 @@ from worker_process import rehearsal  # noqa: F401
 
 @pytest.mark.parametrize('validated', [False, True])
 @pytest.mark.parametrize('cosmetic', ['symptom', 'selectors', 'patches', 'all'])
+@pytest.mark.durability
 def test_execution_cache_ignores_prose_and_irrelevant_order(rehearsal, tmp_path, validated, cosmetic):
     ledger, root, inputs, calls = rehearsal
     (root / 'tests/test_adoption.py').write_text(TEST + TEST[TEST.index('def test_adopt'):].replace(

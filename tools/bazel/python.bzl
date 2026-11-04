@@ -46,6 +46,8 @@ _PACKAGE_DEPS = {
 _MEASURED_SECONDS = {
     "harness/tests:test_review_fixes": 35,
     "harness/tests:test_selection_groups": 240,
+    # #768: unsharded zero-delay probe at b5556bc0 (860e4d94), 38.9 s.
+    "harness/tests:test_subject_observer": 39,
     "harness/tests:test_test_tool": 38,
     "workers/tests:test_large_files": 35,
     "workers/tests:test_maker": 48,
@@ -93,7 +95,7 @@ def tl3_py_test(name, srcs, main = None, deps = [], data = [], **kwargs):
     py_test(
         name = name,
         main = "//tools/bazel:python_runner.py",
-        srcs = srcs + ["//tools/bazel:python_runner.py", "//tools/bazel:runtime.py"],
+        srcs = srcs + ["//tools/bazel:python_runner.py", "//tools/bazel:runtime.py", "//tools/bazel:sync_contention.py"],
         args = [package + "/" + module],
         deps = _unique_labels(deps + _PACKAGE_DEPS.get(package, []) + ["//tools/ci:child_env", requirement("pytest")]),
         data = data + (["//crates/config:tools/tokenizer_oracle.py", "//crates/config:tests/tokenizer/oracle.json"] if package == "workers/tests" and name == "test_tokenizer_parity_oracle" else []) + _PACKAGE_DATA.get(package, []) + native.glob(
