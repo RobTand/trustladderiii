@@ -614,13 +614,35 @@ impl Node {
             self.last_cmd.checked_add(1)
         }
     }
+}
 
-    pub fn new(repo: RepoId) -> Node {
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #771: constructor facts used by the executable apply composition.
+pub closed spec fn initial_node(n: Node, repo: RepoId) -> bool {
+    n.repo == repo && n.phase == Phase::Ingesting && n.pos == 0
+        && n.generation == 0 && n.next_seq == 0 && n.last_cmd == 0
+        && n.credit.start == 0 && n.credit.earned == 0 && n.credit.added == 0 && n.credit.spent == 0
+        && !n.credit.ready && !n.credit.merge_credited && !n.credit.withheld
+        && n.effect.is_none() && n.run.is_none() && n.job.is_none() && n.ticket.is_none()
+        && n.question.is_none() && !n.pool && !n.holds && !n.paused && !n.waiting_incident
+        && n.run_failures == 0 && n.fx_failures == 0 && n.run_incidents == 0 && n.fx_incidents == 0
+        && n.footprint == footprint::inline_footprint(0)
+}
+}
+
+kernel_fn! {
+impl Node {
+    /// #771: new requests begin with zero ledger counters and an inline empty set.
+    pub fn new(repo: RepoId) -> (result: Node) [
+        ensures initial_node(result, repo),
+    ] {
+        kernel_proof! { reveal(initial_node); }
         Node {
             phase: Phase::Ingesting,
             pos: 0,
             repo,
-            footprint: Footprint::default(),
+            footprint: Footprint::inline(0),
             generation: 0,
             next_seq: 0,
             effect: None,
@@ -670,7 +692,10 @@ impl Node {
             waiting_prerequisite: None,
         }
     }
+}
+}
 
+impl Node {
     kernel_fn! {
         fn current(&self) -> (result: Option<Item>) [
             ensures result == current_item(*self),
@@ -2079,14 +2104,44 @@ pub fn step_traced(mut world: World, event: Event) -> (World, Vec<Out>, Vec<Worl
     (world, out, trace)
 }
 
-fn apply(w: &mut World, event: Event, out: &mut Outbox) {
+kernel_fn! {
+/// #771: compose the actual event handlers' per-apply counter bounds.
+#[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
+    requires world_headroom(*old(w)), footprint::ordered_table(*old(w)),
+        dependencies::edges_indexable(*old(w)), old(out).len + 4 <= OUTBOX,
+        forall|j: int| 0 <= j < old(w).nodes@.len()
+            ==> arithmetic_consistent(old(w).nodes@[j])
+                && footprint::valid_footprint(*old(w), old(w).nodes@[j].footprint),
+    ensures old(w).nodes@.len() <= final(w).nodes@.len() <= old(w).nodes@.len() + 1,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@, final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        footprint::ordered_table(*final(w)),
+        final(w).file_sets@.len() >= old(w).file_sets@.len(),
+        forall|j: int| 0 <= j < old(w).file_sets@.len()
+            ==> final(w).file_sets@[j] == old(w).file_sets@[j],
+        forall|j: int| 0 <= j < old(w).nodes@.len() ==>
+            final(w).nodes@[j].generation as int <= old(w).nodes@[j].generation as int + 2
+            && final(w).nodes@[j].next_seq as int <= old(w).nodes@[j].next_seq as int + 1
+            && final(w).nodes@[j].credit.start as int <= old(w).nodes@[j].credit.start as int + CREDIT_START_STEP_BUDGET
+            && final(w).nodes@[j].credit.earned as int + merge_capacity(final(w).nodes@[j])
+                <= old(w).nodes@[j].credit.earned as int + 1
+            && final(w).nodes@[j].credit.added as int <= old(w).nodes@[j].credit.added as int + CREDIT_ADDED_STEP_BUDGET
+            && final(w).nodes@[j].credit.spent as int <= old(w).nodes@[j].credit.spent as int + CREDIT_SPENT_STEP_BUDGET,
+        forall|j: int| old(w).nodes@.len() <= j < final(w).nodes@.len() ==>
+            final(w).nodes@[j].generation == 0 && final(w).nodes@[j].next_seq == 0
+            && final(w).nodes@[j].credit.start == 0 && final(w).nodes@[j].credit.earned == 0
+            && final(w).nodes@[j].credit.added == 0 && final(w).nodes@[j].credit.spent == 0,
+] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table);] {
     match event {
         Event::NewAdoption {
             repo,
             head,
             priority,
         } => {
-            if repo.index().is_some_and(|r| r < w.gates.len()) {
+            if match repo.index() { Some(r) => r < w.gates.len(), None => false } {
                 let mut node = Node::new(repo);
                 node.proposed = Some(head);
                 node.priority = priority;
@@ -2094,7 +2149,7 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) {
             }
         }
         Event::NewRequest { repo, priority } => {
-            if repo.index().is_some_and(|r| r < w.gates.len()) {
+            if match repo.index() { Some(r) => r < w.gates.len(), None => false } {
                 let mut node = Node::new(repo);
                 node.priority = priority;
                 w.nodes.push(node);
@@ -2125,6 +2180,7 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) {
             }
         }
     }
+}
 }
 
 // ---------------------------------------------------------------- transitions
@@ -2195,7 +2251,8 @@ fn abandon_operation(m: &mut Node) -> (result: ()) [
 kernel_fn! {
 /// #771: successful completion resets failures and preserves allocation counters.
 fn end_operation(m: &mut Node) -> (result: ()) [
-    ensures final(m).run.is_none(), final(m).job.is_none(), !final(m).pool,
+    ensures (settle_shape(*old(m)) ==> settle_shape(*final(m))),
+        final(m).run.is_none(), final(m).job.is_none(), !final(m).pool,
         final(m).run_failures == 0, final(m).run_incidents == 0,
         final(m).phase == old(m).phase, final(m).pos == old(m).pos,
         final(m).generation == old(m).generation, final(m).next_seq == old(m).next_seq,
@@ -2218,7 +2275,8 @@ kernel_fn! {
 fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
     requires !(old(m).phase is Closed || old(m).phase is Stopping)
         ==> old(m).generation < u64::MAX,
-    ensures final(m).generation as int == old(m).generation as int
+    ensures (settle_shape(*old(m)) ==> settle_shape(*final(m))),
+        final(m).generation as int == old(m).generation as int
             + if old(m).phase is Closed || old(m).phase is Stopping { 0int } else { 1int },
         final(m).phase == match old(m).phase {
             Phase::Closed(o) => Phase::Closed(o),
@@ -2361,7 +2419,8 @@ fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         holding(old(w).nodes@[i as int].phase) ==>
             old(w).nodes@[i as int].generation < u64::MAX,
-    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
         final(w).nodes@[i as int].generation as int
@@ -2532,7 +2591,8 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
         footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
         footprint::ordered_table(*old(w)),
-    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
         final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 2,
@@ -2597,7 +2657,8 @@ fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
         footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
         footprint::valid_footprint(*old(w), files), footprint::ordered_table(*old(w)),
-    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
         final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
@@ -2862,7 +2923,8 @@ fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
         old(w).nodes@[i as int].generation as int + 2 <= u64::MAX as int,
         old(w).nodes@[i as int].run_failures <= 1,
         old(w).nodes@[i as int].run_incidents <= 2,
-    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
         final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 2,
@@ -2901,7 +2963,8 @@ kernel_fn! {
 /// It asks Rob nothing; the summary offers `restart`, as for any stop (Q49).
 fn stop_for_review(m: &mut Node, step: ReviewStop) -> (result: ()) [
     requires old(m).generation < u64::MAX,
-    ensures final(m).generation as int <= old(m).generation as int + 1,
+    ensures (settle_shape(*old(m)) ==> settle_shape(*final(m))),
+        final(m).generation as int <= old(m).generation as int + 1,
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).last_cmd == old(m).last_cmd, final(m).review_stop == Some(step),
 ] {
@@ -3051,7 +3114,7 @@ kernel_fn! {
 /// Recheck rows / #771: a new head or reviewer uses the same free allowance.
 fn recheck(w: &mut World, i: usize, target: Phase,
     out: &mut Outbox) -> (result: ()) [
-    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+    requires !(target is Closed), i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
     ensures retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
@@ -3094,7 +3157,9 @@ fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+    ensures (settle_shape(old(w).nodes@[i as int]) && stopping_effect_fits(old(w).nodes@[i as int])
+            ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
         final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 2,
@@ -3136,7 +3201,10 @@ kernel_fn! {
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
     requires old(m).generation < u64::MAX,
-    ensures final(m).generation as int <= old(m).generation as int + 1,
+    ensures (settle_shape(*old(m))
+            && (old(m).phase is Stopping ==> current_item(*old(m)) == Some(Item::Teardown(kind)))
+            ==> settle_shape(*final(m))),
+        final(m).generation as int <= old(m).generation as int + 1,
         final(m).generation >= old(m).generation,
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).question == old(m).question,
@@ -3182,7 +3250,8 @@ fn delivery_failed(w: &mut World, i: usize, kind: EffectKind,
         old(w).nodes@[i as int].next_seq < u64::MAX,
         old(w).nodes@[i as int].fx_failures <= 1,
         old(w).nodes@[i as int].fx_incidents <= 2,
-    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
         final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 2,
@@ -3226,7 +3295,8 @@ fn effect_failed(w: &mut World, i: usize, kind: EffectKind,
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
         old(w).nodes@[i as int].generation < u64::MAX,
         old(w).next_question < u64::MAX,
-    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
         final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
@@ -3285,7 +3355,8 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         dependencies::edges_indexable(*old(w)), old(w).next_question < u64::MAX,
-    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
         final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
@@ -3326,7 +3397,8 @@ fn fact_transition(w: &mut World, i: usize, fact: Fact,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(fact is DependencyRemove || fact is Dependency || fact is PrMerged),
-    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
         final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
@@ -3453,7 +3525,8 @@ fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bool,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 4 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
-    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
         final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
@@ -3515,7 +3588,8 @@ fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
         final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
@@ -3588,7 +3662,8 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
         final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
@@ -3684,7 +3759,8 @@ fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
         old(w).nodes@[i as int].credit.withheld ==> q.cost == 0,
         old(w).nodes@[i as int].credit.added as int + 255 <= u32::MAX as int,
         old(w).nodes@[i as int].credit.spent < u32::MAX,
-    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+    ensures (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
             ==> final(w).nodes@[j] == old(w).nodes@[j],
         final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
@@ -3728,7 +3804,8 @@ fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
 kernel_fn! {
 /// Cleanup question row / #771: handling cleanup allocates no monotone counter.
 fn mark_handled(m: &mut Node) -> (result: ()) [
-    ensures final(m).generation == old(m).generation,
+    ensures (settle_shape(*old(m)) ==> settle_shape(*final(m))),
+        final(m).generation == old(m).generation,
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).question == old(m).question,
         final(m).phase == old(m).phase,
@@ -3755,6 +3832,14 @@ fn mark_handled(m: &mut Node) -> (result: ()) [
 #[cfg(verus_keep_ghost)]
 verus! {
 /// #771: reserve for the remaining local settle chains, with mathematical sums.
+/// #771: check_node requires every live stopping effect to fit its teardown.
+spec fn stopping_effect_fits(n: Node) -> bool {
+    n.phase is Stopping ==> match n.effect {
+        Some(e) => e.cancelling || current_item(n) == Some(Item::Teardown(e.kind)),
+        None => true,
+    }
+}
+
 spec fn settle_ready(w: World) -> bool {
     scheduling_safe(w) && w.nodes@.len() <= u64::MAX as int
         && (forall|j: int| 0 <= j < w.nodes@.len() ==> settle_shape(w.nodes@[j])
@@ -3763,6 +3848,23 @@ spec fn settle_ready(w: World) -> bool {
             && w.nodes@[j].credit.earned as int + merge_capacity(w.nodes@[j]) <= u32::MAX as int)
         && w.next_ticket as int + potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| ticket_capacity(n)) <= u64::MAX as int
         && potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n)) <= u32::MAX as int
+}
+
+/// Q30/Q39 / #771: sufficient scheduling conditions for an actual internal move.
+/// Pool obstruction is discharged first; only then can a slot obstruction be
+/// reduced to the oldest Ready waiter. No fairness premise is used.
+spec fn movable(w: World, i: int) -> bool {
+    let node = w.nodes@[i];
+    let configured = node.repo.0 < w.gates@.len() && w.gates@[node.repo.0 as int].w > 0;
+    advance_enabled(node, AdvanceContext {
+        node: i as usize,
+        admit: configured && dependencies::delivered(w.dependencies@, NodeId(i as u64))
+            && slot_waiters(w.nodes@, w.nodes@.len(), node.repo) == 0,
+        pool: w.pool_capacity > 0 && pool_users(w.nodes@, w.nodes@.len()) == 0
+            && oldest_waiter(w, i),
+        slot: configured && oldest_waiter(w, i)
+            && (forall|j: int| 0 <= j < w.nodes@.len() && j != i ==> !w.nodes@[j].holds),
+    })
 }
 
 /// #771: conserved allocations and frames across the real settle loop.
@@ -3796,6 +3898,7 @@ fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>)
     -> (result: u32) [
     requires settle_ready(*old(w)),
     ensures settle_ready(*final(w)), settle_chain(*old(w), *final(w)),
+        forall|i: int| 0 <= i < final(w).nodes@.len() ==> !movable(*final(w), i),
         result as int <= potential_prefix(old(w).nodes@, old(w).nodes@.len(), |n: Node| internal_height(n)),
 ] {
     kernel_snapshot! { baseline = *w }
@@ -3817,6 +3920,7 @@ fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>)
                 potential_prefix(baseline@.nodes@, baseline@.nodes@.len(), |n: Node| internal_height(n)) <= u32::MAX as int,
                 potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n)) <= pass_height@,
                 changed ==> potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n)) < pass_height@,
+                !changed ==> forall|j: int| 0 <= j < i ==> !movable(*w, j),
             decreases w.nodes.len() - i,
         ] {
             let mut outbox = Outbox::new();
@@ -3828,6 +3932,10 @@ fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>)
             let moved = advance(w, i, &mut outbox);
             kernel_proof! {
                 reveal(advance_post);
+                if !changed && !moved {
+                    assert(w.nodes@ == before_node@.nodes@);
+                    assert forall|j: int| 0 <= j <= i implies !movable(*w, j) by {}
+                }
                 assert forall|j: int| 0 <= j < w.nodes@.len() implies
                     w.nodes@[j].generation as int + generation_capacity(w.nodes@[j])
                         <= baseline@.nodes@[j].generation as int + generation_capacity(baseline@.nodes@[j])
@@ -3881,6 +3989,7 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: bool) [
         final(w).fail_fast == old(w).fail_fast,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
+        movable(*old(w), i as int) ==> result,
         node_total(final(w).nodes@) <= node_total(old(w).nodes@),
         potential_prefix(final(w).nodes@, final(w).nodes@.len(), |n: Node| internal_height(n))
             <= potential_prefix(old(w).nodes@, old(w).nodes@.len(), |n: Node| internal_height(n)),
@@ -3895,6 +4004,7 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: bool) [
                 && (forall|j: int| 0 <= j < final(w).nodes@.len() ==> settle_shape(final(w).nodes@[j])),
 ] {
     kernel_snapshot! { before_advance = *w }
+    kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }
     let n = &w.nodes[i];
     let mut context = AdvanceContext {
         node: i,
@@ -3917,6 +4027,9 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: bool) [
             }
             _ => {}
         }
+    }
+    kernel_proof! {
+        assert(movable(*w, i as int) ==> advance_enabled(w.nodes@[i as int], context));
     }
     let changed = advance_node(&mut w.nodes[i], &mut w.next_ticket, context, out);
     kernel_proof! {

@@ -28,6 +28,13 @@ pub closed spec fn prerequisites_delivered(world: World, node: NodeId) -> bool {
     delivered(world.dependencies@, node)
 }
 
+/// #771: the public query depends only on the actual prerequisite table.
+pub(super) proof fn prerequisite_definition(world: World, node: NodeId)
+    ensures prerequisites_delivered(world, node) == delivered(world.dependencies@, node),
+{
+    reveal(prerequisites_delivered);
+}
+
 /// #693 / #771: declarations retained by the controller name existing roots.
 pub closed spec fn edges_indexable(world: World) -> bool {
     forall|i: int| 0 <= i < world.dependencies@.len() ==>

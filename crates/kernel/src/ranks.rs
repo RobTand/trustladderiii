@@ -295,21 +295,69 @@ pub(super) proof fn potential_member(nodes: Seq<Node>, index: int, end: nat,
     if index < end - 1 { potential_member(nodes, index, (end - 1) as nat, potential); }
 }
 
-/// #771: a node update cannot reopen any closed history entry during settle.
-pub(super) proof fn open_count_update(nodes: Seq<Node>, index: int, replacement: Node)
-    requires 0 <= index < nodes.len(),
-        nodes[index].phase is Closed ==> replacement.phase is Closed,
-    ensures open_prefix(nodes.update(index, replacement), nodes.len())
-        <= open_prefix(nodes, nodes.len()),
-    decreases nodes.len(),
+/// Q30/Q39 / #771: every nonempty finite line has an oldest eligible member.
+/// The caller supplies the actual ticket or priority/ticket key.
+pub(super) proof fn finite_minimum(nodes: Seq<Node>, end: nat, eligible: spec_fn(Node) -> bool,
+    key: spec_fn(Node) -> nat)
+    requires end <= nodes.len(), exists|i: int| 0 <= i < end && eligible(nodes[i]),
+    ensures exists|i: int| 0 <= i < end && eligible(nodes[i])
+        && forall|j: int| 0 <= j < end && eligible(nodes[j]) ==> key(nodes[i]) <= key(nodes[j]),
+    decreases end,
+{
+    if exists|i: int| 0 <= i < end - 1 && eligible(nodes[i]) {
+        finite_minimum(nodes, (end - 1) as nat, eligible, key);
+        let best = choose|i: int| 0 <= i < (end - 1) && eligible(nodes[i])
+            && forall|j: int| 0 <= j < (end - 1) && eligible(nodes[j])
+                ==> key(nodes[i]) <= key(nodes[j]);
+        let last = end - 1;
+        if eligible(nodes[last]) && key(nodes[last]) < key(nodes[best]) {
+            assert forall|j: int| 0 <= j < end && eligible(nodes[j])
+                implies key(nodes[last]) <= key(nodes[j]) by {
+                if j < last { assert(key(nodes[best]) <= key(nodes[j])); }
+            }
+            assert(0 <= last < end && eligible(nodes[last])
+                && forall|j: int| 0 <= j < end && eligible(nodes[j]) ==> key(nodes[last]) <= key(nodes[j]));
+        } else {
+            assert forall|j: int| 0 <= j < end && eligible(nodes[j])
+                implies key(nodes[best]) <= key(nodes[j]) by {
+                if j < last { assert(key(nodes[best]) <= key(nodes[j])); }
+            }
+            assert(0 <= best < end && eligible(nodes[best])
+                && forall|j: int| 0 <= j < end && eligible(nodes[j]) ==> key(nodes[best]) <= key(nodes[j]));
+        }
+    } else {
+        let last = end - 1;
+        assert(eligible(nodes[last]));
+        assert forall|j: int| 0 <= j < end && eligible(nodes[j])
+            implies key(nodes[last]) <= key(nodes[j]) by { assert(j == last); }
+        assert(0 <= last < end && eligible(nodes[last])
+            && forall|j: int| 0 <= j < end && eligible(nodes[j]) ==> key(nodes[last]) <= key(nodes[j]));
+    }
+}
+
+/// #771: the open-node scratch count depends only on the scanned prefix.
+pub(super) proof fn open_prefix_equal(left: Seq<Node>, right: Seq<Node>, end: nat)
+    requires end <= left.len(), end <= right.len(),
+        forall|j: int| 0 <= j < end ==> left[j] == right[j],
+    ensures open_prefix(left, end) == open_prefix(right, end),
+    decreases end,
 {
     reveal(open_prefix);
-    if index < nodes.len() - 1 {
-        open_count_update(nodes.drop_last(), index, replacement);
-        assert(nodes.update(index, replacement).drop_last()
-            == nodes.drop_last().update(index, replacement));
+    if end > 0 { open_prefix_equal(left, right, (end - 1) as nat); }
+}
+
+/// #771: a node update cannot reopen any closed history entry during settle.
+pub(super) proof fn open_count_update(nodes: Seq<Node>, index: int, replacement: Node, end: nat)
+    requires 0 <= index < end <= nodes.len(),
+        nodes[index].phase is Closed ==> replacement.phase is Closed,
+    ensures open_prefix(nodes.update(index, replacement), end) <= open_prefix(nodes, end),
+    decreases end,
+{
+    reveal(open_prefix);
+    if index < end - 1 {
+        open_count_update(nodes, index, replacement, (end - 1) as nat);
     } else {
-        assert(nodes.update(index, replacement).drop_last() == nodes.drop_last());
+        open_prefix_equal(nodes.update(index, replacement), nodes, (end - 1) as nat);
     }
 }
 
@@ -335,7 +383,7 @@ pub(super) proof fn advance_sum_bounds(before: Seq<Node>, after: Seq<Node>, inde
         assert(internal_height(before[index]) == 0);
         assert(!changed);
     }
-    open_count_update(before, index, after[index]);
+    open_count_update(before, index, after[index], before.len());
 }
 
 /// #771: closed history contributes no scratch or allocation reserve.
@@ -501,6 +549,28 @@ pub(super) open spec fn settle_shape(n: Node) -> bool {
         && (n.phase is Stopping && n.pos >= 4 ==> !n.holds)
 }
 
+/// #771: exact enabling condition of the executable local dispatcher.
+/// This observes the agenda and scheduler decisions; it defines no replacement
+/// transition relation and is checked against every production case body.
+pub(super) open spec fn advance_enabled(n: Node, context: AdvanceContext) -> bool {
+    if n.phase is Closed { false }
+    else if n.waiting_incident { n.ticket.is_some() }
+    else if n.effect.is_some() { false }
+    else { match current_item(n) {
+        None => n.phase == Phase::Publishing || (n.phase is Stopping && n.question.is_none()),
+        Some(Item::Do(_) | Item::StartChecks | Item::StartRebase) =>
+            !n.paused || holding(n.phase) || n.ticket.is_some(),
+        Some(Item::Start(_)) => if n.paused { holding(n.phase) || n.ticket.is_some() }
+            else { n.ticket.is_none() || context.pool },
+        Some(Item::Admit) => !n.paused && context.admit,
+        Some(Item::Slot) => n.phase is Ready && if n.paused { n.ticket.is_some() }
+            else { n.ticket.is_none() || context.slot },
+        Some(Item::Release) => true,
+        Some(Item::Teardown(_)) => n.question.is_none(),
+        Some(Item::Await | Item::Merge | Item::Answer) => false,
+    } }
+}
+
 pub(super) open spec fn advance_pre(n: Node, ticket: u64, out_len: usize) -> bool {
     out_len as int + 2 <= OUTBOX as int
         && n.generation as int + generation_capacity(n) <= u64::MAX as int
@@ -543,6 +613,7 @@ kernel_fn! {
             old(node).phase is Closed || old(node).waiting_incident || old(node).effect.is_some(),
         ensures advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
+            result == advance_enabled(*old(node), _context),
     ] proof [reveal(advance_post);] {
         let n = *node;
         if n.phase.is_closed() {
@@ -570,6 +641,7 @@ kernel_fn! {
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)).is_none(),
         ensures advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
+            result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post);] {
         let n = *node;
         match n.phase {
@@ -594,6 +666,7 @@ kernel_fn! {
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Do(kind)),
         ensures advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
+            result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post);] {
         let n = *node;
         if n.paused {
@@ -612,6 +685,7 @@ kernel_fn! {
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Start(role)),
         ensures advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
+            result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post);] {
         let n = *node;
         if n.paused {
@@ -642,6 +716,7 @@ kernel_fn! {
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::StartChecks),
         ensures advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
+            result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post);] {
         let n = *node;
         if n.paused {
@@ -663,6 +738,7 @@ kernel_fn! {
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::StartRebase),
         ensures advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
+            result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post);] {
         let n = *node;
         if n.paused {
@@ -684,6 +760,7 @@ kernel_fn! {
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Admit),
         ensures advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
+            result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post);] {
         let n = *node;
         if n.paused || !context.admit {
@@ -705,6 +782,7 @@ kernel_fn! {
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Slot),
         ensures advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
+            result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post);] {
         let n = *node;
         let Phase::Ready(r) = n.phase else {
@@ -739,6 +817,7 @@ kernel_fn! {
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Release),
         ensures advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
+            result == advance_enabled(*old(node), _context),
     ] proof [reveal(advance_post);] {
         let m = &mut *node;
         m.holds = false;
@@ -756,6 +835,7 @@ kernel_fn! {
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Teardown(kind)),
         ensures advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
+            result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post);] {
         let n = *node;
         if n.question.is_some() {
@@ -790,6 +870,7 @@ kernel_fn! {
             !(old(_node).phase is Closed) && !old(_node).waiting_incident && old(_node).effect.is_none() && matches!(current_item(*old(_node)), Some(Item::Await | Item::Merge | Item::Answer)),
         ensures advance_post(*old(_node), *final(_node),
             *old(_next_ticket), *final(_next_ticket), result),
+            result == advance_enabled(*old(_node), _context),
     ] proof [reveal(advance_post);] {
         false
     }
@@ -802,6 +883,7 @@ kernel_fn! {
         requires advance_pre(*old(node), *old(next_ticket), old(out).len),
         ensures advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
+            result == advance_enabled(*old(node), context),
     ] {
         let n = *node;
         if n.phase.is_closed() || n.waiting_incident || n.effect.is_some() {
