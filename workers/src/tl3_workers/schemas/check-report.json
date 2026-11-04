@@ -362,7 +362,7 @@
           "uniqueItems": true
         },
         "red_message": {
-          "maxLength": 160,
+          "maxLength": 200,
           "minLength": 1,
           "type": "string"
         },
