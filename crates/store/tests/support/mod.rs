@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     fs,
     path::PathBuf,
-    process::{ChildStdin, Command, Stdio},
+    process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
 use tempfile::TempDir;
@@ -29,16 +29,17 @@ impl Database {
 
     /// One server for a whole test process (#731). Rust never drops a static, so
     /// a watchdog stops Postgres and removes its scratch when this process exits
-    /// and the kernel closes the returned pipe. Keep the pipe; never write to it.
+    /// and the kernel closes the watchdog's stdin. Keep the returned child; never
+    /// write to its stdin or wait for it.
     #[allow(
         dead_code,
         reason = "Used by the controller library's shared fixture; this fixture is shared with store tests"
     )]
-    pub fn start_shared() -> (Self, ChildStdin) {
+    pub fn start_shared() -> (Self, Child) {
         // Parallel `cargo test` threads share this server, and each test opens several sessions.
         let database = Self::start_with(true, 200);
         let settings = database.postgres.settings();
-        let mut watchdog = Command::new("sh")
+        let watchdog = Command::new("sh")
             .args([
                 "-c",
                 r#"cat >/dev/null; "$0" stop -D "$1" -m immediate -s; rm -rf "$2""#,
@@ -51,8 +52,7 @@ impl Database {
             .stderr(Stdio::null())
             .spawn()
             .expect("start the shared Postgres watchdog");
-        let exit = watchdog.stdin.take().unwrap();
-        (database, exit)
+        (database, watchdog)
     }
 
     fn start_with(fsync: bool, max_connections: u32) -> Self {

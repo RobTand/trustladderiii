@@ -8,7 +8,7 @@
 mod fixture;
 
 use std::{
-    process::ChildStdin,
+    process::Child,
     sync::{
         Mutex, MutexGuard, OnceLock, PoisonError,
         atomic::{AtomicUsize, Ordering},
@@ -17,17 +17,17 @@ use std::{
 
 struct Server {
     fixture: fixture::Database,
-    _exit: ChildStdin,
+    _watchdog: Child,
 }
 
 fn server() -> MutexGuard<'static, Server> {
     static SERVER: OnceLock<Mutex<Server>> = OnceLock::new();
     SERVER
         .get_or_init(|| {
-            let (fixture, exit) = fixture::Database::start_shared();
+            let (fixture, watchdog) = fixture::Database::start_shared();
             Mutex::new(Server {
                 fixture,
-                _exit: exit,
+                _watchdog: watchdog,
             })
         })
         .lock()
