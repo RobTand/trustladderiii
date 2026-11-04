@@ -509,7 +509,7 @@ impl Adapter {
         let parallel = run
             .plan
             .iter()
-            .filter_map(|check| check.declared_symptom.as_ref()?.get("parallel")?.as_u64())
+            .filter_map(|check| Some(check.declared_symptom.as_ref()?.parallel.get()))
             .max()
             .unwrap_or(0)
             .clamp(1, 4) as u32;

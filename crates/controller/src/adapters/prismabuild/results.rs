@@ -1,10 +1,14 @@
 use super::{Job, checks::Kind};
 use crate::{
     Error, Result,
+    contracts::report::{
+        CheckReport as Report, CheckResult, Custody, Outcome, PhaseEvidence, PhaseOutcome,
+        RunOutcome, SymptomSide, Verdict,
+    },
     executor::{Completion, Observation},
     findings::{FailedTest, MAX_FAILED_TESTS, MAX_MESSAGE_CHARS, clipped},
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{fs::File, io::Read};
 use tl3_prismabuild::{ActionKey, Tool};
@@ -52,152 +56,41 @@ struct Log {
     bytes: u64,
     sha256: String,
 }
-#[derive(Deserialize)]
-struct Report {
-    schema: String,
-    effect_key: String,
-    base: String,
-    head: String,
-    #[serde(default)]
-    reviewed: Option<String>,
-    results: Vec<CheckResult>,
-}
-#[derive(Deserialize, Serialize)]
-struct CheckResult {
-    name: String,
-    kind: Kind,
-    verdict: Verdict,
-    custody: Custody,
-    tests: Vec<TestResult>,
-    /// A forced check echoes its forcing so review can judge it (#393).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    forcing: Option<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    proof: Option<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    declared_symptom: Option<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    symptom_evidence: Option<serde_json::Value>,
-    /// Complete-unit admission and the unchecked suffix, retained for review (#591).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    selection: Option<serde_json::Value>,
-}
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case")]
-enum Verdict {
-    Pass,
-    Fail,
-    InfrastructureFailure,
-}
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case")]
-enum Custody {
-    InProcess,
-}
-#[derive(Deserialize, Serialize)]
-struct TestResult {
-    test: String,
-    #[serde(rename = "base")]
-    _base: Outcome,
-    #[serde(rename = "head")]
-    _head: Outcome,
-    #[serde(rename = "pre_existing")]
-    _pre_existing: bool,
-    passed: bool,
-    #[serde(default)]
-    message: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    head_forced: Option<Outcome>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    phases: Option<PhaseEvidence>,
-}
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct PhaseEvidence {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    base: Option<PhaseRun>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    head: Option<PhaseRun>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    head_forced: Option<PhaseRun>,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct PhaseRun {
-    // A selector expanding to several cases retains its first failing case, or first passing case.
-    test: String,
-    setup: PhaseFact,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    call: Option<PhaseFact>,
-    teardown: PhaseFact,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct PhaseFact {
-    outcome: PhaseOutcome,
-    exception: String,
-    assertion: bool,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case")]
-enum PhaseOutcome {
-    Passed,
-    Failed,
-    Skipped,
-}
-
-impl PhaseEvidence {
-    fn valid(&self, requested: &str) -> bool {
-        let runs = [
-            self.base.as_ref(),
-            self.head.as_ref(),
-            self.head_forced.as_ref(),
-        ];
-        runs.iter().any(Option::is_some)
-            && runs.into_iter().flatten().all(|run| {
-                let selected = run.test == requested
-                    || (!requested.contains("::")
-                        && run.test.starts_with(&format!("{requested}::")))
-                    || (!requested.contains('[')
-                        && run.test.starts_with(&format!("{requested}["))
-                        && run.test.ends_with(']'));
-                selected
-                    && run.test.len() <= 4 * 1024 * 1024
-                    && (!matches!(run.setup.outcome, PhaseOutcome::Passed) || run.call.is_some())
-                    && [
-                        ("setup", Some(&run.setup)),
-                        ("call", run.call.as_ref()),
-                        ("teardown", Some(&run.teardown)),
-                    ]
-                    .into_iter()
-                    .all(|(phase, fact)| {
-                        fact.is_none_or(|fact| {
-                            fact.exception.chars().count() <= 200
-                                && (matches!(fact.outcome, PhaseOutcome::Failed)
-                                    || fact.exception.is_empty())
-                                && (!fact.assertion
-                                    || phase == "call"
-                                        && matches!(fact.outcome, PhaseOutcome::Failed))
-                        })
-                    })
+// The typed report states each field's shape and bound. The rules below relate fields to
+// each other and to the staged job.
+fn phases_valid(phases: &PhaseEvidence, requested: &str) -> bool {
+    [
+        phases.base.as_ref(),
+        phases.head.as_ref(),
+        phases.head_forced.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .all(|run| {
+        let run_test = run.test.as_str();
+        let selected = run_test == requested
+            || (!requested.contains("::") && run_test.starts_with(&format!("{requested}::")))
+            || (!requested.contains('[')
+                && run_test.starts_with(&format!("{requested}["))
+                && run_test.ends_with(']'));
+        selected
+            && run_test.len() <= 4 * 1024 * 1024
+            && (!matches!(run.setup.outcome, PhaseOutcome::Passed) || run.call.is_some())
+            && [
+                ("setup", Some(&run.setup)),
+                ("call", run.call.as_ref()),
+                ("teardown", Some(&run.teardown)),
+            ]
+            .into_iter()
+            .all(|(phase, fact)| {
+                fact.is_none_or(|fact| {
+                    (matches!(fact.outcome, PhaseOutcome::Failed)
+                        || fact.exception.as_str().is_empty())
+                        && (!fact.assertion
+                            || phase == "call" && matches!(fact.outcome, PhaseOutcome::Failed))
+                })
             })
-    }
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case")]
-enum Outcome {
-    Passed,
-    Assertion,
-    AddedName,
-    Error,
-    Skipped,
-    Missing,
-    Uncollected,
-    NoReport,
+    })
 }
 
 pub(super) async fn ending(
@@ -323,27 +216,21 @@ fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
         {
             return Err(Error::Invalid("PrismaBuild result log changed"));
         }
-        if let Some(mut parsed) = parse(&raw, job) {
-            for test in parsed
-                .results
-                .iter_mut()
-                .flat_map(|result| &mut result.tests)
-            {
-                test.message = clipped(&test.message, MAX_MESSAGE_CHARS);
-            }
+        // The typed report clips each message to MAX_MESSAGE_CHARS as it parses.
+        if let Some(parsed) = parse(&raw, job) {
             failed_tests = parsed
                 .results
                 .iter()
-                .flat_map(|result| &result.tests)
+                .flat_map(|result| result.tests.iter())
                 .filter(|test| !test.passed)
                 .take(MAX_FAILED_TESTS)
                 .map(|test| FailedTest {
-                    test: clipped(&test.test, 4096),
-                    message: if test.message.trim().is_empty() {
+                    test: clipped(test.test.as_str(), 4096),
+                    message: if test.message.as_str().trim().is_empty() {
                         "The harness rejected this named test; no failure message was supplied."
                             .into()
                     } else {
-                        clipped(&test.message, MAX_MESSAGE_CHARS)
+                        clipped(test.message.as_str(), MAX_MESSAGE_CHARS)
                     },
                 })
                 .collect();
@@ -439,11 +326,10 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
         return None;
     }
     let report: Report = serde_json::from_str(reports[0]).ok()?;
-    if report.schema != "tl3.checks.v1"
-        || report.effect_key != job.delivery.key
-        || report.base != job.run.base_sha.as_str()
-        || Some(&report.head) != job.delivery.head_sha.as_ref()
-        || report.reviewed.as_deref()
+    if report.effect_key != job.delivery.key
+        || report.base.as_str() != job.run.base_sha.as_str()
+        || Some(report.head.as_str()) != job.delivery.head_sha.as_deref()
+        || report.reviewed.as_ref().map(|sha| sha.as_str())
             != job
                 .run
                 .reviewed_sha
@@ -455,11 +341,11 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
     if report
         .results
         .iter()
-        .flat_map(|result| &result.tests)
+        .flat_map(|result| result.tests.iter())
         .any(|test| {
             test.phases
                 .as_ref()
-                .is_some_and(|phases| !phases.valid(&test.test))
+                .is_some_and(|phases| !phases_valid(phases, test.test.as_str()))
         })
     {
         return None;
@@ -482,9 +368,8 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
     }
     if let Some(selected) = report.results.get(plan.len()) {
         let Custody::InProcess = selected.custody;
-        if selected.name != SELECTED_CHECK
+        if selected.name.as_str() != SELECTED_CHECK
             || selected.kind != Kind::Regression
-            || selected.tests.is_empty()
             || selected.tests.len() > job.selected_tests.unwrap_or(0) as usize
             || matches!(selected.verdict, Verdict::Pass) != selected.tests.iter().all(|t| t.passed)
         {
@@ -492,7 +377,7 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
         }
     }
     for (result, check) in report.results.iter().zip(&plan) {
-        if result.name != check.name
+        if result.name.as_str() != check.name
             || result.kind != check.kind
             || result.tests.len() != check.tests.len()
         {
@@ -510,7 +395,7 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             return None;
         }
         for (result, test) in result.tests.iter().zip(&check.tests) {
-            if &result.test != test {
+            if result.test.as_str() != test {
                 return None;
             }
         }
@@ -518,72 +403,38 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             return None;
         }
         if let Some(identity) = &result.proof {
-            let hash = |v: &serde_json::Value| {
-                v.as_str().is_some_and(|s| {
-                    s.len() == 64
-                        && s.bytes()
-                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-                })
-            };
+            // The receipt's rule, mode and digests are typed; these relate it to the plan.
             if !matches!(check.kind, Kind::Demonstrating | Kind::Reproducing)
-                || identity["rule"] != "subject-observer-v1"
-                || identity["declaration"] != check.proof.clone().unwrap_or(serde_json::Value::Null)
-                || ![
-                    "source_base_tree_sha256",
-                    "base_tree_sha256",
-                    "head_tree_sha256",
-                ]
-                .iter()
-                .all(|key| hash(&identity[key]))
-                || !matches!(
-                    identity["mode"].as_str(),
-                    Some("head-observer" | "pytest-outcome")
-                )
-                || identity["observer_sha256"]
-                    .as_object()
-                    .is_none_or(|observers| {
-                        observers.len() != check.tests.len()
-                            || check
-                                .tests
-                                .iter()
-                                .any(|test| !observers.get(test).is_some_and(hash))
-                    })
-                || identity["subjects"].as_object().is_none_or(|subjects| {
-                    subjects.values().any(|subject| {
-                        ["base", "head"]
-                            .iter()
-                            .any(|key| !subject[key].is_null() && !hash(&subject[key]))
-                    })
+                || identity.declaration != check.proof
+                || identity.observer_sha256.len() != check.tests.len()
+                || check.tests.iter().any(|test| {
+                    !identity
+                        .observer_sha256
+                        .get(test)
+                        .is_some_and(Option::is_some)
                 })
-                || identity["support_sha256"]
-                    .as_object()
-                    .is_none_or(|support| support.values().any(|value| !hash(value)))
             {
                 return None;
             }
             if let Some(declaration) = &check.proof {
-                let subjects = declaration["subjects"].as_array()?;
-                let support = declaration["observer_support"].as_array()?;
-                if subjects.len() > 16
-                    || support.len() > 16
-                    || declaration["red_message"]
-                        .as_str()
-                        .is_none_or(str::is_empty)
-                    || (!subjects.is_empty()
-                        && identity["subjects"].as_object()?.len() != subjects.len())
+                let subjects = &declaration.subjects;
+                let support = &declaration.observer_support;
+                if (!subjects.is_empty() && identity.subjects.len() != subjects.len())
                     || subjects.iter().any(|unit| {
-                        let value = &identity["subjects"][unit.as_str().unwrap_or("")];
-                        value.is_null() || value["base"] == value["head"]
+                        identity
+                            .subjects
+                            .get(unit.as_str())
+                            .is_none_or(|digests| digests.base == digests.head)
                     })
-                    || identity["support_sha256"].as_object()?.len() != support.len()
+                    || identity.support_sha256.len() != support.len()
                     || support
                         .iter()
-                        .any(|unit| !hash(&identity["support_sha256"][unit.as_str().unwrap_or("")]))
+                        .any(|unit| !identity.support_sha256.contains_key(unit.as_str()))
                     || result.tests.iter().any(|test| {
                         test.passed
                             && ((check.declared_symptom.is_none()
-                                && !matches!(test._base, Outcome::Assertion | Outcome::AddedName))
-                                || !matches!(test._head, Outcome::Passed))
+                                && !matches!(test.base, Outcome::Assertion | Outcome::AddedName))
+                                || !matches!(test.head, Outcome::Passed))
                     })
                 {
                     return None;
@@ -598,7 +449,7 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             && result
                 .tests
                 .iter()
-                .any(|test| test.passed && matches!(test._base, Outcome::Assertion))
+                .any(|test| test.passed && matches!(test.base, Outcome::Assertion))
         {
             return None;
         }
@@ -618,7 +469,7 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
 
 fn symptom_identity(
     result: &CheckResult,
-    declaration: &serde_json::Value,
+    declaration: &crate::contracts::DeclaredSymptom,
     check: &super::Check,
     job: &Job,
 ) -> bool {
@@ -626,55 +477,58 @@ fn symptom_identity(
         // Refusal before execution carries no positive proof.
         return !matches!(result.verdict, Verdict::Pass);
     };
-    if evidence["base"] != job.run.base_sha.as_str()
-        || evidence["head"].as_str() != job.delivery.head_sha.as_deref()
-        || evidence["declaration"] != *declaration
-        || evidence["forcing"] != check.forcing.clone().unwrap_or(serde_json::Value::Null)
+    if evidence.base.as_str() != job.run.base_sha.as_str()
+        || Some(evidence.head.as_str()) != job.delivery.head_sha.as_deref()
+        || evidence.declaration != *declaration
+        || evidence.forcing != check.forcing
         || check.kind != Kind::Demonstrating
         || check.tests.len() != 1
-        || declaration["node"].as_str() != Some(check.tests[0].as_str())
+        || declaration.node.as_str() != check.tests[0]
     {
         return false;
     }
-    let Some(repeat @ 1..=10) = declaration["repeat"].as_u64() else {
-        return false;
-    };
-    let Some(runs) = evidence["runs"].as_array() else {
-        return false;
-    };
+    let repeat = declaration.repeat.get();
     let mut red = 0;
     let mut green = true;
     let sides = if check.forcing.is_some() {
-        &["base", "head", "ordinary-head"][..]
+        &[
+            SymptomSide::Base,
+            SymptomSide::Head,
+            SymptomSide::OrdinaryHead,
+        ][..]
     } else {
-        &["base", "head"][..]
+        &[SymptomSide::Base, SymptomSide::Head][..]
     };
     for side in sides {
-        let selected: Vec<_> = runs.iter().filter(|run| run["side"] == *side).collect();
-        if selected.len() != repeat as usize {
+        let selected: Vec<_> = evidence
+            .runs
+            .iter()
+            .filter(|run| run.side == *side)
+            .collect();
+        if selected.len() as u64 != repeat {
             return !matches!(result.verdict, Verdict::Pass);
         }
         for (index, run) in selected.iter().enumerate() {
-            let Some(records) = run["records"].as_array() else {
+            // The harness hashes the records' sorted, compact JSON; a Value sorts its keys.
+            let Ok(encoded) =
+                serde_json::to_value(&run.records).and_then(|records| serde_json::to_vec(&records))
+            else {
                 return false;
             };
-            let Ok(encoded) = serde_json::to_vec(records) else {
-                return false;
-            };
-            if run["run"].as_u64() != Some(index as u64 + 1)
-                || run["sha256"] != format!("{:x}", Sha256::digest(encoded))
-                || records.is_empty()
+            if run.run.get() != index as u64 + 1
+                || run.sha256.as_str() != format!("{:x}", Sha256::digest(encoded))
+                || run.records.is_empty()
             {
                 return false;
             }
-            match run["outcome"].as_str() {
-                Some("symptom") if *side == "base" => red += 1,
-                Some("passed") => (),
+            match run.outcome {
+                RunOutcome::Symptom if *side == SymptomSide::Base => red += 1,
+                RunOutcome::Passed => (),
                 _ => green = false,
             }
         }
     }
-    runs.len() == repeat as usize * sides.len()
+    evidence.runs.len() as u64 == repeat * sides.len() as u64
         && (!matches!(result.verdict, Verdict::Pass) || (red > 0 && green))
 }
 
@@ -713,13 +567,20 @@ mod selected_failure_tests {
 
     #[test]
     fn saturation_receipt_survives_controller_report_serialization() {
-        let receipt = json!({"limit": 2, "charged_cases": 1,
+        // The receipt as execution.py::selected_base writes it.
+        let receipt = json!({"policy": "historical failures first, then complete-unit prefix by import distance, path, and declaration order",
+            "limit": 2, "charged_cases": 1,
+            "base_units": [{"members": ["tests/test_a.py"], "cases": 1,
+                "outcomes": {"tests/test_a.py": "passed"}}],
             "head_units": [["tests/test_a.py"]], "skipped_units": [["tests/test_b.py"]],
             "skipped_checked": false,
-            "saturation": {"unit": ["tests/test_b.py"], "cases": 2, "remaining": 1}});
+            "saturation": {"unit": ["tests/test_b.py"], "cases": 2, "remaining": 1,
+                "reason": "Next complete unit cannot fit; lower-priority units were not checked."}});
         let result: super::CheckResult = serde_json::from_value(json!({
             "name": super::SELECTED_CHECK, "kind": "regression", "verdict": "pass",
-            "custody": "in-process", "tests": [], "selection": receipt
+            "custody": "in-process", "selection": receipt,
+            "tests": [{"test": "tests/test_a.py", "base": "passed", "head": "passed",
+                "pre_existing": false, "passed": true, "message": ""}],
         }))
         .unwrap();
         assert_eq!(

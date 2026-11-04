@@ -400,10 +400,12 @@ def test_exhausted_reviewer_does_not_execute_pending_reads(review_request, sessi
 @pytest.mark.parametrize("length,valid", [(1000, True), (1001, False)])
 def test_review_check_message_bound(review_request, length, valid):
     from jsonschema import Draft202012Validator
-    from tl3_workers.contracts import schema
+    from tl3_workers.contracts import registry, schema
 
     review_request["inputs"]["checks"][0]["tests"][0]["message"] = "é" * length
-    assert Draft202012Validator(schema("reviewer-input")).is_valid(review_request["inputs"]) == valid
+    # The check shape lives in the generated check-report.json, so resolve it through the registry.
+    validator = Draft202012Validator(schema("reviewer-input"), registry=registry())
+    assert validator.is_valid(review_request["inputs"]) == valid
 
 
 @pytest.mark.parametrize('count,valid', [(20, True), (21, False)])
@@ -624,8 +626,15 @@ def test_review_input_retains_unresolved_displaced_failures(review_request):
     from tl3_workers.contracts import validate
 
     review_request["inputs"]["unresolved_displaced_failures"] = ["tests/test_old.py", "tests/test_companion.py"]
+    # The receipt as the harness writes it (execution.py::selected_base).
     review_request["inputs"]["checks"][0]["selection"] = {
-        "limit": 500, "charged_cases": 480, "head_units": [["tests/test_greeting.py"]],
+        "policy": "complete-unit prefix by import distance, path, and declaration order",
+        "limit": 500, "charged_cases": 480,
+        "base_units": [{"members": ["tests/test_greeting.py"], "cases": 480,
+                        "outcomes": {"tests/test_greeting.py": "passed"}}],
+        "head_units": [["tests/test_greeting.py"]],
         "skipped_units": [["tests/test_old.py", "tests/test_companion.py"]], "skipped_checked": False,
+        "saturation": {"unit": ["tests/test_old.py", "tests/test_companion.py"], "cases": None, "remaining": 20,
+                       "reason": "Next complete unit cannot fit; lower-priority units were not checked."},
     }
     validate("reviewer-input", review_request["inputs"])

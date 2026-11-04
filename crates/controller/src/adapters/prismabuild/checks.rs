@@ -1,4 +1,8 @@
-use crate::{Error, Result, executor::Delivery};
+use crate::{
+    Error, Result,
+    contracts::{CheckRequest, bounded::CommitSha},
+    executor::Delivery,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -21,29 +25,7 @@ pub struct CheckRun {
     pub selected_failures: Vec<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Check {
-    pub name: String,
-    pub kind: Kind,
-    pub tests: Vec<String>,
-    /// A demonstrating check's forced reproduction (#393). The plan's declarative forcing,
-    /// passed through untouched: the trusted harness bounds it and applies it in the container.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub forcing: Option<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub proof: Option<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub declared_symptom: Option<serde_json::Value>,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum Kind {
-    Demonstrating,
-    Regression,
-    BehaviorPreserving,
-    Reproducing,
-}
+pub use crate::contracts::{Check, CheckKind as Kind};
 
 const MAX_REPORT_LINE_BYTES: usize = 4 * 1024 * 1024;
 
@@ -70,16 +52,16 @@ pub(crate) fn validate_plan_size(plan: &[Check]) -> Result<()> {
         });
         if let Some(forcing) = &check.forcing {
             // A forced check's result echoes its forcing, and each test gains head_forced (#393).
-            header["forcing"] = forcing.clone();
+            header["forcing"] = serde_json::to_value(forcing)?;
         }
         if matches!(check.kind, Kind::Demonstrating | Kind::Reproducing) {
             result_bytes += 65536;
             if let Some(proof) = &check.proof {
-                result_bytes += ascii_json_bytes(proof)?;
+                result_bytes += ascii_json_bytes(&serde_json::to_value(proof)?)?;
             }
         }
         if let Some(symptom) = &check.declared_symptom {
-            header["declared_symptom"] = symptom.clone();
+            header["declared_symptom"] = serde_json::to_value(symptom)?;
             // Up to thirty reports, each with a bounded pytest traceback and identity.
             result_bytes += 384 * 1024;
         }
@@ -208,17 +190,23 @@ pub(super) fn stage(
         }
     }
     fs::write(root.join("action.py"), include_str!("action.py"))?;
-    let mut request = serde_json::json!({
-        "effect_key": delivery.key, "base": run.base_sha, "head": head.as_str(),
-        "reviewed": run.reviewed_sha,
-        "plan": run.plan, "image": image,
-        "protected_paths": protected_paths,
-    });
-    request["selected_failures"] = serde_json::json!(run.selected_failures);
-    request["always_tests"] = serde_json::json!(tests.always);
-    if let Some(limit) = tests.selected {
-        request["selected_tests"] = limit.into();
-    }
+    let commit = |id: &CommitId| {
+        CommitSha::new(id.as_str()).map_err(|_| Error::Invalid("checks require an exact commit"))
+    };
+    let request = CheckRequest {
+        effect_key: delivery.key.clone(),
+        base: commit(&run.base_sha)?,
+        head: commit(&head)?,
+        reviewed: run.reviewed_sha.as_ref().map(commit).transpose()?,
+        plan: run.plan.clone(),
+        image: image.to_owned(),
+        protected_paths: protected_paths.to_vec(),
+        selected_failures: run.selected_failures.clone(),
+        always_tests: tests.always.clone(),
+        selected_tests: tests.selected,
+    };
+    // Through a Value, so the keys stay sorted and the staged bytes stay as they were.
+    let request = serde_json::to_value(request)?;
     fs::write(root.join("request.json"), serde_json::to_vec(&request)?)?;
     Worktrees::commit_check_input(root)?;
     Ok(changed)

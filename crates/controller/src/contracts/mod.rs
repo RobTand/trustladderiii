@@ -37,9 +37,20 @@ pub fn generated() -> Vec<Generated> {
 
 /// The harness check report's schema: self-contained, with every definition in `$defs`.
 pub fn check_report_schema() -> Value {
-    // Red (#741): a stub until the types render their schema.
-    let _ = (SchemaSettings::draft2020_12(), strip_integer_formats);
-    Value::Object(Default::default())
+    let mut schema = SchemaSettings::draft2020_12()
+        .into_generator()
+        .into_root_schema_for::<CheckReport>()
+        .to_value();
+    let object = schema
+        .as_object_mut()
+        .expect("a struct's schema is an object");
+    object.remove("title");
+    object.insert(
+        "$id".into(),
+        Value::String(format!("{SCHEMA_BASE}check-report.json")),
+    );
+    strip_integer_formats(&mut schema);
+    schema
 }
 
 // schemars annotates Rust integer widths ("format": "uint64"). They are not JSON Schema
