@@ -497,9 +497,11 @@ pub(super) fn failed_runs_retry_then_pause(settings: &tl3_config::Store) {
     assert_eq!(status(settings, "1")[0].0, "done", "a restart resumes it");
 }
 
-/// #486: spare pool slots aren't spare quota. While a model in the postmortem
-/// ladder has reported quota, nothing is claimed; other models' quota is no bar.
-pub(super) fn quota_on_a_postmortem_model_stops_claims(settings: &tl3_config::Store) {
+/// #759 (Q53): the postmortem lane falls back like other roles. While one
+/// of its models serves, the lane claims, and that model writes and grades.
+/// Only a ladder with every model out claims nothing, and an expired record
+/// is no bar.
+pub(super) fn lane_falls_back_while_one_model_serves(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let judge = Rc::new(RefCell::new(Judge {
         finished: true,
@@ -529,12 +531,111 @@ pub(super) fn quota_on_a_postmortem_model_stops_claims(settings: &tl3_config::St
     controller.intake(issue(43)).unwrap();
     drain(&mut controller);
     assert_eq!(
-        controller.world().unwrap().nodes[1].phase,
+        status(settings, "1")[0].0,
+        "done",
+        "one model out: the other writes and grades"
+    );
+    assert_eq!(judge.borrow().launched.len(), 2);
+
+    quota(&mut controller, "claude-opus-5-5");
+    controller.intake(issue(44)).unwrap();
+    drain(&mut controller);
+    assert_eq!(
+        controller.world().unwrap().nodes[2].phase,
         Phase::Closed(Outcome::Merged)
     );
-    assert_eq!(status(settings, "1"), [("owed".to_string(), None)]);
+    assert_eq!(
+        status(settings, "2"),
+        [("owed".to_string(), None)],
+        "every model out: nothing is claimed"
+    );
     assert_eq!(jobs(&mut controller), 0);
+    assert_eq!(judge.borrow().launched.len(), 2);
+
+    // Both records reach their resets with no step waiting to delete them.
+    let snapshot = controller.snapshot().unwrap();
+    let mut commit = tl3_store::Commit::new(
+        "fixture-expired-quotas",
+        json!({"fixture": "expired"}),
+        &snapshot,
+    );
+    for model in ["claude-opus-5-5", "claude-sonnet-5-5"] {
+        commit.rows.push(tl3_store::RowChange::Put {
+            table: "model_quotas".into(),
+            id: model.into(),
+            value: json!({"reset_ms": 1}),
+        });
+    }
+    Store::open(settings).unwrap().commit(&commit).unwrap();
+    controller.intake(issue(45)).unwrap();
+    drain(&mut controller);
+    assert_eq!(
+        status(settings, "2")[0].0,
+        "done",
+        "an expired record is no bar"
+    );
+}
+
+/// #759: the lane walks the whole configured postmortem ladder. With entries 0
+/// and 1 out, entry 2 still serves, so the lane claims; it waits only while
+/// every entry is out.
+pub(super) fn lane_waits_only_while_every_configured_model_is_out(settings: &tl3_config::Store) {
+    let mut config =
+        tl3_config::Config::parse(include_str!("../../../config/example.toml")).unwrap();
+    let model = |name: &str| tl3_config::Model {
+        name: name.into(),
+        family: "claude".into(),
+        effort: None,
+        budget_tokens: 32000,
+    };
+    config.models.postmortem = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
+        .map(model)
+        .to_vec();
+    let root = tempfile::tempdir().unwrap();
+    let judge = Rc::new(RefCell::new(Judge {
+        finished: true,
+        ..Judge::default()
+    }));
+    let mut controller = start_at(
+        settings,
+        root.path(),
+        &judge,
+        PostmortemPace::from_config(&config),
+    );
+    share(settings, "1");
+    report_quota(&mut controller, "claude-opus-5-5");
+    report_quota(&mut controller, "claude-sonnet-5-5");
+    controller.intake(issue(42)).unwrap();
+    drain(&mut controller);
+    assert_eq!(
+        status(settings, "0")[0].0,
+        "done",
+        "entries 0 and 1 out: entry 2 serves"
+    );
+    report_quota(&mut controller, "claude-haiku-5-5");
+    controller.intake(issue(43)).unwrap();
+    drain(&mut controller);
+    assert_eq!(
+        status(settings, "1"),
+        [("owed".to_string(), None)],
+        "every entry out: nothing is claimed"
+    );
     assert_eq!(judge.borrow().launched.len(), 1);
+}
+
+/// A model's quota ending, observed with a reset far in the future.
+fn report_quota(controller: &mut Controller, model: &str) {
+    let key = format!("quota-fixture-{model}");
+    controller
+        .observe(
+            &key,
+            Observation::Quota {
+                key: key.clone(),
+                reset_ms: 4_000_000_000_000,
+                model: Some(model.into()),
+            },
+        )
+        .unwrap();
 }
 
 /// #642: the lane drains owed work across restarts without a daily ceiling.
