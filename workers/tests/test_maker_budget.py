@@ -210,6 +210,7 @@ def test_cap_with_unfinished_work_produces_typed_preserved_diagnostic(maker_requ
 
 def test_input_exhaustion_is_distinct_from_tool_turn_exhaustion(maker_request, monkeypatch):
     model = install(monkeypatch, maker_request, turns=64, tokens=300_000)
+    maker_request["inputs"]["context_size"] = 250_000
     model.tokens = 120_000
     events = []
     runtime.run(maker_request, events.append)

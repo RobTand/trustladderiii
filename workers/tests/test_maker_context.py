@@ -44,8 +44,9 @@ def test_cutoff_after_edit_keeps_changes_uncommitted(tmp_path, maker_request):
 
 
 def test_usage_is_latest_context_not_cumulative_tokens(tmp_path, maker_request):
+    maker_request["inputs"]["context_size"] = 100_000
     result = start_worker(tmp_path, maker_request, [
-        write_turn(input_tokens=600, output_tokens=100), turn(DONE, input_tokens=749, output_tokens=100),
+        write_turn(input_tokens=60_000, output_tokens=100), turn(DONE, input_tokens=74_900, output_tokens=100),
     ])
     assert result.exit_code == 0, result.stderr
     assert result.events[-1]["reply"]["kind"] == "done"
