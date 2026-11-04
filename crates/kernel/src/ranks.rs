@@ -251,6 +251,18 @@ pub(super) open spec fn pool_users(nodes: Seq<Node>, end: nat) -> nat {
     potential_prefix(nodes, end, |n: Node| if n.pool { 1nat } else { 0nat })
 }
 
+pub(super) proof fn potential_prefix_equal(left: Seq<Node>, right: Seq<Node>, end: nat,
+    potential: spec_fn(Node) -> nat)
+    requires end <= left.len(), end <= right.len(),
+        forall|i: int| 0 <= i < end ==> left[i] == right[i],
+    ensures potential_prefix(left, end, potential) == potential_prefix(right, end, potential),
+    decreases end,
+{
+    if end > 0 {
+        potential_prefix_equal(left, right, (end - 1) as nat, potential);
+    }
+}
+
 /// #771: one actual node update changes exactly its allocation potential.
 pub(super) proof fn potential_update(nodes: Seq<Node>, index: int,
     replacement: Node, end: nat, potential: spec_fn(Node) -> nat)
@@ -262,6 +274,9 @@ pub(super) proof fn potential_update(nodes: Seq<Node>, index: int,
 {
     if index < end - 1 {
         potential_update(nodes, index, replacement, (end - 1) as nat, potential);
+    } else {
+        potential_prefix_equal(nodes.update(index, replacement), nodes,
+            (end - 1) as nat, potential);
     }
 }
 
@@ -279,7 +294,16 @@ pub(super) proof fn potential_bound(nodes: Seq<Node>, end: nat,
     reveal(open_prefix);
     if end > 0 {
         potential_bound(nodes, (end - 1) as nat, potential, per_open);
-        assert(potential(nodes[end as int - 1]) <= per_open);
+        let prefix = potential_prefix(nodes, (end - 1) as nat, potential);
+        let open = open_prefix(nodes, (end - 1) as nat);
+        let value = potential(nodes[end as int - 1]);
+        assert(prefix <= per_open * open);
+        assert(value <= per_open);
+        if nodes[end as int - 1].phase is Closed {
+            assert(value == 0);
+        } else {
+            assert(prefix + value <= per_open * (open + 1)) by(nonlinear_arith);
+        }
     }
 }
 
