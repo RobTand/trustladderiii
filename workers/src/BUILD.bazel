@@ -79,8 +79,8 @@ py_library(
     srcs = [
         "tl3_workers/__init__.py",
         "tl3_workers/__main__.py",
-        "tl3_workers/budget_check.py",
         "tl3_workers/_policy_identity.py",
+        "tl3_workers/budget_check.py",
         "tl3_workers/classifier_eval.py",
         "tl3_workers/contracts.py",
         "tl3_workers/diff.py",
