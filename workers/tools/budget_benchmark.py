@@ -96,6 +96,8 @@ def main():
             visits.append({"case": case, "repeat": repeat,
                            "calls_per_model_turn": [dict(Counter(r["kind"] for r in calls if r["turn"] == i))
                                                     for i in range(state["turn"] + 1)],
+                           "milliseconds_per_model_turn": [sum(r["ms"] for r in calls if r["turn"] == i)
+                                                           for i in range(state["turn"] + 1)],
                            "calls_outside_model_turns": sum(r["turn"] < 0 for r in calls)})
 
     with ExitStack() as stack:

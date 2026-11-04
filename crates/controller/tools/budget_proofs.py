@@ -75,17 +75,29 @@ def remote(name):
            "kani-0.68.0-x86_64-unknown-linux-gnu.tar.gz")
     os.environ.update(OMP_NUM_THREADS="1", RAYON_NUM_THREADS="1", CARGO_BUILD_JOBS="1")
     with tempfile.TemporaryDirectory(prefix="tl3-budget-kani-") as directory:
-        archive = Path(directory) / "kani.tar.gz"
-        with urllib.request.urlopen(url, timeout=120) as response, archive.open("wb") as stream:
-            while chunk := response.read(1024 * 1024):
-                stream.write(chunk)
-        with archive.open("rb") as stream:
-            if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
-                raise RuntimeError("Kani release checksum mismatch")
-        with tarfile.open(archive) as bundle:
-            bundle.extractall(directory, filter="data")
-        verifier = str(Path(directory) / "kani-0.68.0/bin/kani-driver")
-        print(json.dumps({"kani": "0.68.0", "archive_sha256": digest}), flush=True)
+        rustc_digest = "e531815fa551362b5a485e0d286b6c96555312d49359c0b8fe9e8f34c45594b4"
+        rustc_url = ("https://static.rust-lang.org/dist/2026-08-21/"
+                     "rustc-nightly-x86_64-unknown-linux-gnu.tar.xz")
+        for filename, source_url, expected in [("kani.tar.gz", url, digest),
+                                               ("rustc.tar.xz", rustc_url, rustc_digest)]:
+            archive = Path(directory) / filename
+            with urllib.request.urlopen(source_url, timeout=120) as response, archive.open("wb") as stream:
+                while chunk := response.read(1024 * 1024):
+                    stream.write(chunk)
+            with archive.open("rb") as stream:
+                if hashlib.file_digest(stream, "sha256").hexdigest() != expected:
+                    raise RuntimeError("proof toolchain checksum mismatch")
+            with tarfile.open(archive) as bundle:
+                bundle.extractall(directory, filter="data")
+        kani = Path(directory) / "kani-0.68.0"
+        if (kani / "rust-toolchain-version").read_text().strip() != "nightly-2026-08-21-x86_64-unknown-linux-gnu":
+            raise RuntimeError("Kani compiler toolchain mismatch")
+        toolchain = Path(directory) / "rustc-nightly-x86_64-unknown-linux-gnu/rustc"
+        (kani / "toolchain").symlink_to(toolchain, target_is_directory=True)
+        os.environ["LD_LIBRARY_PATH"] = str(toolchain / "lib")
+        verifier = str(kani / "bin/kani-driver")
+        print(json.dumps({"kani": "0.68.0", "archive_sha256": digest,
+                          "rustc_archive_sha256": rustc_digest}), flush=True)
         if run("prove", name, verifier):
             return 1
         return run("mutant", name, verifier)
