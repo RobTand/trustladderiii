@@ -633,13 +633,13 @@ fn late_comment_after_confirmation_is_deduplicated_on_github_news() {
 }
 
 struct Case {
-    _runtime: tokio::runtime::Runtime,
     _database: database::Database,
     settings: tl3_config::Store,
     root: tempfile::TempDir,
     server: MockServer,
     api: Api,
     key: String,
+    _runtime: tokio::runtime::Runtime,
 }
 
 impl Case {
@@ -733,7 +733,7 @@ impl Case {
         drain(controller);
     }
     fn check_news(&self, controller: &mut Controller, check: Value) {
-        let webhook = json!({"action":"completed", "check_run":check, "installation":{"id":3}, "repository":{"id":1,"name":"sandbox","owner":{"login":"owner"}}, "sender":{"id":99,"login":"factory[bot]"}});
+        let webhook = json!({"action":"completed", "check_run":check, "installation":{"id":3}, "repository":{"id":1,"name":"sandbox","owner":{"id":42,"login":"owner"}}, "sender":{"id":99,"login":"factory[bot]"}});
         Store::open(&self.settings)
             .unwrap()
             .receive_ingress(
