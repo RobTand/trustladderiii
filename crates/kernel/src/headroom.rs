@@ -13,20 +13,34 @@ fn settle_step_budget(open_nodes: usize) -> Option<u32> {
     scan_step_budget(open_nodes)?.checked_mul(6)
 }
 
-/// #771: reserves for one external event followed by the complete settle loop.
-/// The event changes one node's generation at most twice; settle changes that
-/// node's phase at most once more. At most one effect is emitted by apply and
-/// one by settle. Question allocation occurs only in apply.
+/// #771: u64 generation reserve for one event and its complete settle loop.
+/// `run_failed` or `delivery_failed` can increment once and `raise_incident`
+/// can increment once more through `set_phase`. Other apply paths increment
+/// at most once. `advance_node` has at most one further phase change per node.
+/// Thus 2 + 1 = 3 is a conservative per-step bound.
 pub const GENERATION_STEP_BUDGET: u64 = 3;
+/// #771: u64 effect-sequence reserve. Apply can retry one effect through
+/// `delivery_failed`; settle can emit at most once per node because that effect
+/// blocks further moves. Reserving 1 + 1 = 2 also covers their composition.
 pub const EFFECT_STEP_BUDGET: u64 = 2;
+/// #771: u64 question reserve. Apply chooses at most one of `ask_rob`, cleanup
+/// failure's question, or one clarifying question. Settle allocates none.
 pub const QUESTION_STEP_BUDGET: u64 = 1;
-/// Ingest initializes at most u8::MAX + RESERVE. Other credit entry changes are
-/// at most one, except AddCredit, whose u8 input contributes at most 255.
-/// pay's automatic top-up is at most one and is needed only if AddCredit did
-/// not already cover the continuation, so their combined increase is <= 255.
+/// #771: u32 starting-credit reserve. Ingest initializes this field once to
+/// `size + RESERVE`, where size is u8, or `1 + RESERVE` for an early end.
+/// The largest assignment is 255 + 3 = 258; it never accumulates deposits.
 pub const CREDIT_START_STEP_BUDGET: u32 = u8::MAX as u32 + crate::RESERVE;
+/// #771: u32 added-credit reserve. `Credit::fund_and_pay` combines a u8 deposit
+/// with the continuation's automatic top-up. A valid continuation costs <= 1.
+/// A nonzero deposit covers that cost; a zero deposit tops up by at most one.
+/// Therefore the combined increase is <= 255, including automatic top-ups.
 pub const CREDIT_ADDED_STEP_BUDGET: u32 = u8::MAX as u32;
+/// #771: u32 spent-credit reserve. Apply either spends one credit directly or
+/// pays one question continuation; settle spends none. Valid questions cost
+/// zero or one, as checked by `World::check_node`.
 pub const CREDIT_SPENT_STEP_BUDGET: u32 = 1;
+/// #771: u32 earned-credit reserve. `merge_credit` increases this field by one
+/// and latches `merge_credited`, preventing another increase during the step.
 pub const CREDIT_EARNED_STEP_BUDGET: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +61,10 @@ impl World {
     }
 
     /// #771: the executable progress theorem is scoped to counter headroom.
+    /// The u32 scratch counters also reserve one new open root and six local
+    /// settle moves per open node. Closed nodes do not contribute to these
+    /// scans in a consistent world. This admits at most 715,827,881 open nodes;
+    /// the mathematical progress sum itself has no machine-width bound.
     pub fn headroom_ok(&self) -> bool {
         self.counter_exhaustion().is_none()
     }
