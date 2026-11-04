@@ -129,7 +129,7 @@ pub(super) open spec fn effect_distance(n: Node) -> int {
 }
 
 #[verifier::opaque]
-pub(super) open spec fn distance(n: Node) -> nat {
+pub closed spec fn distance(n: Node) -> nat {
     if n.phase is Closed { 0 }
     else if pause_due(n) {
         phase_rank(Phase::Ready(match n.phase {

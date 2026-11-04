@@ -1441,13 +1441,9 @@ impl World {
     /// enforce the fresh-command scope. Raw kernel command exhaustion remains
     /// characterized by tests/progress_limits.rs, outside this theorem's scope.
     pub fn witness(&self) -> (result: Option<Event>) [
-        requires world_checked(*self), self.nodes@.len() <= u64::MAX as int,
-            forall|j: int| 0 <= j < self.nodes@.len() ==> self.nodes@[j].last_cmd < u64::MAX,
-        ensures match result {
-            Some(event) => exists|j: int| 0 <= j < self.nodes@.len() && chosen_for_node(*self, j, event),
-            None => forall|j: int| 0 <= j < self.nodes@.len() ==> !outside_available(*self, j),
-        },
-    ] proof [reveal(world_checked);] {
+        requires world_checked(*self), fresh_commands(*self),
+        ensures witness_selection(*self, result),
+    ] proof [reveal(world_checked); reveal(fresh_commands); reveal(witness_selection);] {
         let mut i = 0usize;
         kernel_while! { (i < self.nodes.len()) [
             invariant i <= self.nodes.len(), self.nodes@.len() <= u64::MAX as int,
@@ -4296,7 +4292,7 @@ spec fn stopping_effect_fits(n: Node) -> bool {
     }
 }
 
-spec fn settle_ready(w: World) -> bool {
+pub closed spec fn settle_ready(w: World) -> bool {
     scheduling_safe(w) && w.nodes@.len() <= u64::MAX as int
         && (forall|j: int| 0 <= j < w.nodes@.len() ==> settle_shape(w.nodes@[j])
             && w.nodes@[j].generation as int + generation_capacity(w.nodes@[j]) <= u64::MAX as int

@@ -1,6 +1,21 @@
 // Included in the kernel module so proofs use the production world's storage.
 #[cfg(verus_keep_ghost)]
 verus! {
+/// #771: checked steering construction can represent the next command for
+/// every node. The raw kernel exhaustion characterization is outside this scope.
+pub closed spec fn fresh_commands(w: World) -> bool {
+    w.nodes@.len() <= u64::MAX as int
+        && forall|j: int| 0 <= j < w.nodes@.len() ==> w.nodes@[j].last_cmd < u64::MAX
+}
+
+/// #771: expose the real selector's result without exposing private storage.
+pub closed spec fn witness_selection(w: World, result: Option<Event>) -> bool {
+    match result {
+        Some(event) => exists|j: int| 0 <= j < w.nodes@.len() && chosen_for_node(w, j, event),
+        None => forall|j: int| 0 <= j < w.nodes@.len() ==> !outside_available(w, j),
+    }
+}
+
 /// Q30/Q39 / #771: these are exactly the branches considered by witness.
 /// Availability says nothing about the event's effect on the rank; that is a
 /// separate obligation against apply and the actual event handlers.
