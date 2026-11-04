@@ -2799,7 +2799,7 @@ fn external_wait_survives_restart(settings: &tl3_config::Store) {
         );
         registry.register(
             tl3_controller::executor::Upstream::PrismaBuild,
-            waits::adapter(root.path()),
+            waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
         );
         let mut c = Controller::open_with_clock(
             Store::open(settings).unwrap(),
