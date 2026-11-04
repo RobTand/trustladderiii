@@ -306,6 +306,29 @@ def _judge(run, stage):
         return feedback
 
 
+def _grade(grader, case, trace):
+    """A grade judge's value and rationale. A malformed reply gets one tool-free
+    repair turn, and a reply still malformed after it grades null (#728)."""
+    with judges.observed("grade") as turns:
+        try:
+            feedback = grader(inputs=case, trace=trace)
+            failure = judges.feedback_failure(feedback)
+        except Exception as error:
+            failure = judges.exception_failure(error)
+        if failure is None:
+            return feedback.value, feedback.rationale or ""
+        if failure.category is not judges.FailureClass.SCHEMA:
+            raise tracing.WorkerStageError("grade judge failure", judge_failure=failure)
+        try:
+            feedback = judges.repair_grade(turns, "grade")
+        except Exception as error:
+            turns.repair, turns.failure = "failed", judges.exception_failure(error)
+            return None, (f"No grade: the judge's reply failed validation ({failure.category}), "
+                          f"and its one repair turn ended in {turns.failure.category}.")
+        turns.repair = "accepted"
+        return feedback.value, feedback.rationale
+
+
 def assessment_key(run, dimension, model, release):
     identity = json.dumps([run, dimension, model, release], separators=(",", ":"))
     # Match MLflow's a-<32 hex> ID shape and its 50-character database bound.
@@ -377,11 +400,11 @@ def _judged_run(model, request, workdir, emit):
         grades = []
         with judges.guarded_tools(redactor, progress):
             for dimension, grader in judges.grade_judges(inputs["rubric"], grade_model).items():
-                feedback = _judge(lambda: grader(inputs=case, trace=trace), "grade judge failure")
-                value = feedback.value
+                with judges.postmortem_turns():
+                    value, rationale = _grade(grader, case, trace)
                 grade = value if type(value) is int and 1 <= value <= 5 else None
                 grades.append({"dimension": dimension, "grade": grade,
-                               "rationale": redactor.text(feedback.rationale or "", 4000)[:4000],
+                               "rationale": redactor.text(rationale, 4000)[:4000],
                                "judge_model": grade_model})
             prompt = run_prompt()
             with judges.postmortem_turns():

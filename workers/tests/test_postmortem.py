@@ -832,8 +832,9 @@ def test_judge_turn_counts_and_limits_reach_spans_and_summary(tmp_path, monkeypa
 
     result, _ = run(document)
     validate("postmortem-reply", result)
-    expected = [{"stage": stage, "turn_count": tool_turns + 1, "iteration_limit": limit}
-                for stage, limit in [("grade", 48), ("grade", 48), ("postmortem", 47)]]
+    # Every judge keeps its last turn for a reply repair (#728).
+    expected = [{"stage": stage, "turn_count": tool_turns + 1, "iteration_limit": 47}
+                for stage in ["grade", "grade", "postmortem"]]
     recorded = json.loads(summary.read_text())
     assert recorded.get("judge_runs") == expected
     assert recorded["outcome"] == "succeeded"
