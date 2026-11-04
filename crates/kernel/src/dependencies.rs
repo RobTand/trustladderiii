@@ -44,6 +44,28 @@ pub closed spec fn edges_indexable(world: World) -> bool {
         }
 }
 
+/// #693 / #771: one declaration's existing consistency requirements.
+pub(super) open spec fn dependency_checked(world: World, dependency: Dependency) -> bool {
+    dependency.node.0 < world.nodes@.len()
+        && (match dependency.target.request { None => true, Some(n) => n.0 < world.nodes@.len() })
+        && ((dependency.rejected || dependency.status != DependencyStatus::Delivered) ==>
+            !world.nodes@[dependency.node.0 as int].planning_started
+                && matches!(world.nodes@[dependency.node.0 as int].phase,
+                    Phase::Ingesting | Phase::Auditing | Phase::Unplanned | Phase::AwaitingRob
+                        | Phase::Stopping(_) | Phase::Closed(_)))
+        && (world.nodes@[dependency.node.0 as int].phase == Phase::Unplanned
+            && !prerequisites_delivered(world, dependency.node) ==>
+                !world.nodes@[dependency.node.0 as int].holds && !world.nodes@[dependency.node.0 as int].pool
+                    && world.nodes@[dependency.node.0 as int].ticket.is_none()
+                    && world.nodes@[dependency.node.0 as int].run.is_none())
+}
+
+/// #693 / #771: executable prerequisite checks imply this progress projection.
+pub(super) open spec fn dependencies_checked(world: World) -> bool {
+    edges_indexable(world) && forall|j: int| 0 <= j < world.dependencies@.len()
+        ==> dependency_checked(world, world.dependencies@[j])
+}
+
 pub closed spec fn unseen_prefix(seen: Seq<bool>, end: nat) -> nat
     recommends end <= seen.len(),
     decreases end,
@@ -219,60 +241,100 @@ impl World {
     }
     }
 
-    pub fn dependency_graph_acyclic(&self) -> bool {
-        self.dependencies.iter().all(|d| {
-            self.nodes[d.node.0 as usize].phase.is_closed()
-                || d.rejected
-                || d.status != DependencyStatus::Pending
-                || d.target
-                    .request
-                    .is_none_or(|target| !self.dependency_path(target, d.node))
-        })
+    kernel_fn! {
+    /// #693 / #771: execute the same per-declaration cycle checks in table order.
+    #[allow(clippy::collapsible_if)]
+    pub fn dependency_graph_acyclic(&self) -> (result: bool) [
+        requires edges_indexable(*self),
+    ] proof [reveal(edges_indexable);] {
+        let mut index = 0usize;
+        kernel_while! { (index < self.dependencies.len()) [
+            invariant index <= self.dependencies.len(), edges_indexable(*self),
+            decreases self.dependencies.len() - index,
+        ] {
+            let d = &self.dependencies[index];
+            if !self.nodes[d.node.0 as usize].phase.is_closed()
+                && !d.rejected && d.status == DependencyStatus::Pending
+            {
+                if let Some(target) = d.target.request {
+                    if self.dependency_path(target, d.node) { return false; }
+                }
+            }
+            index += 1;
+        } }
+        true
+    }
     }
 
-    pub(super) fn check_dependencies(&self) -> Result<(), Broken> {
-        for (index, node) in self.nodes.iter().enumerate() {
-            if node.credit.withheld
-                && !self
-                    .dependencies
-                    .iter()
-                    .any(|d| d.node == NodeId(index as u64))
-            {
-                return Err(Broken::Dependencies);
+    kernel_fn! {
+    /// #693 / #771: the real prerequisite checker establishes indexed owners
+    /// and prevents a blocked request from holding delivery resources.
+    pub(super) fn check_dependencies(&self) -> (result: Result<(), Broken>) [
+        requires self.nodes@.len() <= u64::MAX as int,
+        ensures result.is_ok() ==> dependencies_checked(*self),
+    ] proof [reveal(dependencies_checked); reveal(edges_indexable);] {
+        let mut node_index = 0usize;
+        kernel_while! { (node_index < self.nodes.len()) [
+            invariant node_index <= self.nodes.len(), self.nodes@.len() <= u64::MAX as int,
+            decreases self.nodes.len() - node_index,
+        ] {
+            let node = &self.nodes[node_index];
+            if node.credit.withheld {
+                let mut found = false;
+                let mut edge = 0usize;
+                kernel_while! { (edge < self.dependencies.len()) [
+                    invariant edge <= self.dependencies.len(),
+                    decreases self.dependencies.len() - edge,
+                ] {
+                    if self.dependencies[edge].node == NodeId(node_index as u64) {
+                        found = true;
+                        break;
+                    }
+                    edge += 1;
+                } }
+                if !found { return Err(Broken::Dependencies); }
             }
-        }
+            node_index += 1;
+        } }
         if self.dependencies.is_empty() {
             return Ok(());
         }
-        for (index, dependency) in self.dependencies.iter().enumerate() {
+        let mut index = 0usize;
+        kernel_while! { (index < self.dependencies.len()) [
+            invariant index <= self.dependencies.len(), self.nodes@.len() <= u64::MAX as int,
+                forall|j: int| 0 <= j < index ==> dependency_checked(*self, self.dependencies@[j]),
+            decreases self.dependencies.len() - index,
+        ] {
+            let dependency = &self.dependencies[index];
             let Some(owner) = self.index(dependency.node) else {
                 return Err(Broken::Dependencies);
             };
-            if dependency.target.number == 0
-                || dependency.target.request.is_some_and(|target| {
-                    self.index(target)
-                        .is_none_or(|i| self.nodes[i].repo != self.nodes[owner].repo)
-                })
-                || self.dependencies[..index].iter().any(|d| {
-                    d.node == dependency.node
-                        && d.target.kind == dependency.target.kind
-                        && d.target.number == dependency.target.number
-                })
-            {
+            if dependency.target.number == 0 {
                 return Err(Broken::Dependencies);
             }
+            if let Some(target) = dependency.target.request {
+                match self.index(target) {
+                    None => return Err(Broken::Dependencies),
+                    Some(target_index) => if self.nodes[target_index].repo != self.nodes[owner].repo {
+                        return Err(Broken::Dependencies);
+                    },
+                }
+            }
+            let mut previous = 0usize;
+            kernel_while! { (previous < index) [
+                invariant previous <= index < self.dependencies.len(),
+                decreases index - previous,
+            ] {
+                let d = &self.dependencies[previous];
+                if d.node == dependency.node && d.target.kind == dependency.target.kind
+                    && d.target.number == dependency.target.number
+                { return Err(Broken::Dependencies); }
+                previous += 1;
+            } }
             if (dependency.rejected || dependency.status != DependencyStatus::Delivered)
                 && (self.nodes[owner].planning_started
-                    || self.nodes[owner].question.is_some_and(|q| {
-                        !matches!(
-                            q.cont,
-                            Cont::Ingesting
-                                | Cont::Auditing
-                                | Cont::Unplanned
-                                | Cont::Stop(_)
-                                | Cont::Nowhere
-                        )
-                    }))
+                    || matches!(self.nodes[owner].question, Some(q) if !matches!(q.cont,
+                        Cont::Ingesting | Cont::Auditing | Cont::Unplanned | Cont::Stop(_) | Cont::Nowhere)))
             {
                 return Err(Broken::Dependencies);
             }
@@ -311,11 +373,13 @@ impl World {
                     return Err(Broken::Dependencies);
                 }
             }
-        }
+            index += 1;
+        } }
         if !self.dependency_graph_acyclic() {
             return Err(Broken::Dependencies);
         }
         Ok(())
+    }
     }
 
     kernel_fn! {

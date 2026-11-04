@@ -1532,33 +1532,62 @@ impl World {
 
     /// What holds between any two transitions, including inside settle. Kani
     /// proves that applying an event and every internal transition keep it.
-    pub fn consistent(&self) -> bool {
+    kernel_fn! {
+    /// #771: successful executable consistency checking supplies the exact
+    /// progress invariants used by the source-connected theorem.
+    pub fn consistent(&self) -> (result: bool) [
+        requires world_headroom(*self), footprint::ordered_table(*self),
+        ensures result ==> world_checked(*self),
+    ] {
         self.check().is_ok()
+    }
     }
 
     /// `consistent`, naming the first rule a world breaks.
-    pub fn check(&self) -> Result<(), Broken> {
+    kernel_fn! {
+    /// #771: the real world checker establishes positive capacities and the
+    /// per-node and prerequisite facts, without changing any acceptance rule.
+    pub fn check(&self) -> (result: Result<(), Broken>) [
+        requires world_headroom(*self), footprint::ordered_table(*self),
+        ensures result.is_ok() ==> world_checked(*self),
+    ] proof [reveal(world_headroom); reveal(world_checked);] {
         self.check_dependencies()?;
         if self.gates.is_empty() || self.pool_capacity == 0 {
             return Err(Broken::Config);
         }
-        for g in &self.gates {
-            if g.w == 0 {
-                return Err(Broken::Config);
-            }
-        }
+        let mut gate_index = 0usize;
+        kernel_while! { (gate_index < self.gates.len()) [
+            invariant gate_index <= self.gates.len(),
+                forall|j: int| 0 <= j < gate_index ==> self.gates@[j].w > 0,
+            decreases self.gates.len() - gate_index,
+        ] {
+            if self.gates[gate_index].w == 0 { return Err(Broken::Config); }
+            gate_index += 1;
+        } }
         let mut i = 0;
-        while i < self.nodes.len() {
+        kernel_while! { (i < self.nodes.len()) [
+            invariant i <= self.nodes.len(),
+                forall|j: int| 0 <= j < i ==> node_checked(*self, self.nodes@[j]),
+            decreases self.nodes.len() - i,
+        ] {
             self.check_node(&self.nodes[i])?;
             i += 1;
-        }
+        } }
         // Locks are the footprints of holders in the same repo.
         let mut i = 0;
-        while i < self.nodes.len() {
+        kernel_while! { (i < self.nodes.len()) [
+            invariant i <= self.nodes.len(),
+                forall|j: int| 0 <= j < self.nodes@.len() ==> node_checked(*self, self.nodes@[j]),
+            decreases self.nodes.len() - i,
+        ] {
             let n = self.nodes[i];
             if n.holds {
                 let mut j = 0;
-                while j < i {
+                kernel_while! { (j < i) [
+                    invariant j <= i < self.nodes.len(),
+                        forall|k: int| 0 <= k < self.nodes@.len() ==> node_checked(*self, self.nodes@[k]),
+                    decreases i - j,
+                ] {
                     let other = self.nodes[j];
                     if other.holds
                         && other.repo == n.repo
@@ -1567,40 +1596,65 @@ impl World {
                         return Err(Broken::Gate);
                     }
                     j += 1;
-                }
+                } }
             }
             i += 1;
-        }
-        let mut r = 0;
-        while r < self.gates.len() {
+        } }
+        let mut r = 0usize;
+        kernel_while! { (r < self.gates.len()) [
+            invariant r <= self.gates.len(),
+            decreases self.gates.len() - r,
+        ] {
             let mut count = 0usize;
-            for n in &self.nodes {
-                if n.holds && n.repo == RepoId(r as u64) {
-                    count += 1;
-                }
-            }
-            if count > self.gates[r].w as usize {
-                return Err(Broken::Gate);
-            }
+            let mut index = 0usize;
+            kernel_while! { (index < self.nodes.len()) [
+                invariant index <= self.nodes.len(), count <= index,
+                decreases self.nodes.len() - index,
+            ] {
+                let n = &self.nodes[index];
+                if n.holds && n.repo == RepoId(r as u64) { count += 1; }
+                index += 1;
+            } }
+            if count > self.gates[r].w as usize { return Err(Broken::Gate); }
             r += 1;
-        }
+        } }
         let mut runs = 0u32;
-        for n in &self.nodes {
-            if n.pool {
-                runs += 1;
+        let mut index = 0usize;
+        kernel_while! { (index < self.nodes.len()) [
+            invariant index <= self.nodes.len(), runs as int <= open_prefix(self.nodes@, index as nat),
+                open_prefix(self.nodes@, self.nodes@.len()) <= u32::MAX as int,
+                forall|j: int| 0 <= j < self.nodes@.len() ==> node_checked(*self, self.nodes@[j]),
+            decreases self.nodes.len() - index,
+        ] {
+            kernel_proof! {
+                reveal(open_prefix);
+                open_prefix_monotone(self.nodes@, index as nat + 1, self.nodes@.len());
             }
-        }
-        if runs > self.pool_capacity as u32 {
-            return Err(Broken::Pool);
-        }
-        for (a, x) in self.nodes.iter().enumerate() {
-            for (b, y) in self.nodes.iter().enumerate() {
+            if self.nodes[index].pool { runs += 1; }
+            index += 1;
+        } }
+        if runs > self.pool_capacity as u32 { return Err(Broken::Pool); }
+        let mut a = 0usize;
+        kernel_while! { (a < self.nodes.len()) [
+            invariant a <= self.nodes.len(),
+            decreases self.nodes.len() - a,
+        ] {
+            let x = &self.nodes[a];
+            let mut b = 0usize;
+            kernel_while! { (b < self.nodes.len()) [
+                invariant a < self.nodes.len(), b <= self.nodes.len(),
+                decreases self.nodes.len() - b,
+            ] {
+                let y = &self.nodes[b];
                 if a != b && x.ticket.is_some() && x.ticket == y.ticket {
                     return Err(Broken::Ticket);
                 }
-            }
-        }
+                b += 1;
+            } }
+            a += 1;
+        } }
         Ok(())
+    }
     }
 
     kernel_fn! {
@@ -4062,6 +4116,14 @@ spec fn node_checked(w: World, n: Node) -> bool {
             Phase::Rebasing => ready_checked(n, Resume::Rebasing),
             _ => true,
         })
+}
+
+/// #771: progress facts obtained by running the production consistency checker.
+pub closed spec fn world_checked(w: World) -> bool {
+    w.gates@.len() > 0 && w.pool_capacity > 0
+        && (forall|j: int| 0 <= j < w.gates@.len() ==> w.gates@[j].w > 0)
+        && (forall|j: int| 0 <= j < w.nodes@.len() ==> node_checked(w, w.nodes@[j]))
+        && dependencies::dependencies_checked(w)
 }
 
 /// #771: intermediate source-level safety scope. These consistency clauses
