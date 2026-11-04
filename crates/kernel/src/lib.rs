@@ -2155,6 +2155,7 @@ fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
         },
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).last_cmd == old(m).last_cmd,
+        final(m).review_stop == old(m).review_stop,
         (old(m).phase is Closed || old(m).phase is Stopping) ==> *final(m) == (Node {
             phase: final(m).phase, ..*old(m)
         }),
