@@ -15,6 +15,7 @@ from planner_fixtures import (
     cache_tokenizer,  # noqa: F401
     planner_request,  # noqa: F401
     run_reply,
+    run_reply_in_process,
     tool_capable_fake,  # noqa: F401
 )
 
@@ -31,7 +32,7 @@ def test_out_of_room_rejects_leaf(tmp_path, planner_request, monkeypatch):
 
 def test_out_of_room_leaf_is_rejected_through_protocol(tmp_path, planner_request):
     planner_request["inputs"]["must_split"] = True
-    assert_rule_report(run_reply(tmp_path, planner_request, LEAF), "Must split")
+    assert_rule_report(run_reply_in_process(tmp_path, planner_request, LEAF), "Must split")
 
 
 @pytest.mark.parametrize("proposal", [SPLIT, CANT_MEET])
@@ -41,19 +42,19 @@ def test_out_of_room_can_split_or_report_obstacle(tmp_path, planner_request, pro
     proposal = copy.deepcopy(proposal)
     if proposal["kind"] == "split":
         proposal["reason"] = "out_of_room"
-    result = run_reply(tmp_path, planner_request, proposal)
+    result = run_reply_in_process(tmp_path, planner_request, proposal)
     assert result.exit_code == 0, result.stderr
     assert result.events[-1]["reply"]["kind"] == proposal["kind"]
 
 
 def test_protected_path_is_rejected_through_protocol(tmp_path, planner_request):
-    assert_rule_report(run_reply(tmp_path, planner_request, {**LEAF, "files": ["conftest.py"]}), "protected path")
+    assert_rule_report(run_reply_in_process(tmp_path, planner_request, {**LEAF, "files": ["conftest.py"]}), "protected path")
 
 
 @pytest.mark.parametrize("field", ["must_split", "findings", "protected_paths"])
 def test_controller_must_supply_planning_inputs(tmp_path, planner_request, field):
     del planner_request["inputs"][field]
-    assert_rejected(run_reply(tmp_path, planner_request, LEAF), "request")
+    assert_rejected(run_reply_in_process(tmp_path, planner_request, LEAF), "request")
 
 
 @pytest.mark.parametrize("proposal", [LEAF, SPLIT])
@@ -97,7 +98,7 @@ def test_protected_paths_are_rejected(tmp_path, planner_request, monkeypatch, pr
     ({"lands_on_its_own": False}, True),
 ])
 def test_leaf_rules_are_reported_and_malformed_shapes_fail(tmp_path, planner_request, change, reported):
-    result = run_reply(tmp_path, planner_request, {**LEAF, **change})
+    result = run_reply_in_process(tmp_path, planner_request, {**LEAF, **change})
     if reported:
         assert_rule_report(result)
     else:
@@ -107,7 +108,7 @@ def test_leaf_rules_are_reported_and_malformed_shapes_fail(tmp_path, planner_req
 def test_invalid_node_id_is_reported_to_controller(tmp_path, planner_request):
     proposal = copy.deepcopy(LEAF)
     proposal["checks"][0]["node_ids"] = ["../test.py::test_escape"]
-    result = run_reply(tmp_path, planner_request, proposal)
+    result = run_reply_in_process(tmp_path, planner_request, proposal)
     assert_rule_report(result)
     assert result.events[-1]["reply"]["violations"] == [
         "Checks must name exact pytest node IDs. Replace `../test.py::test_escape` "
@@ -120,7 +121,7 @@ def test_invalid_node_id_is_reported_to_controller(tmp_path, planner_request):
     "new//file.py", "greeting.py/", ".", "bad\x00path",
 ])
 def test_declared_paths_are_confined(tmp_path, planner_request, path):
-    result = run_reply(tmp_path, planner_request, {**LEAF, "files": [path]})
+    result = run_reply_in_process(tmp_path, planner_request, {**LEAF, "files": [path]})
     # #321: a named violation, not a crash. Nothing outside the worktree is measured.
     assert_rule_report(result, f"Declared file can't be used: {path}: ")
     assert result.events[-1]["reply"]["forecast"]["file_tokens"][path] == 0
@@ -136,7 +137,7 @@ def test_declared_paths_are_confined(tmp_path, planner_request, path):
     ({**CANT_MEET, "files": ["../escape"]}, True),
 ])
 def test_split_rules_are_reported_and_malformed_shapes_fail(tmp_path, planner_request, proposal, reported):
-    result = run_reply(tmp_path, planner_request, proposal)
+    result = run_reply_in_process(tmp_path, planner_request, proposal)
     if reported:
         assert_rule_report(result)
     else:
@@ -147,7 +148,7 @@ def test_early_ingest_end_is_not_plannable(tmp_path, planner_request):
     planner_request["inputs"]["ingest"] = {
         "kind": "early_end", "outcome": "duplicate", "reason": "Another request covers it.",
     }
-    assert_rejected(run_reply(tmp_path, planner_request, LEAF), "request")
+    assert_rejected(run_reply_in_process(tmp_path, planner_request, LEAF), "request")
 
 
 def test_read_only_tools_through_protocol(tmp_path, planner_request):
@@ -173,11 +174,11 @@ def test_read_only_tools_through_protocol(tmp_path, planner_request):
 
 
 def test_model_cannot_forge_rule_evidence(tmp_path, planner_request):
-    assert_rejected(run_reply(tmp_path, planner_request, {**LEAF, "violations": []}))
+    assert_rejected(run_reply_in_process(tmp_path, planner_request, {**LEAF, "violations": []}))
 
 
 def test_split_requires_evidence_and_smaller_children(tmp_path, planner_request):
-    reply = run_reply(tmp_path, planner_request, SPLIT)
+    reply = run_reply_in_process(tmp_path, planner_request, SPLIT)
     assert_rule_report(reply, "forecast fits")
     assert_rule_report(reply, "smaller forecast")
 

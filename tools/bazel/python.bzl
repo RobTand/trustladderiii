@@ -35,6 +35,42 @@ _PACKAGE_DEPS = {
     "workers/tests": ["//workers/src"],
 }
 
+# Measured unsharded seconds, rounded up: the larger of main's post-merge Gate
+# at 8403a295e7 (BuildBuddy d3eb5c2b) and an uncached run at c6bac03833
+# (8dfe7845). test_writer is #732's own run (62d9ae7c) after its decision
+# cases moved in-process. Bazel splits each of these modules into shards of
+# about _SHARD_SECONDS, and python_runner.py picks each shard's tests. Update a
+# figure when a target's measured time moves; add any Python target over 30 s.
+_MEASURED_SECONDS = {
+    "harness/tests:test_review_fixes": 35,
+    "harness/tests:test_selection_groups": 81,
+    "harness/tests:test_test_tool": 38,
+    "workers/tests:test_large_files": 35,
+    "workers/tests:test_maker": 48,
+    "workers/tests:test_maker_forecast": 37,
+    "workers/tests:test_maker_recovery": 46,
+    "workers/tests:test_pb_machine_records": 37,
+    "workers/tests:test_pb_tests": 39,
+    "workers/tests:test_pb_tests_base": 48,
+    "workers/tests:test_pb_tests_candidates": 41,
+    "workers/tests:test_pb_tests_forcing": 31,
+    "workers/tests:test_pb_tests_rehearsal": 55,
+    "workers/tests:test_pb_tests_runtime": 40,
+    "workers/tests:test_planner_forecast": 61,
+    "workers/tests:test_reviewer": 69,
+    "workers/tests:test_tracing": 66,
+    "workers/tests:test_workers": 85,
+    "workers/tests:test_writer": 32,
+}
+
+_SHARD_SECONDS = 20
+
+def _shard_count(package, name):
+    """Shards for a measured target; 0 keeps Bazel's unsharded default."""
+    seconds = _MEASURED_SECONDS.get(package + ":" + name, 0)
+    shards = (seconds + _SHARD_SECONDS - 1) // _SHARD_SECONDS
+    return shards if shards > 1 else 0
+
 def _unique_labels(labels):
     """Gazelle writes //a/b, the tables //a/b:b; Bazel rejects the duplicate."""
     unique = {}
@@ -65,6 +101,7 @@ def tl3_py_test(name, srcs, main = None, deps = [], data = [], **kwargs):
         ),
         tags = kwargs.pop("tags", []) + tags,
         exec_properties = exec_properties,
+        shard_count = _shard_count(package, name),
         **kwargs
     )
 

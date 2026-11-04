@@ -270,10 +270,9 @@ Other cases cover adapter outages with another request progressing, a lost
 response retaining its original key, worker and check and rebase and enqueue
 watches, Pending reconciliation, found non-confirming acknowledgements,
 cancelled absence, stale epochs, upgrade drain guards, malformed footprints,
-read-only status and configuration permissions. The review campaign generator
-in `crates/controller/tools/review_manifest.py` adds kernel tests and three
-representative Kani proofs. Generate it from a clean detached worktree at the
-final commit. CI runs independently on Mergify runners.
+read-only status and configuration permissions. The review evidence adds kernel
+tests and three representative Kani proofs. CI runs independently on Mergify
+runners.
 
 ### Mergify queue facts
 

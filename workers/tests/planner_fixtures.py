@@ -11,7 +11,7 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage
 
 import worker_process
-from worker_process import start_worker
+from worker_process import start_worker, start_worker_in_process
 
 
 LEAF = {
@@ -95,6 +95,12 @@ FakeMessagesListChatModel.bind_tools = bind_tools
 '''
     monkeypatch.setattr(worker_process, "LAUNCH", setup + worker_process.LAUNCH)
 
+    def bind_tools(model, tools, **kwargs):
+        assert {tool.name for tool in tools} == {'list', 'read', 'glob', 'grep', 'rehearse_forcing'}
+        assert all(tool.description for tool in tools)
+        return model
+    monkeypatch.setattr(worker_process, "bind_tools", bind_tools)
+
 
 @pytest.fixture
 def planner_request(tmp_path):
@@ -130,12 +136,21 @@ def planner_request(tmp_path):
     }
 
 
-def run_reply(tmp_path, request, reply, calls=()):
+def reply_turns(reply, calls=()):
     turns = []
     if calls:
         turns.append({"content": "", "tool_calls": list(calls)})
     turns.append({"content": json.dumps(reply)})
-    return start_worker(tmp_path, request, turns)
+    return turns
+
+
+def run_reply(tmp_path, request, reply, calls=()):
+    return start_worker(tmp_path, request, reply_turns(reply, calls))
+
+
+def run_reply_in_process(tmp_path, request, reply, calls=()):
+    """run_reply for plan-rule cases: the same main and fake model, no child interpreter."""
+    return start_worker_in_process(tmp_path, request, reply_turns(reply, calls))
 
 
 def assert_rejected(result, phase="run", message=None):

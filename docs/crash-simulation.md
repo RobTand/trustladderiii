@@ -185,25 +185,18 @@ Run mutations through PrismaBuild, just like the green suite.
 the withdrawn read. It requires the finish-gap regression to fail after the
 done read, then restores the source.
 
-## Fleet verification
+## Verification
 
-`crates/controller/tools/crash_manifest.py` generates five PrismaBuild actions.
-Three run the default smoke scenario with the host tags `dl380g10`, `sparky`,
-and `sparklina`. One portable action sets `TL3_SIM_FULL=1` for the full matrix.
-The other runs `verify.sh` with a separate seed and the smoke default, including
-workspace formatting, Clippy, all Rust tests, and the kernel build without
-default features. The host and workspace actions also run the existing
-controller scenarios, worker process scenarios, and channel-disconnection tests.
-The portable full action runs only `crash_safety`.
-The simulation prints its own elapsed time and number of real process kills.
+The default smoke scenario runs in the controller suite on every placement. Set
+`TL3_SIM_FULL=1` for the full matrix, which the `crash_safety` test runs alone.
+`verify.sh` runs the smoke default with workspace formatting, Clippy, all Rust
+tests, and the kernel build without default features. The suite also runs the
+existing controller scenarios, worker process scenarios, and channel-disconnection
+tests. The simulation prints its own elapsed time and number of real process kills.
 
 The crash matrix uses a small seeded footprint. The tracer's existing 80-file
 case remains in the controller suite and runs in every placement too.
 
-Ticket #71's focused final campaign comes from
-`python3 crates/controller/tools/loom_manifest.py`. Its three pinned actions run
-the bounded models and all twenty crash save points on `dl380g10`, `sparky`, and
-`sparklina`. The dl380g10 action also repeats both bell models 50 times at bound two.
-A portable action runs `crates/controller/tools/verify.sh`, and another checks
-all 13 ordering mutants plus the lookup scan-position mutant. The workspace script also runs the bounded loom suite. Each action reserves two
-CPUs and 6 GiB, bounds build and native threads, and preserves PB affinity.
+The workspace script runs the bounded loom suite and all twenty crash save points.
+The two mutant scripts above check all 13 ordering mutants plus the lookup
+scan-position mutant.
