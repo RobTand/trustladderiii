@@ -8,7 +8,7 @@ from subprocess import CalledProcessError
 from jsonschema import Draft202012Validator
 
 from tl3_workers.roles.base import Role
-from tl3_workers.evidence import preflight, proof_applicability
+from tl3_workers.evidence import preflight, proof_applicability, subject_covers
 from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES, MAX_EXECUTION_PIECES, execution_forecast
 from tl3_harness import Check, Forcing, HarnessInputError, Kind, Proof
 from tl3_harness.proof import overlaps
@@ -39,14 +39,17 @@ def execution_budget_details(execution):
 class PlanConsistencyError(ValueError):
     """A draft's checks disagree with its declarations or exact base selections."""
 
-    def __init__(self, uncovered, missing_forced=(), *, draft=None, selectors=None, missing_proof=None):
+    def __init__(self, uncovered, missing_forced=(), *, draft=None, selectors=None, missing_proof=None,
+                 missing_subjects=None):
         self.draft = deepcopy(draft)
         self.uncovered = set(uncovered)
         self.missing_forced = set(missing_forced)
         self.selectors = selectors or {}
         self.missing_proof = missing_proof or {}
-        self.local = bool(self.selectors or self.missing_proof)
+        self.missing_subjects = missing_subjects or {}
+        self.local = bool(self.selectors or self.missing_proof or self.missing_subjects)
         self.node_ids = (*uncovered, *missing_forced,
+                         *(subject for subjects in self.missing_subjects.values() for subject in sorted(subjects)),
                          *(node for nodes in self.selectors.values() for node in nodes),
                          *(f"check-{index + 1} proof: {', '.join(sorted(fields))}"
                            for index, fields in self.missing_proof.items()))
@@ -64,10 +67,15 @@ class PlanConsistencyError(ValueError):
             "State the expected assertion message supported by this check. Missing subjects or observer_support "
             "may only be filled with [] for an inferred partition. Preserve all existing proof values."
             for index, fields in self.missing_proof.items())
+        self.violations.extend(
+            f"check-{index + 1} source assertion proof must identify its subjects in proof.subjects: "
+            + ', '.join(sorted(subjects))
+            + '. Only add the named subjects or their covering enclosing modules or definitions.'
+            for index, subjects in self.missing_subjects.items())
         if self.local:
             super().__init__("\n".join(self.violations) +
                              "\nUse already-read facts. Only replace the named check's selectors or fill its "
-                             "missing proof fields. Preserve every other declaration, existing proof value, "
+                             "missing proof fields or named subjects. Preserve every other declaration, existing proof value, "
                              "check, goal, forcing, evidence obligation, file and estimate. "
                              "Do not invent base failures; return cant_meet if needed.")
             return
@@ -143,7 +151,7 @@ class PlanConsistencyError(ValueError):
         reply['violations'].extend(dict.fromkeys(errors))
 
     def constrain_local(self, reply):
-        """Only the rejected selectors and absent proof fields can change."""
+        """Only rejected selectors, absent proof fields and named subject omissions can change."""
         errors = []
         draft = self.draft
         if reply.get('edits_tests') != draft.get('edits_tests'):
@@ -152,13 +160,23 @@ class PlanConsistencyError(ValueError):
             errors.append('Correction changes the number of draft checks.')
         for index, (before, after) in enumerate(zip(draft['checks'], reply['checks'])):
             mutable = ({'node_ids'} if index in self.selectors else set())
-            if index in self.missing_proof:
+            if index in self.missing_proof or index in self.missing_subjects:
                 mutable.add('proof')
                 old, new = before.get('proof', {}), after.get('proof', {})
-                if (any(new.get(key) != value for key, value in old.items())
-                        or any(new.get(key) != [] for key in self.missing_proof[index]
-                               if key != 'red_message')):
+                subject_omission = index in self.missing_subjects
+                if (any(new.get(key) != value for key, value in old.items()
+                        if key != 'subjects' or not subject_omission)
+                        or any(new.get(key) != [] for key in self.missing_proof.get(index, ())
+                               if key != 'red_message' and (key != 'subjects' or not subject_omission))):
                     errors.append('Correction changes the declared proof partition or an existing proof value.')
+                if subject_omission:
+                    previous = old.get('subjects', [])
+                    subjects = new.get('subjects', [])
+                    if ([subject for subject in subjects if subject in previous] != previous
+                            or any(not any(subject_covers(subject, missing)
+                                           for missing in self.missing_subjects[index])
+                                   for subject in subjects if subject not in previous)):
+                        errors.append('Correction may only add the named missing proof subjects or their enclosing definitions.')
             if ({key: value for key, value in before.items() if key not in mutable}
                     != {key: value for key, value in after.items() if key not in mutable}):
                 errors.append('Correction changes declarations outside the missing fields or selectors.')
@@ -226,6 +244,7 @@ def check_reply(inputs, reply, *, rehearsals=None):
     selectors = {}
     selector_errors = set()
     missing_proof = proof_omissions(reply)
+    missing_subjects = {}
     paths = set()
     if reply["kind"] == "leaf":
         if inputs["must_split"]:
@@ -287,9 +306,12 @@ def check_reply(inputs, reply, *, rehearsals=None):
             if not cited <= goals:
                 violations.append("A check cites an unknown goal.")
             covered.update(cited)
-        violations.extend(proof_applicability(inputs['ingest']['goals'],
-            [check for check in reply['checks'] if set(check['node_ids']) <= exact_nodes],
-            lambda node: base_definition(node, inputs.get('base_sha'))[1]))
+        applicable = [(index, check) for index, check in enumerate(reply['checks'])
+                      if set(check['node_ids']) <= exact_nodes]
+        omissions = {}
+        violations.extend(proof_applicability(inputs['ingest']['goals'], [check for _, check in applicable],
+            lambda node: base_definition(node, inputs.get('base_sha'))[1], missing_subjects=omissions))
+        missing_subjects = {applicable[index][0]: subjects for index, subjects in omissions.items()}
         edit_errors, uncovered = edit_violations(inputs["ingest"]["goals"], reply)
         violations.extend(edit_errors)
         planned_checks = []
@@ -400,9 +422,10 @@ def check_reply(inputs, reply, *, rehearsals=None):
         rejected = next((item for item in reversed(rehearsals.candidates) if item['status'] == 'refused'), None)
         if rejected is not None:
             violations.append(rejected['message'])
-    if uncovered or missing_forced or selectors or missing_proof:
+    if uncovered or missing_forced or selectors or missing_proof or missing_subjects:
         mismatch = PlanConsistencyError(uncovered, missing_forced, draft=reply,
-                                        selectors=selectors, missing_proof=missing_proof)
+                                        selectors=selectors, missing_proof=missing_proof,
+                                        missing_subjects=missing_subjects)
         # Only these intrinsic inconsistencies enter the existing tool-free repair.
         # Substantive plan failures still reach the controller under Q54.
         proof_errors = (rehearsals.violations(inputs.get('base_sha'),
