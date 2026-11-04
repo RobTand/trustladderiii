@@ -4062,3 +4062,6 @@ mod stored_shape_tests {
 
 #[cfg(test)]
 mod publication_tests;
+
+#[cfg(test)]
+mod verification_reference;
