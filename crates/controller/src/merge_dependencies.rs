@@ -379,7 +379,7 @@ impl Controller {
     }
 
     pub(crate) fn declare_merge_dependencies(
-        &self,
+        &mut self,
         world: &mut World,
         event: Event,
         outputs: &mut Vec<Out>,
@@ -446,7 +446,7 @@ impl Controller {
     }
 
     pub(crate) fn announce_dependency_endings(
-        &self,
+        &mut self,
         snapshot: &Snapshot,
         world: &mut World,
         mut roots: Vec<NodeId>,
