@@ -3,7 +3,6 @@ import ast
 import builtins
 import copy
 import ctypes
-import dis
 import errno
 import hashlib
 import importlib
@@ -32,6 +31,9 @@ ForcingError = ownership.ForcingError
 spec = importlib.util.spec_from_file_location("tl3_limits", Path(__file__).with_name("limits.py"))
 limits = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(limits)
+spec = importlib.util.spec_from_file_location("tl3_red_message", Path(__file__).with_name("red_message.py"))
+red_message = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(red_message)
 
 
 def module_candidates(module):
@@ -98,31 +100,6 @@ def missing_name(error):
             except (SyntaxError, OSError, ImportError, ValueError):
                 pass
     return None
-
-
-def assertion_reason(error):
-    reason = str(error)
-    trace = error.__traceback__
-    if isinstance(error, AssertionError) and trace is not None:
-        while trace.tb_next is not None:
-            trace = trace.tb_next
-        code = trace.tb_frame.f_code
-        instruction = next((item for item in dis.get_instructions(code) if item.offset == trace.tb_lasti), None)
-        if instruction is not None and instruction.opname == 'RAISE_VARARGS' and '@pytest_ar' in code.co_names:
-            try:
-                source = ast.parse(Path(code.co_filename).read_bytes())
-                position = instruction.positions
-                if any(isinstance(node, ast.Assert) and node.msg is not None
-                       and (node.lineno, node.col_offset) == (position.lineno, position.col_offset)
-                       for node in ast.walk(source)):
-                    # Only a rewritten assert has pytest's explanation boundary.
-                    # A manual AssertionError keeps its entire message verbatim.
-                    message, boundary, _ = reason.partition('\nassert ')
-                    if boundary:
-                        reason = message.replace('\n  ', '\n')
-            except (OSError, SyntaxError, UnicodeError):
-                pass
-    return reason[:1000]
 
 
 class LocalReference:
@@ -375,7 +352,7 @@ def describe(error):
 
 class Reporter:
     def __init__(self, tests, descriptor, summary=False, parallel=False, patches=(), selection=None,
-                 declared_symptom=None, worker=False):
+                 declared_symptom=None, worker=False, expected_red_message=None):
         self.tests = tests
         self.descriptor = descriptor
         self.summary = summary
@@ -385,6 +362,7 @@ class Reporter:
         self.selection = selection
         self.declared_symptom = declared_symptom
         self.worker = worker
+        self.expected_red_message = expected_red_message
         self.failures = {}
         self.target_hits = {}
         self.delay_budget = {}
@@ -574,9 +552,12 @@ class Reporter:
             return report
         if report.when == 'teardown' and item.nodeid in self.delay_budget:
             self.emit(event='delay-budget', test=item.nodeid, **self.delay_budget[item.nodeid])
+        reason, match = (red_message.capture(call.excinfo.value, self.expected_red_message)
+                         if assertion and report.failed else ('', None))
+        extra = ({'red_message_match': match} if match is not None and self.expected_red_message is not None else {})
         self.emit(event="phase", test=item.nodeid, when=report.when,
                   outcome=outcome, assertion=bool(assertion and outcome == "failed"), missing=missing,
-                  reason=assertion_reason(call.excinfo.value) if assertion and report.failed else "",
+                  reason=reason[:1000], **extra,
                   exception=describe(call.excinfo.value) if report.failed and call.excinfo else "",
                   exception_type=(type(call.excinfo.value).__module__ + '.' + type(call.excinfo.value).__qualname__)[:200]
                   if report.failed and call.excinfo else "",
@@ -660,10 +641,12 @@ def main():
     forcing = {}
     selection = None
     declared_symptom = None
+    expected_red_message = None
     if isinstance(tests, dict):
         # A forced check's selection carries the plan's forcing, which the host validated (#393).
         selection = tests.get("selection")
         declared_symptom = tests.get('declared_symptom')
+        expected_red_message = tests.get('red_message')
         tests, forcing = tests["tests"], tests.get("forcing", {})
         os.environ.update(forcing.get("environment", {}))
     descriptor = os.dup(1)
@@ -679,7 +662,7 @@ def main():
     sys.path.insert(0, str(Path.cwd()))
     reporter = Reporter(tests, descriptor, summary, parallel=bool(summary and parallel),
                         patches=tuple(forcing.get("patches", ())), selection=selection,
-                        declared_symptom=declared_symptom)
+                        declared_symptom=declared_symptom, expected_red_message=expected_red_message)
     # Start before pytest loads the checkout's conftest files, ini options and
     # plugins. Any exit after this point may come from the code under test.
     reporter.pytest_sessionstart()

@@ -145,6 +145,9 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
             request = {"tests": tests, "forcing": forcing.as_json()}
         if selected is not None:
             request = {"tests": tests, "selection": selected.as_json()}
+        red_message = getattr(messages, 'red_message', None)
+        if red_message is not None:
+            request = {**(request if isinstance(request, dict) else {'tests': tests}), 'red_message': red_message}
         selection.write(json.dumps(request).encode())
         selection.seek(0)
         try:
@@ -629,7 +632,8 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                 receipt = assemble_proof(subject, new, staged, check, config)
             except (ProofRefusal, SyntaxError, OSError) as error:
                 return refused(plan, str(error))
-            notes, forced_notes = FailureNotes(), FailureNotes()
+            notes = FailureNotes(check.proof.red_message if check.proof else None)
+            forced_notes = FailureNotes()
             if check.declared_symptom is not None:
                 from .test_tool import run_symptom
                 from .symptoms import judge_symptom
@@ -667,6 +671,10 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                            if getattr(item, 'delay_budget', None)}
                 if budgets:
                     receipt['delay_budget'] = budgets
+                if notes is not None:
+                    receipt['red_message_matches'] = {
+                        test: failure.red_message_match for test, failure in notes.details.items()
+                        if test in check.tests and failure.red_message_match is not None}
                 results.append(replace(result, proof=receipt))
                 continue
             result = judge(check, before, after, messages=messages, base_notes=before_messages)

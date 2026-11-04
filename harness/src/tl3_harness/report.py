@@ -3,6 +3,7 @@ import json
 from .model import Failure, Outcome
 from .forcing_ownership import valid_delay_budget
 from .node_ids import selects
+from .red_message import RedMessageMatch
 
 
 class InvalidReport(ValueError):
@@ -56,6 +57,19 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
             raise InvalidReport('invalid assertion reason')
         ignored = ('message', 'exception', 'exception_type', 'reason') if record.get('event') == 'phase' else ('message', 'exception')
         record = {key: value for key, value in record.items() if key not in ignored}
+        red_message_match = None
+        if record.get('event') == 'phase':
+            expected = getattr(messages, 'red_message', None)
+            assertion_failure = record.get('when') == 'call' and record.get('outcome') == 'failed' and record.get('assertion') is True
+            if 'red_message_match' in record:
+                if expected is None or not assertion_failure:
+                    raise InvalidReport('unexpected RED message match')
+                try:
+                    red_message_match = RedMessageMatch(record.pop('red_message_match'))
+                except (ValueError, TypeError):
+                    raise InvalidReport('invalid RED message match') from None
+            elif expected is not None and assertion_failure:
+                raise InvalidReport('missing RED message match')
         match record:
             case {'event': 'delay-budget', 'test': str(test), 'applied_seconds': _, 'exhausted': _} if len(record) == 4:
                 budget = {key: record[key] for key in ('applied_seconds', 'exhausted')}
@@ -103,7 +117,7 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
                     messages[test] = (messages.get(test, "") + "\n" + message).strip()[:1000]
                 if details is not None and outcome == "failed":
                     if test not in details or when in ('setup', 'teardown'):
-                        details[test] = Failure(when, exception, message, reason)
+                        details[test] = Failure(when, exception, message, reason, red_message_match)
             case _:
                 raise InvalidReport("unknown report event")
     def case_outcome(test):

@@ -27,6 +27,7 @@ py_library(
         "model.py",
         "node_ids.py",
         "proof.py",
+        "red_message.py",
         "report.py",
         "runner.py",
         "scratch.py",

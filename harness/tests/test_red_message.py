@@ -5,8 +5,8 @@ import sys
 import pytest
 
 from tl3_harness import execution
-from tl3_harness.model import Check, Kind, Outcome, Proof, Verdict
-from tl3_harness.report import decode
+from tl3_harness.model import Check, FailureNotes, Kind, Outcome, Proof, Verdict, judge
+from tl3_harness.report import InvalidReport, decode, parse
 from tl3_harness.trees import git
 
 
@@ -105,4 +105,44 @@ def test_explicit_assertion_message_keeps_whole_message_equality(checking, decla
 def test_source_assertion_inside_a_manual_error_cannot_supply_red(checking):
     result, _ = checking('if product.value() != 1: raise AssertionError(' + repr('other\n' + ASSERTION) + ')',
                          ASSERTION)
+    assert result.verdict == Verdict.FAIL
+
+
+def test_whitespace_inside_a_string_literal_is_not_normalized(checking):
+    result, _ = checking('assert product.value() == 1 and "a b"',
+                         'assert product.value() == 1 and "a  b"')
+    assert result.verdict == Verdict.FAIL
+
+
+def failure_report(match):
+    phases = [{'event': 'phase', 'test': NODE, 'when': when, 'outcome': outcome,
+               'assertion': when == 'call', 'missing': None}
+              for when, outcome in [('setup', 'passed'), ('call', 'failed'), ('teardown', 'passed')]]
+    phases[1].update(reason=ASSERTION, message='x' * 1000)
+    if match is not None:
+        phases[1]['red_message_match'] = match
+    return [{'event': 'start', 'schema': 1}, {'event': 'collection', 'tests': [NODE]},
+            *phases, {'event': 'finish', 'exit_code': 1}]
+
+
+@pytest.mark.parametrize('match', [None, True, False, 'source', {'matched': True}])
+def test_missing_or_untyped_capture_match_is_not_proof(match):
+    with pytest.raises(InvalidReport, match='RED message match'):
+        parse(failure_report(match), (NODE,), set(), 1, messages=FailureNotes(ASSERTION))
+
+
+def test_bounded_reason_text_cannot_override_the_capture_verdict():
+    notes = FailureNotes(ASSERTION)
+    outcomes = parse(failure_report('mismatch'), (NODE,), set(), 1, messages=notes)
+    result = judge(Check('capture verdict', Kind.DEMONSTRATING, (NODE,), proof=Proof((), (), ASSERTION)),
+                   outcomes, {NODE: Outcome.PASSED}, base_notes=notes)
+    assert result.verdict == Verdict.FAIL
+
+
+def test_capture_match_cannot_be_reused_for_another_declaration():
+    notes = FailureNotes(ASSERTION)
+    outcomes = parse(failure_report('source-assertion'), (NODE,), set(), 1, messages=notes)
+    result = judge(Check('another declaration', Kind.DEMONSTRATING, (NODE,),
+                         proof=Proof((), (), ASSERTION[:-1] + 'X')),
+                   outcomes, {NODE: Outcome.PASSED}, base_notes=notes)
     assert result.verdict == Verdict.FAIL

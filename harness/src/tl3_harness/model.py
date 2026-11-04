@@ -1,4 +1,5 @@
 from .forcing_ownership import MAX_TOTAL_DELAY_SECONDS as MAX_TOTAL_DELAY_SECONDS
+from .red_message import RedMessageMatch
 import builtins
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -63,13 +64,15 @@ class Failure:
     exception: str
     message: str
     reason: str = ''
+    red_message_match: RedMessageMatch | None = None
 
 
 class FailureNotes(dict):
     """Failure messages by test, plus the `Failure` behind each, for a run whose evidence `judge` quotes."""
 
-    def __init__(self):
+    def __init__(self, red_message: str | None = None):
         super().__init__()
+        self.red_message = red_message
         self.details: dict[str, Failure] = {}
         self.delay_budget: dict[str, dict] = {}
         self.phases: dict[str, dict] = {}
@@ -366,7 +369,8 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
         if passed and before == Outcome.ASSERTION and check.proof is not None and check.declared_symptom is None:
             failure = (base_notes.details if base_notes is not None else {}).get(test)
             wrong_reason = (failure is None or failure.phase != 'call'
-                            or failure.reason != check.proof.red_message)
+                            or base_notes.red_message != check.proof.red_message
+                            or failure.red_message_match not in (RedMessageMatch.MESSAGE, RedMessageMatch.SOURCE_ASSERTION))
             passed = not wrong_reason
         message = "" if passed else (messages or {}).get(test, "")
         if not passed and check.forcing is not None:

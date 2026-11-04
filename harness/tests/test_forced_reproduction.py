@@ -68,6 +68,9 @@ PID_REUSE = {
 
 def run(tree, container, tests, report, progress, additions=frozenset(), *, messages=None, forcing=None):
     selection = tests if forcing is None else {'tests': tests, 'forcing': forcing.as_json()}
+    if getattr(messages, 'red_message', None) is not None:
+        selection = {**(selection if isinstance(selection, dict) else {'tests': tests}),
+                     'red_message': messages.red_message}
     child = subprocess.run([sys.executable, '-I', '-B', str(RUNNER), json.dumps(selection), str(tree)],
                            capture_output=True)
     missing = {test for test in tests if not (tree / test.split('::')[0]).is_file()}
