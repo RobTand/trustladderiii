@@ -6,6 +6,7 @@ import tempfile
 
 from .execution import Container, Progress, container_command, require_admission
 from .report import decode
+from .selector_identity import selector_identity
 from .model import Forcing
 from .forcing_ownership import valid_delay_budget
 from .supervision import ExecutionFailure, ExecutionOutcome, Supervised
@@ -40,10 +41,14 @@ def infrastructure(message, origin=None):
 
 
 def bounded(result, *, limit=SUMMARY_BYTES - 2048):
-    # Bound the complete envelope after metadata is attached. Keep identity and
-    # retained entries exact; dropping a node makes the proof visibly incomplete.
+    # Bound the envelope after metadata is attached. Digest the full selection
+    # before dropping result entries; the prefix is display text, never proof.
     while len(json.dumps(result).encode()) > limit:
-        if result['status'] != 'completed' and result.get('selectors'):
+        selected = result.get('selectors')
+        compact = selector_identity(selected) if isinstance(selected, list) and result['status'] == 'completed' else None
+        if compact is not None and len(json.dumps(compact)) < len(json.dumps(selected)):
+            result['selectors'] = compact
+        elif result['status'] != 'completed' and isinstance(selected, list) and selected:
             result['selectors'].pop()
             result['selectors_omitted'] = result.get('selectors_omitted', 0) + 1
         elif result['tests']:
@@ -61,7 +66,7 @@ def bounded(result, *, limit=SUMMARY_BYTES - 2048):
                 if field in result:
                     diagnostic[field] = result[field]
             return diagnostic
-        result['note'] = 'Truncated: selectors, test entries or run failure IDs were cut. Totals include all results.'
+        result['note'] = 'Truncated: selectors were compacted or entries were cut. Totals include all results.'
     return result
 
 

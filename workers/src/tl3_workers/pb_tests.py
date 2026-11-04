@@ -17,6 +17,7 @@ from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT, Check, Kind, Proof, Pro
 from tl3_harness.proof import assemble_proof
 from tl3_harness.scratch import environment as scratch_environment
 from tl3_harness.node_ids import selects
+from tl3_harness.selector_identity import selection_matches
 from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
 from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, OUTCOMES, bounded, infrastructure, options
 from tl3_harness.trees import export, configuration
@@ -373,8 +374,10 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                         raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "proof_mismatch")
                 if tree is not None:
                     result["tree"] = tree
-                if forcing is not None and result["status"] == "completed" and (
-                        result.get("forcing") != forcing.as_json() or result.get("selectors") != list(selected)):
+                if result["status"] == "completed" and (
+                        forcing is not None and result.get("forcing") != forcing.as_json()
+                        or (forcing is not None or "selectors" in result)
+                        and not selection_matches(result.get("selectors"), selected)):
                     raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "forcing_or_selection_mismatch")
                 if declared_symptom is not None and result.get("declared_symptom") != declared_symptom:
                     raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "symptom_mismatch")

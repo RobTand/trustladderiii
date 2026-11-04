@@ -1,3 +1,5 @@
+# ruff: noqa: F811
+
 """Completed selector-heavy runs retain exact receipt identity (#704)."""
 from copy import deepcopy
 import hashlib
@@ -24,7 +26,7 @@ def identity(selected):
 
 
 def selectors():
-    return [f'test_many.py::test_value[{i}_' + 'x' * 1200 + ']' for i in range(16)]
+    return sorted(f'test_many.py::test_value[{i}_' + 'x' * 1200 + ']' for i in range(16))
 
 
 def invoke(submission, response, selected, forcing=None):

@@ -970,8 +970,8 @@ tl3_py_test(
 )
 
 tl3_py_test(
-    name = "test_summary_identity",
-    srcs = ["test_summary_identity.py"],
+    name = "test_pb_tests_identity",
+    srcs = ["test_pb_tests_identity.py"],
     deps = [
         ":conftest",
         ":pb_fixtures",

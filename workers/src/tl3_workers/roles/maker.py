@@ -15,6 +15,7 @@ from jsonschema import Draft202012Validator
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
+from tl3_harness.selector_identity import selection_matches
 from tl3_workers.contracts import read_json, read_reply, registry, schema
 from tl3_workers.exploration import BudgetUnavailable, ExplorationBudget
 from tl3_workers.forecast import forecast_fit, measure_files, optional_encoding
@@ -255,6 +256,10 @@ def _budget_reply(request, allowance, history, worktree, reply):
         if receipt.get("status") != "completed" or receipt.get("output_tree") != tree:
             unfinished.append("Final configured generation")
     verified = {test for entry in evidence for test in entry["tests"]}
+    planned = list(dict.fromkeys(test for check in inputs["plan"]["checks"] for test in check["tests"]))
+    for tests in [planned, *(check["tests"] for check in inputs["plan"]["checks"])]:
+        if any(selection_matches(entry.get("tests_identity"), sorted(set(tests))) for entry in evidence):
+            verified.update(tests)
     unfinished.extend("Unverified final check: " + check["name"]
                       for check in inputs["plan"]["checks"] if not set(check["tests"]) <= verified)
     # A read or diff before the last mutation cannot verify the final files.
