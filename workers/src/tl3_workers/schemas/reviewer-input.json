@@ -405,6 +405,15 @@
                 "type": "string",
                 "pattern": "^[0-9a-f]{64}$"
               },
+              "red_message_matches": {
+                "type": "object",
+                "additionalProperties": {
+                  "enum": [
+                    "message",
+                    "source-assertion"
+                  ]
+                }
+              },
               "delay_budget": {
                 "type": "object",
                 "additionalProperties": {
