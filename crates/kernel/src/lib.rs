@@ -2460,7 +2460,10 @@ kernel_fn! {
 fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
     requires !(old(m).phase is Closed || old(m).phase is Stopping)
         ==> old(m).generation < u64::MAX,
-    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+    ensures (!old(m).paused && !old(m).waiting_incident && old(m).effect.is_none()
+            && !(old(m).phase is Closed || old(m).phase is Stopping)
+            ==> distance(*final(m)) < distance(*old(m))),
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
         (settle_shape(*old(m)) ==> settle_shape(*final(m))),
         final(m).generation as int == old(m).generation as int
             + if old(m).phase is Closed || old(m).phase is Stopping { 0int } else { 1int },
@@ -2478,7 +2481,7 @@ fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
         !(old(m).phase is Closed || old(m).phase is Stopping) ==>
             final(m).pos == 0 && final(m).ticket.is_none() && final(m).question.is_none()
                 && !final(m).waiting_incident && !final(m).incident_needs_rob,
-] {
+] proof [reveal(distance);] {
     match m.phase {
         Phase::Closed(_) => {}
         Phase::Stopping(_) => {
@@ -3679,7 +3682,11 @@ fn fact_transition(w: &mut World, i: usize, fact: Fact,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(fact is DependencyRemove || fact is Dependency || fact is PrMerged),
-    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+    ensures (fact == Fact::IncidentCleared { by_rob: true }
+            && old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none()
+            && !old(w).nodes@[i as int].paused && !(old(w).nodes@[i as int].phase is Closed)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -3700,7 +3707,7 @@ fn fact_transition(w: &mut World, i: usize, fact: Fact,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 2,
-] proof [reveal(retry_bounds);] {
+] proof [reveal(retry_bounds);] proof [reveal(distance);] {
     match fact {
         Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {}
         Fact::Priority(priority) => {
@@ -3810,7 +3817,12 @@ fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bool,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 4 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
-    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+            && old(w).nodes@[i as int].phase == Phase::Queued && !old(w).nodes@[i as int].paused
+            && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none()
+            && old(w).nodes@[i as int].question.is_none()
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -3834,7 +3846,7 @@ fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bool,
         final(w).nodes@[i as int].credit.earned as int + merge_capacity(final(w).nodes@[i as int])
             <= old(w).nodes@[i as int].credit.earned as int + 1,
 
-] {
+] proof [reveal(distance);] {
     let m = &mut w.nodes[i];
     if !m.had_pr || m.merged.is_some() {
         return;
@@ -3876,7 +3888,11 @@ fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+            && id > old(w).nodes@[i as int].last_cmd
+            && command_progress_input(old(w).nodes@[i as int], command)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -3900,7 +3916,7 @@ fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
-] {
+] proof [reveal(distance);] {
     if id <= w.nodes[i].last_cmd {
         return; // a repeated command
     }
@@ -3953,7 +3969,10 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+            && answer_progress_input(old(w).nodes@[i as int], id, answer)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -3975,7 +3994,7 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
-] {
+] proof [reveal(distance);] {
     let Some(q) = w.nodes[i].question else { return };
     if q.id != id {
         return; // an answer to a question that is no longer open
@@ -4053,7 +4072,11 @@ fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
         old(w).nodes@[i as int].credit.withheld ==> q.cost == 0,
         old(w).nodes@[i as int].credit.added as int + 255 <= u32::MAX as int,
         old(w).nodes@[i as int].credit.spent < u32::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (old(w).nodes@[i as int].phase == Phase::AwaitingRob
+            && old(w).nodes@[i as int].question == Some(q) && !old(w).nodes@[i as int].paused
+            && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none()
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
@@ -4075,7 +4098,7 @@ fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
-] {
+] proof [reveal(distance);] {
     let m = &mut w.nodes[i];
     m.credit.fund_and_pay(deposit, q.cost);
     m.question = None;
@@ -4100,14 +4123,17 @@ fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
 kernel_fn! {
 /// Cleanup question row / #771: handling cleanup allocates no monotone counter.
 fn mark_handled(m: &mut Node) -> (result: ()) [
-    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+    ensures (old(m).effect.is_none() && old(m).question.is_none() && !old(m).waiting_incident
+            && old(m).phase is Stopping && matches!(current_item(*old(m)), Some(Item::Teardown(_)))
+            ==> distance(*final(m)) + 2 <= distance(*old(m))),
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
         (settle_shape(*old(m)) ==> settle_shape(*final(m))),
         final(m).generation == old(m).generation,
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).question == old(m).question,
         final(m).phase == old(m).phase,
         final(m).last_cmd == old(m).last_cmd,
-] {
+] proof [reveal(distance);] {
     if let Some(Item::Teardown(kind)) = m.current() {
         match kind {
             EffectKind::StopRun => {

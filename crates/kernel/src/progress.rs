@@ -261,3 +261,25 @@ spec fn successful_reply_input(n: Node, reply: Reply) -> bool {
     ordinary_await(n) && successful_reply(n) == Some(reply)
 }
 }
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// Question rows / #771: the selector supplies exactly this permitted answer.
+spec fn answer_progress_input(n: Node, id: u64, answer: Answer) -> bool {
+    !n.paused && !n.waiting_incident && n.effect.is_none()
+        && match n.question {
+            Some(q) => q.id == id && answer == successful_answer(q.kind),
+            None => false,
+        }
+}
+
+/// Command rows / #771: these are the selector's three command cases.
+spec fn command_progress_input(n: Node, command: Command) -> bool {
+    (n.paused && !(n.phase is Stopping || n.phase is Closed) && command == Command::Resume)
+        || (!n.paused && !n.waiting_incident && n.effect.is_none() && match command {
+            Command::Answer { question, answer } => answer_progress_input(n, question, answer),
+            Command::ChangeRequest => n.phase == Phase::Unplanned && n.question.is_none(),
+            _ => false,
+        })
+}
+}
