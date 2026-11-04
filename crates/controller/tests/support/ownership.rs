@@ -11,7 +11,7 @@ pub fn ownership() -> MutexGuard<'static, tl3_controller::Ownership> {
     OWNER
         .get_or_init(|| {
             let mut database = DATABASE
-                .get_or_init(|| Mutex::new(Database::start_shared()))
+                .get_or_init(|| Mutex::new(Database::start_shared_on_stderr()))
                 .lock()
                 .unwrap();
             let settings = database.0.create("adapter_fixture_owner");
