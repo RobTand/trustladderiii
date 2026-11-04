@@ -40,6 +40,7 @@ pub fn run() {
         "test postmortem_golden_cli_contract ... ok ({} vectors)",
         cases.len()
     );
+    schema_contract(&cases);
     let mut malformed = cases[0].clone();
     malformed["reply"]["postmortem"]["went_wrong"] = json!(["The maker skipped a test."]);
     assert!(!cli(&malformed)["violations"].as_array().unwrap().is_empty());
@@ -54,6 +55,42 @@ pub fn run() {
     println!("test postmortem_parsed_text_and_counts ... ok");
     real_worker(&cases);
     println!("test postmortem_real_worker_repair_and_cache ... ok");
+}
+
+/// Q32 / #403: the wire schema enforces the count cap and add text independently.
+fn schema_contract(cases: &[Value]) {
+    let schema: Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            super::worker_package().join("src/tl3_workers/schemas/postmortem-reply.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let mut reply = cases[1]["reply"].clone();
+    let mut recommendation = reply["postmortem"]["recommendations"][0].clone();
+    recommendation["operation"] = json!("add");
+    recommendation["before"] = json!("");
+    recommendation["after"] = json!("Run the tests first.");
+    reply["postmortem"]["recommendations"] = json!(vec![recommendation.clone(); 3]);
+    assert!(
+        validator.is_valid(&reply),
+        "schema must accept three valid recommendations"
+    );
+    reply["postmortem"]["recommendations"] = json!(vec![recommendation.clone(); 4]);
+    assert!(
+        !validator.is_valid(&reply),
+        "schema alone must reject four recommendations"
+    );
+    for (before, after) in [("existing text", "new text"), ("", "")] {
+        recommendation["before"] = json!(before);
+        recommendation["after"] = json!(after);
+        reply["postmortem"]["recommendations"] = json!([recommendation.clone()]);
+        assert!(
+            !validator.is_valid(&reply),
+            "schema alone must reject invalid add text: {before:?}, {after:?}"
+        );
+    }
 }
 
 fn parsed_text_and_counts(cases: &[Value]) {
