@@ -3710,6 +3710,14 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
         final(out).len <= old(out).len + 4,
 ] proof [reveal(distance); reveal(world_checked); reveal(progress_measure);] {
     kernel_snapshot! { before_fact = *w }
+    kernel_proof! {
+        if world_checked(*w) && chosen_for_node(*w, i as int, Event::Fact { node: NodeId(i as u64), fact }) {
+            if let Fact::Dependency { target, status } = fact {
+                dependencies::pending_ready(*w, i as int, target);
+                assert(dependency_progress_input(*w, i as int, target, status));
+            }
+        }
+    }
     match fact {
         Fact::DependencyRemove { kind, number } => w.remove_dependency(i, kind, number),
         Fact::Dependency { target, status } => w.dependency_fact(i, target, status, out),

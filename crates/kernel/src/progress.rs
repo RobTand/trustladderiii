@@ -291,6 +291,7 @@ verus! {
 spec fn dependency_progress_input(w: World, i: int, target: DependencyTarget,
     status: DependencyStatus) -> bool {
     !(w.nodes@[i].phase is Closed) && status == DependencyStatus::Delivered
+        && dependencies::delivery_key_ready(w, i, target)
         && exists|k: int| 0 <= k < w.dependencies@.len()
             && w.dependencies@[k].node == NodeId(i as u64) && w.dependencies@[k].target == target
             && !w.dependencies@[k].rejected && w.dependencies@[k].status == DependencyStatus::Pending

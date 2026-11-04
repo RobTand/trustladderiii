@@ -98,9 +98,43 @@ pub(super) open spec fn declarations_unique(w: World) -> bool {
         ==> !same_declaration(w.dependencies@[a], w.dependencies@[b])
 }
 
+/// #771: exactly the guards needed by the delivered-fact path.
+pub(super) open spec fn delivery_key_ready(w: World, i: int, target: DependencyTarget) -> bool {
+    target.number > 0
+        && (match target.request { None => true, Some(node) => node.0 < w.nodes@.len()
+            && w.nodes@[node.0 as int].repo == w.nodes@[i].repo })
+        && forall|j: int| 0 <= j < w.dependencies@.len()
+            && w.dependencies@[j].node == NodeId(i as u64)
+            && w.dependencies@[j].target.kind == target.kind && w.dependencies@[j].target.number == target.number
+            ==> w.dependencies@[j].target == target && !w.dependencies@[j].rejected
+                && w.dependencies@[j].status == DependencyStatus::Pending
+}
+
+/// #693 / #771: consistency and uniqueness supply the delivered-fact guards.
+pub(super) proof fn pending_ready(w: World, i: int, target: DependencyTarget)
+    requires dependencies_checked(w),
+        exists|k: int| 0 <= k < w.dependencies@.len()
+            && w.dependencies@[k].node == NodeId(i as u64) && w.dependencies@[k].target == target
+            && !w.dependencies@[k].rejected && w.dependencies@[k].status == DependencyStatus::Pending,
+    ensures delivery_key_ready(w, i, target),
+{
+    let k = choose|k: int| 0 <= k < w.dependencies@.len()
+        && w.dependencies@[k].node == NodeId(i as u64) && w.dependencies@[k].target == target
+        && !w.dependencies@[k].rejected && w.dependencies@[k].status == DependencyStatus::Pending;
+    assert forall|j: int| 0 <= j < w.dependencies@.len()
+        && w.dependencies@[j].node == NodeId(i as u64)
+        && w.dependencies@[j].target.kind == target.kind && w.dependencies@[j].target.number == target.number
+        implies w.dependencies@[j].target == target && !w.dependencies@[j].rejected
+            && w.dependencies@[j].status == DependencyStatus::Pending by {
+        if j < k { assert(!same_declaration(w.dependencies@[j], w.dependencies@[k])); }
+        if k < j { assert(!same_declaration(w.dependencies@[k], w.dependencies@[j])); }
+        assert(j == k);
+    }
+}
+
 /// #771: the production key lookup selects the unique pending witness row.
 proof fn pending_lookup(w: World, i: int, target: DependencyTarget, existing: Option<usize>)
-    requires dependencies_checked(w), dependency_progress_input(w, i, target, DependencyStatus::Delivered),
+    requires dependency_progress_input(w, i, target, DependencyStatus::Delivered),
         match existing {
             Some(index) => index < w.dependencies@.len()
                 && same_declaration(w.dependencies@[index as int], Dependency {
@@ -589,7 +623,7 @@ impl World {
         status: DependencyStatus, out: &mut Outbox) -> (result: ()) [
         requires i < old(self).nodes@.len(), i <= u64::MAX as int,
             edges_indexable(*old(self)), old(out).len < OUTBOX,
-        ensures (dependencies_checked(*old(self)) && dependency_progress_input(*old(self), i as int, target, status)
+        ensures (dependency_progress_input(*old(self), i as int, target, status)
             ==> edges_indexable(*final(self))
                 && final(self).dependencies@.len() == old(self).dependencies@.len()
                 && (forall|j: int| 0 <= j < old(self).dependencies@.len() ==>
@@ -612,7 +646,7 @@ impl World {
     ] {
         kernel_snapshot! { before_dependency = *self }
         kernel_proof! {
-            if dependencies_checked(*self) && dependency_progress_input(*self, i as int, target, status) {
+            if dependency_progress_input(*self, i as int, target, status) {
                 let k = choose|k: int| 0 <= k < self.dependencies@.len()
                     && self.dependencies@[k].node == NodeId(i as u64) && self.dependencies@[k].target == target
                     && !self.dependencies@[k].rejected && self.dependencies@[k].status == DependencyStatus::Pending;
@@ -633,7 +667,7 @@ impl World {
         let node = NodeId(i as u64);
         let existing = self.find_dependency(node, target.kind, target.number);
         kernel_proof! {
-            if dependencies_checked(*self) && dependency_progress_input(*self, i as int, target, status) {
+            if dependency_progress_input(*self, i as int, target, status) {
                 pending_lookup(*self, i as int, target, existing);
             }
         }
