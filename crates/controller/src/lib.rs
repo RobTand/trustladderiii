@@ -2911,22 +2911,12 @@ impl Controller {
                 }
                 return Ok(None);
             }
-            Observation::Kernel(event) if kernel_boundary::is_raw_command(event) => {
-                return Err(Error::Invalid(
-                    "commands must come from the steering constructors, which assign next_command_id",
-                ));
-            }
             Observation::Steering { node, command } => {
                 return self.command_event(snapshot, world, node, command, commit);
             }
-            Observation::Kernel(
-                Event::Ack { .. } | Event::NewRequest { .. } | Event::NewAdoption { .. },
-            ) => {
-                return Err(Error::Invalid(
-                    "acknowledgements require an effect key; requests require authorized intake",
-                ));
+            Observation::Kernel(event) => {
+                kernel_boundary::validate_raw_event(event).map_err(Error::Invalid)?
             }
-            Observation::Kernel(event) => event,
             Observation::CiFailed { node, infra, .. } => Event::Fact {
                 node,
                 fact: Fact::CiFailed { infra },

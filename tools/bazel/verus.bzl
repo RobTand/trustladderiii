@@ -12,7 +12,7 @@ def _verus_test_impl(ctx):
     ctx.actions.write(launcher, """#!/bin/bash
 set -euo pipefail
 cd "${RUNFILES_DIR:-$0.runfiles}/%s"
-exec "%s" "%s" "%s" "%s" "%s" "%s" "%s"
+exec "%s" "%s" "%s" "%s" "%s" "%s" "%s" "%s" "%s"
 """ % (
         ctx.workspace_name,
         ctx.executable._runner.short_path,
@@ -22,6 +22,8 @@ exec "%s" "%s" "%s" "%s" "%s" "%s" "%s"
         ctx.file.src.short_path,
         ctx.attr.expected_obligations,
         ctx.label,
+        ctx.attr.module,
+        ctx.attr.threads,
     ), is_executable = True)
     runfiles = ctx.runfiles(files = [ctx.file.src, ctx.executable._runner] + ctx.files.srcs + ctx.files.specs,
                            transitive_files = toolchain.files)
@@ -36,6 +38,8 @@ verus_test = rule(
         "srcs": attr.label_list(allow_files = [".rs"], mandatory = True),
         "specs": attr.label_list(allow_files = [".rs"]),
         "expected_obligations": attr.int(mandatory = True),
+        "module": attr.string(),
+        "threads": attr.int(default = 1, values = [1, 2, 3, 4]),
         "toolchain": attr.label(default = "@verus_linux_amd64//:toolchain", providers = [VerusToolchainInfo]),
         "_runner": attr.label(default = "//crates/mergify:verus-runner", executable = True, cfg = "exec"),
     },
