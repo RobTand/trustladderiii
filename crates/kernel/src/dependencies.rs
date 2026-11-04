@@ -15,16 +15,41 @@ pub struct Dependency {
     pub rejected: bool,
 }
 
+#[cfg(verus_keep_ghost)]
+verus! {
+/// Q26 / #771: admission requires every declared prerequisite to be delivered.
+pub closed spec fn delivered(dependencies: Seq<Dependency>, node: NodeId) -> bool {
+    forall|i: int| 0 <= i < dependencies.len() && dependencies[i].node == node
+        ==> !dependencies[i].rejected && dependencies[i].status == DependencyStatus::Delivered
+}
+}
+
 impl World {
     pub fn dependencies(&self) -> &[Dependency] {
         &self.dependencies
     }
 
-    pub fn dependencies_delivered(&self, node: NodeId) -> bool {
-        self.dependencies
-            .iter()
-            .filter(|d| d.node == node)
-            .all(|d| !d.rejected && d.status == DependencyStatus::Delivered)
+    kernel_fn! {
+    /// Q26 / #771: the executable prerequisite query checks every declaration.
+    pub fn dependencies_delivered(&self, node: NodeId) -> (result: bool) [
+        ensures result == delivered(self.dependencies@, node),
+    ] proof [reveal(delivered);] {
+        let mut i = 0usize;
+        kernel_while! { (i < self.dependencies.len()) [
+            invariant i <= self.dependencies.len(),
+                forall|j: int| 0 <= j < i && self.dependencies@[j].node == node
+                    ==> !self.dependencies@[j].rejected
+                        && self.dependencies@[j].status == DependencyStatus::Delivered,
+            decreases self.dependencies.len() - i,
+        ] {
+            let d = &self.dependencies[i];
+            if d.node == node && (d.rejected || d.status != DependencyStatus::Delivered) {
+                return false;
+            }
+            i += 1;
+        } }
+        true
+    }
     }
 
     fn dependency_path(&self, from: NodeId, to: NodeId) -> bool {
