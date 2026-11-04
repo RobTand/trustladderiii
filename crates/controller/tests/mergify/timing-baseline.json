@@ -38,5 +38,17 @@
     56.272,
     393.693
   ],
-  "reported_missing_shards": 1
+  "reported_missing_shards": 1,
+  "red_commit": "f5e5b5bd36bc3569236ad5c16e4bdb023440f81e",
+  "red_invocation": "https://app.buildbuddy.io/invocation/008d191a-988e-4506-86f7-e50f40ae3d07",
+  "red_shard_seconds": [
+    164.858752551,
+    84.06932685399994,
+    55.36453856600565,
+    285.28835166300087,
+    56.9105699799984,
+    57.89385121399755,
+    92.49039885395905,
+    64.54672853900047
+  ]
 }
