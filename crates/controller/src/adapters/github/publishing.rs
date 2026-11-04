@@ -178,7 +178,7 @@ impl Adapter {
                     &attempt,
                     &serde_json::to_vec(&ApprovalAttempt::Dispatching)?,
                 )?;
-                let check = self.runtime.block_on(client.post_check_run(
+                let check = self.runtime.block_on(client.post_check_run_tracked(
                     &repo,
                     &NewCheckRun {
                         name: APPROVAL_CHECK.into(),
@@ -189,13 +189,27 @@ impl Adapter {
                     },
                     Some(&approval_output()),
                 ));
-                if matches!(&check, Err(tl3_github::Error::Http { status: 404 })) {
+                if matches!(
+                    &check,
+                    Err(tl3_github::PostFailure {
+                        error: tl3_github::Error::Http { status: 404 },
+                        ..
+                    })
+                ) {
                     self.records
                         .write(&attempt, &serde_json::to_vec(&ApprovalAttempt::Refused)?)?;
                 }
                 let check = match check {
                     Ok(check) => check,
-                    Err(error)
+                    Err(failure) if !failure.sent => {
+                        self.records
+                            .write(&attempt, &serde_json::to_vec(&ApprovalAttempt::Refused)?)?;
+                        return Err(publication_failure::http(
+                            failure.error,
+                            Endpoint::CheckRuns,
+                        ));
+                    }
+                    Err(tl3_github::PostFailure { error, .. })
                         if matches!(
                             error.failure_class(),
                             tl3_github::FailureClass::Permanent(_)

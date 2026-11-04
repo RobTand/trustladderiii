@@ -7,7 +7,7 @@ pub mod status;
 pub mod webhook;
 
 pub use client::{
-    API_VERSION, ActionsRefusal, AppConfig, ClientOptions, Error, FailureClass, GitHub,
+    API_VERSION, ActionsRefusal, AppConfig, ClientOptions, Error, FailureClass, GitHub, PostFailure,
 };
 pub use models::*;
 

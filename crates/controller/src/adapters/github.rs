@@ -105,6 +105,7 @@ pub struct Adapter {
     policy: Policy,
     runtime: &'static tokio::runtime::Runtime,
     records: Records,
+    legacy_approval_scan: Option<std::fs::ReadDir>,
     operations: Option<tl3_config::OperationsIssue>,
     /// Each served repository's PR-body policy (#447).
     body_lines: Vec<(crate::Repository, Vec<tl3_config::BodyLine>, Vec<String>)>,
@@ -173,6 +174,11 @@ impl Adapter {
             policy,
             runtime: crate::executor::runtime()?,
             records: Records::new(simulation),
+            legacy_approval_scan: if simulation.join("approval-attempts.migrated").exists() {
+                None
+            } else {
+                Some(std::fs::read_dir(simulation)?)
+            },
             operations,
             body_lines: Vec::new(),
         })
@@ -547,6 +553,63 @@ impl Executor for Adapter {
             return Ok(Reconciliation::Absent);
         }
         self.reconcile(delivery)
+    }
+
+    fn retire(&mut self, store: &mut tl3_store::Store) -> Result<()> {
+        let Some(scan) = &mut self.legacy_approval_scan else {
+            return Ok(());
+        };
+        // #766: one-time legacy sidecar migration, at most 64 directory entries
+        // per drive. Recovery thereafter uses retirement/repair rows exclusively.
+        for _ in 0..64 {
+            let Some(entry) = scan.next() else {
+                let marker = self
+                    .records
+                    .path("unused")
+                    .parent()
+                    .ok_or(Error::Invalid("approval directory missing"))?
+                    .join("approval-attempts.migrated");
+                self.records.write(&marker, b"1")?;
+                self.legacy_approval_scan = None;
+                return Ok(());
+            };
+            let path = entry?.path();
+            if !path.extension().is_some_and(|ext| ext == "approval") {
+                continue;
+            }
+            let stem = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .ok_or(Error::Invalid("invalid approval record name"))?;
+            let bytes = (0..stem.len())
+                .step_by(2)
+                .map(|i| {
+                    stem.get(i..i + 2)
+                        .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+                })
+                .collect::<Option<Vec<_>>>()
+                .ok_or(Error::Invalid("invalid approval record name"))?;
+            let decoded = String::from_utf8(bytes)
+                .map_err(|_| Error::Invalid("invalid approval record name"))?;
+            let (key, _) = decoded
+                .rsplit_once(':')
+                .ok_or(Error::Invalid("invalid approval record name"))?;
+            if store
+                .effect(key)?
+                .is_none_or(|effect| !effect.state.is_pending())
+            {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => std::fs::File::open(
+                        path.parent()
+                            .ok_or(Error::Invalid("approval directory missing"))?,
+                    )?
+                    .sync_all()?,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        Ok(())
     }
 
     fn retire_delivery(&mut self, delivery: &Delivery) -> Result<()> {

@@ -398,7 +398,6 @@ impl Controller {
         controller.reconcile_capacity()?;
         controller.cleanup_ended_looks()?;
         controller.recover_postmortems()?;
-        controller.recover_approvals(false)?;
         Ok(controller)
     }
 
@@ -1067,17 +1066,28 @@ impl Controller {
                 Err(error) => eprintln!("adoption clarification pending for {}: {error}", row.id),
             }
         }
+        let mut retired_approval = false;
         for row in snapshot
             .rows
             .iter()
             .filter(|r| r.table == "retiring_effects")
         {
-            match self.retire_effect(&snapshot, row) {
+            let delivery: Delivery = decode_stored(row.value.clone())?;
+            let current = self.store.load()?;
+            match self.retire_effect(&current, row) {
+                Ok(()) if approval_delivery::is_approval(&delivery) => {
+                    retired_approval = true;
+                }
                 Ok(()) => return Ok(true),
                 Err(error) if !input_errors::recoverable(&error) => return Err(error),
                 Err(error) => eprintln!("adapter retirement failed for {}: {error}", row.id),
             }
         }
+        let snapshot = if retired_approval {
+            self.store.load()?
+        } else {
+            snapshot
+        };
         if let Some(row) = snapshot.rows.iter().find(|r| r.table == "inbox") {
             let observation: Observation = decode_stored(row.value.clone())?;
             let mut waiting_for_queue = false;
@@ -1209,11 +1219,12 @@ impl Controller {
                         && !snapshot.rows.iter().any(|r| {
                             r.table == approval_delivery::AUTHORIZATIONS && r.id == effect.key
                         })
-                        && self.approval_has_prior_dispatch(effect)?
+                        && self.approval_prior_dispatch(effect, &snapshot)?.0
                     {
+                        let predecessor = self.approval_prior_dispatch(effect, &snapshot)?.1;
                         match self.adapters.adapter(&delivery)?.reconcile(&delivery) {
-                            Ok(Reconciliation::Absent) => {}
-                            Ok(Reconciliation::Found(completion)) => {
+                            Ok(Reconciliation::Absent) if !predecessor => {}
+                            Ok(Reconciliation::Found(completion)) if !predecessor => {
                                 self.transition(effect, EffectState::Sent)?;
                                 self.complete(&effect.key, *completion)?;
                                 return Ok(true);
@@ -1756,6 +1767,23 @@ impl Controller {
                 table: "watches".into(),
                 id: key.into(),
             });
+            if approval_delivery::is_approval(&delivery) {
+                for replacement in &commit.effects {
+                    let next: Delivery = decode_stored(replacement.payload.clone())?;
+                    if approval_delivery::is_approval(&next) {
+                        commit.rows.push(put(
+                            approval_delivery::AUTHORIZATIONS,
+                            next.key.clone(),
+                            json!(true),
+                        ));
+                        commit.rows.push(put(
+                            approval_delivery::LINEAGE_SAFE,
+                            next.key,
+                            json!(true),
+                        ));
+                    }
+                }
+            }
             queue_retirement(&mut commit, &delivery);
             commit.transitions.push(EffectTransition {
                 key: key.into(),
@@ -3900,7 +3928,11 @@ fn observation_upstream(
 
 fn queue_retirement(commit: &mut Commit, delivery: &Delivery) {
     if approval_delivery::is_approval(delivery) {
-        for table in [approval_delivery::AUTHORIZATIONS, "notice_incidents"] {
+        for table in [
+            approval_delivery::AUTHORIZATIONS,
+            approval_delivery::LINEAGE_SAFE,
+            "notice_incidents",
+        ] {
             commit.rows.push(RowChange::Delete {
                 table: table.into(),
                 id: delivery.key.clone(),

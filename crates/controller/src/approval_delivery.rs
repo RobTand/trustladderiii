@@ -11,6 +11,7 @@ use tl3_store::{Commit, Effect, EffectState, RowChange, Snapshot};
 
 pub(crate) const AMBIGUOUS: &str = "approval_outcome_unknown";
 pub(crate) const AUTHORIZATIONS: &str = "approval_retry_authorizations";
+pub(crate) const LINEAGE_SAFE: &str = "approval_lineage_admitted";
 pub(crate) const REPAIRS: &str = "approval_reconciliations";
 
 pub(crate) fn is_approval(delivery: &Delivery) -> bool {
@@ -24,24 +25,31 @@ pub(crate) fn is_approval(delivery: &Delivery) -> bool {
 }
 
 impl Controller {
-    /// #766: an old Intended row can have already sent a POST before re-epoching.
-    pub(crate) fn approval_has_prior_dispatch(&mut self, effect: &Effect) -> Result<bool> {
-        let mut revision = effect.created_revision;
-        loop {
-            let events = self.store.events_after(revision, 128)?;
-            if events.is_empty() {
-                return Ok(false);
-            }
-            for event in events {
-                if event.payload["effect"] == effect.key && event.payload["to"] == "Sent" {
-                    return Ok(true);
-                }
-                revision = event.receipt.revision;
-                if revision >= effect.updated_revision {
-                    return Ok(false);
-                }
-            }
-        }
+    /// #766: legacy retries carry dispatch ambiguity across replacement sequences.
+    pub(crate) fn approval_prior_dispatch(
+        &mut self,
+        effect: &Effect,
+        snapshot: &Snapshot,
+    ) -> Result<(bool, bool)> {
+        let delivery: Delivery = crate::decode_stored(effect.payload.clone())?;
+        let identity = json!({
+            "repository":delivery.repository, "issue":delivery.issue,
+            "generation":delivery.generation, "head_sha":delivery.head_sha,
+            "output":{"Effect":{"node":delivery.node(),"kind":"PostApproval"}}
+        });
+        // A bounded scalar migration query for this pending operation only.
+        // Successful admission is durable; terminal history is never replayed at open.
+        let predecessor = !snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == LINEAGE_SAFE && r.id == effect.key)
+            && self
+                .store
+                .dispatched_effect_matching(&identity, &effect.key)?;
+        let current = self
+            .store
+            .dispatched_effect_matching(&json!({"key":effect.key}), "")?;
+        Ok((current || predecessor, predecessor))
     }
 
     pub(crate) fn approval_ambiguous(&mut self, delivery: &Delivery) -> Result<bool> {
@@ -96,6 +104,9 @@ impl Controller {
             commit
                 .rows
                 .push(put(AUTHORIZATIONS, effect.key.clone(), json!(true)));
+            commit
+                .rows
+                .push(put(LINEAGE_SAFE, effect.key.clone(), json!(true)));
         }
     }
 
@@ -184,54 +195,49 @@ impl Controller {
         Ok(())
     }
 
-    /// Restart/catch-up look, not a polling loop or a persistent terminal watch set.
-    pub(crate) fn recover_approvals(&mut self, reconcile: bool) -> Result<()> {
-        let snapshot = self.store.load()?;
-        let mut commit = Commit::new(
-            format!("approval-recovery:{}", snapshot.revision.get()),
-            json!({"approval_recovery":true}),
-            &snapshot,
-        );
-        for effect in self.store.effects()? {
-            if !matches!(
-                effect.state,
-                EffectState::Confirmed | EffectState::Failed | EffectState::Cancelled
-            ) {
-                continue;
-            }
-            let mut delivery: Delivery = crate::decode_stored(effect.payload)?;
-            if !is_approval(&delivery) {
-                continue;
-            }
-            self.adapters
-                .adapter(&delivery)?
-                .retire_delivery(&delivery)?;
-            if reconcile && effect.state == EffectState::Confirmed {
-                delivery.epoch = snapshot.epoch.get();
-                commit
-                    .rows
-                    .push(put(REPAIRS, delivery.key.clone(), json!(delivery)));
-            }
-        }
-        if !commit.rows.is_empty() {
-            self.store.commit(&commit)?;
-        }
-        Ok(())
-    }
-
     pub(crate) fn reconcile_approvals(&mut self, snapshot: &Snapshot) -> Result<bool> {
         for row in snapshot.rows.iter().filter(|r| r.table == REPAIRS) {
             let mut delivery: Delivery = crate::decode_stored(row.value.clone())?;
             delivery.epoch = snapshot.epoch.get();
-            match self.adapters.adapter(&delivery)?.reconcile(&delivery) {
-                Ok(Reconciliation::Found(_)) => {}
-                Ok(_) | Err(_) => continue,
+            let repair_key = format!("approval-repair:{}", row.id);
+            if looks::outage_waiting(snapshot, &repair_key) {
+                continue;
+            }
+            let result = self
+                .adapters
+                .adapter(&delivery)
+                .and_then(|adapter| adapter.reconcile(&delivery));
+            if !matches!(result, Ok(Reconciliation::Found(_))) {
+                let error = match result {
+                    Err(error) => error,
+                    _ => crate::Error::Invalid("approval repair has no matching evidence yet"),
+                };
+                let mut commit = Commit::new(
+                    format!(
+                        "approval-repair-failed:{}:{}",
+                        row.id,
+                        snapshot.revision.get()
+                    ),
+                    json!({"approval_repair_failed":row.id}),
+                    snapshot,
+                );
+                self.maintenance_failure(
+                    snapshot,
+                    &delivery,
+                    &repair_key,
+                    "approval_repair",
+                    error,
+                    &mut commit,
+                )?;
+                self.store.commit(&commit)?;
+                return Ok(true);
             }
             let mut commit = Commit::new(
                 format!("approval-reconciled:{}:{}", row.id, snapshot.revision.get()),
                 json!({"approval_reconciled":row.id}),
                 snapshot,
             );
+            self.finish_maintenance(snapshot, &repair_key, &mut commit)?;
             commit.rows.push(RowChange::Delete {
                 table: REPAIRS.into(),
                 id: row.id.clone(),

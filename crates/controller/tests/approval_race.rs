@@ -242,6 +242,12 @@ impl Executor for TargetGitHub {
         }
         result
     }
+    fn probe(&mut self, delivery: &Delivery) -> tl3_controller::Result<bool> {
+        self.real.probe(delivery)
+    }
+    fn retire(&mut self, store: &mut Store) -> tl3_controller::Result<()> {
+        self.real.retire(store)
+    }
     fn app_login(&self, installation: u64) -> Option<String> {
         self.real.app_login(installation)
     }
@@ -1054,6 +1060,7 @@ fn restart_midway_through_approval_reconciliation_converges() {
     drop(controller);
     case.api.0.lock().unwrap().fail_patch_after = None;
     let mut controller = case.open();
+    controller.look_now().unwrap();
     drain(&mut controller);
     case.assert_converged(3);
 }

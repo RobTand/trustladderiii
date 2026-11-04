@@ -264,7 +264,7 @@ impl Controller {
             "incidents",
             id.clone(),
             json!(Incident {
-                id,
+                id: id.clone(),
                 node: Some(delivery.node()),
                 input_failure: None,
                 open: true,
@@ -277,8 +277,66 @@ impl Controller {
                 cause: Some(crate::looks::Cause::Upstream),
             }),
         ));
+        if class == "message_cleanup" || class == "approval_repair" {
+            let mut probe = delivery.clone();
+            probe.key = key.into();
+            // This allowance probes upstream health; it never executes a publication.
+            probe.output = Output::Comment {
+                node: delivery.node(),
+                kind: crate::executor::CommentKind::OperationsNote,
+            };
+            let mut state = crate::looks::AllowanceState::new(probe, self.now_ms(), 30_000);
+            state.maintenance = true;
+            state.incident = Some(id);
+            commit
+                .rows
+                .push(put("allowances", key.into(), json!(state)));
+        }
         commit.rows.push(self.allowance_row(post.clone()));
         commit.effects.push(post.into_effect());
+        Ok(())
+    }
+
+    /// State-table:307: bounded counters and the existing allowance timer per maintenance key.
+    pub(crate) fn maintenance_failure(
+        &mut self,
+        snapshot: &Snapshot,
+        delivery: &Delivery,
+        key: &str,
+        class: &str,
+        error: crate::Error,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        let count = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "maintenance_failures" && r.id == key)
+            .and_then(|r| r.value.as_u64())
+            .unwrap_or(0)
+            + 1;
+        commit
+            .rows
+            .push(put("maintenance_failures", key.into(), json!(count % 2)));
+        if count >= 2 || matches!(error, crate::Error::Permanent { .. }) {
+            self.maintenance_incident(snapshot, delivery, key, class,
+                format!("GitHub {class} failed for {}/{} issue {}. The first incident recovers on an upstream probe; clear later incidents to retry.", delivery.repository.owner, delivery.repository.name, delivery.issue), commit)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn finish_maintenance(
+        &mut self,
+        snapshot: &Snapshot,
+        key: &str,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        crate::looks::resolve_effect_incidents(snapshot, commit, |_, effect| Ok(effect == key))?;
+        for table in ["allowances", "maintenance_failures", "notice_incidents"] {
+            commit.rows.push(tl3_store::RowChange::Delete {
+                table: table.into(),
+                id: key.into(),
+            });
+        }
         Ok(())
     }
 }

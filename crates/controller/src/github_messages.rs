@@ -109,13 +109,6 @@ impl Controller {
                     .get(Upstream::GitHub)?
                     .reconcile_message(&repository, issue, &comment)
             {
-                let failures = snapshot
-                    .rows
-                    .iter()
-                    .find(|r| r.table == "github_message_failures" && r.id == row.id)
-                    .and_then(|r| r.value.as_u64())
-                    .unwrap_or(0)
-                    .saturating_add(1);
                 let mut commit = Commit::new(
                     format!(
                         "github-cleanup-failed:{}:{}",
@@ -125,39 +118,38 @@ impl Controller {
                     json!({"cleanup_failed":row.id}),
                     snapshot,
                 );
-                commit.rows.push(put(
-                    "github_message_failures",
-                    row.id.clone(),
-                    json!(failures % 2),
-                ));
-                if failures >= 2 || matches!(error, Error::Permanent { .. }) {
-                    let key = tl3_github::GitHub::comment_effect_key(&comment.body)
-                        .ok_or(Error::Invalid("cleanup marker missing"))?;
-                    if let Some(effect) = self.store.effect(&key)? {
-                        let delivery = crate::decode_stored(effect.payload)?;
-                        self.maintenance_incident(snapshot, &delivery, &cleanup_key, "message_cleanup",
-                            format!("GitHub message cleanup failed for {}/{} issue {}. Clear to retry deduplication.",repository.owner,repository.name,issue),&mut commit)?;
-                    } else {
-                        // A marked message can outlive its historical local effect.
-                        self.input_failed(
-                            snapshot,
-                            &cleanup_key,
-                            Some(crate::input_errors::IssueTarget {
-                                repository: repository.clone(),
-                                issue,
-                            }),
-                            "GitHub message cleanup",
-                            None,
-                            Upstream::GitHub,
-                            error,
-                            &mut commit,
-                        )?;
-                        for change in &mut commit.rows {
-                            if let RowChange::Put { table, value, .. } = change
-                                && table == "incidents"
-                            {
-                                value["effect"] = json!(cleanup_key);
-                            }
+                let key = tl3_github::GitHub::comment_effect_key(&comment.body)
+                    .ok_or(Error::Invalid("cleanup marker missing"))?;
+                if let Some(effect) = self.store.effect(&key)? {
+                    let delivery = crate::decode_stored(effect.payload)?;
+                    self.maintenance_failure(
+                        snapshot,
+                        &delivery,
+                        &cleanup_key,
+                        "message_cleanup",
+                        error,
+                        &mut commit,
+                    )?;
+                } else {
+                    // A marked message can outlive its historical local effect.
+                    self.input_failed(
+                        snapshot,
+                        &cleanup_key,
+                        Some(crate::input_errors::IssueTarget {
+                            repository: repository.clone(),
+                            issue,
+                        }),
+                        "GitHub message cleanup",
+                        None,
+                        Upstream::GitHub,
+                        error,
+                        &mut commit,
+                    )?;
+                    for change in &mut commit.rows {
+                        if let RowChange::Put { table, value, .. } = change
+                            && table == "incidents"
+                        {
+                            value["effect"] = json!(cleanup_key);
                         }
                     }
                 }
@@ -181,10 +173,7 @@ impl Controller {
                 table: "github_message_failures".into(),
                 id: row.id.clone(),
             });
-            commit.rows.push(RowChange::Delete {
-                table: "notice_incidents".into(),
-                id: cleanup_key,
-            });
+            self.finish_maintenance(snapshot, &cleanup_key, &mut commit)?;
             self.store.commit(&commit)?;
             return Ok(true);
         }

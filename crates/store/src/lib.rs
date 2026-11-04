@@ -794,6 +794,19 @@ impl Store {
         load_effects(&mut self.client)
     }
 
+    /// #766: a replacement delivery inherits dispatch evidence for its operation.
+    /// The predicate is controller-owned; no historical payloads or adapters are loaded.
+    pub fn dispatched_effect_matching(
+        &mut self,
+        identity: &serde_json::Value,
+        excluding: &str,
+    ) -> Result<bool> {
+        Ok(self.client.query_one(
+            "SELECT EXISTS (SELECT 1 FROM tl3_effects e WHERE e.payload @> $1 AND e.effect_key <> $2 AND EXISTS (SELECT 1 FROM tl3_events v WHERE v.payload->>'effect' = e.effect_key AND v.payload->>'to' = 'Sent'))",
+            &[identity, &excluding],
+        )?.get(0))
+    }
+
     /// Retirement commits retain comment IDs without loading their old payloads.
     pub fn comment_retired(&mut self, id: &str) -> Result<bool> {
         Ok(self

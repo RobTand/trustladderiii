@@ -9,6 +9,13 @@ use tokio::{sync::Mutex, time::Instant};
 
 pub const API_VERSION: &str = "2022-11-28";
 
+/// A POST failure retains whether a mutation could have reached GitHub.
+#[derive(Debug)]
+pub struct PostFailure {
+    pub error: Error,
+    pub sent: bool,
+}
+
 /// Matches deploy/github-app/README.md. Deliberately has no Debug or Serialize.
 #[derive(Deserialize)]
 pub struct AppConfig {
@@ -323,6 +330,21 @@ impl GitHub {
         token: &str,
         retry_safe: bool,
     ) -> Result<(Value, reqwest::header::HeaderMap), Error> {
+        self.send_tracked(method, path, query, body, token, retry_safe, None)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn send_tracked(
+        &self,
+        method: Method,
+        path: &str,
+        query: &[(String, String)],
+        body: Option<Value>,
+        token: &str,
+        retry_safe: bool,
+        dispatch: Option<&std::sync::atomic::AtomicBool>,
+    ) -> Result<(Value, HeaderMap), Error> {
         let mut url = self.0.options.api_url.clone();
         // Segments are already encoded by endpoint builders. Never follow an upstream URL.
         url.set_path(&format!("{}{}", url.path(), path));
@@ -352,7 +374,19 @@ impl GitHub {
             if let Some(body) = &body {
                 request = request.json(body);
             }
+            if let Some(dispatch) = dispatch {
+                dispatch.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             let response = request.send().await;
+            // reqwest identifies connect/build failures before the HTTP request
+            // can be written. Other transport failures leave dispatch ambiguous.
+            if response
+                .as_ref()
+                .is_err_and(|error| error.is_connect() || error.is_builder())
+                && let Some(dispatch) = dispatch
+            {
+                dispatch.store(false, std::sync::atomic::Ordering::Relaxed);
+            }
             if method != Method::GET {
                 throttle.next_mutation = Instant::now() + self.0.options.mutation_interval;
             }
@@ -813,24 +847,56 @@ impl GitHub {
         check: &NewCheckRun,
         output: Option<&CheckOutput>,
     ) -> Result<CheckRun, Error> {
-        if check.external_id.trim().is_empty()
-            || matches!(check.status, CheckStatus::Completed) != check.conclusion.is_some()
-        {
-            return Err(Error::Config(
-                "check needs an external id and a conclusion exactly when completed",
-            ));
+        self.post_check_run_tracked(repo, check, output)
+            .await
+            .map_err(|failure| failure.error)
+    }
+
+    /// #766: local refusal is retryable; a sent POST with unknown outcome needs reconciliation.
+    pub async fn post_check_run_tracked(
+        &self,
+        repo: &str,
+        check: &NewCheckRun,
+        output: Option<&CheckOutput>,
+    ) -> Result<CheckRun, PostFailure> {
+        let dispatch = std::sync::atomic::AtomicBool::new(false);
+        let result = async {
+            if check.external_id.trim().is_empty()
+                || matches!(check.status, CheckStatus::Completed) != check.conclusion.is_some()
+            {
+                return Err(Error::Config(
+                    "check needs an external id and a conclusion exactly when completed",
+                ));
+            }
+            let mut body = serde_json::to_value(check).map_err(|_| Error::Response)?;
+            if let Some(output) = output {
+                body["output"] = serde_json::to_value(output).map_err(|_| Error::Response)?;
+            }
+            let token = self.installation_token().await?;
+            let result = self
+                .send_tracked(
+                    Method::POST,
+                    &format!("{}/check-runs", repo_path(repo)?),
+                    &[],
+                    Some(body),
+                    &token,
+                    false,
+                    Some(&dispatch),
+                )
+                .await;
+            if matches!(result, Err(Error::Http { status: 401 })) {
+                let mut cached = self.0.token.lock().await;
+                if cached.as_ref().is_some_and(|t| t.value == token) {
+                    *cached = None;
+                }
+            }
+            serde_json::from_value(result?.0).map_err(|_| Error::Response)
         }
-        let mut body = serde_json::to_value(check).map_err(|_| Error::Response)?;
-        if let Some(output) = output {
-            body["output"] = serde_json::to_value(output).map_err(|_| Error::Response)?;
-        }
-        self.request(
-            Method::POST,
-            format!("{}/check-runs", repo_path(repo)?),
-            vec![],
-            Some(body),
-        )
-        .await
+        .await;
+        result.map_err(|error| PostFailure {
+            error,
+            sent: dispatch.load(std::sync::atomic::Ordering::Relaxed),
+        })
     }
 
     pub async fn update_check_run(
