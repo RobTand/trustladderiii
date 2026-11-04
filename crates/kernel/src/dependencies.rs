@@ -171,6 +171,7 @@ proof fn delivered_record_progress(before: World, after: World, index: int)
         !(before.nodes@[before.dependencies@[index].node.0 as int].phase is Closed),
         after.dependencies@ == before.dependencies@.update(index, Dependency {
             status: DependencyStatus::Delivered, rejected: false, ..before.dependencies@[index] }),
+        after.nodes@.len() == before.nodes@.len(),
         after.nodes@ == before.nodes@.update(before.dependencies@[index].node.0 as int,
             Node { waiting_prerequisite: after.nodes@[before.dependencies@[index].node.0 as int].waiting_prerequisite,
                 credit: Credit { withheld: after.nodes@[before.dependencies@[index].node.0 as int].credit.withheld,
@@ -185,14 +186,20 @@ proof fn delivered_record_progress(before: World, after: World, index: int)
     reveal(progress_measure);
     reveal(distance);
     let owner = before.dependencies@[index].node.0 as int;
+    assert(after.nodes@ == before.nodes@.update(owner, after.nodes@[owner]));
     sum_update(before.nodes@, owner, after.nodes@[owner]);
     assert(distance(after.nodes@[owner]) == distance(before.nodes@[owner]));
+    assert(node_total(after.nodes@) == node_total(before.nodes@));
+    assert(dependency_weight(before, index) == 1);
+    assert(dependency_weight(after, index) == 0);
     assert forall|j: int| 0 <= j < before.dependencies@.len() implies
         dependency_weight(after, j) <= dependency_weight(before, j) by {
         if j != index { assert(after.dependencies@[j] == before.dependencies@[j]); }
         let n = before.dependencies@[j].node.0 as int;
         if n != owner { assert(after.nodes@[n] == before.nodes@[n]); }
     }
+    assert(exists|j: int| 0 <= j < before.dependencies@.len()
+        && dependency_weight(after, j) < dependency_weight(before, j));
     dependency_sum_compare(before, after, before.dependencies@.len());
 }
 
