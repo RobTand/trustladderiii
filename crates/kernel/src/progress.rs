@@ -433,3 +433,35 @@ proof fn resume_decreases(w: World, n: Node)
     }
 }
 }
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// Fact rows / #771: hide whole-world consistency from the mutation proof.
+#[verifier::opaque]
+spec fn fact_progress_input(w: World, i: int, fact: Fact) -> bool {
+    world_checked(w) && chosen_for_node(w, i, Event::Fact { node: NodeId(i as u64), fact })
+}
+
+/// #771: the actual witness branch supplies the fact handler's local guards.
+proof fn fact_witness_premises(w: World, i: int, fact: Fact)
+    requires 0 <= i < w.nodes@.len(), fact_progress_input(w, i, fact),
+    ensures node_checked(w, w.nodes@[i]),
+        match fact {
+            Fact::Dependency { target, status } => dependency_progress_input(w, i, target, status),
+            Fact::PrMerged { .. } => w.nodes@[i].phase == Phase::Queued
+                && !w.nodes@[i].paused && !w.nodes@[i].waiting_incident
+                && w.nodes@[i].effect.is_none() && w.nodes@[i].question.is_none(),
+            _ => fact == Fact::IncidentCleared { by_rob: true }
+                && w.nodes@[i].waiting_incident && w.nodes@[i].effect.is_none()
+                && (!w.nodes@[i].paused || w.nodes@[i].phase is Stopping)
+                && !(w.nodes@[i].phase is Closed),
+        },
+{
+    reveal(fact_progress_input);
+    reveal(world_checked);
+    reveal(dependency_progress_input);
+    if let Fact::Dependency { target, status } = fact {
+        dependencies::pending_ready(w, i, target);
+    }
+}
+}

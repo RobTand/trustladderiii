@@ -2369,8 +2369,10 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
         Event::Fact { node, fact } => {
             if let Some(i) = w.index(node) {
                 kernel_proof! {
-                    if witness_event(before_apply@, event) {
+                    if progress_input(before_apply@, event) {
+                        reveal(fact_progress_input);
                         assert(chosen_for_node(before_apply@, i as int, event));
+                        assert(fact_progress_input(before_apply@, i as int, fact));
                     }
                 }
                 on_fact(w, i, fact, out);
@@ -3683,8 +3685,7 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         dependencies::edges_indexable(*old(w)), old(w).next_question < u64::MAX,
-    ensures (world_checked(*old(w))
-            && chosen_for_node(*old(w), i as int, Event::Fact { node: NodeId(i as u64), fact })
+    ensures (fact_progress_input(*old(w), i as int, fact)
             ==> progress_measure(*final(w)) < progress_measure(*old(w))
                 && dependencies::edges_indexable(*final(w))),
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
@@ -3708,16 +3709,10 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
         final(w).fail_fast == old(w).fail_fast,
         final(w).file_sets@ == old(w).file_sets@,
         final(out).len <= old(out).len + 4,
-] proof [reveal(world_checked);] {
+] {
     kernel_snapshot! { before_fact = *w }
     kernel_proof! {
-        if world_checked(*w) && chosen_for_node(*w, i as int, Event::Fact { node: NodeId(i as u64), fact }) {
-            if let Fact::Dependency { target, status } = fact {
-                reveal(dependency_progress_input);
-                dependencies::pending_ready(*w, i as int, target);
-                assert(dependency_progress_input(*w, i as int, target, status));
-            }
-        }
+        if fact_progress_input(*w, i as int, fact) { fact_witness_premises(*w, i as int, fact); }
     }
     match fact {
         Fact::DependencyRemove { kind, number } => w.remove_dependency(i, kind, number),
@@ -3729,8 +3724,7 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
         _ => fact_transition(w, i, fact, out),
     }
     kernel_proof! {
-        if world_checked(before_fact@)
-            && chosen_for_node(before_fact@, i as int, Event::Fact { node: NodeId(i as u64), fact }) {
+        if fact_progress_input(before_fact@, i as int, fact) {
             match fact {
                 Fact::Dependency { target, status } => {
                     assert(dependency_progress_input(before_fact@, i as int, target, status));
