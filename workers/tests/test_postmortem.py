@@ -12,7 +12,6 @@ import pytest
 
 from tl3_workers import judges, tracing
 from tl3_workers.contracts import validate
-from tl3_workers.roles import ROLES
 from tl3_workers.roles import postmortem
 from postmortem_support import FakeTraces, KEY, MAKER_PROMPT, SECRET, TOKEN, request, run
 from postmortem_support import judge_environment as judge_environment
@@ -52,18 +51,6 @@ def reply(recommendations=1):
             "usage": {"traces": 1, "input_tokens": 100, "output_tokens": 10,
                       "cache_read_input_tokens": 60, "cache_creation_input_tokens": 0},
             "models": {"postmortem": "claude-opus-5-5", "grades": "claude-sonnet-5-5"}}
-
-
-def test_the_schema_and_code_each_reject_a_fourth_recommendation():
-    validate("postmortem-reply", reply(3))
-    with pytest.raises(ValidationError):
-        validate("postmortem-reply", reply(4))
-    with pytest.raises(ValueError, match="at most three"):
-        ROLES["postmortem"].check_reply({}, reply(4))
-    add = reply(1)
-    add["postmortem"]["recommendations"][0].update(operation="add")
-    with pytest.raises(ValidationError):
-        validate("postmortem-reply", add)
 
 
 def test_a_tool_result_is_redacted_and_capped():
@@ -413,13 +400,8 @@ def contract_boundary(tmp_path, monkeypatch):
 @pytest.mark.parametrize("bad, diagnostic", [
     (dict(written(0), went_wrong=["The maker skipped a test."]), "schema validation failed: type"),
     ("{broken JSON", "JSON parse failure"),
-    (dict(written(0), recommendations=[dict(RECOMMENDATION, operation="execute")]),
-     "recommendation contract failure"),
     (dict(written(0), recommendations=[dict(RECOMMENDATION, target="bad\x00path")]),
      "recommendation contract failure"),
-    (dict(written(0), recommendations=[dict(RECOMMENDATION, operation="add")]),
-     "recommendation contract failure"),
-    (written(4), "recommendation contract failure"),
 ])
 def test_invalid_output_never_becomes_successful_work(contract_boundary, bad, diagnostic):
     document, traces, values, calls = contract_boundary
@@ -891,7 +873,7 @@ def test_postmortem_shim_transports_exact_reply_and_repair(fake_reply_checker, v
     history = []
     with pytest.raises(InvalidReply) as caught:
         repaired(TurnControl(), history, lambda: output,
-                 lambda value: postmortem.check_reply(inputs, value))
+                 lambda value: postmortem._checked(inputs, value))
     first = violations[0]
     assert all(str(error) == first for error in caught.value.errors)
     assert tracing.failure_tags(caught.value.errors[0]) == {
@@ -915,7 +897,8 @@ def test_postmortem_validator_failure_bypasses_repair(fake_reply_checker, monkey
     from tl3_workers.turns import TurnControl, repaired
 
     fake_reply_checker(body)
-    monkeypatch.setattr(reply_check, 'TIMEOUT_SECONDS', 0.05)
+    if body.startswith('import time'):
+        monkeypatch.setattr(reply_check, 'TIMEOUT_SECONDS', 0.05)
     history, asked = [], []
 
     def ask():
@@ -927,3 +910,21 @@ def test_postmortem_validator_failure_bypasses_repair(fake_reply_checker, monkey
     assert history == [] and asked == [True]
     assert tracing.failure_tags(caught.value) == {
         'failure_class': 'ReplyCheckInfrastructureError', 'failure_message': message}
+
+
+
+def test_validator_infrastructure_failure_precedes_checkpoints_and_assessments(
+        contract_boundary, fake_reply_checker):
+    from tl3_workers.reply_check import ReplyCheckInfrastructureError
+
+    document, traces, values, calls = contract_boundary
+    values.append(written(0))
+    fake_reply_checker("print('private-validator-canary')\n")
+    with pytest.raises(ReplyCheckInfrastructureError) as caught:
+        run(document)
+    assert tracing.failure_tags(caught.value)['failure_message'] == (
+        'reply validator returned invalid output')
+    assert len(calls) == 1
+    assert not traces.logged
+    for artifact in ['judged.json', 'assessment-pending.json', 'assessments.json', 'reply.json']:
+        assert not (Path(document['worktree']) / artifact).exists()

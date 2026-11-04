@@ -367,7 +367,7 @@ fn main() {
     if env::args().nth(1).as_deref() == Some("--postmortem-contracts") {
         prepare_workers();
         postmortem_reply::run();
-        println!("2 postmortem scenarios passed; no skips");
+        println!("4 postmortem scenarios passed; no skips");
         return;
     }
     if env::args().nth(1).as_deref() == Some("--classifier-contracts") {

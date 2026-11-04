@@ -94,16 +94,14 @@ fn parse(inputs: &Value, reply: &Value) -> crate::Result<Classification> {
 pub fn check_reply(role: Option<&str>) -> crate::Result<()> {
     use std::io::{Read, Write};
     if !matches!(role, Some("classifier" | "postmortem")) {
-        return Err(crate::Error::Invalid("usage: tl3 check-reply classifier"));
+        return Err(crate::Error::Invalid("usage: tl3 check-reply <role>"));
     }
     let mut bytes = Vec::new();
     std::io::stdin().read_to_end(&mut bytes)?;
     let request = crate::adapters::workers::json::parse(&bytes)
         .map_err(|_| crate::Error::Invalid("invalid check-reply JSON"))?;
     let result = match role {
-        Some("postmortem") => Err(crate::Error::Invalid(
-            "postmortem validator not implemented",
-        )),
+        Some("postmortem") => crate::postmortems::check_reply(&request["reply"]),
         _ => validate(&request["inputs"], &request["reply"]),
     };
     let violations = match result {

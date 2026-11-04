@@ -58,8 +58,76 @@ pub fn run() {
     let mut malformed = cases[0].clone();
     malformed["reply"]["postmortem"]["went_wrong"] = json!(["The maker skipped a test."]);
     assert!(!cli(&malformed)["violations"].as_array().unwrap().is_empty());
+    malformed = cases[1].clone();
+    malformed["reply"]["postmortem"]["recommendations"][0]["operation"] = json!("execute");
+    assert!(!cli(&malformed)["violations"].as_array().unwrap().is_empty());
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_tl3"));
     cmd.args(["check-reply", "postmortem"]);
     assert!(!command(cmd, b"{broken JSON").status.success());
     println!("test postmortem_cli_schema_and_json_boundary ... ok");
+    parsed_text_and_counts(&cases);
+    println!("test postmortem_parsed_text_and_counts ... ok");
+    real_worker(&cases);
+    println!("test postmortem_real_worker_repair_and_cache ... ok");
+}
+
+fn parsed_text_and_counts(cases: &[Value]) {
+    use proptest::{prelude::*, test_runner::TestRunner};
+    TestRunner::new(ProptestConfig::with_cases(128))
+        .run(
+            &prop::collection::vec((0u8..3, "\\PC{0,24}", "\\PC{0,24}"), 0..7),
+            |items| {
+                let mut reply = cases[1]["reply"].clone();
+                let template = reply["postmortem"]["recommendations"][0].clone();
+                let mut valid = items.len() <= 3;
+                let recommendations: Vec<_> = items
+                    .iter()
+                    .map(|(operation, before, after)| {
+                        let mut item = template.clone();
+                        let operation = ["add", "remove", "replace"][usize::from(*operation)];
+                        valid &= match operation {
+                            "add" => before.is_empty() && !after.is_empty(),
+                            "remove" => !before.is_empty() && after.is_empty(),
+                            _ => !before.is_empty() && !after.is_empty(),
+                        };
+                        item["operation"] = json!(operation);
+                        item["before"] = json!(before);
+                        item["after"] = json!(after);
+                        item
+                    })
+                    .collect();
+                reply["postmortem"]["recommendations"] = json!(recommendations);
+                let encoded = serde_json::to_vec(&reply).unwrap();
+                let decoded: Value = serde_json::from_slice(&encoded).unwrap();
+                prop_assert_eq!(&reply, &decoded);
+                prop_assert_eq!(
+                    tl3_controller::postmortem_reply::validate(&decoded).is_ok(),
+                    valid
+                );
+                Ok(())
+            },
+        )
+        .unwrap();
+}
+
+fn real_worker(cases: &[Value]) {
+    let root = tempfile::tempdir().unwrap();
+    let mut worker = Command::new(super::worker_package().join(".venv/bin/python"));
+    worker
+        .args(["-c", include_str!("postmortem/worker.py")])
+        .env("TL3_BINARY", env!("CARGO_BIN_EXE_tl3"))
+        .env("LANGSMITH_TRACING", "false")
+        .env("LANGCHAIN_TRACING_V2", "false")
+        .env("OPENAI_API_KEY", "placeholder");
+    let input = json!({"worktree":root.path(), "reply":cases[0]["reply"]});
+    let output = command(worker, input.to_string().as_bytes());
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        cases[0]["reply"]
+    );
 }
