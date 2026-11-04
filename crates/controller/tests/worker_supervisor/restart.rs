@@ -63,6 +63,19 @@ fn watch(controller: &mut Controller) -> Delivery {
     .unwrap()
 }
 
+fn reply_documents(
+    controller: &mut Controller,
+) -> std::collections::BTreeMap<(String, String), Value> {
+    controller
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|row| matches!(row.table.as_str(), "briefs" | "goals" | "worker_failures"))
+        .map(|row| ((row.table, row.id), row.value))
+        .collect()
+}
+
 #[test]
 fn restarted_controller_cancels_legacy_worker_and_rejects_its_late_outcome() {
     let mut database = database::Database::start();
@@ -181,6 +194,7 @@ fn restarted_controller_cancels_legacy_worker_and_rejects_its_late_outcome() {
         Reconciliation::Pending
     ));
     let before = serde_json::to_value(controller.world().unwrap()).unwrap();
+    let documents = reply_documents(&mut controller);
     // Deliver the actual JSON produced by the old worker, delayed until after
     // cancellation and replacement. The live attempt never became a new run.
     controller
@@ -195,6 +209,13 @@ fn restarted_controller_cancels_legacy_worker_and_rejects_its_late_outcome() {
             },
         )
         .unwrap();
+    // observe enqueues ingress; dispatch it before checking either fence.
+    drive(&mut controller);
+    assert_eq!(
+        reply_documents(&mut controller),
+        documents,
+        "an old reply must not replace the new generation's durable documents"
+    );
     assert_eq!(
         serde_json::to_value(controller.world().unwrap()).unwrap(),
         before
