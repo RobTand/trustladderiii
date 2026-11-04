@@ -89,12 +89,37 @@ def configure(base_url, key):
     _endpoint = endpoint_url(base_url)
 
 
+class MalformedReply(Exception):
+    """A judge's reply that is not the JSON object its judge asks for."""
+
+
+class Turns:
+    """One judge's model calls: their count, and its latest request and reply."""
+
+    def __init__(self):
+        self.count = 0
+        self.request = None
+        # The latest reply's text when it called no tools: the judge's final answer.
+        self.reply = None
+        self.repair: Literal["accepted", "failed"] | None = None
+        self.failure: JudgeFailure | None = None
+
+    def record(self, response):
+        try:
+            message = response["choices"][0]["message"]
+            if not message.get("tool_calls"):
+                self.reply = message.get("content") or ""
+        except (KeyError, IndexError, TypeError, AttributeError):
+            pass
+
+
 @contextmanager
 def observed(stage: Literal["grade", "postmortem"]):
     """Count attempted model turns, including the final or failed call, per judge.
 
     Provider retries inside send_chat_request belong to the same model turn.
-    The separate tool-free reply repair is outside the postmortem judge loop.
+    The postmortem's separate tool-free reply repair is outside its judge loop;
+    a grade's repair (`repair_grade`) is a turn of its own judge.
     """
     import mlflow
     from mlflow.environment_variables import MLFLOW_JUDGE_MAX_ITERATIONS
@@ -102,27 +127,70 @@ def observed(stage: Literal["grade", "postmortem"]):
     from tl3_workers import memory, tracing
 
     limit = MLFLOW_JUDGE_MAX_ITERATIONS.get()
-    turns = 0
+    turns = Turns()
     send = gateway_adapter.send_chat_request
 
     def counted(*args, **kwargs):
-        nonlocal turns
-        turns += 1
-        return send(*args, **kwargs)
+        turns.count += 1
+        # MLflow passes every argument by keyword; only those requests can be repaired.
+        turns.request, turns.reply = (None if args else kwargs), None
+        response = send(*args, **kwargs)
+        turns.record(response)
+        return response
 
     context = mlflow.start_span(name=f"{stage} judge", span_type="CHAIN") if (
         tracing.active.get() is not None) else nullcontext()
     with context as span:
         gateway_adapter.send_chat_request = counted
         try:
-            yield
+            yield turns
         finally:
             gateway_adapter.send_chat_request = send
             if span is not None:
-                span.set_attribute("tl3.judge.turn_count", turns)
+                span.set_attribute("tl3.judge.turn_count", turns.count)
                 span.set_attribute("tl3.judge.iteration_limit", limit)
+                if turns.repair is not None:
+                    span.set_attribute("tl3.judge.repair", turns.repair)
+                if turns.failure is not None:
+                    span.set_attribute("tl3.judge.failure_class", str(turns.failure.category))
             if summary := memory.current.get():
-                summary.judge_run(stage, turns, limit)
+                summary.judge_run(stage, turns.count, limit)
+
+
+GRADE_REPAIR = ("your final reply was not one JSON object with a result (an integer from 1 to "
+                "5, or null) and a rationale (a string)")
+
+
+def repair_grade(turns, name):
+    """A grade judge's Feedback from one tool-free turn that corrects its final reply (#728).
+
+    The turn resends the judge's latest request, with its tool history and
+    response format, plus the reply and why it failed. It runs inside the
+    judge's `observed` block, so it counts as one of the judge's turns."""
+    from mlflow.entities.assessment import Feedback
+    from mlflow.genai.judges.adapters import gateway_adapter
+    from mlflow.genai.judges.utils.parsing_utils import _strip_markdown_code_blocks
+    from tl3_workers.turns import REPAIR
+
+    if turns.request is None:
+        raise MalformedReply("no model call to repair")
+    payload = dict(turns.request["payload"])
+    messages = list(payload["messages"])
+    if turns.reply is not None:
+        messages.append({"role": "assistant", "content": turns.reply})
+    messages.append({"role": "user", "content": REPAIR.format(GRADE_REPAIR)})
+    payload["messages"] = messages
+    payload["tool_choice"] = "none"
+    gateway_adapter.send_chat_request(**{**turns.request, "payload": payload})
+    try:
+        reply = json.loads(_strip_markdown_code_blocks(turns.reply), strict=False)
+    except (TypeError, AttributeError, ValueError):
+        raise MalformedReply("the repaired reply is not JSON") from None
+    if not isinstance(reply, dict) or "result" not in reply:
+        raise MalformedReply("the repaired reply has no result")
+    rationale = reply.get("rationale")
+    return Feedback(name=name, value=reply["result"],
+                    rationale=rationale if isinstance(rationale, str) else "")
 
 
 def judge(name, instructions, model, value_type):
@@ -183,7 +251,7 @@ def postmortem_contract(prompt):
 
 @contextmanager
 def postmortem_turns():
-    # Reserve the last model turn for the shared reply repair.
+    # Reserve each judge's last model turn for its reply repair.
     previous = os.environ["MLFLOW_JUDGE_MAX_ITERATIONS"]
     os.environ["MLFLOW_JUDGE_MAX_ITERATIONS"] = str(MAX_TURNS - 1)
     try:
@@ -280,7 +348,8 @@ def exception_failure(error):
         if isinstance(error, ContentFilterFinishReasonError):
             return JudgeFailure(FailureClass.REFUSAL)
         if isinstance(error, (json.JSONDecodeError, SchemaError, ModelSchemaError,
-                              APIResponseValidationError, LengthFinishReasonError)):
+                              APIResponseValidationError, LengthFinishReasonError,
+                              MalformedReply)):
             return JudgeFailure(FailureClass.SCHEMA)
         if isinstance(error, (KeyError, TypeError, AttributeError)):
             return JudgeFailure(FailureClass.CONTRACT)
