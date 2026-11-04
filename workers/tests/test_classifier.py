@@ -318,8 +318,12 @@ def classifier_cli_parity(monkeypatch):
     from dataclasses import replace
     from pathlib import Path
     import subprocess
+    from jsonschema import ValidationError
     from tl3_workers.roles import classifier
     original = classifier.check_reply
+    checked = runtime._checked
+    binary = Path("crates/controller/tl3").resolve()
+    vectors, mismatches = [], []
 
     def parity(inputs, reply):
         expected = []
@@ -327,15 +331,29 @@ def classifier_cli_parity(monkeypatch):
             original(inputs, reply)
         except ValueError as error:
             expected = [str(error)]
-        vector = {"inputs": inputs, "reply": reply, "violations": expected}
-        print("CLASSIFIER_VECTOR " + json.dumps(vector, ensure_ascii=True))
-        binary = Path("crates/controller/tl3").resolve()
+        vector = json.loads(json.dumps({"inputs": inputs, "reply": reply, "violations": expected}))
+        vectors.append(vector)
         result = subprocess.run([str(binary), "check-reply", "classifier"],
                                 input=json.dumps({"inputs": inputs, "reply": reply}),
                                 text=True, capture_output=True, check=True)
-        assert json.loads(result.stdout) == {"violations": expected}
+        actual = json.loads(result.stdout)
+        if actual != {"violations": expected}:
+            mismatches.append((actual, expected))
         if expected:
             raise ValueError(expected[0])
 
+    def boundary(role, inputs, reply, **kwargs):
+        try:
+            return checked(role, inputs, reply, **kwargs)
+        except ValidationError:
+            if role.name == "classifier":
+                vectors.append(json.loads(json.dumps({"inputs": inputs, "reply": reply, "schema_invalid": True})))
+            raise
+
+    monkeypatch.setattr(runtime, "_checked", boundary)
     monkeypatch.setattr(classifier, "check_reply", parity)
     monkeypatch.setitem(ROLES, "classifier", replace(classifier.ROLE, check_reply=parity))
+    yield
+    for vector in vectors:
+        print("CLASSIFIER_VECTOR " + json.dumps(vector, ensure_ascii=True))
+    assert not mismatches, mismatches
