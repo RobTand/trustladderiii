@@ -55,24 +55,12 @@ pub(crate) fn validate_findings(
     Ok(findings)
 }
 
-fn python_whitespace(c: char) -> bool {
-    c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
-}
-
-fn lines(text: &str) -> impl Iterator<Item = &str> {
-    // Python str.splitlines recognizes these separators; empty CRLF pieces do not match hunks.
-    text.split([
-        '\n', '\r', '\u{b}', '\u{c}', '\u{1c}', '\u{1d}', '\u{1e}', '\u{85}', '\u{2028}',
-        '\u{2029}',
-    ])
-}
-
 fn quotes_changed_hunk(diff: &str, evidence: &str) -> bool {
-    lines(diff).any(|line| {
+    diff.lines().any(|line| {
         (line.starts_with('+') || line.starts_with('-'))
             && !line.starts_with("+++")
             && !line.starts_with("---")
-            && line[1..].chars().filter(|c| !python_whitespace(*c)).count() >= 8
-            && lines(evidence).any(|quote| quote.trim_matches(python_whitespace) == line)
+            && line[1..].chars().filter(|c| !c.is_whitespace()).count() >= 8
+            && evidence.lines().any(|quote| quote.trim() == line)
     })
 }

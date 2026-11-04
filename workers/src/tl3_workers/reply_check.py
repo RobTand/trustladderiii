@@ -16,6 +16,15 @@ class ReplyCheckInfrastructureError(RuntimeError):
     """The validator did not decide; exit the worker without a model repair."""
 
 
+def _unique_object(pairs):
+    document = {}
+    for key, value in pairs:
+        if key in document:
+            raise ReplyCheckInfrastructureError("reply validator returned invalid output")
+        document[key] = value
+    return document
+
+
 def check_reply(role, inputs, reply):
     binary = os.environ.get("TL3_BINARY")
     if not binary:
@@ -36,7 +45,7 @@ def check_reply(role, inputs, reply):
     except UnicodeError:
         raise ReplyCheckInfrastructureError("reply validator returned invalid output") from None
     try:
-        document = json.loads(result.stdout)
+        document = json.loads(result.stdout, object_pairs_hook=_unique_object)
     except json.JSONDecodeError:
         raise ReplyCheckInfrastructureError("reply validator returned invalid output") from None
     violations = document.get("violations") if isinstance(document, dict) else None
