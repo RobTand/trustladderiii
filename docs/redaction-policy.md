@@ -11,6 +11,16 @@ preserves literal hyphens and class boundaries. The parsed flags preserve scoped
 case/multiline behavior, and the adapter translates strict `\Z` and soft `$`
 anchors. Generation compiles every expression and aborts on unsupported syntax.
 
+Before parsing, `grammar.rs` validates an explicit Python lexical subset without
+editing the source. It accepts `i/m/s` flags, ASCII capture names and named
+backreferences, standard character escapes, and fixed-width `\x/\u/\U` scalar
+escapes. Verbose mode, numeric escapes/backreferences, named Unicode escapes,
+`\z`, comment groups, and other parser extensions are outside the subset.
+Literal U+000B/U+000C must use escaped forms. Unsupported tokens fail with their
+construct name and byte offset before fancy-regex can reinterpret them.
+The CI Python oracle independently calls `re.compile` on all 90 generated
+expressions, including every helper, and checks an invalid unused-helper mutant.
+
 Generate both committed consumers with the built controller CLI:
 
 ```sh

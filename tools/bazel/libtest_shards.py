@@ -1,12 +1,15 @@
-"""Split a libtest binary across Bazel shards by measured test time (#731).
+"""Split test binaries across Bazel shards by measured time (#731, #742).
 
-rust_runner.py lists the binary's tests, keeps this shard's share and runs them
-with --exact. The weights come from test logs, never from hand-edited numbers:
+rust_runner.py lists a libtest binary's tests, keeps this shard's share and runs
+them with --exact. A custom scenario harness reads its group weights from the
+same file and assigns whole groups (scenario_shard.rs). The weights come from
+test logs, never from hand-edited numbers:
 
-    python3 tools/bazel/libtest_shards.py BINARY TEST_LOG... > /tmp/weights.json
+    python3 tools/bazel/libtest_shards.py BINARY TEST_LOG... > weights.json
+    python3 tools/bazel/libtest_shards.py --groups BINARY TEST_LOG... > weights.json
 
-then merge the output into tools/bazel/libtest-shards.json. A test missing from
-the weights, such as a new one, counts as the median measured test.
+then merge the output into tools/bazel/libtest-shards.json. A test or group
+missing from the weights, such as a new one, counts as the median measured one.
 """
 import json
 from pathlib import Path
@@ -61,12 +64,31 @@ def measured(binary, lines):
     return dict(sorted(seconds.items()))
 
 
+def measured_groups(binary, lines):
+    """Seconds per scenario group from scenario_shard.rs's `scenario group NAME: Xs` lines.
+
+    Every group runs in exactly one shard of a run; across runs the largest time wins.
+    """
+    prefix = re.compile(r'^\[' + re.escape(binary) + r'\] scenario group (\w+): ([0-9.]+)s\s*$')
+    seconds = {}
+    for line in lines:
+        match = prefix.match(line)
+        if match:
+            seconds[match[1]] = max(seconds.get(match[1], 0.0), round(float(match[2]), 3))
+    if not seconds:
+        raise RuntimeError(f'No {binary} scenario groups in the logs')
+    return dict(sorted(seconds.items()))
+
+
 def main():
-    binary, *logs = sys.argv[1:]
+    arguments = sys.argv[1:]
+    groups = arguments[:1] == ['--groups']
+    binary, *logs = arguments[groups:]
     if not logs:
-        raise SystemExit('usage: libtest_shards.py BINARY TEST_LOG...')
+        raise SystemExit('usage: libtest_shards.py [--groups] BINARY TEST_LOG...')
     lines = [line for log in logs for line in Path(log).read_text().splitlines()]
-    print(json.dumps({binary: measured(binary, lines)}, indent=1, sort_keys=True))
+    weights = measured_groups(binary, lines) if groups else measured(binary, lines)
+    print(json.dumps({binary: weights}, indent=1, sort_keys=True))
 
 
 if __name__ == '__main__':
