@@ -2557,6 +2557,7 @@ impl Controller {
             if incident.open && incident.signature.class == postmortems::PAUSED {
                 self.reset_postmortem_pause(snapshot, commit);
             }
+            self.resume_memory_incident(&incident, commit);
             incident.open = false;
             if !self.retry_notice(snapshot, &incident, commit)? {
                 self.resume_incident_look(snapshot, &incident, commit)?;

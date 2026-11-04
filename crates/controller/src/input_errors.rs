@@ -55,7 +55,7 @@ impl InputFailure {
     }
 
     pub(crate) fn memory_lineage(&self, lineage: &str) -> bool {
-        self.scope == lineage || self.scope == "memory"
+        self.scope == lineage
     }
 
     pub(crate) fn with_memory_lineage(&self, lineage: &str, version: i64) -> Self {

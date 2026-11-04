@@ -119,6 +119,10 @@ const MIGRATIONS: &[(i32, &str)] = &[
         19,
         include_str!("../migrations/0019_memory_feed_version.sql"),
     ),
+    (
+        20,
+        include_str!("../migrations/0020_memory_feed_lineage.sql"),
+    ),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -156,6 +160,14 @@ pub enum MemoryFeedState {
     NoConsumer,
 }
 
+/// #773 / Q7: lifecycle evidence and its identity are one persisted observation.
+#[derive(Debug, Default)]
+pub struct MemoryFeedOutcome {
+    pub state: MemoryFeedState,
+    pub version: i64,
+    pub lineage: String,
+}
+
 impl MemoryFeedState {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -173,19 +185,31 @@ impl MemoryFeedState {
 const MEMORY_CONSUMER: &str = "SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = 773 AND objid = 1 AND objsubid = 2 AND granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())";
 
 pub fn read_memory_feed_state(tx: &mut Transaction<'_>) -> Result<MemoryFeedState> {
+    Ok(read_memory_feed_outcome(tx)?.state)
+}
+
+fn read_memory_feed_outcome(tx: &mut Transaction<'_>) -> Result<MemoryFeedOutcome> {
     let row = tx.query_opt(
-        &format!("SELECT state, EXISTS ({MEMORY_CONSUMER}) FROM tl3_memory_feed WHERE singleton"),
+        &format!("SELECT state, EXISTS ({MEMORY_CONSUMER}), version, lineage FROM tl3_memory_feed WHERE singleton"),
         &[],
     )?;
-    Ok(match row {
-        None => MemoryFeedState::NoConsumer,
-        Some(row) if !row.get::<_, bool>(1) => MemoryFeedState::Failed,
-        Some(row) => match row.get::<_, &str>(0) {
+    let Some(row) = row else {
+        return Ok(MemoryFeedOutcome::default());
+    };
+    let state = if !row.get::<_, bool>(1) {
+        MemoryFeedState::Failed
+    } else {
+        match row.get::<_, &str>(0) {
             "ready" => MemoryFeedState::Ready,
             "delivering" => MemoryFeedState::Delivering,
             "held" => MemoryFeedState::Held,
             _ => return Err(Error::Invalid("invalid memory feed state")),
-        },
+        }
+    };
+    Ok(MemoryFeedOutcome {
+        state,
+        version: row.get(2),
+        lineage: row.get(3),
     })
 }
 
@@ -198,7 +222,7 @@ impl Store {
     pub fn claim_memory_feed(&mut self) -> Result<()> {
         self.client
             .query_one("SELECT pg_advisory_lock_shared(773, 1)", &[])?;
-        self.client.batch_execute("SET application_name = 'tl3-memory-feed'; INSERT INTO tl3_memory_feed (singleton, state) VALUES (true, 'delivering') ON CONFLICT (singleton) DO UPDATE SET state = 'delivering', version = tl3_memory_feed.version + 1")?;
+        self.client.batch_execute("SET application_name = 'tl3-memory-feed'; INSERT INTO tl3_memory_feed (singleton, state) VALUES (true, 'ready') ON CONFLICT (singleton) DO NOTHING")?;
         Ok(())
     }
 
@@ -221,10 +245,27 @@ impl Store {
 
     /// #773: identify the persisted attempt outcome, so clearance is not a failure.
     pub fn memory_feed_version(&mut self) -> Result<i64> {
-        Ok(self
-            .client
-            .query_one("SELECT version FROM tl3_memory_feed WHERE singleton", &[])?
-            .get(0))
+        Ok(self.memory_feed_outcome()?.version)
+    }
+
+    /// #773 / Q7: sample the outcome's version and attempted lineage together.
+    pub fn memory_feed_outcome(&mut self) -> Result<MemoryFeedOutcome> {
+        read_memory_feed_outcome(&mut self.client.transaction()?)
+    }
+
+    /// #773: only the owning feed records delivery identity; operator flushes
+    /// signal acknowledged recovery through memory_delivery_ack instead.
+    pub fn set_memory_feed_attempt(&mut self, lineage: &str, held: bool) -> Result<()> {
+        let state = if held { "held" } else { "delivering" };
+        let mut tx = self.client.transaction()?;
+        if tx.execute(
+            &format!("UPDATE tl3_memory_feed SET state = $1, lineage = $2, version = version + 1 WHERE singleton AND (state <> $1 OR lineage <> $2) AND EXISTS ({MEMORY_CONSUMER} AND pid = pg_backend_pid())"),
+            &[&state, &lineage],
+        )? > 0 {
+            tx.batch_execute("NOTIFY tl3_ingress")?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     /// #773: durable retry evidence wakes the controller's existing ingress source.

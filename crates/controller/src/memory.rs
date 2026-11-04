@@ -288,6 +288,7 @@ pub fn flush(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usiz
         }
         return Ok(count);
     }
+    memory_attempt(store, &format!("memory:retain:{}", pending[0].1))?;
     let key = settings.retain_key()?;
     let client = client(Duration::from_secs(10))?;
     let url = bank_url(settings, &[])?;
@@ -295,11 +296,7 @@ pub fn flush(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usiz
     loop {
         for (sequence, id, item) in pending {
             // Q7: a preceding curation cannot authorize this operation's retry.
-            if memory_needs_rob(&store.load()?, &format!("memory:retain:{id}"))? {
-                return Err(Error::Invalid(
-                    "memory delivery waits for Rob to clear its incident",
-                ));
-            }
+            memory_attempt(store, &format!("memory:retain:{id}"))?;
             after = sequence;
             let result: Result<()> = crate::executor::runtime()?.block_on(async {
                 let mut request = client
@@ -1128,16 +1125,13 @@ fn curate(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usize> 
     if pending.is_empty() {
         return Ok(0);
     }
+    memory_attempt(store, &format!("memory:curation:{}", pending[0].0))?;
     let key = settings.retain_key()?;
     let client = client(Duration::from_secs(10))?;
     let mut count = 0;
     while !pending.is_empty() {
         for (sequence, memory_id, state, reason) in pending {
-            if memory_needs_rob(&store.load()?, &format!("memory:curation:{sequence}"))? {
-                return Err(Error::Invalid(
-                    "memory curation waits for Rob to clear its incident",
-                ));
-            }
+            memory_attempt(store, &format!("memory:curation:{sequence}"))?;
             let url = bank_url(settings, &[&memory_id])?;
             let status = crate::executor::runtime()?.block_on(async {
                 let mut request = client
@@ -1272,19 +1266,23 @@ fn run_feed(
         if life.held.load(Ordering::SeqCst) && !retry {
             continue;
         }
-        // Q7: a later incident holds this lineage until Rob clears it.
-        if memory_needs_rob(&store.load()?, &memory_lineage(store)?)? {
-            life.held.store(true, Ordering::SeqCst);
-            store.set_memory_feed_state(tl3_store::MemoryFeedState::Held)?;
-            continue;
-        }
-        store.set_memory_feed_state(tl3_store::MemoryFeedState::Delivering)?;
-        let delivery = deliver(store, settings, breaker);
+        let work =
+            !store.pending_memory_curations()?.is_empty() || !store.pending_memories(0)?.is_empty();
+        let delivery = work.then(|| deliver(store, settings, breaker));
         if let Some(announcer) = announcer.lock().unwrap().as_deref()
             && let Err(error) = announce(store, announcer)
         {
             eprintln!("memory curation notes retained for retry: {error}");
         }
+        let Some(delivery) = delivery else {
+            // An empty healthy wake is silent. An external acknowledged flush
+            // can also have drained a held queue before requesting this wake.
+            life.held.store(false, Ordering::SeqCst);
+            if store.memory_feed_state()? != tl3_store::MemoryFeedState::Ready {
+                store.set_memory_feed_state(tl3_store::MemoryFeedState::Ready)?;
+            }
+            continue;
+        };
         let state = match delivery {
             Ok(_) => tl3_store::MemoryFeedState::Ready,
             Err(error @ Error::Store(_)) => return Err(error),
@@ -1432,14 +1430,17 @@ pub(crate) fn next_probe_ms(snapshot: &tl3_store::Snapshot) -> Result<Option<u64
         .transpose()
 }
 
-fn memory_lineage(store: &mut Store) -> Result<String> {
-    if let Some((sequence, ..)) = store.pending_memory_curations()?.first() {
-        return Ok(format!("memory:curation:{sequence}"));
+fn memory_attempt(store: &mut Store, lineage: &str) -> Result<()> {
+    let held = memory_needs_rob(&store.load()?, lineage)?;
+    // Persist identity before key/client/HTTP failures can produce an outcome.
+    // A blocked operation restores its existing hold after independent work.
+    store.set_memory_feed_attempt(lineage, held)?;
+    if held {
+        return Err(Error::Invalid(
+            "memory delivery waits for Rob to clear its incident",
+        ));
     }
-    Ok(store.pending_memories(0)?.first().map_or_else(
-        || "memory:empty".into(),
-        |(_, operation, _)| format!("memory:retain:{operation}"),
-    ))
+    Ok(())
 }
 
 fn memory_needs_rob(snapshot: &tl3_store::Snapshot, lineage: &str) -> Result<bool> {
@@ -1462,7 +1463,8 @@ impl crate::Controller {
     pub(crate) fn reconcile_memory(&mut self, snapshot: &tl3_store::Snapshot) -> Result<bool> {
         use crate::looks::{Cause, Incident, IncidentSignature};
         use tl3_store::{Commit, MemoryFeedState, RowChange};
-        let state = self.store.memory_feed_state()?;
+        let outcome = self.store.memory_feed_outcome()?;
+        let state = outcome.state;
         let incidents = snapshot
             .rows
             .iter()
@@ -1499,9 +1501,9 @@ impl crate::Controller {
         if !matches!(state, MemoryFeedState::Held | MemoryFeedState::Failed) {
             return Ok(false);
         }
-        let version = self.store.memory_feed_version()?;
+        let version = outcome.version;
         let lineage = if state == MemoryFeedState::Held {
-            memory_lineage(&mut self.store)?
+            outcome.lineage
         } else {
             "memory:feed".into()
         };
@@ -1548,8 +1550,9 @@ impl crate::Controller {
                 summary.push_str(" The controller probes in two minutes and drains automatically after acknowledgement; `tl3 memory retry --config FILE` requests an earlier attempt.");
             }
             let probe_armed = next_probe_ms(snapshot)?.is_some();
+            let probe_needed = state == MemoryFeedState::Held && !previous.needs_rob;
             if previous.summary == summary
-                && (probe_armed == (state == MemoryFeedState::Held))
+                && probe_armed == probe_needed
                 && previous.input_failure.as_ref().is_some_and(|failure| {
                     failure.memory_lineage(&lineage) && failure.memory_version == Some(version)
                 })
@@ -1577,7 +1580,7 @@ impl crate::Controller {
                 incident.id.clone(),
                 json!(incident),
             ));
-            if state == MemoryFeedState::Held && !probe_armed {
+            if probe_needed && !probe_armed {
                 commit.rows.push(crate::put(
                     MEMORY_PROBES,
                     MEMORY_PROBE.into(),
@@ -1586,7 +1589,7 @@ impl crate::Controller {
                     }),
                 ));
             }
-            if state == MemoryFeedState::Failed && next_probe_ms(snapshot)?.is_some() {
+            if !probe_needed && probe_armed {
                 commit.rows.push(RowChange::Delete {
                     table: MEMORY_PROBES.into(),
                     id: MEMORY_PROBE.into(),
@@ -1641,7 +1644,8 @@ impl crate::Controller {
         commit
             .rows
             .push(crate::put("incidents", id, json!(incident)));
-        if state == MemoryFeedState::Held && next_probe_ms(snapshot)?.is_none() {
+        let probe_needed = state == MemoryFeedState::Held && !needs_rob;
+        if probe_needed && next_probe_ms(snapshot)?.is_none() {
             commit.rows.push(crate::put(
                 MEMORY_PROBES,
                 MEMORY_PROBE.into(),
@@ -1650,7 +1654,7 @@ impl crate::Controller {
                 }),
             ));
         }
-        if state == MemoryFeedState::Failed && next_probe_ms(snapshot)?.is_some() {
+        if !probe_needed && next_probe_ms(snapshot)?.is_some() {
             commit.rows.push(RowChange::Delete {
                 table: MEMORY_PROBES.into(),
                 id: MEMORY_PROBE.into(),
@@ -1658,6 +1662,23 @@ impl crate::Controller {
         }
         self.store.commit(&commit)?;
         Ok(true)
+    }
+
+    /// Q7 / #773: clearance is the event that resumes a Rob-held lineage.
+    pub(crate) fn resume_memory_incident(
+        &self,
+        incident: &crate::looks::Incident,
+        commit: &mut tl3_store::Commit,
+    ) {
+        if incident.open && incident.signature.class == "hindsight_unavailable" {
+            commit.rows.push(crate::put(
+                MEMORY_PROBES,
+                MEMORY_PROBE.into(),
+                json!(MemoryProbe {
+                    due_ms: self.now_ms()
+                }),
+            ));
+        }
     }
 
     pub(crate) fn look_memory_probe(&mut self, force: bool, key: Option<&str>) -> Result<()> {
@@ -1674,7 +1695,8 @@ impl crate::Controller {
         }
         // This schedules one real operation under its original UUID. A probe
         // deadline never manufactures healthy evidence or clears the hold.
-        if !memory_needs_rob(&snapshot, &memory_lineage(&mut self.store)?)?
+        let held = memory_needs_rob(&snapshot, &self.store.memory_feed_outcome()?.lineage)?;
+        if !held
             && let Err(error) = self
                 .adapters
                 .get(crate::executor::Upstream::Workers)?
@@ -1687,13 +1709,20 @@ impl crate::Controller {
             json!({"memory_probe":true}),
             &snapshot,
         );
-        commit.rows.push(crate::put(
-            MEMORY_PROBES,
-            MEMORY_PROBE.into(),
-            json!(MemoryProbe {
-                due_ms: now.saturating_add(PROBE_MS)
-            }),
-        ));
+        if held {
+            commit.rows.push(tl3_store::RowChange::Delete {
+                table: MEMORY_PROBES.into(),
+                id: MEMORY_PROBE.into(),
+            });
+        } else {
+            commit.rows.push(crate::put(
+                MEMORY_PROBES,
+                MEMORY_PROBE.into(),
+                json!(MemoryProbe {
+                    due_ms: now.saturating_add(PROBE_MS)
+                }),
+            ));
+        }
         self.store.commit(&commit)?;
         Ok(())
     }

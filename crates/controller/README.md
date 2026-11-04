@@ -1121,11 +1121,17 @@ first incident. Only Rob can clear later incidents for that lineage, using the
 leave those operations held until clearance. Clearance is checked before each
 outgoing operation, so a preceding curation cannot release a retain's hold.
 Rob's clearance covers the current persisted outcome. Other operations get their own
-incident count. A reused incident after restart always rearms its recovery look.
+incident count. The attempted lineage is stored with the outcome, so priority
+work arriving later cannot inherit its failure. Legacy `memory` incidents keep
+their own scope. A reused first incident after restart rearms its recovery look.
+Later incidents have no probe deadline while waiting for Rob; his clearance
+arms an immediate recovery look in the same durable commit.
 Feed failure or panic wakes the existing worker ingress source, even if the
 source registers after the exit. Intentional joined shutdown sends no failure wake. Feed failure does not skip worker-session retirement.
 Migration 19 adds a runtime version marker so clearing an incident does not
-count the same failed attempt again. Migration 18 stays unchanged.
+count the same failed attempt again. Migration 20 adds the attempted lineage.
+An empty healthy wake writes no feed state and sends no ingress notification.
+Migrations 18 and 19 stay unchanged.
 
 The active retry set holds at most 10,000 rows; new records beyond that limit
 park the oldest pending rows. After a successful retain drains the pending set,
