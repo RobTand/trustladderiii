@@ -27,6 +27,36 @@ pub closed spec fn delivered(dependencies: Seq<Dependency>, node: NodeId) -> boo
 pub closed spec fn prerequisites_delivered(world: World, node: NodeId) -> bool {
     delivered(world.dependencies@, node)
 }
+
+/// #693 / #771: declarations retained by the controller name existing roots.
+pub closed spec fn edges_indexable(world: World) -> bool {
+    forall|i: int| 0 <= i < world.dependencies@.len() ==>
+        world.dependencies@[i].node.0 < world.nodes@.len()
+        && match world.dependencies@[i].target.request {
+            None => true, Some(node) => node.0 < world.nodes@.len(),
+        }
+}
+
+pub closed spec fn unseen_prefix(seen: Seq<bool>, end: nat) -> nat
+    recommends end <= seen.len(),
+    decreases end,
+{
+    if end == 0 { 0 } else { unseen_prefix(seen, (end - 1) as nat)
+        + if seen[end as int - 1] { 0nat } else { 1nat } }
+}
+
+/// #771: visiting an unvisited root pays for at most one complete edge scan.
+pub proof fn visit_reduces_unseen(seen: Seq<bool>, index: int, end: nat)
+    requires 0 <= index < end <= seen.len(), !seen[index],
+    ensures unseen_prefix(seen.update(index, true), end) + 1 == unseen_prefix(seen, end),
+    decreases end,
+{
+    reveal(unseen_prefix);
+    if index < end - 1 {
+        visit_reduces_unseen(seen, index, (end - 1) as nat);
+    }
+}
+
 }
 
 impl World {
@@ -57,30 +87,49 @@ impl World {
     }
     }
 
-    fn dependency_path(&self, from: NodeId, to: NodeId) -> bool {
+    kernel_fn! {
+    /// #693 / #771: both production cycle-detection branches terminate. Bitset
+    /// relaxation strictly raises a u64 mask; the large traversal charges each
+    /// push to one edge of a newly visited root. Neither branch writes a ledger.
+    fn dependency_path(&self, from: NodeId, to: NodeId) -> (result: bool) [
+        requires from.0 < self.nodes@.len(), to.0 < self.nodes@.len(),
+            edges_indexable(*self),
+    ] proof [reveal(edges_indexable);] {
         if self.nodes.len() <= 64 {
             // Most worlds fit in a bitset. Repeated edge relaxation reaches
             // the same nodes as the unbounded traversal below, without allocation.
             let mut seen = 1u64 << from.0;
-            loop {
+            kernel_loop! { [
+                invariant self.nodes.len() <= 64,
+                decreases u64::MAX as int - seen as int,
+            ] {
                 if seen & (1u64 << to.0) != 0 {
                     return true;
                 }
                 let before = seen;
-                for dependency in &self.dependencies {
+                let mut index = 0usize;
+                kernel_while! { (index < self.dependencies.len()) [
+                    invariant index <= self.dependencies.len(), seen >= before,
+                    decreases self.dependencies.len() - index,
+                ] {
+                    let dependency = self.dependencies[index];
                     if !dependency.rejected
                         && dependency.status == DependencyStatus::Pending
                         && !self.nodes[dependency.node.0 as usize].phase.is_closed()
                         && seen & (1u64 << dependency.node.0) != 0
-                        && let Some(target) = dependency.target.request
                     {
-                        seen |= 1u64 << target.0;
+                        if let Some(target) = dependency.target.request {
+                            let mask = 1u64 << target.0;
+                            kernel_proof! { assert((seen | mask) >= seen) by(bit_vector); }
+                            seen |= mask;
+                        }
                     }
-                }
+                    index += 1;
+                } }
                 if seen == before {
                     return false;
                 }
-            }
+            } }
         }
         #[cfg(kani)]
         {
@@ -91,7 +140,14 @@ impl World {
         }
         let mut seen = alloc::vec![false; self.nodes.len()];
         let mut pending = alloc::vec![from];
-        while let Some(node) = pending.pop() {
+        kernel_loop! { [
+            invariant seen.len() == self.nodes.len(),
+                forall|i: int| 0 <= i < pending@.len() ==> pending@[i].0 < self.nodes@.len(),
+            decreases unseen_prefix(seen@, seen@.len()) * (self.dependencies@.len() + 1)
+                + pending@.len(),
+        ] {
+            let pending_before = pending.len();
+            let Some(node) = pending.pop() else { return false; };
             if node == to {
                 return true;
             }
@@ -101,18 +157,28 @@ impl World {
             if seen[index] || self.nodes[index].phase.is_closed() {
                 continue;
             }
+            kernel_proof! { visit_reduces_unseen(seen@, index as int, seen@.len()); }
             seen[index] = true;
-            for dependency in &self.dependencies {
+            let mut edge = 0usize;
+            kernel_while! { (edge < self.dependencies.len()) [
+                invariant edge <= self.dependencies.len(),
+                    pending@.len() <= pending_before as int - 1 + edge as int,
+                    forall|i: int| 0 <= i < pending@.len() ==> pending@[i].0 < self.nodes@.len(),
+                decreases self.dependencies.len() - edge,
+            ] {
+                let dependency = self.dependencies[edge];
                 if dependency.node == node
                     && !dependency.rejected
                     && dependency.status == DependencyStatus::Pending
-                    && let Some(target) = dependency.target.request
                 {
-                    pending.push(target);
+                    if let Some(target) = dependency.target.request {
+                        pending.push(target);
+                    }
                 }
-            }
-        }
-        false
+                edge += 1;
+            } }
+        } }
+    }
     }
 
     pub fn dependency_graph_acyclic(&self) -> bool {
@@ -255,20 +321,73 @@ impl World {
     }
     }
 
-    pub(super) fn remove_dependency(&mut self, i: usize, kind: PrerequisiteKind, number: u64) {
+    kernel_fn! {
+    /// Prerequisite removal rows / #693 / #771: stable in-place compaction
+    /// preserves every ledger amount and changes only this node's wait flags.
+    pub(super) fn remove_dependency(&mut self, i: usize, kind: PrerequisiteKind,
+        number: u64) -> (result: ()) [
+        requires i < old(self).nodes@.len(),
+        ensures final(self).nodes@ == old(self).nodes@.update(i as int, Node {
+            waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
+            credit: Credit { withheld: final(self).nodes@[i as int].credit.withheld,
+                ..old(self).nodes@[i as int].credit },
+            ..old(self).nodes@[i as int]
+        }),
+            final(self).next_ticket == old(self).next_ticket,
+            final(self).next_question == old(self).next_question,
+            final(self).gates@ == old(self).gates@,
+            final(self).pool_capacity == old(self).pool_capacity,
+            final(self).fail_fast == old(self).fail_fast,
+            final(self).file_sets@ == old(self).file_sets@,
+    ] {
         if self.nodes[i].phase != Phase::Ingesting || self.nodes[i].planning_started {
             return;
         }
         let node = NodeId(i as u64);
-        self.dependencies
-            .retain(|d| d.node != node || d.target.kind != kind || d.target.number != number);
-        self.nodes[i].waiting_prerequisite = self
-            .dependencies
-            .iter()
-            .find(|d| d.node == node && (d.rejected || d.status != DependencyStatus::Delivered))
-            .map(|d| d.target.number);
+        let mut read = 0usize;
+        let mut write = 0usize;
+        kernel_while! { (read < self.dependencies.len()) [
+            invariant write <= read <= self.dependencies.len(),
+            decreases self.dependencies.len() - read,
+        ] {
+            let d = self.dependencies[read];
+            if d.node != node || d.target.kind != kind || d.target.number != number {
+                self.dependencies[write] = d;
+                write += 1;
+            }
+            read += 1;
+        } }
+        self.dependencies.truncate(write);
+        self.nodes[i].waiting_prerequisite = self.first_undelivered(node).map(|d| d.target.number);
         self.nodes[i].credit.withheld =
             !self.dependencies_delivered(node) && self.nodes[i].credit.ready;
+    }
+    }
+
+    kernel_fn! {
+    /// #693 / #771: find the same first blocking declaration as the public query.
+    fn first_undelivered(&self, node: NodeId) -> (result: Option<Dependency>) [
+        ensures match result {
+            Some(d) => d.node == node && (d.rejected || d.status != DependencyStatus::Delivered),
+            None => prerequisites_delivered(*self, node),
+        },
+    ] proof [reveal(prerequisites_delivered); reveal(delivered);] {
+        let mut index = 0usize;
+        kernel_while! { (index < self.dependencies.len()) [
+            invariant index <= self.dependencies.len(),
+                forall|j: int| 0 <= j < index && self.dependencies@[j].node == node
+                    ==> !self.dependencies@[j].rejected
+                        && self.dependencies@[j].status == DependencyStatus::Delivered,
+            decreases self.dependencies.len() - index,
+        ] {
+            let d = self.dependencies[index];
+            if d.node == node && (d.rejected || d.status != DependencyStatus::Delivered) {
+                return Some(d);
+            }
+            index += 1;
+        } }
+        None
+    }
     }
 
     pub(super) fn dependency_fact(
@@ -337,11 +456,7 @@ impl World {
                 }),
             );
         }
-        self.nodes[i].waiting_prerequisite = self
-            .dependencies
-            .iter()
-            .find(|d| d.node == node && (d.rejected || d.status != DependencyStatus::Delivered))
-            .map(|d| d.target.number);
+        self.nodes[i].waiting_prerequisite = self.first_undelivered(node).map(|d| d.target.number);
         self.withhold_dependency_credit(i);
     }
 }
