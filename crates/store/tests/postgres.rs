@@ -2944,11 +2944,6 @@ fn dispatch_evidence_index_plan(settings: &tl3_config::Store) {
 /// #766/Q27: one-time legacy backfill is bounded, restartable and gates negative admission.
 fn dispatch_legacy_migration_is_bounded(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
-    assert!(
-        matches!(store.migrate_dispatch_evidence(), Err(Error::OwnershipLost)),
-        "an auxiliary session cannot drive the legacy backfill"
-    );
-    let mut store = Ownership::claim(store).unwrap().into_store();
     let mut client = raw(settings);
     client.batch_execute("ALTER TABLE tl3_effects DISABLE TRIGGER tl3_record_dispatch;
         INSERT INTO tl3_events(event_key,revision,epoch,payload,result)
@@ -2982,6 +2977,19 @@ fn dispatch_legacy_migration_is_bounded(settings: &tl3_config::Store) {
             .is_err(),
         "incomplete migration cannot authorize a negative lookup"
     );
+    assert!(
+        matches!(store.migrate_dispatch_evidence(), Err(Error::OwnershipLost)),
+        "an auxiliary session cannot drive the legacy backfill"
+    );
+    assert_eq!(
+        client
+            .query_one("SELECT cursor FROM tl3_dispatch_migration", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        0,
+        "a refused auxiliary backfill cannot move its cursor"
+    );
+    let mut store = Ownership::claim(store).unwrap().into_store();
     assert!(store.migrate_dispatch_evidence().unwrap());
     assert_eq!(
         client
