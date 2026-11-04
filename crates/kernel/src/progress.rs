@@ -340,7 +340,7 @@ proof fn lift_node_progress(before: World, after: World, i: int)
     ensures progress_measure(after) < progress_measure(before),
 {
     reveal(progress_measure);
-    reveal(dependencies::edges_indexable);
+    dependencies::indexable_definition(before);
     sum_update(before.nodes@, i, after.nodes@[i]);
     assert forall|j: int| 0 <= j < before.dependencies@.len() implies
         dependency_weight(after, j) <= dependency_weight(before, j) by {
@@ -359,7 +359,7 @@ proof fn settle_measure(before: World, after: World)
     ensures progress_measure(after) <= progress_measure(before),
 {
     reveal(progress_measure);
-    reveal(dependencies::edges_indexable);
+    dependencies::indexable_definition(before);
     assert forall|j: int| 0 <= j < before.dependencies@.len() implies
         dependency_weight(after, j) <= dependency_weight(before, j) by {}
     dependency_sum_compare(before, after, before.dependencies@.len());
