@@ -27,7 +27,7 @@ fn refused(state: EnqueueState) -> bool {
 proof!(enqueue_ack_sound, {
     let state: EnqueueState = kani::any();
     let read: QueueRead = kani::any();
-    let (_, effects) = decide(state, QueueEvent::Reconcile(read));
+    let (next, effects) = decide(state, QueueEvent::Reconcile(read));
     // Independent outcome oracle. It does not call a production predicate.
     let expected = if refused(state) {
         Effect::SaveRecovery
@@ -90,27 +90,75 @@ proof!(enqueue_ack_sound, {
         match read.issue {
             None => Effect::Read(Need::Issue),
             Some(issue) => {
-                let pending = read.queue == QueueState::Waiting
-                    && issue.queue_label
-                    && (issue.recovery || issue.repaired)
-                    || match state.intent {
-                        None => issue.dequeue_pending,
+                let recovery_wait = read.queue == QueueState::Waiting && issue.queue_label;
+                if recovery_wait && issue.recovery.is_none() {
+                    Effect::Read(Need::RecoveryFile)
+                } else if recovery_wait && issue.recovery == Some(true) {
+                    Effect::Complete(Complete::Pending)
+                } else if recovery_wait && issue.repaired.is_none() {
+                    Effect::Read(Need::RepairedHead)
+                } else if recovery_wait && issue.repaired == Some(true) {
+                    Effect::Complete(Complete::Pending)
+                } else {
+                    match state.intent {
+                        None => match issue.dequeue_pending {
+                            None => Effect::Read(Need::Dequeue),
+                            Some(true) => Effect::Complete(Complete::Pending),
+                            Some(false) => Effect::Complete(Complete::Absent),
+                        },
                         Some(Intent {
                             requeue: Some(command),
-                        }) => {
-                            issue.recovery || command == Requeue::Sending || issue.dequeue_pending
+                        }) => match issue.recovery {
+                            None => Effect::Read(Need::RecoveryFile),
+                            Some(true) => Effect::Complete(Complete::Pending),
+                            Some(false) if command == Requeue::Sending => {
+                                Effect::Complete(Complete::Pending)
+                            }
+                            Some(false) => match issue.dequeue_pending {
+                                None => Effect::Read(Need::Dequeue),
+                                Some(true) => Effect::Complete(Complete::Pending),
+                                Some(false) => Effect::Complete(Complete::Absent),
+                            },
+                        },
+                        Some(Intent { requeue: None }) => {
+                            if issue.queue_label {
+                                Effect::Complete(Complete::Pending)
+                            } else {
+                                match issue.applied {
+                                    None => Effect::Read(Need::Applied),
+                                    Some(true) => Effect::Complete(Complete::Pending),
+                                    Some(false) => Effect::Complete(Complete::Absent),
+                                }
+                            }
                         }
-                        Some(Intent { requeue: None }) => issue.queue_label || issue.applied,
-                    };
-                Effect::Complete(if pending {
-                    Complete::Pending
-                } else {
-                    Complete::Absent
-                })
+                    }
+                }
             }
         }
     };
     assert_eq!(first(&effects), expected, "enqueue outcome misjudged");
+    if refused(state) {
+        assert_eq!(effects.len(), 2);
+        assert_eq!(
+            effects.get(1),
+            Some(Effect::Complete(Complete::Permanent(Failure::Refused)))
+        );
+    } else if expected == Effect::SaveRecovery {
+        assert_eq!(effects.len(), 3);
+        assert_eq!(effects.get(1), Some(Effect::SaveIntent));
+        assert_eq!(
+            effects.get(2),
+            Some(Effect::Complete(Complete::Permanent(Failure::Refused)))
+        );
+        assert_eq!(
+            next.intent,
+            Some(Intent {
+                requeue: Some(Requeue::Refused)
+            })
+        );
+    } else {
+        assert_eq!(effects.len(), 1);
+    }
     kani::cover!(
         expected == Effect::Complete(Complete::Pending),
         "await acknowledgement"
@@ -238,6 +286,54 @@ proof!(enqueue_refused_sticky, {
         matches!(event, QueueEvent::Reconcile(_)),
         "refused reconcile"
     );
+    let command: Command = kani::any();
+    kani::assume(matches!(
+        command,
+        Command::Refused | Command::PermissionDenied | Command::Rejected
+    ));
+    let recovery = Recovery {
+        command,
+        eligible_since_ms: kani::any(),
+    };
+    let event: QueueEvent = kani::any();
+    kani::assume(matches!(
+        event,
+        QueueEvent::CommandStatus
+            | QueueEvent::CommandReceipt { .. }
+            | QueueEvent::DispatchCommand(_)
+            | QueueEvent::CommandDone(_)
+            | QueueEvent::RecoveryTick { .. }
+    ));
+    let (next, effects) = decide(
+        EnqueueState {
+            recovery: Some(recovery),
+            ..EnqueueState::default()
+        },
+        event,
+    );
+    assert_eq!(next.recovery, Some(recovery), "a terminal command changed");
+    let failure = match command {
+        Command::Refused => Failure::Refused,
+        Command::PermissionDenied => Failure::Permission,
+        Command::Rejected => Failure::Rejected,
+        _ => unreachable!(),
+    };
+    assert_eq!(
+        effects.get(effects.len() - 1),
+        Some(Effect::Complete(Complete::Permanent(failure))),
+        "terminal command must stay permanent"
+    );
+    for i in 0..effects.len() {
+        assert!(
+            !matches!(effects.get(i), Some(Effect::Write(_))),
+            "terminal command retried"
+        );
+    }
+    kani::cover!(
+        command == Command::Refused
+            && matches!(event, QueueEvent::CommandDone(CommandResult::Accepted)),
+        "late success cannot erase refusal"
+    );
 });
 
 proof!(enqueue_write_ahead, {
@@ -346,5 +442,86 @@ proof!(enqueue_recovery_grace, {
     kani::cover!(
         ready && !eligible && recovery.is_some(),
         "eligibility reset"
+    );
+});
+
+proof!(enqueue_dequeue_fresh, {
+    let retry: bool = kani::any();
+    let concluded: bool = kani::any();
+    let labeled: bool = kani::any();
+    let dequeued: Option<LabelEvent> = kani::any();
+    let queued: Option<u64> = kani::any();
+    let finished: Option<super::Time> = kani::any();
+    let fresh = match dequeued {
+        None => false,
+        Some(event) => {
+            event.labeled
+                && match queued {
+                    Some(queued) => event.id > queued,
+                    None => match finished {
+                        Some(finished) => event.at >= finished,
+                        None => false,
+                    },
+                }
+        }
+    };
+    let pending = dequeue_pending(retry, concluded, labeled, dequeued, queued, finished);
+    assert_eq!(
+        pending,
+        retry && !concluded && (!labeled || !fresh),
+        "dequeue freshness misjudged"
+    );
+    kani::cover!(pending && !labeled, "wait for label");
+    kani::cover!(pending && labeled && !fresh, "ignore old cycle");
+    kani::cover!(
+        !pending && retry && !concluded && fresh,
+        "fresh event finishes dequeue"
+    );
+});
+
+proof!(enqueue_required_check, {
+    use super::{App, Conclusion, Status};
+    let check: super::CheckView = kani::any();
+    let runner: bool = kani::any();
+    let expected = match (check.status, check.conclusion) {
+        (
+            Status::Completed,
+            Some(Conclusion::Success | Conclusion::Neutral | Conclusion::Skipped),
+        ) => RequiredState::Passed,
+        (Status::Completed, Some(Conclusion::ActionRequired | Conclusion::Stale)) => {
+            RequiredState::Pending
+        }
+        (Status::Completed, Some(conclusion)) => {
+            if check.app == App::Actions
+                && (matches!(
+                    conclusion,
+                    Conclusion::Cancelled | Conclusion::TimedOut | Conclusion::StartupFailure
+                ) || conclusion == Conclusion::Failure && runner)
+            {
+                RequiredState::Infrastructure
+            } else {
+                RequiredState::Tests
+            }
+        }
+        (Status::Completed, None) => RequiredState::Unknown,
+        _ => RequiredState::Pending,
+    };
+    assert_eq!(
+        required_check(check, runner),
+        expected,
+        "required check misclassified"
+    );
+    kani::cover!(expected == RequiredState::Passed, "head check passed");
+    kani::cover!(expected == RequiredState::Pending, "head check pending");
+    kani::cover!(expected == RequiredState::Unknown, "no conclusion");
+    kani::cover!(expected == RequiredState::Tests, "test failure");
+    kani::cover!(
+        expected == RequiredState::Infrastructure && check.conclusion == Some(Conclusion::Failure),
+        "runner annotation"
+    );
+    kani::cover!(
+        expected == RequiredState::Infrastructure
+            && check.conclusion == Some(Conclusion::Cancelled),
+        "cancelled runner"
     );
 });

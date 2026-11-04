@@ -483,7 +483,9 @@ impl Adapter {
         for effect in effects {
             match effect {
                 lifecycle::Effect::SaveRecovery => {
-                    self.fence(delivery)?;
+                    if recovery.command == Command::Sending {
+                        self.fence(delivery)?;
+                    }
                     self.save_recovery(delivery, &recovery)?;
                 }
                 lifecycle::Effect::Complete(lifecycle::Complete::Pending) => {

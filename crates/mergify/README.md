@@ -170,3 +170,30 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --transport pool 
 Inside an admitted action, `kani.py prove [NAME...]` proves harnesses and
 `kani.py mutants [NAME...]` checks each seeded mutant. The string parsers have
 proptest round-trips in `tests/parse.rs`.
+
+### Enqueue lifecycle (#751)
+
+`decide::enqueue::decide(state, event)` returns the next `EnqueueState` and an
+ordered effect list. Ordinary builds use a `Vec`; Kani uses a three-slot
+outbox. `Read` effects request only the next necessary input. `SaveIntent`,
+`SaveRecovery` and `SaveRerun` precede their upstream writes. The adapter stops
+if a save fails.
+
+The state is a projection, not a new storage format. The controller still
+reads and writes the same `.intent`, `.applied`, `.reruns`, head recovery and
+acknowledgement files. It retains the same command keys and retirement rules.
+No state moves into the store in this step.
+
+Seven harnesses in `enqueue_proofs.rs` cover exact reconciliation outcomes,
+stale heads, sticky refusals, write-ahead ordering, recovery grace and budget,
+dequeue freshness, and required-check classification. Their scalar inputs
+range over their full domains. Unwind 4 covers the three effect slots and
+loop exit. The recovery harness checks timer expiry and two consecutive
+command dispatches. It does not prove crash/restart interleavings, file I/O,
+command-key adoption, annotation parsing, or check/run selection. Keep all
+183 controller scenarios until those assertions have their own coverage.
+
+`tools/kani.py verify NAME` rejects that harness's seeded mutants and then
+proves the restored source. Run it only inside an admitted PrismaBuild action
+until #726 provides the required per-harness BuildBuddy targets. These proofs
+are development evidence; the current Gate does not run them.

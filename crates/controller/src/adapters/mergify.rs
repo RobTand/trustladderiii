@@ -711,7 +711,8 @@ impl Adapter {
                 state.state,
                 QueueState::Dequeued | QueueState::FailedCi | QueueState::Conflict
             );
-        if !retry || state.dequeue_rule_concluded {
+        if !lifecycle::dequeue_pending(retry, state.dequeue_rule_concluded, false, None, None, None)
+        {
             return Ok(false);
         }
         if !issue.labels.iter().any(|label| label.name == "dequeued") {
@@ -767,6 +768,7 @@ impl Adapter {
         let mut observed = None;
         let mut read = None;
         let mut observations = Vec::new();
+        let mut issue = None;
         loop {
             let (next, effects) = lifecycle::decide(core, event);
             core = next;
@@ -900,36 +902,46 @@ impl Adapter {
                     read.as_mut().unwrap().person_removed = Some(removed);
                 }
                 lifecycle::Need::Issue => {
-                    let state = observed.as_ref().unwrap();
-                    let issue = self.runtime.block_on(
+                    let current = self.runtime.block_on(
                         self.clients[&delivery.repository.installation]
                             .issue(&full_name(&delivery.repository), enqueue(delivery)?.0),
                     )?;
-                    let queue_label = issue.labels.iter().any(|label| label.name == QUEUE_LABEL);
-                    let recovery = self.has_recovery(delivery)?;
-                    let repaired = state.state == QueueState::Waiting
-                        && queue_label
-                        && !recovery
-                        && self.repaired_head(delivery, snapshot)?;
-                    let needs_dequeue = !(state.state == QueueState::Waiting
-                        && queue_label
-                        && (recovery || repaired))
-                        && (baseline.is_none()
-                            || baseline.as_ref().is_some_and(|attempt| {
-                                matches!(attempt.requeue, Some(Requeue::Ready))
-                            }) && !recovery);
                     read.as_mut().unwrap().issue = Some(lifecycle::IssueRead {
-                        queue_label,
-                        recovery,
-                        repaired,
-                        dequeue_pending: needs_dequeue
-                            && self.dequeue_pending(delivery, state, &issue)?,
-                        applied: self
-                            .records
+                        queue_label: current.labels.iter().any(|label| label.name == QUEUE_LABEL),
+                        recovery: None,
+                        repaired: None,
+                        dequeue_pending: None,
+                        applied: None,
+                    });
+                    issue = Some(current);
+                }
+                lifecycle::Need::RecoveryFile => {
+                    read.as_mut().unwrap().issue.as_mut().unwrap().recovery =
+                        Some(self.has_recovery(delivery)?)
+                }
+                lifecycle::Need::RepairedHead => {
+                    read.as_mut().unwrap().issue.as_mut().unwrap().repaired =
+                        Some(self.repaired_head(delivery, snapshot)?)
+                }
+                lifecycle::Need::Dequeue => {
+                    read.as_mut()
+                        .unwrap()
+                        .issue
+                        .as_mut()
+                        .unwrap()
+                        .dequeue_pending = Some(self.dequeue_pending(
+                        delivery,
+                        observed.as_ref().unwrap(),
+                        issue.as_ref().unwrap(),
+                    )?);
+                }
+                lifecycle::Need::Applied => {
+                    read.as_mut().unwrap().issue.as_mut().unwrap().applied = Some(
+                        self.records
                             .path(&delivery.key)
                             .with_extension("applied")
                             .exists(),
-                    });
+                    )
                 }
                 _ => return Err(Error::Invalid("unexpected enqueue read request")),
             }

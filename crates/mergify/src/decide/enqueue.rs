@@ -60,10 +60,10 @@ pub struct EnqueueState {
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct IssueRead {
     pub queue_label: bool,
-    pub repaired: bool,
-    pub recovery: bool,
-    pub dequeue_pending: bool,
-    pub applied: bool,
+    pub repaired: Option<bool>,
+    pub recovery: Option<bool>,
+    pub dequeue_pending: Option<bool>,
+    pub applied: Option<bool>,
 }
 
 /// Optional fields are reads not yet requested. This preserves the adapter's
@@ -95,6 +95,10 @@ pub enum Need {
     CommandReply,
     HeadChecks,
     RerunPull,
+    RecoveryFile,
+    RepairedHead,
+    Dequeue,
+    Applied,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -264,6 +268,52 @@ fn command_completion(command: Command) -> Complete {
     }
 }
 
+fn reconcile_issue(intent: Option<Intent>, queue: QueueState, issue: IssueRead) -> Effect {
+    if queue == QueueState::Waiting && issue.queue_label {
+        let Some(recovery) = issue.recovery else {
+            return Effect::Read(Need::RecoveryFile);
+        };
+        if recovery {
+            return Effect::Complete(Complete::Pending);
+        }
+        match issue.repaired {
+            None => return Effect::Read(Need::RepairedHead),
+            Some(true) => return Effect::Complete(Complete::Pending),
+            Some(false) => {}
+        }
+    }
+    let pending = match intent {
+        None => issue.dequeue_pending,
+        Some(Intent {
+            requeue: Some(requeue),
+        }) => {
+            let Some(recovery) = issue.recovery else {
+                return Effect::Read(Need::RecoveryFile);
+            };
+            if recovery || requeue == Requeue::Sending {
+                Some(true)
+            } else {
+                issue.dequeue_pending
+            }
+        }
+        Some(Intent { requeue: None }) => {
+            if issue.queue_label {
+                Some(true)
+            } else {
+                let Some(applied) = issue.applied else {
+                    return Effect::Read(Need::Applied);
+                };
+                Some(applied)
+            }
+        }
+    };
+    match pending {
+        None => Effect::Read(Need::Dequeue),
+        Some(true) => Effect::Complete(Complete::Pending),
+        Some(false) => Effect::Complete(Complete::Absent),
+    }
+}
+
 pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effects) {
     let mut out = Effects::new();
     let refused_intent = matches!(
@@ -385,31 +435,8 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
                             out.push(Effect::Read(Need::Issue));
                             return (state, out);
                         };
-                        let pending = if read.queue == QueueState::Waiting
-                            && issue.queue_label
-                            && (issue.recovery || issue.repaired)
-                        {
-                            true
-                        } else {
-                            match state.intent {
-                                None => issue.dequeue_pending,
-                                Some(Intent {
-                                    requeue: Some(requeue),
-                                }) => {
-                                    issue.recovery
-                                        || requeue == Requeue::Sending
-                                        || issue.dequeue_pending
-                                }
-                                Some(Intent { requeue: None }) => {
-                                    issue.queue_label || issue.applied
-                                }
-                            }
-                        };
-                        if pending {
-                            Complete::Pending
-                        } else {
-                            Complete::Absent
-                        }
+                        out.push(reconcile_issue(state.intent, read.queue, issue));
+                        return (state, out);
                     }
                 }
             };
@@ -477,12 +504,13 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
                 eligible_since_ms: None,
                 command: Command::Sending,
             });
-            if refused {
+            let in_flight = matches!(recovery.command, Command::Sending | Command::Sent);
+            if in_flight && refused {
                 recovery.command = Command::Refused;
-            } else if found {
+            } else if in_flight && found {
                 recovery.command = Command::Sent;
             }
-            if refused || found {
+            if in_flight && (refused || found) {
                 out.push(Effect::SaveRecovery);
             }
             out.push(Effect::Complete(command_completion(recovery.command)));
@@ -518,6 +546,10 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
         }
         QueueEvent::CommandDone(result) => {
             if let Some(recovery) = &mut state.recovery {
+                if recovery.command != Command::Sending {
+                    out.push(Effect::Complete(command_completion(recovery.command)));
+                    return (state, out);
+                }
                 recovery.command = match result {
                     CommandResult::Accepted => Command::Sent,
                     CommandResult::PermissionDenied => Command::PermissionDenied,

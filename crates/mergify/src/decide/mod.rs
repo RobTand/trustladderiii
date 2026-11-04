@@ -10,6 +10,8 @@
 //! - `observe`: which queue check describes the PR, and the queue state.
 //! - `facts`: which facts a queue read yields (Q52, #447, merge evidence).
 //! - `translate`: how a queue fact reaches the kernel, or only an incident.
+//! - `enqueue`: enqueue acknowledgement, ordered write intents, command
+//!   recovery and workflow rerun budgets. The shell retains its side files.
 //!
 //! The module does no I/O and uses no `std` item. It has no `unsafe`, no
 //! floats and no target-specific code, so its proofs hold on amd64 and arm64.
@@ -26,6 +28,7 @@ mod enqueue_proofs;
 mod proofs;
 
 pub use check::{App, CheckView, Conclusion, Head, Name, Status, Time};
+pub use enqueue::{EnqueueState, QueueEvent, decide};
 pub use observe::QueueState;
 
 /// The check run Mergify's GitHub App posts for a queued PR.
