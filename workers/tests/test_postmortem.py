@@ -324,7 +324,7 @@ def test_a_run_past_its_deadline_fails_with_the_deadline_class(tmp_path, monkeyp
 
 def test_a_recommendation_must_edit_text_its_target_holds_exactly_once(tmp_path, model,
                                                                        monkeypatch, capsys,
-                                                                       release):
+                                                                       release):  # noqa: F811
     planner = release / "workers/src/tl3_workers/prompts/planner.md"
     planner.write_text("Plan the work. Plan the work.\n")
     model.postmortem = written(0)
@@ -355,7 +355,7 @@ def test_a_recommendation_must_edit_text_its_target_holds_exactly_once(tmp_path,
     (dict(RECOMMENDATION, target="workers/missing.md", operation="add", before="",
           after="New."), "not a file in the release"),
 ])
-def test_unusable_names_why_a_recommendation_cannot_apply(release, item, reason):
+def test_unusable_names_why_a_recommendation_cannot_apply(release, item, reason):  # noqa: F811
     (release.parent / "outside.md").write_text("Run the tests.\n")
     assert postmortem.unusable(item, release) == reason
 
