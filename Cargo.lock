@@ -3023,6 +3023,7 @@ dependencies = [
  "proptest",
  "rand 0.8.8",
  "regex",
+ "regex-syntax",
  "reqwest 0.12.28",
  "rsa",
  "rustix",

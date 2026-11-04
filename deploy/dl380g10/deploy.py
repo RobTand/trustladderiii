@@ -683,6 +683,12 @@ def install_mlflow(home):
 
 
 def check_binaries(root):
+    """Verify exactly TL3's release binaries against the installed release SHA256SUMS.
+
+    Returns the names that failed. Other files in bin/ belong to other deployers
+    (tl3-console is installed there by RobTand/tl3-console's own deploy) and are
+    neither verified nor flagged.
+    """
     directory = root / "bin"
     expected = {}
     try:
@@ -690,14 +696,13 @@ def check_binaries(root):
             entry = re.fullmatch(r"([0-9a-f]{64}) [ *]([A-Za-z0-9][A-Za-z0-9._-]*)", line)
             if not entry or entry[2] not in RELEASE_BINARIES or entry[2] in expected:
                 print("MISSING bin/SHA256SUMS: invalid release manifest")
-                return 1
+                return set(RELEASE_BINARIES)
             expected[entry[2]] = entry[1]
-        installed = {path.name for path in directory.iterdir()} - {"SHA256SUMS"}
     except (OSError, UnicodeError):
         print("MISSING bin/SHA256SUMS: unreadable release manifest")
-        return 1
-    missing = 0
-    for name in sorted(set(RELEASE_BINARIES) | installed):
+        return set(RELEASE_BINARIES)
+    failed = set()
+    for name in RELEASE_BINARIES:
         path = directory / name
         ok = False
         if name in expected and path.is_file():
@@ -707,14 +712,15 @@ def check_binaries(root):
             except OSError:
                 pass
         print(f"{'OK' if ok else 'MISSING'} bin/{name}: release SHA-256")
-        missing += not ok
-    return missing
+        if not ok:
+            failed.add(name)
+    return failed
 
 
 def check(home):
     root, config, _ = paths(home)
-    binary_missing = check_binaries(root)
-    missing = binary_missing + int(not mlflow_health(home))
+    failed_binaries = check_binaries(root)
+    missing = len(failed_binaries) + int(not mlflow_health(home))
     managed = (root / "deploy/managed-tunnel").exists()
     units = ["tl3-postgres", "tl3d", "tl3-status", "tl3-mlflow"]
     if managed:
@@ -731,7 +737,7 @@ def check(home):
         ("tl3 status", [root / "bin/tl3", "status", "--config", config / "tl3.toml"]),
         ("Config::load including secret metadata", [root / "bin/tl3-deploy", "validate", config / "tl3.toml"]),
     ):
-        if binary_missing:
+        if Path(command[0]).name in failed_binaries:
             print(f"MISSING {label}: binary verification failed")
             missing += 1
             continue
