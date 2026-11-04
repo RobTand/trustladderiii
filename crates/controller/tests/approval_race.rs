@@ -1,3 +1,5 @@
+#[path = "support/controller_restart.rs"]
+mod controller_restart;
 #[path = "../../store/tests/support/mod.rs"]
 mod database;
 #[path = "support/github.rs"]
@@ -320,6 +322,8 @@ fn open_clock(
     legacy: bool,
     clock: impl tl3_controller::clock::Clock + 'static,
 ) -> Controller {
+    // #785: dropping the client does not synchronously reap its server session.
+    controller_restart::wait_for_owner_release(&mut fixture_connection(settings));
     let mut registry = adapters::simulation(&root.join("fakes")).unwrap();
     if let Some(uri) = uri {
         let client = GitHub::new(
@@ -1894,6 +1898,17 @@ fn gap_catchup_repairs_late_approval_after_closure() {
     );
 }
 
+fn fixture_connection(settings: &tl3_config::Store) -> postgres::Client {
+    postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .user(&settings.user)
+        .dbname(&settings.database)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap()
+}
+
 fn http_client(case: &Case) -> GitHub {
     GitHub::new(
         AppConfig {
@@ -1961,14 +1976,7 @@ fn deployed_main_outstanding_post_survives_upgrade_stop_and_gap() {
     let case = Case::new("main_upgrade_closed_gap");
     let delivery = case.delivery();
     let mut store = Store::open(&case.settings).unwrap();
-    let mut sql = postgres::Config::new()
-        .host(&case.settings.host)
-        .port(case.settings.port)
-        .user(&case.settings.user)
-        .dbname(&case.settings.database)
-        .password("tl3-disposable-test-password")
-        .connect(postgres::NoTls)
-        .unwrap();
+    let mut sql = fixture_connection(&case.settings);
     // Remove only #769's new schema. The effect payload and transition receipt below
     // are the deployed 46f30c8c format; memory tables do not participate in dispatch.
     sql.batch_execute(
@@ -2023,6 +2031,7 @@ fn deployed_main_outstanding_post_survives_upgrade_stop_and_gap() {
         Store::open(&case.settings),
         Err(tl3_store::Error::SchemaVersion { .. })
     ));
+    controller_restart::wait_for_owner_release(&mut sql);
     let mut owner = tl3_store::Ownership::claim(Store::connect(&case.settings).unwrap()).unwrap();
     owner.migrate().unwrap();
     assert!(

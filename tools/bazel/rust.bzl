@@ -125,7 +125,7 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
-    "tests/approval_race.rs": ["tests/support/github.rs"],
+    "tests/approval_race.rs": ["tests/support/github.rs", "tests/support/controller_restart.rs"],
     "tests/production.rs": ["tests/prismabuild_fixture/**"],
     "tests/redaction_parity.rs": ["tests/redaction_support/**"],
     "tests/redaction_generated.rs": ["tests/redaction_support/**"],

@@ -3013,6 +3013,7 @@ fn dispatch_legacy_migration_is_bounded(settings: &tl3_config::Store) {
     );
     assert!(recovery.contains(&"pending".into()) && recovery.contains(&"cancelled".into()));
     drop(store);
+    client.batch_execute("SET lock_timeout = '180s'; SELECT pg_advisory_lock(6074286361602315346); SELECT pg_advisory_unlock(6074286361602315346)").unwrap();
     let mut store = Ownership::claim(Store::open(settings).unwrap())
         .unwrap()
         .into_store();
