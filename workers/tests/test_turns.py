@@ -38,6 +38,12 @@ def classifier_validation_boundary(monkeypatch, tmp_path):
     monkeypatch.setenv("TL3_BINARY", str(checker))
 
 
+def test_turn_fixture_keeps_the_real_budget_validator():
+    from tl3_workers.budget_check import check
+    assert check("finalizing", maker=True, turns=0, no_progress=0,
+                 allowed=4, window=3, reserve=1) is False
+
+
 maker_request = test_maker.maker_request
 review_request = test_reviewer.review_request
 request_doc = test_workers.request_doc
