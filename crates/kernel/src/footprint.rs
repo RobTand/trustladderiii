@@ -49,7 +49,7 @@ pub open spec fn ordered(files: Seq<FileId>) -> bool {
     forall|i: int, j: int| 0 <= i < j < files.len() ==> files[i].0 < files[j].0
 }
 
-pub open spec fn ordered_table(world: World) -> bool {
+pub(super) closed spec fn ordered_table(world: World) -> bool {
     forall|i: int| 0 <= i < world.file_sets@.len() ==> ordered(world.file_sets@[i]@)
 }
 
@@ -126,7 +126,7 @@ impl World {
 
     kernel_fn! {
     /// #771: interning changes only the append-only file table, and returns the
-    /// exact supplied sorted set. Its loops do not access any numeric ledger.
+    /// a valid set handle. Its loops do not access any numeric ledger.
     fn intern_sorted_files(&mut self, files: Vec<FileId>) -> (result: Footprint) [
         requires ordered(files@), ordered_table(*old(self)),
         ensures valid_footprint(*final(self), result),
@@ -141,8 +141,9 @@ impl World {
             final(self).pool_capacity == old(self).pool_capacity,
             final(self).fail_fast == old(self).fail_fast,
             final(self).dependencies@ == old(self).dependencies@,
-    ] proof [reveal(valid_footprint); reveal(file_view);] {
-        if files.last().is_none_or(|f| f.0 < 64) {
+    ] proof [reveal(valid_footprint); reveal(file_view); reveal(ordered_table);] {
+        let inline = match files.last() { None => true, Some(f) => f.0 < 64 };
+        if inline {
             kernel_proof! {
                 assert forall|j: int| 0 <= j < files@.len() implies files@[j].0 < 64 by {
                     if j < files@.len() - 1 {
@@ -177,7 +178,7 @@ impl World {
     fn collect_files(&self, footprint: Footprint) -> (result: Vec<FileId>) [
         requires valid_footprint(*self, footprint), ordered_table(*self),
         ensures result@ == file_view(*self, footprint), ordered(result@),
-    ] proof [reveal(valid_footprint); reveal(file_view);] {
+    ] proof [reveal(valid_footprint); reveal(file_view); reveal(ordered_table);] {
         let mut files = Vec::new();
         match footprint.0 {
             Repr::Inline(bits) => {
@@ -271,7 +272,7 @@ impl World {
     kernel_fn! {
     /// File extension rows / #771: the merge consumes one input on every pass.
     /// Only the append-only file table changes; all allocation ledgers are framed.
-    pub(crate) fn union_footprints(&mut self, a: Footprint, b: Footprint) -> (result: Footprint) [
+    pub(super) fn union_footprints(&mut self, a: Footprint, b: Footprint) -> (result: Footprint) [
         requires valid_footprint(*old(self), a), valid_footprint(*old(self), b),
             ordered_table(*old(self)),
         ensures valid_footprint(*final(self), result), ordered_table(*final(self)),
@@ -285,7 +286,7 @@ impl World {
             final(self).pool_capacity == old(self).pool_capacity,
             final(self).fail_fast == old(self).fail_fast,
             final(self).dependencies@ == old(self).dependencies@,
-    ] proof [reveal(valid_footprint);] {
+    ] proof [reveal(valid_footprint); reveal(ordered_table);] {
         if let (Repr::Inline(a), Repr::Inline(b)) = (a.0, b.0) {
             return Footprint::inline(a | b);
         }

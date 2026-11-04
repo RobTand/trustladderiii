@@ -2135,6 +2135,9 @@ fn end_operation(m: &mut Node) -> (result: ()) [
         final(m).generation == old(m).generation, final(m).next_seq == old(m).next_seq,
         final(m).credit == old(m).credit, final(m).question == old(m).question,
         final(m).ticket == old(m).ticket,
+        final(m).footprint == old(m).footprint,
+        final(m).last_cmd == old(m).last_cmd,
+
 ] {
     abandon_operation(m);
     m.run_failures = 0;
@@ -2469,31 +2472,64 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
     }
     end_operation(&mut w.nodes[i]);
     match reply {
-        Reply::MakerNeedsFiles { files, fits } => {
-            if fits && !files.is_empty() && w.nodes[i].credit.can_spend(1) {
-                let footprint = w.union_footprints(w.nodes[i].footprint, files);
-                let m = &mut w.nodes[i];
-                m.credit.spend(1);
-                m.footprint = footprint;
-                m.holds = false;
-                set_phase(m, Phase::Ready(Resume::Making));
-            } else if fits && !files.is_empty() && w.fail_fast {
-                // Q54 stops retries, not credit decisions: Rob funds the extension.
-                let footprint = w.union_footprints(w.nodes[i].footprint, files);
-                w.nodes[i].footprint = footprint;
-                ask_rob(
-                    w,
-                    i,
-                    QKind::OutOfCredit,
-                    Cont::Ready(Resume::Making),
-                    1,
-                    out,
-                );
-            } else {
-                out_of_room(w, i, ReviewStop::MakerNeedsFiles, out);
-            }
-        }
+        Reply::MakerNeedsFiles { files, fits } => reply_files(w, i, files, fits, out),
         _ => reply_transition(w, i, reply, out),
+    }
+}
+
+kernel_fn! {
+/// File extension rows / #771: union only appends file storage; the transition
+/// spends at most one credit and allocates one generation or question.
+fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
+        footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
+        footprint::valid_footprint(*old(w), files), footprint::ordered_table(*old(w)),
+    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit.start == old(w).nodes@[i as int].credit.start,
+        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
+        final(w).nodes@[i as int].credit.added == old(w).nodes@[i as int].credit.added,
+        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        footprint::ordered_table(*final(w)),
+        final(w).file_sets@.len() >= old(w).file_sets@.len(),
+        forall|j: int| 0 <= j < old(w).file_sets@.len()
+            ==> final(w).file_sets@[j] == old(w).file_sets@[j],
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 1,
+] proof [reveal(retry_bounds);] {
+    if fits && !files.is_empty() && w.nodes[i].credit.can_spend(1) {
+        let footprint = w.union_footprints(w.nodes[i].footprint, files);
+        let m = &mut w.nodes[i];
+        m.credit.spend(1);
+        m.footprint = footprint;
+        m.holds = false;
+        set_phase(m, Phase::Ready(Resume::Making));
+    } else if fits && !files.is_empty() && w.fail_fast {
+        // Q54 stops retries, not credit decisions: Rob funds the extension.
+        let footprint = w.union_footprints(w.nodes[i].footprint, files);
+        w.nodes[i].footprint = footprint;
+        ask_rob(
+            w,
+            i,
+            QKind::OutOfCredit,
+            Cont::Ready(Resume::Making),
+            1,
+            out,
+        );
+    } else {
+        out_of_room(w, i, ReviewStop::MakerNeedsFiles, out);
+    }
     }
 }
 
@@ -2519,6 +2555,7 @@ fn reply_transition(w: &mut World, i: usize, reply: Reply,
 
 kernel_fn! {
 /// Reply rows / #771: one phase change, at most one paid credit and one question.
+#[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 fn reply_ingest(w: &mut World, i: usize, reply: Reply,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -2962,6 +2999,7 @@ kernel_fn! {
 /// Confirmed-effect rows / #771: at most one adoption generation is allocated.
 // The pinned Verus frontend requires nested if-let instead of let chains.
 #[allow(clippy::collapsible_if)]
+#[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
     requires old(m).generation < u64::MAX,
     ensures final(m).generation as int <= old(m).generation as int + 1,
