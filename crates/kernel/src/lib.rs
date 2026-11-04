@@ -2099,6 +2099,8 @@ pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<
         open_prefix_compare(before_step@.nodes@, world.nodes@, before_step@.nodes@.len());
         open_prefix_monotone(world.nodes@, before_step@.nodes@.len(), world.nodes@.len());
         settle_reserve_totals(world.nodes@);
+        open_prefix_monotone(world.nodes@, 0, world.nodes@.len());
+        reveal(open_prefix);
         assert forall|j: int| 0 <= j < world.nodes@.len() implies
             world.nodes@[j].generation as int + generation_capacity(world.nodes@[j]) <= u64::MAX as int
                 && world.nodes@[j].next_seq as int + effect_capacity(world.nodes@[j]) <= u64::MAX as int
@@ -2677,6 +2679,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
 ] proof [reveal(reply_bounds); reveal(footprint::ordered_table);] {
+    kernel_snapshot! { before_reply = *w }
     let n = &w.nodes[i];
     if n.phase.is_stopping() {
         // The run or job ended on its own, so teardown needn't stop it.
@@ -2688,15 +2691,18 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         if m.job == Some(generation) {
             m.job = None;
         }
+        kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
         return;
     }
     if n.current() != Some(Item::Await) || (n.run != Some(generation) && n.job != Some(generation))
     {
+        kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
         return; // stale
     }
     // A reply that breaks its schema or names the wrong commit counts as a failed run.
     if !accepts(w, n, &reply) {
         run_failed(w, i, out);
+        kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
         return;
     }
     kernel_snapshot! { before_operation = *w }
