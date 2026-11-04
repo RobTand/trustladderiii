@@ -176,7 +176,7 @@ fn registry(
     fail: bool,
 ) -> (Registry, WorkerOutputSource, adapters::prismabuild::Source) {
     let mut registry = adapters::simulation(root).unwrap();
-    let real = Supervisor::new(config, root).unwrap();
+    let real = Supervisor::new(config, root, &mut crate::startup_ownership::ownership()).unwrap();
     let source = real.source();
     registry.register(
         Upstream::Workers,
@@ -195,7 +195,12 @@ fn registry(
         if fail { "check_fail" } else { "done" },
         "http://127.0.0.1:9/",
     );
-    let checks = adapters::prismabuild::Adapter::new(client, settings).unwrap();
+    let checks = adapters::prismabuild::Adapter::new(
+        client,
+        settings,
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     let checks_source = checks.source();
     registry.register(Upstream::PrismaBuild, checks);
     (registry, source, checks_source)
@@ -469,7 +474,12 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
             value: json!(delivery),
         });
         store.commit(&commit).unwrap();
-        let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+        let mut supervisor = Supervisor::new(
+            &config,
+            &root.path().join("fakes"),
+            &mut crate::startup_ownership::ownership(),
+        )
+        .unwrap();
         supervisor.retire(&mut store).unwrap();
         assert!(
             leftover.exists(),
@@ -735,7 +745,12 @@ fn process_contract(settings: &tl3_config::Store) {
         head: None,
     };
     delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     supervisor.execute(&delivery).unwrap();
     let completion = terminal(&mut supervisor, &delivery);
     assert!(!root_for(&config, &delivery.key).join("worktree").exists());
@@ -745,7 +760,12 @@ fn process_contract(settings: &tl3_config::Store) {
     let head = git(&worktree, &["rev-parse", "HEAD"]);
     assert_ne!(head, base);
     drop(supervisor);
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     assert!(matches!(
         supervisor.reconcile(&delivery).unwrap(),
         Reconciliation::Found(_)
@@ -758,12 +778,22 @@ fn process_contract(settings: &tl3_config::Store) {
     );
     assert_eq!(attempts(&root_for(&config, &delivery.key)), 1);
     config.workers.command[1] = "bad-schema".into();
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     delivery.key = "maker-invalid".into();
     supervisor.execute(&delivery).unwrap();
     assert!(failed(&terminal(&mut supervisor, &delivery)));
     config.workers.command[1] = "blocked".into();
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     delivery.key = "maker-stop".into();
     supervisor.execute(&delivery).unwrap();
     let attempt = root_for(&config, &delivery.key).join("attempt-00000000");
@@ -786,7 +816,12 @@ fn restart_after_replan(settings: &tl3_config::Store) {
         head: None,
     };
     delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     supervisor.execute(&delivery).unwrap();
     let completion = terminal(&mut supervisor, &delivery);
     assert!(
@@ -806,7 +841,12 @@ fn restart_after_replan(settings: &tl3_config::Store) {
     delivery.generation += 1;
     delivery.replanned = true;
     config.workers.command[1] = "replanned".into();
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     supervisor.execute(&delivery).unwrap();
     let completion = terminal(&mut supervisor, &delivery);
     assert!(!failed(&completion));
@@ -852,7 +892,12 @@ pub(super) fn adopted_fix_without_session(settings: &tl3_config::Store) {
         head: None,
     };
     delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     supervisor.execute(&delivery).unwrap();
     let completion = terminal(&mut supervisor, &delivery);
     assert!(
@@ -882,7 +927,12 @@ pub(super) fn legacy_session(settings: &tl3_config::Store) {
         head: None,
     };
     delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     supervisor.execute(&delivery).unwrap();
     assert!(
         !failed(&terminal(&mut supervisor, &delivery)),
@@ -903,7 +953,12 @@ pub(super) fn legacy_session(settings: &tl3_config::Store) {
     drop(supervisor);
     delivery.key = "legacy-session-revisit".into();
     delivery.generation += 1;
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     let result = supervisor.execute(&delivery);
     assert!(
         matches!(
@@ -942,7 +997,12 @@ pub(super) fn repository_images(database: &mut Database) {
             head: None,
         };
         delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
-        let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+        let mut supervisor = Supervisor::new(
+            &config,
+            &root.path().join("fakes"),
+            &mut crate::startup_ownership::ownership(),
+        )
+        .unwrap();
         supervisor.execute(&delivery).unwrap();
         let _ = terminal(&mut supervisor, &delivery);
         let request: Value = serde_json::from_slice(

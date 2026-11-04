@@ -1,6 +1,7 @@
 #[path = "support/command.rs"]
 mod command;
-
+#[path = "support/ownership.rs"]
+mod startup_ownership;
 // Single-event fixture receives expose no intermediate progress.
 // #673 measured daemon_webhooks_worker_replies_and_source_failure at 169.274 s; 350 s > 2x.
 const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(350);

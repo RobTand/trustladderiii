@@ -95,3 +95,15 @@ impl Drop for Database {
         }
     }
 }
+
+/// Standalone adapter fixtures use isolated files and share one claimed session.
+pub fn ownership() -> MutexGuard<'static, crate::Ownership> {
+    static OWNER: OnceLock<Mutex<crate::Ownership>> = OnceLock::new();
+    OWNER
+        .get_or_init(|| {
+            let settings = server().fixture.create("adapter_fixture_owner");
+            Mutex::new(crate::Ownership::claim(tl3_store::Store::open(&settings).unwrap()).unwrap())
+        })
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}

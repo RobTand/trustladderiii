@@ -651,11 +651,15 @@ The separate outer-session trial is reproducible from the repository root:
 
 ```sh
 # Build this example through PrismaBuild first. Run its executable outside PB.
-/path/to/pb_trial submit /absolute/empty/trial-directory "$IMAGE"
+/path/to/pb_trial submit /absolute/empty/trial-directory "$IMAGE" /absolute/disposable-config.toml
 python3 /mnt/shared/prismabuild-fleet/repo/tools/pbwait.py \
     --endings --until cleaned ACTION_KEY
-/path/to/pb_trial observe /absolute/empty/trial-directory "$IMAGE"
+/path/to/pb_trial observe /absolute/empty/trial-directory "$IMAGE" /absolute/disposable-config.toml
 ```
+
+Use a disposable configuration with an isolated disposable database. The trial
+claims controller ownership of that database before initializing the adapter.
+Never use the live controller configuration for this trial.
 
 The trial submits a fixture demonstrating check through the real adapter. Its
 base fails and its exact head passes. The final command feeds the real ending

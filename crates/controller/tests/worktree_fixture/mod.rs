@@ -131,7 +131,12 @@ impl Fixture {
             .with_repositories(&self.repositories)
             .unwrap();
         adapter
-            .serve_local(identity(), &self.repo, &self.remote)
+            .serve_local(
+                identity(),
+                &self.repo,
+                &self.remote,
+                &mut crate::startup_ownership::ownership(),
+            )
             .unwrap();
         adapter
     }

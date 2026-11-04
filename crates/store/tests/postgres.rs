@@ -87,7 +87,20 @@ fn main() {
         .filter(|(name, _)| !args.get(1).is_some_and(|s| s == "--r3") || name.starts_with("wait_"))
         .collect();
     for (name, test) in &selected {
-        let settings = database.create(name);
+        let settings = if matches!(
+            *name,
+            "mvp_schema_6_upgrades_to_hindsight"
+                | "phase_backfill_from_schema_9"
+                | "postmortem_migration_on_schema_12"
+                | "read_only_reader"
+                | "reader_schema_versions"
+                | "console_login_granted_before_migration"
+                | "prompts_open_on_a_store_ahead"
+        ) {
+            database.create_uninitialized(name)
+        } else {
+            database.create(name)
+        };
         test(&settings);
         println!("test {name} ... ok");
     }
@@ -104,6 +117,13 @@ fn main() {
         "{} Postgres integration scenarios passed; no skips",
         selected.len() + 1
     );
+}
+
+fn migrate(settings: &tl3_config::Store) -> tl3_store::Result<Store> {
+    let mut ownership = Ownership::claim(Store::connect(settings)?)?;
+    ownership.migrate()?;
+    drop(ownership);
+    Store::open(settings)
 }
 
 fn raw(settings: &tl3_config::Store) -> Client {
@@ -628,7 +648,7 @@ fn mvp_schema_6_upgrades_to_hindsight(settings: &tl3_config::Store) {
             .get::<_, i32>(0),
         6
     );
-    let upgraded = Store::open(settings);
+    let upgraded = migrate(settings);
     assert!(
         upgraded.is_ok(),
         "schema 6 must upgrade to Hindsight: {:?}",
@@ -733,7 +753,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
         .unwrap();
     assert!(matches!(
         Store::open(settings),
-        Err(Error::MigrationMismatch)
+        Err(Error::SchemaVersion { actual: 999, .. })
     ));
     client
         .execute("DELETE FROM tl3_schema_migrations WHERE version = 999", &[])
@@ -768,7 +788,7 @@ fn durability_settings(settings: &tl3_config::Store) {
         .unwrap();
     drop(durable);
     let mut unsafe_database = Database::start_with_fsync(false);
-    let unsafe_settings = unsafe_database.create("unsafe_durability");
+    let unsafe_settings = unsafe_database.create_uninitialized("unsafe_durability");
     assert!(matches!(
         Store::open(&unsafe_settings),
         Err(Error::Invalid("store requires Postgres fsync = on"))
@@ -893,7 +913,7 @@ fn read_only_reader(settings: &tl3_config::Store) {
             .unwrap()
             .get::<_, bool>(0)
     );
-    let mut writer = Store::open(settings).unwrap();
+    let mut writer = migrate(settings).unwrap();
     let change = seed(&mut writer);
     writer.commit(&change).unwrap();
     let before = writer.load().unwrap();
@@ -955,7 +975,7 @@ fn reader_schema_versions(settings: &tl3_config::Store) {
             .unwrap()
             .get::<_, bool>(0)
     );
-    Store::open(settings).unwrap();
+    migrate(settings).unwrap();
     let migrations = client
         .query(
             "SELECT version, sql FROM tl3_schema_migrations ORDER BY version",
@@ -1313,7 +1333,7 @@ fn phase_backfill_from_schema_9(settings: &tl3_config::Store) {
              UPDATE tl3_meta SET revision = 2;",
         )
         .unwrap();
-    drop(Store::open(settings).unwrap());
+    drop(migrate(settings).unwrap());
     let rows: Vec<(String, serde_json::Value, String)> = client
         .query(
             "SELECT node_id, phase, to_char(since AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM tl3_node_phases ORDER BY node_id",
@@ -1903,7 +1923,7 @@ fn prompts_open_on_a_store_ahead(settings: &tl3_config::Store) {
         Prompts::open(settings).is_err(),
         "a store without the prompt tables"
     );
-    let mut store = Store::open(settings).unwrap();
+    let mut store = migrate(settings).unwrap();
     store.seed_prompts(BUILTIN).unwrap();
     raw(settings)
         .execute(
@@ -2080,7 +2100,7 @@ fn console_login_writes_only_prompts(settings: &tl3_config::Store) {
 /// Deploy may grant the console's login before tl3d migrates the store.
 fn console_login_granted_before_migration(settings: &tl3_config::Store) {
     let (login, _) = console_login(settings, "tl3_console_early");
-    let mut store = Store::open(settings).unwrap();
+    let mut store = migrate(settings).unwrap();
     store.seed_prompts(BUILTIN).unwrap();
     assert_eq!(
         raw(&login)
@@ -2266,7 +2286,7 @@ fn postmortem_migration_on_schema_12(settings: &tl3_config::Store) {
     };
     let before = phases(&mut client, "tl3_node_phases");
     assert_eq!(before.len(), 2);
-    let mut store = Store::open(settings).unwrap();
+    let mut store = migrate(settings).unwrap();
     assert_eq!(
         phases(&mut client, "tl3_node_phases"),
         before,
