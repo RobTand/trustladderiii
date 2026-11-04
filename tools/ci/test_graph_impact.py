@@ -253,6 +253,81 @@ class GraphImpactTests(unittest.TestCase):
         result = impact.check(base, head, set(), impact.baseline(base))
         self.assertTrue(any('existing source fanout grew' in error for error in result['errors']))
 
+    def test_move_does_not_grant_inheritance_to_destination_package_additions(self):
+        test = '//tests:small'
+        old, moved, added = '//old:a.py', '//new:a.py', '//new:b.py'
+        base = graph({test: [old]}, tests=(test,), sources=(old,))
+        head = graph({test: [moved, added]}, tests=(test,), sources=(moved, added))
+        base['source_identities'] = {old: 'a-bytes'}
+        head['source_identities'] = {moved: 'a-bytes', added: 'b-bytes'}
+        for changed in (set(), {test}):
+            with self.subTest(changed=changed):
+                result = impact.check(base, head, changed, impact.baseline(base))
+                self.assertTrue(any('reach' in error and added in error for error in result['errors']),
+                                result['errors'])
+                self.assertEqual(result['source_moves'], {moved: old})
+
+    def test_move_keeps_original_package_inheritance(self):
+        test = '//tests:small'
+        old, moved, added = '//old:a.py', '//new:a.py', '//old:b.py'
+        base = graph({test: [old]}, tests=(test,), sources=(old,))
+        head = graph({test: [moved, added]}, tests=(test,), sources=(moved, added))
+        base['source_identities'] = {old: 'a-bytes'}
+        head['source_identities'] = {moved: 'a-bytes', added: 'b-bytes'}
+        result = impact.check(base, head, {test}, impact.baseline(base))
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(result['source_moves'], {moved: old})
+
+    def test_surviving_and_unused_duplicates_make_identity_ambiguous(self):
+        test = '//tests:small'
+        old, kept, new = '//old:a.py', '//keep:empty.py', '//new:a.py'
+        for kept_base, kept_head, used in (
+                ('empty-bytes', 'empty-bytes', True),
+                ('empty-bytes', 'empty-bytes', False),
+                ('empty-bytes', 'other-bytes', False),
+                ('other-bytes', 'empty-bytes', False)):
+            with self.subTest(kept_base=kept_base, kept_head=kept_head, used=used):
+                base = graph({test: [old, kept] if used else [old]},
+                             tests=(test,), sources=(old, kept))
+                head = graph({test: [new, kept] if used else [new]},
+                             tests=(test,), sources=(new, kept))
+                base['source_identities'] = {old: 'empty-bytes', kept: kept_base}
+                head['source_identities'] = {new: 'empty-bytes', kept: kept_head}
+                result = impact.check(base, head, set(), impact.baseline(base))
+                self.assertTrue(any('reach' in error for error in result['errors']), result['errors'])
+                self.assertEqual(result['source_moves'], {})
+
+    def test_multiple_added_duplicates_are_not_moves_even_when_unused(self):
+        test = '//tests:small'
+        old, new, duplicate = '//old:a.py', '//new:a.py', '//new:duplicate.py'
+        base = graph({test: [old]}, tests=(test,), sources=(old,))
+        base['source_identities'] = {old: 'same-bytes'}
+        for used in (False, True):
+            with self.subTest(used=used):
+                head = graph({test: [new, duplicate] if used else [new]},
+                             tests=(test,), sources=(new, duplicate))
+                head['source_identities'] = {new: 'same-bytes', duplicate: 'same-bytes'}
+                result = impact.check(base, head, set(), impact.baseline(base))
+                self.assertTrue(any('reach' in error for error in result['errors']), result['errors'])
+                self.assertEqual(result['source_moves'], {})
+
+    def test_multiple_simultaneous_moves_credit_only_the_matched_sources(self):
+        test = '//tests:small'
+        old_a, old_b = '//old:a.py', '//old:b.py'
+        new_a, new_b = '//new:a.py', '//other:b.py'
+        base = graph({test: [old_a, old_b]}, tests=(test,), sources=(old_a, old_b))
+        head = graph({test: [new_a, new_b]}, tests=(test,), sources=(new_a, new_b))
+        base['source_identities'] = {old_a: 'a-bytes', old_b: 'b-bytes'}
+        head['source_identities'] = {new_a: 'a-bytes', new_b: 'b-bytes'}
+        result = impact.check(base, head, {test}, impact.baseline(base))
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(result['source_moves'], {new_a: old_a, new_b: old_b})
+        self.assertEqual(result['fanout_growth'], [])
+        self.assertEqual(result['base']['reach'][test], sorted([old_a, old_b]))
+        self.assertEqual(result['head']['reach'][test], sorted([new_a, new_b]))
+        self.assertEqual(result['edge_diff']['added']['rule_to_source'],
+                         [[test, new_a], [test, new_b]])
+
     def test_copies_changed_bytes_and_ambiguous_identity_are_not_moves(self):
         old, new = '//old:a.py', '//new:a.py'
         for keep_old, old_hash, new_hash, extra in (
