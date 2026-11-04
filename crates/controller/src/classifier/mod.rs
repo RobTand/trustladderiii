@@ -93,14 +93,20 @@ fn parse(inputs: &Value, reply: &Value) -> crate::Result<Classification> {
 /// The CLI boundary accepts one request and emits one JSON result, without config or DB access.
 pub fn check_reply(role: Option<&str>) -> crate::Result<()> {
     use std::io::{Read, Write};
-    if role != Some("classifier") {
+    if !matches!(role, Some("classifier" | "postmortem")) {
         return Err(crate::Error::Invalid("usage: tl3 check-reply classifier"));
     }
     let mut bytes = Vec::new();
     std::io::stdin().read_to_end(&mut bytes)?;
     let request = crate::adapters::workers::json::parse(&bytes)
         .map_err(|_| crate::Error::Invalid("invalid check-reply JSON"))?;
-    let violations = match validate(&request["inputs"], &request["reply"]) {
+    let result = match role {
+        Some("postmortem") => Err(crate::Error::Invalid(
+            "postmortem validator not implemented",
+        )),
+        _ => validate(&request["inputs"], &request["reply"]),
+    };
+    let violations = match result {
         Ok(()) => Vec::new(),
         Err(crate::Error::Invalid(message)) => vec![message],
         Err(error) => return Err(error),

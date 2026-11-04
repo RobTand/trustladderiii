@@ -860,3 +860,70 @@ def test_judge_turn_counts_and_limits_reach_spans_and_summary(tmp_path, monkeypa
             value = attrs["tl3.judge." + field]
             assert value.WhichOneof("value") == "int_value"
             assert value.int_value == metrics[field]
+
+
+@pytest.fixture
+def fake_reply_checker(tmp_path, monkeypatch):
+    import sys
+
+    def install(body):
+        checker = tmp_path / 'fake-tl3'
+        checker.write_text(f'#!{sys.executable}\n' + body)
+        checker.chmod(0o755)
+        monkeypatch.setenv('TL3_BINARY', str(checker))
+        return checker
+    return install
+
+
+@pytest.mark.parametrize('violations', [[], ["a recommendation's before and after must fit its operation"]])
+def test_postmortem_shim_transports_exact_reply_and_repair(fake_reply_checker, violations):
+    from tl3_workers.turns import InvalidReply, TurnControl, repaired
+
+    inputs, output = {'case': 'café'}, reply(0)
+    fake_reply_checker(
+        'import json, sys\n'
+        "assert sys.argv[1:] == ['check-reply', 'postmortem']\n"
+        f'assert json.load(sys.stdin) == {dict(inputs=inputs, reply=output)!r}\n'
+        f'print({json.dumps(dict(violations=violations))!r})\n')
+    if not violations:
+        assert postmortem.check_reply(inputs, output) is None
+        return
+    history = []
+    with pytest.raises(InvalidReply) as caught:
+        repaired(TurnControl(), history, lambda: output,
+                 lambda value: postmortem.check_reply(inputs, value))
+    first = violations[0]
+    assert all(str(error) == first for error in caught.value.errors)
+    assert tracing.failure_tags(caught.value.errors[0]) == {
+        'failure_class': 'ReplyViolation', 'failure_message': first}
+    assert history[0].text == (
+        f'Your reply failed validation: {first}\nTools are unavailable for this turn. Return one '
+        'corrected JSON object matching your reply schema and nothing else.')
+
+
+@pytest.mark.parametrize('body,message', [
+    ("print('null')\n", 'reply validator returned invalid output'),
+    ("print('{\"violations\": false}')\n", 'reply validator returned invalid output'),
+    ("print('{\"violations\": [null]}')\n", 'reply validator returned invalid output'),
+    ("print('private-validator-canary')\n", 'reply validator returned invalid output'),
+    ("import sys\nprint('private-validator-canary', file=sys.stderr)\nsys.exit(7)\n",
+     'reply validator process failed'),
+    ("import time\ntime.sleep(0.3)\n", 'reply validator timed out'),
+])
+def test_postmortem_validator_failure_bypasses_repair(fake_reply_checker, monkeypatch, body, message):
+    from tl3_workers import reply_check
+    from tl3_workers.turns import TurnControl, repaired
+
+    fake_reply_checker(body)
+    monkeypatch.setattr(reply_check, 'TIMEOUT_SECONDS', 0.05)
+    history, asked = [], []
+
+    def ask():
+        asked.append(True)
+        return reply(0)
+
+    with pytest.raises(reply_check.ReplyCheckInfrastructureError) as caught:
+        repaired(TurnControl(), history, ask, lambda value: postmortem.check_reply({}, value))
+    assert history == [] and asked == [True]
+    assert tracing.failure_tags(caught.value) == {
+        'failure_class': 'ReplyCheckInfrastructureError', 'failure_message': message}
