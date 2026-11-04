@@ -297,10 +297,11 @@ def _save(path, value):
 def _judge(run, stage):
     try:
         feedback = run()
-        if judges.failed(feedback):
-            raise tracing.WorkerStageError(stage)
-    except Exception:
-        raise tracing.WorkerStageError(stage) from None
+        failure = judges.feedback_failure(feedback)
+    except Exception as error:
+        raise tracing.WorkerStageError(stage, judge_failure=judges.exception_failure(error)) from None
+    if failure is not None:
+        raise tracing.WorkerStageError(stage, judge_failure=failure) from None
     return feedback
 
 

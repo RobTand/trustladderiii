@@ -253,6 +253,83 @@ pub struct PostmortemResult {
     pub memory: Option<(String, Value)>,
 }
 
+/// Safe diagnostic vocabulary shared with the worker's judge boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JudgeFailureClass {
+    Quota,
+    Refusal,
+    Http,
+    Deadline,
+    Transport,
+    Schema,
+    Contract,
+    Configuration,
+    IterationLimit,
+    Mlflow,
+    #[serde(other)]
+    Other,
+}
+
+impl JudgeFailureClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Quota => "quota",
+            Self::Refusal => "refusal",
+            Self::Http => "http",
+            Self::Deadline => "deadline",
+            Self::Transport => "transport",
+            Self::Schema => "schema",
+            Self::Contract => "contract",
+            Self::Configuration => "configuration",
+            Self::IterationLimit => "iteration_limit",
+            Self::Mlflow => "mlflow",
+            Self::Other => "other",
+        }
+    }
+}
+
+/// Only HTTP error statuses may enter a judge diagnostic.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "u16", into = "u16")]
+pub struct JudgeHttpStatus(u16);
+
+impl TryFrom<u16> for JudgeHttpStatus {
+    type Error = &'static str;
+
+    fn try_from(status: u16) -> std::result::Result<Self, Self::Error> {
+        if (400..=599).contains(&status) {
+            Ok(Self(status))
+        } else {
+            Err("judge HTTP status must be 400..599")
+        }
+    }
+}
+
+impl From<JudgeHttpStatus> for u16 {
+    fn from(status: JudgeHttpStatus) -> Self {
+        status.0
+    }
+}
+
+/// Diagnostics are separate from the operational failure used for retries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct JudgeFailure {
+    pub class: JudgeFailureClass,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<JudgeHttpStatus>,
+}
+
+impl std::fmt::Display for JudgeFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.class.as_str())?;
+        if let Some(status) = self.http_status {
+            write!(f, " HTTP {}", u16::from(status))?;
+        }
+        Ok(())
+    }
+}
+
 /// The runner's change to one postmortem, applied in the same transaction as
 /// the rest of its commit (#403).
 #[derive(Clone, Debug, PartialEq)]
@@ -275,6 +352,7 @@ pub enum PostmortemUpdate {
         id: i64,
         run_key: String,
         failure: String,
+        judge_failure: Option<JudgeFailure>,
     },
     /// running -> owed: the claim's run is gone, so the postmortem is owed again.
     Release { id: i64, run_key: String },

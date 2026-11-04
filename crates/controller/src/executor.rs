@@ -155,6 +155,8 @@ pub enum Observation {
         reply: Option<serde_json::Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         failure: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        judge_failure: Option<tl3_store::JudgeFailure>,
     },
     LinkedRequest {
         repository: crate::Repository,

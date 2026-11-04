@@ -11,6 +11,8 @@ mod fake;
 mod input_contract_tests;
 mod json;
 pub(crate) mod ladder;
+#[cfg(test)]
+mod postmortem_failure_tests;
 mod process;
 pub(crate) mod protocol;
 pub(crate) mod reproducing;
@@ -1376,6 +1378,7 @@ fn failed_with(delivery: &Delivery, class: &str) -> Completion {
         return Completion::confirmed(vec![Observation::Postmortem {
             key: delivery.key.clone(),
             reply: None,
+            judge_failure: None,
             failure: Some(class.into()),
         }]);
     }
@@ -1423,15 +1426,33 @@ pub(super) fn inspect(attempt: &Path, delivery: &Delivery) -> Result<Reconciliat
     if exit["code"] != 0 {
         if delivery.is_postmortem() {
             // #486: a run its own deadline stopped names that class.
-            let deadline = read(&attempt.join("memory.json"))
-                .ok()
-                .flatten()
-                .is_some_and(|summary| summary["reason"]["failure_class"] == "PostmortemDeadline");
-            return Ok(Reconciliation::Found(Box::new(if deadline {
-                failed_with(delivery, "deadline")
-            } else {
-                failed(delivery)
-            })));
+            let summary = read(&attempt.join("memory.json")).ok().flatten();
+            let reason = summary.as_ref().and_then(|summary| summary.get("reason"));
+            if reason.is_some_and(|reason| reason["failure_class"] == "PostmortemDeadline") {
+                return Ok(Reconciliation::Found(Box::new(failed_with(
+                    delivery, "deadline",
+                ))));
+            }
+            let judge_failure = reason.map(|reason| {
+                let class = serde_json::from_value(reason["failure_class"].clone())
+                    .unwrap_or(tl3_store::JudgeFailureClass::Other);
+                let http_status = reason["failure_http_status"]
+                    .as_str()
+                    .filter(|status| {
+                        status.len() == 3 && status.bytes().all(|b| b.is_ascii_digit())
+                    })
+                    .and_then(|status| status.parse::<u16>().ok())
+                    .and_then(|status| tl3_store::JudgeHttpStatus::try_from(status).ok());
+                tl3_store::JudgeFailure { class, http_status }
+            });
+            return Ok(Reconciliation::Found(Box::new(Completion::confirmed(
+                vec![Observation::Postmortem {
+                    key: delivery.key.clone(),
+                    reply: None,
+                    failure: Some("worker_failed".into()),
+                    judge_failure,
+                }],
+            ))));
         }
         let mut completion = failed(delivery);
         if delivery.job_table().is_none()

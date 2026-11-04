@@ -84,6 +84,7 @@ impl Executor for Workers {
                 vec![Observation::Postmortem {
                     key: delivery.key.clone(),
                     reply: None,
+                    judge_failure: None,
                     failure: Some(failure.into()),
                 }],
             ))));
@@ -92,6 +93,7 @@ impl Executor for Workers {
             vec![Observation::Postmortem {
                 key: delivery.key.clone(),
                 reply: Some(judge.reply.clone().unwrap_or_else(|| reply(2))),
+                judge_failure: None,
                 failure: None,
             }],
         ))))
@@ -118,6 +120,7 @@ impl Executor for Workers {
         Ok(Completion::confirmed(vec![Observation::Postmortem {
             key: delivery.key.clone(),
             reply: None,
+            judge_failure: None,
             failure: Some("worker_failed".into()),
         }]))
     }
