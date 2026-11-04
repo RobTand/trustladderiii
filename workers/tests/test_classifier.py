@@ -122,3 +122,29 @@ def test_classifier_shim_keeps_exact_repair_and_failure_diagnostics(fake_tl3):
         "failure_class": "InvalidReply",
         "failure_message": f"invalid reply: {first}; repaired reply: {first}",
     }
+
+
+@pytest.mark.parametrize("response", [
+    '{"violations":["reject"],"violations":[]}',
+    '{"violations":[],"violations":["reject"]}',
+    '{"violations":[],"metadata":{"private-validator-canary":1,"private-validator-canary":2}}',
+    '{"violations":[],"metadata":[{"inner":{"duplicate":1,"duplicate":2}}]}',
+])
+def test_reply_shim_duplicate_keys_are_infrastructure_failure(fake_tl3, response):
+    fake_tl3(f"print({response!r})\n")
+    asked = []
+    history = []
+
+    def ask():
+        asked.append(True)
+        return '{"kind":"remark"}'
+
+    with pytest.raises(reply_check.ReplyCheckInfrastructureError) as caught:
+        repaired(TurnControl(), history, ask, lambda _: check_reply({}, {"kind": "remark"}))
+    assert asked == [True]
+    assert history == []
+    assert failure_tags(caught.value) == {
+        "failure_class": "ReplyCheckInfrastructureError",
+        "failure_message": "reply validator returned invalid output",
+    }
+    assert "private-validator-canary" not in str(caught.value)

@@ -1095,7 +1095,9 @@
       ],
       "findings": []
     },
-    "violations": [],
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
     "schema_invalid": false
   },
   {
@@ -1179,7 +1181,9 @@
       ],
       "findings": []
     },
-    "violations": [],
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
     "schema_invalid": false
   },
   {
@@ -1221,7 +1225,9 @@
       ],
       "findings": []
     },
-    "violations": [],
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
     "schema_invalid": false
   },
   {
@@ -1263,7 +1269,9 @@
       ],
       "findings": []
     },
-    "violations": [],
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
     "schema_invalid": false
   },
   {
@@ -1305,7 +1313,9 @@
       ],
       "findings": []
     },
-    "violations": [],
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
     "schema_invalid": false
   },
   {
@@ -1347,7 +1357,9 @@
       ],
       "findings": []
     },
-    "violations": [],
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
     "schema_invalid": false
   },
   {
@@ -1389,7 +1401,9 @@
       ],
       "findings": []
     },
-    "violations": [],
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
     "schema_invalid": false
   },
   {
@@ -1431,7 +1445,9 @@
       ],
       "findings": []
     },
-    "violations": [],
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
     "schema_invalid": false
   },
   {
@@ -1473,7 +1489,9 @@
       ],
       "findings": []
     },
-    "violations": [],
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
     "schema_invalid": false
   },
   {
@@ -1515,9 +1533,7 @@
       ],
       "findings": []
     },
-    "violations": [
-      "scope blocker must quote a changed hunk"
-    ],
+    "violations": [],
     "schema_invalid": false
   },
   {
@@ -1559,9 +1575,7 @@
       ],
       "findings": []
     },
-    "violations": [
-      "scope blocker must quote a changed hunk"
-    ],
+    "violations": [],
     "schema_invalid": false
   },
   {
@@ -1603,9 +1617,7 @@
       ],
       "findings": []
     },
-    "violations": [
-      "scope blocker must quote a changed hunk"
-    ],
+    "violations": [],
     "schema_invalid": false
   },
   {
@@ -1647,9 +1659,7 @@
       ],
       "findings": []
     },
-    "violations": [
-      "scope blocker must quote a changed hunk"
-    ],
+    "violations": [],
     "schema_invalid": false
   },
   {
@@ -2544,5 +2554,91 @@
     },
     "violations": [],
     "schema_invalid": true
+  },
+  {
+    "name": "rust_whole_changed_line_unicode_separator",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+let s = \"context\u2028+abcdefgh\u2028tail\";\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abcdefgh"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "rust_unit_separator_counts_as_content",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+abc\u001fdefg",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abc\u001fdefg"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": false
   }
 ]
