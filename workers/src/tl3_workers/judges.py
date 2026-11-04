@@ -10,7 +10,7 @@ the annotations below give the Bazel targets the same dependencies.
 # gazelle:include_dep @tl3_pip//numpy
 # gazelle:include_dep @tl3_pip//pandas
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from enum import StrEnum
 import json
@@ -70,7 +70,7 @@ def endpoint_url(base_url):
 
 
 # Model turns, each with its tool calls, one judge may take.
-MAX_TURNS = 12
+MAX_TURNS = 48
 
 
 def configure(base_url, key):
@@ -87,6 +87,42 @@ def configure(base_url, key):
     os.environ["MLFLOW_DISABLE_TELEMETRY"] = "true"
     os.environ["DO_NOT_TRACK"] = "true"
     _endpoint = endpoint_url(base_url)
+
+
+@contextmanager
+def observed(stage: Literal["grade", "postmortem"]):
+    """Count attempted model turns, including the final or failed call, per judge.
+
+    Provider retries inside send_chat_request belong to the same model turn.
+    The separate tool-free reply repair is outside the postmortem judge loop.
+    """
+    import mlflow
+    from mlflow.environment_variables import MLFLOW_JUDGE_MAX_ITERATIONS
+    from mlflow.genai.judges.adapters import gateway_adapter
+    from tl3_workers import memory, tracing
+
+    limit = MLFLOW_JUDGE_MAX_ITERATIONS.get()
+    turns = 0
+    send = gateway_adapter.send_chat_request
+
+    def counted(*args, **kwargs):
+        nonlocal turns
+        turns += 1
+        return send(*args, **kwargs)
+
+    context = mlflow.start_span(name=f"{stage} judge", span_type="CHAIN") if (
+        tracing.active.get() is not None) else nullcontext()
+    with context as span:
+        gateway_adapter.send_chat_request = counted
+        try:
+            yield
+        finally:
+            gateway_adapter.send_chat_request = send
+            if span is not None:
+                span.set_attribute("tl3.judge.turn_count", turns)
+                span.set_attribute("tl3.judge.iteration_limit", limit)
+            if summary := memory.current.get():
+                summary.judge_run(stage, turns, limit)
 
 
 def judge(name, instructions, model, value_type):
@@ -147,7 +183,7 @@ def postmortem_contract(prompt):
 
 @contextmanager
 def postmortem_turns():
-    # Reserve the last of the writer's twelve turns for the shared reply repair.
+    # Reserve the last model turn for the shared reply repair.
     previous = os.environ["MLFLOW_JUDGE_MAX_ITERATIONS"]
     os.environ["MLFLOW_JUDGE_MAX_ITERATIONS"] = str(MAX_TURNS - 1)
     try:

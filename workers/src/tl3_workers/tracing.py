@@ -1207,6 +1207,11 @@ def span_entry(span, redactor, role, model):
         # prompt_tokens must survive the general sensitive-key filter.
         value = [chunk_counts(chunk) for chunk in json.loads(raw)[:32]]
         _set_otel_proto_anyvalue(result.attributes.add(key='tl3.proxy.usage_chunks').value, value)
+    for key in ('tl3.judge.turn_count', 'tl3.judge.iteration_limit'):
+        if (raw := span.attributes.get(key)) is not None:
+            value = json.loads(raw)
+            if type(value) is int and value >= 0:
+                result.attributes.add(key=key).value.int_value = value
     if span.attributes.get('tl3.proxy.usage_chunks_truncated') is not None:
         result.attributes.add(key='tl3.proxy.usage_chunks_truncated').value.bool_value = True
     if kind in {'LLM', 'CHAT_MODEL'} and (raw := span.attributes.get('mlflow.chat.tokenUsage')):

@@ -130,15 +130,16 @@ def source_trace(role, start, tags):
 class FakeModel:
     """CLIProxyAPI as MLflow's gateway adapter sees it. It records every request."""
 
-    def __init__(self, postmortem=None, needs_rob="no"):
+    def __init__(self, postmortem=None, needs_rob="no", tool_turns=1):
         self.payloads = []
+        self.tool_turns = tool_turns
         self.postmortem = postmortem or written(2, extra=f"It read {TOKEN}.")
         self.needs_rob = needs_rob
 
     def __call__(self, endpoint, headers, payload, num_retries):
         self.payloads.append(copy.deepcopy(payload))
         messages = payload["messages"]
-        if not any(message.get("role") == "tool" for message in messages):
+        if sum(message.get("role") == "tool" for message in messages) < self.tool_turns:
             call = {"id": f"call-{len(self.payloads)}", "type": "function",
                     "function": {"name": "search_trace_regex", "arguments": json.dumps(
                         {"pattern": MARKER, "max_matches": 400,
@@ -292,11 +293,14 @@ def test_the_escalation_seam_returns_feedback_and_logs_nothing(model, monkeypatc
     assert judges.failed(errored)
 
 
-def test_judges_take_at_most_twelve_turns():
+def test_judges_have_forty_eight_turns_with_one_reserved_for_repair():
     from mlflow.environment_variables import MLFLOW_JUDGE_MAX_ITERATIONS
 
     judges.configure("http://proxy.invalid:8317/v1", KEY)
-    assert MLFLOW_JUDGE_MAX_ITERATIONS.get() == 12
+    assert MLFLOW_JUDGE_MAX_ITERATIONS.get() == 48
+    with judges.postmortem_turns():
+        assert MLFLOW_JUDGE_MAX_ITERATIONS.get() == 47
+    assert MLFLOW_JUDGE_MAX_ITERATIONS.get() == 48
 
 
 def test_a_run_past_its_deadline_fails_with_the_deadline_class(tmp_path, monkeypatch):
@@ -806,3 +810,42 @@ def test_server_enforced_assessment_id_prevents_duplicate_when_both_lookups_are_
     assert len(posts) == 2 and posts[0] == posts[1]
     assert result["assessment_ids"] == [posts[0]]
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("tool_turns", [1, 20])
+def test_judge_turn_counts_and_limits_reach_spans_and_summary(tmp_path, monkeypatch, tool_turns):
+    import os
+    from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
+    from mlflow.genai.judges.adapters import gateway_adapter
+
+    model = FakeModel(tool_turns=tool_turns)
+    monkeypatch.setattr(gateway_adapter, "send_chat_request", model)
+    monkeypatch.setattr(postmortem, "SOURCE", lambda settings: FakeTraces([
+        source_trace("maker", 1_000_000_000, {})]))
+    document = request(tmp_path)
+    log, summary = tmp_path / "spans.jsonl", tmp_path / "memory.json"
+    document["mlflow"] = {"tracking_uri": "http://unused.invalid", "experiment": "test"}
+    document["trace"] = {"log": str(log)}
+    document["memory"] = {"summary_file": str(summary)}
+    monkeypatch.setattr(tracing.SpanLog, "start_shipper", lambda self: None)
+    monkeypatch.setattr(tracing.SpanLog, "finish", lambda self: os.close(self.fd))
+
+    result, _ = run(document)
+    validate("postmortem-reply", result)
+    expected = [{"stage": stage, "turn_count": tool_turns + 1, "iteration_limit": limit}
+                for stage, limit in [("grade", 48), ("grade", 48), ("postmortem", 47)]]
+    recorded = json.loads(summary.read_text())
+    assert recorded.get("judge_runs") == expected
+    assert recorded["outcome"] == "succeeded"
+    records = [json.loads(line) for line in log.read_text().splitlines()]
+    packet = ExportTraceServiceRequest.FromString(base64.b64decode(
+        next(item["otlp"] for item in records if item["kind"] == "final")))
+    spans = packet.resource_spans[0].scope_spans[0].spans
+    measured = [span for span in spans if span.name in {"grade judge", "postmortem judge"}]
+    assert len(measured) == 3
+    for span, metrics in zip(measured, expected, strict=True):
+        attrs = {item.key: item.value for item in span.attributes}
+        for field in ("turn_count", "iteration_limit"):
+            value = attrs["tl3.judge." + field]
+            assert value.WhichOneof("value") == "int_value"
+            assert value.int_value == metrics[field]

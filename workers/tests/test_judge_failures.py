@@ -104,6 +104,12 @@ def test_each_judge_cause_reaches_failed_span_and_run_record(
         status = str({"quota": 429, "refusal": 403, "http": 502}[category])
         assert status in reason["failure_message"]
         assert reason["failure_http_status"] == status
+    judge_runs = json.loads(summary.read_text()).get("judge_runs", [])
+    measured = [item for item in judge_runs if item["stage"] == stage]
+    assert len(measured) == 1
+    assert type(measured[0]["turn_count"]) is int
+    assert measured[0]["turn_count"] == (1 if mode == "raised" else 0)
+    assert measured[0]["iteration_limit"] == (48 if stage == "grade" else 47)
     records = [json.loads(line) for line in log.read_text().splitlines()]
     packet = ExportTraceServiceRequest.FromString(base64.b64decode(
         next(item["otlp"] for item in records if item["kind"] == "final")))
@@ -113,6 +119,12 @@ def test_each_judge_cause_reaches_failed_span_and_run_record(
     attrs = {item.key: item.value.string_value for item in root.attributes}
     for key, value in reason.items():
         assert attrs["mlflow.traceTag." + key] == value
+    judge_span = next(span for span in spans if span.name == f"{stage} judge")
+    metrics = {item.key: item.value for item in judge_span.attributes}
+    for field in ("turn_count", "iteration_limit"):
+        value = metrics["tl3.judge." + field]
+        assert value.WhichOneof("value") == "int_value"
+        assert value.int_value == measured[0][field]
     assert all(not span.events and not span.status.message for span in spans)
     exported = packet.SerializeToString() + summary.read_bytes() + log.read_bytes()
     assert PRIVATE.encode() not in exported

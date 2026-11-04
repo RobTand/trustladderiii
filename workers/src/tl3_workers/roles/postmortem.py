@@ -295,14 +295,15 @@ def _save(path, value):
 
 
 def _judge(run, stage):
-    try:
-        feedback = run()
-        failure = judges.feedback_failure(feedback)
-    except Exception as error:
-        raise tracing.WorkerStageError(stage, judge_failure=judges.exception_failure(error)) from None
-    if failure is not None:
-        raise tracing.WorkerStageError(stage, judge_failure=failure) from None
-    return feedback
+    with judges.observed("grade" if stage == "grade judge failure" else "postmortem"):
+        try:
+            feedback = run()
+            failure = judges.feedback_failure(feedback)
+        except Exception as error:
+            raise tracing.WorkerStageError(stage, judge_failure=judges.exception_failure(error)) from None
+        if failure is not None:
+            raise tracing.WorkerStageError(stage, judge_failure=failure) from None
+        return feedback
 
 
 def assessment_key(run, dimension, model, release):

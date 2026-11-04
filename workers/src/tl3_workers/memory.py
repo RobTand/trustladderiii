@@ -107,6 +107,12 @@ class Summary:
             if changed:
                 self.save()
 
+    def judge_run(self, stage: str, turn_count: int, iteration_limit: int):
+        with self.lock:
+            self.value.setdefault("judge_runs", []).append({
+                "stage": stage, "turn_count": turn_count, "iteration_limit": iteration_limit})
+            self.save()
+
     def finish(self, reply, error):
         from tl3_workers.tracing import failure_tags
 
