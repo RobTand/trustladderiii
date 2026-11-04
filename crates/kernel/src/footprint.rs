@@ -323,13 +323,23 @@ impl World {
         let mut offset = 0usize;
         kernel_while! { (offset < files.len()) [
             invariant offset <= files.len(), files@ == file_view(*self, a),
+                valid_footprint(*self, a), valid_footprint(*self, b), ordered_table(*self),
+                match (a.0, b.0) {
+                    (Repr::Inline(_), Repr::Inline(_)) => false, _ => true,
+                },
                 forall|i: int| 0 <= i < offset ==> !contains_file(*self, b, files@[i]),
             decreases files.len() - offset,
         ] {
             let file = files[offset];
             let contains = match b.0 {
                 Repr::Inline(bits) => file.0 < 64 && bits & (1 << file.0) != 0,
-                Repr::Interned(index) => sorted_contains(&self.file_sets[index], file),
+                Repr::Interned(index) => {
+                    kernel_proof! {
+                        reveal(ordered_table);
+                        assert(ordered(self.file_sets@[index as int]@));
+                    }
+                    sorted_contains(&self.file_sets[index], file)
+                }
             };
             if contains {
                 return false;

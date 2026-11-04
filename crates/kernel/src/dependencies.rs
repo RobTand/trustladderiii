@@ -424,6 +424,7 @@ impl World {
     kernel_fn! {
     /// Prerequisite fact rows / #693 / #771: declarations and terminal facts
     /// preserve every numeric ledger and emit at most one note.
+    #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
     pub(super) fn dependency_fact(&mut self, i: usize, target: DependencyTarget,
         status: DependencyStatus, out: &mut Outbox) -> (result: ()) [
         requires i < old(self).nodes@.len(), i <= u64::MAX as int,
@@ -481,24 +482,51 @@ impl World {
             status,
             rejected,
         };
+        self.record_dependency(i, existing, dependency, out);
+    }
+    }
+
+    kernel_fn! {
+    /// #693 / #771: store the validated declaration, then reconcile wait flags.
+    /// This separates the unchanged writes from cycle-query validation.
+    #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+    fn record_dependency(&mut self, i: usize, existing: Option<usize>,
+        dependency: Dependency, out: &mut Outbox) -> (result: ()) [
+        requires i < old(self).nodes@.len(), old(out).len < OUTBOX,
+            match existing { None => true, Some(index) => index < old(self).dependencies@.len() },
+        ensures final(self).nodes@ == old(self).nodes@.update(i as int, Node {
+            waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
+            credit: Credit { withheld: final(self).nodes@[i as int].credit.withheld,
+                ..old(self).nodes@[i as int].credit },
+            ..old(self).nodes@[i as int]
+        }),
+            final(self).next_ticket == old(self).next_ticket,
+            final(self).next_question == old(self).next_question,
+            final(self).gates@ == old(self).gates@,
+            final(self).pool_capacity == old(self).pool_capacity,
+            final(self).fail_fast == old(self).fail_fast,
+            final(self).file_sets@ == old(self).file_sets@,
+            final(out).len <= old(out).len + 1,
+    ] {
+        let node = NodeId(i as u64);
         match existing {
             Some(index) => self.dependencies[index] = dependency,
             None => self.dependencies.push(dependency),
         }
-        if rejected {
+        if dependency.rejected {
             notice(
                 out,
                 i,
                 Notice::Note(NoteKind::DependencyCycle {
-                    number: target.number,
+                    number: dependency.target.number,
                 }),
             );
-        } else if status == DependencyStatus::Abandoned {
+        } else if dependency.status == DependencyStatus::Abandoned {
             notice(
                 out,
                 i,
                 Notice::Note(NoteKind::DependencyAbandoned {
-                    number: target.number,
+                    number: dependency.target.number,
                 }),
             );
         }

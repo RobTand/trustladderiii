@@ -285,6 +285,59 @@ pub(super) proof fn potential_update(nodes: Seq<Node>, index: int,
     }
 }
 
+/// #771: one node's allocation reserve is contained in the finite sum.
+pub(super) proof fn potential_member(nodes: Seq<Node>, index: int, end: nat,
+    potential: spec_fn(Node) -> nat)
+    requires 0 <= index < end <= nodes.len(),
+    ensures potential(nodes[index]) <= potential_prefix(nodes, end, potential),
+    decreases end,
+{
+    if index < end - 1 { potential_member(nodes, index, (end - 1) as nat, potential); }
+}
+
+/// #771: a node update cannot reopen any closed history entry during settle.
+pub(super) proof fn open_count_update(nodes: Seq<Node>, index: int, replacement: Node)
+    requires 0 <= index < nodes.len(),
+        nodes[index].phase is Closed ==> replacement.phase is Closed,
+    ensures open_prefix(nodes.update(index, replacement), nodes.len())
+        <= open_prefix(nodes, nodes.len()),
+    decreases nodes.len(),
+{
+    reveal(open_prefix);
+    if index < nodes.len() - 1 {
+        open_count_update(nodes.drop_last(), index, replacement);
+        assert(nodes.update(index, replacement).drop_last()
+            == nodes.drop_last().update(index, replacement));
+    } else {
+        assert(nodes.update(index, replacement).drop_last() == nodes.drop_last());
+    }
+}
+
+/// #771: compose the real local postcondition with arbitrary finite sums.
+pub(super) proof fn advance_sum_bounds(before: Seq<Node>, after: Seq<Node>, index: int,
+    ticket_before: u64, ticket_after: u64, changed: bool)
+    requires 0 <= index < before.len(), after == before.update(index, after[index]),
+        advance_post(before[index], after[index], ticket_before, ticket_after, changed),
+    ensures node_total(after) <= node_total(before),
+        potential_prefix(after, after.len(), |n: Node| internal_height(n))
+            <= potential_prefix(before, before.len(), |n: Node| internal_height(n)),
+        changed ==> potential_prefix(after, after.len(), |n: Node| internal_height(n))
+            < potential_prefix(before, before.len(), |n: Node| internal_height(n)),
+        ticket_after as int + potential_prefix(after, after.len(), |n: Node| ticket_capacity(n))
+            <= ticket_before as int + potential_prefix(before, before.len(), |n: Node| ticket_capacity(n)),
+        open_prefix(after, after.len()) <= open_prefix(before, before.len()),
+{
+    reveal(advance_post);
+    sum_update(before, index, after[index]);
+    potential_update(before, index, after[index], before.len(), |n: Node| internal_height(n));
+    potential_update(before, index, after[index], before.len(), |n: Node| ticket_capacity(n));
+    if before[index].phase is Closed {
+        assert(internal_height(before[index]) == 0);
+        assert(!changed);
+    }
+    open_count_update(before, index, after[index]);
+}
+
 /// #771: closed history contributes no scratch or allocation reserve.
 /// The bound depends on open nodes, not the total length of executable storage.
 pub(super) proof fn potential_bound(nodes: Seq<Node>, end: nat,
@@ -459,7 +512,7 @@ pub(super) open spec fn advance_pre(n: Node, ticket: u64, out_len: usize) -> boo
 /// #771: bounds proved for the actual local transition. This is a postcondition,
 /// not an alternative transition relation.
 #[verifier::opaque]
-pub(super) closed spec fn advance_post(before: Node, after: Node,
+pub(super) open spec fn advance_post(before: Node, after: Node,
     ticket_before: u64, ticket_after: u64, changed: bool) -> bool {
     (changed ==> internal_height(after) < internal_height(before))
     && after.repo == before.repo && after.footprint == before.footprint
@@ -696,6 +749,7 @@ kernel_fn! {
 
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
+    #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
     fn advance_teardown(node: &mut Node, _next_ticket: &mut u64,
         context: AdvanceContext, out: &mut Outbox, kind: EffectKind) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
@@ -707,6 +761,7 @@ kernel_fn! {
         if n.question.is_some() {
             return false; // waiting for Rob
         }
+        kernel_proof! { assert(n.phase is Stopping); }
         let gone = match kind {
             EffectKind::StopRun => n.run.is_none(),
             EffectKind::WithdrawJob => n.job.is_none(),

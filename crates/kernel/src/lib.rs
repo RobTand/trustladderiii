@@ -732,6 +732,38 @@ pub struct World {
     pub fail_fast: bool,
 }
 
+kernel_fn! {
+/// #771: an observational world snapshot, including every interned file list.
+/// Copy fields keep their values; nested vectors keep their element sequences.
+fn snapshot_world(world: &World) -> (result: World) [
+    ensures result.nodes@ == world.nodes@, result.gates@ == world.gates@,
+        result.dependencies@ == world.dependencies@,
+        result.file_sets@.len() == world.file_sets@.len(),
+        forall|i: int| 0 <= i < world.file_sets@.len()
+            ==> result.file_sets@[i]@ == world.file_sets@[i]@,
+        result.pool_capacity == world.pool_capacity,
+        result.next_ticket == world.next_ticket, result.next_question == world.next_question,
+        result.fail_fast == world.fail_fast,
+] {
+    let mut file_sets: Vec<Vec<FileId>> = Vec::new();
+    let mut index = 0usize;
+    kernel_while! { (index < world.file_sets.len()) [
+        invariant index <= world.file_sets.len(), file_sets@.len() == index,
+            forall|i: int| 0 <= i < index ==> file_sets@[i]@ == world.file_sets@[i]@,
+        decreases world.file_sets.len() - index,
+    ] {
+        file_sets.push(world.file_sets[index].clone());
+        index += 1;
+    } }
+    World {
+        nodes: world.nodes.clone(), gates: world.gates.clone(),
+        dependencies: world.dependencies.clone(), file_sets,
+        pool_capacity: world.pool_capacity, next_ticket: world.next_ticket,
+        next_question: world.next_question, fail_fast: world.fail_fast,
+    }
+}
+}
+
 #[cfg_attr(
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
@@ -1077,14 +1109,30 @@ pub struct Outbox {
     len: usize,
 }
 
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #771: public specification without exposing the private output storage.
+pub closed spec fn empty_outbox(out: Outbox) -> bool {
+    out.len == 0 && out.items@ == Seq::new(OUTBOX as nat, |i: int| None)
+}
+}
+
+kernel_fn! {
 impl Outbox {
-    pub const fn new() -> Self {
+    /// #771: the fixed output buffer begins with no emitted entries.
+    pub const fn new() -> (result: Outbox) [
+        ensures empty_outbox(result),
+    ] {
+        kernel_proof! { reveal(empty_outbox); }
         Outbox {
             items: [None; OUTBOX],
             len: 0,
         }
     }
+}
+}
 
+impl Outbox {
     kernel_fn! {
         fn push(&mut self, o: Out) -> (result: ()) [
         requires old(self).len < OUTBOX,
@@ -1121,8 +1169,19 @@ impl Outbox {
         false
     }
 
-    fn drain_into(&self, out: &mut Vec<Out>) {
-        out.extend(self.items.iter().flatten().copied());
+    kernel_fn! {
+    /// #771: append occupied slots in the same order as iter.flatten.copied.
+    fn drain_into(&self, out: &mut Vec<Out>) -> (result: ()) [
+    ] {
+        let mut index = 0usize;
+        kernel_while! { (index < OUTBOX) [
+            invariant index <= OUTBOX,
+            decreases OUTBOX - index,
+        ] {
+            if let Some(item) = self.items[index] { out.push(item); }
+            index += 1;
+        } }
+    }
     }
 }
 
@@ -1306,7 +1365,7 @@ impl World {
 
     /// True when settle has nothing left to do.
     pub fn is_settled(&self) -> bool {
-        let mut w = self.clone();
+        let mut w = snapshot_world(self);
         let mut out = Outbox::new();
         let mut i = 0;
         while i < w.nodes.len() {
@@ -2015,7 +2074,7 @@ pub fn step_traced(mut world: World, event: Event) -> (World, Vec<Out>, Vec<Worl
     apply(&mut world, event, &mut outbox);
     let mut out = Vec::new();
     outbox.drain_into(&mut out);
-    trace.push(world.clone());
+    trace.push(snapshot_world(&world));
     settle(&mut world, &mut out, Some(&mut trace));
     (world, out, trace)
 }
@@ -2198,6 +2257,9 @@ kernel_fn! {
     fn merge_credit(m: &mut Node) -> (result: ()) [
         requires old(m).credit.merge_credited || old(m).credit.earned < u32::MAX,
         ensures
+            *final(m) == (Node { credit: Credit {
+                earned: final(m).credit.earned, merge_credited: true, ..old(m).credit
+            }, ..*old(m) }),
             final(m).credit.earned as int == old(m).credit.earned as int
                 + if old(m).credit.merge_credited { 0int } else { 1int },
             final(m).credit.merge_credited,
@@ -2603,6 +2665,7 @@ fn reply_transition(w: &mut World, i: usize, reply: Reply,
 
 kernel_fn! {
 /// Ingest reply rows / #771: initialize the same one-time deposit before audit.
+#[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 fn finish_ingest(w: &mut World, i: usize, size: u8, early_end: Option<EarlyEnd>)
     -> (result: ()) [
     requires i < old(w).nodes@.len(),
@@ -2701,6 +2764,7 @@ fn reply_plan(w: &mut World, i: usize, reply: Reply,
 
 kernel_fn! {
 /// Reply rows / #771: one phase change, at most one paid credit and one question.
+#[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 fn reply_work(w: &mut World, i: usize, reply: Reply,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -2744,6 +2808,23 @@ fn reply_work(w: &mut World, i: usize, reply: Reply,
                 recheck(w, i, Phase::Reviewing, out);
             }
         }
+        _ => reply_rebase(w, i, reply, out),
+    }
+}
+}
+
+kernel_fn! {
+/// Reply rows / #771: one phase change, at most one paid credit and one question.
+fn reply_rebase(w: &mut World, i: usize, reply: Reply,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+        !(reply is MakerNeedsFiles),
+    ensures reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+] proof [reveal(reply_bounds); reveal(retry_bounds);] {
+    match reply {
         Reply::RebaseClean { head } => {
             let m = &mut w.nodes[i];
             if m.head != Some(head) {
@@ -3139,6 +3220,7 @@ fn delivery_failed(w: &mut World, i: usize, kind: EffectKind,
 
 kernel_fn! {
 /// Permanent-effect-failure rows / #771: exactly one question, no credit change.
+#[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 fn effect_failed(w: &mut World, i: usize, kind: EffectKind,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
@@ -3196,6 +3278,7 @@ fn effect_failed(w: &mut World, i: usize, kind: EffectKind,
 kernel_fn! {
 /// Fact rows / #771: compose declaration updates, merge credit and the remaining
 /// fact handlers. No fact assigns a command ID, effect sequence or ticket.
+#[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), i <= u64::MAX as int,
         old(out).len + 4 <= OUTBOX,
@@ -3669,31 +3752,106 @@ fn mark_handled(m: &mut Node) -> (result: ()) [
 
 // ---------------------------------------------------------------- settle
 
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #771: reserve for the remaining local settle chains, with mathematical sums.
+spec fn settle_ready(w: World) -> bool {
+    scheduling_safe(w) && w.nodes@.len() <= u64::MAX as int
+        && (forall|j: int| 0 <= j < w.nodes@.len() ==> settle_shape(w.nodes@[j])
+            && w.nodes@[j].generation as int + generation_capacity(w.nodes@[j]) <= u64::MAX as int
+            && w.nodes@[j].next_seq as int + effect_capacity(w.nodes@[j]) <= u64::MAX as int
+            && w.nodes@[j].credit.earned as int + merge_capacity(w.nodes@[j]) <= u32::MAX as int)
+        && w.next_ticket as int + potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| ticket_capacity(n)) <= u64::MAX as int
+        && potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n)) <= u32::MAX as int
+}
+
+/// #771: conserved allocations and frames across the real settle loop.
+spec fn settle_chain(before: World, after: World) -> bool {
+    after.nodes@.len() == before.nodes@.len()
+        && after.next_question == before.next_question && after.gates@ == before.gates@
+        && after.pool_capacity == before.pool_capacity && after.fail_fast == before.fail_fast
+        && after.file_sets@ == before.file_sets@ && after.dependencies@ == before.dependencies@
+        && node_total(after.nodes@) <= node_total(before.nodes@)
+        && after.next_ticket as int + potential_prefix(after.nodes@, after.nodes@.len(), |n: Node| ticket_capacity(n))
+            <= before.next_ticket as int + potential_prefix(before.nodes@, before.nodes@.len(), |n: Node| ticket_capacity(n))
+        && forall|j: int| 0 <= j < before.nodes@.len() ==>
+            after.nodes@[j].generation as int + generation_capacity(after.nodes@[j])
+                <= before.nodes@[j].generation as int + generation_capacity(before.nodes@[j])
+            && after.nodes@[j].next_seq as int + effect_capacity(after.nodes@[j])
+                <= before.nodes@[j].next_seq as int + effect_capacity(before.nodes@[j])
+            && after.nodes@[j].credit.earned as int + merge_capacity(after.nodes@[j])
+                <= before.nodes@[j].credit.earned as int + merge_capacity(before.nodes@[j])
+            && after.nodes@[j].credit.start == before.nodes@[j].credit.start
+            && after.nodes@[j].credit.added == before.nodes@[j].credit.added
+            && after.nodes@[j].credit.spent == before.nodes@[j].credit.spent
+}
+}
+
+kernel_fn! {
 /// Takes passes over the nodes until one changes nothing, and returns how many
 /// passes changed something. Each internal transition moves a node along a
 /// finite chain, so the loop ends. Kani's unwinding check proves it within the
 /// bounds.
-fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>) -> u32 {
+fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>)
+    -> (result: u32) [
+    requires settle_ready(*old(w)),
+    ensures settle_ready(*final(w)), settle_chain(*old(w), *final(w)),
+        result as int <= potential_prefix(old(w).nodes@, old(w).nodes@.len(), |n: Node| internal_height(n)),
+] {
+    kernel_snapshot! { baseline = *w }
     let mut passes: u32 = 0;
-    loop {
+    kernel_loop! { [
+        invariant baseline@ == *old(w), settle_ready(*w), settle_chain(baseline@, *w),
+            passes as int + potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n))
+                <= potential_prefix(baseline@.nodes@, baseline@.nodes@.len(), |n: Node| internal_height(n)),
+            potential_prefix(baseline@.nodes@, baseline@.nodes@.len(), |n: Node| internal_height(n)) <= u32::MAX as int,
+        decreases potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n)),
+    ] {
+        kernel_snapshot! { pass_height = potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n)) }
         let mut changed = false;
         let mut i = 0;
-        while i < w.nodes.len() {
+        kernel_while! { (i < w.nodes.len()) [
+            invariant i <= w.nodes.len(), baseline@ == *old(w),
+                settle_ready(*w), settle_chain(baseline@, *w),
+                passes as int + pass_height@ <= potential_prefix(baseline@.nodes@, baseline@.nodes@.len(), |n: Node| internal_height(n)),
+                potential_prefix(baseline@.nodes@, baseline@.nodes@.len(), |n: Node| internal_height(n)) <= u32::MAX as int,
+                potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n)) <= pass_height@,
+                changed ==> potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n)) < pass_height@,
+            decreases w.nodes.len() - i,
+        ] {
             let mut outbox = Outbox::new();
-            if advance(w, i, &mut outbox) {
-                outbox.drain_into(out);
-                changed = true;
-                if let Some(t) = trace.as_mut() {
-                    t.push(w.clone());
+            kernel_proof! {
+                reveal(empty_outbox);
+                potential_member(w.nodes@, i as int, w.nodes@.len(), |n: Node| ticket_capacity(n));
+            }
+            kernel_snapshot! { before_node = *w }
+            let moved = advance(w, i, &mut outbox);
+            kernel_proof! {
+                reveal(advance_post);
+                assert forall|j: int| 0 <= j < w.nodes@.len() implies
+                    w.nodes@[j].generation as int + generation_capacity(w.nodes@[j])
+                        <= baseline@.nodes@[j].generation as int + generation_capacity(baseline@.nodes@[j])
+                    && w.nodes@[j].next_seq as int + effect_capacity(w.nodes@[j])
+                        <= baseline@.nodes@[j].next_seq as int + effect_capacity(baseline@.nodes@[j])
+                    && w.nodes@[j].credit.earned as int + merge_capacity(w.nodes@[j])
+                        <= baseline@.nodes@[j].credit.earned as int + merge_capacity(baseline@.nodes@[j])
+                    && w.nodes@[j].credit.start == baseline@.nodes@[j].credit.start
+                    && w.nodes@[j].credit.added == baseline@.nodes@[j].credit.added
+                    && w.nodes@[j].credit.spent == baseline@.nodes@[j].credit.spent by {
+                    if j != i { assert(w.nodes@[j] == before_node@.nodes@[j]); }
                 }
             }
+            if moved {
+                outbox.drain_into(out);
+                changed = true;
+                if let Some(t) = trace.as_mut() { t.push(snapshot_world(w)); }
+            }
             i += 1;
-        }
-        if !changed {
-            return passes;
-        }
+        } }
+        if !changed { return passes; }
         passes += 1;
-    }
+    } }
+}
 }
 
 /// One internal transition for node `i`, if the facts allow one.
@@ -3723,7 +3881,20 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: bool) [
         final(w).fail_fast == old(w).fail_fast,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
+        node_total(final(w).nodes@) <= node_total(old(w).nodes@),
+        potential_prefix(final(w).nodes@, final(w).nodes@.len(), |n: Node| internal_height(n))
+            <= potential_prefix(old(w).nodes@, old(w).nodes@.len(), |n: Node| internal_height(n)),
+        result ==> potential_prefix(final(w).nodes@, final(w).nodes@.len(), |n: Node| internal_height(n))
+            < potential_prefix(old(w).nodes@, old(w).nodes@.len(), |n: Node| internal_height(n)),
+        final(w).next_ticket as int + potential_prefix(final(w).nodes@, final(w).nodes@.len(), |n: Node| ticket_capacity(n))
+            <= old(w).next_ticket as int + potential_prefix(old(w).nodes@, old(w).nodes@.len(), |n: Node| ticket_capacity(n)),
+        open_prefix(final(w).nodes@, final(w).nodes@.len())
+            <= open_prefix(old(w).nodes@, old(w).nodes@.len()),
+        (forall|j: int| 0 <= j < old(w).nodes@.len() ==> settle_shape(old(w).nodes@[j]))
+            ==> scheduling_safe(*final(w))
+                && (forall|j: int| 0 <= j < final(w).nodes@.len() ==> settle_shape(final(w).nodes@[j])),
 ] {
+    kernel_snapshot! { before_advance = *w }
     let n = &w.nodes[i];
     let mut context = AdvanceContext {
         node: i,
@@ -3747,7 +3918,22 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: bool) [
             _ => {}
         }
     }
-    advance_node(&mut w.nodes[i], &mut w.next_ticket, context, out)
+    let changed = advance_node(&mut w.nodes[i], &mut w.next_ticket, context, out);
+    kernel_proof! {
+        reveal(advance_post);
+        advance_sum_bounds(before_advance@.nodes@, w.nodes@, i as int,
+            before_advance@.next_ticket, w.next_ticket, changed);
+        if forall|j: int| 0 <= j < before_advance@.nodes@.len()
+            ==> settle_shape(before_advance@.nodes@[j]) {
+            assert forall|j: int| 0 <= j < w.nodes@.len()
+                implies footprint::valid_footprint(*w, w.nodes@[j].footprint) by {
+                footprint::valid_under_table_growth(before_advance@, *w, w.nodes@[j].footprint);
+            }
+            assert forall|j: int| 0 <= j < w.nodes@.len() implies settle_shape(w.nodes@[j]) by {}
+            reveal(footprint::ordered_table);
+        }
+    }
+    changed
 }
 }
 
@@ -3908,12 +4094,15 @@ fn slot_free(w: &World, i: usize) -> (result: bool) [
         ==> result,
 ] {
     let me = &w.nodes[i];
+    let _gate_count = w.gates.len();
     let Some(repo) = me.repo.index() else { return false; };
     let Some(gate) = w.gates.get(repo) else { return false; };
     let mut holders = 0u32;
     let mut j = 0usize;
     kernel_while! { (j < w.nodes.len()) [
         invariant j <= w.nodes.len(), i < w.nodes.len(), scheduling_safe(*w),
+            *me == w.nodes@[i as int], repo < w.gates.len(),
+            repo as int == me.repo.0 as int, *gate == w.gates@[repo as int],
             holders as int <= open_prefix(w.nodes@, j as nat),
             ((forall|k: int| 0 <= k < w.nodes@.len() && k != i ==> !w.nodes@[k].holds)
                 ==> holders == 0),
@@ -3996,6 +4185,7 @@ fn older_overlap(w: &World, i: usize, ticket: u64) -> (result: bool) [
     let mut index = 0usize;
     kernel_while! { (index < w.nodes.len()) [
         invariant index <= w.nodes.len(), i < w.nodes.len(), scheduling_safe(*w),
+            *waiter == w.nodes@[i as int],
         decreases w.nodes.len() - index,
     ] {
         let older = &w.nodes[index];
@@ -4025,6 +4215,7 @@ fn first_in_line(w: &World, i: usize) -> (result: bool) [
         let mut index = 0usize;
         kernel_while! { (index < w.nodes.len()) [
             invariant index <= w.nodes.len(), i < w.nodes.len(),
+                *me == w.nodes@[i as int], !(me.phase is Ready), me.ticket == Some(mine),
             decreases w.nodes.len() - index,
         ] {
             if earlier_in_pool(&w.nodes[index], me) { return false; }
@@ -4036,6 +4227,7 @@ fn first_in_line(w: &World, i: usize) -> (result: bool) [
     let mut j = 0usize;
     kernel_while! { (j < w.nodes.len()) [
         invariant j <= w.nodes.len(), i < w.nodes.len(), scheduling_safe(*w),
+            *me == w.nodes@[i as int], me.phase is Ready, me.ticket == Some(mine),
             oldest_waiter(*w, i as int) ==> first_runnable == mine,
         decreases w.nodes.len() - j,
     ] {
@@ -4046,6 +4238,7 @@ fn first_in_line(w: &World, i: usize) -> (result: bool) [
         if !matches!(waiter.phase, Phase::Ready(_)) || waiter.repo != me.repo || theirs >= mine {
             continue;
         }
+        kernel_proof! { assert(!oldest_waiter(*w, i as int)); }
         if !w.footprints_disjoint(waiter.footprint, me.footprint) { return false; }
         if theirs >= first_runnable || !slot_free(w, index) { continue; }
         if !older_overlap(w, index, theirs) { first_runnable = theirs; }
