@@ -278,5 +278,5 @@ def test_planner_receives_actual_budget_and_approved_split_guidance(monkeypatch,
     assert str(ROLES["maker"].exploration_budget.tool_turns) in text
     system = "\n".join(m.text for m in model.calls[0] if m.type == "system")
     assert "finalization reserve" in system
-    assert "new split reason" in system
-    assert "Q54 is unchanged" in system
+    assert "execution_budget is a split reason" in system
+    assert "Q54: never use a split to retry failed maker work" in system

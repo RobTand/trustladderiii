@@ -4,8 +4,7 @@ from importlib.resources import files
 
 import pytest
 
-# The planner is condensed in PR 3, with #662; it gets its line there.
-ROLES = ["maker", "ingest", "audit", "reviewer", "writer", "classifier", "postmortem"]
+ROLES = ["maker", "ingest", "audit", "planner", "reviewer", "writer", "classifier", "postmortem"]
 
 
 def prompt_text(role):
