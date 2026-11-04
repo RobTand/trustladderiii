@@ -59,3 +59,42 @@ def test_digest_then_entry_removal_terminates_with_exact_identity():
     assert observed['selectors'] == selector_identity(selected)
     assert observed['totals']['passed'] == 1
     assert len(json.dumps(observed).encode()) <= 1000
+
+
+def test_error_dominated_group_removes_failures_but_keeps_totals_and_proof():
+    module = 'tests/test_checkout_recovery_1465.py'
+    proof = {'rule': 'subject-observer-v1', 'mode': 'pytest-outcome',
+             'declaration': None, 'source_base_tree_sha256': 'a' * 64,
+             'base_tree_sha256': 'b' * 64, 'head_tree_sha256': 'c' * 64}
+    control = test_tool.Summary().result
+    control.update(check='planned observer', proof={**proof, 'mode': 'head-observer'},
+                   tests=[{'test': module + '::test_git_config', 'outcome': 'failed',
+                           'message': 'maintenance and gc must be disabled'}])
+    control['totals']['failed'] = 1
+    full_file = test_tool.Summary().result
+    outcomes = ['passed'] * 25 + ['error'] * 267 + ['failed']
+    full_file.update(check='unplanned base tests', proof=proof,
+                     tests=[{'test': module + f'::test_checkout[{index}]', 'outcome': outcome,
+                             'message': 'checkout recovery failure ' * 8 if outcome != 'passed' else ''}
+                            for index, outcome in enumerate(outcomes)])
+    full_file['totals'].update(passed=25, failed=1, error=267)
+    result = test_tool.Summary().result
+    result.update(groups=[control, full_file], totals={'passed': 25, 'failed': 2, 'error': 267, 'skipped': 0})
+    limit = test_tool.SUMMARY_BYTES
+    assert len(json.dumps(result).encode()) > limit
+
+    observed = bounded(result, limit)
+
+    assert observed['status'] == 'completed', observed
+    assert observed['totals'] == result['totals']
+    assert len(observed['groups']) == 2
+    for before, after in zip(result['groups'], observed['groups']):
+        assert after['check'] == before['check']
+        assert after['status'] == before['status']
+        assert after['totals'] == before['totals']
+        assert after['proof'] == before['proof']
+    kept = observed['groups'][1]['tests']
+    assert not any(test['outcome'] in ('passed', 'failed') for test in kept)
+    assert sum(test['outcome'] == 'error' for test in kept) < 267
+    assert len(json.dumps(observed).encode()) <= limit
+    assert 'Truncated' in observed['note']
