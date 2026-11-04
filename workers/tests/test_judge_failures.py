@@ -74,7 +74,7 @@ def instrumented(tmp_path, monkeypatch):
     document["trace"] = {"log": str(log)}
     document["memory"] = {"summary_file": str(summary), "repo": "RobTand/tl3-sandbox",
                           "issue": 42, "request": "3", "epoch": 1}
-    # Keep the real durable OTLP export; no network shipper is needed to read it.
+    # Keep the real OTLP serialization; no network shipper is needed to read it.
     monkeypatch.setattr(tracing.SpanLog, "start_shipper", lambda self: None)
     monkeypatch.setattr(tracing.SpanLog, "finish", lambda self: os.close(self.fd))
     monkeypatch.setattr(postmortem, "SOURCE", lambda settings: FakeTraces([]))
@@ -312,3 +312,53 @@ def test_three_malformed_grades_in_a_row_no_longer_fail_postmortems(graders, tmp
         recorded = json.loads(summary.read_text())
         assert recorded["outcome"] == "succeeded" and recorded["reason"] is None
         assert len(model.repaired) == 2
+
+
+def proxy_reply(status, code):
+    """CLIProxyAPI's typed error reply, as requests receives it (#745)."""
+    def post(url, **kwargs):
+        reply = requests.Response()
+        reply.status_code, reply.url = status, url
+        reply.headers["Content-Type"] = "application/json"
+        reply._content = json.dumps({"error": {
+            "message": f"unknown provider for model {PRIVATE}", "type": "invalid_request_error",
+            "code": code, "param": "model"}}).encode()
+        return reply
+    return post
+
+
+@pytest.mark.parametrize("stage", ["grade", "postmortem"])
+def test_an_unroutable_judge_model_keeps_its_typed_code_and_ends_like_quota(
+        tmp_path, monkeypatch, stage):
+    # #759: MLflow's ChatCompletionError keeps only the status and message, so
+    # model_not_found looked like any 400 and failed the postmortem.
+    from tl3_workers import quota
+
+    document, log, summary = instrumented(tmp_path, monkeypatch)
+    # The real gateway and send_chat_request, down to the HTTP reply.
+    monkeypatch.setattr(requests, "post", proxy_reply(400, "model_not_found"))
+    if stage == "postmortem":
+        monkeypatch.setattr(judges, "grade_judges", lambda *args: {
+            "correctness": lambda **kwargs: Feedback(value=4, rationale="fixture")})
+    with pytest.raises(tracing.WorkerStageError) as caught:
+        run(document)
+    assert caught.value.judge_failure == judges.JudgeFailure(
+        judges.FailureClass.HTTP, 400, "model_not_found")
+    ending = {"event": "quota", "role": "postmortem",
+              "reset_ms": int((1000 + quota.PROBE_S) * 1000)}
+    if stage == "grade":
+        ending["model"] = document["inputs"]["grade_model"]
+    assert quota.event(caught.value, 1000, document) == ending
+    exported = summary.read_bytes() + log.read_bytes()
+    assert PRIVATE.encode() not in exported and KEY.encode() not in exported
+
+
+def test_a_judge_400_with_another_code_still_fails(tmp_path, monkeypatch):
+    from tl3_workers import quota
+
+    document, _, _ = instrumented(tmp_path, monkeypatch)
+    monkeypatch.setattr(requests, "post", proxy_reply(400, "invalid_value"))
+    with pytest.raises(tracing.WorkerStageError) as caught:
+        run(document)
+    assert caught.value.judge_failure == judges.JudgeFailure(judges.FailureClass.HTTP, 400)
+    assert quota.event(caught.value, 1000, document) is None

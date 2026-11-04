@@ -245,6 +245,7 @@ def start_review_session(request, session_model, tmp_path):
     responses[:] = [AIMessage(content=json.dumps({**APPROVE, "head_sha": "c" * 40}))]
 
 
+@pytest.mark.durability
 def test_round_one_sees_round_zero_findings_and_reasoning(review_request, session_model, tmp_path):
     start_review_session(review_request, session_model, tmp_path)
     observed, _ = session_model
@@ -259,6 +260,7 @@ def test_round_one_sees_round_zero_findings_and_reasoning(review_request, sessio
     assert previous.additional_kwargs["reasoning_content"] == "The implementation contradicts g1."
 
 
+@pytest.mark.durability
 def test_new_attempt_starts_fresh_reviewer_session(review_request, session_model, tmp_path):
     start_review_session(review_request, session_model, tmp_path)
     observed, _ = session_model
@@ -274,6 +276,7 @@ def test_new_attempt_starts_fresh_reviewer_session(review_request, session_model
 
 @pytest.mark.parametrize("crash_event", ["model_turn", "reply"])
 @pytest.mark.parametrize("new_generation", [False, True])
+@pytest.mark.durability
 def test_round_one_crash_and_retry_do_not_duplicate_turns(
         review_request, session_model, tmp_path, crash_event, new_generation):
     start_review_session(review_request, session_model, tmp_path)
@@ -299,6 +302,7 @@ def test_round_one_crash_and_retry_do_not_duplicate_turns(
 
 
 @pytest.mark.parametrize("crash_unit", ["model_turn", "tool_result"])
+@pytest.mark.durability
 def test_round_one_retry_keeps_completed_tool_exchange(review_request, session_model, tmp_path, crash_unit):
     start_review_session(review_request, session_model, tmp_path)
     observed, responses = session_model
@@ -320,6 +324,7 @@ def test_round_one_retry_keeps_completed_tool_exchange(review_request, session_m
     assert len([m for m in observed[-1] if m.type == "ai" and m.tool_calls]) == 1
 
 
+@pytest.mark.durability
 def test_accepted_round_one_recheck_is_a_new_visit(review_request, session_model, tmp_path):
     start_review_session(review_request, session_model, tmp_path)
     observed, _ = session_model
@@ -373,6 +378,7 @@ def test_reviewer_continues_past_a_turn_that_only_reasoned_long(review_request, 
 
 
 @pytest.mark.parametrize("field,value", [("diff", "different fix"), ("checks", [])])
+@pytest.mark.durability
 def test_review_retry_rejects_changed_evidence(review_request, session_model, tmp_path, field, value):
     observed, responses = session_model
     review_request["session_file"] = str(tmp_path / "reviewer.json")
@@ -507,6 +513,7 @@ def test_q44_reviewer_reports_exhaustion_through_process_protocol(tmp_path, revi
 
 
 @pytest.mark.parametrize("with_session", [False, True])
+@pytest.mark.durability
 def test_q44_model_cannot_request_a_free_restart(review_request, session_model, tmp_path, with_session):
     _, responses = session_model
     responses[:] = [AIMessage(content=json.dumps({"verdict": "out_of_room"}))]

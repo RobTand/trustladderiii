@@ -4,12 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+libc = "0.2"
 loom = { version = "0.7", optional = true }
 socket2 = "0.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 jsonschema = { version = "0.46", default-features = false }
-rustix = { version = "1", features = ["process", "event", "fs"] }
+rustix = { version = "1", features = ["process", "event", "fs", "stdio"] }
 thiserror = "2"
 sha2 = "0.10"
 regex = "1"
@@ -29,6 +30,7 @@ schemars = "1"
 tl3-worktrees = { path = "../worktrees" }
 
 [dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
 loom = "0.7"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 rand = "0.8"
@@ -39,7 +41,6 @@ postgresql_embedded = { version = "0.22", default-features = false, features = [
 tempfile = "3"
 hmac = "0.12"
 hex = "0.4"
-proptest = { version = "1", default-features = false, features = ["std"] }
 
 [[example]]
 name = "tl3-deploy"
@@ -90,3 +91,6 @@ harness = false
 name = "publishing"
 path = "tests/publishing.rs"
 harness = false
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
