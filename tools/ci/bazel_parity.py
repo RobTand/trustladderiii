@@ -109,6 +109,31 @@ def bazel_tests(query_lines):
     return rust, sorted(python)
 
 
+def verus_tests(query_lines):
+    """Proof targets have their own obligations, not Cargo binary test names."""
+    proofs = {}
+    for line in query_lines:
+        rule = json.loads(line).get('rule', {})
+        attributes = {item['name']: item for item in rule.get('attribute', [])}
+        tags = attributes.get('tags', {}).get('stringListValue', [])
+        if rule.get('ruleClass') != 'verus_test':
+            continue
+        count = int(attributes.get('expected_obligations', {}).get('intValue', 0))
+        if (not {'rust', 'verus'} <= set(tags) or 'manual' in tags or count <= 0
+                or not attributes.get('src', {}).get('stringValue')
+                or not attributes.get('srcs', {}).get('stringListValue')):
+            raise RuntimeError(f"Ungated or vacuous Verus proof: {rule['name']}")
+        proofs[rule['name']] = count
+    return proofs
+
+
+def check_verus_receipt(receipt):
+    for label, proof in receipt.get('proofs', {}).items():
+        expected, verified = proof.get('expected_obligations', 0), proof.get('verified', 0)
+        if proof.get('kind') != 'verus' or expected <= 0 or verified != expected:
+            raise RuntimeError(f'Invalid Verus proof receipt: {label}')
+
+
 def has_nested_suite(source):
     """Find runner commands, harness calls, and scripts written by a test.
 
@@ -271,6 +296,7 @@ def bazel_receipts(directory):
         receipt = read_receipt(outputs)
         if receipt is None:
             continue
+        check_verus_receipt(receipt)
         for binary, names in receipt.get('rust', {}).items():
             shard = receipt.get('shard')
             if shard:
@@ -326,11 +352,12 @@ def main():
     try:
         if args.command == 'static':
             query = bazel_query(args.bazel.split())
+            proofs = verus_tests(query)
             rust, python = bazel_tests(query)
             check_python_sizing(query)
             compare_static(cargo_binaries(cargo_metadata()), rust,
                            python_modules(check.tracked_files()), python)
-            summary = {'rust_binaries': len(rust), 'python_modules': len(python)}
+            summary = {'rust_binaries': len(rust), 'python_modules': len(python), 'verus_proofs': len(proofs)}
         else:
             actual = bazel_receipts(args.bazel_testlogs)
             compare(cargo_receipts(args.cargo_receipt, check.tracked_files()), actual)

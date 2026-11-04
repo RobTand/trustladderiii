@@ -255,6 +255,9 @@ class Workspace:
     def rust_tests(self):
         return set(map(canonical, self.query(f'attr(tags, "\\brust\\b", {TESTS})')))
 
+    def verus_tests(self):
+        return set(map(canonical, self.query(f'kind("verus_test rule", {TESTS})')))
+
     def used_sources(self):
         # BUILD and .bzl files define targets rather than being read by one; Bazel still reads them.
         labels = self.query('kind("source file", deps(//...))') + self.query('buildfiles(//...)')
@@ -643,9 +646,10 @@ def gate_main(workspace, base, head, metadata):
     architectures = {}
     for architecture, config in CONFIGS.items():
         begun = time.monotonic()
-        statuses = workspace.test(everything, config, metadata, f'main-{architecture}')
+        selected = sorted(set(everything) - workspace.verus_tests()) if architecture == 'arm64' else everything
+        statuses = workspace.test(selected, config, metadata, f'main-{architecture}')
         warnings = workspace.budget_warnings(statuses)
-        verdicts, failed = classify(everything, statuses, rust)
+        verdicts, failed = classify(selected, statuses, rust)
         failures = failed['rust'] + failed['python']
         architectures[architecture] = {
             'verdicts': verdicts, 'failed': failed,
@@ -661,9 +665,22 @@ def gate_main(workspace, base, head, metadata):
             'durations': {'total': round(time.monotonic() - started, 1)}}
 
 
+def gate_proofs(workspace, metadata):
+    """Nightly full Verus inventory on its qualified amd64 execution platform."""
+    workspace.mode = 'main'
+    selected = sorted(workspace.verus_tests())
+    if not selected:
+        raise GateError('no Verus proofs discovered')
+    statuses = workspace.test(selected, CONFIGS['amd64'], metadata, 'verus-nightly')
+    verdicts, failed = classify(selected, statuses, set(selected))
+    return {'selection': 'all-verus', 'reason': [], 'selected': selected,
+            'scopes': [], 'all_scopes': False, 'inputs': [],
+            'verdicts': verdicts, 'failed': failed}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['pr', 'batch-draft', 'main'])
+    parser.add_argument('mode', choices=['pr', 'batch-draft', 'main', 'proofs'])
     parser.add_argument('--base', required=True)
     parser.add_argument('--head', required=True)
     parser.add_argument('--branch', default='')
@@ -673,7 +690,9 @@ def main():
     result = {'schema': SCHEMA, 'mode': args.mode, 'base': args.base, 'head': args.head}
     try:
         workspace = Workspace(mode=args.mode)
-        if args.mode == 'main':
+        if args.mode == 'proofs':
+            result.update(gate_proofs(workspace, metadata))
+        elif args.mode == 'main':
             result.update(gate_main(workspace, args.base, args.head, metadata))
         else:
             result.update(gate_pr(workspace, args.base, args.head, metadata, mode=args.mode))

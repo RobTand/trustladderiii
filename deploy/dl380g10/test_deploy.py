@@ -294,11 +294,31 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(result, 1, output)
         self.assertIn("MISSING bin/tl3-worker-supervisor", output)
 
-    def test_check_rejects_extra_executable(self):
-        result, output = self.checked_bundle(
-            lambda directory: deploy.write_file(directory / "old-worker", b"old executable", 0o700))
+    def test_check_ignores_binaries_owned_by_other_deployers(self):
+        # tl3-console is installed into bin/ by RobTand/tl3-console's own deploy and is not
+        # in TL3's release SHA256SUMS; TL3's check must neither verify nor flag it (#784 regression).
+        for name in ("tl3-console", "old-worker"):
+            result, output = self.checked_bundle(
+                lambda directory, name=name: deploy.write_file(directory / name, b"other deployer", 0o700))
+            self.assertEqual(result, 0, output)
+            self.assertNotIn(f"bin/{name}", output)
+
+    def test_check_requires_every_release_binary_in_the_manifest(self):
+        def drop(directory):
+            sums = (directory / "SHA256SUMS").read_text().splitlines(keepends=True)
+            (directory / "SHA256SUMS").write_text("".join(l for l in sums if not l.rstrip().endswith(" tl3d")))
+        result, output = self.checked_bundle(drop)
+        self.assertGreaterEqual(result, 1, output)
+        self.assertIn("MISSING bin/tl3d", output)
+
+    def test_failed_binary_skips_only_checks_that_invoke_it(self):
+        result, output = self.checked_bundle(lambda directory: (directory / "tl3").write_bytes(b"stale"))
+        self.assertIn("MISSING bin/tl3:", output)
+        self.assertIn("MISSING tl3 status: binary verification failed", output)
+        self.assertNotIn("Postgres reachable and migrated: binary verification failed", output)
+        self.assertNotIn("Config::load including secret metadata: binary verification failed", output)
         self.assertEqual(result, 1, output)
-        self.assertIn("MISSING bin/old-worker", output)
+        self.assertIn("Deployment check: 2 missing checks", output)
 
     def test_install_preserves_release_binary_manifest(self):
         binaries = self.home / "release"
