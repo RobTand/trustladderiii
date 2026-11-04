@@ -30,31 +30,34 @@ fn classes() -> [String; 3] {
     })
 }
 
+fn oracle(path: &std::path::Path) -> std::process::Output {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut command = Command::new(root.join("../../workers/.venv/bin/python"));
+    command.env_clear();
+    for key in [
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "TEST_TMPDIR",
+        "TEST_SRCDIR",
+        "TEST_WORKSPACE",
+        "RUNFILES_DIR",
+        "RUNFILES_MANIFEST_FILE",
+        "JAVA_RUNFILES",
+        "PYTHON_RUNFILES",
+    ] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    command.args(["-I", "-c", "import sys; sys.path.insert(0,sys.argv.pop(1)); import redaction_branches; redaction_branches.main()"])
+        .arg(root.join("../../workers/tests")).arg(path).output().unwrap()
+}
+
 fn cases() -> &'static Value {
     static DATA: LazyLock<Value> = LazyLock::new(|| {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut command = Command::new(root.join("../../workers/.venv/bin/python"));
-        command.env_clear();
-        for key in [
-            "PATH",
-            "HOME",
-            "TMPDIR",
-            "TEST_TMPDIR",
-            "TEST_SRCDIR",
-            "TEST_WORKSPACE",
-            "RUNFILES_DIR",
-            "RUNFILES_MANIFEST_FILE",
-            "JAVA_RUNFILES",
-            "PYTHON_RUNFILES",
-        ] {
-            if let Some(value) = std::env::var_os(key) {
-                command.env(key, value);
-            }
-        }
-        let output = command.args(["-I", "-c", "import sys; sys.path.insert(0,sys.argv.pop(1)); import redaction_branches; redaction_branches.main()"])
-            .arg(root.join("../../workers/tests"))
-            .arg(root.join("src/redaction/policy.json"))
-            .output().unwrap();
+        let output = oracle(&root.join("src/redaction/policy.json"));
         assert!(
             output.status.success(),
             "{}",
@@ -182,4 +185,79 @@ fn unsupported_class_syntax_is_rejected() {
             "{pattern}"
         );
     }
+}
+
+macro_rules! grammar_regression {
+    ($test:ident, $pattern:expr, $name:expr) => {
+        /// #788: reject unsupported Python syntax before fancy-regex can silently rewrite it.
+        #[test]
+        fn $test() {
+            let result = compatibility::translate($pattern, &classes());
+            assert!(
+                result.is_err(),
+                "{} unexpectedly translated: {result:?}",
+                $name
+            );
+            assert!(
+                result.unwrap_err().contains($name),
+                "missing named grammar error"
+            );
+        }
+    };
+}
+grammar_regression!(
+    named_unicode_escape_rejected,
+    r"\N{LATIN SMALL LETTER I}",
+    "named Unicode escape"
+);
+grammar_regression!(
+    verbose_vertical_tab_rejected,
+    "(?x:a\u{b}b)",
+    "literal U+000B"
+);
+grammar_regression!(verbose_form_feed_rejected, "(?x:a\u{c}b)", "literal U+000C");
+grammar_regression!(non_python_h_escape_rejected, r"\h", "escape \\h");
+grammar_regression!(non_python_e_escape_rejected, r"\e", "escape \\e");
+grammar_regression!(bare_n_escape_rejected, r"\N", "escape \\N");
+grammar_regression!(non_python_ungreedy_flag_rejected, r"(?U)a+", "flag U");
+grammar_regression!(brace_hex_escape_rejected, r"\x{69}", "hex escape \\x");
+
+/// #788: CI must compile every policy expression with Python, including unused helpers.
+#[test]
+fn python_oracle_rejects_an_invalid_unused_helper() {
+    let mut policy = policy();
+    policy["helpers"]["HEX_PREFIX"] = json!(r"\h");
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), serde_json::to_vec(&policy).unwrap()).unwrap();
+    let output = oracle(file.path());
+    assert!(
+        !output.status.success(),
+        "Python oracle accepted helpers:HEX_PREFIX containing \\h"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("helpers:HEX_PREFIX"));
+}
+
+/// #788: the Python compilation check must enumerate all 90 policy expressions.
+#[test]
+fn every_policy_expression_compiles_with_python() {
+    let policy = policy();
+    let mut required = BTreeSet::new();
+    for section in ["regex", "helpers", "patterns", "checked"] {
+        if let Some(entries) = policy[section].as_object() {
+            required.extend(entries.keys().map(|key| format!("{section}:{key}")));
+        } else {
+            required.extend(
+                (0..policy[section].as_array().unwrap().len())
+                    .map(|index| format!("{section}:{index}")),
+            );
+        }
+    }
+    let compiled = cases()["compiled"]
+        .as_array()
+        .expect("Python oracle must compile every expression")
+        .iter()
+        .map(|name| name.as_str().unwrap().to_owned())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(required.len(), 90);
+    assert_eq!(compiled, required);
 }
