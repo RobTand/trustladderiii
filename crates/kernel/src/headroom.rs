@@ -1,16 +1,34 @@
 use crate::{NodeId, World};
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::*;
 
 // A step appends at most one node; Closed never becomes open again. Every
 // u32 scan in admits/pool_free counts only open nodes in a consistent world.
-fn scan_step_budget(open_nodes: usize) -> Option<u32> {
-    u32::try_from(open_nodes).ok()?.checked_add(1)
+kernel_fn! {
+    /// #771: the u32 scan reserve is exactly one plus the current open count.
+    fn scan_step_budget(open_nodes: usize) -> (result: Option<u32>) [
+        ensures match result {
+            Some(budget) => budget as int == open_nodes as int + 1,
+            None => open_nodes as int + 1 > u32::MAX as int,
+        },
+    ] {
+        u32::try_from(open_nodes).ok()?.checked_add(1)
+    }
 }
 
 // Stopping can skip five agenda entries and then close. Every other local
 // settle path takes at most four moves before blocking. Each changing pass
 // consumes at least one move, so six per open node bounds the u32 pass counter.
-fn settle_step_budget(open_nodes: usize) -> Option<u32> {
-    scan_step_budget(open_nodes)?.checked_mul(6)
+kernel_fn! {
+    /// #771: each open node contributes at most six local moves to settle.
+    fn settle_step_budget(open_nodes: usize) -> (result: Option<u32>) [
+        ensures match result {
+            Some(budget) => budget as int == 6 * (open_nodes as int + 1),
+            None => 6 * (open_nodes as int + 1) > u32::MAX as int,
+        },
+    ] {
+        scan_step_budget(open_nodes)?.checked_mul(6)
+    }
 }
 
 /// #771: u64 generation reserve for one event and its complete settle loop.
@@ -50,14 +68,20 @@ pub struct CounterExhaustion {
 }
 
 impl World {
-    /// #771: a step may create one node, and each node can take a slot ticket
-    /// followed by an agent-pool ticket during settle. The global reserve must
-    /// scale with the world: one admission can unblock many Unplanned roots.
-    pub fn ticket_step_budget(&self) -> Option<u64> {
-        u64::try_from(self.nodes.len())
-            .ok()?
-            .checked_add(1)?
-            .checked_mul(2)
+    kernel_fn! {
+        /// #771: each node can take a slot ticket followed by a pool ticket.
+        /// The reserve includes the one new node that apply can append.
+        pub fn ticket_step_budget(&self) -> (result: Option<u64>) [
+            ensures match result {
+                Some(budget) => budget as int == 2 * (self.nodes@.len() + 1),
+                None => 2 * (self.nodes@.len() + 1) > u64::MAX as int,
+            },
+        ] {
+            u64::try_from(self.nodes.len())
+                .ok()?
+                .checked_add(1)?
+                .checked_mul(2)
+        }
     }
 
     /// #771: the executable progress theorem is scoped to counter headroom.
