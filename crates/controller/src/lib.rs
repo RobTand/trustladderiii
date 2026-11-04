@@ -51,6 +51,7 @@ mod snapshot;
 pub mod status;
 pub mod status_web;
 pub mod steering;
+pub mod store_stats;
 mod sync;
 pub mod verification;
 pub mod worker_inputs;

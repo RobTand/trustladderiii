@@ -151,3 +151,58 @@ fn fixture_log_read_only_cli_and_corrupt_snapshot() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("fixture:corrupt-snapshot"));
 }
+
+/// #783: counts only, matching replay baselines, and SQL-enforced read-only access.
+#[test]
+fn store_stats_exact_counts_no_values_and_read_only() {
+    let mut db = support::Database::start();
+    let settings = db.create("store_stats_fixture");
+    let mut store = Store::open(&settings).unwrap();
+    let s = store.load().unwrap();
+    let secret = "planted-secret-like-DO-NOT-PRINT-783";
+    let mut first = Commit::new("fixture:legacy", json!({"secret":secret}), &s);
+    first.rows.push(RowChange::Put {
+        table: "requests".into(),
+        id: "secret-row".into(),
+        value: json!({"secret":secret}),
+    });
+    first.rows.push(RowChange::Put {
+        table: "requests".into(),
+        id: "another".into(),
+        value: json!(secret),
+    });
+    store.commit(&first).unwrap();
+    let s = store.load().unwrap();
+    let mut baseline = Commit::new("fixture:baseline", json!({}), &s);
+    let world = tl3_kernel::World::new(&[1], 1);
+    baseline.result = json!({"kernel_replay":{"before":world,"steps":[],"after":world}});
+    baseline.rows.push(RowChange::Put {
+        table: "metadata".into(),
+        id: "hidden".into(),
+        value: json!(secret),
+    });
+    store.commit(&baseline).unwrap();
+    let mut reader = Reader::open(&settings).unwrap();
+    let stats = tl3_controller::store_stats::load(&mut reader).unwrap();
+    assert_eq!(
+        serde_json::to_value(&stats).unwrap(),
+        json!({
+            "world_rows":{"metadata":1,"requests":2},"events":2,
+            "min_event_revision":1,"max_event_revision":2,"min_world_version":1,"replay_from_revision":2
+        })
+    );
+    let json = serde_json::to_string(&stats).unwrap();
+    assert!(!json.contains(secret));
+    assert!(!json.contains("secret-row"));
+    let mut tx = reader.transaction().unwrap();
+    assert_eq!(
+        tx.query_one("SHOW transaction_isolation", &[])
+            .unwrap()
+            .get::<_, String>(0),
+        "repeatable read"
+    );
+    assert_eq!(
+        tx.execute("DELETE FROM tl3_world", &[]).unwrap_err().code(),
+        Some(&postgres::error::SqlState::READ_ONLY_SQL_TRANSACTION)
+    );
+}
