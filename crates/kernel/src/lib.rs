@@ -51,6 +51,7 @@ mod proofs;
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const RESERVE: u32 = 3;
 /// Rechecks after clean rebases that cost nothing, per leaf.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const FREE_RECHECKS: u8 = 3;
 
 #[cfg_attr(
