@@ -1219,6 +1219,10 @@ impl FeedExit {
 
 impl FeedLife {
     fn exited(&self) {
+        // The owning supervisor intentionally stops the feed on shutdown.
+        if !self.failed.load(Ordering::SeqCst) {
+            return;
+        }
         let supervisor = self.supervisor.lock().unwrap();
         self.exited.store(true, Ordering::SeqCst);
         if let Some(sender) = supervisor.as_ref() {

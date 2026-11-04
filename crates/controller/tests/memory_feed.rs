@@ -370,12 +370,20 @@ fn feed_connection_failure_is_visible_and_retry_reports_no_consumer() {
 fn shutdown_needs_no_new_database_connection_and_leaves_no_listener() {
     let mut fixture = Fixture::new(false);
     fixture.barrier();
+    let (sender, receiver) = mpsc::channel();
+    let mut source = fixture.supervisor().source();
+    source.poll_once(&mut fixture.store, &sender).unwrap();
+    assert!(receiver.try_recv().is_err());
     let mut observer = fixture.sql();
     fixture
         .sql_database("postgres")
         .batch_execute("ALTER DATABASE feed ALLOW_CONNECTIONS false")
         .unwrap();
     drop(fixture.supervisor.take());
+    assert!(
+        receiver.try_recv().is_err(),
+        "intentional joined shutdown is not a failed-feed wake"
+    );
     let sessions: i64 = observer.query_one("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND (application_name = 'tl3-memory-feed' OR query LIKE 'LISTEN tl3_memory_retry%')", &[]).unwrap().get(0);
     assert_eq!(
         sessions, 0,

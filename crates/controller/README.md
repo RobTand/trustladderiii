@@ -1122,8 +1122,8 @@ leave those operations held until clearance. Clearance is checked before each
 outgoing operation, so a preceding curation cannot release a retain's hold.
 Rob's clearance covers the current persisted outcome. Other operations get their own
 incident count. A reused incident after restart always rearms its recovery look.
-Feed-thread exit wakes the existing worker ingress source, even if the source
-registers after the exit. Feed failure does not skip worker-session retirement.
+Feed failure or panic wakes the existing worker ingress source, even if the
+source registers after the exit. Intentional joined shutdown sends no failure wake. Feed failure does not skip worker-session retirement.
 Migration 19 adds a runtime version marker so clearing an incident does not
 count the same failed attempt again. Migration 18 stays unchanged.
 
