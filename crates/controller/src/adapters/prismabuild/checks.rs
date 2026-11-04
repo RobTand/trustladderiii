@@ -171,17 +171,28 @@ impl Modules {
         &self,
         interrupt: &mut dyn FnMut(Publication) -> std::io::Result<()>,
     ) -> std::io::Result<PathBuf> {
-        fs::create_dir_all(&self.copies)?;
-        // A partial copy here was abandoned by an earlier process: only the owner writes here.
-        for entry in fs::read_dir(&self.copies)? {
-            let entry = entry?;
-            if entry.file_name().to_string_lossy().starts_with(PARTIAL)
-                && entry.file_type()?.is_dir()
-            {
-                fs::remove_dir_all(entry.path())?;
+        if !self.copies.is_dir() {
+            fs::create_dir_all(&self.copies)?;
+            // A new directory entry is durable only once its parent is synced.
+            if let Some(parent) = self.copies.parent() {
+                sync_directory(parent)?;
             }
         }
         let copy = self.copies.join(&self.digest);
+        // Only the owner writes here, so anything but the copy about to be used is left by an
+        // earlier process: a partial copy, or a completed one that a crash after the rename
+        // kept from its sweep. Reclaim it all before publishing.
+        for entry in fs::read_dir(&self.copies)? {
+            let entry = entry?;
+            if entry.path() == copy {
+                continue;
+            }
+            if entry.file_type()?.is_dir() {
+                fs::remove_dir_all(entry.path())?;
+            } else {
+                fs::remove_file(entry.path())?;
+            }
+        }
         if !self.verified(&copy)? {
             if copy.is_dir() {
                 fs::remove_dir_all(&copy)?;
