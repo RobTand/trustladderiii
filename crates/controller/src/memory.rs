@@ -1266,6 +1266,7 @@ fn run_feed(
         if life.held.load(Ordering::SeqCst) && !retry {
             continue;
         }
+        store.expire_parked_memories()?;
         let work =
             !store.pending_memory_curations()?.is_empty() || !store.pending_memories(0)?.is_empty();
         let delivery = work.then(|| deliver(store, settings, breaker));
