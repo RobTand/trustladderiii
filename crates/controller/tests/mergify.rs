@@ -2925,8 +2925,13 @@ fn main() {
             let group = scenario_count;
             scenario_count += 1;
             shard.run(group, || {
+                let started = std::time::Instant::now();
                 scenario_progress(stringify!($call));
                 $call;
+                eprintln!(
+                    "mergify group {group}: {:.6}s",
+                    started.elapsed().as_secs_f64()
+                );
             });
         }};
     }
