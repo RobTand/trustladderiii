@@ -14,6 +14,28 @@ def publish_marker(path, text):
     pending.replace(path)
 
 
+def unavailable(kind):
+    """The typed errors CLIProxyAPI returned for gpt-6.1-sol on 2026-11-04 (#745),
+    and a request-caused 400, as the openai client raises them."""
+    import httpx
+    import openai
+    status, error, body = {
+        # CLIProxyAPI sdk/api/handlers/handlers_routing.go: an unroutable model.
+        "model_not_found": (400, openai.BadRequestError, {
+            "message": "unknown provider for model", "type": "invalid_request_error",
+            "code": "model_not_found", "param": "model"}),
+        "bad_request": (400, openai.BadRequestError, {
+            "message": "private provider text", "type": "invalid_request_error",
+            "code": "invalid_value", "param": "temperature"}),
+        "allowance_unverified": (503, openai.InternalServerError, {
+            "message": "private provider text", "type": "server_error"}),
+        "retry_limit": (429, openai.RateLimitError, {
+            "message": "private provider text", "type": "rate_limit_error"}),
+    }[kind]
+    response = httpx.Response(status, request=httpx.Request("POST", "http://model.invalid/v1"))
+    return error("private provider text", response=response, body=body)
+
+
 def scripted_reply(request, mode, marker):
     with marker.with_suffix(".requests").open("a") as output:
         output.write(json.dumps({"pid": os.getpid(), "request": request}) + "\n")
@@ -29,6 +51,8 @@ def scripted_reply(request, mode, marker):
         limits = marker.with_suffix(".quota-models")
         seconds = (json.loads(limits.read_text()) if limits.exists() else {}).get(
             request["role"], {}).get(request["model"]["name"])
+        if isinstance(seconds, str):
+            raise unavailable(seconds)
         if seconds is not None:
             import httpx
             from openai import RateLimitError
