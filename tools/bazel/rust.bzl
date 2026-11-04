@@ -101,7 +101,6 @@ _CONTROLLER_RUNTIME = {
     "test_test_redaction_generated": ["//workers/tests:redaction_generated"],
     "test_test_redaction_parity": ["//workers/tests:redaction_branches"],
     "lib_test_tl3_controller": [
-        "//crates/controller:allocation_counter",
         "//harness:project_files",
         "//workers/tests:worker_process",
         "//workers/tools:scripts",
@@ -341,6 +340,7 @@ def _crate_test(kind, package, name, source, harness, options):
             crate_name = name.replace("-", "_"),
             crate_root = source,
             srcs = sources,
+            data = [":allocation_counter"] if native.package_name() == "crates/controller" and kind == "lib" else [],
             compile_data = compile_data + [
                 label
                 for label in _EXAMPLE_DATA.get(source, [])
