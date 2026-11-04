@@ -100,6 +100,10 @@ impl Executor for Spy {
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         self.hit("reconcile", delivery.key.clone())
     }
+    fn repair_approval(&mut self, delivery: &Delivery) -> Result<(Reconciliation, Option<usize>)> {
+        let _: Result<()> = self.hit("repair_approval", delivery.key.clone());
+        Ok((Reconciliation::Pending, Some(7)))
+    }
     fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         self.hit("reconcile_cancellation", delivery.key.clone())
     }
@@ -313,6 +317,13 @@ fn assert_delivery_methods(
     assert!(router.execute(d).is_err());
     assert!(router.observations(d).is_err());
     assert!(router.reconcile(d).is_err());
+    let (repaired, copies) = router.repair_approval(d).unwrap();
+    assert!(matches!(repaired, Reconciliation::Pending));
+    assert_eq!(
+        copies,
+        Some(7),
+        "the router must retain copy-count evidence"
+    );
     assert!(router.reconcile_cancellation(d).is_err());
     assert!(router.look(d).is_err());
     assert!(router.probe(d).is_err());
@@ -327,6 +338,7 @@ fn assert_delivery_methods(
             "execute",
             "observations",
             "reconcile",
+            "repair_approval",
             "reconcile_cancellation",
             "look",
             "probe",

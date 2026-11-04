@@ -1893,3 +1893,205 @@ fn gap_catchup_repairs_late_approval_after_closure() {
         "gap recovery never POSTs another approval"
     );
 }
+
+fn http_client(case: &Case) -> GitHub {
+    GitHub::new(
+        AppConfig {
+            id: 123,
+            slug: "factory".into(),
+            pem: include_str!("../../mergify/tests/fixtures/throwaway-key.pem").into(),
+            webhook_secret: "fixture".into(),
+        },
+        3,
+        ClientOptions {
+            api_url: format!("{}/", case.server.uri()).parse().unwrap(),
+            request_timeout: Duration::from_secs(1),
+            mutation_interval: Duration::ZERO,
+            max_retries: 0,
+            ..ClientOptions::default()
+        },
+    )
+    .unwrap()
+}
+
+fn approval_adapter(case: &Case, epoch: i64) -> adapters::github::Adapter {
+    adapters::github::Adapter::new(
+        BTreeMap::from([(3, http_client(case))]),
+        adapters::workers::FakeWriter,
+        epoch,
+        Policy::default(),
+        &case.root.path().join("github"),
+        Some(tl3_config::OperationsIssue {
+            owner: "owner".into(),
+            name: "operations".into(),
+            installation_id: 3,
+            number: 81,
+        }),
+    )
+    .unwrap()
+}
+
+/// #766, state-table effect epochs: repair must refuse a superseded owner before PATCH.
+#[test]
+fn stale_owner_cannot_repair_approval_copies() {
+    let case = Case::new("repair_epoch_fence");
+    let delivery = case.delivery();
+    let mut stale = approval_adapter(&case, 0);
+    let mut current = approval_adapter(&case, 1);
+    // Persist the new owner's fence without creating any check evidence.
+    current.reconcile(&delivery).unwrap();
+    case.corrupt_copies(2);
+    let result = stale.repair_approval(&delivery);
+    assert_eq!(
+        case.api.0.lock().unwrap().patches,
+        0,
+        "a stale owner must never PATCH approval copies"
+    );
+    assert!(
+        result.is_err(),
+        "repair must report the ownership fence refusal"
+    );
+    current.repair_approval(&delivery).unwrap();
+    case.assert_converged(2);
+}
+
+/// #766/Q27: deployed-main approval rows must keep closed heads in actual gap catch-up.
+#[test]
+fn deployed_main_outstanding_post_survives_upgrade_stop_and_gap() {
+    let case = Case::new("main_upgrade_closed_gap");
+    let delivery = case.delivery();
+    let mut store = Store::open(&case.settings).unwrap();
+    let mut sql = postgres::Config::new()
+        .host(&case.settings.host)
+        .port(case.settings.port)
+        .user(&case.settings.user)
+        .dbname(&case.settings.database)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap();
+    // Remove only #769's new schema. The effect payload and transition receipt below
+    // are the deployed 46f30c8c format; memory tables do not participate in dispatch.
+    sql.batch_execute(
+        "DROP TRIGGER tl3_record_dispatch ON tl3_effects;
+        DROP FUNCTION tl3_record_dispatch(); DROP FUNCTION tl3_approval_operation(jsonb);
+        DROP TABLE tl3_dispatch_evidence; DROP TABLE tl3_dispatch_migration;
+        DELETE FROM tl3_schema_migrations WHERE version=21",
+    )
+    .unwrap();
+    let snapshot = store.load().unwrap();
+    let mut sent = tl3_store::Commit::new(
+        format!("delivery:{}:{}", case.key, snapshot.revision.get()),
+        json!({"effect":case.key,"from":"Intended","to":"Sent"}),
+        &snapshot,
+    );
+    sent.transitions.push(tl3_store::EffectTransition {
+        key: case.key.clone(),
+        from: EffectState::Intended,
+        to: EffectState::Sent,
+    });
+    store.commit(&sent).unwrap();
+    // Main's actual GET-then-POST client API writes no output. Keep its HTTP request
+    // beyond the timeout, with no new approval attempt or recovery metadata.
+    let error = case
+        ._runtime
+        .block_on(http_client(&case).create_check_run(
+            "owner/sandbox",
+            &tl3_github::NewCheckRun {
+                name: "TL3 approval".into(),
+                head_sha: delivery.head_sha.clone().unwrap(),
+                external_id: format!("{}:{}", case.key, delivery.head_sha.as_ref().unwrap()),
+                status: tl3_github::CheckStatus::Completed,
+                conclusion: Some(tl3_github::CheckConclusion::Success),
+            },
+        ))
+        .unwrap_err();
+    assert!(matches!(error, tl3_github::Error::Transport));
+    assert_eq!(case.api.0.lock().unwrap().posts, 1);
+    assert!(case.api.0.lock().unwrap().held.is_some());
+    assert!(
+        !store
+            .load()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table.starts_with("approval_"))
+    );
+    drop(store);
+    // Store opening installs the new schema but must neither replay history nor
+    // depend on a controller/adapter owner. Stop arrives before the first new drive.
+    let mut controller = case.open();
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "approval_dispatch_recovery")
+    );
+    controller
+        .observe(
+            "stop-at-deploy",
+            tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+                node: delivery.node(),
+                id: 172,
+                command: tl3_kernel::Command::Stop,
+            }),
+        )
+        .unwrap();
+    drain(&mut controller);
+    assert!(matches!(
+        controller.world().unwrap().nodes[0].phase,
+        tl3_kernel::Phase::Closed(_)
+    ));
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "allowances")
+    );
+    drop(controller);
+    case.api.release();
+    assert!(
+        case.api.0.lock().unwrap().visible[0]
+            .get("output")
+            .is_none()
+    );
+    let mut controller = case.open();
+    let catchup =
+        tl3_controller::ingress::CatchUp::new(BTreeMap::from([(3, http_client(&case))])).unwrap();
+    let mut store = Store::open(&case.settings).unwrap();
+    store
+        .receive_catch_up(
+            "github-catch-up",
+            &[],
+            &json!(chrono::Utc::now() - chrono::Duration::minutes(1)),
+        )
+        .unwrap();
+    let inputs = catchup.pass(&mut store, &bootstrap()).unwrap();
+    tl3_controller::ingress::drain(&mut controller).unwrap();
+    for input in inputs {
+        tl3_controller::ingress::apply(&mut controller, input).unwrap();
+    }
+    drain(&mut controller);
+    case.assert_converged(1);
+    assert_eq!(
+        case.api.0.lock().unwrap().visible[0]["output"]["title"],
+        "TL3 approval",
+        "the output-free deployed-main POST must be repaired on the closed head"
+    );
+    assert_eq!(
+        case.api.0.lock().unwrap().posts,
+        1,
+        "gap recovery must never POST"
+    );
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "approval_dispatch_recovery")
+    );
+}
