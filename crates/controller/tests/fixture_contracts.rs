@@ -56,6 +56,20 @@ impl Executor for Spy {
         let _: Result<()> = self.hit("app_login", installation.to_string());
         Some(self.name.into())
     }
+    fn reconcile_message(
+        &mut self,
+        repository: &tl3_controller::Repository,
+        issue: u64,
+        comment: &tl3_github::Comment,
+    ) -> Result<()> {
+        self.hit(
+            "reconcile_message",
+            format!(
+                "{}/{}#{issue}:{}",
+                repository.owner, repository.name, comment.id
+            ),
+        )
+    }
     fn prerequisite(
         &mut self,
         repository: &tl3_controller::Repository,
@@ -222,6 +236,17 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
         assert!(router.wait_record("key", Path::new("checkout")).is_err());
         assert!(router.recover_deliveries(17, 29).is_err());
         assert!(router.issue(&question.repository, 17).is_err());
+        let comment: tl3_github::Comment = serde_json::from_value(serde_json::json!({
+            "id": 766, "body": "message", "user": {"id": 99, "login": "app[bot]"},
+            "created_at": "2026-11-04T00:00:00Z", "updated_at": "2026-11-04T00:00:00Z",
+            "issue_url": "https://api.github.com/repos/owner/repo/issues/17"
+        }))
+        .unwrap();
+        assert!(
+            router
+                .reconcile_message(&question.repository, 17, &comment)
+                .is_err()
+        );
         assert!(
             router
                 .prerequisite(
@@ -246,6 +271,14 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
                     "issue",
                     format!(
                         "{}/{}#17",
+                        question.repository.owner, question.repository.name
+                    ),
+                ),
+                (
+                    primary,
+                    "reconcile_message",
+                    format!(
+                        "{}/{}#17:766",
                         question.repository.owner, question.repository.name
                     ),
                 ),
