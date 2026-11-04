@@ -11,7 +11,7 @@ mod facts;
 mod fake;
 #[cfg(test)]
 mod input_contract_tests;
-mod json;
+pub(crate) mod json;
 pub(crate) mod ladder;
 #[cfg(test)]
 mod postmortem_failure_tests;
@@ -72,7 +72,16 @@ pub(super) fn isolate_credentials(
     File::open(&directory)?.sync_all()?;
     request["key_file"] = json!(key);
     command.env("CREDENTIALS_DIRECTORY", &directory);
+    command.env("TL3_BINARY", check_reply_binary()?);
     Ok(())
+}
+
+/// All roles use the CLI from the same immutable release as the controller.
+fn check_reply_binary() -> std::io::Result<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("TL3_BINARY") {
+        return Ok(path.into());
+    }
+    Ok(std::env::current_exe()?.with_file_name("tl3"))
 }
 
 #[derive(Clone, Default)]

@@ -79,6 +79,7 @@ _CONTROLLER_WORKERS = [
 ]
 _CONTROLLER_BINARIES = {
     "test_test_worker_supervisor": [":tl3-worker-supervisor"],
+    "test_test_workers": [":tl3"],
     "test_test_console_commands": [":tl3d"],
     "test_test_github-flow": [":tl3d"],
     # Both groups compile github.rs, including its env!("CARGO_BIN_EXE_tl3d").

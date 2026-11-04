@@ -10,6 +10,25 @@ from tl3_workers import classifier_eval as evaluation
 from tl3_workers.contracts import validate
 
 
+@pytest.fixture(autouse=True)
+def classifier_validation_boundary(monkeypatch):
+    # Scoring consumes the validator's result; Rust tests its decision rules.
+    monkeypatch.setattr(evaluation, "check_reply", lambda inputs, reply: None)
+
+
+def test_validator_rejection_is_recorded_without_reclassifying(monkeypatch):
+    calls = []
+    def reject(inputs, reply):
+        calls.append((inputs, reply))
+        raise ValueError("canned validator rejection")
+    monkeypatch.setattr(evaluation, "check_reply", reject)
+    item = case()
+    result = evaluation._score(item, message({"kind": "remark"}))
+    assert calls == [(item["inputs"], {"kind": "remark"})]
+    assert result["error"] == "invalid_reply"
+    assert result["correct"] is False
+
+
 def case(kind='remark', **expected):
     return {'id': 'case-1', 'category': 'test',
             'inputs': {'comment': {'author': 'requester', 'body': 'Thanks.'},

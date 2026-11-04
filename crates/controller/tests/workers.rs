@@ -2,6 +2,8 @@
 // #673 measured a complete worker case at 215.423 s; 450 s > 2x.
 const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(450);
 
+#[path = "workers/classifier.rs"]
+mod classifier;
 mod maker;
 use support::scenario_shard::{self, WorkerGroup};
 use tl3_controller::executor::Output as Out;
@@ -360,6 +362,12 @@ fn finish_fixture(database: Database, group: &str) {
 }
 
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--classifier-contracts") {
+        prepare_workers();
+        classifier::run();
+        println!("6 classifier scenarios passed; no skips");
+        return;
+    }
     if env::args().len() == 1 {
         run_default();
         return;
@@ -478,6 +486,8 @@ fn main() {
         .get(1)
         .is_some_and(|arg| arg == "--real-worker-contracts")
     {
+        classifier::real_worker_repair();
+        println!("test real_worker_contract_classifier ... ok");
         simulation(&database.create("contract_ingest_audit"));
         println!("test real_worker_contract_ingest_audit ... ok");
         planning::planning(&database.create("contract_planner"), "normal");
@@ -2743,6 +2753,7 @@ fn run_default() {
         finish_fixture(database, "worker_restart");
     });
     shard.run(WorkerGroup::Reply, || {
+        classifier::run();
         let mut database = Database::start();
         invalid_replies(&database.create("workers_invalid"));
         println!("test schema_missing_nonzero_and_duplicate_replies_fail ... ok");
