@@ -35,30 +35,32 @@ _PACKAGE_DEPS = {
     "workers/tests": ["//workers/src"],
 }
 
-# Uncached single-shard seconds on main's post-merge Gate at 8403a295e7
-# (BuildBuddy d3eb5c2b), or on #732's own runs for targets it moved in-process.
-# Bazel splits these modules into shards of about _SHARD_SECONDS each;
-# python_runner.py selects each shard's tests. Update a figure when a target's
-# measured time moves, and add any Python target that passes 30 s.
+# Measured unsharded seconds, rounded up: the larger of main's post-merge Gate
+# at 8403a295e7 (BuildBuddy d3eb5c2b) and an uncached run at c6bac03833
+# (8dfe7845). test_writer is #732's own run (62d9ae7c) after its decision
+# cases moved in-process. Bazel splits each of these modules into shards of
+# about _SHARD_SECONDS, and python_runner.py picks each shard's tests. Update a
+# figure when a target's measured time moves; add any Python target over 30 s.
 _MEASURED_SECONDS = {
     "harness/tests:test_review_fixes": 35,
-    "harness/tests:test_selection_groups": 60,
-    "harness/tests:test_test_tool": 35,
+    "harness/tests:test_selection_groups": 81,
+    "harness/tests:test_test_tool": 38,
     "workers/tests:test_large_files": 35,
-    "workers/tests:test_maker": 43,
-    "workers/tests:test_maker_forecast": 36,
-    "workers/tests:test_maker_recovery": 41,
+    "workers/tests:test_maker": 48,
+    "workers/tests:test_maker_forecast": 37,
+    "workers/tests:test_maker_recovery": 46,
     "workers/tests:test_pb_machine_records": 37,
-    "workers/tests:test_pb_tests": 38,
+    "workers/tests:test_pb_tests": 39,
     "workers/tests:test_pb_tests_base": 48,
     "workers/tests:test_pb_tests_candidates": 41,
-    "workers/tests:test_pb_tests_forcing": 30,
-    "workers/tests:test_pb_tests_rehearsal": 54,
+    "workers/tests:test_pb_tests_forcing": 31,
+    "workers/tests:test_pb_tests_rehearsal": 55,
     "workers/tests:test_pb_tests_runtime": 40,
-    "workers/tests:test_planner_forecast": 60,
-    "workers/tests:test_reviewer": 68,
+    "workers/tests:test_planner_forecast": 61,
+    "workers/tests:test_reviewer": 69,
     "workers/tests:test_tracing": 66,
     "workers/tests:test_workers": 85,
+    "workers/tests:test_writer": 32,
 }
 
 _SHARD_SECONDS = 20

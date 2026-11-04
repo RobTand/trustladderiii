@@ -56,6 +56,11 @@ Local Bazel is only for short Gazelle, generation and query commands. Put
 - **Runtime inputs** that neither Cargo nor Gazelle can see (fixtures in
   another directory, scripts a test starts) go in the tables at the top of
   `tools/bazel/rust.bzl` or `tools/bazel/python.bzl`, keyed by package.
+- **A slow Python test module** (over about 30 s) goes in `_MEASURED_SECONDS`
+  in `tools/bazel/python.bzl`, with its measured seconds. The macro sets
+  `shard_count` to about one shard per 20 s. `tools/bazel/python_runner.py`
+  deals the module's collected pytest tests round-robin across the shards.
+  Shard 0's receipt names the module for parity.
 - **A test that cannot be hermetic** goes in `tools/bazel/nonhermetic.bzl`
   with its reason. Remote test actions have no network unless listed there.
 
