@@ -30,7 +30,7 @@ fn add_count(counts: &mut BTreeMap<u64, usize>, key: u64, add: bool) -> (usize, 
     (old, new)
 }
 impl Incremental {
-    fn summary(&mut self, index: usize, node: &Node, add: bool, update_pool: bool) {
+    fn summary(&mut self, index: usize, node: &Node, add: bool) {
         if node.pool {
             if add {
                 self.pool += 1;

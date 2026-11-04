@@ -1693,7 +1693,7 @@ the final snapshot, so concurrent controller commits cannot change the view.
 A SELECT-only store role provides another access restriction.
 
 New controller commits retain each real kernel step's prepared input and
-result, plus the committed kernel snapshot, in the append-only event result.
+deltas in the append-only event result, with a full baseline every 128 kernel commits.
 Replay checks the chain between commits, permits translation to append interned
 footprints, replays capacity reconciliation through `settle_world`, and compares
 the last result with the actual world rows. This is a diagnostic command;
@@ -1747,9 +1747,11 @@ and stored values are never output.
 
 Replay-start availability uses the same decoder as `replay-check`: the first
 event containing a decodable `kernel_anchor` World or a complete
-`kernel_replay` record with its `before` World. This reports availability of
+`kernel_replay` record with its `before` World, or a compact record carrying a full baseline. This reports availability of
 a baseline, not successful verification of its invariants or the suffix.
 After deploy, the TL3 lead can run `tl3 store-stats --config FILE --json`,
 then run replay from the first instrumented kernel event, inclusive. Keep the
 matching binary with the log. These commands were tested only on disposable
 fixture stores; this change does not access the live store.
+
+Incremental checks compare actual typed node changes, cache pool/gate/ticket summaries, and reuse the existing kernel predicates. Unchanged waiters remain part of settling probes because another node can release their resources. The unchanged full checker is compared every 128 observations. `BASELINE_INTERVAL` is 128 to bound recovery while amortizing baseline storage; normal compact records contain only changed entries. Replay validates each real step against its delta and reports a missing/malformed chain as unverifiable at its revision. No sampling, rejection or containment is enabled.
