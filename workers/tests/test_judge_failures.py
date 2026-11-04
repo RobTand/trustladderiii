@@ -16,9 +16,9 @@ import requests
 
 from tl3_workers import judges, tracing
 from tl3_workers.roles import postmortem
-from test_postmortem import FakeTraces, KEY, request, run
-from test_postmortem import judge_environment as judge_environment
-from test_postmortem import release as release
+from postmortem_support import FakeTraces, KEY, request, run
+from postmortem_support import judge_environment as judge_environment
+from postmortem_support import release as release
 
 
 PRIVATE = f"request-fragment-687 {KEY}"

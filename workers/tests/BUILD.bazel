@@ -379,6 +379,7 @@ tl3_py_test(
     srcs = ["test_postmortem.py"],
     deps = [
         ":conftest",
+        ":postmortem_support",
         "//workers/src",
         "@tl3_pip//jsonschema",
         "@tl3_pip//langchain_core",
@@ -899,7 +900,7 @@ tl3_py_test(
     srcs = ["test_judge_failures.py"],
     deps = [
         ":conftest",
-        ":test_postmortem",
+        ":postmortem_support",
         "//workers/src",
         "@tl3_pip//mlflow_skinny",
         "@tl3_pip//opentelemetry_proto",
@@ -916,5 +917,15 @@ tl3_py_test(
         ":worker_process",
         "//harness/src/tl3_harness",
         "//workers/src",
+    ],
+)
+
+py_library(
+    name = "postmortem_support",
+    srcs = ["postmortem_support.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//workers/src",
+        "@tl3_pip//pytest",
     ],
 )
