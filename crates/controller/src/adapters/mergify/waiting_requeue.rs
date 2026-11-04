@@ -4,17 +4,8 @@ use sha2::{Digest, Sha256};
 use std::time::UNIX_EPOCH;
 
 pub(crate) const PROGRESS_PREFIX: &str = "mergify:awaiting Mergify re-queue";
-const GRACE_MS: u64 = 300_000;
+use lifecycle::Command;
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
-enum Command {
-    Ready,
-    Sending,
-    Sent,
-    Refused,
-    PermissionDenied,
-    Rejected,
-}
 #[derive(Serialize, Deserialize)]
 struct Recovery {
     eligible_since_ms: Option<u64>,
@@ -287,25 +278,56 @@ impl Adapter {
         }
         Ok(recovery)
     }
+    fn recovery_decide(
+        &self,
+        delivery: &Delivery,
+        recovery: &mut Recovery,
+        event: lifecycle::QueueEvent,
+    ) -> Result<Vec<lifecycle::Effect>> {
+        let (next, effects) = lifecycle::decide(
+            lifecycle::EnqueueState {
+                recovery: Some(lifecycle::Recovery {
+                    eligible_since_ms: recovery.eligible_since_ms,
+                    command: recovery.command,
+                }),
+                ..Default::default()
+            },
+            event,
+        );
+        let next = next
+            .recovery
+            .ok_or(Error::Invalid("recovery decision lost its state"))?;
+        recovery.eligible_since_ms = next.eligible_since_ms;
+        recovery.command = next.command;
+        let mut remaining = Vec::new();
+        for effect in effects {
+            if effect == lifecycle::Effect::SaveRecovery {
+                self.save_recovery(delivery, recovery)?;
+            } else {
+                remaining.push(effect);
+            }
+        }
+        Ok(remaining)
+    }
     fn reconcile_command(
         &self,
         delivery: &Delivery,
         recovery: &mut Recovery,
     ) -> Result<Option<Reconciliation>> {
-        let class = match recovery.command {
-            Command::Ready => return Ok(None),
-            Command::Refused => Some("queue_command_refused"),
-            Command::PermissionDenied => Some("queue_command_permission"),
-            Command::Rejected => Some("queue_command_rejected"),
-            Command::Sending | Command::Sent => None,
-        };
-        if let Some(class) = class {
-            return Ok(Some(refused(class)));
+        let effects =
+            self.recovery_decide(delivery, recovery, lifecycle::QueueEvent::CommandStatus)?;
+        match effects.as_slice() {
+            [lifecycle::Effect::Continue] => return Ok(None),
+            [lifecycle::Effect::Complete(lifecycle::Complete::Permanent(failure))] => {
+                return Ok(Some(refused(failure.class())));
+            }
+            [lifecycle::Effect::Read(lifecycle::Need::CommandReply)] => {}
+            _ => return Err(Error::Invalid("unexpected command reconciliation effect")),
         }
         let github = self.clients[&delivery.repository.installation].clone();
         let repo = full_name(&delivery.repository);
         let (number, _) = enqueue(delivery)?;
-        if self
+        let refusal = self
             .runtime
             .block_on(Mergify::new(github.clone()).command_refusal(
                 &repo,
@@ -313,22 +335,38 @@ impl Adapter {
                 &recovery.command_key,
             ))
             .map_err(adapter_error)?
-            .is_some()
-        {
-            recovery.command = Command::Refused;
-            self.save_recovery(delivery, recovery)?;
-            return Ok(Some(refused("queue_command_refused")));
+            .is_some();
+        let found = !refusal
+            && self
+                .runtime
+                .block_on(github.reconcile_comments(&repo, number, &recovery.command_key))?
+                .is_some();
+        let effects = self.recovery_decide(
+            delivery,
+            recovery,
+            lifecycle::QueueEvent::CommandReceipt {
+                refused: refusal,
+                found,
+            },
+        )?;
+        match effects.as_slice() {
+            [lifecycle::Effect::Complete(lifecycle::Complete::Permanent(failure))] => {
+                Ok(Some(refused(failure.class())))
+            }
+            // An absent comment cannot disprove an in-flight POST.
+            [lifecycle::Effect::Complete(lifecycle::Complete::Pending)] => {
+                Ok(Some(Reconciliation::Pending))
+            }
+            _ => Err(Error::Invalid("unexpected command receipt effect")),
         }
-        if self
-            .runtime
-            .block_on(github.reconcile_comments(&repo, number, &recovery.command_key))?
-            .is_some()
-        {
-            recovery.command = Command::Sent;
-            self.save_recovery(delivery, recovery)?;
-        }
-        // An absent comment cannot disprove an in-flight POST.
-        Ok(Some(Reconciliation::Pending))
+    }
+    fn recovery_now_ms(&self) -> u64 {
+        self.clock
+            .now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(u64::MAX as u128) as u64
     }
     pub(super) fn recover_waiting(
         &mut self,
@@ -347,19 +385,17 @@ impl Adapter {
         let (state, _) = self.read(delivery, snapshot)?;
         if !self.recovery_eligible(delivery, &state, snapshot)? {
             if let Some(mut recovery) = self.recovery(delivery)? {
-                recovery.eligible_since_ms = None;
-                self.save_recovery(delivery, &recovery)?;
+                self.recovery_decide(
+                    delivery,
+                    &mut recovery,
+                    lifecycle::QueueEvent::RecoveryTick {
+                        eligible: false,
+                        now_ms: self.recovery_now_ms(),
+                    },
+                )?;
             }
             return Ok(Reconciliation::Pending);
         }
-
-        let now = self
-            .clock
-            .now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
-            .min(u64::MAX as u128) as u64;
         // Poll the saved timer without rereading the delivery archive. Dispatch
         // adopts historical commands again before consuming the head budget.
         let mut recovery = match self.recovery(delivery)? {
@@ -369,12 +405,23 @@ impl Adapter {
         if let Some(result) = self.reconcile_command(delivery, &mut recovery)? {
             return Ok(result);
         }
-        let since = *recovery.eligible_since_ms.get_or_insert(now);
-        self.save_recovery(delivery, &recovery)?;
-        if !matches!(recovery.command, Command::Ready) || now.saturating_sub(since) < GRACE_MS {
-            return Ok(Reconciliation::Pending);
+        let effects = self.recovery_decide(
+            delivery,
+            &mut recovery,
+            lifecycle::QueueEvent::RecoveryTick {
+                eligible: true,
+                now_ms: self.recovery_now_ms(),
+            },
+        )?;
+        match effects.as_slice() {
+            [lifecycle::Effect::Read(lifecycle::Need::Command)] => {
+                self.queue_command(delivery, true)
+            }
+            [lifecycle::Effect::Complete(lifecycle::Complete::Pending)] => {
+                Ok(Reconciliation::Pending)
+            }
+            _ => Err(Error::Invalid("unexpected recovery timer effect")),
         }
-        self.queue_command(delivery, true)
     }
     /// Both legacy enqueue and repaired-head recovery use this one budget.
     pub(super) fn queue_command(
@@ -388,60 +435,96 @@ impl Adapter {
         }
         let snapshot = self.snapshot()?;
         let (fresh, _) = self.read(delivery, snapshot.as_ref())?;
-        if waiting && !self.recovery_eligible(delivery, &fresh, snapshot.as_ref())? {
-            recovery.eligible_since_ms = None;
-            self.save_recovery(delivery, &recovery)?;
-            return Ok(Reconciliation::Pending);
-        }
+        let eligible = !waiting || self.recovery_eligible(delivery, &fresh, snapshot.as_ref())?;
         let (number, head) = enqueue(delivery)?;
         let github = self.clients[&delivery.repository.installation].clone();
         let repo = full_name(&delivery.repository);
-        let events = self.runtime.block_on(github.issue_events(&repo, number))?;
-        if fresh.pull_request.head.sha != head
-            || fresh.pull_request.state != "open"
-            || fresh.pull_request.merged_at.is_some()
-            || fresh.pull_request.draft
-            || self.human_hold_in_events(delivery, snapshot.as_ref(), &events)?
-            || snapshot.as_ref().is_some_and(|snapshot| {
-                snapshot.rows.iter().any(|row| {
-                    row.table == "nodes"
-                        && row.id == delivery.node().0.to_string()
-                        && row.value["paused"] == true
-                })
-            })
-        {
-            return Ok(Reconciliation::Pending);
-        }
-        self.fence(delivery)?;
-        recovery.command = Command::Sending;
-        self.save_recovery(delivery, &recovery)?;
-        match self.runtime.block_on(Mergify::new(github).requeue(
-            &repo,
-            number,
-            head,
-            &recovery.command_key,
-        )) {
-            Ok(()) => recovery.command = Command::Sent,
-            Err(tl3_mergify::Error::GitHub(tl3_github::Error::Http { status: 403 })) => {
-                recovery.command = Command::PermissionDenied;
-                self.save_recovery(delivery, &recovery)?;
-                return Ok(refused("queue_command_permission"));
-            }
-            Err(error) => {
-                if matches!(
-                    error,
-                    tl3_mergify::Error::GitHub(
-                        tl3_github::Error::RateLimited { .. }
-                            | tl3_github::Error::Http { status: 400..=499 }
-                    )
-                ) {
-                    recovery.command = Command::Rejected;
+        // Preserve the eligibility short circuit before the issue-events read.
+        let (held, paused) = if eligible {
+            let events = self.runtime.block_on(github.issue_events(&repo, number))?;
+            (
+                self.human_hold_in_events(delivery, snapshot.as_ref(), &events)?,
+                snapshot.as_ref().is_some_and(|snapshot| {
+                    snapshot.rows.iter().any(|row| {
+                        row.table == "nodes"
+                            && row.id == delivery.node().0.to_string()
+                            && row.value["paused"] == true
+                    })
+                }),
+            )
+        } else {
+            (false, false)
+        };
+        let (next, effects) = lifecycle::decide(
+            lifecycle::EnqueueState {
+                recovery: Some(lifecycle::Recovery {
+                    eligible_since_ms: recovery.eligible_since_ms,
+                    command: recovery.command,
+                }),
+                ..Default::default()
+            },
+            lifecycle::QueueEvent::DispatchCommand(lifecycle::CommandRead {
+                head: lifecycle_head(fresh.pull_request.head.sha == head),
+                open: fresh.pull_request.state == "open",
+                merged: fresh.pull_request.merged_at.is_some(),
+                draft: fresh.pull_request.draft,
+                held,
+                paused,
+                waiting,
+                eligible,
+                now_ms: self.recovery_now_ms(),
+            }),
+        );
+        let next = next
+            .recovery
+            .ok_or(Error::Invalid("command decision lost its state"))?;
+        recovery.eligible_since_ms = next.eligible_since_ms;
+        recovery.command = next.command;
+        for effect in effects {
+            match effect {
+                lifecycle::Effect::SaveRecovery => {
+                    self.fence(delivery)?;
+                    self.save_recovery(delivery, &recovery)?;
                 }
-                self.save_recovery(delivery, &recovery)?;
-                return Err(adapter_error(error));
+                lifecycle::Effect::Complete(lifecycle::Complete::Pending) => {
+                    return Ok(Reconciliation::Pending);
+                }
+                lifecycle::Effect::Complete(lifecycle::Complete::Permanent(failure)) => {
+                    return Ok(refused(failure.class()));
+                }
+                lifecycle::Effect::Write(lifecycle::Write::Command) => {
+                    let result = self.runtime.block_on(Mergify::new(github.clone()).requeue(
+                        &repo,
+                        number,
+                        head,
+                        &recovery.command_key,
+                    ));
+                    let outcome = match &result {
+                        Ok(()) => lifecycle::CommandResult::Accepted,
+                        Err(tl3_mergify::Error::GitHub(tl3_github::Error::Http {
+                            status: 403,
+                        })) => lifecycle::CommandResult::PermissionDenied,
+                        Err(tl3_mergify::Error::GitHub(
+                            tl3_github::Error::RateLimited { .. }
+                            | tl3_github::Error::Http { status: 400..=499 },
+                        )) => lifecycle::CommandResult::Rejected,
+                        Err(_) => lifecycle::CommandResult::Unknown,
+                    };
+                    self.recovery_decide(
+                        delivery,
+                        &mut recovery,
+                        lifecycle::QueueEvent::CommandDone(outcome),
+                    )?;
+                    if outcome == lifecycle::CommandResult::PermissionDenied {
+                        return Ok(refused("queue_command_permission"));
+                    }
+                    if let Err(error) = result {
+                        return Err(adapter_error(error));
+                    }
+                }
+                _ => return Err(Error::Invalid("unexpected recovery dispatch effect")),
             }
         }
-        self.save_recovery(delivery, &recovery)?;
         Ok(Reconciliation::Pending)
     }
     pub(super) fn requeue_progress(&self, delivery: &Delivery) -> Result<Option<String>> {
