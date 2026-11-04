@@ -1,6 +1,15 @@
 //! Scalar inputs range over their full domains. Each transition emits at most
 //! three effects. Unwind 4 covers those three slots and the loop exit; the
 //! grace proof additionally applies two successive transitions, with no loop.
+//!
+//! Property traceability:
+//! - `enqueue_ack_sound`: state-table Publishing, step 4 confirms before Queued.
+//! - `enqueue_stale_head`: Reviewing's Approved(head) row and #608's dispatch fence.
+//! - `enqueue_refused_sticky`: #608, preserve terminal command refusal handling.
+//! - `enqueue_write_ahead`: #608, persist intent before upstream dispatch.
+//! - `enqueue_recovery_grace`: #608, five-minute grace and one command per head.
+//! - `enqueue_dequeue_fresh`: #608, retain prior dequeue without reusing stale labels.
+//! - `enqueue_required_check`: Q47, distinguish code failures from runner failures.
 use super::enqueue::*;
 use super::{Head, QueueState};
 
