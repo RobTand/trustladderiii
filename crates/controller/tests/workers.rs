@@ -625,6 +625,12 @@ fn main() {
                 &database.create("quota_removed_legacy"),
                 true,
             ),
+            Some("ladder-out") => {
+                quota_ladder::whole_ladder_out_raises_an_operations_note(
+                    &database.create("unavailable_ladder_out"),
+                );
+                println!("test quota_whole_ladder_out_raises_an_operations_note ... ok");
+            }
             Some("unavailable") => {
                 unavailable_scenarios(&mut database);
                 println!("6 quota-ladder unavailable scenarios passed; no skips");
