@@ -1928,13 +1928,10 @@ fn publication_refusal_retention(settings: &tl3_config::Store, reconciliation: b
     );
     assert_eq!(diagnostic["status"], if reconciliation { 403 } else { 404 });
     assert_eq!(diagnostic["effect_kind"], json!(EffectKind::PostApproval));
+    // Both refusals occur during GET, before the approval POST boundary.
     assert_eq!(
         diagnostic["endpoint"],
-        if reconciliation {
-            "GET /repos/{owner}/{repo}/commits/{head}/check-runs"
-        } else {
-            "POST /repos/{owner}/{repo}/check-runs"
-        }
+        "GET /repos/{owner}/{repo}/commits/{head}/check-runs"
     );
     assert!(
         !serde_json::to_string(diagnostic)

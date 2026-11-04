@@ -12,6 +12,7 @@ pub const APPROVAL_CHECK: &str = "TL3 approval";
 enum ApprovalAttempt {
     Preflight,
     Dispatching,
+    Observed,
     Uncertain,
     Refused,
 }
@@ -167,6 +168,8 @@ impl Adapter {
                     .block_on(client.check_runs(&repo, head(delivery)?.as_str()))
                     .map_err(|error| publication_failure::http(error, Endpoint::HeadChecks))?;
                 if self.converge_approvals(&client, &repo, delivery, &checks)? {
+                    self.records
+                        .write(&attempt, &serde_json::to_vec(&ApprovalAttempt::Observed)?)?;
                     return Ok(Completion::confirmed(vec![]));
                 }
                 // Dispatch intent closes the crash window before POST. Uncertain is
@@ -211,6 +214,8 @@ impl Adapter {
                         .write(&attempt, &serde_json::to_vec(&ApprovalAttempt::Uncertain)?)?;
                     return Err(Error::ApprovalAmbiguous);
                 }
+                self.records
+                    .write(&attempt, &serde_json::to_vec(&ApprovalAttempt::Observed)?)?;
                 Ok(Completion::confirmed(vec![]))
             }
             Out::Effect {
