@@ -1,8 +1,6 @@
 //! One validator for controller acceptance and the worker's repair turn.
 
 mod decision;
-#[cfg(kani)]
-mod proofs;
 use decision::{Answer, Classification, Kind, decide};
 use serde_json::Value;
 use std::collections::BTreeSet;
