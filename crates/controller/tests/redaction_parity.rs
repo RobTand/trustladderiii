@@ -85,6 +85,7 @@ fn matches_python_on_all_planted_forms() {
 }
 
 #[test]
+/// Issue #753, wave G0: corpus-derived spans retain exact Rust/Python redaction parity.
 fn corpus_seeded_proptest_matches_python() {
     use proptest::{
         prelude::*,
