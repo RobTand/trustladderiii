@@ -354,6 +354,20 @@ proof!(enqueue_write_ahead, {
     let state: EnqueueState = kani::any();
     let event: QueueEvent = kani::any();
     let (next, effects) = decide(state, event);
+    if let QueueEvent::Prepare {
+        dequeue_pending: false,
+        checks_ready: true,
+        ..
+    } = event
+    {
+        if !refused(state) {
+            assert_eq!(
+                first(&effects),
+                Effect::SaveIntent,
+                "intent must precede final head validation"
+            );
+        }
+    }
     let mut intent = false;
     let mut recovery = false;
     let mut rerun = false;
