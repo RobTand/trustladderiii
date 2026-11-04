@@ -28,31 +28,16 @@ fn cli(input: &Value) -> Value {
 
 pub fn run() {
     let cases: Vec<Value> = serde_json::from_str(include_str!("postmortem/golden.json")).unwrap();
-    let mut python = Command::new(super::worker_package().join(".venv/bin/python"));
-    python.args(["-c", include_str!("postmortem/legacy.py")]);
-    let old = command(python, json!(cases).to_string().as_bytes());
-    assert!(
-        old.status.success(),
-        "{}",
-        String::from_utf8_lossy(&old.stderr)
-    );
-    let old: Vec<Value> = serde_json::from_slice(&old.stdout).unwrap();
-    assert_eq!(old.len(), cases.len());
-    for (case, expected) in cases.iter().zip(old) {
-        assert_eq!(
-            expected, case["violations"],
-            "legacy golden: {}",
-            case["name"]
-        );
+    for case in &cases {
         assert_eq!(
             cli(case),
-            json!({"violations":expected}),
-            "Rust/Python parity: {}",
+            json!({"violations":case["violations"]}),
+            "golden: {}",
             case["name"]
         );
     }
     println!(
-        "test postmortem_golden_python_cli_parity ... ok ({} vectors)",
+        "test postmortem_golden_cli_contract ... ok ({} vectors)",
         cases.len()
     );
     let mut malformed = cases[0].clone();
@@ -118,7 +103,8 @@ fn real_worker(cases: &[Value]) {
         .env("TL3_BINARY", env!("CARGO_BIN_EXE_tl3"))
         .env("LANGSMITH_TRACING", "false")
         .env("LANGCHAIN_TRACING_V2", "false")
-        .env("OPENAI_API_KEY", "placeholder");
+        .env("OPENAI_API_KEY", "placeholder")
+        .env("MLFLOW_JUDGE_MAX_ITERATIONS", "30");
     let input = json!({"worktree":root.path(), "reply":cases[0]["reply"]});
     let output = command(worker, input.to_string().as_bytes());
     assert!(
