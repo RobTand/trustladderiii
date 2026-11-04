@@ -697,7 +697,7 @@ fn held_retain_keeps_its_outcome_lineage_when_a_curation_arrives() {
                 memory_id: "priority-B".into(),
                 state: "valid",
                 verdict: "accepted",
-                source: "fixture",
+                source: "fixture".into(),
                 request: None,
                 run: None,
                 claim: None,
