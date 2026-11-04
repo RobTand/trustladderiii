@@ -4,6 +4,24 @@ const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(350);
 
 use super::*;
 
+/// #777: force contention at the real durable-ingress boundary, before HTTP 202.
+fn receipt_store(settings: &tl3_config::Store) -> Store {
+    let mut store = Store::open(settings).unwrap();
+    if env::var_os("TL3_TEST_STARTUP_ACK_CONTENTION").is_some() {
+        store.set_boundary_hook(|point, key, _| {
+            if point == tl3_store::SavePoint::ReceiveIngressBeforeCommit {
+                let started = Instant::now();
+                thread::sleep(Duration::from_secs(2));
+                eprintln!(
+                    "startup ACK forced pre-commit stall: {key}; {:?}",
+                    started.elapsed()
+                );
+            }
+        });
+    }
+    store
+}
+
 struct BlockCatchUp {
     entered: mpsc::Sender<()>,
     release: Mutex<mpsc::Receiver<()>>,
@@ -51,7 +69,7 @@ fn during_catch_up(settings: &tl3_config::Store) {
     let mut controller = controller(settings, root.path(), &api.uri());
     let source = Webhooks::bind(
         "127.0.0.1:0".parse().unwrap(),
-        Store::open(settings).unwrap(),
+        receipt_store(settings),
         bootstrap(),
         b"test-secret".to_vec(),
         Some(CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap()),
@@ -147,7 +165,7 @@ fn during_catch_up(settings: &tl3_config::Store) {
 fn before_source_run(settings: &tl3_config::Store) {
     let source = Webhooks::bind(
         "127.0.0.1:0".parse().unwrap(),
-        Store::open(settings).unwrap(),
+        receipt_store(settings),
         bootstrap(),
         b"test-secret".to_vec(),
         None,

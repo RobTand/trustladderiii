@@ -719,7 +719,7 @@ fn main() {
         database.stop();
         return;
     }
-    if args.get(1).is_some_and(|arg| arg == "--startup-ack") {
+    if args.iter().any(|arg| arg == "--startup-ack") {
         startup_ack::run(&mut database);
         database.stop();
         return;
