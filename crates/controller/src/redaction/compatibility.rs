@@ -21,60 +21,25 @@ pub(crate) fn translate(pattern: &str, classes: &[String; 3]) -> Result<String> 
         classes: &[String; 3],
         ignore_case: bool,
     ) -> Result<String> {
-        let negate = source.next_if_eq(&'^').is_some();
-        let mut literal = String::new();
-        let mut codes = Vec::new();
-        let mut members = Vec::new();
+        // Lex one complete class, then parse it. Never splice members into its source:
+        // a trailing literal '-' changes meaning when followed by another character.
+        let mut token = String::from("[");
+        if source.next_if_eq(&'^').is_some() {
+            token.push('^');
+        }
+        if source.next_if_eq(&']').is_some() {
+            token.push(']');
+        }
         loop {
-            match source.next().ok_or("unfinished regex class")? {
+            let c = source.next().ok_or("unfinished regex class")?;
+            token.push(c);
+            match c {
+                '\\' => token.push(source.next().ok_or("unfinished class escape")?),
                 ']' => break,
-                '\\' => match source.next().ok_or("unfinished class escape")? {
-                    code @ ('w' | 'W' | 'd' | 'D' | 's' | 'S') => codes.push(code),
-                    'b' => literal.push_str(r"\x08"),
-                    code => {
-                        literal.push('\\');
-                        literal.push(code);
-                    }
-                },
-                '[' => literal.push_str(r"\["),
-                c => {
-                    literal.push(c);
-                    members.push(c);
-                }
+                _ => {}
             }
         }
-        // Python adds dotted/dotless I to ASCII I/i under Unicode IGNORECASE.
-        // Apply the union before negation, including ranges such as [a-z].
-        if ignore_case
-            && (members.iter().any(|c| matches!(c, 'I' | 'i' | 'İ' | 'ı'))
-                || members.windows(3).any(|r| {
-                    r[1] == '-'
-                        && ['I', 'i', 'İ', 'ı']
-                            .iter()
-                            .any(|c| r[0] <= *c && *c <= r[2])
-                }))
-        {
-            literal.push_str("Iiİı");
-        }
-        if codes.is_empty() {
-            return Ok(format!("[{}{literal}]", if negate { "^" } else { "" }));
-        }
-        if literal.is_empty() && codes.len() == 1 {
-            return Ok(shorthand(codes[0], classes, negate));
-        }
-        let mut parts = codes
-            .into_iter()
-            .map(|c| shorthand(c, classes, false))
-            .collect::<Vec<_>>();
-        if !literal.is_empty() {
-            parts.push(format!("[{literal}]"));
-        }
-        let union = parts.join("|");
-        Ok(if negate {
-            format!("(?:(?!(?:{union}))(?s:.))")
-        } else {
-            format!("(?:{union})")
-        })
+        parsed_class(&token, classes, ignore_case)
     }
     #[derive(Clone, Copy, Default)]
     struct Flags {
@@ -181,4 +146,90 @@ pub(crate) fn translate(pattern: &str, classes: &[String; 3]) -> Result<String> 
         return Err("unbalanced regex group".into());
     }
     Ok(out)
+}
+
+use regex_syntax::{
+    ast::{self, Ast, ClassSet, ClassSetItem},
+    hir::{Class, ClassUnicode, ClassUnicodeRange, Hir},
+};
+
+fn fold(set: &mut ClassUnicode) -> Result<()> {
+    set.try_case_fold_simple().map_err(|e| e.to_string())?;
+    let turkish = ['I', 'i', 'İ', 'ı'];
+    if set
+        .iter()
+        .any(|r| turkish.iter().any(|c| r.start() <= *c && *c <= r.end()))
+    {
+        set.union(&ClassUnicode::new(
+            turkish.map(|c| ClassUnicodeRange::new(c, c)),
+        ));
+    }
+    Ok(())
+}
+
+fn parsed_class(pattern: &str, classes: &[String; 3], ignore_case: bool) -> Result<String> {
+    fn item(node: &ClassSetItem, classes: &[String; 3], casei: bool) -> Result<ClassUnicode> {
+        let mut set = match node {
+            ClassSetItem::Literal(literal) => {
+                ClassUnicode::new([ClassUnicodeRange::new(literal.c, literal.c)])
+            }
+            ClassSetItem::Range(range) => {
+                ClassUnicode::new([ClassUnicodeRange::new(range.start.c, range.end.c)])
+            }
+            ClassSetItem::Union(union) => {
+                let mut set = ClassUnicode::empty();
+                for child in &union.items {
+                    set.union(&item(child, classes, casei)?);
+                }
+                return Ok(set);
+            }
+            ClassSetItem::Perl(perl) => {
+                let index = match perl.kind {
+                    ast::ClassPerlKind::Word => 0,
+                    ast::ClassPerlKind::Digit => 1,
+                    ast::ClassPerlKind::Space => 2,
+                };
+                let ast = ast::parse::Parser::new()
+                    .parse(&format!("[{}]", classes[index]))
+                    .map_err(|e| e.to_string())?;
+                let Ast::ClassBracketed(class) = ast else {
+                    return Err("invalid frozen Python character class".into());
+                };
+                let mut set = bracketed(&class, classes, false)?;
+                if perl.negated {
+                    set.negate();
+                }
+                // Python shorthand sets do not change under IGNORECASE.
+                return Ok(set);
+            }
+            _ => return Err(format!("unsupported Python character-class AST: {node:?}")),
+        };
+        if casei {
+            fold(&mut set)?;
+        }
+        Ok(set)
+    }
+    fn bracketed(
+        class: &ast::ClassBracketed,
+        classes: &[String; 3],
+        casei: bool,
+    ) -> Result<ClassUnicode> {
+        let ClassSet::Item(contents) = &class.kind else {
+            return Err("Python class set operations are unsupported".into());
+        };
+        let mut set = item(contents, classes, casei)?;
+        // Folding must precede complementing a negated class.
+        if class.negated {
+            set.negate();
+        }
+        Ok(set)
+    }
+    let ast = ast::parse::Parser::new()
+        .parse(pattern)
+        .map_err(|e| e.to_string())?;
+    let Ast::ClassBracketed(class) = ast else {
+        return Err("expected a parsed bracketed Python class".into());
+    };
+    let set = bracketed(&class, classes, ignore_case)?;
+    Ok(format!("(?-i:{})", Hir::class(Class::Unicode(set))))
 }

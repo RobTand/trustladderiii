@@ -1073,3 +1073,10 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+py_binary(
+    name = "redaction_generated",
+    srcs = ["redaction_generated.py"],
+    visibility = ["//visibility:public"],
+    deps = [":redaction_branches"],
+)

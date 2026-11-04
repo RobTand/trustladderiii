@@ -57,6 +57,7 @@ _SCENARIO_SHARDS = {
 # one 249-324 s action.
 _LIBTEST_SHARDS = {
     "tl3-controller/tl3_controller": 8,
+    "tl3-controller/redaction_generated": 8,
 }
 
 # Inputs read by controller tests, rather than by the controller library.
@@ -72,6 +73,7 @@ _CONTROLLER_TEST_COMPILE_DATA = {
 # Only these scenarios execute tl3_workers. Its imports include tl3_harness.
 _CONTROLLER_WORKERS = [
     "test_test_redaction_adapter",
+    "test_test_redaction_generated",
     "test_test_redaction_parity",
     "lib_test_tl3_controller",
     "test_test_github-flow",
@@ -92,6 +94,7 @@ _CONTROLLER_BINARIES = {
 _CONTROLLER_RUNTIME = {
     "test_test_redaction_policy": ["//workers/src:redaction_contract"],
     "test_test_redaction_adapter": ["//workers/tests:redaction_branches"],
+    "test_test_redaction_generated": ["//workers/tests:redaction_generated"],
     "test_test_redaction_parity": ["//workers/tests:redaction_branches"],
     "lib_test_tl3_controller": [
         "//harness:project_files",

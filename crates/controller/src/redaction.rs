@@ -750,6 +750,22 @@ pub fn text(value: &str) -> crate::Result<String> {
 
 /// Serialize the authoritative Rust redaction policy for Python consumers.
 pub fn generated_policy() -> String {
+    static VALID: LazyLock<Result<()>> = LazyLock::new(|| {
+        for pattern in policy()
+            .regex
+            .values()
+            .chain(policy().helpers.values())
+            .copied()
+            .chain(policy().patterns.iter().copied())
+            .chain(policy().checked.iter().map(|(pattern, _)| *pattern))
+        {
+            rx(pattern)?;
+        }
+        Ok(())
+    });
+    VALID
+        .as_ref()
+        .expect("cannot generate an unsupported redaction policy");
     serde_json::to_string_pretty(policy()).expect("static redaction policy is serializable") + "\n"
 }
 

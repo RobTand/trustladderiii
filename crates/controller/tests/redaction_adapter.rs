@@ -165,3 +165,14 @@ fn every_pattern_alternative_is_hit_in_both_engines() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// #753 re-review: unsupported class constructs must stop generation, without a text fallback.
+#[test]
+fn unsupported_class_syntax_is_rejected() {
+    for pattern in [r"[a&&b]", r"[a--b]", r"[a[b]]", r"[\p{Greek}]"] {
+        assert!(
+            compatibility::translate(pattern, &classes()).is_err(),
+            "{pattern}"
+        );
+    }
+}
