@@ -131,6 +131,9 @@ fn retirement_wakes_do_not_retry_unavailable_hindsight() {
         "Hindsight outage holds the feed instead of retrying on each drain"
     );
     assert_eq!(fixture.store.pending_memories(0).unwrap().len(), 1);
+    fixture.available.store(true, Ordering::SeqCst);
+    fixture.retry_signal();
+    assert_eq!(fixture.attempts.recv_timeout(WAIT), Ok(true));
 }
 
 /// #773: a recovery signal racing the failed response is retained, without a drain or timer.

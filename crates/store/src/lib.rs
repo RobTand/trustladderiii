@@ -141,6 +141,13 @@ fn retire_ingress(tx: &mut Transaction<'_>) -> Result<()> {
 }
 
 impl Store {
+    /// #773: release the memory feed's upstream hold on an explicit retry or
+    /// acknowledged Hindsight delivery. Startup recovers missed notifications.
+    pub fn retry_memory_delivery(&mut self) -> Result<()> {
+        self.client.batch_execute("NOTIFY tl3_memory_retry")?;
+        Ok(())
+    }
+
     /// Open an independent read-only session without transferring this writer's ownership.
     pub fn reader(&self) -> Result<Reader> {
         Reader::open(&self.settings)
@@ -1509,6 +1516,11 @@ pub struct Listener {
 }
 
 impl Listener {
+    /// #773: wait for evidence or an operator retry, independent of controller drains.
+    pub fn memory(settings: &tl3_config::Store) -> Result<Self> {
+        Self::listen(settings, "LISTEN tl3_memory_retry")
+    }
+
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
         Self::listen(settings, "LISTEN tl3_changes")
     }

@@ -1055,9 +1055,15 @@ the evidence and fail retirement so a later drain can retry.
 
 A separate thread drains the outbox into `[hindsight].bank`, which defaults to
 `tl3`. The bank must be separate from the coordinator's bank. The thread wakes
-at startup and at controller drains through a channel of capacity one. An
-outage leaves rows for the next controller wake or restart. It never polls on
-a timer and never makes a request wait for Hindsight.
+at startup and at controller drains through a channel of capacity one. After
+a delivery error it holds the queued rows and blocks on Postgres
+`LISTEN tl3_memory_retry`. Ordinary controller drains cannot release this hold.
+Once Hindsight is available, run `tl3 memory retry --config FILE` to request
+another attempt. A successful retain or curation flush in another process
+also notifies the feed. A restart retries the durable queue. Hindsight has no
+recovery event stream, so availability alone does not wake a held feed.
+The listener is armed before delivery, preserving a retry that races a failed
+response. There is no timer or polling, and requests never wait for Hindsight.
 
 The server's `/openapi.json`, read on 2026-10-30, documents
 `POST /v1/default/banks/{bank}/memories` with `async: true` and a client-supplied

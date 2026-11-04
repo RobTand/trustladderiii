@@ -282,6 +282,9 @@ pub fn flush(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usiz
     let mut count = curate(store, settings)?;
     let mut pending = store.pending_memories(0)?;
     if pending.is_empty() {
+        if count > 0 {
+            store.retry_memory_delivery()?;
+        }
         return Ok(count);
     }
     let key = settings.retain_key()?;
@@ -343,6 +346,9 @@ pub fn flush(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usiz
             after = 0;
             pending = store.pending_memories(after)?;
         }
+    }
+    if count > 0 {
+        store.retry_memory_delivery()?;
     }
     Ok(count)
 }
@@ -1167,21 +1173,47 @@ impl Feed {
     ) -> Self {
         let (sender, receiver) = mpsc::sync_channel(1);
         std::thread::spawn(move || {
-            while receiver.recv().is_ok() {
-                let mut store = match Store::open(&store) {
-                    Ok(store) => store,
-                    Err(error) => {
-                        eprintln!("Hindsight memory retained for retry: {error}");
-                        continue;
+            'feed: while receiver.recv().is_ok() {
+                loop {
+                    // #773: arm before I/O so a retry racing the failed response
+                    // is retained. Each attempt drops its listener, including
+                    // notifications from its own successful delivery.
+                    let mut retry = match tl3_store::Listener::memory(&store) {
+                        Ok(retry) => retry,
+                        Err(error) => {
+                            eprintln!("Hindsight memory retry listener ended: {error}");
+                            break 'feed;
+                        }
+                    };
+                    let mut store = match Store::open(&store) {
+                        Ok(store) => store,
+                        Err(error) => {
+                            eprintln!("Hindsight memory retained for retry: {error}");
+                            if let Err(error) = retry.wait() {
+                                eprintln!("Hindsight memory retry listener ended: {error}");
+                                break 'feed;
+                            }
+                            continue;
+                        }
+                    };
+                    let delivery = deliver(&mut store, &settings, &breaker);
+                    if let Some(announcer) = announcer.lock().unwrap().as_deref()
+                        && let Err(error) = announce(&mut store, announcer)
+                    {
+                        eprintln!("memory curation notes retained for retry: {error}");
                     }
-                };
-                if let Err(error) = deliver(&mut store, &settings, &breaker) {
-                    eprintln!("Hindsight memory retained for retry: {error}");
-                }
-                if let Some(announcer) = announcer.lock().unwrap().as_deref()
-                    && let Err(error) = announce(&mut store, announcer)
-                {
-                    eprintln!("memory curation notes retained for retry: {error}");
+                    match delivery {
+                        Ok(_) => break,
+                        Err(error) => {
+                            eprintln!("Hindsight memory retained for retry: {error}");
+                            // Only this upstream's signal releases the hold.
+                            // Ordinary retirement wakes remain coalesced.
+                            if let Err(error) = retry.wait() {
+                                eprintln!("Hindsight memory retry listener ended: {error}");
+                                break 'feed;
+                            }
+                        }
+                    }
                 }
             }
         });
