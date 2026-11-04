@@ -1,3 +1,5 @@
+mod prismabuild_fixture;
+mod startup;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 
@@ -194,7 +196,18 @@ fn second_daemon_cannot_destroy_the_owners_staged_inputs() {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, b"owner's staged bytes").unwrap();
     }
+    let mut client = startup::raw(&config.store);
+    let shared_paths = startup::seed_shared_state(&config, &mut client);
+    let before_files: Vec<_> = shared_paths.iter().map(|p| fs::read(p).ok()).collect();
+    let before_prompts = startup::prompt_rows(&mut client);
     let loser = start();
+    assert_eq!(startup::prompt_rows(&mut client), before_prompts);
+    let after_files: Vec<_> = shared_paths.iter().map(|p| fs::read(p).ok()).collect();
+    assert_eq!(
+        after_files, before_files,
+        "loser changed completion, job, cancellation, or journal state"
+    );
+    drop(client);
     for path in &paths {
         assert_eq!(
             fs::read(path).ok().as_deref(),
