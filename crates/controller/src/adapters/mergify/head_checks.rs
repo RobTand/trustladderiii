@@ -139,12 +139,11 @@ pub(super) async fn evaluate(
             context: rule.context.clone(),
             app: rule.integration_id,
         };
-        if checks.is_empty() && status.is_none() {
-            if rule.integration_id.is_some() || statuses_available {
-                ready = false;
-                missing.push(expected);
-            }
-        } else {
+        let reports = !checks.is_empty() || status.is_some();
+        if facts::required_missing(reports, rule.integration_id.is_some(), statuses_available) {
+            ready = false;
+            missing.push(expected);
+        } else if reports {
             reported.push(expected);
         }
         for check in checks {

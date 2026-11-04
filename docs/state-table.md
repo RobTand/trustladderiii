@@ -540,12 +540,19 @@ When the last step confirms, the leaf moves to Queued.
 | Check-suite or check-run evidence | All check suites on the approved head have completed, but a required context from the expected app is absent | Publishing, enqueue pending | Open a deduplicated repo setup incident naming the head, context and expected app. No failure count or credit charge. (Q52, Rob, 2026-11-01) |
 | Required check reports | The context and expected app match an open missing-check incident on that head | Publishing | Clear that incident; evaluate the reported check normally (Q52) |
 | `clear incident <id>` | Rob names an open missing-check incident | Publishing | Clear the incident; required-check enforcement still applies (Q52) |
+| Check-suite or check-run evidence | Mergify waits on unmet queue-entry conditions on the approved head. Every check suite on it has completed, and so has every check other than Mergify's own | Publishing, enqueue pending | Open a deduplicated repo setup incident naming the head, the unmet conditions and the failed checks outside the required set. No failure count or credit charge. (#447; clarification recorded in #735, not a new rule) |
 
 Publication guards report a Conflict fact when the checked head conflicts with current main, including before the push or PR opening completes and before enqueue. Rebasing uses the same credit and recheck rules as a conflict in Queued. A clean main advance needs no rebase; publish the checked head and let Mergify update the merge tree.
 
 Required head-check failures at the enqueue step use the same credit costs and infrastructure retry limits as failures in Queued (Q47).
 
 The missing-check rows decide on the check-suite and check-run webhooks TL3 already receives, with no timer or polling. A cleared incident stays cleared for that head, context and app. Waiting for required checks arms no allowance timer and spends no retry. The incident also clears when its head is replaced or the leaf closes.
+
+These clarify how the controller already applies Q52 and #447 (#735). They add no rule:
+
+- **Unreadable statuses.** A requirement with no expected app can be met by a legacy commit status. If GitHub refuses the status read (HTTP 403 or 404), its absence can't be known, so no missing-check incident opens for it. The refused read opens a check-setup incident instead.
+- **Clearing in any open phase.** When the missing context reports on its head from the expected app, TL3 clears the incident in whatever open phase the leaf is in, not only in Publishing. A closed leaf's incidents have already cleared with it.
+- **The blocked-queue incident (#447)** opens only for the approved head, while the leaf is Queued or still enqueuing. Like a missing-check incident, it never reaches the kernel, and it clears when its head stops being the node's head or approved head, or the leaf closes.
 
 ### A failed round
 
@@ -566,6 +573,7 @@ The missing-check rows decide on the check-suite and check-run webhooks TL3 alre
 | CI failed | The runner or its setup failed | See "Failures" | Enqueue again, when the failure rules allow |
 | Conflict | | Rebasing | Rebase onto main, in a new generation |
 | GitHub or Mergify stalled | No incident is already open | Queued, waiting on an incident | Raise an incident. A probe or Rob clears the first; only Rob clears later incidents. See "Looks and stalls" and Q7. |
+| Check-suite or check-run evidence | Mergify waits on unmet queue-entry conditions on the approved head. Every check suite on it has completed, and so has every check other than Mergify's own | Queued | Open a deduplicated repo setup incident naming the head, the unmet conditions and the failed checks outside the required set. No failure count or credit charge. (#447; clarification recorded in #735, not a new rule) |
 
 ### Rebasing
 

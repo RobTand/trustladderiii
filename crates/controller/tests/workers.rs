@@ -688,6 +688,10 @@ fn main() {
                 &database.create("quota_removed_legacy"),
                 true,
             ),
+            Some("unavailable") => {
+                unavailable_scenarios(&mut database);
+                println!("5 quota-ladder unavailable scenarios passed; no skips");
+            }
             _ => quota_scenarios(&mut database),
         }
         database.stop();
@@ -880,6 +884,20 @@ fn quota_removed_models(database: &mut Database) {
     println!("test quota_wait_for_removed_model_resumes_on_open ... ok");
     quota_ladder::removed_model_resumes_on_open(&database.create("quota_removed_legacy"), true);
     println!("test quota_legacy_wait_for_removed_model_resumes_on_open ... ok");
+}
+
+fn unavailable_scenarios(database: &mut Database) {
+    for kind in ["model_not_found", "allowance_unverified", "retry_limit"] {
+        quota_ladder::unavailable_model_falls_back(
+            &database.create(&format!("unavailable_{kind}")),
+            kind,
+        );
+        println!("test quota_unavailable_{kind}_falls_back_to_next_model ... ok");
+    }
+    quota_ladder::unavailable_model_is_probed_after_expiry(&database.create("unavailable_probe"));
+    println!("test quota_unavailable_model_is_probed_after_expiry ... ok");
+    quota_ladder::request_error_fails(&database.create("unavailable_request_error"));
+    println!("test quota_request_caused_400_fails_without_fallback ... ok");
 }
 
 // These scenarios isolate ingest/audit. Maker acceptance below uses the real
@@ -2946,6 +2964,11 @@ fn run_default() {
         let mut database = Database::start();
         quota_removed_models(&mut database);
         finish_fixture(database, "worker_planning");
+    });
+    shard.run(WorkerGroup::Unavailable, || {
+        let mut database = Database::start();
+        unavailable_scenarios(&mut database);
+        finish_fixture(database, "worker_unavailable");
     });
     // Shards without a maker group never start its Postgres.
     let mut database = None;

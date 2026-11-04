@@ -67,6 +67,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tl3_github::{Actor, CheckRun, GitHub, RepoChanges, webhook::Event};
 use tl3_kernel::{NodeId, World};
+use tl3_mergify::decide::{facts, translate::Kind};
 use tl3_mergify::{Mergify, QUEUE_LABEL, QueueState, is_merge_queue_pr};
 use tl3_store::{InternKind, Snapshot};
 
@@ -82,6 +83,16 @@ pub struct QueueFact {
 pub struct RequiredCheck {
     pub context: String,
     pub app: Option<u64>,
+}
+
+impl RequiredCheck {
+    /// The check run reports this context, from the expected app if one is named.
+    pub(crate) fn matches(&self, check: &CheckRun) -> bool {
+        self.context == check.name
+            && self
+                .app
+                .is_none_or(|id| check.app.as_ref().is_some_and(|app| app.id == id))
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -142,6 +153,32 @@ pub enum Evidence {
         head: String,
     },
 }
+impl Evidence {
+    /// The evidence without its payload, as the core decides on it.
+    pub(crate) fn kind(&self) -> Kind {
+        match self {
+            Self::ChecksUnavailable { .. } => Kind::ChecksUnavailable,
+            Self::CheckMissing { .. } => Kind::CheckMissing,
+            Self::QueueBlocked { .. } => Kind::QueueBlocked,
+            Self::CheckReported { .. } => Kind::CheckReported,
+            Self::Merged { checks_passed, .. } => Kind::Merged {
+                checks_passed: *checks_passed,
+            },
+            Self::CiFailed {
+                head_check, infra, ..
+            } => Kind::CiFailed {
+                head_check: *head_check,
+                infra: *infra,
+            },
+            Self::Conflict { .. } => Kind::Conflict,
+            Self::DequeuedByCommand { .. } => Kind::DequeuedByCommand,
+            Self::DequeuedByPerson { .. } => Kind::DequeuedByPerson,
+            Self::ClosedByPerson { .. } => Kind::ClosedByPerson,
+            Self::PushByOther { .. } => Kind::PushByOther,
+        }
+    }
+}
+
 impl QueueFact {
     pub(crate) fn node(&self, snapshot: &Snapshot) -> Result<Option<NodeId>> {
         for row in snapshot.rows.iter().filter(|row| {
@@ -160,13 +197,7 @@ impl QueueFact {
     }
     /// Setup evidence is deduplicated against incidents, not observation receipts.
     pub(crate) fn setup(&self) -> bool {
-        matches!(
-            self.evidence,
-            Evidence::ChecksUnavailable { .. }
-                | Evidence::CheckMissing { .. }
-                | Evidence::CheckReported { .. }
-                | Evidence::QueueBlocked { .. }
-        )
+        self.evidence.kind().setup()
     }
     pub(crate) fn recorded(&self, snapshot: &Snapshot) -> Result<bool> {
         if let Evidence::CheckMissing { head, required }
@@ -1166,12 +1197,11 @@ pub(crate) fn heal_phase(phase: Option<tl3_kernel::Phase>) -> bool {
 /// #447 review: whether every check on the head, other than Mergify's own,
 /// has completed. Until then a check suite read can't show a blocked queue.
 pub(crate) fn checks_settled(state: &tl3_mergify::Observation) -> bool {
-    state
-        .check_runs
-        .iter()
-        .filter(|check| check.head_sha == state.pull_request.head.sha)
-        .filter(|check| !check.app.as_ref().is_some_and(|app| app.slug == "mergify"))
-        .all(|check| check.status == "completed")
+    facts::checks_settled(&tl3_mergify::views(
+        &state.check_runs,
+        &state.pull_request.head.sha,
+        |_| false,
+    ))
 }
 
 /// A PR-body heal on one head: whether its stale runs have been rerun (#447).
@@ -1189,49 +1219,24 @@ pub(crate) fn queue_blocked(
     suites_completed: bool,
     required: &[RequiredCheck],
 ) -> Option<(Vec<String>, Vec<String>)> {
-    if state.state != QueueState::Waiting || !suites_completed {
+    let conditions = if state.state == QueueState::Waiting && suites_completed {
+        tl3_mergify::unmet_conditions(state.check.as_ref()?)
+    } else {
+        vec![]
+    };
+    if !facts::queue_blocked(state.state, suites_completed, !conditions.is_empty()) {
         return None;
     }
-    let conditions = tl3_mergify::unmet_conditions(state.check.as_ref()?);
-    if conditions.is_empty() {
-        return None;
-    }
-    let head = &state.pull_request.head.sha;
-    let mut latest: BTreeMap<&str, &CheckRun> = BTreeMap::new();
-    for check in state
-        .check_runs
-        .iter()
-        .filter(|check| &check.head_sha == head)
-    {
-        let entry = latest.entry(check.name.as_str()).or_insert(check);
-        if check.id > entry.id {
-            *entry = check;
-        }
-    }
-    let failed = latest
-        .into_values()
-        .filter(|check| {
-            check.status == "completed"
-                && matches!(
-                    check.conclusion.as_deref(),
-                    Some(
-                        "failure"
-                            | "cancelled"
-                            | "timed_out"
-                            | "action_required"
-                            | "startup_failure"
-                    )
-                )
-                && !check.app.as_ref().is_some_and(|app| app.slug == "mergify")
-                && !required.iter().any(|rule| {
-                    rule.context == check.name
-                        && rule
-                            .app
-                            .is_none_or(|id| check.app.as_ref().is_some_and(|app| app.id == id))
-                })
-        })
-        .map(|check| check.name.clone())
+    let views = tl3_mergify::views(&state.check_runs, &state.pull_request.head.sha, |check| {
+        required.iter().any(|rule| rule.matches(check))
+    });
+    // Each failing name is the newest of its name, so sorting gives the
+    // former BTreeMap's order by name.
+    let mut failed: Vec<String> = (0..views.len())
+        .filter(|&index| facts::blocking_failure(&views, index))
+        .map(|index| state.check_runs[index].name.clone())
         .collect();
+    failed.sort();
     Some((conditions, failed))
 }
 
@@ -1245,26 +1250,27 @@ async fn queue_facts(
     snapshot: Option<&Snapshot>,
 ) -> Result<Vec<QueueFact>> {
     let pull = &state.pull_request;
-    if is_merge_queue_pr(pull) {
-        return Ok(vec![]);
-    }
-    if state.state != QueueState::Merged && pull.head.sha != expected_head {
-        return Ok(vec![QueueFact {
-            repository: repo.clone(),
-            number: pull.number,
-            evidence: Evidence::PushByOther {
-                head: pull.head.sha.clone(),
-            },
-        }]);
-    }
+    let head_checks = match facts::entry(
+        is_merge_queue_pr(pull),
+        state.state,
+        pull.head.sha == expected_head,
+        pull.state == "open",
+    ) {
+        facts::Entry::Ignore => return Ok(vec![]),
+        facts::Entry::PushByOther => {
+            return Ok(vec![QueueFact {
+                repository: repo.clone(),
+                number: pull.number,
+                evidence: Evidence::PushByOther {
+                    head: pull.head.sha.clone(),
+                },
+            }]);
+        }
+        facts::Entry::Read { head_checks } => head_checks,
+    };
     let mut facts = Vec::new();
     let mut head_infrastructure = None;
-    if pull.state == "open"
-        && matches!(
-            state.state,
-            QueueState::Waiting | QueueState::Unknown | QueueState::FailedCi | QueueState::Dequeued
-        )
-    {
+    if head_checks {
         let repo_name = full_name(repo);
         let requirements = github
             .required_status_checks(&repo_name, &pull.base.branch)
@@ -1286,7 +1292,7 @@ async fn queue_facts(
         // working on it, so a missing required context will not report.
         if !checks.missing.is_empty() {
             let suites = github.check_suites(&repo_name, &pull.head.sha).await?;
-            if !suites.is_empty() && suites.iter().all(|suite| suite.status == "completed") {
+            if facts::suites_completed(&suite_statuses(&suites)) {
                 facts.extend(checks.missing.iter().map(|required| QueueFact {
                     repository: repo.clone(),
                     number: pull.number,
@@ -1307,8 +1313,7 @@ async fn queue_facts(
                 .is_some_and(|check| !tl3_mergify::unmet_conditions(check).is_empty())
         {
             let suites = github.check_suites(&repo_name, &pull.head.sha).await?;
-            let completed =
-                !suites.is_empty() && suites.iter().all(|suite| suite.status == "completed");
+            let completed = facts::suites_completed(&suite_statuses(&suites));
             let required: Vec<_> = checks
                 .missing
                 .iter()
@@ -1359,66 +1364,69 @@ async fn queue_facts(
             return Ok(facts);
         }
     }
-    let evidence = match state.state {
-        QueueState::Merged => {
-            // Mergify publishes its final queue result after GitHub records the merge.
-            if pull.head.sha == expected_head
-                && state
-                    .check
-                    .as_ref()
-                    .is_some_and(|check| check.status != "completed" || check.conclusion.is_none())
-            {
-                return Ok(vec![]);
-            }
-            let checks_passed = if state.check.as_ref().is_some_and(|check| {
-                check
-                    .output
-                    .as_ref()
-                    .is_some_and(|output| output.title.as_deref() == Some("Merged via merge queue"))
-            }) {
-                tl3_mergify::merged_via_queue(state)
-            } else if let Some(sha) = &pull.merge_commit_sha {
-                checks_passed(&github.check_runs(&full_name(repo), sha).await?, sha)
-            } else {
-                false
+    let outcome = facts::queue_outcome(
+        state.state,
+        state.check.as_ref(),
+        head_infrastructure,
+        tl3_mergify::ci_is_infrastructure,
+    );
+    let attempt = |check: &CheckRun| (check.id, check.completed_at.map(|time| time.to_rfc3339()));
+    let evidence = match outcome {
+        Some(facts::Outcome::Merged) => {
+            let queue_check = state.check.as_ref().map(|check| facts::QueueCheck {
+                completed: check.status == "completed",
+                concluded: check.conclusion.is_some(),
+                merged_title: check.output.as_ref().is_some_and(|output| {
+                    output.title.as_deref() == Some("Merged via merge queue")
+                }),
+            });
+            let checks_passed = match facts::merged_plan(
+                pull.head.sha == expected_head,
+                queue_check,
+                pull.merge_commit_sha.is_some(),
+            ) {
+                // Mergify publishes its final queue result after GitHub records the merge.
+                facts::MergedPlan::Wait => return Ok(vec![]),
+                facts::MergedPlan::ViaQueue => tl3_mergify::merged_via_queue(state),
+                facts::MergedPlan::MergeCommit => {
+                    let sha = pull.merge_commit_sha.as_deref().unwrap_or_default();
+                    checks_passed(&github.check_runs(&full_name(repo), sha).await?, sha)
+                }
+                facts::MergedPlan::NotPassed => false,
             };
             Some(Evidence::Merged {
                 head: pull.head.sha.clone(),
                 checks_passed,
             })
         }
-        QueueState::FailedCi => state.check.as_ref().map(|check| Evidence::CiFailed {
-            check: check.id,
-            completed_at: check.completed_at.map(|time| time.to_rfc3339()),
-            head: pull.head.sha.clone(),
-            head_check: false,
-            details: Default::default(),
-            infra: head_infrastructure.unwrap_or_else(|| tl3_mergify::ci_is_infrastructure(check)),
-        }),
-        QueueState::DequeuedByPerson => {
-            state
-                .check
-                .as_ref()
-                .map(|check| Evidence::DequeuedByCommand {
-                    check: check.id,
-                    completed_at: check.completed_at.map(|time| time.to_rfc3339()),
-                    head: pull.head.sha.clone(),
-                })
+        Some(facts::Outcome::CiFailed { check, infra }) => {
+            let (check, completed_at) = attempt(check);
+            Some(Evidence::CiFailed {
+                check,
+                completed_at,
+                head: pull.head.sha.clone(),
+                head_check: false,
+                details: Default::default(),
+                infra,
+            })
         }
-        QueueState::Dequeued => state.check.as_ref().map(|check| Evidence::CiFailed {
-            check: check.id,
-            completed_at: check.completed_at.map(|time| time.to_rfc3339()),
-            head: pull.head.sha.clone(),
-            infra: head_infrastructure.unwrap_or(true),
-            head_check: false,
-            details: Default::default(),
-        }),
-        QueueState::Conflict => state.check.as_ref().map(|check| Evidence::Conflict {
-            check: check.id,
-            completed_at: check.completed_at.map(|time| time.to_rfc3339()),
-            head: pull.head.sha.clone(),
-        }),
-        _ => None,
+        Some(facts::Outcome::DequeuedByCommand(check)) => {
+            let (check, completed_at) = attempt(check);
+            Some(Evidence::DequeuedByCommand {
+                check,
+                completed_at,
+                head: pull.head.sha.clone(),
+            })
+        }
+        Some(facts::Outcome::Conflict(check)) => {
+            let (check, completed_at) = attempt(check);
+            Some(Evidence::Conflict {
+                check,
+                completed_at,
+                head: pull.head.sha.clone(),
+            })
+        }
+        None => None,
     };
     if let Some(evidence) = evidence {
         let mut fact = QueueFact {
@@ -1440,22 +1448,14 @@ async fn queue_facts(
     Ok(facts)
 }
 fn checks_passed(checks: &[CheckRun], sha: &str) -> bool {
-    let mut latest = BTreeMap::new();
-    for check in checks.iter().filter(|check| check.head_sha == sha) {
-        let key = (check.app.as_ref().map(|app| app.id), &check.name);
-        let entry = latest.entry(key).or_insert(check);
-        if check.id > entry.id {
-            *entry = check;
-        }
-    }
-    !latest.is_empty()
-        && latest.values().all(|check| {
-            check.status == "completed"
-                && matches!(
-                    check.conclusion.as_deref(),
-                    Some("success" | "skipped" | "neutral")
-                )
-        })
+    facts::checks_passed(&tl3_mergify::views(checks, sha, |_| false))
+}
+
+fn suite_statuses(suites: &[tl3_github::CheckSuite]) -> Vec<tl3_mergify::decide::Status> {
+    suites
+        .iter()
+        .map(|suite| tl3_mergify::decide::Status::parse(&suite.status))
+        .collect()
 }
 
 fn approved_head(snapshot: &Snapshot, approved: Option<tl3_kernel::HeadId>) -> Result<String> {
@@ -1850,19 +1850,22 @@ impl Translator {
             }
             for (number, event) in &changes.labels {
                 if *number == item.number
-                    && event.event == "unlabeled"
-                    && event.label.name == QUEUE_LABEL
-                    && person(&event.actor)
+                    && let Some(facts::PersonFact::Dequeued { event }) =
+                        facts::person_fact(facts::IssueEvent {
+                            id: event.id,
+                            actor: actor(Some(&event.actor)),
+                            kind: event_kind(&event.event, Some(event.label.name.as_str())),
+                        })
                 {
                     facts.push(QueueFact {
                         repository: repo.clone(),
                         number: item.number,
-                        evidence: Evidence::DequeuedByPerson { event: event.id },
+                        evidence: Evidence::DequeuedByPerson { event },
                     });
                 }
             }
             for (number, event) in &changes.closed {
-                if *number == item.number && event.actor.as_ref().is_some_and(person) {
+                if *number == item.number && actor(event.actor.as_ref()) == facts::Actor::Person {
                     facts.push(QueueFact {
                         repository: repo.clone(),
                         number: item.number,
@@ -1874,8 +1877,19 @@ impl Translator {
         Ok(facts.into_iter().map(QueueFact::input).collect())
     }
 }
-fn person(actor: &Actor) -> bool {
-    !actor.login.ends_with("[bot]")
+fn actor(actor: Option<&Actor>) -> facts::Actor {
+    facts::Actor::parse(actor.map(|actor| actor.login.as_str()))
+}
+
+fn event_kind(event: &str, label: Option<&str>) -> facts::EventKind {
+    match event {
+        "unlabeled" => facts::EventKind::Unlabeled {
+            queue_label: label == Some(QUEUE_LABEL),
+        },
+        "closed" => facts::EventKind::Closed,
+        "merged" => facts::EventKind::Merged,
+        _ => facts::EventKind::Other,
+    }
 }
 
 fn person_facts(
@@ -1884,30 +1898,25 @@ fn person_facts(
     events: &[tl3_github::IssueActivity],
     merged: bool,
 ) -> Vec<QueueFact> {
-    if merged || events.iter().any(|event| event.event == "merged") {
-        return vec![];
-    }
-    events
+    let events: Vec<_> = events
         .iter()
-        .filter(|event| event.actor.as_ref().is_some_and(person))
-        .filter_map(|event| {
-            let evidence = match event.event.as_str() {
-                "unlabeled"
-                    if event
-                        .label
-                        .as_ref()
-                        .is_some_and(|label| label.name == QUEUE_LABEL) =>
-                {
-                    Evidence::DequeuedByPerson { event: event.id }
-                }
-                "closed" => Evidence::ClosedByPerson { event: event.id },
-                _ => return None,
-            };
-            Some(QueueFact {
-                repository: repo.clone(),
-                number,
-                evidence,
-            })
+        .map(|event| facts::IssueEvent {
+            id: event.id,
+            actor: actor(event.actor.as_ref()),
+            kind: event_kind(
+                &event.event,
+                event.label.as_ref().map(|label| label.name.as_str()),
+            ),
+        })
+        .collect();
+    facts::person_facts(&events, merged)
+        .map(|fact| QueueFact {
+            repository: repo.clone(),
+            number,
+            evidence: match fact {
+                facts::PersonFact::Dequeued { event } => Evidence::DequeuedByPerson { event },
+                facts::PersonFact::Closed { event } => Evidence::ClosedByPerson { event },
+            },
         })
         .collect()
 }
@@ -1930,6 +1939,103 @@ impl GitHubTranslator for Translator {
                 changes,
             } if repos.contains(repository) => self.catch_up(repository, changes, snapshot),
             _ => Ok(vec![]),
+        }
+    }
+}
+
+#[cfg(test)]
+mod kind_tests {
+    use super::*;
+
+    /// `Evidence::kind` matches every variant with no wildcard, so the compiler
+    /// keeps it total. This pins each arm and the flags it copies (#735).
+    /// Kani can't take it: the controller crate pulls in sqlx and Postgres.
+    #[test]
+    fn every_evidence_maps_to_its_kind() {
+        let head = || "abc".to_string();
+        let required = || RequiredCheck {
+            context: "Rust".into(),
+            app: Some(15368),
+        };
+        let mut cases = vec![
+            (
+                Evidence::ChecksUnavailable {
+                    permissions: vec!["checks".into()],
+                },
+                Kind::ChecksUnavailable,
+            ),
+            (
+                Evidence::CheckMissing {
+                    head: head(),
+                    required: required(),
+                },
+                Kind::CheckMissing,
+            ),
+            (
+                Evidence::QueueBlocked {
+                    head: head(),
+                    conditions: vec!["scopes".into()],
+                    failed: vec![],
+                },
+                Kind::QueueBlocked,
+            ),
+            (
+                Evidence::CheckReported {
+                    head: head(),
+                    required: required(),
+                },
+                Kind::CheckReported,
+            ),
+            (
+                Evidence::Conflict {
+                    check: 1,
+                    completed_at: None,
+                    head: head(),
+                },
+                Kind::Conflict,
+            ),
+            (
+                Evidence::DequeuedByCommand {
+                    check: 2,
+                    completed_at: None,
+                    head: head(),
+                },
+                Kind::DequeuedByCommand,
+            ),
+            (
+                Evidence::DequeuedByPerson { event: 3 },
+                Kind::DequeuedByPerson,
+            ),
+            (Evidence::ClosedByPerson { event: 4 }, Kind::ClosedByPerson),
+            (Evidence::PushByOther { head: head() }, Kind::PushByOther),
+        ];
+        for checks_passed in [false, true] {
+            cases.push((
+                Evidence::Merged {
+                    head: head(),
+                    checks_passed,
+                },
+                Kind::Merged { checks_passed },
+            ));
+        }
+        for head_check in [false, true] {
+            for infra in [false, true] {
+                cases.push((
+                    Evidence::CiFailed {
+                        check: 5,
+                        completed_at: None,
+                        head: head(),
+                        infra,
+                        head_check,
+                        details: Default::default(),
+                    },
+                    Kind::CiFailed { head_check, infra },
+                ));
+            }
+        }
+        assert_eq!(cases.len(), 15);
+        for (evidence, kind) in cases {
+            assert_eq!(evidence.kind(), kind, "{evidence:?}");
         }
     }
 }
