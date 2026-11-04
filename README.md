@@ -57,8 +57,13 @@ require the checks `Rust` and `Python`.
   head with bazel-diff, runs the impacted tests, and uploads the impacted
   Bazel packages to Mergify as the PR's scopes. Build, lock and workflow
   changes test everything. Detection that cannot say what to test fails.
+- **Kani** proves every kernel harness on BuildBuddy runners when a change
+  can affect a proof: the kernel's source or manifest, the root manifest, the
+  toolchain, or the Kani gate itself. Other changes prove nothing. A harness
+  passes only with `VERIFICATION:- SUCCESSFUL` and every cover satisfied. A
+  nightly run proves every harness on `main` and opens an issue on failure.
 - **Rust** requires Bazel's Rust tests, rustfmt and Clippy with warnings
-  denied, and the feature and Kani compiles.
+  denied, the feature and Kani compiles, and the Kani job.
 - **Python** requires Bazel's Python tests, Ruff's syntax and Pyflakes rules,
   and the lock checks.
 - **Post-merge full run**: each push to `main` runs every test on amd64 and

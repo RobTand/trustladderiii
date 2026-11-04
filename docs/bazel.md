@@ -219,6 +219,43 @@ merged PRs and says whether their selection included the failing test. The
 job summary and the `post-merge-<sha>` artifact hold one `POST_MERGE_RECORD`
 JSON line per run.
 
+## Kani proofs
+
+The Gate's `Kani` job runs `tools/ci/kani_gate.py pr`. The required `Rust`
+check needs it. The job proves every harness in `crates/kernel/src/proofs.rs`
+when the queue-aware diff touches a file in `TRIGGERS`. These are the kernel's
+source and manifest, the root `Cargo.toml`, a toolchain file, the gate script,
+its budgets, and the two workflows that run it. Any other change proves
+nothing, and the job passes in seconds. Kernel tests, docs, `run.py` and
+`dependency_mutants.py` do not trigger it.
+
+The job plans shards from `tools/ci/kani-budgets.json` and starts each one on
+a BuildBuddy Remote Bazel runner through the Run API. Each runner has
+8 CPUs and 176 GB. A shard installs Rust 1.99.1 and Kani 0.68.0, runs one
+codegen, and then proves its harnesses in parallel. A harness reserves its
+measured peak memory plus 25%, so heavy proofs run alone. Each shard leaves
+`kani-shard.json` and one log per harness as BuildBuddy artifacts. The runner
+credential stays with the shard supervisor. Kani runs with `child_env()`, and
+the supervisor scans the artifacts before upload.
+
+A harness passes only when Kani exits 0, reports `VERIFICATION:- SUCCESSFUL`
+and satisfies every cover check. These cases fail the check: a failure, an
+unsatisfied cover, a missing result, a shard error, or a harness that reaches
+its hard timeout. Running past the warning budget (1.5 times the measured time)
+is only a warning. The hard timeout is 3 times the measured time, and at least
+15 minutes. In PR mode the first failure stops its shard, and the job cancels
+the other shards. A harness with no measurement gets a 30-minute estimate and
+runs alone on its runner.
+
+`.github/workflows/kani-nightly.yml` proves every harness on `main` each night.
+It runs with no fail-fast and keeps `kani-result.json` for 90 days, with each
+harness's verdict, wall time, CPU time and peak memory. A failure opens the
+"Nightly Kani run failed on main" issue, or comments on it if it is open.
+
+To remeasure, run the nightly from the Actions tab, or start shards with
+`kani_gate.py shard --mode nightly` through the Run API. Then copy each
+harness's `seconds` and `peak_gb` into the budgets file.
+
 ## Time budget warnings
 
 Per-test CPU, wall-only, and wall-backstop overruns are warnings. A Rust

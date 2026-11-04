@@ -1,0 +1,530 @@
+{
+ "schema": "tl3.kani-budgets.v1",
+ "source": "priors from partial BuildBuddy measurement",
+ "harnesses": {
+  "apply_dependency": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_dependency_registration": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_dependency_remove": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "dependency_no_cycle": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "dependency_waiting_holds_nothing": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "dependency_delivered_releases": {
+   "seconds": 124.6,
+   "peak_gb": 4.88
+  },
+  "dependency_abandoned_never_releases": {
+   "seconds": 228.1,
+   "peak_gb": 13.63
+  },
+  "apply_new_request": {
+   "seconds": 886.5,
+   "peak_gb": 29.7
+  },
+  "apply_ingest_done": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "apply_ingest_early_end": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "apply_protected_paths": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "apply_audit_agrees": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "apply_audit_disagrees": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "apply_plan_leaf": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "apply_plan_split": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "apply_plan_cant_meet": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "apply_maker_done": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "apply_maker_needs_files": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "apply_maker_cant_meet": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "apply_maker_out_of_room": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "apply_checks_done": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "apply_approved": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "apply_reviewer_out_of_room": {
+   "seconds": 363.7,
+   "peak_gb": 7.34
+  },
+  "apply_changes_requested": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "apply_rebase_clean": {
+   "seconds": 246.1,
+   "peak_gb": 4.82
+  },
+  "apply_rebase_needs_changes": {
+   "seconds": 244.6,
+   "peak_gb": 4.8
+  },
+  "apply_run_failed": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "apply_ack_confirmed": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_ack_retryable": {
+   "seconds": 244.1,
+   "peak_gb": 4.33
+  },
+  "apply_ack_permanent": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_ack_body_policy_refused": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_pr_closed": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_pr_dequeued": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_outside_push": {
+   "seconds": 1825.8,
+   "peak_gb": 35.0
+  },
+  "apply_ci_failed": {
+   "seconds": 1800.0,
+   "peak_gb": 35.0
+  },
+  "apply_conflict": {
+   "seconds": 1800.0,
+   "peak_gb": 35.0
+  },
+  "apply_priority": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_upstream_stalled": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_incident_cleared": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_stop": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_pause": {
+   "seconds": 255.6,
+   "peak_gb": 3.64
+  },
+  "apply_resume": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_change_request": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_answer_continue": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_answer_try_again": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_answer_add_credit": {
+   "seconds": 342.1,
+   "peak_gb": 4.22
+  },
+  "apply_answer_change_request": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_answer_stop": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_answer_unclear": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_answer_retry": {
+   "seconds": 280.6,
+   "peak_gb": 3.83
+  },
+  "apply_answer_mark_handled": {
+   "seconds": 254.6,
+   "peak_gb": 3.95
+  },
+  "advance_ingesting": {
+   "seconds": 205.1,
+   "peak_gb": 3.69
+  },
+  "advance_auditing": {
+   "seconds": 253.6,
+   "peak_gb": 3.68
+  },
+  "advance_unplanned": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "advance_planning": {
+   "seconds": 234.1,
+   "peak_gb": 3.69
+  },
+  "advance_ready": {
+   "seconds": 317.6,
+   "peak_gb": 3.15
+  },
+  "advance_making": {
+   "seconds": 225.1,
+   "peak_gb": 4.03
+  },
+  "advance_checking": {
+   "seconds": 249.1,
+   "peak_gb": 3.8
+  },
+  "advance_reviewing": {
+   "seconds": 226.1,
+   "peak_gb": 4.0
+  },
+  "advance_publishing": {
+   "seconds": 200.1,
+   "peak_gb": 3.99
+  },
+  "advance_queued": {
+   "seconds": 220.6,
+   "peak_gb": 1.87
+  },
+  "advance_rebasing": {
+   "seconds": 219.1,
+   "peak_gb": 3.8
+  },
+  "advance_awaiting_rob": {
+   "seconds": 168.6,
+   "peak_gb": 2.07
+  },
+  "advance_stopping": {
+   "seconds": 221.1,
+   "peak_gb": 3.84
+  },
+  "advance_closed": {
+   "seconds": 193.1,
+   "peak_gb": 1.82
+  },
+  "progress_from_ingesting": {
+   "seconds": 1800.0,
+   "peak_gb": 35.0
+  },
+  "progress_from_auditing": {
+   "seconds": 1305.7,
+   "peak_gb": 26.75
+  },
+  "progress_from_unplanned": {
+   "seconds": 325.7,
+   "peak_gb": 6.34
+  },
+  "progress_from_unplanned_delivered": {
+   "seconds": 408.2,
+   "peak_gb": 8.41
+  },
+  "progress_from_unplanned_delivered_one": {
+   "seconds": 406.2,
+   "peak_gb": 6.78
+  },
+  "progress_from_unplanned_waiting": {
+   "seconds": 167.6,
+   "peak_gb": 2.58
+  },
+  "progress_from_unplanned_waiting_one": {
+   "seconds": 120.1,
+   "peak_gb": 2.33
+  },
+  "progress_from_planning": {
+   "seconds": 1800.0,
+   "peak_gb": 35.0
+  },
+  "progress_from_ready": {
+   "seconds": 1307.2,
+   "peak_gb": 26.38
+  },
+  "progress_from_making": {
+   "seconds": 1800.0,
+   "peak_gb": 35.0
+  },
+  "progress_from_checking": {
+   "seconds": 1265.6,
+   "peak_gb": 26.71
+  },
+  "progress_from_reviewing": {
+   "seconds": 1800.0,
+   "peak_gb": 35.0
+  },
+  "progress_from_publishing": {
+   "seconds": 1800.0,
+   "peak_gb": 35.0
+  },
+  "progress_from_queued": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "progress_from_rebasing": {
+   "seconds": 1405.7,
+   "peak_gb": 26.71
+  },
+  "progress_from_awaiting_rob": {
+   "seconds": 1222.1,
+   "peak_gb": 26.4
+  },
+  "progress_from_stopping": {
+   "seconds": 1800.0,
+   "peak_gb": 35.0
+  },
+  "progress_from_closed": {
+   "seconds": 1176.6,
+   "peak_gb": 26.19
+  },
+  "pr_merged_ingesting": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "pr_merged_auditing": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "pr_merged_unplanned": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "pr_merged_planning": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "pr_merged_ready": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "pr_merged_making": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "pr_merged_checking": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "pr_merged_reviewing": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "pr_merged_publishing": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "pr_merged_queued": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "pr_merged_rebasing": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "pr_merged_awaiting_rob": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "pr_merged_stopping": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "pr_merged_closed": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_new_adoption": {
+   "seconds": 1075.1,
+   "peak_gb": 29.8
+  },
+  "apply_adoption_at_most_once": {
+   "seconds": 97.6,
+   "peak_gb": 1.54
+  },
+  "apply_adoption_has_no_maker_credit": {
+   "seconds": 104.5,
+   "peak_gb": 1.34
+  },
+  "gate_grant_w2": {
+   "seconds": 1175.7,
+   "peak_gb": 4.65
+  },
+  "gate_grant_w3": {
+   "seconds": 1710.9,
+   "peak_gb": 4.65
+  },
+  "gate_planning_w2": {
+   "seconds": 332.7,
+   "peak_gb": 2.6
+  },
+  "gate_planning_w3": {
+   "seconds": 257.1,
+   "peak_gb": 2.6
+  },
+  "gate_progress_w2": {
+   "seconds": 340.7,
+   "peak_gb": 3.43
+  },
+  "gate_progress_w3": {
+   "seconds": 291.1,
+   "peak_gb": 3.43
+  },
+  "gate_waiting_progress_w2": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "gate_waiting_progress_w3": {
+   "seconds": 680.8,
+   "peak_gb": 5.06
+  },
+  "gate_maker_progress_w2": {
+   "seconds": 205.6,
+   "peak_gb": 2.31
+  },
+  "gate_maker_progress_w3": {
+   "seconds": 178.6,
+   "peak_gb": 2.31
+  },
+  "gate_merge_progress_w2": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "gate_merge_progress_w3": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "gate_resume_progress_w2": {
+   "seconds": 216.6,
+   "peak_gb": 2.32
+  },
+  "gate_resume_progress_w3": {
+   "seconds": 238.6,
+   "peak_gb": 2.32
+  },
+  "apply_rebase_progress_gate": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_publishing_ci_tests": {
+   "seconds": 1933.3,
+   "peak_gb": 35.0
+  },
+  "fail_fast_plan_cant_meet": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "fail_fast_maker_needs_files": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "fail_fast_maker_cant_meet": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "fail_fast_maker_out_of_room": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "fail_fast_checks_done": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "fail_fast_changes_requested": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "fail_fast_reviewer_out_of_room": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "fail_fast_ci_failed_queued": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "fail_fast_ci_failed_publishing": {
+   "seconds": 1500.0,
+   "peak_gb": 35.0
+  },
+  "apply_publishing_ci_infrastructure": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "apply_publishing_ci_earlier_step": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "gate_leaf_progress_w2": {
+   "seconds": 2400.0,
+   "peak_gb": 20.0
+  },
+  "gate_leaf_progress_w3": {
+   "seconds": 2400.0,
+   "peak_gb": 20.0
+  },
+  "pool_grant_is_priority_ordered": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  },
+  "pool_order_is_strict_priority": {
+   "seconds": 300.0,
+   "peak_gb": 8.0
+  }
+ }
+}

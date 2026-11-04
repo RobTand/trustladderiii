@@ -87,8 +87,9 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(info['memory_gb'], 10)
         small = kani_gate.budget('a', {'a': {'seconds': 10.0, 'peak_gb': 0.5}})
         self.assertEqual((small['timeout'], small['memory_gb']), (kani_gate.MIN_TIMEOUT, 2))
-        big = kani_gate.budget('a', {'a': {'seconds': 10.0, 'peak_gb': 40.0}})
-        self.assertEqual(big['memory_gb'], kani_gate.MEMORY_GB - kani_gate.RESERVED_GB)
+        usable = kani_gate.MEMORY_GB - kani_gate.RESERVED_GB
+        big = kani_gate.budget('a', {'a': {'seconds': 10.0, 'peak_gb': usable - 1.0}})
+        self.assertEqual(big['memory_gb'], usable)
         unmeasured = kani_gate.budget('new', {})
         self.assertFalse(unmeasured['measured'])
         self.assertEqual(unmeasured['memory_gb'], kani_gate.MEMORY_GB - kani_gate.RESERVED_GB)
@@ -105,7 +106,7 @@ class BudgetTests(unittest.TestCase):
 
     def test_plan_refuses_a_harness_no_runner_can_hold(self):
         with self.assertRaises(kani_gate.KaniError):
-            kani_gate.plan(['huge'], {'huge': {'seconds': 1.0, 'peak_gb': 100.0}})
+            kani_gate.plan(['huge'], {'huge': {'seconds': 1.0, 'peak_gb': kani_gate.MEMORY_GB + 1.0}})
 
 
 class VerdictTests(unittest.TestCase):
@@ -129,6 +130,9 @@ class VerdictTests(unittest.TestCase):
                 self.assertEqual(result['verdict'], 'FAILED')
                 self.assertIn(reason, result['reason'])
         self.assertEqual(kani_gate.verdict(SUCCESS, -9, True)['verdict'], 'TIMEOUT')
+        killed = kani_gate.verdict('Checking harness proofs::a...\nVERIFICATION:- FAILED\n', 137, False)
+        self.assertEqual(killed['verdict'], 'FAILED')
+        self.assertIn('likely out of memory', killed['reason'])
 
 
 def fake_kani(output, code=0, sleep=0.0):
@@ -138,9 +142,9 @@ def fake_kani(output, code=0, sleep=0.0):
 
 
 class ProverTests(unittest.TestCase):
-    def prover(self, directory, commands, fail_fast=True, budgets=None, memory_gb=44):
+    def prover(self, directory, commands, fail_fast=True, budgets=None, memory_gb=44, cpus=4):
         budgets = budgets or {name: {'seconds': 1.0, 'peak_gb': 1.0} for name in commands}
-        return kani_gate.Prover(sorted(commands), budgets, Path(directory), memory_gb=memory_gb,
+        return kani_gate.Prover(sorted(commands), budgets, Path(directory), cpus=cpus, memory_gb=memory_gb,
                                 fail_fast=fail_fast, command=lambda name: commands[name], poll=0.01)
 
     def test_every_harness_reports_its_verdict_time_and_peak(self):
@@ -161,7 +165,8 @@ class ProverTests(unittest.TestCase):
             budgets = {name: {'seconds': 1.0, 'peak_gb': 1.0} for name in commands}
             budgets['slow'] = {'seconds': 5.0, 'peak_gb': 1.0}
             budgets['bad'] = {'seconds': 3.0, 'peak_gb': 1.0}
-            results = self.prover(directory, commands, budgets=budgets).run()
+            # Two slots: the slow harness and the failing one start first.
+            results = self.prover(directory, commands, budgets=budgets, cpus=2).run()
             self.assertEqual(results['bad']['verdict'], 'FAILED')
             self.assertNotEqual(results['slow']['verdict'], 'SUCCESSFUL')
             self.assertTrue(any(r['verdict'] == 'NOT_RUN' for r in results.values()))
@@ -210,8 +215,8 @@ class ProverTests(unittest.TestCase):
 class FakeClient:
     """Run API double: each Run gets an invocation; GetFile returns its shard record."""
 
-    def __init__(self, records):
-        self.records, self.runs, self.cancelled = records, [], []
+    def __init__(self, records, running=()):
+        self.records, self.runs, self.cancelled, self.running = records, [], [], set(running)
 
     def call(self, method, body, timeout=120, raw=False):
         if method == 'Run':
@@ -219,6 +224,8 @@ class FakeClient:
             return {'invocationId': f'inv{len(self.runs) - 1}'}
         if method == 'GetInvocation':
             invocation_id = body['selector']['invocation_id']
+            if invocation_id in self.running:
+                return {'invocation': [{'invocationStatus': 'PARTIAL_INVOCATION_STATUS'}]}
             return {'invocation': [{'invocationStatus': 'COMPLETE_INVOCATION_STATUS', 'success': True,
                                     'artifacts': [{'name': kani_gate.RESULT, 'uri': invocation_id}]}]}
         if method == 'GetFile':
@@ -248,10 +255,10 @@ def gate_args(directory, mode='pr'):
 
 
 class ControllerTests(unittest.TestCase):
-    budgets = {f'p{i}': {'seconds': 600.0, 'peak_gb': 4.0} for i in range(12)}
+    budgets = {f'p{i}': {'seconds': 600.0, 'peak_gb': 4.0} for i in range(24)}
 
-    def prove(self, records, mode='pr'):
-        client = FakeClient(records)
+    def prove(self, records, mode='pr', running=()):
+        client = FakeClient(records, running)
         with tempfile.TemporaryDirectory() as directory, \
              patch.dict(os.environ, {'RUNNER_TEMP': directory}):
             results, errors = kani_gate.prove(client, gate_args(directory, mode), sorted(self.budgets),
@@ -275,9 +282,11 @@ class ControllerTests(unittest.TestCase):
     def test_a_failed_harness_fails_and_cancels_the_other_shards(self):
         def records(index, names):
             return record(names, {names[0]: 'FAILED'} if index == 0 else {})
-        client, results, errors = self.prove(records)
+        client, results, errors = self.prove(records, running={'inv1', 'inv2'})
         self.assertTrue(any(r['verdict'] == 'FAILED' for r in results.values()))
-        self.assertTrue(client.cancelled)
+        # Only the runs still going are cancelled; their harnesses never pass.
+        self.assertEqual(sorted(client.cancelled), ['inv1', 'inv2'])
+        self.assertTrue(all(r['verdict'] == 'NOT_RUN' for r in results.values() if r['invocation'] != 'inv0'))
 
     def test_missing_wrong_or_partial_records_fail(self):
         cases = {

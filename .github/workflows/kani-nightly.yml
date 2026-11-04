@@ -1,0 +1,74 @@
+name: Kani nightly
+
+# Proves every Kani harness on main each night, on BuildBuddy, and records each
+# harness's verdict and time. A failure opens or updates one regression issue.
+# See tools/ci/kani_gate.py.
+
+on:
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: kani-nightly
+  cancel-in-progress: false
+
+jobs:
+  prove:
+    name: Kani nightly
+    runs-on: ubuntu-24.04
+    timeout-minutes: 130
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: main
+          persist-credentials: false
+      - id: head
+        name: Main's head
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - id: kani
+        name: Prove every harness on BuildBuddy
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          HEAD: ${{ steps.head.outputs.sha }}
+        run: exec python3 tools/ci/kani_gate.py nightly --head "$HEAD" --branch main
+      - name: Cancel Kani shard runs
+        if: cancelled()
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: python3 tools/ci/kani_gate.py cancel
+      - name: Report the regression
+        if: failure() && steps.head.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/kani_gate.py report --summary gate-output/kani-summary.md
+      - name: Python with zstd support for artifact scanning
+        if: always()
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+      - name: Explain skipped fork artifact uploads
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true
+        run: |
+          echo 'artifact uploads skipped: fork PR has no secrets to scan for'
+      - id: secret-check
+        name: Check artifacts before upload
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true)
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          MERGIFY_TOKEN: ${{ secrets.MERGIFY_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 tools/ci/before_upload.py
+          --require BUILDBUDDY_API_KEY --require MERGIFY_TOKEN --env GITHUB_TOKEN gate-output/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true) && steps.secret-check.outcome == 'success'
+        with:
+          name: kani-nightly-${{ steps.head.outputs.sha }}
+          path: gate-output/
+          retention-days: 90
+          if-no-files-found: ignore
