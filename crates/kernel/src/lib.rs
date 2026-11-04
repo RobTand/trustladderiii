@@ -1273,8 +1273,9 @@ impl World {
                 None => true,
             },
     ] {
+        let length = self.nodes.len();
         let i = node.index()?;
-        if i < self.nodes.len() { Some(i) } else { None }
+        if i < length { Some(i) } else { None }
     }
     }
 

@@ -17,7 +17,7 @@ pub struct Dependency {
 
 #[cfg(verus_keep_ghost)]
 verus! {
-/// Q26 / #771: admission requires every declared prerequisite to be delivered.
+/// State-table planning admission / #693 / #771: every prerequisite is delivered.
 pub closed spec fn delivered(dependencies: Seq<Dependency>, node: NodeId) -> bool {
     forall|i: int| 0 <= i < dependencies.len() && dependencies[i].node == node
         ==> !dependencies[i].rejected && dependencies[i].status == DependencyStatus::Delivered
@@ -30,7 +30,7 @@ impl World {
     }
 
     kernel_fn! {
-    /// Q26 / #771: the executable prerequisite query checks every declaration.
+    /// State-table planning admission / #771: check every prerequisite declaration.
     pub fn dependencies_delivered(&self, node: NodeId) -> (result: bool) [
         ensures result == delivered(self.dependencies@, node),
     ] proof [reveal(delivered);] {
