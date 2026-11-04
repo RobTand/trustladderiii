@@ -82,6 +82,8 @@ _CONTROLLER_WORKERS = [
     "test_test_writer_references",
 ]
 _CONTROLLER_BINARIES = {
+    "test_test_worker_supervisor": [":tl3-worker-supervisor"],
+    "test_test_workers": [":tl3"],
     "test_test_console_commands": [":tl3d"],
     "test_test_redaction_policy": [":tl3"],
     "test_test_github-flow": [":tl3d"],
@@ -118,6 +120,7 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
+    "tests/worker_supervisor/main.rs": ["tests/worker_supervisor/legacy.py", "tests/worker_supervisor/restart.rs"],
     "tests/console_commands.rs": ["tests/fixtures/decisions/**", "tests/support/scenario.rs"],
     "tests/hindsight.rs": ["README.md"],
     "tests/fail_fast.rs": ["tests/support/**"],
@@ -154,6 +157,8 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     package = native.package_name()
     controller = package == "crates/controller"
     binaries = _CONTROLLER_BINARIES.get(name, []) if controller else []
+    if controller and ":tl3-worker-supervisor" not in binaries:
+        binaries = binaries + [":tl3-worker-supervisor"]
     workers = controller and name in _CONTROLLER_WORKERS
     env = {"CARGO_MANIFEST_DIR": WORKSPACE + "/" + package}
     for binary in binaries:

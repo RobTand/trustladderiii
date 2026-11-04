@@ -1210,6 +1210,11 @@ def failure_tags(error):
     from tl3_workers.forcing_rehearsal import ForcingInfrastructureError
     from tl3_workers.tools import WorktreeUnavailable
     from tl3_workers.turns import InvalidReply, Unrepairable
+    from tl3_workers.reply_check import ReplyCheckInfrastructureError, ReplyViolation
+
+    if isinstance(error, (ReplyCheckInfrastructureError, ReplyViolation)):
+        # Rust emits fixed repair text; infrastructure errors contain no child output or paths.
+        return {"failure_class": type(error).__name__, "failure_message": str(error)}
 
     if type(error) is MergePrerequisiteError:
         return {"failure_class": "MergePrerequisiteError",

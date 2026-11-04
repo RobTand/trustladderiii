@@ -140,6 +140,7 @@ def test_malformed_prismabuild_response_is_infrastructure(submission, response, 
     assert sum(result["totals"].values()) == 0
 
 
+@pytest.mark.durability
 def test_wait_is_declared_before_blocking_and_on_reattach(submission, monkeypatch):
     from tl3_workers import pb_tests
 
@@ -424,6 +425,7 @@ def test_legacy_ending_retains_only_matching_publication_oom(submission, publica
     assert "private" not in json.dumps(result)
 
 
+@pytest.mark.durability
 def test_sigkill_without_oom_reason_is_not_classified_as_oom(submission):
     result = call(submission, Summary().result, override={
         "status": "failed", "succeeded": False, "exit_code": 137,
@@ -448,6 +450,7 @@ def test_failure_receipts_preserve_terminal_reason_without_inventing_test_start(
 
 
 @pytest.mark.parametrize('change', ['input', 'selectors', 'contract', 'identical'])
+@pytest.mark.durability
 def test_reattach_checks_staged_input_selection_and_execution_contract(submission, monkeypatch, change):
     from tl3_workers import pb_tests
     root, scripts = submission

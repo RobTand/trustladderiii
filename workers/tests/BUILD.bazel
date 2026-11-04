@@ -32,9 +32,7 @@ tl3_py_test(
     srcs = ["test_classifier.py"],
     deps = [
         ":conftest",
-        ":worker_process",
         "//workers/src",
-        "@tl3_pip//langchain_core",
         "@tl3_pip//pytest",
     ],
 )
@@ -1079,4 +1077,14 @@ py_binary(
     srcs = ["redaction_generated.py"],
     visibility = ["//visibility:public"],
     deps = [":redaction_branches"],
+)
+
+tl3_py_test(
+    name = "test_durability",
+    srcs = ["test_durability.py"],
+    deps = [
+        ":conftest",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
 )
