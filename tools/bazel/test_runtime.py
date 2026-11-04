@@ -63,5 +63,73 @@ class PythonRunnerTests(unittest.TestCase):
         self.assertEqual(self.run_module(source), 0)
 
 
+PROBE = '''
+import os
+import pytest
+
+@pytest.mark.parametrize("case", range(7))
+def test_case(case):
+    with open(os.environ["PROBE_LOG"], "a") as log:
+        log.write(f"case{case}\\n")
+
+def test_last():
+    with open(os.environ["PROBE_LOG"], "a") as log:
+        log.write("last\\n")
+'''
+
+
+class PytestShardTests(unittest.TestCase):
+    """Bazel shards of one pytest module run each collected test exactly once."""
+
+    def run_shards(self, total):
+        sys.path.insert(0, str(HERE))
+        import pytest
+        import python_runner
+        ran = []
+        with tempfile.TemporaryDirectory() as temporary:
+            module = Path(temporary, 'test_probe_shards.py')
+            module.write_text(PROBE)
+            for index in range(total):
+                log = Path(temporary, f'shard{index}.log')
+                log.touch()
+                os.environ['PROBE_LOG'] = str(log)
+                try:
+                    status = pytest.main([str(module), '-q', '-p', 'no:cacheprovider'],
+                                         plugins=[python_runner.Shard(index, total)])
+                finally:
+                    del os.environ['PROBE_LOG']
+                    sys.modules.pop('test_probe_shards', None)
+                self.assertEqual(status, 0)
+                ran.append(log.read_text().split())
+        return ran
+
+    def test_shards_partition_the_module(self):
+        for total in (2, 3, 8):
+            ran = self.run_shards(total)
+            names = [name for shard in ran for name in shard]
+            self.assertEqual(sorted(names), sorted([f'case{case}' for case in range(7)] + ['last']))
+            self.assertTrue(all(ran), f'every one of {total} shards runs a test')
+            self.assertLessEqual(max(map(len, ran)) - min(map(len, ran)), 1, 'shards stay even')
+
+    def test_runner_accepts_bazel_sharding(self):
+        sys.path.insert(0, str(HERE))
+        import python_runner
+        with tempfile.TemporaryDirectory() as temporary:
+            status = Path(temporary, 'shard-status')
+            shard_env = {'TEST_TOTAL_SHARDS': '3', 'TEST_SHARD_INDEX': '2',
+                         'TEST_SHARD_STATUS_FILE': str(status)}
+            saved = {key: os.environ.get(key) for key in shard_env}
+            os.environ.update(shard_env)
+            try:
+                self.assertEqual(python_runner.bazel_shard(), (2, 3))
+            finally:
+                for key, value in saved.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+            self.assertTrue(status.exists(), 'Bazel needs the status file to trust the shard')
+
+
 if __name__ == '__main__':
     unittest.main()
