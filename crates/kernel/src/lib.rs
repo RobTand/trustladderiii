@@ -20,6 +20,8 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::*;
 
 #[macro_use]
 mod verification;

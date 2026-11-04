@@ -1756,6 +1756,14 @@ impl Controller {
         event: Event,
         commit: &mut Commit,
     ) -> Result<()> {
+        if let Some(exhausted) = world.counter_exhaustion() {
+            return self.counter_exhausted(
+                snapshot,
+                commit,
+                exhausted.node,
+                format!("kernel counter headroom exhausted: {}", exhausted.counter),
+            );
+        }
         // A dequeue receipt can precede queue admission, where the kernel
         // intentionally ignores it. Only an accepted Resume releases that hold.
         if let Event::Command {
