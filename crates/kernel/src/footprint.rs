@@ -60,15 +60,17 @@ impl Footprint {
         matches!(self.0, Repr::Inline(0))
     }
     }
+}
 
-    kernel_fn! {
+kernel_fn! {
+impl Footprint {
     /// #771: an inline file mask keeps its exact executable representation.
     pub(crate) fn inline(bits: u64) -> (result: Footprint) [
         ensures result == inline_footprint(bits),
     ] {
         Footprint(Repr::Inline(bits))
     }
-    }
+}
 }
 
 impl World {
