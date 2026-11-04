@@ -59,6 +59,6 @@ impl<'de> Deserialize<'de> for Document {
     }
 }
 
-pub(super) fn parse(bytes: &[u8]) -> Result<Value, serde_json::Error> {
+pub(crate) fn parse(bytes: &[u8]) -> Result<Value, serde_json::Error> {
     serde_json::from_slice::<Document>(bytes).map(|v| v.0)
 }

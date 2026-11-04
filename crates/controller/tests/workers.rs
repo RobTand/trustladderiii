@@ -2,6 +2,8 @@
 // #673 measured a complete worker case at 215.423 s; 450 s > 2x.
 const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(450);
 
+#[path = "workers/classifier.rs"]
+mod classifier;
 mod maker;
 use support::scenario_shard::{self, WorkerGroup};
 use tl3_controller::executor::Output as Out;
@@ -382,6 +384,12 @@ fn finish_fixture(group: &str) {
 }
 
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--classifier-contracts") {
+        prepare_workers();
+        classifier::run();
+        println!("6 classifier scenarios passed; no skips");
+        return;
+    }
     if env::args().len() == 1 {
         run_default();
         return;
@@ -503,6 +511,8 @@ fn main() {
         .get(1)
         .is_some_and(|arg| arg == "--real-worker-contracts")
     {
+        classifier::real_worker_repair();
+        println!("test real_worker_contract_classifier ... ok");
         simulation(&database.create("contract_ingest_audit"));
         println!("test real_worker_contract_ingest_audit ... ok");
         planning::planning(&database.create("contract_planner"), "normal");
@@ -1550,18 +1560,12 @@ fn late_launcher(settings: &tl3_config::Store) {
     let delivery = delivery();
     let attempt = root_for(&config, &delivery.key).join("attempt-00000000");
     fs::create_dir_all(&attempt).unwrap();
-    fs::write(
-        attempt.join("supervisor.py"),
-        include_bytes!("../tools/worker_supervisor.py"),
-    )
-    .unwrap();
     // This is the record left if the controller dies immediately before spawn.
     assert!(matches!(
         supervisor.reconcile(&delivery).unwrap(),
         Reconciliation::Absent
     ));
-    let status = Command::new(&config.workers.python)
-        .arg(attempt.join("supervisor.py"))
+    let status = Command::new(env!("CARGO_BIN_EXE_tl3-worker-supervisor"))
         .arg(&attempt)
         .status()
         .unwrap();
@@ -2845,6 +2849,7 @@ fn run_default() {
         println!("test sigkill_controller_reattaches_to_the_same_worker_plan-blocked ... ok");
         finish_fixture("worker_restart");
     });
+    shard.run(WorkerGroup::Classifier, classifier::run);
     for (group, modes) in [
         (WorkerGroup::InvalidSchema, &INVALID_REPLIES[..4]),
         (WorkerGroup::InvalidShape, &INVALID_REPLIES[4..7]),

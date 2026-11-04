@@ -43,6 +43,7 @@ worker_groups! {
     Launch: 2,
     RestartBlocked: 1,
     Restart: 2,
+    Classifier: 6,
     InvalidSchema: 4,
     InvalidShape: 3,
     InvalidSize: 3,
