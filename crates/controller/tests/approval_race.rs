@@ -24,6 +24,8 @@ struct Checks {
     held: Option<Request>,
     posts: usize,
     visible: Vec<Value>,
+    refuse_next_read: bool,
+    apply_first: bool,
 }
 
 impl github_fake::Routes for Checks {
@@ -66,9 +68,16 @@ impl Respond for Api {
             return response;
         }
         let mut state = self.0.lock().unwrap();
+        if request.method == "GET"
+            && request.url.path().ends_with("/check-runs")
+            && state.refuse_next_read
+        {
+            state.refuse_next_read = false;
+            return ResponseTemplate::new(404);
+        }
         if request.method == "POST" && request.url.path() == "/repos/owner/sandbox/check-runs" {
             state.posts += 1;
-            if state.posts == 1 {
+            if state.posts == 1 && !state.apply_first {
                 // #766: retain the mutation after the client's request deadline.
                 // Only release() applies it, after reconciliation and retry.
                 state.held = Some(request.clone());
@@ -190,6 +199,54 @@ fn late_approval_post_after_hold_release_does_not_duplicate() {
 #[test]
 fn late_approval_post_after_restart_does_not_duplicate() {
     late_post(true);
+}
+
+/// #766; the effect machine permits retry on authoritative absence. A known
+/// 404 before POST must retain its existing bounded retry after a successful look.
+#[test]
+fn refused_approval_read_can_retry_after_an_empty_look() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let api = Api::default();
+    {
+        let mut state = api.0.lock().unwrap();
+        state.refuse_next_read = true;
+        state.apply_first = true;
+    }
+    let server = runtime.block_on(async {
+        let server = MockServer::start().await;
+        Mock::given(|_: &Request| true)
+            .respond_with(api.clone())
+            .mount(&server)
+            .await;
+        server
+    });
+    let mut db = database::Database::start();
+    let settings = db.create("approval_refusal");
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = open(&settings, root.path(), None);
+    let key = ready_approval(&mut controller);
+    drop(controller);
+    let mut controller = open(&settings, root.path(), Some(&server.uri()));
+    assert!((0..30).any(|_| !controller.drive_once().unwrap()));
+    assert_eq!(api.0.lock().unwrap().posts, 0);
+    controller.look_key(&key).unwrap();
+    assert_eq!(
+        controller.world().unwrap().nodes[0].fx_failures,
+        1,
+        "known refusal must permit the existing bounded retry"
+    );
+    for _ in 0..20 {
+        controller.drive_once().unwrap();
+        if !api.0.lock().unwrap().visible.is_empty() {
+            assert_eq!(api.0.lock().unwrap().posts, 1);
+            return;
+        }
+    }
+    panic!("approval never retried after its known refusal");
 }
 
 fn late_post(restart: bool) {
