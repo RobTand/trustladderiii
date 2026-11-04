@@ -234,6 +234,14 @@ pub(crate) fn classifier_schema(value: &Value, reply: bool) -> Result<()> {
     }
 }
 
+pub(crate) fn reviewer_schema(value: &Value, reply: bool) -> Result<()> {
+    if validator("reviewer", if reply { "reply" } else { "input" })?.is_valid(value) {
+        Ok(())
+    } else {
+        Err(Error::Invalid("reviewer value breaks role schema"))
+    }
+}
+
 pub(crate) use crate::classifier::validate as validate_classification;
 
 pub(super) fn validate_forecast_settings(reply: &Value, settings: &Value) -> Result<()> {

@@ -2,6 +2,7 @@
 import copy
 from dataclasses import replace
 import json
+import sys
 from pathlib import Path
 
 import httpx
@@ -21,11 +22,20 @@ import test_workers
 
 
 @pytest.fixture(autouse=True)
-def classifier_validation_boundary(monkeypatch):
+def classifier_validation_boundary(monkeypatch, tmp_path):
     # These tests exercise turn orchestration. Rust owns classifier decisions.
     monkeypatch.setitem(runtime.ROLES, "classifier", replace(
         runtime.ROLES["classifier"], check_reply=None,
     ))
+    checker = tmp_path / "fake-tl3"
+    checker.write_text(
+        f"#!{sys.executable}\nimport json, sys\n"
+        "assert sys.argv[1:] == ['check-reply', 'reviewer']\n"
+        f"invalid = {ROLES['reviewer'][3]!r}\n"
+        f"message = {ROLES['reviewer'][4]!r}\n"
+        "print(json.dumps({'violations': [message] if json.load(sys.stdin)['reply'] == invalid else []}))\n")
+    checker.chmod(0o755)
+    monkeypatch.setenv("TL3_BINARY", str(checker))
 
 
 maker_request = test_maker.maker_request

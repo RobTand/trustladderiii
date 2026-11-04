@@ -5,6 +5,10 @@ const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(450);
 #[path = "workers/classifier.rs"]
 mod classifier;
 mod maker;
+#[path = "workers/postmortem.rs"]
+mod postmortem_reply;
+#[path = "workers/reviewer.rs"]
+mod reviewer;
 use support::scenario_shard::{self, WorkerGroup};
 use tl3_controller::executor::Output as Out;
 #[path = "workers/planning.rs"]
@@ -384,6 +388,18 @@ fn finish_fixture(group: &str) {
 }
 
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--reviewer-contracts") {
+        prepare_workers();
+        reviewer::run();
+        println!("4 reviewer scenarios passed; no skips");
+        return;
+    }
+    if env::args().nth(1).as_deref() == Some("--postmortem-contracts") {
+        prepare_workers();
+        postmortem_reply::run();
+        println!("4 postmortem scenarios passed; no skips");
+        return;
+    }
     if env::args().nth(1).as_deref() == Some("--classifier-contracts") {
         prepare_workers();
         classifier::run();
@@ -2850,6 +2866,8 @@ fn run_default() {
         finish_fixture("worker_restart");
     });
     shard.run(WorkerGroup::Classifier, classifier::run);
+    shard.run(WorkerGroup::Reviewer, reviewer::run);
+    shard.run(WorkerGroup::Postmortem, postmortem_reply::run);
     for (group, modes) in [
         (WorkerGroup::InvalidSchema, &INVALID_REPLIES[..4]),
         (WorkerGroup::InvalidShape, &INVALID_REPLIES[4..7]),
