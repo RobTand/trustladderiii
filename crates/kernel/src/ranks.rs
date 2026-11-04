@@ -587,6 +587,7 @@ pub(super) open spec fn advance_post(before: Node, after: Node,
     (changed ==> internal_height(after) < internal_height(before))
     && after.repo == before.repo && after.footprint == before.footprint
     && (settle_shape(before) ==> settle_shape(after))
+    && (before.phase is Closed ==> after.phase is Closed)
     && distance(after) <= distance(before)
     && (changed ==> 4 * distance(after) + pending_rank(after)
         < 4 * distance(before) + pending_rank(before))
@@ -611,7 +612,8 @@ kernel_fn! {
         _context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(_out).len),
             old(node).phase is Closed || old(node).waiting_incident || old(node).effect.is_some(),
-        ensures advance_post(*old(node), *final(node),
+        ensures (!result ==> final(_out).len == old(_out).len),
+            advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
     ] proof [reveal(advance_post);] {
@@ -639,7 +641,8 @@ kernel_fn! {
         context: AdvanceContext, out: &mut Outbox) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)).is_none(),
-        ensures advance_post(*old(node), *final(node),
+        ensures (!result ==> final(out).len == old(out).len),
+            advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post);] {
@@ -664,7 +667,8 @@ kernel_fn! {
         context: AdvanceContext, out: &mut Outbox, kind: EffectKind) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Do(kind)),
-        ensures advance_post(*old(node), *final(node),
+        ensures (!result ==> final(out).len == old(out).len),
+            advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post);] {
@@ -683,7 +687,8 @@ kernel_fn! {
         context: AdvanceContext, out: &mut Outbox, role: Role) -> (result: bool) [
         requires advance_pre(*old(node), *old(next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Start(role)),
-        ensures advance_post(*old(node), *final(node),
+        ensures (!result ==> final(out).len == old(out).len),
+            advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post);] {
@@ -714,7 +719,8 @@ kernel_fn! {
         context: AdvanceContext, out: &mut Outbox) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::StartChecks),
-        ensures advance_post(*old(node), *final(node),
+        ensures (!result ==> final(out).len == old(out).len),
+            advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post);] {
@@ -736,7 +742,8 @@ kernel_fn! {
         context: AdvanceContext, out: &mut Outbox) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::StartRebase),
-        ensures advance_post(*old(node), *final(node),
+        ensures (!result ==> final(out).len == old(out).len),
+            advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post);] {
@@ -758,7 +765,8 @@ kernel_fn! {
         context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(_out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Admit),
-        ensures advance_post(*old(node), *final(node),
+        ensures (!result ==> final(_out).len == old(_out).len),
+            advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post);] {
@@ -780,7 +788,8 @@ kernel_fn! {
         context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
         requires advance_pre(*old(node), *old(next_ticket), old(_out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Slot),
-        ensures advance_post(*old(node), *final(node),
+        ensures (!result ==> final(_out).len == old(_out).len),
+            advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post);] {
@@ -815,7 +824,8 @@ kernel_fn! {
         _context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(_out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Release),
-        ensures advance_post(*old(node), *final(node),
+        ensures (!result ==> final(_out).len == old(_out).len),
+            advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
     ] proof [reveal(advance_post);] {
@@ -833,7 +843,8 @@ kernel_fn! {
         context: AdvanceContext, out: &mut Outbox, kind: EffectKind) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Teardown(kind)),
-        ensures advance_post(*old(node), *final(node),
+        ensures (!result ==> final(out).len == old(out).len),
+            advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post);] {
@@ -868,7 +879,8 @@ kernel_fn! {
         _context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
         requires advance_pre(*old(_node), *old(_next_ticket), old(_out).len),
             !(old(_node).phase is Closed) && !old(_node).waiting_incident && old(_node).effect.is_none() && matches!(current_item(*old(_node)), Some(Item::Await | Item::Merge | Item::Answer)),
-        ensures advance_post(*old(_node), *final(_node),
+        ensures (!result ==> final(_out).len == old(_out).len),
+            advance_post(*old(_node), *final(_node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(_node), _context),
     ] proof [reveal(advance_post);] {
@@ -881,7 +893,8 @@ kernel_fn! {
     pub(super) fn advance_node(node: &mut Node, next_ticket: &mut u64,
         context: AdvanceContext, out: &mut Outbox) -> (result: bool) [
         requires advance_pre(*old(node), *old(next_ticket), old(out).len),
-        ensures advance_post(*old(node), *final(node),
+        ensures (!result ==> final(out).len == old(out).len),
+            advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
     ] {

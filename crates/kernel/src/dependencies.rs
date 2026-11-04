@@ -46,11 +46,12 @@ pub closed spec fn edges_indexable(world: World) -> bool {
 
 /// #693 / #771: one declaration's existing consistency requirements.
 pub(super) open spec fn dependency_checked(world: World, dependency: Dependency) -> bool {
+    let owner = world.nodes@[dependency.node.0 as int];
     dependency.node.0 < world.nodes@.len()
         && (match dependency.target.request { None => true, Some(n) => n.0 < world.nodes@.len() })
         && ((dependency.rejected || dependency.status != DependencyStatus::Delivered) ==>
             !world.nodes@[dependency.node.0 as int].planning_started
-                && matches!(world.nodes@[dependency.node.0 as int].phase,
+                && matches!(owner.phase,
                     Phase::Ingesting | Phase::Auditing | Phase::Unplanned | Phase::AwaitingRob
                         | Phase::Stopping(_) | Phase::Closed(_)))
         && (world.nodes@[dependency.node.0 as int].phase == Phase::Unplanned

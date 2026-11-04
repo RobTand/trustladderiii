@@ -761,7 +761,8 @@ kernel_fn! {
 /// #771: an observational world snapshot, including every interned file list.
 /// Copy fields keep their values; nested vectors keep their element sequences.
 fn snapshot_world(world: &World) -> (result: World) [
-    ensures result.nodes@ == world.nodes@, result.gates@ == world.gates@,
+    ensures (settle_ready(*world) ==> settle_ready(result)),
+        result.nodes@ == world.nodes@, result.gates@ == world.gates@,
         result.dependencies@ == world.dependencies@,
         result.file_sets@.len() == world.file_sets@.len(),
         forall|i: int| 0 <= i < world.file_sets@.len()
@@ -780,12 +781,22 @@ fn snapshot_world(world: &World) -> (result: World) [
         file_sets.push(world.file_sets[index].clone());
         index += 1;
     } }
-    World {
+    let result = World {
         nodes: world.nodes.clone(), gates: world.gates.clone(),
         dependencies: world.dependencies.clone(), file_sets,
         pool_capacity: world.pool_capacity, next_ticket: world.next_ticket,
         next_question: world.next_question, fail_fast: world.fail_fast,
+    };
+    kernel_proof! {
+        if settle_ready(*world) {
+            assert forall|j: int| 0 <= j < result.nodes@.len() implies
+                footprint::valid_footprint(result, result.nodes@[j].footprint) by {
+                footprint::valid_under_table_growth(*world, result, result.nodes@[j].footprint);
+            }
+            reveal(footprint::ordered_table);
+        }
     }
+    result
 }
 }
 
@@ -1390,17 +1401,29 @@ impl World {
     }
 
     /// True when settle has nothing left to do.
-    pub fn is_settled(&self) -> bool {
+    kernel_fn! {
+    /// #771: true from the actual settle probe excludes every sufficient
+    /// internal move used by the gate and pool obstruction argument.
+    pub fn is_settled(&self) -> (result: bool) [
+        requires settle_ready(*self),
+        ensures result ==> settled_world(*self),
+    ] proof [reveal(settled_world);] {
         let mut w = snapshot_world(self);
         let mut out = Outbox::new();
-        let mut i = 0;
-        while i < w.nodes.len() {
-            if advance(&mut w, i, &mut out) {
-                return false;
-            }
+        kernel_proof! { reveal(empty_outbox); }
+        let mut i = 0usize;
+        kernel_while! { (i < w.nodes.len()) [
+            invariant i <= w.nodes.len(), settle_ready(w), out.len == 0,
+                w.nodes@ == self.nodes@, w.gates@ == self.gates@,
+                w.pool_capacity == self.pool_capacity, w.dependencies@ == self.dependencies@,
+                forall|j: int| 0 <= j < i ==> !movable(*self, j),
+            decreases w.nodes.len() - i,
+        ] {
+            if advance(&mut w, i, &mut out) { return false; }
             i += 1;
-        }
+        } }
         true
+    }
     }
 
     /// One outside event that moves the world closer to done: a successful
@@ -2128,9 +2151,15 @@ pub fn proofs_of_phase(phase: Phase) -> &'static [&'static str] {
 // proof map end
 
 /// The kernel: apply one event, then settle.
-pub fn step(world: World, event: Event) -> (World, Vec<Out>) {
+kernel_fn! {
+/// #771: the public executable step inherits the checked whole-step K bounds.
+pub fn step(world: World, event: Event) -> (result: (World, Vec<Out>)) [
+    requires step_scope(world),
+    ensures step_budget(world, result.0),
+] {
     let (world, out, _) = step_with_passes(world, event);
     (world, out)
+}
 }
 
 /// Settle after the controller reconciles stored gate or agent capacity.
@@ -4126,6 +4155,30 @@ pub closed spec fn world_checked(w: World) -> bool {
         && dependencies::dependencies_checked(w)
 }
 
+/// Q30/Q39 / #771: obstruction proof needs no sufficient internal move. The
+/// real is_settled and settle bodies both establish this predicate.
+pub closed spec fn settled_world(w: World) -> bool {
+    forall|i: int| 0 <= i < w.nodes@.len() ==> !movable(w, i)
+}
+
+/// #771: the production checker and enforced reserves supply the step scope.
+proof fn checked_reserves(w: World)
+    requires world_checked(w), world_headroom(w), footprint::ordered_table(w),
+    ensures step_scope(w), settle_ready(w),
+{
+    reveal(world_checked);
+    reveal(world_headroom);
+    reveal(step_scope);
+    settle_reserve_totals(w.nodes@);
+    assert forall|j: int| 0 <= j < w.nodes@.len() implies
+        w.nodes@[j].generation as int + generation_capacity(w.nodes@[j]) <= u64::MAX as int
+            && w.nodes@[j].next_seq as int + effect_capacity(w.nodes@[j]) <= u64::MAX as int
+            && w.nodes@[j].credit.earned as int + merge_capacity(w.nodes@[j]) <= u32::MAX as int
+    by { local_capacities(w.nodes@[j]); }
+    open_prefix_monotone(w.nodes@, 0, w.nodes@.len());
+    reveal(open_prefix);
+}
+
 /// #771: intermediate source-level safety scope. These consistency clauses
 /// must be connected to the real checker before the final progress theorem.
 pub closed spec fn step_scope(w: World) -> bool {
@@ -4301,7 +4354,8 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: bool) [
     requires i < old(w).nodes@.len(), i <= u64::MAX as int,
         scheduling_safe(*old(w)),
         advance_pre(old(w).nodes@[i as int], old(w).next_ticket, old(out).len),
-    ensures advance_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
+    ensures (!result ==> final(out).len == old(out).len),
+        advance_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
             old(w).next_ticket, final(w).next_ticket, result),
         final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
         final(w).next_question == old(w).next_question,
