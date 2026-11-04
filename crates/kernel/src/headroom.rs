@@ -1,5 +1,10 @@
 use crate::{NodeId, World};
 
+#[allow(dead_code)]
+fn scan_step_budget(_open_nodes: usize) -> Option<u32> {
+    Some(0)
+}
+
 /// #771: reserves for one external event followed by the complete settle loop.
 /// The event changes one node's generation at most twice; settle changes that
 /// node's phase at most once more. At most one effect is emitted by apply and
@@ -20,6 +25,20 @@ pub const CREDIT_EARNED_STEP_BUDGET: u32 = 1;
 pub struct CounterExhaustion {
     pub node: Option<NodeId>,
     pub counter: &'static str,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scan_step_budget;
+
+    /// #771: scratch u32 scans need room for every open node and one new root.
+    #[test]
+    fn scan_budget_checks_the_actual_u32_width() {
+        assert_eq!(scan_step_budget(0), Some(1));
+        assert_eq!(scan_step_budget(1024), Some(1025));
+        assert_eq!(scan_step_budget(u32::MAX as usize - 1), Some(u32::MAX));
+        assert_eq!(scan_step_budget(u32::MAX as usize), None);
+    }
 }
 
 impl World {
