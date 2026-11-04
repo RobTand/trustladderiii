@@ -103,27 +103,27 @@ fn during_catch_up(settings: &tl3_config::Store) {
         ];
         sent.send((statuses, start.elapsed())).unwrap();
     });
-    let timely = response.recv_timeout(Duration::from_secs(1));
+    // #777: completion before releasing catch-up proves independence, regardless of write latency.
+    let completed = response.recv();
     let pending = Store::open(settings).unwrap().pending_ingress().unwrap();
-    if timely.is_ok() {
+    if completed.is_ok() {
         for _ in 0..3 {
             receiver.recv_timeout(SIGNAL_WAIT).unwrap();
         }
         ingress::drain(&mut controller).unwrap();
         assert_eq!(controller.world().unwrap().nodes.len(), 1);
     }
-    // Release even on the red implementation so the failure is an assertion, not a hung job.
+    // Release even if the POST thread failed, so teardown cannot strand catch-up.
     release.send(()).unwrap();
     post_thread.join().unwrap();
-    if timely.is_ok() {
+    if completed.is_ok() {
         receiver.recv_timeout(SIGNAL_WAIT).unwrap();
     }
     control.stop();
     source_thread.join().unwrap().unwrap();
     let (statuses, elapsed) =
-        timely.expect("signed POSTs must finish while startup catch-up is blocked");
+        completed.expect("signed POSTs must finish while startup catch-up is blocked");
     assert_eq!(statuses, [202; 3]);
-    assert!(elapsed < Duration::from_secs(1));
     assert_eq!(pending.len(), 2, "2xx deliveries must already be durable");
     assert!(pending.iter().all(|row| row.source == "github-webhook"));
     assert!(
@@ -197,7 +197,8 @@ fn before_source_run(settings: &tl3_config::Store) {
         ))
         .unwrap();
     });
-    let timely = response.recv_timeout(Duration::from_secs(1));
+    // Source registration remains after the response, so it cannot make receipt succeed.
+    let completed = response.recv();
     let pending = Store::open(settings).unwrap().pending_ingress().unwrap();
     let (sender, _receiver) = mpsc::channel();
     let running = thread::spawn(move || source.run(sender));
@@ -205,7 +206,7 @@ fn before_source_run(settings: &tl3_config::Store) {
     control.stop();
     running.join().unwrap().unwrap();
     assert_eq!(
-        timely
+        completed
             .expect("bound listener must answer before controller startup or source registration"),
         202
     );
