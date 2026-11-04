@@ -49,9 +49,20 @@ fn same_repository(a: &Repository, b: &Repository) -> bool {
         && a.name.eq_ignore_ascii_case(&b.name)
 }
 
+#[cfg(test)]
+thread_local! {
+    static HISTORY_ROWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn history_row(row: &tl3_store::WorldRow) -> &tl3_store::WorldRow {
+    #[cfg(test)]
+    HISTORY_ROWS.set(HISTORY_ROWS.get() + 1);
+    row
+}
+
 fn bindings(snapshot: &Snapshot, commit: &Commit) -> Result<BTreeMap<NodeId, Request>> {
     let mut requests = BTreeMap::new();
-    for row in snapshot.rows.iter().filter(|row| row.table == "requests") {
+    for row in snapshot.rows.iter().map(history_row).filter(|row| row.table == "requests") {
         requests.insert(
             NodeId(
                 row.id
@@ -146,6 +157,7 @@ fn stored_row(snapshot: &Snapshot, commit: &Commit, table: &str, id: &str) -> Op
             snapshot
                 .rows
                 .iter()
+                .map(history_row)
                 .find(|r| r.table == table && r.id == id)
                 .map(|r| r.value.clone())
         })
@@ -936,6 +948,74 @@ mod tests {
             c.world().unwrap().nodes[waiter.0 as usize].phase,
             Phase::Unplanned
         );
+    }
+
+    #[test]
+    fn unrelated_event_reads_no_dependency_history_with_completed_roots() {
+        let mut db = Database::start();
+        let (_repo, mut c, repo) = fixture(&mut db, "dependency_history_bound");
+        let root = intake(&mut c, &repo, 2761);
+        reply(&mut c, root, Reply::IngestEarlyEnd(EarlyEnd::AlreadyDone));
+        reply(&mut c, root, Reply::AuditAgrees);
+        confirm(&mut c, root);
+        let active = intake(&mut c, &repo, 42);
+        let snapshot = c.snapshot().unwrap();
+        let mut world = c.world().unwrap();
+        let completed = world.nodes[root.0 as usize].clone();
+        assert_eq!(completed.phase, Phase::Closed(Outcome::AlreadyDone));
+        let mut request = crate::request(&snapshot, root).unwrap();
+        let mut commit = Commit::new("completed-history", json!(null), &snapshot);
+        for number in 0..127 {
+            let id = world.nodes.len().to_string();
+            world.nodes.push(completed.clone());
+            request.issue = 10_000 + number;
+            commit.rows.push(put("requests", id, json!(request)));
+        }
+        commit.rows.extend(crate::snapshot::changes(
+            &crate::snapshot::encode(&c.world().unwrap()).unwrap(),
+            crate::snapshot::encode(&world).unwrap(),
+        ));
+        c.store.commit(&commit).unwrap();
+        assert!(c.world().unwrap().dependencies().is_empty());
+        HISTORY_ROWS.set(0);
+        event(&mut c, Event::Fact {
+            node: active,
+            fact: Fact::Priority(tl3_kernel::Priority::Unranked),
+        });
+        assert_eq!(HISTORY_ROWS.get(), 0,
+            "an unrelated event must not read dependency history, even with 128 completed roots");
+    }
+
+    #[test]
+    fn completion_without_waiters_retains_delivery_for_later_declaration() {
+        let mut db = Database::start();
+        let (_repo, mut c, repo) = fixture(&mut db, "completion_without_waiters");
+        let root = intake(&mut c, &repo, 2761);
+        reply(&mut c, root, Reply::IngestEarlyEnd(EarlyEnd::AlreadyDone));
+        reply(&mut c, root, Reply::AuditAgrees);
+        let snapshot = c.snapshot().unwrap();
+        let commit = Commit::new("check-retained", json!(null), &snapshot);
+        assert_eq!(retained_fact(&snapshot, &commit, &repo, PrerequisiteKind::Issue, 2761)
+            .unwrap().unwrap().status, DependencyStatus::Delivered);
+        let waiter = intake(&mut c, &repo, 42);
+        ingest(&mut c, waiter, &[2761]);
+        assert_eq!(c.world().unwrap().dependencies()[0].status, DependencyStatus::Delivered);
+        assert_eq!(c.world().unwrap().nodes[waiter.0 as usize].phase,
+            Phase::Planning { must_split: false });
+    }
+
+    #[test]
+    fn completed_roots_late_pr_identity_retains_delivery_immediately() {
+        let mut db = Database::start();
+        let (_repo, mut c, repo) = fixture(&mut db, "completed_late_pr");
+        let root = intake(&mut c, &repo, 2761);
+        reply(&mut c, root, Reply::IngestEarlyEnd(EarlyEnd::AlreadyDone));
+        reply(&mut c, root, Reply::AuditAgrees);
+        observation(&mut c, Observation::PullRequest { node: root, number: 998 });
+        let snapshot = c.snapshot().unwrap();
+        let commit = Commit::new("check-retained", json!(null), &snapshot);
+        assert_eq!(retained_fact(&snapshot, &commit, &repo, PrerequisiteKind::PullRequest, 998)
+            .unwrap().map(|fact| fact.status), Some(DependencyStatus::Delivered));
     }
 
     #[test]
