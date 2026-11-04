@@ -70,7 +70,7 @@ fn matches_python_on_the_shared_matrix() {
 fn matches_python_on_all_planted_forms() {
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../workers/tests");
     let output = python_command().args(["-I", "-c",
-            "import json,sys; sys.path.insert(0,sys.argv[1]); from tracing_forms import FORMS; from tracing_forms3 import FORMS as MORE; print(json.dumps([text for _,text,*_ in FORMS+MORE]))"])
+            "import json,sys; sys.path.insert(0,sys.argv[1]); from tracing_forms import FORMS,PLANTED,PLANTED_LINES; from tracing_forms3 import FORMS as MORE; print(json.dumps([text for _,text,*_ in FORMS+MORE]+[text for text,_ in PLANTED+PLANTED_LINES]))"])
             .arg(directory).output().unwrap();
     assert!(output.status.success());
     let inputs: Vec<String> = serde_json::from_slice(&output.stdout).unwrap();
@@ -81,6 +81,16 @@ fn matches_python_on_all_planted_forms() {
             expected,
             "{input:?}"
         );
+    }
+}
+
+/// #753 security review: Python's Turkish I folding must also protect controller output.
+#[test]
+fn turkish_scheme_redacts_identically() {
+    let inputs = vec!["Basıc zE9pR4cV7x".to_owned(), "Basİc zE9pR4cV7x".to_owned()];
+    for (input, expected) in inputs.iter().zip(python_redact(&inputs)) {
+        assert!(expected.contains("[REDACTED]"));
+        assert_eq!(tl3_controller::redaction::text(input).unwrap(), expected);
     }
 }
 

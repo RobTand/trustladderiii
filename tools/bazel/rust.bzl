@@ -71,6 +71,7 @@ _CONTROLLER_TEST_COMPILE_DATA = {
 }
 # Only these scenarios execute tl3_workers. Its imports include tl3_harness.
 _CONTROLLER_WORKERS = [
+    "test_test_redaction_adapter",
     "test_test_redaction_parity",
     "lib_test_tl3_controller",
     "test_test_github-flow",
@@ -89,6 +90,7 @@ _CONTROLLER_BINARIES = {
 # These tests stage the trusted harness into a sealed check action, even when
 # the queue fixture supplies the result instead of executing that action.
 _CONTROLLER_RUNTIME = {
+    "test_test_redaction_adapter": ["//workers/tests:redaction_branches"],
     "test_test_redaction_parity": ["//workers/tests:tracing_forms", "//workers/tests:tracing_forms3"],
     "lib_test_tl3_controller": [
         "//harness:project_files",

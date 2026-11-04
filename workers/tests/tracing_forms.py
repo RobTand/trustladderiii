@@ -323,3 +323,52 @@ add('json_x_api_key', '{{"x-api-key": "{0}"}}', gen=lambda: r(40))
 
 # ---- documented limitations (expected to leak; must not leak anywhere else) ----
 add('DOC_unquoted_spaces', 'password=two {0} words', gen=lambda: r(12), doc='D1-spaces')
+
+
+# Original #296 planted cases, shared by both engines and the exporter tests.
+PLANTED = [
+    ('eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.fixtureSignature296',
+     'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.fixtureSignature296'),
+    ('postgresql://u:postgres-password-296@h', 'postgres-password-296'),
+    ('redis://u:redis-password-296@h', 'redis-password-296'),
+    ('Authorization: Basic Zml4dHVyZTI5NjpwYXNzd29yZA==', 'Zml4dHVyZTI5NjpwYXNzd29yZA=='),
+    ('GITHUB_WEBHOOK_SECRET=webhook-env-296', 'webhook-env-296'),
+    ('webhook_secret: "webhook-quoted-296"', 'webhook-quoted-296'),
+    ('GITHUB_TOKEN=0123456789abcdef296', '0123456789abcdef296'),
+    ('{"token": "json-token-296"}', 'json-token-296'),
+    ('{"secret": "json-secret-296"}', 'json-secret-296'),
+    ('aws_secret_access_key=aws-lower-296', 'aws-lower-296'),
+    ('AWS_SECRET_ACCESS_KEY=aws-upper-296', 'aws-upper-296'),
+    ('ASIA0123456789ABCDEF', 'ASIA0123456789ABCDEF'),
+    ('xapp-fixture296application', 'xapp-fixture296application'),
+    ('pypi-fixture296package', 'pypi-fixture296package'),
+    (json.dumps(json.dumps({'password': 'nested-password-296'})), 'nested-password-296'),
+    ('credential_value="credential-296"', 'credential-296'),
+    ('key_value=key-value-296', 'key-value-296'),
+]
+
+PLANTED_LINES = [
+    ('Authorization: Token abcdef296token', 'abcdef296token'),
+    ('Authorization: Digest username="u", response="deadbeef296"', 'deadbeef296'),
+    ('Authorization: AWS4-HMAC-SHA256 Credential=AKIAXXXXXXXXXXXXXXXX/20251101/x, Signature=sig296aws',
+     'sig296aws'),
+    ('Proxy-Authorization: Negotiate neg296tok', 'neg296tok'),
+    ('Cookie: session=cookie296abc; other=1', 'cookie296abc'),
+    ('Set-Cookie: sid=setcookie296; Path=/', 'setcookie296'),
+    ('{"password": "ab\\"cd296esc"}', 'cd296esc'),
+    ('sk_live_abcdefABCDEF296ghij', 'abcdefABCDEF296ghij'),
+    ('rk_test_abcdefABCDEF296ghij', 'abcdefABCDEF296ghij'),
+    ('AIzaSyA-abcdefghijklmnopqrstuvwxyz01234', 'abcdefghijklmnopqrstuvwxyz01234'),
+    ('glpat-abcdefghij296klmnop', 'abcdefghij296klmnop'),
+    ('npm_abcdefghijklmnopqrstuvwxyz0123456789', 'abcdefghijklmnopqrstuvwxyz0123456789'),
+    ('SG.abcdefghij296.klmnopqrstuv296', 'klmnopqrstuv296'),
+    ('hf_abcdefghijklmnopqrstuvwxyz0123', 'abcdefghijklmnopqrstuvwxyz0123'),
+    ('-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF296\n-----END PGP PRIVATE KEY BLOCK-----', 'lQOYBF296'),
+    ('https://x.example/a?X-Amz-Signature=sigq296&b=1', 'sigq296'),
+    ('curl --password hunter296 http://x', 'hunter296'),
+    ('curl -u admin:clipw296 http://x', 'clipw296'),
+    ('https://hooks.slack.com/services/T000/B000/slackhook296', 'slackhook296'),
+    ('https://discord.com/api/webhooks/123/discordtok296', 'discordtok296'),
+    (json.dumps({'k': 'secret:\tjson-tab-296'}), 'json-tab-296'),
+    (json.dumps({'k': 'password:\n  json-newline-296'}), 'json-newline-296'),
+]
