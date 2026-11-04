@@ -38,6 +38,7 @@ TOKENIZER_KEY = hashlib.sha1(TOKENIZER_URL.encode()).hexdigest()
 # tl3d's cgroup, so restarting or deploying tl3d leaves runs alive.
 WORKER_SLICE = "tl3-workers.slice"
 LAUNCHER = ["/usr/bin/systemd-run", "--user", "--scope", "--quiet", "--collect", f"--slice={WORKER_SLICE}"]
+RELEASE_BINARIES = ("tl3", "tl3d", "tl3-deploy", "tl3-worker-supervisor")
 RELEASE_PACKAGES = ("workers", "harness")
 RELEASE_IGNORED = (".venv", "__pycache__", ".pytest_cache", "*.egg-info")
 
@@ -346,8 +347,9 @@ def install(args):
     print("Tokenizer: pinned o200k_base installed and hash verified")
     introduced = install_release(home)
     private_dir(root / "bin")
-    for binary in ("tl3", "tl3d", "tl3-deploy", "tl3-worker-supervisor"):
+    for binary in RELEASE_BINARIES:
         write_file(root / "bin" / binary, (args.binaries / binary).read_bytes(), 0o700)
+    write_file(root / "bin/SHA256SUMS", (args.binaries / "SHA256SUMS").read_bytes())
     private_dir(root / "deploy")
     write_file(root / "deploy/deploy.py", (HERE / "deploy.py").read_bytes())
     state_path = root / "app-state.json"
@@ -680,9 +682,39 @@ def install_mlflow(home):
     print("MLflow 3.17.2 installed. Controller tracing takes effect on its next start.")
 
 
+def check_binaries(root):
+    directory = root / "bin"
+    expected = {}
+    try:
+        for line in (directory / "SHA256SUMS").read_text().splitlines():
+            entry = re.fullmatch(r"([0-9a-f]{64}) [ *]([A-Za-z0-9][A-Za-z0-9._-]*)", line)
+            if not entry or entry[2] not in RELEASE_BINARIES or entry[2] in expected:
+                print("MISSING bin/SHA256SUMS: invalid release manifest")
+                return 1
+            expected[entry[2]] = entry[1]
+        installed = {path.name for path in directory.iterdir()} - {"SHA256SUMS"}
+    except (OSError, UnicodeError):
+        print("MISSING bin/SHA256SUMS: unreadable release manifest")
+        return 1
+    missing = 0
+    for name in sorted(set(RELEASE_BINARIES) | installed):
+        path = directory / name
+        ok = False
+        if name in expected and path.is_file():
+            try:
+                with path.open("rb") as binary:
+                    ok = hashlib.file_digest(binary, "sha256").hexdigest() == expected[name]
+            except OSError:
+                pass
+        print(f"{'OK' if ok else 'MISSING'} bin/{name}: release SHA-256")
+        missing += not ok
+    return missing
+
+
 def check(home):
     root, config, _ = paths(home)
-    missing = int(not mlflow_health(home))
+    binary_missing = check_binaries(root)
+    missing = binary_missing + int(not mlflow_health(home))
     managed = (root / "deploy/managed-tunnel").exists()
     units = ["tl3-postgres", "tl3d", "tl3-status", "tl3-mlflow"]
     if managed:
@@ -699,6 +731,10 @@ def check(home):
         ("tl3 status", [root / "bin/tl3", "status", "--config", config / "tl3.toml"]),
         ("Config::load including secret metadata", [root / "bin/tl3-deploy", "validate", config / "tl3.toml"]),
     ):
+        if binary_missing:
+            print(f"MISSING {label}: binary verification failed")
+            missing += 1
+            continue
         result = subprocess.run([str(part) for part in command], capture_output=True)
         print(f"{'OK' if result.returncode == 0 else 'MISSING'} {label}")
         missing += result.returncode != 0

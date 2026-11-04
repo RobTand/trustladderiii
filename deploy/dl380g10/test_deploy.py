@@ -243,6 +243,80 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(actual["maker"][1]["effort"], "high")
         self.assertEqual(actual["maker"][1]["budget_tokens"], 128000)
 
+    def binary_bundle(self, directory):
+        directory.mkdir(parents=True, exist_ok=True)
+        sums = []
+        for name in ("tl3", "tl3d", "tl3-deploy", "tl3-worker-supervisor"):
+            content = f"release fixture for {name}\n".encode()
+            deploy.write_file(directory / name, content, 0o700)
+            sums.append(f"{hashlib.sha256(content).hexdigest()}  {name}\n")
+        deploy.write_file(directory / "SHA256SUMS", "".join(sums).encode())
+
+    def checked_bundle(self, damage=None):
+        root, config, _ = deploy.paths(self.home)
+        self.binary_bundle(root / "bin")
+        if damage:
+            damage(root / "bin")
+        source, _ = self.config()
+        deploy.write_file(config / "tl3.toml", source.read_bytes())
+        for name in ("model-key", "hindsight-key"):
+            deploy.write_file(config / "secrets" / name, b"fixture")
+        deploy.write_file(config / "production-ready", b"")
+        with patch.object(deploy, "mlflow_health", return_value=True), \
+             patch.object(deploy, "launcher_works", return_value=(True, "fixture")), \
+             patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0)), \
+             patch.object(deploy.http.client, "HTTPConnection") as http, \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            http.return_value.getresponse.side_effect = [
+                unittest.mock.Mock(status=200),
+                unittest.mock.Mock(status=405),
+            ]
+            result = deploy.check(self.home)
+        return result, output.getvalue()
+
+    def test_check_accepts_complete_binary_bundle(self):
+        result, output = self.checked_bundle()
+        self.assertEqual(result, 0, output)
+
+    def test_check_rejects_truncated_binary(self):
+        result, output = self.checked_bundle(lambda directory: (directory / "tl3d").write_bytes(b""))
+        self.assertEqual(result, 1, output)
+        self.assertIn("MISSING bin/tl3d", output)
+
+    def test_check_rejects_missing_binary(self):
+        result, output = self.checked_bundle(lambda directory: (directory / "tl3-deploy").unlink())
+        self.assertEqual(result, 1, output)
+        self.assertIn("MISSING bin/tl3-deploy", output)
+
+    def test_check_rejects_stale_binary(self):
+        result, output = self.checked_bundle(
+            lambda directory: (directory / "tl3-worker-supervisor").write_bytes(b"older release"))
+        self.assertEqual(result, 1, output)
+        self.assertIn("MISSING bin/tl3-worker-supervisor", output)
+
+    def test_check_rejects_extra_executable(self):
+        result, output = self.checked_bundle(
+            lambda directory: deploy.write_file(directory / "old-worker", b"old executable", 0o700))
+        self.assertEqual(result, 1, output)
+        self.assertIn("MISSING bin/old-worker", output)
+
+    def test_install_preserves_release_binary_manifest(self):
+        binaries = self.home / "release"
+        self.binary_bundle(binaries)
+        args = deploy.argparse.Namespace(home=self.home, binaries=binaries,
+                                        status_listen="192.168.1.107:8033", image=None,
+                                        primary=None, alternate=None, console_listen=None,
+                                        managed_tunnel=False)
+        with patch.object(deploy, "postgres"), patch.object(deploy, "checked_download"), \
+             patch.object(deploy, "install_release", return_value=False), \
+             patch.object(deploy, "configure"), patch.object(deploy, "grant_console_reader"), \
+             patch.object(deploy, "collect_releases"), patch.object(deploy, "run"), \
+             contextlib.redirect_stdout(io.StringIO()):
+            deploy.install(args)
+        installed = deploy.paths(self.home)[0] / "bin/SHA256SUMS"
+        self.assertTrue(installed.is_file(), "install must retain the release SHA256SUMS")
+        self.assertEqual(installed.read_bytes(), (binaries / "SHA256SUMS").read_bytes())
+
     def test_check_reports_both_bad_credentials_as_missing(self):
         config, data = self.config()
         deploy.write_file(deploy.paths(self.home)[0] / "deploy/managed-tunnel", b"managed\n")

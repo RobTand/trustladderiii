@@ -18,6 +18,7 @@ pub mod classifier;
 pub mod cli;
 pub mod clock;
 pub mod console;
+pub mod contracts;
 mod decisions;
 pub mod evidence;
 pub mod executor;
@@ -3163,13 +3164,18 @@ impl Controller {
                         .iter()
                         .enumerate()
                         .map(|(index, check)| {
+                            let declared = |field: &str| check.get(field).cloned();
                             Ok(adapters::prismabuild::Check {
                                 name: format!("check-{}", index + 1),
                                 kind: serde_json::from_value(check["kind"].clone())?,
                                 tests: adapters::workers::protocol::reply_field(check, "node_ids")?,
-                                forcing: check.get("forcing").cloned(),
-                                proof: check.get("proof").cloned(),
-                                declared_symptom: check.get("declared_symptom").cloned(),
+                                forcing: declared("forcing")
+                                    .map(serde_json::from_value)
+                                    .transpose()?,
+                                proof: declared("proof").map(serde_json::from_value).transpose()?,
+                                declared_symptom: declared("declared_symptom")
+                                    .map(serde_json::from_value)
+                                    .transpose()?,
                             })
                         })
                         .collect::<Result<Vec<_>>>()?;

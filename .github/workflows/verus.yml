@@ -1,0 +1,21 @@
+name: Nightly Verus proofs
+on:
+  schedule:
+    - cron: '41 3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  proofs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Run every Verus proof on BuildBuddy amd64
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: >-
+          python3 tools/ci/remote_gate.py proofs --base "$GITHUB_SHA" --head "$GITHUB_SHA"
+          --branch "$GITHUB_REF_NAME" --timeout 15

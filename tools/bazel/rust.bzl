@@ -14,6 +14,7 @@ load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 load("//tools/bazel:nonhermetic.bzl", "nonhermetic")
 load("//tools/bazel:python.bzl", "tl3_py_test")
 load("//tools/bazel:test_sizing.bzl", "test_size")
+load("//tools/bazel:verus.bzl", "verus_proofs")
 
 # Cargo tests read env!("CARGO_MANIFEST_DIR") and some require it absolute.
 # rust_runner.py points this fixed path at the test's runfiles. Each test needs
@@ -97,6 +98,8 @@ _CONTROLLER_RUNTIME = {
         "//workers/src:prompts",
         "//workers/tests:fixtures",
     ],
+    # The shared harness check-report vectors (#734) the typed contracts parse (#741).
+    "test_test_contracts": ["//harness:project_files"],
     "test_test_hindsight": ["//workers/src:role_files"],
     "test_test_prismabuild": ["//harness/src/tl3_harness", "//crates/prismabuild:sources"],
     "test_test_publishing": ["//harness/src/tl3_harness", "//crates/prismabuild:sources"],
@@ -208,6 +211,7 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
     declared_tests holds the [[test]] entries that do not.
     """
     directory = native.package_name()
+    verus_proofs()
     native.exports_files(["Cargo.toml", "BUILD.bazel"])
     native.filegroup(
         name = "sources",
