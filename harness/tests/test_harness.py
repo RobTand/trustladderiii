@@ -109,6 +109,7 @@ def test_setup_error_is_not_an_assertion(trees):
     assert results[tests[0]] == Outcome.ERROR
 
 
+@pytest.mark.durability
 def test_progress_is_atomic_cumulative_and_contains_no_test_secrets(tmp_path, monkeypatch):
     target = tmp_path / "progress.json"
     monkeypatch.setenv("PRISMABUILD_ACTION_PROGRESS_PATH", str(target))

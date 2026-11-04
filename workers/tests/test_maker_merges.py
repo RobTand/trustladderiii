@@ -64,6 +64,7 @@ def test_pending_merge_done_requires_resolution_and_original_target(maker_reques
         assert git(root, 'rev-parse', 'MERGE_HEAD') == target
 
 
+@pytest.mark.durability
 def test_merge_target_survives_crash_after_an_aborted_resolution(maker_request, monkeypatch, tmp_path):
     root, leaf, target = pending_conflict(maker_request)
     maker_request['session_file'] = str(tmp_path / 'session.json')
@@ -107,6 +108,7 @@ def test_resolved_merge_ignores_unconflicted_documentation(maker_request, monkey
 
 
 @pytest.mark.parametrize('legacy_checkpoint', [False, True])
+@pytest.mark.durability
 def test_original_conflict_files_survive_staging_and_restart(maker_request, monkeypatch, tmp_path, legacy_checkpoint):
     root, leaf, target = pending_conflict(maker_request)
     session = tmp_path / 'session.json'

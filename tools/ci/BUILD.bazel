@@ -298,3 +298,23 @@ py_binary(
     visibility = ["//visibility:public"],
     deps = [":bazel_gate"],
 )
+
+tl3_py_test(
+    name = "test_verus_gate",
+    srcs = ["test_verus_gate.py"],
+    deps = [
+        ":bazel_gate",
+        ":bazel_parity",
+        ":remote_gate",
+    ],
+)
+
+py_binary(
+    name = "verus_qualification",
+    srcs = ["verus_qualification.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":bazel_gate",
+        ":remote_gate",
+    ],
+)

@@ -14,6 +14,6 @@ export TL3_DEPLOY_HELPER="$cargo_target/debug/examples/tl3-deploy"
 python3 -m unittest discover -s deploy/dl380g10 -p 'test_*.py' -v
 if [[ -n ${TL3_DEPLOY_ARTIFACTS:-} ]]; then
   mkdir -p "$TL3_DEPLOY_ARTIFACTS"
-  install -m 0700 "$cargo_target/debug/tl3" "$cargo_target/debug/tl3d" "$TL3_DEPLOY_HELPER" "$TL3_DEPLOY_ARTIFACTS/"
-  sha256sum "$TL3_DEPLOY_ARTIFACTS/tl3" "$TL3_DEPLOY_ARTIFACTS/tl3d" "$TL3_DEPLOY_ARTIFACTS/tl3-deploy"
+  install -m 0700 "$cargo_target/debug/tl3" "$cargo_target/debug/tl3d" "$cargo_target/debug/tl3-worker-supervisor" "$TL3_DEPLOY_HELPER" "$TL3_DEPLOY_ARTIFACTS/"
+  sha256sum "$TL3_DEPLOY_ARTIFACTS/tl3" "$TL3_DEPLOY_ARTIFACTS/tl3d" "$TL3_DEPLOY_ARTIFACTS/tl3-deploy" "$TL3_DEPLOY_ARTIFACTS/tl3-worker-supervisor"
 fi

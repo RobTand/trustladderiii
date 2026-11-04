@@ -33,6 +33,7 @@ def shared_request(request_doc, role):
 
 @pytest.mark.parametrize("role", ["ingest", "audit", "planner"])
 @pytest.mark.parametrize("model", ["claude-sonnet-5-5", "gpt-6.1-sol"])
+@pytest.mark.durability
 def test_requests_share_wire_prefix_and_cache_but_keep_attempt_sessions(request_doc, monkeypatch, role, model):
     first = shared_request(request_doc, role)
     first["model"]["name"] = model

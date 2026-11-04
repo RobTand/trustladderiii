@@ -47,6 +47,9 @@ class FakeWorkspace:
     def rust_tests(self):
         return {label for label in TESTS if label.startswith('//crates')}
 
+    def verus_tests(self):
+        return set()
+
     def used_sources(self):
         return set(USED)
 

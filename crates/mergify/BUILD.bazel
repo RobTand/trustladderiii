@@ -7,5 +7,6 @@ tl3_crate(
     package = "tl3-mergify",
     crate = "tl3_mergify",
     local_deps = ["//crates/github:tl3_github"],
+    bins = ["verus-runner"],
     examples = {"sandbox_gate": "examples/sandbox_gate.rs"},
 )
