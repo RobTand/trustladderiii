@@ -44,6 +44,8 @@ worker_groups! {
     RestartBlocked: 1,
     Restart: 2,
     Classifier: 6,
+    Reviewer: 4,
+    Postmortem: 4,
     InvalidSchema: 4,
     InvalidShape: 3,
     InvalidSize: 3,
