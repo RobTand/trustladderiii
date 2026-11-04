@@ -40,3 +40,14 @@ def test_prerequisite_failure_keeps_its_repairable_message():
         "failure_class": "MergePrerequisiteError",
         "failure_message": MergePrerequisiteError.message,
     }
+
+
+@pytest.mark.parametrize("prerequisites", [None, []])
+def test_brief_without_prerequisites_needs_no_issue_evidence(prerequisites):
+    from tl3_workers.roles.ingest import check_memory_ids
+
+    reply = {"kind": "brief", "brief": "Implement the request.", "memory_ids": []}
+    if prerequisites is not None:
+        reply["merge_prerequisites"] = prerequisites
+    check_memory_ids({}, reply)
+    assert reply["brief"] == "Implement the request."
