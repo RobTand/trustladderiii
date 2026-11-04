@@ -44,12 +44,21 @@ pub closed spec fn valid_footprint(world: World, footprint: Footprint) -> bool {
     }
 }
 
+/// #771: appending immutable file sets preserves every existing handle.
+pub(super) proof fn valid_under_table_growth(before: World, after: World, footprint: Footprint)
+    requires valid_footprint(before, footprint), after.file_sets@.len() >= before.file_sets@.len(),
+    ensures valid_footprint(after, footprint),
+{
+    reveal(valid_footprint);
+}
+
 /// #771: stored file lists are strictly increasing, as produced by the interner.
 pub open spec fn ordered(files: Seq<FileId>) -> bool {
     forall|i: int, j: int| 0 <= i < j < files.len() ==> files[i].0 < files[j].0
 }
 
-pub(super) closed spec fn ordered_table(world: World) -> bool {
+#[verifier::opaque]
+pub(super) open spec fn ordered_table(world: World) -> bool {
     forall|i: int| 0 <= i < world.file_sets@.len() ==> ordered(world.file_sets@[i]@)
 }
 
@@ -72,6 +81,22 @@ pub closed spec fn file_view(world: World, footprint: Footprint) -> Seq<FileId> 
     }
 }
 
+pub closed spec fn contains_file(world: World, footprint: Footprint, file: FileId) -> bool {
+    match footprint.0 {
+        Repr::Inline(bits) => file.0 < 64 && bits & (1u64 << file.0) != 0,
+        Repr::Interned(index) => world.file_sets@[index as int]@.contains(file),
+    }
+}
+
+/// #771: the production inline fast path and interned file scan.
+pub closed spec fn disjoint(world: World, a: Footprint, b: Footprint) -> bool {
+    match (a.0, b.0) {
+        (Repr::Inline(left), Repr::Inline(right)) => left & right == 0,
+        _ => forall|i: int| 0 <= i < file_view(world, a).len()
+            ==> !contains_file(world, b, file_view(world, a)[i]),
+    }
+}
+
 pub proof fn inline_view_ordered(bits: u64, end: nat)
     requires end <= 64,
     ensures ordered(inline_view(bits, end)),
@@ -85,6 +110,31 @@ pub proof fn inline_view_ordered(bits: u64, end: nat)
     }
 }
 
+}
+
+kernel_fn! {
+/// #771: the Rust 1.99.1 slice binary-search algorithm, with the same chosen
+/// midpoint on every iteration. Ordered inputs give exact set membership.
+fn sorted_contains(files: &[FileId], key: FileId) -> (result: bool) [
+    requires ordered(files@),
+    ensures result == files@.contains(key),
+] {
+    let mut size = files.len();
+    if size == 0 { return false; }
+    let mut base = 0usize;
+    kernel_while! { (size > 1) [
+        invariant size > 0, base + size <= files.len(), ordered(files@),
+            forall|i: int| 0 <= i < base ==> files@[i].0 < key.0,
+            forall|i: int| base + size <= i < files.len() ==> files@[i].0 > key.0,
+        decreases size,
+    ] {
+        let half = size / 2;
+        let mid = base + half;
+        if files[mid].0 <= key.0 { base = mid; }
+        size -= half;
+    } }
+    files[base] == key
+}
 }
 
 impl Default for Footprint {
@@ -249,7 +299,13 @@ impl World {
     }
     }
 
-    pub(crate) fn footprints_disjoint(&self, a: Footprint, b: Footprint) -> bool {
+    kernel_fn! {
+    /// File grant rows / #771: the executable scan uses the same set predicate.
+    pub(super) fn footprints_disjoint(&self, a: Footprint, b: Footprint) -> (result: bool) [
+        requires valid_footprint(*self, a), valid_footprint(*self, b), ordered_table(*self),
+        ensures result == disjoint(*self, a, b),
+    ] proof [reveal(valid_footprint); reveal(disjoint); reveal(contains_file);
+        reveal(ordered_table);] {
         if let (Repr::Inline(a), Repr::Inline(b)) = (a.0, b.0) {
             return a & b == 0;
         }
@@ -263,16 +319,25 @@ impl World {
             kani::assume(false);
         }
 
-        for file in self.files(a).expect("interned footprint") {
+        let files = self.collect_files(a);
+        let mut offset = 0usize;
+        kernel_while! { (offset < files.len()) [
+            invariant offset <= files.len(), files@ == file_view(*self, a),
+                forall|i: int| 0 <= i < offset ==> !contains_file(*self, b, files@[i]),
+            decreases files.len() - offset,
+        ] {
+            let file = files[offset];
             let contains = match b.0 {
                 Repr::Inline(bits) => file.0 < 64 && bits & (1 << file.0) != 0,
-                Repr::Interned(index) => self.file_sets[index].binary_search(&file).is_ok(),
+                Repr::Interned(index) => sorted_contains(&self.file_sets[index], file),
             };
             if contains {
                 return false;
             }
-        }
+            offset += 1;
+        } }
         true
+    }
     }
 
     kernel_fn! {

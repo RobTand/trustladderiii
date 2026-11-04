@@ -164,6 +164,8 @@ impl World {
         ] {
             kernel_snapshot! { before_metric = unseen_prefix(seen@, seen@.len())
                 * (self.dependencies@.len() + 1) + pending@.len() }
+            kernel_snapshot! { before_unseen = unseen_prefix(seen@, seen@.len()) }
+            kernel_snapshot! { before_pending = pending@.len() }
             let Some(node) = pending.pop() else { return false; };
             if node == to {
                 return true;
@@ -176,6 +178,16 @@ impl World {
             }
             kernel_proof! { visit_reduces_unseen(seen@, index as int, seen@.len()); }
             seen[index] = true;
+            kernel_proof! {
+                assert(unseen_prefix(seen@, seen@.len()) + 1 == before_unseen@);
+                assert(pending@.len() + 1 == before_pending@);
+                let u = unseen_prefix(seen@, seen@.len());
+                let d = self.dependencies@.len();
+                let p = pending@.len();
+                assert((u + 1) * (d + 1) + (p + 1)
+                    == u * (d + 1) + p + d + 2) by(nonlinear_arith);
+                assert(u * (d + 1) + p + d < before_metric@);
+            }
             let mut edge = 0usize;
             kernel_while! { (edge < self.dependencies.len()) [
                 invariant edge <= self.dependencies.len(), edges_indexable(*self),

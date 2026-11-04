@@ -440,6 +440,14 @@ impl Node {
 
 #[cfg(verus_keep_ghost)]
 verus! {
+/// #771: the subset of consistency needed to bound settle's scratch scans.
+/// Cleanup releases the pool at its first step and its slot at Release.
+pub(super) open spec fn settle_shape(n: Node) -> bool {
+    (n.phase is Closed ==> !n.pool && !n.holds)
+        && (n.phase is Stopping && n.pos >= 1 ==> !n.pool)
+        && (n.phase is Stopping && n.pos >= 4 ==> !n.holds)
+}
+
 pub(super) open spec fn advance_pre(n: Node, ticket: u64, out_len: usize) -> bool {
     out_len as int + 2 <= OUTBOX as int
         && n.generation as int + generation_capacity(n) <= u64::MAX as int
@@ -454,6 +462,8 @@ pub(super) open spec fn advance_pre(n: Node, ticket: u64, out_len: usize) -> boo
 pub(super) closed spec fn advance_post(before: Node, after: Node,
     ticket_before: u64, ticket_after: u64, changed: bool) -> bool {
     (changed ==> internal_height(after) < internal_height(before))
+    && after.repo == before.repo && after.footprint == before.footprint
+    && (settle_shape(before) ==> settle_shape(after))
     && distance(after) <= distance(before)
     && (changed ==> 4 * distance(after) + pending_rank(after)
         < 4 * distance(before) + pending_rank(before))

@@ -820,9 +820,16 @@ impl Priority {
         *self == Priority::Unranked
     }
 
-    /// 0 for P0 through 4 for unranked.
-    pub fn rank(self) -> u8 {
+    kernel_fn! {
+    /// Q39 / #771: 0 for P0 through 4 for unranked, in pool priority order.
+    pub fn rank(self) -> (result: u8) [
+        ensures result == match self {
+            Priority::P0 => 0u8, Priority::P1 => 1u8, Priority::P2 => 2u8,
+            Priority::P3 => 3u8, Priority::Unranked => 4u8,
+        },
+    ] {
         self as u8
+    }
     }
 }
 
@@ -2218,6 +2225,9 @@ kernel_fn! {
     requires old(m).credit.merge_credited || old(m).credit.earned < u32::MAX,
         old(out).len + 2 <= OUTBOX,
     ensures final(m).phase == Phase::Closed(outcome), final(m).pos == 0,
+        *final(m) == (Node { phase: Phase::Closed(outcome), pos: 0, ticket: None,
+            credit: Credit { earned: final(m).credit.earned,
+                merge_credited: final(m).credit.merge_credited, ..old(m).credit }, ..*old(m) }),
         final(m).ticket.is_none(),
         final(m).generation == old(m).generation, final(m).next_seq == old(m).next_seq,
         final(m).credit.earned as int == old(m).credit.earned as int
@@ -2503,7 +2513,11 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         run_failed(w, i, out);
         return;
     }
+    kernel_snapshot! { before_operation = *w }
     end_operation(&mut w.nodes[i]);
+    kernel_proof! {
+        footprint::valid_under_table_growth(before_operation@, *w, w.nodes@[i as int].footprint);
+    }
     match reply {
         Reply::MakerNeedsFiles { files, fits } => reply_files(w, i, files, fits, out),
         _ => reply_transition(w, i, reply, out),
@@ -2588,6 +2602,25 @@ fn reply_transition(w: &mut World, i: usize, reply: Reply,
 }
 
 kernel_fn! {
+/// Ingest reply rows / #771: initialize the same one-time deposit before audit.
+fn finish_ingest(w: &mut World, i: usize, size: u8, early_end: Option<EarlyEnd>)
+    -> (result: ()) [
+    requires i < old(w).nodes@.len(),
+        node_headroom(old(w).nodes@[i as int]),
+    ensures reply_bounds(*old(w), *final(w), i as int, 0, 0),
+] proof [reveal(reply_bounds);] {
+    let m = &mut w.nodes[i];
+    if !m.credit.ready {
+        m.credit.ready = true;
+        m.credit.start = size as u32 + RESERVE;
+    }
+    m.early_end = early_end;
+    set_phase(m, Phase::Auditing);
+    w.withhold_dependency_credit(i);
+}
+}
+
+kernel_fn! {
 /// Reply rows / #771: one phase change, at most one paid credit and one question.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 fn reply_ingest(w: &mut World, i: usize, reply: Reply,
@@ -2601,24 +2634,10 @@ fn reply_ingest(w: &mut World, i: usize, reply: Reply,
 ] proof [reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::IngestDone { size } => {
-            let m = &mut w.nodes[i];
-            if !m.credit.ready {
-                m.credit.ready = true;
-                m.credit.start = size as u32 + RESERVE;
-            }
-            m.early_end = None;
-            set_phase(m, Phase::Auditing);
-            w.withhold_dependency_credit(i);
+            finish_ingest(w, i, size, None);
         }
         Reply::IngestEarlyEnd(e) => {
-            let m = &mut w.nodes[i];
-            if !m.credit.ready {
-                m.credit.ready = true;
-                m.credit.start = 1 + RESERVE;
-            }
-            m.early_end = Some(e);
-            set_phase(m, Phase::Auditing);
-            w.withhold_dependency_credit(i);
+            finish_ingest(w, i, 1, Some(e));
         }
         Reply::AuditAgrees => match w.nodes[i].early_end {
             Some(e) => enter_stopping(&mut w.nodes[i], e.outcome()),
@@ -3688,7 +3707,23 @@ struct AdvanceContext {
     slot: bool,
 }
 
-fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
+kernel_fn! {
+/// #771: source-connected scheduler wrapper. Context queries are read at the
+/// original branches; the verified local transition writes only this node.
+fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: bool) [
+    requires i < old(w).nodes@.len(), i <= u64::MAX as int,
+        scheduling_safe(*old(w)),
+        advance_pre(old(w).nodes@[i as int], old(w).next_ticket, old(out).len),
+    ensures advance_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
+            old(w).next_ticket, final(w).next_ticket, result),
+        final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
+        final(w).next_question == old(w).next_question,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+] {
     let n = &w.nodes[i];
     let mut context = AdvanceContext {
         node: i,
@@ -3714,6 +3749,7 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
     }
     advance_node(&mut w.nodes[i], &mut w.next_ticket, context, out)
 }
+}
 
 kernel_fn! {
         /// A paused leaf starts nothing new. In a holding phase it gives back its slot
@@ -3723,6 +3759,8 @@ kernel_fn! {
     fn pause_node(m: &mut Node) -> (result: bool) [
     requires holding(old(m).phase) ==> old(m).generation < u64::MAX,
     ensures final(m).generation as int <= old(m).generation as int + 1,
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+        final(m).pool == old(m).pool,
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).question == old(m).question,
         final(m).paused == old(m).paused, final(m).waiting_incident == old(m).waiting_incident,
@@ -3844,21 +3882,58 @@ fn admits(w: &World, repo: RepoId) -> (result: bool) [
 }
 }
 
-fn slot_free(w: &World, i: usize) -> bool {
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #771: storage and scratch-scan conditions read by the scheduling queries.
+spec fn scheduling_safe(w: World) -> bool {
+    footprint::ordered_table(w)
+        && (forall|j: int| 0 <= j < w.nodes@.len()
+            ==> footprint::valid_footprint(w, w.nodes@[j].footprint)
+                && ((w.nodes@[j].holds || w.nodes@[j].pool)
+                    ==> !(w.nodes@[j].phase is Closed)))
+        && open_prefix(w.nodes@, w.nodes@.len()) <= u32::MAX as int
+}
+
+
+}
+
+kernel_fn! {
+/// Q30 / #771: a request has a free slot when no other request holds one.
+/// The full scan still rejects overlaps and saturated widths at their old sites.
+fn slot_free(w: &World, i: usize) -> (result: bool) [
+    requires i < w.nodes@.len(), scheduling_safe(*w),
+    ensures (w.nodes@[i as int].repo.0 < w.gates@.len()
+        && w.gates@[w.nodes@[i as int].repo.0 as int].w > 0
+        && (forall|j: int| 0 <= j < w.nodes@.len() && j != i ==> !w.nodes@[j].holds))
+        ==> result,
+] {
     let me = &w.nodes[i];
-    let Some(gate) = me.repo.index().and_then(|r| w.gates.get(r)) else {
-        return false;
-    };
+    let Some(repo) = me.repo.index() else { return false; };
+    let Some(gate) = w.gates.get(repo) else { return false; };
     let mut holders = 0u32;
-    for (j, n) in w.nodes.iter().enumerate() {
+    let mut j = 0usize;
+    kernel_while! { (j < w.nodes.len()) [
+        invariant j <= w.nodes.len(), i < w.nodes.len(), scheduling_safe(*w),
+            holders as int <= open_prefix(w.nodes@, j as nat),
+            ((forall|k: int| 0 <= k < w.nodes@.len() && k != i ==> !w.nodes@[k].holds)
+                ==> holders == 0),
+        decreases w.nodes.len() - j,
+    ] {
+        let n = &w.nodes[j];
+        kernel_proof! {
+            reveal(open_prefix);
+            open_prefix_monotone(w.nodes@, j as nat + 1, w.nodes@.len());
+        }
         if j != i && n.holds && n.repo == me.repo {
             if !w.footprints_disjoint(n.footprint, me.footprint) {
                 return false;
             }
             holders += 1;
         }
-    }
+        j += 1;
+    } }
     holders < gate.w as u32
+}
 }
 
 /// A node's place in the agent pool's line (Q39), lowest first: its priority,
@@ -3868,43 +3943,113 @@ pub fn pool_key(n: &Node) -> Option<(Priority, u64)> {
     Some((n.priority, ticket))
 }
 
+#[cfg(verus_keep_ghost)]
+verus! {
+spec fn priority_number(priority: Priority) -> nat {
+    match priority {
+        Priority::P0 => 0, Priority::P1 => 1, Priority::P2 => 2,
+        Priority::P3 => 3, Priority::Unranked => 4,
+    }
+}
+
+spec fn pool_precedes(a: Node, b: Node) -> bool {
+    !(a.phase is Ready) && match (a.ticket, b.ticket) {
+        (Some(theirs), Some(mine)) => priority_number(a.priority) < priority_number(b.priority)
+            || (a.priority == b.priority && theirs < mine),
+        _ => false,
+    }
+}
+
+spec fn oldest_waiter(w: World, i: int) -> bool {
+    w.nodes@[i].ticket.is_some() && forall|j: int| 0 <= j < w.nodes@.len() ==>
+        if w.nodes@[i].phase is Ready {
+            !(w.nodes@[j].phase is Ready) || w.nodes@[j].repo != w.nodes@[i].repo
+                || match w.nodes@[j].ticket {
+                    None => true, Some(theirs) => theirs >= w.nodes@[i].ticket.unwrap(),
+                }
+        } else { !pool_precedes(w.nodes@[j], w.nodes@[i]) }
+}
+}
+
+kernel_fn! {
+/// Q39 / #771: the declared priority order followed by the older pool ticket.
+fn earlier_in_pool(a: &Node, b: &Node) -> (result: bool) [
+    ensures result == pool_precedes(*a, *b),
+] {
+    if matches!(a.phase, Phase::Ready(_)) { return false; }
+    match (a.ticket, b.ticket) {
+        (Some(theirs), Some(mine)) => a.priority.rank() < b.priority.rank()
+            || (a.priority == b.priority && theirs < mine),
+        _ => false,
+    }
+}
+}
+
+kernel_fn! {
+/// Q30 / #771: this is the original inner overlap scan, with explicit indices.
+// The pinned Verus frontend requires nested if-let instead of let chains.
+#[allow(clippy::collapsible_if)]
+fn older_overlap(w: &World, i: usize, ticket: u64) -> (result: bool) [
+    requires i < w.nodes@.len(), scheduling_safe(*w),
+] {
+    let waiter = &w.nodes[i];
+    let mut index = 0usize;
+    kernel_while! { (index < w.nodes.len()) [
+        invariant index <= w.nodes.len(), i < w.nodes.len(), scheduling_safe(*w),
+        decreases w.nodes.len() - index,
+    ] {
+        let older = &w.nodes[index];
+        if matches!(older.phase, Phase::Ready(_)) && older.repo == waiter.repo {
+            if let Some(theirs) = older.ticket {
+                if theirs < ticket && !w.footprints_disjoint(older.footprint, waiter.footprint) {
+                    return true;
+                }
+            }
+        }
+        index += 1;
+    } }
+    false
+}
+}
+
+kernel_fn! {
 /// Older slot waiters block runnable or overlapping younger leaves.
-/// The agent pool goes strictly by priority, then ticket (Q39).
-fn first_in_line(w: &World, i: usize) -> bool {
+/// Q30/Q39 / #771: the oldest waiter is first in its actual executable line.
+fn first_in_line(w: &World, i: usize) -> (result: bool) [
+    requires i < w.nodes@.len(), scheduling_safe(*w),
+    ensures oldest_waiter(*w, i as int) ==> result,
+] {
     let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };
     if !matches!(me.phase, Phase::Ready(_)) {
-        return !w.nodes.iter().any(|n| {
-            !matches!(n.phase, Phase::Ready(_))
-                && n.ticket
-                    .is_some_and(|theirs| (n.priority, theirs) < (me.priority, mine))
-        });
+        let mut index = 0usize;
+        kernel_while! { (index < w.nodes.len()) [
+            invariant index <= w.nodes.len(), i < w.nodes.len(),
+            decreases w.nodes.len() - index,
+        ] {
+            if earlier_in_pool(&w.nodes[index], me) { return false; }
+            index += 1;
+        } }
+        return true;
     }
     let mut first_runnable = mine;
-    for (j, waiter) in w.nodes.iter().enumerate() {
-        let Some(theirs) = waiter.ticket else {
-            continue;
-        };
+    let mut j = 0usize;
+    kernel_while! { (j < w.nodes.len()) [
+        invariant j <= w.nodes.len(), i < w.nodes.len(), scheduling_safe(*w),
+            oldest_waiter(*w, i as int) ==> first_runnable == mine,
+        decreases w.nodes.len() - j,
+    ] {
+        let index = j;
+        let waiter = &w.nodes[j];
+        j += 1;
+        let Some(theirs) = waiter.ticket else { continue; };
         if !matches!(waiter.phase, Phase::Ready(_)) || waiter.repo != me.repo || theirs >= mine {
             continue;
         }
-        if !w.footprints_disjoint(waiter.footprint, me.footprint) {
-            return false;
-        }
-        if theirs >= first_runnable || !slot_free(w, j) {
-            continue;
-        }
-        // The oldest candidate with free files and no earlier overlap is
-        // first in line. It blocks every younger ticket without recursion.
-        let older_overlap = w.nodes.iter().any(|older| {
-            matches!(older.phase, Phase::Ready(_))
-                && older.repo == me.repo
-                && older.ticket.is_some_and(|ticket| ticket < theirs)
-                && !w.footprints_disjoint(older.footprint, waiter.footprint)
-        });
-        if !older_overlap {
-            first_runnable = theirs;
-        }
-    }
+        if !w.footprints_disjoint(waiter.footprint, me.footprint) { return false; }
+        if theirs >= first_runnable || !slot_free(w, index) { continue; }
+        if !older_overlap(w, index, theirs) { first_runnable = theirs; }
+    } }
     first_runnable == mine
+}
 }
