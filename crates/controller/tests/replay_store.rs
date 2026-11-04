@@ -319,7 +319,7 @@ fn compact_commit_crash_safety() {
     let mut db = support::Database::start();
     let root = tempfile::tempdir().unwrap();
     for point in ["EventWritten", "RowsWritten", "BeforeCommit", "AfterCommit"] {
-        let settings = db.create("compact_crash");
+        let settings = db.create(&format!("compact_crash_{}", point.to_lowercase()));
         let mut controller = Controller::open(
             Store::open(&settings).unwrap(),
             adapters::simulation(root.path()).unwrap(),

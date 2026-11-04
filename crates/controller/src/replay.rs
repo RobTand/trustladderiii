@@ -199,14 +199,12 @@ pub fn run(reader: &mut tl3_store::Reader, from: Option<&str>) -> crate::Result<
             }
             if let Some(compact) = record.receipt.result.get("kernel_delta") {
                 let expected = compact["previous_kernel_revision"].as_i64();
-                if last_kernel_revision.is_some()
-                    && expected.is_some()
-                    && expected != last_kernel_revision
+                if let (Some(prior), Some(expected)) = (last_kernel_revision, expected)
+                    && expected != prior
                 {
                     return Err(Error::Replay(format!(
-                        "unverifiable from revision {}: missing kernel delta after revision {}",
-                        record.receipt.revision.get(),
-                        last_kernel_revision.unwrap()
+                        "unverifiable from revision {}: missing kernel delta after revision {prior}",
+                        record.receipt.revision.get()
                     )));
                 }
             }
