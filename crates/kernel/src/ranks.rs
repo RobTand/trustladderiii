@@ -118,10 +118,13 @@ pub(super) open spec fn base_distance(n: Node) -> nat {
 pub(super) open spec fn effect_distance(n: Node) -> int {
     match n.effect {
         None => 0int,
-        Some(e) => 1 - if !e.cancelling && match current_item(n) {
-            Some(Item::Do(k) | Item::Teardown(k)) => k == e.kind,
-            _ => false,
-        } { 2int } else { 0int },
+        Some(e) => if e.cancelling { 1int } else {
+            match current_item(n) {
+                Some(Item::Do(k)) => if k == e.kind { -1int } else { 1int },
+                Some(Item::Teardown(k)) => if k == e.kind { -1int } else { 1int },
+                _ => 1int,
+            }
+        },
     }
 }
 
@@ -218,7 +221,7 @@ impl Node {
         #[allow(clippy::collapsible_if)]
         pub fn distance(&self) -> (result: u64) [
             ensures result as int == super::ranks::distance(*self), result <= 4096,
-        ] {
+        ] proof [reveal(effect_distance); reveal(current_item);] {
             if self.phase.is_closed() {
                 return 0;
             }
