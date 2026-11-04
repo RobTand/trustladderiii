@@ -2629,12 +2629,19 @@ fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
 }
 }
 
-/// Q54 (Rob, 2026-11-02): under `fail_fast`, a step that would retry the work
-/// stops the request for TL3 review instead. It spends no credit and asks Rob
-/// nothing; the summary offers `restart`, as for any stop (Q49).
-fn stop_for_review(m: &mut Node, step: ReviewStop) {
+kernel_fn! {
+/// Q54 / #771: stopping for review spends no credit and allocates at most one generation.
+/// Under `fail_fast`, a step that would retry the work stops for TL3 review.
+/// It asks Rob nothing; the summary offers `restart`, as for any stop (Q49).
+fn stop_for_review(m: &mut Node, step: ReviewStop) -> (result: ()) [
+    requires old(m).generation < u64::MAX,
+    ensures final(m).generation as int <= old(m).generation as int + 1,
+        final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
+        final(m).last_cmd == old(m).last_cmd, final(m).review_stop == Some(step),
+] {
     m.review_stop = Some(step);
     enter_stopping(m, Outcome::Stopped);
+}
 }
 
 fn failed_round(w: &mut World, i: usize, step: ReviewStop, out: &mut Outbox) {
@@ -3068,7 +3075,19 @@ fn on_command(w: &mut World, i: usize, id: u64, command: Command, out: &mut Outb
     }
 }
 
-fn allowed(kind: QKind, answer: Answer) -> bool {
+kernel_fn! {
+/// Question answer rows / #771: cleanup, continuation and funding permissions.
+fn allowed(kind: QKind, answer: Answer) -> (result: bool) [
+    ensures result == match (kind, answer) {
+        (QKind::CleanupFailed, Answer::Retry | Answer::MarkHandled) => true,
+        (QKind::CleanupFailed, _) => false,
+        (_, Answer::ChangeRequest | Answer::Stop) => true,
+        (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue) => true,
+        (QKind::CantMeet, Answer::TryAgain) => true,
+        (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
+        _ => false,
+    },
+] {
     match (kind, answer) {
         (QKind::CleanupFailed, Answer::Retry | Answer::MarkHandled) => true,
         (QKind::CleanupFailed, _) => false,
@@ -3078,6 +3097,7 @@ fn allowed(kind: QKind, answer: Answer) -> bool {
         (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
         _ => false,
     }
+}
 }
 
 fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer, out: &mut Outbox) {
@@ -3144,8 +3164,39 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer, out: &mut Outbox)
     }
 }
 
-/// Carry on to the question's continuation, paying what it costs.
-fn go_on(w: &mut World, i: usize, q: Question, deposit: u8, out: &mut Outbox) {
+kernel_fn! {
+/// Question continuation rows / #771: fund and pay before changing phase.
+fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX, q.cost <= 1,
+        old(w).nodes@[i as int].generation < u64::MAX,
+        old(w).nodes@[i as int].credit.start as int
+            + old(w).nodes@[i as int].credit.earned as int
+            + old(w).nodes@[i as int].credit.added as int
+                >= old(w).nodes@[i as int].credit.spent as int,
+        old(w).nodes@[i as int].credit.withheld ==> q.cost == 0,
+        old(w).nodes@[i as int].credit.added as int + 255 <= u32::MAX as int,
+        old(w).nodes@[i as int].credit.spent < u32::MAX,
+    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit.start == old(w).nodes@[i as int].credit.start,
+        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
+        final(w).nodes@[i as int].credit.added as int <= old(w).nodes@[i as int].credit.added as int + 255,
+        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        final(w).nodes@[i as int].question.is_none(),
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question == old(w).next_question,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 1,
+] {
     let m = &mut w.nodes[i];
     m.credit.fund_and_pay(deposit, q.cost);
     m.question = None;
@@ -3165,6 +3216,7 @@ fn go_on(w: &mut World, i: usize, q: Question, deposit: u8, out: &mut Outbox) {
         Cont::Nowhere => enter_stopping(m, Outcome::Stopped),
     }
 }
+}
 
 kernel_fn! {
 /// Cleanup question row / #771: handling cleanup allocates no monotone counter.
@@ -3173,6 +3225,7 @@ fn mark_handled(m: &mut Node) -> (result: ()) [
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).question == old(m).question,
         final(m).phase == old(m).phase,
+        final(m).last_cmd == old(m).last_cmd,
 ] {
     if let Some(Item::Teardown(kind)) = m.current() {
         match kind {
