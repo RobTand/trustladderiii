@@ -29,6 +29,7 @@ filegroup(
     srcs = glob([
         "tl3_workers/prompts/*.md",
         "tl3_workers/evaluation/*.json",
+        "tl3_workers/policy.json",
     ]) + [":schemas"],
     visibility = ["//visibility:public"],
 )

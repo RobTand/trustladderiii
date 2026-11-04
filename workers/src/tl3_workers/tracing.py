@@ -24,7 +24,6 @@ STRING_CHARS = 8192
 ITEM_BYTES = 16384
 # Text kept beyond each cut, so a label or prefix outside the shown window still
 # redacts the value inside it.
-CONTEXT = 1024
 # Every span keeps up to this much content before the newest spans take the rest.
 FLOOR_BYTES = 4096
 # Spans beyond the first and last of these are omitted from very long runs.
@@ -32,168 +31,62 @@ FIRST_SPANS, LAST_SPANS = 1024, 3072
 # Unredacted, bounded content held until the run ends. Older spans shrink to the
 # floor beyond this, which the final allocation would give them anyway.
 SHAPED_BYTES = 4 * TRACE_BYTES
-TOKEN_FIELDS = ('input_tokens', 'output_tokens', 'total_tokens',
-                'cache_read_input_tokens', 'cache_creation_input_tokens')
-REDACTED = '[REDACTED]'
 LEAD_NOTE = '[truncated: earlier text omitted]\n'
 
-# A label names a secret when one of its words does. Words are split at
-# underscores, hyphens, dots and camel case, so `input_tokens` and `TokenBucket`
-# don't count as `token`, while `PGPASSWORD` and `_authToken` do.
-LABEL_WORDS = re.compile(r'[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+')
-SECRET_PARTS = ('password', 'passwd', 'passphrase', 'secret', 'credential', 'apikey', 'privatekey',
-                'accesskey', 'secretkey', 'accesstoken', 'authtoken', 'refreshtoken', 'sessionid',
-                'bearer', 'cookie', 'authorization', 'pgpass')
-SECRET_WORDS = {'cred', 'creds', 'jwt', 'signature', 'passcode'}
-# Short or common words that also name ordinary things. Their values must look random.
-WEAK_WORDS = {'key', 'session', 'pass', 'auth', 'pwd', 'pw', 'sig'}
-KEY_QUALIFIERS = {'api', 'private', 'access', 'secret', 'signing', 'account', 'master', 'encryption',
-                  'subscription', 'model', 'app', 'client', 'license', 'auth', 'webhook', 'ssh', 'deploy',
-                  'service', 'consumer', 'storage', 'session'}
-# Words that make a label describe a secret rather than hold one.
-NOT_SECRET = {'count', 'counts', 'counter', 'budget', 'limit', 'limits', 'len', 'length', 'size', 'max',
-              'min', 'type', 'types', 'kind', 'url', 'uri', 'endpoint', 'path', 'paths', 'file', 'files',
-              'dir', 'name', 'names', 'bucket', 'details', 'usage', 'metadata', 'estimate', 'ttl', 'expiry',
-              'expires', 'expiration', 'lifetime', 'field', 'fields', 'prefix', 'regex', 'pattern', 'policy',
-              'scope', 'scopes', 'store', 'manager', 'provider', 'rate', 'window', 'version', 'hint', 'label',
-              'ref', 'reset', 'required', 'enabled', 'rotation', 'format', 'encoding', 'mode', 'method',
-              'timeout', 'interval', 'stdin', 'env', 'index', 'offset', 'error', 'errors', 'message',
-              'prompt', 'description', 'help', 'example', 'placeholder', 'header', 'is', 'has', 'load',
-              'helper'}
-# Values that say they are not real.
-PLACEHOLDERS = {'fake', 'fixture', 'test', 'dummy', 'example', 'unused', 'placeholder', 'sample', 'changeme',
-                'redacted', 'disposable', 'mock', 'stub', 'invalid'}
-KEYWORDS = {'lambda', 'None', 'True', 'False', 'null', 'nil', 'true', 'false', 'none', 'undefined', 'self',
-            'this', 'cls', 'def', 'return', 'if', 'else', 'elif', 'not', 'and', 'or', 'in', 'is', 'await',
-            'async', 'new', 'yield', 'pass', 'fn', 'let', 'const', 'var', 'mut', 'ref', 'impl', 'match',
-            'Some', 'Ok', 'Err', 'required', 'optional', 'continue', 'break', 'raise', 'try', 'except',
-            'finally', 'with', 'for', 'while', 'del', 'global', 'nonlocal', 'assert', 'import', 'from', 'class',
-            'loop', 'unsafe', 'use', 'mod', 'pub', 'static', 'enum', 'struct', 'trait', 'where', 'dyn', 'move'}
-TYPE_NAMES = {'str', 'bytes', 'int', 'float', 'bool', 'dict', 'list', 'tuple', 'set', 'object', 'Any',
-              'Optional', 'Union', 'Literal', 'String', 'Vec', 'Option', 'Box', 'Self', 'usize', 'u8', 'u16',
-              'u32', 'u64', 'i32', 'i64', 'string', 'number', 'boolean', 'any', 'unknown', 'void', 'Path',
-              'PathBuf', 'SecretStr', 'SecretString', 'SecretBytes', 'expr', 'ident', 'ty', 'tt', 'pat',
-              'path', 'literal', 'block', 'stmt', 'item', 'meta', 'vis', 'lifetime'}
-REFERENCE = re.compile(r'[${<]|%[({A-Za-z_]|\*{3}|\.{3}')
-TEMPLATE = re.compile(r'\$\{|\{\{|\$\(|\{[\w.]*\}|%\(\w+\)s|::')
-SCHEME_NAME = re.compile(r'(?i)bearer|basic|token|digest|negotiate|ntlm|apikey|aws4-hmac-sha256')
-# A path segment that reads as a name, which a random token rarely contains.
-PATH_SEGMENT = re.compile(r'[a-z]{4,}|[a-z]+(?:[-_][a-z0-9]+)+')
-VERSION = re.compile(r'\d{1,3}|\d{1,4}(?:\.\d{1,4}){1,3}')
-# A variable or attribute name passed as a value, as in `token = runtime`.
-CODE_NAME = re.compile(r'[a-z_][a-z0-9_]*+|[a-z]++(?:[A-Z][a-z]{2,}+\d*+)++')
-PATHLIKE = re.compile(r'(?:~|\.{1,2})?/[\w.@-]*+(?:/[\w.@-]*+)*+')
-DOTTED = re.compile(r'[A-Za-z_]\w*+(?:\.[A-Za-z_]\w*+)++')
-NUMBER = re.compile(r'-?\d{1,6}(?:\.\d+)?|-?\d+\.\d+')
-IDENTIFIER = re.compile(r'[A-Za-z_]\w*+')
-WORD = re.compile(r'[A-Za-z][a-z]*+')
-
-# JSON inside JSON puts a literal backslash before each quote and whitespace escape.
-SPACE = r'(?:[ \t\r\n]|\\+[nrt])*+'
-QUOTED = r"""(?:\\+"[^"\r\n]*+"|"(?:[^"\\\r\n]|\\.)*+"|\\*'[^'\r\n]*+'|`[^`\r\n]*+`)"""
-# Values are bounded lookaheads: a rejected value is scanned again for labels
-# of its own, and a run of labels costs at most the bound each.
-BOUNDED = (r"""(?:[rbfuRBFU]{1,2}(?=["'])|)(?:\\+"[^"\r\n]{0,4096}+"|"(?:[^"\\\r\n]|\\.){0,4096}+"""
-           r""""|\\*'[^'\r\n]{0,4096}+'|`[^`\r\n]{0,4096}+`)""")
-# Identifiers are matched possessively and judged in Python, so a long run of
-# word characters is scanned once.
-LABELLED = re.compile(
-    r'(?<![\w.$\\-])(?P<q>\\*["\'`]|[*_]{1,2})?\$?(?P<l>[A-Za-z_][\w.-]*+)(?:\\*["\'`]|\*{1,2})?[ \t]*+'
-    r'(?P<a>:(?![:=])|=(?![=>~]))[*_]{0,2}(?=' + SPACE + '(?P<v>' + BOUNDED
-    + r"""|[^\s"'`\\,;}&|\])<>]{1,512}+))""")
-FLAG = re.compile(r'(?<![\w-])--?(?P<l>[A-Za-z][\w-]*+)(?=(?:=|[ \t]++)(?P<v>' + BOUNDED
-                  + r"""|[^\s"'`]{1,512}+))""")
-TABLE = re.compile(r'(?m)(?:^[ \t]*+|(?<![\w|]))\|[ \t]++(?P<l>[^|\n]{1,64}?)[ \t]++\|[ \t]++'
-                   r'(?P<v>[^|\s][^|\n]{0,254}?)[ \t]++(?=\|)')
-BLOCK_SCALAR = re.compile(
-    r'(?m)^(?P<i>[ \t]*+)(?:-[ \t]++)?["\']?(?P<l>[\w.-]++)["\']?[ \t]*+:[ \t]*+[|>][-+0-9]*+[ \t]*+'
-    r'(?:#[^\n]*+)?\r?\n(?P<v>(?:(?P=i)[ \t]++[^\n]*+(?:\n|\Z)|[ \t]*+\r?\n)++)')
-NAME_VALUE = re.compile(r'\bname:[ \t]*+["\']?(?P<l>[\w.-]++)["\']?[ \t]*+\r?\n[ \t]*+(?:-[ \t]++)?'
-                        r'value:[ \t]*+(?P<v>' + QUOTED + r'|[^\s#]++)')
-SECTION = re.compile(r'(?m)(?:^[ \t]*+|(?<![\w\]]))\[\[?(?P<l>[^\]\n"\',]{1,64})\]\]?[ \t]*+(?:#[^\n]*+)?$')
-SECTION_VALUE = re.compile(r'(?m)^[ \t]*+["\']?[\w.-]++["\']?[ \t]*+[=:][ \t]*+(?P<v>[^\s#][^\n]*+)')
-AWS_SET = re.compile(r'\baws[ \t]++configure[ \t]++set[ \t]++(?P<l>[\w.-]++)[ \t]++(?P<v>[^\s\'"`]++)')
-AUTH_HEADER = re.compile(
-    r'(?i)(?<![\w-])(?:proxy-)?authorization(?:\\*["\'])?[ \t]*+[:=](?![:=])(?:[ \t]|\\t)*+'
-    r'(?P<v>' + QUOTED + r'|(?:(?!\\[nr])[^\r\n])++)'
-    r'|(?<![\w-])(?:set-)?cookie(?:\\*["\'])?[ \t]*+[:=](?![:=])(?:[ \t]|\\t)*+'
-    r'(?P<c>' + QUOTED + r'|(?:(?!\\[nr])[^\r\n])++)')
-SCHEME = re.compile(r'(?:\\*["\'])?(?i:bearer|basic|token)[ \t]++([^\s"\'\\,;)]*+)')
-BEARER = re.compile(r'(?i)\b(?:bearer|basic)[ \t]++(?P<v>[A-Za-z0-9._~+/-]{8,}+=*+)')
-PRIVATE_HEADER = re.compile(r'-----BEGIN (?:[A-Z0-9]++ )*?PRIVATE KEY(?: BLOCK)?-----')
-PRIVATE_END = re.compile(r'-----END (?:[A-Z0-9]++ )*?PRIVATE KEY(?: BLOCK)?-----')
-# Without an END marker, a key runs while lines look like key material or PEM headers.
-KEY_LINES = re.compile(r'(?:(?:\r?\n|\\r?\\n)(?:[ \t]*+(?:[A-Za-z0-9+/=]{1,128}+|[\w-]{1,32}+:'
-                       r'[^\r\n\\]{0,200}+)(?=[ \t]|\r?\n|\\[rn]|["\']|$))?)*+')
-TOKEN_CHAR = re.compile(r'[A-Za-z0-9+/=_.~:@%-]')
-NOT_TOKEN = re.compile(r'[^A-Za-z0-9+/=_.~:@%-]')
-# Long tokens with mixed character classes and few readable words look random.
-CANDIDATE = re.compile(r'(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{24,}+=*+')
-WORDISH = re.compile(r'[A-Z]?[a-z]{3,}|[A-Z]{4,}(?![a-z])')
-SAFE_TOKEN = re.compile(r'(?i)[0-9a-f]{40}|[0-9a-f]{64}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
-                        r'|[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}|tr-[0-9a-f]{32}|prismabuild-job[0-9a-f]{32}'
-                        r'|[A-Za-z]{1,16}-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
-                        r'|sha(?:1|224|256|384|512)-[A-Za-z0-9+/]+=*')
-# Names that hold credentials whatever their extension.
-SENSITIVE_NAME = re.compile(
-    r'(?i)\.env[^/]*|[^/]*\.env|env(?:\.[^/]*)?|[^/]*\.(?:pem|key|ppk|p12|pfx|jks|keystore|p8|pk8)'
-    r'|[^/]*\.tfvars(?:\.json)?|[^/]*\.tfstate(?:\.backup)?|\.netrc|_netrc|\.npmrc|\.pypirc|\.pgpass|\.htpasswd'
-    r'|\.my\.cnf|\.dockercfg|\.s3cfg|\.boto|\.vault_pass|[^/]*vault[-_.]pass[^/]*|\.git-credentials|\.token'
-    r'|token\.json|auth\.json'
-    r'|service-?account[^/]*\.json|[^/]*sa-key[^/]*\.json|[^/]*kubeconfig[^/]*|shadow|wp-config\.php')
-# Broad names and directories, which also name ordinary source and docs.
-SENSITIVE_BROAD = re.compile(r'(?i)(?:^|/)(?:secrets?|credentials?|\.ssh|\.gnupg)/'
-                             r'|(?:^|/)(?:id_[^/]*|[^/]*secret[^/]*|[^/]*credentials[^/]*)$')
-SOURCE_FILE = re.compile(r'(?i)\.(?:py|pyi|rs|go|js|jsx|ts|tsx|java|kt|scala|c|h|cc|cpp|hpp|rb|cs|swift|sh'
-                         r'|md|rst|adoc|html|css|csv|tsv|pub)$')
-PATH_KEYS = {'path', 'file', 'file_path', 'filepath', 'filename', 'target_file'}
-CONTENT_KEYS = {'content', 'text', 'result', 'output', 'stdout', 'old', 'new', 'data', 'body', 'lines',
-                'artifact'}
-SKIPPED_KEYS = {'response_metadata', 'additional_kwargs', 'headers'}
-
-# Each pattern redacts group `v` (or `c`), else the whole match. Patterns with a
-# check redact only when it accepts the match.
-PATTERNS = [
-    re.compile(r'Private-Lines:[ \t]*+\d++[ \t]*+\r?\n(?P<v>(?:(?!Private-MAC:)[^\r\n]++\r?\n?)++)'),
-    re.compile(r'\beyJ[A-Za-z0-9_-]*+\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]*+(?:\.[A-Za-z0-9_-]*+){0,2}+'),
-    re.compile(r'\b(?:sk-[A-Za-z0-9_-]{20,}+|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{10,}+|whsec_[A-Za-z0-9+/=]{20,}+'
-               r'|gh[pousr]_[A-Za-z0-9_]{20,}+|github_pat_[A-Za-z0-9_]{20,}+'
-               r'|gl(?:pat|rt|ptt|dt|cbt|soat|ft|imt|oas)-[A-Za-z0-9_-]{16,}+(?:\.[0-9a-z]{2}\.[A-Za-z0-9]{6,}+)?'
-               r'|(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA)[A-Z0-9]{16}|xox[abeprs]-[A-Za-z0-9-]{10,}+'
-               r'|xapp-[A-Za-z0-9-]{10,}+|pypi-[A-Za-z0-9_-]{16,}+|npm_[A-Za-z0-9]{20,}+|hf_[A-Za-z0-9]{20,}+'
-               r'|AIza[A-Za-z0-9_-]{20,}+|SG\.[A-Za-z0-9_-]{10,}+\.[A-Za-z0-9_-]{10,}+|ya29\.[A-Za-z0-9_-]{20,}+'
-               r'|GOCSPX-[A-Za-z0-9_-]{20,}+|1//0[A-Za-z0-9_-]{20,}+|SK[0-9a-fA-F]{32}|key-[0-9a-f]{32}'
-               r'|do[opr]_v1_[a-f0-9]{64}|shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}|dckr_pat_[A-Za-z0-9_-]{20,}+'
-               r'|dapi[a-f0-9]{32}(?:-\d)?|ATATT3[A-Za-z0-9_=-]{20,}+|lin_api_[A-Za-z0-9]{20,}+|sbp_[a-f0-9]{40}'
-               r'|PMAK-[a-f0-9]{24}-[a-f0-9]{24,}+|ntn_[A-Za-z0-9]{20,}+|secret_[A-Za-z0-9]{30,}+'
-               r'|hv[sbr]\.[A-Za-z0-9_-]{20,}+|pat[A-Za-z0-9]{14}\.[a-f0-9]{64}'
-               r'|[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_-]{60,}+'
-               r'|[MNO][A-Za-z0-9_-]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,40})'),
-    # Telegram bot tokens also sit inside URLs, as in /bot123456789:AA...
-    re.compile(r'(?<!\d)\d{8,10}:AA[A-Za-z0-9_-]{30,}+'),
-    # A Netscape cookie jar line ends with the cookie's name and value.
-    re.compile(r'(?<!\S)(?:#HttpOnly_)?\S++\t(?:TRUE|FALSE)\t[^\t\n]*+\t(?:TRUE|FALSE)\t\d++\t[^\t\n]++\t'
-               r'(?P<v>[^\t\n]++)'),
-    # Password hashes from htpasswd, shadow and bcrypt can be cracked offline.
-    re.compile(r'\$(?:apr1|[1256]|y|gy|7)\$[^\s:$]{0,64}\$(?P<v>[./A-Za-z0-9]{16,}+)'),
-    re.compile(r'\$2[abxy]?\$\d\d\$(?P<v>[./A-Za-z0-9]{53})'),
-    re.compile(r'(?i)\bIDENTIFIED[ \t]++(?:WITH[ \t]++\S++[ \t]++)?BY[ \t]++(?:PASSWORD[ \t]*+\(?[ \t]*+)?'
-               r'(?P<v>\'[^\'\n]{1,256}\'|"[^"\n]{1,256}")'),
-    re.compile(r'(?i)\b(?:hooks\.slack\.com/services|discord(?:app)?\.com/api/webhooks|outlook\.office(?:365)?'
-               r'\.com/webhook|(?<![\w-])[\w-]++\.webhook\.office\.com/webhookb2)/[^\s"\'\\]+'),
-    re.compile(r'\bsshpass[ \t]++-p[ \t]*+(?P<v>[^\s\'"`]++)'),
-    re.compile(r'\b(?:docker|podman|buildah|helm|skopeo)(?:[ \t]++registry)?[ \t]++login\b[^\n]{0,200}?'
-               r'[ \t]-p[ \t]++(?P<v>[^\s\'"`]++)'),
-    re.compile(r'\b(?:mysql|mysqldump|mysqladmin|mariadb)\b[^\n]{0,200}?[ \t]-p(?P<v>[^\s\'"`]++)'),
-    re.compile(r'\bhtpasswd\b[^\n]{0,100}?[ \t]-[a-zA-Z]*b[a-zA-Z]*+(?:[ \t]++-[a-zA-Z]++)*+'
-               r'[ \t]++\S++[ \t]++\S++[ \t]++(?P<v>[^\s\'"`]++)'),
-    re.compile(r'(?<![\w-])-pass(?:in|out)?[ \t]++pass:(?P<v>[^\s\'"`]++)'),
-    re.compile(r'\b(?:unzip|zip)\b[^\n]{0,100}?[ \t]-P[ \t]*+(?P<v>[^\s\'"`]++)'),
-    re.compile(r'\b7za?\b[^\n]{0,100}?[ \t]-p(?P<v>[^\s\'"`]++)'),
-    re.compile(r'\blogin[ \t]++\S++[ \t]++password[ \t]++(?P<v>\S++)'),
-    re.compile(r'(?m)^[ \t]*+password[ \t]++(?P<v>\S++)[ \t]*+$'),
-    re.compile(r'(?<!\S)[A-Za-z0-9._*-]++:(?:\d++|\*):[\w.*-]++:[\w.@*-]++:(?P<v>[^\s:]++)(?!\S)'),
-]
+# Generated by `tl3 redaction-policy` from the controller's typed Rust policy.
+POLICY = json.loads(Path(__file__).with_name('policy.json').read_text(encoding='utf-8'))
+CONTEXT = POLICY['context']
+REDACTED = POLICY['redacted']
+LABEL_WORDS = re.compile(POLICY['regex']['LABEL_WORDS'])
+REFERENCE = re.compile(POLICY['regex']['REFERENCE'])
+TEMPLATE = re.compile(POLICY['regex']['TEMPLATE'])
+SCHEME_NAME = re.compile(POLICY['regex']['SCHEME_NAME'])
+PATH_SEGMENT = re.compile(POLICY['regex']['PATH_SEGMENT'])
+VERSION = re.compile(POLICY['regex']['VERSION'])
+CODE_NAME = re.compile(POLICY['regex']['CODE_NAME'])
+PATHLIKE = re.compile(POLICY['regex']['PATHLIKE'])
+DOTTED = re.compile(POLICY['regex']['DOTTED'])
+NUMBER = re.compile(POLICY['regex']['NUMBER'])
+IDENTIFIER = re.compile(POLICY['regex']['IDENTIFIER'])
+WORD = re.compile(POLICY['regex']['WORD'])
+LABELLED = re.compile(POLICY['regex']['LABELLED'])
+FLAG = re.compile(POLICY['regex']['FLAG'])
+TABLE = re.compile(POLICY['regex']['TABLE'])
+BLOCK_SCALAR = re.compile(POLICY['regex']['BLOCK_SCALAR'])
+NAME_VALUE = re.compile(POLICY['regex']['NAME_VALUE'])
+SECTION = re.compile(POLICY['regex']['SECTION'])
+SECTION_VALUE = re.compile(POLICY['regex']['SECTION_VALUE'])
+AWS_SET = re.compile(POLICY['regex']['AWS_SET'])
+AUTH_HEADER = re.compile(POLICY['regex']['AUTH_HEADER'])
+SCHEME = re.compile(POLICY['regex']['SCHEME'])
+BEARER = re.compile(POLICY['regex']['BEARER'])
+PRIVATE_HEADER = re.compile(POLICY['regex']['PRIVATE_HEADER'])
+PRIVATE_END = re.compile(POLICY['regex']['PRIVATE_END'])
+KEY_LINES = re.compile(POLICY['regex']['KEY_LINES'])
+TOKEN_CHAR = re.compile(POLICY['regex']['TOKEN_CHAR'])
+NOT_TOKEN = re.compile(POLICY['regex']['NOT_TOKEN'])
+CANDIDATE = re.compile(POLICY['regex']['CANDIDATE'])
+WORDISH = re.compile(POLICY['regex']['WORDISH'])
+SAFE_TOKEN = re.compile(POLICY['regex']['SAFE_TOKEN'])
+SENSITIVE_NAME = re.compile(POLICY['regex']['SENSITIVE_NAME'])
+SENSITIVE_BROAD = re.compile(POLICY['regex']['SENSITIVE_BROAD'])
+SOURCE_FILE = re.compile(POLICY['regex']['SOURCE_FILE'])
+NEAR_WORD = re.compile(POLICY['regex']['NEAR_WORD'])
+NEAR_TOKEN = re.compile(POLICY['regex']['NEAR_TOKEN'])
+SECRET_DATA = re.compile(POLICY['regex']['SECRET_DATA'])
+TOKEN_FIELDS = tuple(POLICY['words']['TOKEN_FIELDS'])
+SECRET_PARTS = tuple(POLICY['words']['SECRET_PARTS'])
+SECRET_WORDS = set(POLICY['words']['SECRET_WORDS'])
+WEAK_WORDS = set(POLICY['words']['WEAK_WORDS'])
+KEY_QUALIFIERS = set(POLICY['words']['KEY_QUALIFIERS'])
+NOT_SECRET = set(POLICY['words']['NOT_SECRET'])
+PLACEHOLDERS = set(POLICY['words']['PLACEHOLDERS'])
+KEYWORDS = set(POLICY['words']['KEYWORDS'])
+TYPE_NAMES = set(POLICY['words']['TYPE_NAMES'])
+PATH_KEYS = set(POLICY['words']['PATH_KEYS'])
+CONTENT_KEYS = set(POLICY['words']['CONTENT_KEYS'])
+SKIPPED_KEYS = set(POLICY['words']['SKIPPED_KEYS'])
+PATTERNS = [re.compile(pattern) for pattern in POLICY['patterns']]
 
 
 def label_kind(label):
@@ -441,42 +334,8 @@ def check_pair(match, text):
     return match.span('v') if secretish(match['v']) else None
 
 
-CHECKED = [(LABELLED, check_labelled), (FLAG, check_flag), (TABLE, check_table), (BLOCK_SCALAR, check_block),
-           (NAME_VALUE, check_name_value), (AUTH_HEADER, check_header), (BEARER, check_bearer),
-           (AWS_SET, check_aws),
-           # The password is everything up to the last @ before the host, so it may contain @ or /.
-           (re.compile(r'(?i)(?<![\w/])//[^\s/:@]{0,128}:(?!\d++(?:[/?#\s]|$))(?P<v>\S{1,256})@'
-                       r'(?=[^\s@]{0,253}(?:[\s/?#:"\']|$))'), check_url),
-           (re.compile(r'(?<![\w/])//(?P<v>[^\s/:@]{20,128})@'), check_url),
-           (re.compile(r'(?<![\w-])(?:--(?:proxy-)?user|-[uU])(?:=|[ \t]++)[^\s:\'"]++:(?P<v>[^\s\'"`]++)'),
-            check_user),
-           (re.compile(r'\bssh-keygen\b[^\n]{0,100}?[ \t]-N[ \t]++(?P<v>' + QUOTED + r'|[^\s\'"]++)'),
-            check_ssh_keygen),
-           # <password>x</password>, and <property name="db.password">x</property>.
-           (re.compile(r'<(?P<l>[A-Za-z_][\w.:-]{0,63})(?:[ \t][^<>]{0,256})?>(?P<v>[^<>\n]{1,512})'
-                       r'</(?P=l)[ \t]*>'), check_xml),
-           (re.compile(r'<(?P<t>[A-Za-z_][\w.:-]{0,63})[ \t][^<>]{0,256}?\b(?:name|key)[ \t]*=[ \t]*["\']'
-                       r'(?P<l>[^"\'<>]{1,128})["\'][^<>]{0,256}>(?P<v>[^<>\n]{1,512})</(?P=t)[ \t]*>'),
-            check_xml),
-           # {"name": "DB_PASSWORD", "value": "x"} in JSON text, however escaped or laid out.
-           (re.compile(r'(?<!\\)(?P<q>\\*")(?:name|key|Name|Key)(?P=q)' + SPACE + ':' + SPACE + r'(?P=q)'
-                       r'(?P<l>[\w.-]{1,128})(?P=q)' + SPACE + ',' + SPACE + r'(?P=q)(?:value|Value)(?P=q)' + SPACE
-                       + ':' + SPACE + r'(?P<v>' + QUOTED + r'|[^\s,}\]]{1,512})'), check_json_pair),
-           # Login: admin / password
-           (re.compile(r'(?i)\b(?:login|credentials?|creds|user(?:name)?)[ \t]*+:[ \t]*+[^\s/]{1,64}'
-                       r'[ \t]*+/[ \t]*+(?P<v>[^\s/]{1,256})'), check_pair)]
-
-
-# A secret word, then within NEAR_CHARS a quoted or password-like token:
-# "the password for staging is X", WITH PASSWORD 'X', AUTH X, net use ... X.
-NEAR_WORD = re.compile(r'(?i)(?<![\w-])(?:password|passwd|passphrase|pw|secret|token|api[-_ ]?key|credentials?'
-                       r'|requirepass|masterauth|convertto-securestring)(?![\w-])|(?<![\w-])(?-i:AUTH)(?=[ \t])'
-                       r'|(?i:\bnet[ \t]++use)\b')
-NEAR_TOKEN = re.compile(r'(?P<q>["\'`])(?P<qv>[^"\'`\s]{1,256})(?P=q)|(?P<v>[^\s"\'`<>()\[\]{},;|]{1,256})')
-NEAR_CHARS = 48
-# The data of a Kubernetes Secret manifest, where every value is a base64 secret.
-SECRET_DATA = re.compile(r'(?m)^kind:[ \t]*+Secret[ \t]*+$(?:\n(?!kind:)[^\n]*+){0,40}?\n(?P<i>[ \t]*+)'
-                         r'(?:data|stringData):[ \t]*+\r?\n(?P<b>(?:(?P=i)[ \t]++[^\n]*+(?:\n|\Z))++)')
+CHECKED = [(re.compile(pattern), globals()[check]) for pattern, check in POLICY['checked']]
+NEAR_CHARS = POLICY['near_chars']
 
 
 def near_spans(text):
