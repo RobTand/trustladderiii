@@ -47,8 +47,10 @@ def tl3_py_test(name, srcs, main = None, deps = [], data = [], **kwargs):
     module = main or srcs[0]
     tags, exec_properties = nonhermetic(name)
     exec_properties.update(test_size(package, name))
-    # Main and wave 5 both exceeded 300s in uncached solo remote runs.
-    if package == "workers/tests" and name == "test_pb_machine_records":
+    # Measured near or over the 300s moderate class in uncached solo remote runs:
+    # machine records exceeded 300s (main and wave 5); classifier took 286s alone
+    # (wave 6, invocation 9ec338b6) and timed out under Gate load.
+    if package == "workers/tests" and name in ("test_pb_machine_records", "test_classifier"):
         kwargs["timeout"] = "long"
     py_test(
         name = name,
