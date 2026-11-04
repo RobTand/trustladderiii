@@ -18,9 +18,20 @@ pub(super) enum Profile {
     Command,
     Waiting,
     Rerun,
+    Body,
+    Classic,
+    Duplicates,
+    Refusal,
+    Active,
+    Terminal,
+    Merged,
+    MergeFalse,
+    Draft,
+    Missing,
 }
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Entry {
+    Read,
     Completion,
     Execute,
     Reconcile,
@@ -40,6 +51,17 @@ pub(super) struct Schedule {
     pub frames: Vec<Frame>,
     pub appears_at: usize,
     pub write_results: Vec<u8>,
+    #[serde(default)]
+    pub overrides: Vec<ReadOverride>,
+    #[serde(default)]
+    pub file_results: Vec<u8>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(super) struct ReadOverride {
+    pub op: String,
+    pub suffix: String,
+    pub nth: usize,
+    pub frame: Frame,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Call {
@@ -71,6 +93,7 @@ struct Recording {
     recovery_reads: usize,
     writes: usize,
     api_writes: usize,
+    file_writes: usize,
     now_ms: u64,
     cut: Option<Cut>,
 }
@@ -80,10 +103,21 @@ fn with<T>(f: impl FnOnce(&mut Recording) -> T) -> T {
 }
 fn read(op: &str, args: &str) -> Frame {
     with(|r| {
-        let frame = r.schedule.frames.get(r.reads).cloned().unwrap_or(Frame {
+        let mut frame = r.schedule.frames.get(r.reads).cloned().unwrap_or(Frame {
             word: 0,
             elapsed_ms: 0,
         });
+        if let Some(over) = r.schedule.overrides.iter().find(|over| {
+            over.op == op
+                && args.ends_with(&over.suffix)
+                && r.calls
+                    .iter()
+                    .filter(|c| c.op == op && c.args.ends_with(&over.suffix))
+                    .count()
+                    == over.nth
+        }) {
+            frame = over.frame.clone();
+        }
         r.reads += 1;
         r.now_ms = r.now_ms.saturating_add(u64::from(frame.elapsed_ms));
         r.calls.push(Call {
@@ -97,8 +131,32 @@ fn read(op: &str, args: &str) -> Frame {
 fn returned<T: Serialize>(value: &T) {
     with(|r| r.calls.last_mut().unwrap().result = serde_json::to_vec(value).unwrap());
 }
-fn write(op: &str, args: &str, bytes: &[u8], change: impl FnOnce(&mut Recording)) {
-    mutation(op, args, bytes, true, change)
+fn write(
+    op: &str,
+    args: &str,
+    bytes: &[u8],
+    change: impl FnOnce(&mut Recording),
+) -> io::Result<()> {
+    let mode = with(|r| {
+        let mode = r
+            .schedule
+            .file_results
+            .get(r.file_writes)
+            .copied()
+            .unwrap_or(0);
+        r.file_writes += 1;
+        mode
+    });
+    mutation(op, args, bytes, mode == 0, change);
+    if mode == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::from(match mode {
+            1 => io::ErrorKind::PermissionDenied,
+            2 => io::ErrorKind::StorageFull,
+            _ => io::ErrorKind::Other,
+        }))
+    }
 }
 fn mutation(op: &str, args: &str, bytes: &[u8], landed: bool, change: impl FnOnce(&mut Recording)) {
     with(|r| {
@@ -123,7 +181,10 @@ fn mutation(op: &str, args: &str, bytes: &[u8], landed: bool, change: impl FnOnc
     });
 }
 pub(super) fn has_store() -> bool {
-    with(|r| r.schedule.profile == Profile::Waiting || r.schedule.initial & 1 != 0)
+    with(|r| {
+        matches!(r.schedule.profile, Profile::Waiting | Profile::Body)
+            || r.schedule.initial & 1 != 0
+    })
 }
 fn profile() -> Profile {
     with(|r| r.schedule.profile)
@@ -156,6 +217,7 @@ fn init(schedule: Schedule, cut: Option<Cut>) {
             recovery_reads: 0,
             writes: 0,
             api_writes: 0,
+            file_writes: 0,
             now_ms: 1_000_000,
             cut,
         })
@@ -249,6 +311,43 @@ pub(super) fn compare(schedule: &Schedule, entry: Entry) -> ::std::result::Resul
     }
     Ok(writes * 2 + 1)
 }
+pub(super) fn require_field(s: &Schedule, e: Entry, key: &str, expected: Value) {
+    assert_eq!(run(s, e, false, None).result[key], expected);
+}
+pub(super) fn require_pull_flag(s: &Schedule, key: &str, expected: bool) {
+    assert_eq!(
+        run(s, Entry::Read, false, None).result["pull"][key],
+        json!(expected)
+    );
+}
+pub(super) fn require_ack(s: &Schedule, e: Entry, expected: &str) {
+    assert_eq!(
+        run(s, e, false, None).result["found"]["ack"],
+        json!(expected)
+    );
+}
+pub(super) fn require_count(s: &Schedule, e: Entry, op: &str, count: usize) {
+    assert_eq!(
+        run(s, e, false, None)
+            .calls
+            .iter()
+            .filter(|c| c.op == op)
+            .count(),
+        count
+    );
+}
+pub(super) fn require_error(s: &Schedule, e: Entry) {
+    assert!(run(s, e, false, None).result.get("error").is_some());
+}
+pub(super) fn require_ops(s: &Schedule, entry: Entry, ops: &[&str]) {
+    let trace = run(s, entry, false, None);
+    for op in ops {
+        assert!(
+            trace.calls.iter().any(|call| call.op == *op),
+            "mandatory branch missed {op}: {trace:#?}"
+        );
+    }
+}
 pub(super) fn reconciliation(result: Result<Reconciliation>) -> Value {
     match result {
         Ok(Reconciliation::Found(c)) => json!({"found":c}),
@@ -299,6 +398,14 @@ pub(super) mod mock_std {
         pub fn read(path: impl ::std::borrow::Borrow<PathBuf>) -> io::Result<Vec<u8>> {
             let path = path.borrow();
             let f = super::super::read("file.read", &path.0);
+            if f.word & 1024 != 0 {
+                returned(&"PermissionDenied");
+                return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+            }
+            if f.word & 2048 != 0 {
+                returned(&"Other");
+                return Err(io::Error::from(io::ErrorKind::Other));
+            }
             if path.0.ends_with(".requeue") {
                 let appear = with(|r| {
                     let n = r.recovery_reads;
@@ -348,7 +455,11 @@ pub(super) mod mock_std {
                     });
                 }
             }
-            let value = with(|r| r.files.get(&path.0).cloned());
+            let value = if f.word & 4096 != 0 {
+                Some(b"invalid json".to_vec())
+            } else {
+                with(|r| r.files.get(&path.0).cloned())
+            };
             returned(&value);
             value.ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
         }
@@ -356,15 +467,14 @@ pub(super) mod mock_std {
             write("file.rename", &format!("{}->{}", from.0, to.0), &[], |r| {
                 let b = r.files.remove(&from.0).unwrap();
                 r.files.insert(to.0.clone(), b);
-            });
-            Ok(())
+            })
         }
         pub struct File(PathBuf);
         impl File {
             pub fn create(path: &PathBuf) -> io::Result<Self> {
                 write("file.create", &path.0, &[], |r| {
                     r.files.insert(path.0.clone(), vec![]);
-                });
+                })?;
                 Ok(Self(path.clone()))
             }
             pub fn open(path: &PathBuf) -> io::Result<Self> {
@@ -376,15 +486,14 @@ pub(super) mod mock_std {
                 Ok(Self(path.clone()))
             }
             pub fn sync_all(&self) -> io::Result<()> {
-                write("file.fsync", &self.0.0, &[], |_| {});
-                Ok(())
+                write("file.fsync", &self.0.0, &[], |_| {})
             }
         }
         impl io::Write for File {
             fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
                 write("file.write", &self.0.0, bytes, |r| {
                     r.files.get_mut(&self.0.0).unwrap().extend(bytes);
-                });
+                })?;
                 Ok(bytes.len())
             }
             fn flush(&mut self) -> io::Result<()> {
@@ -394,13 +503,13 @@ pub(super) mod mock_std {
     }
 }
 #[derive(Clone)]
-pub(super) struct Row {
+pub(crate) struct Row {
     pub table: &'static str,
     pub id: String,
     pub value: Value,
 }
 #[derive(Clone)]
-pub(super) struct Snapshot {
+pub(crate) struct Snapshot {
     pub rows: Vec<Row>,
     pub repaired: bool,
 }
@@ -471,7 +580,24 @@ impl Clock {
     }
 }
 #[derive(Clone)]
-pub(super) struct GitHub;
+pub(super) struct GitHub(pub ::std::sync::Arc<GitHubInner>);
+pub(super) struct GitHubInner {
+    pub slug: String,
+    pub comments: tokio::sync::Mutex<()>,
+}
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct Message(String);
+impl From<&str> for Message {
+    fn from(s: &str) -> Self {
+        Self(s.into())
+    }
+}
+impl From<String> for Message {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
 pub(super) struct Mergify {
     pub(super) github: GitHub,
 }
@@ -495,7 +621,7 @@ fn github_frame(op: &str, args: &str) -> ::std::result::Result<Frame, ::tl3_gith
     Ok(f)
 }
 fn pull(f: &Frame) -> PullRequest {
-    serde_json::from_value(json!({"number":100,"user":{"id":1,"login":"factory[bot]"},"state":if f.word&1!=0 {"closed"}else{"open"},"draft":f.word&8!=0,"merged_at":if f.word&4!=0 {Some("2026-11-01T00:00:00Z")}else{None},"mergeable":true,"mergeable_state":"clean","head":{"sha":if f.word&2!=0 {"other"}else{"head"},"ref":"topic","repo":null},"base":{"sha":"base","ref":"main","repo":null},"updated_at":"2026-11-01T00:00:00Z"})).unwrap()
+    serde_json::from_value(json!({"number":100,"user":{"id":1,"login":"factory[bot]"},"state":if f.word&1!=0 {"closed"}else{"open"},"draft":f.word&8!=0 || profile() == Profile::Draft,"merged_at":if f.word&4!=0 || profile() == Profile::Merged {Some("2026-11-01T00:00:00Z")}else{None},"mergeable":!(f.word&512!=0 || profile()==Profile::MergeFalse),"mergeable_state":if f.word&512!=0 || profile()==Profile::MergeFalse {"dirty"}else{"clean"},"body":if profile()==Profile::Body {""} else {"Change type: fix"},"merge_commit_sha":if profile()==Profile::Merged {Some("merge")}else{None},"head":{"sha":if f.word&2!=0 {"other"}else{"head"},"ref":"topic","repo":null},"base":{"sha":"base","ref":"main","repo":null},"updated_at":"2026-11-01T00:00:00Z"})).unwrap()
 }
 fn check(f: &Frame, queue: bool) -> CheckRun {
     let summary = include_str!("../../../mergify/tests/fixtures/waiting/checks.json");
@@ -514,6 +640,35 @@ fn check(f: &Frame, queue: bool) -> CheckRun {
     if queue {
         c.output.as_mut().unwrap().summary=Some("<span itemprop=\"mergify.v1.eyJ2ZXJzaW9uIjogMSwgInN0YXRlIjogIndhaXRpbmciLCAicXVldWVfcnVsZV9uYW1lIjogbnVsbCwgInF1ZXVlZF9hdCI6IG51bGwsICJzcGVjdWxhdGl2ZV9jaGVja19wciI6IG51bGwsICJyZXF1aXJlZF9jb25kaXRpb25zIjogW119\"></span>".into());
     }
+
+    if queue {
+        let state = match (f.word >> 10) % 8 {
+            1 => "queued",
+            2 => "checking",
+            3 => "dequeued",
+            4 => "dequeued",
+            5 => "dequeued",
+            6 => "unknown",
+            _ => match profile() {
+                Profile::Active => "queued",
+                Profile::Terminal => "dequeued",
+                _ => "waiting",
+            },
+        };
+        let reason = match (f.word >> 10) % 8 {
+            4 => "CHECKS_FAILED",
+            5 => "PR_MANUALLY_DEQUEUED",
+            _ => "OTHER",
+        };
+        if state != "waiting" {
+            let payload =
+                json!({"version":1,"state":state,"dequeue_reason":{"code":reason}}).to_string();
+            // Encode without a new dependency; serde-produced bytes go to Mergify's real parser.
+            let encoded = base64(&payload);
+            c.output.as_mut().unwrap().summary =
+                Some(format!("<span itemprop=\"mergify.v1.{encoded}\"></span>"));
+        }
+    }
     if !queue {
         c.name = "CI".into();
         c.app = Some(tl3_github::CheckApp {
@@ -530,6 +685,12 @@ fn check(f: &Frame, queue: bool) -> CheckRun {
     c
 }
 impl GitHub {
+    pub fn new() -> Self {
+        Self(::std::sync::Arc::new(GitHubInner {
+            slug: "factory".into(),
+            comments: tokio::sync::Mutex::new(()),
+        }))
+    }
     pub fn marker(key: &str) -> String {
         ::tl3_github::GitHub::marker(key)
     }
@@ -582,25 +743,35 @@ impl GitHub {
         n: u64,
     ) -> ::std::result::Result<Vec<Comment>, ::tl3_github::Error> {
         let f = github_frame("github.comments", &format!("{repo}#{n}"))?;
-        let c = if f.word & 1 != 0 {
-            vec![serde_json::from_value(json!({"id":1,"body":format!("@mergifyio queue\n{}",Self::marker("enqueue-1")),"user":{"id":1,"login":"factory[bot]"},"created_at":"2026-11-01T00:00:00Z","updated_at":"2026-11-01T00:00:00Z","issue_url":"unused"})).unwrap()]
+        let key = if f.word & 8 != 0 {
+            "mergify-requeue:owner/sandbox:100:head"
         } else {
-            vec![]
+            "enqueue-1"
         };
+        let mut c =
+            if f.word & 1 != 0 || matches!(profile(), Profile::Duplicates | Profile::Refusal) {
+                vec![comment(
+                    1,
+                    key,
+                    "factory[bot]",
+                    &format!("@mergifyio queue\n{}", Self::marker(key)),
+                )]
+            } else {
+                vec![]
+            };
+        if (f.word & 2 != 0 || profile() == Profile::Duplicates) && !c.is_empty() {
+            c.push(comment(2, key, "factory[bot]", &c[0].body));
+        }
+        if f.word & 4 != 0 || profile() == Profile::Refusal {
+            let mut reply = comment(3, key, "mergify[bot]", "> `queue`\n\n## Command disallowed");
+            reply.user.id = 37929162;
+            c.push(reply);
+        }
+        if f.word & 16 != 0 {
+            c.push(comment(4, key, "person", &Self::marker(key)));
+        }
         returned(&c);
         Ok(c)
-    }
-    pub async fn reconcile_comments(
-        &self,
-        repo: &str,
-        n: u64,
-        key: &str,
-    ) -> ::std::result::Result<Option<Comment>, ::tl3_github::Error> {
-        Ok(self
-            .comments(repo, n)
-            .await?
-            .into_iter()
-            .find(|c| c.body.contains(&Self::marker(key))))
     }
     pub async fn check_runs(
         &self,
@@ -608,7 +779,10 @@ impl GitHub {
         head: &str,
     ) -> ::std::result::Result<Vec<CheckRun>, ::tl3_github::Error> {
         let f = github_frame("github.checks", &format!("{repo}@{head}"))?;
-        let c = vec![check(&f, profile() != Profile::Rerun)];
+        let mut c = vec![check(&f, profile() != Profile::Rerun)];
+        if f.word & 512 != 0 {
+            c.push(check(&f, false));
+        }
         returned(&c);
         Ok(c)
     }
@@ -619,10 +793,18 @@ impl GitHub {
     ) -> ::std::result::Result<RequiredChecks, ::tl3_github::Error> {
         let f = github_frame("github.requirements", &format!("{repo}@{branch}"))?;
         Ok(RequiredChecks {
-            checks: if (profile() == Profile::Rerun) ^ (f.word & 1 != 0) {
+            checks: if matches!(
+                profile(),
+                Profile::Rerun | Profile::Classic | Profile::Missing
+            ) ^ (f.word & 1 != 0)
+            {
                 vec![RequiredStatusCheck {
                     context: "CI".into(),
-                    integration_id: Some(1),
+                    integration_id: if profile() == Profile::Classic || f.word & 2 != 0 {
+                        None
+                    } else {
+                        Some(1)
+                    },
                 }]
             } else {
                 vec![]
@@ -636,7 +818,7 @@ impl GitHub {
         head: &str,
     ) -> ::std::result::Result<Vec<CommitStatus>, ::tl3_github::Error> {
         let f = github_frame("github.statuses", &format!("{repo}@{head}"))?;
-        let values = if f.word & 1 != 0 {
+        let values = if profile() == Profile::Classic || f.word & 1 != 0 {
             vec![
                 json!({"id":1,"context":"CI","state":if f.word&2!=0 {"success"}else{"failure"},"updated_at":null}),
             ]
@@ -688,18 +870,96 @@ impl GitHub {
     ) -> ::std::result::Result<(), ::tl3_github::Error> {
         api_write("github.add_label", &format!("{repo}#{n}"), label.as_bytes())
     }
-    pub async fn post_command_comment(
+
+    pub async fn request<T: serde::de::DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        path: String,
+        _: Vec<(String, String)>,
+        body: Option<Value>,
+    ) -> ::std::result::Result<T, ::tl3_github::Error> {
+        let payload = body.unwrap_or(Value::Null);
+        let op = if method == reqwest::Method::DELETE {
+            "github.delete_comment"
+        } else {
+            "github.command"
+        };
+        api_write(op, &path, &serde_json::to_vec(&payload).unwrap())?;
+        let value = if method == reqwest::Method::DELETE {
+            Value::Null
+        } else {
+            serde_json::to_value(comment(
+                50,
+                "",
+                "factory[bot]",
+                payload["body"].as_str().unwrap(),
+            ))
+            .unwrap()
+        };
+        Ok(serde_json::from_value(value).unwrap())
+    }
+    pub async fn update_pull_request_body(
         &self,
         repo: &str,
         n: u64,
-        key: &str,
         body: &str,
+    ) -> ::std::result::Result<PullRequest, ::tl3_github::Error> {
+        api_write("github.patch_body", &format!("{repo}#{n}"), body.as_bytes())?;
+        let mut pull = pull(&Frame {
+            word: 0,
+            elapsed_ms: 0,
+        });
+        pull.body = Some(body.into());
+        Ok(pull)
+    }
+    pub async fn rerun_failed_jobs(
+        &self,
+        repo: &str,
+        n: u64,
     ) -> ::std::result::Result<(), ::tl3_github::Error> {
-        api_write(
-            "github.command",
-            &format!("{repo}#{n}/{key}"),
-            body.as_bytes(),
-        )
+        api_write("github.rerun_failed", &format!("{repo}/{n}"), &[])
+    }
+    pub async fn check_suites(
+        &self,
+        repo: &str,
+        head: &str,
+    ) -> ::std::result::Result<Vec<::tl3_github::CheckSuite>, ::tl3_github::Error> {
+        let f = github_frame("github.suites", &format!("{repo}@{head}"))?;
+        let result=vec![serde_json::from_value(json!({"id":1,"head_sha":head,"status":if f.word&1!=0 {"in_progress"}else{"completed"},"conclusion":"success"})).unwrap()];
+        returned(&result);
+        Ok(result)
+    }
+    pub async fn job_log_tail(
+        &self,
+        repo: &str,
+        id: u64,
+    ) -> ::std::result::Result<::tl3_github::JobLogTail, ::tl3_github::Error> {
+        let f = github_frame("github.job_log", &format!("{repo}/{id}"))?;
+        let text = if f.word & 1 != 0 {
+            "no test output"
+        } else {
+            "FAILED tests/test_queue.py::case"
+        }
+        .to_owned();
+        returned(&text);
+        Ok(::tl3_github::JobLogTail {
+            text,
+            truncated: f.word & 2 != 0,
+        })
+    }
+    pub async fn pull_request_paths(
+        &self,
+        repo: &str,
+        n: u64,
+    ) -> ::std::result::Result<Option<Vec<String>>, ::tl3_github::Error> {
+        let f = github_frame("github.paths", &format!("{repo}#{n}"))?;
+        let result = if f.word & 1 != 0 {
+            None
+        } else {
+            Some(vec!["src/main.rs".to_owned()])
+        };
+        returned(&result);
+        Ok(result)
     }
     pub async fn rerun_workflow_run(
         &self,
@@ -757,18 +1017,30 @@ fn api_write(op: &str, args: &str, bytes: &[u8]) -> ::std::result::Result<(), ::
         }),
     }
 }
-pub(super) fn read_queue(
-    github: &GitHub,
-    d: &Delivery,
-) -> Result<(tl3_mergify::Observation, Vec<Observation>)> {
-    let repo = full_name(&d.repository);
-    let mergify = Mergify::new(github.clone());
-    let mut retries = 2;
-    let state = loop {
-        match Runtime.block_on(mergify.read(&repo, 100, "head")) {
-            Err(tl3_mergify::Error::ChangedDuringRead) if retries > 0 => retries -= 1,
-            result => break result.map_err(adapter_error)?,
+
+fn comment(id: u64, _: &str, login: &str, body: &str) -> Comment {
+    serde_json::from_value(json!({"id":id,"body":body,"user":{"id":1,"login":login},"created_at":"2026-11-01T00:00:00Z","updated_at":"2026-11-01T00:00:00Z","issue_url":"unused"})).unwrap()
+}
+fn base64(s: &str) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for b in s.as_bytes().chunks(3) {
+        let n = (u32::from(b[0]) << 16)
+            | (u32::from(*b.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*b.get(2).unwrap_or(&0));
+        for shift in [18, 12, 6, 0] {
+            out.push(ALPHABET[((n >> shift) & 63) as usize] as char);
         }
-    };
-    Ok((state, vec![]))
+        if b.len() < 3 {
+            out.pop();
+            out.push('=');
+        }
+        if b.len() < 2 {
+            out.pop();
+            out.pop();
+            out.push('=');
+            out.push('=');
+        }
+    }
+    out
 }

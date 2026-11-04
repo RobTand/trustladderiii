@@ -494,17 +494,40 @@ proof!(enqueue_recovery_grace, {
         eligible,
         now_ms,
     };
-    let (sent, dispatch) = decide(next, QueueEvent::DispatchCommand(read));
+    // The shell dispatches only on RecoveryTick's Command read. Its later
+    // command_budget reread may replace the timer; it never rechecks grace.
+    let granted = effects.get(1) == Some(Effect::Read(Need::Command));
+    let reread: Option<Recovery> = kani::any();
+    let command_ready = reread.is_none_or(|r| r.command == Command::Ready);
+    let (sent, dispatch) = if granted {
+        let refreshed = EnqueueState {
+            recovery: reread,
+            ..next
+        };
+        let (sent, dispatch) = decide(refreshed, QueueEvent::DispatchCommand(read));
+        assert_eq!(
+            dispatch.get(1) == Some(Effect::Write(Write::Command)),
+            command_ready && eligible,
+            "dispatch rechecked the sampled grace timer"
+        );
+        (sent, dispatch)
+    } else {
+        (next, Effects::new())
+    };
     let wrote = dispatch.get(1) == Some(Effect::Write(Write::Command));
     let matured = recovery
         .and_then(|r| r.eligible_since_ms)
         .is_some_and(|since| now_ms.saturating_sub(since) >= 300_000);
     assert_eq!(
         wrote,
-        ready && eligible && matured,
+        command_ready && ready && eligible && matured,
         "recovery sent before grace or failed to send"
     );
-    let (_, again) = decide(sent, QueueEvent::DispatchCommand(read));
+    let (_, again) = if wrote {
+        decide(sent, QueueEvent::DispatchCommand(read))
+    } else {
+        (sent, Effects::new())
+    };
     for i in 0..again.len() {
         assert!(
             !matches!(again.get(i), Some(Effect::Write(_))),

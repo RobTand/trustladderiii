@@ -43,6 +43,186 @@ fn lifecycle_head(current: bool) -> tl3_mergify::decide::Head {
 
 
 impl Adapter {
+    fn read(
+        &self,
+        delivery: &Delivery,
+        snapshot: Option<&Snapshot>,
+    ) -> Result<(tl3_mergify::Observation, Vec<Observation>)> {
+        let (number, head) = enqueue(delivery)?;
+        let github = self
+            .clients
+            .get(&delivery.repository.installation)
+            .ok_or(Error::Invalid("missing Mergify installation client"))?;
+        let repo = full_name(&delivery.repository);
+        let state = self
+            .runtime
+            .block_on(read_queue(github, &repo, number, head))?;
+        if is_merge_queue_pr(&state.pull_request) {
+            return Err(Error::Invalid("cannot queue a Mergify draft PR"));
+        }
+        crate::evidence::validate_publication(
+            delivery,
+            &state.pull_request.head.branch,
+            state.pull_request.draft,
+            state.pull_request.body.as_deref().unwrap_or_default(),
+        )?;
+        let proof =
+            crate::evidence::publication(delivery, delivery.request_text.as_deref().unwrap_or(""))?;
+        if !proof.is_empty()
+            && !state
+                .pull_request
+                .body
+                .as_deref()
+                .unwrap_or_default()
+                .contains(&proof)
+        {
+            return Err(Error::Permanent {
+                class: "pr_evidence",
+                source: "Required recorded proof is missing from the PR body".into(),
+            });
+        }
+        if self.heal_body(delivery, &state.pull_request, snapshot)? {
+            // The checks read before the edit are stale; the next read decides.
+            return Ok((state, Vec::new()));
+        }
+        let facts = self
+            .runtime
+            .block_on(queue_facts(
+                github,
+                &delivery.repository,
+                &state,
+                head,
+                &[],
+                snapshot,
+            ))?
+            .into_iter()
+            .map(Observation::Queue)
+            .collect();
+        Ok((state, facts))
+    }
+    fn heal_body(
+        &self,
+        delivery: &Delivery,
+        pull: &tl3_github::PullRequest,
+        snapshot: Option<&Snapshot>,
+    ) -> Result<bool> {
+        let Some((_, policy)) = self
+            .policies
+            .iter()
+            .find(|(repo, _)| *repo == delivery.repository)
+        else {
+            return Ok(false);
+        };
+        let rules = &policy.rules;
+        if pull.state != "open" || pull.merged_at.is_some() {
+            return Ok(false);
+        }
+        let ours = match &self.branches {
+            Some(branches) => branches.matches(delivery, &pull.head.branch)?,
+            None => false,
+        };
+        if !ours {
+            return Ok(false);
+        }
+        let github = &self.clients[&delivery.repository.installation];
+        let repo = full_name(&delivery.repository);
+        let head = &pull.head.sha;
+        // Keyed by PR, not by effect, so a later enqueue of the same head
+        // finds the heal and never reruns twice.
+        let path = self
+            .records
+            .path(&format!("body-heal:{repo}#{}", pull.number))
+            .with_extension("body-heal");
+        let mut heal: Option<BodyHeal> = match std::fs::read(&path) {
+            Ok(bytes) => Some(serde_json::from_slice(&bytes)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        let body = pull.body.as_deref().unwrap_or_default();
+        let gaps = crate::pr_body::gaps(body, rules);
+        let pending = heal
+            .as_ref()
+            .is_some_and(|heal| heal.head == *head && !heal.reran);
+        // Read the world only when there is something to do.
+        if (gaps.is_empty() && !pending) || !heal_phase(Self::phase(delivery, snapshot)?) {
+            return Ok(false);
+        }
+        let mut edited = false;
+        let request = if gaps.is_empty() {
+            None
+        } else {
+            // The issue's own instruction names the value; read it only to heal.
+            match &delivery.request_text {
+                Some(text) => Some(text.clone()),
+                None => {
+                    self.runtime
+                        .block_on(github.issue(&repo, delivery.issue))?
+                        .body
+                }
+            }
+        };
+        if let Some(healed) =
+            crate::pr_body::healed(body, rules, request.as_deref(), &delivery.paths)
+        {
+            // Record the intent first, so a crash after the PATCH still reruns.
+            let intent = BodyHeal {
+                head: head.clone(),
+                reran: false,
+            };
+            self.records.write(&path, &serde_json::to_vec(&intent)?)?;
+            self.runtime
+                .block_on(github.update_pull_request_body(&repo, pull.number, &healed))?;
+            eprintln!(
+                "PR-body policy: added {gaps:?} to {repo}#{} (#447)",
+                pull.number
+            );
+            heal = Some(intent);
+            edited = true;
+        }
+        // The edit's completion triggers the reruns, once per head. Closing and
+        // reopening the PR would also rerun them, but TL3 would read it as a
+        // person closing its PR.
+        let Some(heal) = heal.filter(|heal| heal.head == *head && !heal.reran) else {
+            return Ok(edited);
+        };
+        let runs = if policy.reruns.is_empty() {
+            Vec::new()
+        } else {
+            self.runtime
+                .block_on(github.workflow_runs(&repo, head))
+                .map_err(Error::from)?
+        };
+        for run in body_edit_reruns(&runs, head, &policy.reruns) {
+            if let Err(error) = self.runtime.block_on(github.rerun_failed_jobs(&repo, run)) {
+                // The next read of this PR retries; the heal stays pending.
+                eprintln!("PR-body policy: rerun of {repo} run {run} failed: {error}");
+                return Ok(edited);
+            }
+            eprintln!("PR-body policy: reran the failed jobs of {repo} run {run} (#447)");
+        }
+        self.records.write(
+            &path,
+            &serde_json::to_vec(&BodyHeal {
+                head: heal.head,
+                reran: true,
+            })?,
+        )?;
+        Ok(edited)
+    }
+    fn phase(
+        delivery: &Delivery,
+        snapshot: Option<&Snapshot>,
+    ) -> Result<Option<tl3_kernel::Phase>> {
+        let Some(snapshot) = snapshot else {
+            return Ok(None);
+        };
+        let world = crate::snapshot::decode(snapshot)?;
+        Ok(world
+            .nodes
+            .get(delivery.node().0 as usize)
+            .map(|node| node.phase))
+    }
+
     fn completion(
         &self,
         delivery: &Delivery,
@@ -491,3 +671,299 @@ impl Adapter {
         Ok(())
     }
 }
+
+async fn read_queue(
+    github: &GitHub,
+    repo: &str,
+    number: u64,
+    head: &str,
+) -> Result<tl3_mergify::Observation> {
+    let mergify = Mergify::new(github.clone());
+    let mut retries = 2;
+    loop {
+        match mergify.read(repo, number, head).await {
+            Err(tl3_mergify::Error::ChangedDuringRead) if retries > 0 => retries -= 1,
+            result => return result.map_err(adapter_error),
+        }
+    }
+}
+async fn queue_facts(
+    github: &GitHub,
+    repo: &Repository,
+    state: &tl3_mergify::Observation,
+    expected_head: &str,
+    open: &[RequiredCheck],
+    snapshot: Option<&Snapshot>,
+) -> Result<Vec<QueueFact>> {
+    let pull = &state.pull_request;
+    let head_checks = match facts::entry(
+        is_merge_queue_pr(pull),
+        state.state,
+        pull.head.sha == expected_head,
+        pull.state == "open",
+    ) {
+        facts::Entry::Ignore => return Ok(vec![]),
+        facts::Entry::PushByOther => {
+            return Ok(vec![QueueFact {
+                repository: repo.clone(),
+                number: pull.number,
+                evidence: Evidence::PushByOther {
+                    head: pull.head.sha.clone(),
+                },
+            }]);
+        }
+        facts::Entry::Read { head_checks } => head_checks,
+    };
+    let mut facts = Vec::new();
+    let mut head_infrastructure = None;
+    if head_checks {
+        let repo_name = full_name(repo);
+        let requirements = github
+            .required_status_checks(&repo_name, &pull.base.branch)
+            .await?;
+        let checks =
+            head_checks::evaluate(github, &repo_name, pull, requirements, &state.check_runs)
+                .await?;
+        head_infrastructure = checks.infrastructure();
+        if !checks.unavailable.is_empty() {
+            facts.push(QueueFact {
+                repository: repo.clone(),
+                number: pull.number,
+                evidence: Evidence::ChecksUnavailable {
+                    permissions: checks.unavailable.clone(),
+                },
+            });
+        }
+        // Q52: once every suite on the head has completed, no app is still
+        // working on it, so a missing required context will not report.
+        if !checks.missing.is_empty() {
+            let suites = github.check_suites(&repo_name, &pull.head.sha).await?;
+            if facts::suites_completed(&suite_statuses(&suites)) {
+                facts.extend(checks.missing.iter().map(|required| QueueFact {
+                    repository: repo.clone(),
+                    number: pull.number,
+                    evidence: Evidence::CheckMissing {
+                        head: pull.head.sha.clone(),
+                        required: required.clone(),
+                    },
+                }));
+            }
+        }
+        // #447: Mergify waits on a condition nothing still running can meet,
+        // such as PrismaBuild's scopes after its pr-gate failed.
+        if state.state == QueueState::Waiting
+            && checks_settled(state)
+            && state
+                .check
+                .as_ref()
+                .is_some_and(|check| !tl3_mergify::unmet_conditions(check).is_empty())
+        {
+            let suites = github.check_suites(&repo_name, &pull.head.sha).await?;
+            let completed = facts::suites_completed(&suite_statuses(&suites));
+            let required: Vec<_> = checks
+                .missing
+                .iter()
+                .chain(&checks.reported)
+                .cloned()
+                .collect();
+            if let Some((conditions, failed)) = queue_blocked(state, completed, &required) {
+                facts.push(QueueFact {
+                    repository: repo.clone(),
+                    number: pull.number,
+                    evidence: Evidence::QueueBlocked {
+                        head: pull.head.sha.clone(),
+                        conditions,
+                        failed,
+                    },
+                });
+            }
+        }
+        facts.extend(
+            open.iter()
+                .filter(|required| checks.reported.contains(required))
+                .map(|required| QueueFact {
+                    repository: repo.clone(),
+                    number: pull.number,
+                    evidence: Evidence::CheckReported {
+                        head: pull.head.sha.clone(),
+                        required: required.clone(),
+                    },
+                }),
+        );
+        if let Some(evidence) = checks.evidence(pull) {
+            let mut fact = QueueFact {
+                repository: repo.clone(),
+                number: pull.number,
+                evidence,
+            };
+            if !snapshot
+                .map(|snapshot| fact.recorded(snapshot))
+                .transpose()?
+                .unwrap_or(false)
+            {
+                if let Evidence::CiFailed { details, .. } = &mut fact.evidence {
+                    *details =
+                        ci_evidence::read_checks(github, &repo_name, &state.check_runs).await;
+                }
+                facts.push(fact);
+            }
+            return Ok(facts);
+        }
+    }
+    let outcome = facts::queue_outcome(
+        state.state,
+        state.check.as_ref(),
+        head_infrastructure,
+        tl3_mergify::ci_is_infrastructure,
+    );
+    let attempt = |check: &CheckRun| (check.id, check.completed_at.map(|time| time.to_rfc3339()));
+    let evidence = match outcome {
+        Some(facts::Outcome::Merged) => {
+            let queue_check = state.check.as_ref().map(|check| facts::QueueCheck {
+                completed: check.status == "completed",
+                concluded: check.conclusion.is_some(),
+                merged_title: check.output.as_ref().is_some_and(|output| {
+                    output.title.as_deref() == Some("Merged via merge queue")
+                }),
+            });
+            let checks_passed = match facts::merged_plan(
+                pull.head.sha == expected_head,
+                queue_check,
+                pull.merge_commit_sha.is_some(),
+            ) {
+                // Mergify publishes its final queue result after GitHub records the merge.
+                facts::MergedPlan::Wait => return Ok(vec![]),
+                facts::MergedPlan::ViaQueue => tl3_mergify::merged_via_queue(state),
+                facts::MergedPlan::MergeCommit => {
+                    let sha = pull.merge_commit_sha.as_deref().unwrap_or_default();
+                    checks_passed(&github.check_runs(&full_name(repo), sha).await?, sha)
+                }
+                facts::MergedPlan::NotPassed => false,
+            };
+            Some(Evidence::Merged {
+                head: pull.head.sha.clone(),
+                checks_passed,
+            })
+        }
+        Some(facts::Outcome::CiFailed { check, infra }) => {
+            let (check, completed_at) = attempt(check);
+            Some(Evidence::CiFailed {
+                check,
+                completed_at,
+                head: pull.head.sha.clone(),
+                head_check: false,
+                details: Default::default(),
+                infra,
+            })
+        }
+        Some(facts::Outcome::DequeuedByCommand(check)) => {
+            let (check, completed_at) = attempt(check);
+            Some(Evidence::DequeuedByCommand {
+                check,
+                completed_at,
+                head: pull.head.sha.clone(),
+            })
+        }
+        Some(facts::Outcome::Conflict(check)) => {
+            let (check, completed_at) = attempt(check);
+            Some(Evidence::Conflict {
+                check,
+                completed_at,
+                head: pull.head.sha.clone(),
+            })
+        }
+        None => None,
+    };
+    if let Some(evidence) = evidence {
+        let mut fact = QueueFact {
+            repository: repo.clone(),
+            number: pull.number,
+            evidence,
+        };
+        if !snapshot
+            .map(|snapshot| fact.recorded(snapshot))
+            .transpose()?
+            .unwrap_or(false)
+        {
+            if let Evidence::CiFailed { details, .. } = &mut fact.evidence {
+                *details = ci_evidence::read_queue(github, &full_name(repo), state).await;
+            }
+            facts.push(fact);
+        }
+    }
+    Ok(facts)
+}
+pub(crate) fn queue_blocked(
+    state: &tl3_mergify::Observation,
+    suites_completed: bool,
+    required: &[RequiredCheck],
+) -> Option<(Vec<String>, Vec<String>)> {
+    let conditions = if state.state == QueueState::Waiting && suites_completed {
+        tl3_mergify::unmet_conditions(state.check.as_ref()?)
+    } else {
+        vec![]
+    };
+    if !facts::queue_blocked(state.state, suites_completed, !conditions.is_empty()) {
+        return None;
+    }
+    let views = tl3_mergify::views(&state.check_runs, &state.pull_request.head.sha, |check| {
+        required.iter().any(|rule| rule.matches(check))
+    });
+    // Each failing name is the newest of its name, so sorting gives the
+    // former BTreeMap's order by name.
+    let mut failed: Vec<String> = (0..views.len())
+        .filter(|&index| facts::blocking_failure(&views, index))
+        .map(|index| state.check_runs[index].name.clone())
+        .collect();
+    failed.sort();
+    Some((conditions, failed))
+}
+pub(crate) fn body_edit_reruns(
+    runs: &[tl3_github::WorkflowRun],
+    head: &str,
+    workflows: &[String],
+) -> Vec<u64> {
+    let listed = |path: &str| {
+        let file = path.rsplit('/').next().unwrap_or(path);
+        workflows.iter().any(|listed| listed == file)
+    };
+    let mut latest: BTreeMap<&str, &tl3_github::WorkflowRun> = BTreeMap::new();
+    for run in runs
+        .iter()
+        .filter(|run| run.head_sha == head && run.event == "pull_request" && listed(&run.path))
+    {
+        let entry = latest.entry(run.path.as_str()).or_insert(run);
+        if run.id > entry.id {
+            *entry = run;
+        }
+    }
+    latest
+        .into_values()
+        .filter(|run| {
+            run.status == "completed"
+                && matches!(
+                    run.conclusion.as_deref(),
+                    Some("failure" | "cancelled" | "timed_out" | "startup_failure")
+                )
+        })
+        .map(|run| run.id)
+        .collect()
+}
+pub(crate) fn heal_phase(phase: Option<tl3_kernel::Phase>) -> bool {
+    matches!(
+        phase,
+        Some(tl3_kernel::Phase::Publishing | tl3_kernel::Phase::Queued)
+    )
+}
+fn suite_statuses(suites: &[tl3_github::CheckSuite]) -> Vec<tl3_mergify::decide::Status> {
+    suites
+        .iter()
+        .map(|suite| tl3_mergify::decide::Status::parse(&suite.status))
+        .collect()
+}
+fn checks_passed(checks: &[CheckRun], sha: &str) -> bool {
+    facts::checks_passed(&tl3_mergify::views(checks, sha, |_| false))
+}
+
+#[derive(Serialize, Deserialize)]
+struct BodyHeal { head: String, reran: bool }

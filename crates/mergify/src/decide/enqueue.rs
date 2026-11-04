@@ -556,10 +556,6 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
                 || read.draft
                 || read.held
                 || read.paused
-                || read.waiting
-                    && !recovery
-                        .eligible_since_ms
-                        .is_some_and(|since| read.now_ms.saturating_sub(since) >= GRACE_MS)
             {
                 out.push(Effect::Complete(Complete::Pending));
             } else {
