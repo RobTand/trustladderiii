@@ -145,7 +145,7 @@ impl Error {
                 FailureClass::Permanent("actions_refused")
             }
             Self::Http { status } => {
-                use tl3_mergify_core::http::{StatusClass, status_class};
+                use crate::status::{StatusClass, status_class};
                 match status_class(*status) {
                     // A rate-limited response is `RateLimited`, never `Http`.
                     StatusClass::Quota => FailureClass::Quota,
@@ -380,7 +380,7 @@ impl GitHub {
                     let m = m.to_ascii_lowercase();
                     m.contains("secondary rate limit") || m.contains("abuse detection")
                 });
-            let rate_limited = tl3_mergify_core::http::rate_limited(
+            let rate_limited = crate::status::rate_limited(
                 status.as_u16(),
                 remaining_zero || headers.contains_key("retry-after") || secondary,
             );
@@ -868,7 +868,7 @@ impl GitHub {
             .send()
             .await
             .map_err(|_| Error::Transport)?;
-        if tl3_mergify_core::http::rate_limited(
+        if crate::status::rate_limited(
             response.status().as_u16(),
             response
                 .headers()

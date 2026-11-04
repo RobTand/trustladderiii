@@ -1,11 +1,11 @@
-//! Boundary parsers: GitHub's strings into the core's enums (#735).
+//! Boundary parsers: GitHub's strings into the queue decisions' enums (#735).
 //! Every named value round-trips; any other string is `Other`, never a
 //! named value; parsing never panics.
 
 use proptest::prelude::*;
-use tl3_mergify_core::facts::Actor;
-use tl3_mergify_core::observe::Mergeable;
-use tl3_mergify_core::{
+use tl3_mergify::decide::facts::Actor;
+use tl3_mergify::decide::observe::Mergeable;
+use tl3_mergify::decide::{
     App, Conclusion, MERGIFY_APP_ID, Name, QUEUE_CHECK, QUEUE_RULE_CHECK, Status,
 };
 

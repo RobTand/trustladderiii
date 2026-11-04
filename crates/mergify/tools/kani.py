@@ -1,4 +1,7 @@
-"""Run the Mergify core's Kani proofs, or their seeded mutants (#735).
+"""Run the Mergify queue decisions' Kani proofs, or their seeded mutants (#735).
+
+The harnesses live in tl3-mergify (`src/decide/proofs.rs`) and, for the HTTP
+status table, in tl3-github (`src/status.rs`).
 
     kani.py manifest [NAME...]   print a PrismaBuild campaign manifest
     kani.py prove [NAME...]      prove the named harnesses, or all of them
@@ -18,82 +21,96 @@ import subprocess
 import sys
 import time
 
-CRATE = pathlib.Path(__file__).resolve().parents[1]
-SRC = CRATE / "src"
+ROOT = pathlib.Path(__file__).resolve().parents[3]
+DECIDE = "crates/mergify/src/decide/"
+STATUS = "crates/github/src/status.rs"
+# Each proof file, its package and the module path of its harnesses.
+PROOF_FILES = [
+    (DECIDE + "proofs.rs", "tl3-mergify", "decide::proofs"),
+    (STATUS, "tl3-github", "status::proofs"),
+]
 # One mutation per harness: (file, exact text, replacement). Each breaks the
 # property its harness states, so the harness must fail.
 MUTANTS = {
-    "observe_select": ("observe.rs", "check.id >= checks[best].id", "check.id > checks[best].id"),
+    "observe_select": (DECIDE + "observe.rs", "check.id >= checks[best].id", "check.id > checks[best].id"),
     "observe_merged": (
-        "observe.rs",
+        DECIDE + "observe.rs",
         "if reported == QueueState::Merged {\n        QueueState::Unknown",
         "if reported == QueueState::Waiting {\n        QueueState::Unknown",
     ),
     "observe_conflict": (
-        "observe.rs",
+        DECIDE + "observe.rs",
         "(pull.mergeable == Some(false) || pull.mergeable_state == Mergeable::Dirty)",
         "pull.mergeable == Some(false)",
     ),
-    "observe_rule_concluded": ("observe.rs", "finished >= dequeued", "finished > dequeued"),
+    "observe_rule_concluded": (DECIDE + "observe.rs", "finished >= dequeued", "finished > dequeued"),
     "observe_check_state": (
-        "observe.rs",
+        DECIDE + "observe.rs",
         "    ) {\n        QueueState::FailedCi",
         "    ) && conclusion.is_none() {\n        QueueState::FailedCi",
     ),
     "checks_passed_total": (
-        "facts.rs",
+        DECIDE + "facts.rs",
         "|a, b| a.app_key == b.app_key && a.name_key == b.name_key",
         "|a, b| a.name_key == b.name_key",
     ),
-    "queue_blocked_total": ("facts.rs", "            && !check.required\n", "\n"),
+    "queue_blocked_total": (DECIDE + "facts.rs", "            && !check.required\n", "\n"),
     "q52": (
-        "translate.rs",
+        DECIDE + "translate.rs",
         "Kind::CheckMissing if node.enqueuing() && approved_head",
         "Kind::CheckMissing if approved_head",
     ),
     "translate_closed": (
-        "translate.rs",
+        DECIDE + "translate.rs",
         "(!matches!(kind, Kind::Merged { .. }) || node.merged)",
         "!matches!(kind, Kind::Merged { .. })",
     ),
     "translate_head_ci": (
-        "translate.rs",
+        DECIDE + "translate.rs",
         "return node.phase == Phase::Queued || node.enqueuing();",
         "return node.phase != Phase::Closed;",
     ),
     "translate_route": (
-        "translate.rs",
+        DECIDE + "translate.rs",
         "if kind.names_attempt_head() && !head_current {",
         "if kind.names_attempt_head() && !head_current && approved_head {",
     ),
-    "ci_classify": ("translate.rs", "outside && !repeated", "outside"),
+    "ci_classify": (DECIDE + "translate.rs", "outside && !repeated", "outside"),
     "person_facts_total": (
-        "facts.rs",
+        DECIDE + "facts.rs",
         "if event.actor != Actor::Person {",
         "if event.actor == Actor::Missing {",
     ),
     "http_status_class_total": (
-        "http.rs",
+        STATUS,
         "status == 429 || status == 403 && rate_signal",
         "status == 429 || status == 403",
     ),
-    "facts_outcome": ("facts.rs", "head_infra.unwrap_or(true)", "head_infra.unwrap_or(false)"),
+    "facts_outcome": (DECIDE + "facts.rs", "head_infra.unwrap_or(true)", "head_infra.unwrap_or(false)"),
 }
 
 
 def harnesses():
-    return re.findall(r"^proof!\(\s*(\w+),", (SRC / "proofs.rs").read_text(), re.M)
+    """Each harness name, with its package and full harness path."""
+    found = {}
+    for path, package, module in PROOF_FILES:
+        source = (ROOT / path).read_text()
+        names = re.findall(r"^proof!\(\s*(\w+),", source, re.M)
+        names += re.findall(r"#\[kani::proof\]\s*#\[kani::unwind\(\d+\)\]\s*fn (\w+)\(", source)
+        for name in names:
+            found[name] = (package, f"{module}::{name}")
+    return found
 
 
-def kani(names):
-    """Run Kani on the named harnesses; return (exit code, output)."""
-    argv = ["cargo", "kani", "-p", "tl3-mergify-core", "--output-format", os.environ.get("KANI_OUTPUT", "terse"),
+def kani(package, paths):
+    """Run Kani on harnesses of one package; return (exit code, output)."""
+    argv = ["cargo", "kani", "-p", package, "--output-format", os.environ.get("KANI_OUTPUT", "terse"),
             "-j", os.environ.get("KANI_JOBS", "1")]
-    for name in names:
-        argv += ["--harness", f"proofs::{name}", "--exact"]
+    for path in paths:
+        argv += ["--harness", path, "--exact"]
     print(f"== kani: {' '.join(argv)}", flush=True)
     start = time.monotonic()
-    proc = subprocess.Popen(argv, cwd=CRATE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    proc = subprocess.Popen(argv, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     lines = []
     for line in proc.stdout:
         print(line, end="", flush=True)
@@ -103,27 +120,31 @@ def kani(names):
     return code, "".join(lines)
 
 
-def prove(names):
-    code, output = kani(names)
-    if code:
-        return code
-    # A proof whose cover checks aren't all reachable proved nothing about
-    # those cases, so it fails too.
-    covers = re.findall(r"\*\* (\d+) of (\d+) cover properties satisfied", output)
-    if len(covers) != len(names):
-        print(f"== kani: {len(covers)} cover reports for {len(names)} harnesses", flush=True)
-        return 1
-    if any(int(hit) < int(total) for hit, total in covers):
-        print("== kani: a cover check was not satisfied, so the proof may be vacuous", flush=True)
-        return 1
-    return 0
+def prove(names, known):
+    failed = 0
+    for package in sorted({known[name][0] for name in names}):
+        paths = [known[name][1] for name in names if known[name][0] == package]
+        code, output = kani(package, paths)
+        if code:
+            failed = code
+            continue
+        # A proof whose cover checks aren't all reachable proved nothing about
+        # those cases, so it fails too.
+        covers = re.findall(r"\*\* (\d+) of (\d+) cover properties satisfied", output)
+        if len(covers) != len(paths):
+            print(f"== kani: {len(covers)} cover reports for {len(paths)} harnesses", flush=True)
+            failed = 1
+        elif any(int(hit) < int(total) for hit, total in covers):
+            print("== kani: a cover check was not satisfied, so the proof may be vacuous", flush=True)
+            failed = 1
+    return failed
 
 
-def mutants(names):
+def mutants(names, known):
     failed = []
     for name in names:
         file, before, after = MUTANTS[name]
-        path = SRC / file
+        path = ROOT / file
         original = path.read_text()
         if original.count(before) != 1:
             print(f"MUTANT {name}: the seeded text no longer matches exactly once", flush=True)
@@ -132,7 +153,8 @@ def mutants(names):
         print(f"MUTANT {name}: {file}: {before.strip()!r} -> {after.strip()!r}", flush=True)
         try:
             path.write_text(original.replace(before, after))
-            code, output = kani([name])
+            package, harness = known[name]
+            code, output = kani(package, [harness])
         finally:
             path.write_text(original)
         rejected = code != 0 and "VERIFICATION:- FAILED" in output
@@ -151,7 +173,7 @@ def manifest(names):
         "KANI_HOME": "/home/rob/.kani", "CARGO_BUILD_JOBS": "1",
         "KANI_JOBS": "1", "OMP_NUM_THREADS": "1", "RAYON_NUM_THREADS": "1",
     }
-    rows = [{"cwd": str(CRATE), "argv": ["/usr/bin/python3", "tools/kani.py", "prove", name],
+    rows = [{"cwd": str(ROOT), "argv": ["/usr/bin/python3", "crates/mergify/tools/kani.py", "prove", name],
              "cpus": 1, "demand": {"mem_gb": 2}, "anywhere": True, "env": env,
              "priority": -10, "timeout_s": 1800} for name in names]
     print(json.dumps(rows, indent=2))
@@ -165,13 +187,13 @@ def main():
         sys.exit(f"unknown harness: {sorted(set(names) - set(known))}")
     if set(known) != set(MUTANTS):
         sys.exit("every harness needs exactly one seeded mutant")
-    names = names or known
+    names = names or sorted(known)
     if mode == "manifest":
         return manifest(names)
     if mode == "prove":
-        return prove(names)
+        return prove(names, known)
     if mode == "mutants":
-        return mutants(names)
+        return mutants(names, known)
     sys.exit(__doc__)
 
 

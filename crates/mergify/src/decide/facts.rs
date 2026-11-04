@@ -1,8 +1,8 @@
 //! Which queue facts one read of a PR yields. The adapter performs each read
 //! these functions ask for, in the same order, and builds the facts.
 
-use crate::check::{CheckView, Conclusion, Head, Status, newest_first};
-use crate::observe::QueueState;
+use super::check::{CheckView, Conclusion, Head, Status, newest_first};
+use super::observe::QueueState;
 
 /// What a queue read leads to before any further read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1,24 +1,21 @@
 //! The Mergify queue adapter's functional core (#735).
 //!
 //! The controller's Mergify adapter reads GitHub and Mergify, then decides
-//! which queue facts to report and how each one reaches the kernel. This crate
-//! holds those decisions as pure functions over small typed domains, so Kani
-//! can prove them. The adapter parses upstream JSON into these types at its
-//! boundary and keeps every read, write and store access.
+//! which queue facts to report and how each one reaches the kernel. This
+//! module holds those decisions as pure functions over small typed domains,
+//! so Kani can prove them. The adapter parses upstream JSON into these types
+//! at its boundary and keeps every read, write and store access.
 //!
 //! - `check`: check runs as enums (status, conclusion, app, name, head).
 //! - `observe`: which queue check describes the PR, and the queue state.
 //! - `facts`: which facts a queue read yields (Q52, #447, merge evidence).
 //! - `translate`: how a queue fact reaches the kernel, or only an incident.
-//! - `http`: GitHub REST status codes to failure classes.
 //!
-//! Ordinary builds have no standard library. The crate has no `unsafe`, no
+//! The module does no I/O and uses no `std` item. It has no `unsafe`, no
 //! floats and no target-specific code, so its proofs hold on amd64 and arm64.
-#![cfg_attr(not(any(kani, test)), no_std)]
 
 pub mod check;
 pub mod facts;
-pub mod http;
 pub mod observe;
 pub mod translate;
 

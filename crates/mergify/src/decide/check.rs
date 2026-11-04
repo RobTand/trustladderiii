@@ -1,7 +1,7 @@
 //! Check runs as small enums. The adapter parses GitHub's strings into these
 //! at its boundary; every decision in this crate reads only the enums.
 
-use crate::{MERGIFY_APP_ID, MERGIFY_APP_SLUG, QUEUE_CHECK, QUEUE_RULE_CHECK};
+use super::{MERGIFY_APP_ID, MERGIFY_APP_SLUG, QUEUE_CHECK, QUEUE_RULE_CHECK};
 
 /// A check run's or check suite's `status`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -67,8 +67,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tl3_github::{Actor, CheckRun, GitHub, RepoChanges, webhook::Event};
 use tl3_kernel::{NodeId, World};
+use tl3_mergify::decide::{facts, translate::Kind};
 use tl3_mergify::{Mergify, QUEUE_LABEL, QueueState, is_merge_queue_pr};
-use tl3_mergify_core::{facts, translate::Kind};
 use tl3_store::{InternKind, Snapshot};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1451,10 +1451,10 @@ fn checks_passed(checks: &[CheckRun], sha: &str) -> bool {
     facts::checks_passed(&tl3_mergify::views(checks, sha, |_| false))
 }
 
-fn suite_statuses(suites: &[tl3_github::CheckSuite]) -> Vec<tl3_mergify_core::Status> {
+fn suite_statuses(suites: &[tl3_github::CheckSuite]) -> Vec<tl3_mergify::decide::Status> {
     suites
         .iter()
-        .map(|suite| tl3_mergify_core::Status::parse(&suite.status))
+        .map(|suite| tl3_mergify::decide::Status::parse(&suite.status))
         .collect()
 }
 

@@ -2644,7 +2644,7 @@ impl Controller {
                     return Ok(None);
                 };
                 use adapters::mergify::Evidence;
-                use tl3_mergify_core::translate::{self as queue, KernelFact, Route};
+                use tl3_mergify::decide::translate::{self as queue, KernelFact, Route};
                 let current = &world.nodes[node.0 as usize];
                 let view = queue::NodeView {
                     phase: match current.phase {

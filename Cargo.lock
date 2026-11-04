@@ -2952,7 +2952,6 @@ dependencies = [
  "tl3-github",
  "tl3-kernel",
  "tl3-mergify",
- "tl3-mergify-core",
  "tl3-prismabuild",
  "tl3-store",
  "tl3-worktrees",
@@ -2978,7 +2977,6 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror",
- "tl3-mergify-core",
  "tokio",
  "unicode-normalization",
  "wiremock",
@@ -2998,21 +2996,14 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "jsonwebtoken",
+ "proptest",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
  "thiserror",
  "tl3-github",
- "tl3-mergify-core",
  "tokio",
  "wiremock",
-]
-
-[[package]]
-name = "tl3-mergify-core"
-version = "0.1.0"
-dependencies = [
- "proptest",
 ]
 
 [[package]]

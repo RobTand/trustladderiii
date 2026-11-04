@@ -7,8 +7,9 @@ use base64::{
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use tl3_github::{CheckRun, GitHub, PullRequest};
-use tl3_mergify_core::observe::{Mergeable, PullView};
-pub use tl3_mergify_core::{
+pub mod decide;
+use decide::observe::{Mergeable, PullView};
+pub use decide::{
     CheckView, MERGIFY_APP_ID, QUEUE_CHECK, QUEUE_LABEL, QUEUE_RULE_CHECK, QueueState,
 };
 
@@ -150,7 +151,7 @@ impl Mergify {
             return Err(Error::ChangedDuringRead);
         }
         let observation = observe(after, &checks, approved_head);
-        if tl3_mergify_core::observe::mergeability_pending(
+        if decide::observe::mergeability_pending(
             observation.state,
             pull_view(&observation.pull_request),
         ) {
@@ -188,23 +189,18 @@ pub fn views(
             CheckView {
                 id: check.id,
                 head: if check.head_sha == head {
-                    tl3_mergify_core::Head::Current
+                    decide::Head::Current
                 } else {
-                    tl3_mergify_core::Head::Other
+                    decide::Head::Other
                 },
-                app: tl3_mergify_core::App::parse(
-                    check.app.as_ref().map(|app| (app.id, app.slug.as_str())),
-                ),
+                app: decide::App::parse(check.app.as_ref().map(|app| (app.id, app.slug.as_str()))),
                 app_key,
-                name: tl3_mergify_core::Name::parse(&check.name),
+                name: decide::Name::parse(&check.name),
                 name_key,
                 required: required(check),
-                status: tl3_mergify_core::Status::parse(&check.status),
-                conclusion: check
-                    .conclusion
-                    .as_deref()
-                    .map(tl3_mergify_core::Conclusion::parse),
-                completed_at: check.completed_at.map(|time| tl3_mergify_core::Time {
+                status: decide::Status::parse(&check.status),
+                conclusion: check.conclusion.as_deref().map(decide::Conclusion::parse),
+                completed_at: check.completed_at.map(|time| decide::Time {
                     secs: time.timestamp(),
                     nanos: time.timestamp_subsec_nanos(),
                 }),
@@ -224,12 +220,11 @@ pub fn pull_view(pull_request: &PullRequest) -> PullView {
 /// Only a check on this head from Mergify's GitHub App describes current state.
 pub fn observe(pull_request: PullRequest, checks: &[CheckRun], approved_head: &str) -> Observation {
     let views = views(checks, &pull_request.head.sha, |_| false);
-    let selected = tl3_mergify_core::observe::select(&views, tl3_mergify_core::Name::QueueCheck);
+    let selected = decide::observe::select(&views, decide::Name::QueueCheck);
     let check = selected.map(|index| checks[index].clone());
-    let state = tl3_mergify_core::observe::queue_state(pull_view(&pull_request), || {
-        check.as_ref().map(check_state)
-    });
-    let dequeue_rule_concluded = tl3_mergify_core::observe::rule_concluded(&views, selected);
+    let state =
+        decide::observe::queue_state(pull_view(&pull_request), || check.as_ref().map(check_state));
+    let dequeue_rule_concluded = decide::observe::rule_concluded(&views, selected);
     let unapproved_merge =
         pull_request.merged_at.is_some() && pull_request.head.sha != approved_head;
     Observation {
@@ -243,11 +238,8 @@ pub fn observe(pull_request: PullRequest, checks: &[CheckRun], approved_head: &s
 }
 
 fn check_state(check: &CheckRun) -> QueueState {
-    tl3_mergify_core::observe::check_state(
-        check
-            .conclusion
-            .as_deref()
-            .map(tl3_mergify_core::Conclusion::parse),
+    decide::observe::check_state(
+        check.conclusion.as_deref().map(decide::Conclusion::parse),
         || report(check),
     )
 }
@@ -376,11 +368,8 @@ fn payload_state(json: &str) -> Option<QueueState> {
 
 /// A timeout or an interrupted run reports runner/setup failure rather than a test failure.
 pub fn ci_is_infrastructure(check: &CheckRun) -> bool {
-    tl3_mergify_core::observe::ci_is_infrastructure(
-        check
-            .conclusion
-            .as_deref()
-            .map(tl3_mergify_core::Conclusion::parse),
+    decide::observe::ci_is_infrastructure(
+        check.conclusion.as_deref().map(decide::Conclusion::parse),
         || report_infrastructure(check),
     )
 }
@@ -471,7 +460,7 @@ pub fn eligible_waiting(check: &CheckRun) -> bool {
 pub fn merged_via_queue(observation: &Observation) -> bool {
     observation.check.as_ref().is_some_and(|check| {
         let view = views(std::slice::from_ref(check), &check.head_sha, |_| false)[0];
-        tl3_mergify_core::observe::merged_via_queue(&view, || check_state(check))
+        decide::observe::merged_via_queue(&view, || check_state(check))
     })
 }
 

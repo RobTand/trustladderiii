@@ -1,4 +1,4 @@
-//! Kani proofs of the Mergify core's decisions (#735).
+//! Kani proofs of the Mergify queue decisions (#735).
 //!
 //! Each proof states its property over every value of the typed inputs. Check
 //! and event lists hold at most `N` (3) entries: enough for two members of one
@@ -11,11 +11,10 @@
 //! Every proof has `kani::cover!` checks, and `tools/kani.py` fails a proof
 //! whose covers are not all satisfied, so no proof passes vacuously.
 
-use crate::check::*;
-use crate::facts::*;
-use crate::http::*;
-use crate::observe::*;
-use crate::translate::*;
+use super::check::*;
+use super::facts::*;
+use super::observe::*;
+use super::translate::*;
 
 const N: usize = 3;
 
@@ -807,47 +806,6 @@ fn check_person_facts() {
     );
 }
 
-/// http_status_class_total: every status code, with or without GitHub's
-/// rate-limit signal, has exactly one class, as the table states.
-fn check_http_status_class_total() {
-    let status: u16 = kani::any();
-    let signal: bool = kani::any();
-    let class = classify(status, signal);
-    let expected = match status {
-        429 => StatusClass::Quota,
-        403 if signal => StatusClass::Quota,
-        401 | 403 => StatusClass::Permission,
-        404 | 410 => StatusClass::NotFound,
-        422 => StatusClass::InvalidRequest,
-        500..=599 => StatusClass::UpstreamServer,
-        _ => StatusClass::Transport,
-    };
-    assert!(class == expected, "status misclassified");
-    assert!(
-        rate_limited(status, signal) == (class == StatusClass::Quota),
-        "rate limit and quota disagree"
-    );
-    assert!(
-        status_class(status) != StatusClass::Quota,
-        "a plain error response is quota"
-    );
-    kani::cover!(
-        class == StatusClass::Quota && status == 403,
-        "a 403 rate limit"
-    );
-    kani::cover!(
-        class == StatusClass::Permission && status == 403,
-        "a 403 permission"
-    );
-    kani::cover!(class == StatusClass::NotFound && status == 410, "gone");
-    kani::cover!(class == StatusClass::InvalidRequest, "invalid request");
-    kani::cover!(class == StatusClass::UpstreamServer, "server error");
-    kani::cover!(
-        class == StatusClass::Transport && status == 400,
-        "another status"
-    );
-}
-
 /// K-facts-outcome: what a queue read yields. A merge-queue PR yields nothing,
 /// a merged PR never counts as another's push, and head checks are read only
 /// for an open PR whose queue state can still wait or fail. Merge evidence
@@ -971,5 +929,4 @@ proof!(translate_head_ci, 4, check_translate_head_ci());
 proof!(translate_route, 4, check_translate_route());
 proof!(ci_classify, 4, check_ci_classify());
 proof!(person_facts_total, 4, check_person_facts());
-proof!(http_status_class_total, 4, check_http_status_class_total());
 proof!(facts_outcome, 4, check_facts_outcome());

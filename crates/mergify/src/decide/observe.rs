@@ -1,6 +1,6 @@
 //! Which queue check describes a PR, and what state the queue is in.
 
-use crate::check::{App, CheckView, Conclusion, Head, Name, Status};
+use super::check::{App, CheckView, Conclusion, Head, Name, Status};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]

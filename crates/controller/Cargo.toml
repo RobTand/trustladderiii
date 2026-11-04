@@ -22,7 +22,6 @@ tl3-store = { path = "../store" }
 tl3-config = { path = "../config" }
 tl3-github = { path = "../github" }
 tl3-mergify = { path = "../mergify" }
-tl3-mergify-core = { path = "../mergify-core" }
 chrono = { version = "0.4", features = ["serde"] }
 ts-rs = { version = "12", features = ["no-serde-warnings"] }
 
