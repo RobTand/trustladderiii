@@ -1954,6 +1954,19 @@ fn closed_looks_regressions(db: &mut support::Database) -> usize {
 }
 
 fn main() {
+    // #766: run the unchanged allowance regressions without the unrelated long suite.
+    if std::env::args().any(|arg| arg == "--approval-regressions") {
+        let mut db = support::Database::start();
+        alive_look_inside_allowance_breaks_streak(&db.create("alive_streak"));
+        println!("test alive_look_inside_allowance_breaks_streak ... ok");
+        read_outages_keep_looking(&db.create("approval_outage"), false);
+        println!("test read_outages_keep_looking ... ok");
+        read_outages_keep_looking(&db.create("approval_probe_error"), true);
+        println!("test read_outages_keep_looking_after_probe_error ... ok");
+        db.stop();
+        println!("3 allowance scenarios passed; no skips");
+        return;
+    }
     if std::env::args().any(|arg| arg == "--subscription-errors") {
         let mut db = support::Database::start();
         subscription_error_is_isolated(&db.create("subscription_errors"));
