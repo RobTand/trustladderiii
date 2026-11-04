@@ -2179,6 +2179,8 @@ kernel_fn! {
 pub fn step(world: World, event: Event) -> (result: (World, Vec<Out>)) [
     requires step_scope(world),
     ensures step_budget(world, result.0),
+        (progress_input(world, event)
+            ==> progress_measure(result.0) < progress_measure(world)),
 ] {
     let (world, out, _) = step_with_passes(world, event);
     (world, out)
@@ -2201,6 +2203,8 @@ kernel_fn! {
 pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<Out>, u32)) [
     requires step_scope(world),
     ensures step_budget(world, result.0),
+        (progress_input(world, event)
+            ==> progress_measure(result.0) < progress_measure(world)),
 ] {
     kernel_snapshot! { before_step = world }
     let mut outbox = Outbox::new();
@@ -2226,6 +2230,12 @@ pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<
     let passes = settle(&mut world, &mut out, None);
     kernel_proof! {
         reveal(step_budget);
+        if world_checked(before_step@) && witness_event(before_step@, event) {
+            reveal(world_checked);
+            // Witness events never append a node or remove declarations.
+            assert(dependencies::edges_indexable(after_apply@));
+            settle_measure(after_apply@, world);
+        }
         assert forall|j: int| 0 <= j < before_step@.nodes@.len() implies
             world.nodes@[j].generation as int <= before_step@.nodes@[j].generation as int + GENERATION_STEP_BUDGET
                 && world.nodes@[j].next_seq as int <= before_step@.nodes@[j].next_seq as int + EFFECT_STEP_BUDGET

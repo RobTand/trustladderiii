@@ -368,8 +368,47 @@ proof fn settle_measure(before: World, after: World)
 
 #[cfg(verus_keep_ghost)]
 verus! {
+/// #771: public view of the source-connected outside event premise.
+pub closed spec fn progress_input(w: World, event: Event) -> bool {
+    world_checked(w) && witness_event(w, event)
+}
 /// #771: an event returned by the real outside-witness selector.
 spec fn witness_event(w: World, event: Event) -> bool {
     exists|j: int| 0 <= j < w.nodes@.len() && chosen_for_node(w, j, event)
+}
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// Q30/Q39 / #771: consistency and settledness plus the enforced arithmetic
+/// domain. Node::next_command_id uses checked_add. Controller::translate
+/// rejects raw Commands, and steering's command_event supplies the checked ID.
+/// Controller::apply checks World::headroom_ok before each event. Exhausting a
+/// command ID requires about 2^64 accepted steering commands on one request;
+/// the unrestricted raw-kernel counterexample remains outside this scope.
+/// Immutable file storage is ordered by World::intern_footprint.
+pub closed spec fn progress_scope(w: World) -> bool {
+    world_checked(w) && settled_world(w) && world_headroom(w) && fresh_commands(w)
+        && storage_ordered(w)
+        && exists|i: int| 0 <= i < w.nodes@.len() && !(w.nodes@[i].phase is Closed)
+}
+
+/// #771: source-connected progress of the executable step. The rank is the
+/// mathematical version of measure(), avoiding overflow of its finite sum.
+/// This proves existence of some progress event. Q30/Q39 permit starvation.
+fn kernel_progress(world: World) -> (result: (World, Vec<Out>))
+    requires progress_scope(world),
+    ensures progress_measure(result.0) < progress_measure(world),
+        step_budget(world, result.0),
+{
+    proof {
+        reveal(progress_scope);
+        reveal(storage_ordered);
+        checked_reserves(world);
+        outside_branch_exists(world);
+    }
+    let event = world.witness();
+    proof { reveal(witness_selection); }
+    step(world, event.unwrap())
 }
 }
