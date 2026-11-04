@@ -264,11 +264,10 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             controller
                 .observe(
                     "stop",
-                    Observation::Kernel(tl3_kernel::Event::Command {
+                    Observation::Steering {
                         node: NodeId(0),
-                        id: 1,
                         command: tl3_kernel::Command::Stop,
-                    }),
+                    },
                 )
                 .unwrap();
             if mode == "stop-restart" {

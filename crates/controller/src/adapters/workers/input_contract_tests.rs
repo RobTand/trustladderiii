@@ -186,7 +186,7 @@ fn worlds() -> Vec<(World, Vec<tl3_kernel::Out>)> {
                 {
                     event = Event::Command {
                         node: NodeId(0),
-                        id: n.last_cmd + 1,
+                        id: n.next_command_id().expect("fresh test command ID"),
                         command: KernelCommand::Pause,
                     };
                     paused_audit_reply = true;
@@ -201,7 +201,7 @@ fn worlds() -> Vec<(World, Vec<tl3_kernel::Out>)> {
                     paused_maker_reply = true;
                     event = Event::Command {
                         node: NodeId(0),
-                        id: n.last_cmd + 1,
+                        id: n.next_command_id().expect("fresh test command ID"),
                         command: KernelCommand::Pause,
                     };
                     changed = true;

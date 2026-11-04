@@ -190,7 +190,7 @@ impl Daemon {
     fn input(&mut self, key: &str, event: Event) {
         let input = Input::Observation {
             key: key.into(),
-            observation: Observation::Kernel(event),
+            observation: crate::command::observation(event),
         };
         let stdin = self.child.stdin.as_mut().unwrap();
         serde_json::to_writer(&mut *stdin, &input).unwrap();
@@ -1410,11 +1410,10 @@ pub(super) fn unanswered_clarification_closes(settings: &tl3_config::Store) {
     controller
         .observe(
             "close-without-an-answer",
-            Observation::Kernel(Event::Command {
+            Observation::Steering {
                 node: NodeId(0),
-                id: 1,
                 command: KernelCommand::Stop,
-            }),
+            },
         )
         .unwrap();
     drain(&mut controller);

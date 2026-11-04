@@ -72,28 +72,16 @@ fn paused_unplanned(last_cmd: u64) -> World {
 fn max_command_id_refutes_the_unrestricted_progress_witness() {
     let world = paused_unplanned(u64::MAX);
     assert_eq!(world.measure(), 28 * 64 + 2 + 8);
-    match std::panic::catch_unwind(|| world.witness()) {
-        Err(payload) => {
-            let message = payload
-                .downcast_ref::<&str>()
-                .copied()
-                .or_else(|| payload.downcast_ref::<String>().map(String::as_str));
-            assert_eq!(message, Some("attempt to add with overflow"));
-        }
-        Ok(witness) => {
-            let event = witness.expect("the release witness wraps its command ID");
-            assert_eq!(
-                event,
-                Event::Command {
-                    node: NodeId(0),
-                    id: 0,
-                    command: Command::Resume,
-                }
-            );
-            let after = send(world.clone(), event);
-            assert_eq!(after, world, "the wrapped witness is ignored");
-        }
-    }
+    assert_eq!(world.witness(), None, "outside the fresh-command scope");
+    let after = send(
+        world.clone(),
+        Event::Command {
+            node: NodeId(0),
+            id: 0,
+            command: Command::Resume,
+        },
+    );
+    assert_eq!(after, world, "the kernel still ignores stale commands");
 }
 
 /// Facts and commands in every phase: even Stop cannot bypass an exhausted ID.

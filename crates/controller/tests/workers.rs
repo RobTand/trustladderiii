@@ -1006,11 +1006,10 @@ fn simulation(settings: &tl3_config::Store) {
     controller
         .observe(
             "fixture-pause",
-            Observation::Kernel(Event::Command {
+            Observation::Steering {
                 node: NodeId(0),
-                id: 1,
                 command: tl3_kernel::Command::Pause,
-            }),
+            },
         )
         .unwrap();
     drive(&mut controller, &mut source, &mut store);
@@ -1026,11 +1025,10 @@ fn simulation(settings: &tl3_config::Store) {
     controller
         .observe(
             "fixture-resume",
-            Observation::Kernel(Event::Command {
+            Observation::Steering {
                 node: NodeId(0),
-                id: 2,
                 command: tl3_kernel::Command::Resume,
-            }),
+            },
         )
         .unwrap();
     wait(|| {
@@ -1887,11 +1885,10 @@ fn clock_stops_stalled_worker(settings: &tl3_config::Store) {
     controller
         .observe(
             "stop-after-stall",
-            Observation::Kernel(Event::Command {
+            Observation::Steering {
                 node: NodeId(0),
-                id: 1,
                 command: tl3_kernel::Command::Stop,
-            }),
+            },
         )
         .unwrap();
     while controller.drive_once().unwrap() {}
@@ -1986,11 +1983,10 @@ fn quota_resumes_same_operation(settings: &tl3_config::Store) {
     controller
         .observe(
             "stop-after-quota",
-            Observation::Kernel(Event::Command {
+            Observation::Steering {
                 node: NodeId(0),
-                id: 1,
                 command: tl3_kernel::Command::Stop,
-            }),
+            },
         )
         .unwrap();
     while controller.drive_once().unwrap() {}

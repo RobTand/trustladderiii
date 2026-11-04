@@ -658,11 +658,10 @@ fn recorded_human_removal_before_first_dispatch_requires_explicit_resume() {
     // A different accepted command cannot release the hold.
     c.observe(
         "unrelated-command",
-        tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+        tl3_controller::executor::Observation::Steering {
             node: NodeId(0),
-            id: 1,
             command: tl3_kernel::Command::Pause,
-        }),
+        },
     )
     .unwrap();
     drain(&mut c);
@@ -670,11 +669,10 @@ fn recorded_human_removal_before_first_dispatch_requires_explicit_resume() {
     let mut c = f.open();
     c.observe(
         "explicit-resume",
-        tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+        tl3_controller::executor::Observation::Steering {
             node: NodeId(0),
-            id: 2,
             command: tl3_kernel::Command::Resume,
-        }),
+        },
     )
     .unwrap();
     drain(&mut c);

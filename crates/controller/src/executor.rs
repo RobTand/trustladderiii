@@ -186,6 +186,11 @@ pub enum Observation {
         model: Option<String>,
     },
     Kernel(Event),
+    /// Commands carry intent; steering allocates their kernel command ID.
+    Steering {
+        node: NodeId,
+        command: tl3_kernel::Command,
+    },
     CiFailed {
         node: NodeId,
         infra: bool,

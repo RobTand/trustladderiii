@@ -1,3 +1,6 @@
+#[path = "support/command.rs"]
+mod command;
+
 // Single-event fixture receives expose no intermediate progress.
 // #673 measured daemon_webhooks_worker_replies_and_source_failure at 169.274 s; 350 s > 2x.
 const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(350);
@@ -2209,11 +2212,10 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
     // This ingress fixture uses a real maker and fake checks. Publishing tests own real review.
     let stop = Input::Observation {
         key: "stop-after-maker".into(),
-        observation: Observation::Kernel(tl3_kernel::Event::Command {
+        observation: Observation::Steering {
             node: NodeId(0),
-            id: 1,
             command: tl3_kernel::Command::Stop,
-        }),
+        },
     };
     let stdin = daemon.0.stdin.as_mut().unwrap();
     serde_json::to_writer(&mut *stdin, &stop).unwrap();

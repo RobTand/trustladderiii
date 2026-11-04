@@ -364,11 +364,10 @@ pub(super) fn rebase_revisit(settings: &tl3_config::Store, new_edits: bool) {
     flow.controller
         .observe(
             "stop-rebase-fixture",
-            Observation::Kernel(Event::Command {
+            Observation::Steering {
                 node: NodeId(0),
-                id: 1,
                 command: tl3_kernel::Command::Stop,
-            }),
+            },
         )
         .unwrap();
     flow.until(|phase| phase.is_closed());

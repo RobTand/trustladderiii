@@ -438,6 +438,11 @@ pub struct Node {
 }
 
 impl Node {
+    /// #771: allocate a fresh command ID without wrapping at exhaustion.
+    pub fn next_command_id(&self) -> Option<u64> {
+        self.last_cmd.checked_add(1)
+    }
+
     pub fn new(repo: RepoId) -> Node {
         Node {
             phase: Phase::Ingesting,
@@ -1138,7 +1143,7 @@ impl World {
             if n.paused && !n.phase.is_stopping() {
                 return Some(Event::Command {
                     node,
-                    id: n.last_cmd + 1,
+                    id: n.next_command_id()?,
                     command: Command::Resume,
                 });
             }
@@ -1169,7 +1174,7 @@ impl World {
                 };
                 return Some(Event::Command {
                     node,
-                    id: n.last_cmd + 1,
+                    id: n.next_command_id()?,
                     command,
                 });
             }
@@ -1184,7 +1189,7 @@ impl World {
                 if dependency.rejected || dependency.status == DependencyStatus::Abandoned {
                     return Some(Event::Command {
                         node,
-                        id: n.last_cmd + 1,
+                        id: n.next_command_id()?,
                         command: Command::ChangeRequest,
                     });
                 }

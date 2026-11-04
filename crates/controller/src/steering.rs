@@ -629,6 +629,30 @@ impl Controller {
         self.steer(snapshot, world, node, &reply, &origin, commit)
     }
 
+    /// #771: all controller commands allocate IDs here, including typed ingress.
+    pub(crate) fn command_event(
+        &self,
+        snapshot: &Snapshot,
+        world: &World,
+        node: NodeId,
+        command: Command,
+        commit: &mut Commit,
+    ) -> Result<Option<Event>> {
+        let Some(n) = node.index().and_then(|index| world.nodes.get(index)) else {
+            return Ok(None);
+        };
+        let Some(id) = n.next_command_id() else {
+            self.counter_exhausted(
+                snapshot,
+                commit,
+                Some(node),
+                format!("command ids exhausted for request {}", node.0),
+            )?;
+            return Ok(None);
+        };
+        Ok(Some(Event::Command { node, id, command }))
+    }
+
     /// Apply one classified instruction, from a comment or the console, as Rob.
     pub(crate) fn steer(
         &mut self,
@@ -651,6 +675,16 @@ impl Controller {
                 text: origin.text.into(),
                 issue: None,
             };
+            let event = if matches!(n.phase, Phase::Closed(_) | Phase::Stopping(_)) {
+                None
+            } else {
+                let Some(event) =
+                    self.command_event(snapshot, world, node, Command::ChangeRequest, commit)?
+                else {
+                    return Ok(None);
+                };
+                Some(event)
+            };
             commit
                 .rows
                 .push(put("replacement", node.0.to_string(), json!(restart)));
@@ -661,11 +695,7 @@ impl Controller {
                 }
                 // Stopping already tears the work down; close_replacement starts it again.
                 Phase::Stopping(_) => None,
-                _ => Some(Event::Command {
-                    node,
-                    id: n.last_cmd + 1,
-                    command: Command::ChangeRequest,
-                }),
+                _ => event,
             });
         }
         if n.phase.is_closed() {
@@ -709,6 +739,9 @@ impl Controller {
         if !current_answer {
             return Ok(None);
         }
+        let Some(event) = self.command_event(snapshot, world, node, command, commit)? else {
+            return Ok(None);
+        };
         let changes_request = !matches!(n.phase, Phase::Stopping(_))
             && matches!(
                 command,
@@ -848,11 +881,7 @@ impl Controller {
                 .rows
                 .push(put("findings", node.0.to_string(), findings));
         }
-        Ok(Some(Event::Command {
-            node,
-            id: n.last_cmd + 1,
-            command,
-        }))
+        Ok(Some(event))
     }
 
     pub(crate) fn pending_replacement(

@@ -53,6 +53,33 @@ fn post_backoff_ms(class: &str) -> u64 {
 }
 
 impl Controller {
+    pub(crate) fn counter_exhausted(
+        &self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        node: Option<NodeId>,
+        message: String,
+    ) -> Result<()> {
+        let target = node
+            .map(|node| {
+                crate::request(snapshot, node).map(|request| IssueTarget {
+                    repository: request.repo,
+                    issue: request.issue,
+                })
+            })
+            .transpose()?;
+        self.input_failed(
+            snapshot,
+            &format!("counter:{message}"),
+            target,
+            "Kernel counter exhaustion",
+            node,
+            Upstream::Workers,
+            Error::CounterExhausted(message),
+            commit,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn input_failed(
         &self,
@@ -98,8 +125,8 @@ impl Controller {
             })
             .count() as u64
             + 1;
-        let needs_rob =
-            crate::looks::incident_needs_rob(crate::looks::IncidentCause::ReadFailure {
+        let needs_rob = matches!(error, Error::CounterExhausted(_))
+            || crate::looks::incident_needs_rob(crate::looks::IncidentCause::ReadFailure {
                 incidents: count,
             });
         let signature = IncidentSignature {
@@ -111,6 +138,9 @@ impl Controller {
             "{} Other requests can continue.",
             crate::looks::incident_summary(title, &signature, needs_rob, None)
         );
+        if let Error::CounterExhausted(message) = &error {
+            summary.clone_from(message);
+        }
         crate::worker_inputs::append(&mut summary, crate::worker_inputs::of(&error));
         let incident = Incident {
             id: id.clone(),
@@ -124,8 +154,10 @@ impl Controller {
             post_key: Some(format!("incident:{id}")),
             // Reading or translating upstream input failed.
             cause: Some(
-                if matches!(class, "redaction_infra" | "worker_input_schema")
-                    || class == crate::postmortems::PAUSED
+                if matches!(
+                    class,
+                    "redaction_infra" | "worker_input_schema" | "kernel_counter_headroom"
+                ) || class == crate::postmortems::PAUSED
                 {
                     crate::looks::Cause::Tl3
                 } else {
@@ -292,6 +324,7 @@ pub(crate) fn observation_context(
     use tl3_kernel::Event;
     let node = match observation {
         Observation::ScratchSaved { node, .. }
+        | Observation::Steering { node, .. }
         | Observation::WorkerReply { node, .. }
         | Observation::WorkerFailed { node, .. }
         | Observation::CiFailed { node, .. }

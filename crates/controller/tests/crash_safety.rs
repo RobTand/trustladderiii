@@ -236,11 +236,10 @@ fn child(args: &[String]) {
             controller
                 .observe(
                     "stop",
-                    Observation::Kernel(Event::Command {
+                    Observation::Steering {
                         node: NodeId(0),
-                        id: 1,
                         command: Control::Stop,
-                    }),
+                    },
                 )
                 .unwrap();
         }

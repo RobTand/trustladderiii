@@ -2191,11 +2191,10 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
         controller
             .observe(
                 "stop",
-                Observation::Kernel(Event::Command {
+                Observation::Steering {
                     node: NodeId(0),
-                    id: 1,
                     command: Control::Stop,
-                }),
+                },
             )
             .unwrap();
         controller
@@ -2288,11 +2287,10 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
             controller
                 .observe(
                     "cancel-sealed",
-                    Observation::Kernel(Event::Command {
+                    Observation::Steering {
                         node: NodeId(0),
-                        id: 1,
                         command: Control::Stop,
-                    }),
+                    },
                 )
                 .unwrap();
             for _ in 0..100 {

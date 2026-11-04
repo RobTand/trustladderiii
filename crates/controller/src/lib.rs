@@ -84,6 +84,8 @@ pub enum Error {
     WorkerInputs(#[from] worker_inputs::Failure),
     #[error("{0}")]
     Invalid(&'static str),
+    #[error("{0}")]
+    CounterExhausted(String),
     #[error("Hindsight returned HTTP {0}")]
     HindsightStatus(u16),
     #[error("writer drafts failed the message checker after two reruns")]
@@ -2857,6 +2859,14 @@ impl Controller {
                 }
                 return Ok(None);
             }
+            Observation::Kernel(Event::Command { .. }) => {
+                return Err(Error::Invalid(
+                    "commands must come from the steering constructors, which assign next_command_id",
+                ));
+            }
+            Observation::Steering { node, command } => {
+                return self.command_event(snapshot, world, node, command, commit);
+            }
             Observation::Kernel(
                 Event::Ack { .. } | Event::NewRequest { .. } | Event::NewAdoption { .. },
             ) => {
@@ -3775,6 +3785,7 @@ fn observation_upstream(
         Observation::Progress { .. }
         | Observation::Quota { .. }
         | Observation::TraceLogsCapped { .. }
+        | Observation::Steering { .. }
         | Observation::Kernel(Event::Fact {
             fact: Fact::UpstreamStalled,
             ..

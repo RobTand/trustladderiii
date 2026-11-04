@@ -1648,6 +1648,7 @@ pub(crate) const CHECKS_PENDING: &str = "checks_pending";
 
 pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
     match error {
+        crate::Error::CounterExhausted(_) => "kernel_counter_headroom",
         crate::Error::WorkerInputs(_) => crate::worker_inputs::CLASS,
         crate::Error::ChecksPending => CHECKS_PENDING,
         crate::Error::RedactionInfra(_) => "redaction_infra",
