@@ -102,7 +102,7 @@ pub closed spec fn pending_rank(n: Node) -> nat {
     } }
 }
 
-open spec fn base_distance(n: Node) -> nat {
+pub(super) open spec fn base_distance(n: Node) -> nat {
     let rank = match n.phase {
         Phase::AwaitingRob => match n.question {
             Some(q) => continuation_rank(q.cont) + 1,
@@ -115,7 +115,7 @@ open spec fn base_distance(n: Node) -> nat {
     (rank * 64 + 2 * (len - pos)) as nat
 }
 
-open spec fn effect_distance(n: Node) -> int {
+pub(super) open spec fn effect_distance(n: Node) -> int {
     match n.effect {
         None => 0int,
         Some(e) => 1 - if !e.cancelling && match current_item(n) {

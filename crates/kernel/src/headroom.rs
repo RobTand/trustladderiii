@@ -6,9 +6,11 @@ fn scan_step_budget(open_nodes: usize) -> Option<u32> {
     u32::try_from(open_nodes).ok()?.checked_add(1)
 }
 
-#[allow(dead_code)]
-fn settle_step_budget(_open_nodes: usize) -> Option<u32> {
-    Some(0)
+// Stopping can skip five agenda entries and then close. Every other local
+// settle path takes at most four moves before blocking. Each changing pass
+// consumes at least one move, so six per open node bounds the u32 pass counter.
+fn settle_step_budget(open_nodes: usize) -> Option<u32> {
+    scan_step_budget(open_nodes)?.checked_mul(6)
 }
 
 /// #771: reserves for one external event followed by the complete settle loop.
@@ -55,6 +57,12 @@ impl World {
             return Some(CounterExhaustion {
                 node: None,
                 counter: "node_scan",
+            });
+        }
+        if settle_step_budget(open_nodes).is_none() {
+            return Some(CounterExhaustion {
+                node: None,
+                counter: "settle_passes",
             });
         }
         let tickets = self.ticket_step_budget();
