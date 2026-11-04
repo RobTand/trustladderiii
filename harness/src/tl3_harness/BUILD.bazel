@@ -31,6 +31,7 @@ py_library(
         "runner.py",
         "scratch.py",
         "selection.py",
+        "selector_identity.py",
         "supervision.py",
         "symptoms.py",
         "test_tool.py",
