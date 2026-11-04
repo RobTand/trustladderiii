@@ -22,8 +22,8 @@ struct Fixture {
     _server: MockServer,
     runtime: tokio::runtime::Runtime,
     _scratch: tempfile::TempDir,
-    _database: support::Database,
     store: Store,
+    _database: support::Database,
     settings: tl3_config::Store,
     config: tl3_config::Config,
     attempts: Receiver<bool>,
@@ -207,6 +207,30 @@ fn drain(controller: &mut tl3_controller::Controller) {
     panic!("controller must settle");
 }
 
+struct IncidentRecorder(Arc<Mutex<Vec<String>>>);
+impl Executor for IncidentRecorder {
+    fn input_incident(
+        &mut self,
+        notice: &tl3_controller::input_errors::IncidentNotice,
+        _: i64,
+    ) -> tl3_controller::Result<()> {
+        self.0.lock().unwrap().push(notice.summary.clone());
+        Ok(())
+    }
+    fn execute(
+        &mut self,
+        _: &tl3_controller::executor::Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+        Ok(tl3_controller::executor::Completion::confirmed(vec![]))
+    }
+    fn reconcile(
+        &mut self,
+        _: &tl3_controller::executor::Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Reconciliation> {
+        Ok(tl3_controller::executor::Reconciliation::Absent)
+    }
+}
+
 /// #773 / Q51: a sanctioned probe clears the incident only after upstream acknowledgement.
 #[test]
 fn upstream_probe_recovers_without_operator_action_and_status_shows_hold() {
@@ -216,7 +240,15 @@ fn upstream_probe_recovers_without_operator_action_and_status_shows_hold() {
     let clock = FakeClock(std::rc::Rc::new(std::cell::Cell::new(1_000_000)));
     let mut registry = adapters::simulation(fixture._scratch.path()).unwrap();
     registry.register(Upstream::Workers, fixture.supervisor().clone());
-    let bootstrap = Bootstrap::from_config(&fixture.config).unwrap();
+    let notices = Arc::new(Mutex::new(Vec::new()));
+    registry.register(Upstream::GitHub, IncidentRecorder(notices.clone()));
+    let mut bootstrap = Bootstrap::from_config(&fixture.config).unwrap();
+    bootstrap.operations = Some(tl3_config::OperationsIssue {
+        owner: "owner".into(),
+        name: "operations".into(),
+        installation_id: 3,
+        number: 17,
+    });
     let mut controller = Controller::open_with_clock(
         Store::open(&fixture.settings).unwrap(),
         registry,
@@ -225,6 +257,15 @@ fn upstream_probe_recovers_without_operator_action_and_status_shows_hold() {
     )
     .unwrap();
     drain(&mut controller);
+    assert_eq!(
+        notices.lock().unwrap().len(),
+        1,
+        "the existing incident posting path reports the outage once"
+    );
+    let snapshot = controller.snapshot().unwrap();
+    assert!(snapshot.rows.iter().any(|row| row.table == "incidents"
+        && row.value["cause"] == "upstream"
+        && row.value["input_failure"]["posted"] == true));
     let mut reader = fixture.store.reader().unwrap();
     let held = status::load(&mut reader).unwrap();
     assert!(
@@ -288,7 +329,16 @@ fn feed_connection_failure_is_visible_and_retry_reports_no_consumer() {
     let mut fixture = Fixture::new(false);
     fixture.barrier();
     fixture.sql().query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND (application_name = 'tl3-memory-feed' OR query LIKE 'LISTEN tl3_memory_retry%')", &[]).unwrap();
-    fixture.retire();
+    let error = fixture
+        .supervisor
+        .as_mut()
+        .unwrap()
+        .retire(&mut fixture.store)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("no consumer"),
+        "the failure reaches supervision"
+    );
     let _ = fixture.supervisor().memory_barrier();
     assert_eq!(
         fixture.store.memory_feed_state().unwrap(),

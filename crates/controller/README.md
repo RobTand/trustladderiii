@@ -1056,16 +1056,32 @@ item's size using Postgres's JSONB text representation. Invalid JSON and oversiz
 the evidence and fail retirement so a later drain can retry.
 
 A separate thread drains the outbox into `[hindsight].bank`, which defaults to
-`tl3`. The bank must be separate from the coordinator's bank. The thread wakes
-at startup and at controller drains through a channel of capacity one. After
-a delivery error it holds the queued rows and blocks on Postgres
-`LISTEN tl3_memory_retry`. Ordinary controller drains cannot release this hold.
-Once Hindsight is available, run `tl3 memory retry --config FILE` to request
-another attempt. A successful retain or curation flush in another process
-also notifies the feed. A restart retries the durable queue. Hindsight has no
-recovery event stream, so availability alone does not wake a held feed.
-The listener is armed before delivery, preserving a retry that races a failed
-response. There is no timer or polling, and requests never wait for Hindsight.
+`tl3`. The bank must be separate from the coordinator's bank. Startup and
+controller drains send coalesced channel wakes. After a delivery error the
+thread holds the queued rows, ignoring ordinary drains. There is no private
+SQL listener or feed retry timer.
+
+The controller records an upstream incident, `Hindsight unavailable: N memories
+held`, and posts it through the existing operations-issue incident path. Other
+requests continue. Restore Hindsight or its credentials. The controller's
+existing earliest-deadline look schedules a probe after two minutes, matching
+#759's unavailable-model probe. The probe requests delivery with the saved
+operation UUIDs. A deadline does not clear the incident: acknowledged delivery
+and durable queue removal do. Failed probes rearm the same look. Recovery drains
+the queue and clears the incident automatically, without an operator command.
+`tl3 memory retry --config FILE` requests an earlier attempt through durable
+retry evidence and the existing ingress wake. Evidence arriving during a failed
+response survives that failure. A successful retain or curation from another
+process also requests an attempt. Restart retries the durable queue.
+
+Web status and `tl3 status` show `Feed` (`ready`, `delivering`, `held`, or
+`failed`), `Pending`, `Parked`, and `HTTP parked`. A lost consumer shows
+`failed (no consumer; restart tl3d)` and raises a TL3-side incident. Retry then
+returns an error instead of reporting success. A session advisory lock proves
+consumer presence without a heartbeat. Dropping the final supervisor handle
+sends a local stop and joins the thread before dependencies are released;
+shutdown needs no new database connection. The feed retains one writer session
+while idle and has no blocking SQL listener.
 
 The server's `/openapi.json`, read on 2026-10-30, documents
 `POST /v1/default/banks/{bank}/memories` with `async: true` and a client-supplied

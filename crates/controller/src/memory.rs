@@ -1293,6 +1293,13 @@ impl Feed {
     }
 
     pub(crate) fn refresh(&self, store: &mut Store) -> Result<()> {
+        if store.memory_feed_state()? == tl3_store::MemoryFeedState::Failed {
+            self.0.life.failed.store(true, Ordering::SeqCst);
+            let _ = self.0.sender.send(FeedEvent::Stop);
+            return Err(Error::Invalid(
+                "memory feed failed: no consumer; restart tl3d",
+            ));
+        }
         let generation = store.memory_retry_generation()?;
         if self.0.generation.swap(generation, Ordering::SeqCst) != generation {
             self.retry()?;
@@ -1415,8 +1422,32 @@ impl crate::Controller {
         } else {
             ("memory_feed_failed", Cause::Tl3, "Memory feed failed: no consumer. Restart tl3d to reattach the durable queue. Other requests can continue.".into())
         };
-        if open.any(|incident| incident.signature.class == class) {
-            return Ok(false);
+        if let Some(previous) = open.find(|incident| incident.signature.class == class) {
+            if previous.summary == summary
+                && (state != MemoryFeedState::Failed || next_probe_ms(snapshot)?.is_none())
+            {
+                return Ok(false);
+            }
+            let mut incident = previous.clone();
+            incident.summary = summary;
+            let mut commit = Commit::new(
+                format!("memory-health:{}", snapshot.revision.get()),
+                json!({"memory_health":true}),
+                snapshot,
+            );
+            commit.rows.push(crate::put(
+                "incidents",
+                incident.id.clone(),
+                json!(incident),
+            ));
+            if state == MemoryFeedState::Failed && next_probe_ms(snapshot)?.is_some() {
+                commit.rows.push(RowChange::Delete {
+                    table: MEMORY_PROBES.into(),
+                    id: MEMORY_PROBE.into(),
+                });
+            }
+            self.store.commit(&commit)?;
+            return Ok(true);
         }
         let id = crate::looks::incident_id(snapshot, "memory");
         let incident = Incident {
@@ -1453,6 +1484,12 @@ impl crate::Controller {
                     due_ms: self.now_ms().saturating_add(PROBE_MS)
                 }),
             ));
+        }
+        if state == MemoryFeedState::Failed && next_probe_ms(snapshot)?.is_some() {
+            commit.rows.push(RowChange::Delete {
+                table: MEMORY_PROBES.into(),
+                id: MEMORY_PROBE.into(),
+            });
         }
         self.store.commit(&commit)?;
         Ok(true)
