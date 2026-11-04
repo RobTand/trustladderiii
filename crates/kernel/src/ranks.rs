@@ -405,7 +405,7 @@ kernel_fn! {
             *old(_next_ticket), *final(_next_ticket), result),
     ] proof [reveal(advance_post);] {
         let n = *node;
-        return match n.phase {
+        match n.phase {
             Phase::Publishing => {
                 set_phase(node, Phase::Queued);
                 true
@@ -415,7 +415,7 @@ kernel_fn! {
                 true
             }
             _ => false,
-        };
+        }
     }
 }
 
