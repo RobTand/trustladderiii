@@ -110,12 +110,12 @@ pub enum Error {
     RedactionInfra(#[source] std::io::Error),
     #[error("upstream quota exhausted")]
     Quota { retry_after: std::time::Duration },
-    /// The enqueue guard is waiting for required checks to report. This is
-    /// evidence of a legitimate wait, not a failure (Q52).
     #[error("kernel invariant {rule} failed after {event:?}")]
     KernelInvariant { event: Option<Event>, rule: String },
     #[error("replay-check: {0}")]
     Replay(String),
+    /// The enqueue guard is waiting for required checks to report. This is
+    /// evidence of a legitimate wait, not a failure (Q52).
     #[error("required head checks are still pending")]
     ChecksPending,
 }

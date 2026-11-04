@@ -165,6 +165,34 @@ pub fn run(reader: &mut tl3_store::Reader, from: Option<&str>) -> crate::Result<
     }
     let expected = previous
         .ok_or_else(|| Error::Replay("no replayable kernel snapshot in selected history".into()))?;
+    let expected_rows = crate::snapshot::encode(&expected)?;
+    let mismatch = snapshot
+        .rows
+        .iter()
+        .filter(|row| {
+            matches!(
+                row.table.as_str(),
+                "kernel" | "nodes" | "gates" | "file_sets"
+            )
+        })
+        .filter(|row| expected_rows.get(&(row.table.clone(), row.id.clone())) != Some(&row.value))
+        .map(|row| row.version)
+        .min();
+    if let Some(revision) = mismatch {
+        if let Some(record) = tl3_store::events_in(
+            &mut tx,
+            Revision::try_from(revision.get().saturating_sub(1))?,
+            1,
+        )?
+        .first()
+        {
+            last_key = record.key.clone();
+        }
+        return Err(Error::Replay(format!(
+            "event {last_key}: final stored snapshot diverged at revision {}",
+            revision.get()
+        )));
+    }
     let actual = crate::snapshot::decode(&snapshot)
         .map_err(|error| Error::Replay(format!("event {last_key}: final snapshot: {error}")))?;
     if expected != actual {
@@ -173,7 +201,7 @@ pub fn run(reader: &mut tl3_store::Reader, from: Option<&str>) -> crate::Result<
             snapshot.revision.get()
         )));
     }
-    tx.commit()?;
+    tx.commit().map_err(tl3_store::Error::from)?;
     Ok(report)
 }
 
