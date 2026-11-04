@@ -497,3 +497,37 @@ fn scenario_shards_cover_nonworker_groups_including_markerless_setup_once() {
     assert_eq!(seen, ["after_setup", "fast", "setup", "slow"]);
     assert!(loads.iter().all(|load| *load <= 300), "{loads:?}");
 }
+
+#[test]
+fn worker_groups_are_weighted_by_their_measured_seconds() {
+    use support::scenario_shard::{WORKER_GROUPS, measured, weights_ms};
+    let groups = measured("tl3-controller/workers");
+    let names: Vec<_> = WORKER_GROUPS.iter().map(|group| group.name()).collect();
+    assert!(
+        !groups.is_empty(),
+        "libtest-shards.json has measured worker groups"
+    );
+    for name in groups.keys() {
+        assert!(
+            names.contains(&name.as_str()),
+            "{name} is measured but is not a worker group; regenerate the weights"
+        );
+    }
+    for (name, weight) in names.iter().zip(weights_ms(&groups, &names)) {
+        if let Some(seconds) = groups.get(*name) {
+            assert_eq!(
+                weight,
+                (seconds.as_f64().unwrap() * 1000.0).round() as usize,
+                "{name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_unmeasured_group_counts_as_the_median_measured_group() {
+    use support::scenario_shard::weights_ms;
+    let measured = serde_json::json!({"a": 1.0, "b": 2.5, "slow": 90.0});
+    let weights = weights_ms(measured.as_object().unwrap(), &["slow", "a", "new"]);
+    assert_eq!(weights, [90_000, 1_000, 2_500]);
+}
