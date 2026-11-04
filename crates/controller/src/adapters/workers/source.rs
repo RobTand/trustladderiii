@@ -38,6 +38,7 @@ pub struct WorkerOutputSource {
     root: PathBuf,
     settings: tl3_config::Store,
     active: ActiveRuns,
+    memory: Option<crate::memory::FeedExit>,
     inotify: Option<OwnedFd>,
     root_watch: i32,
     overflows: u64,
@@ -82,6 +83,7 @@ impl WorkerOutputSource {
             root,
             settings,
             active,
+            memory: None,
             inotify: None,
             root_watch: -1,
             overflows: 0,
@@ -98,6 +100,11 @@ impl WorkerOutputSource {
     pub(super) fn with_flusher(mut self, launcher: Vec<String>, python: PathBuf) -> Self {
         self.launcher = launcher;
         self.python = python;
+        self
+    }
+
+    pub(super) fn with_memory(mut self, memory: crate::memory::FeedExit) -> Self {
+        self.memory = Some(memory);
         self
     }
 
@@ -219,6 +226,9 @@ impl WorkerOutputSource {
 
     /// Nonblocking event drain for simulations which drive Controller directly.
     pub fn poll_once(&mut self, store: &mut Store, sender: &Sender<Input>) -> Result<()> {
+        if let Some(memory) = &self.memory {
+            memory.supervise(sender);
+        }
         at("poll_once", self.poll_once_inner(store, sender))
     }
 

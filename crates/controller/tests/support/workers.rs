@@ -164,6 +164,9 @@ impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
     fn look(&mut self, delivery: &Delivery) -> Result<Look> {
         self.backend(delivery).look(delivery)
     }
+    fn probe_memory(&mut self) -> Result<()> {
+        self.primary().probe_memory()
+    }
     fn probe(&mut self, delivery: &Delivery) -> Result<bool> {
         self.backend(delivery).probe(delivery)
     }

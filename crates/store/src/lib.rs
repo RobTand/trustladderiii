@@ -119,7 +119,16 @@ const MIGRATIONS: &[(i32, &str)] = &[
         include_str!("../migrations/0015_postmortem_results.sql"),
     ),
     (17, include_str!("../migrations/0017_worker_facts.sql")),
-    (18, include_str!("../migrations/0018_dispatch_evidence.sql")),
+    (18, include_str!("../migrations/0018_memory_feed.sql")),
+    (
+        19,
+        include_str!("../migrations/0019_memory_feed_version.sql"),
+    ),
+    (
+        20,
+        include_str!("../migrations/0020_memory_feed_lineage.sql"),
+    ),
+    (21, include_str!("../migrations/0021_dispatch_evidence.sql")),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,7 +155,165 @@ fn retire_ingress(tx: &mut Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
+/// #773: delivery lifecycle, including a lost consumer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MemoryFeedState {
+    Ready,
+    Delivering,
+    Held,
+    Failed,
+    #[default]
+    NoConsumer,
+}
+
+/// #773 / Q7: lifecycle evidence and its identity are one persisted observation.
+#[derive(Debug, Default)]
+pub struct MemoryFeedOutcome {
+    pub state: MemoryFeedState,
+    pub version: i64,
+    pub lineage: String,
+}
+
+impl MemoryFeedState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Delivering => "delivering",
+            Self::Held => "held",
+            Self::Failed => "failed (no consumer; restart tl3d)",
+            Self::NoConsumer => "no consumer",
+        }
+    }
+}
+
+// A session lock proves the consumer's ownership, not an expiring heartbeat.
+// The two-key namespace is separate from the controller's single-key lock.
+const MEMORY_CONSUMER: &str = "SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = 773 AND objid = 1 AND objsubid = 2 AND granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())";
+
+pub fn read_memory_feed_state(tx: &mut Transaction<'_>) -> Result<MemoryFeedState> {
+    Ok(read_memory_feed_outcome(tx)?.state)
+}
+
+fn read_memory_feed_outcome(tx: &mut Transaction<'_>) -> Result<MemoryFeedOutcome> {
+    let row = tx.query_opt(
+        &format!("SELECT state, EXISTS ({MEMORY_CONSUMER}), version, lineage FROM tl3_memory_feed WHERE singleton"),
+        &[],
+    )?;
+    let Some(row) = row else {
+        return Ok(MemoryFeedOutcome::default());
+    };
+    let state = if !row.get::<_, bool>(1) {
+        MemoryFeedState::Failed
+    } else {
+        match row.get::<_, &str>(0) {
+            "ready" => MemoryFeedState::Ready,
+            "delivering" => MemoryFeedState::Delivering,
+            "held" => MemoryFeedState::Held,
+            _ => return Err(Error::Invalid("invalid memory feed state")),
+        }
+    };
+    Ok(MemoryFeedOutcome {
+        state,
+        version: row.get(2),
+        lineage: row.get(3),
+    })
+}
+
 impl Store {
+    pub fn memory_feed_state(&mut self) -> Result<MemoryFeedState> {
+        read_memory_feed_state(&mut self.client.transaction()?)
+    }
+
+    /// #773: the consumer owns this session until its thread has joined.
+    pub fn claim_memory_feed(&mut self) -> Result<()> {
+        self.client
+            .query_one("SELECT pg_advisory_lock_shared(773, 1)", &[])?;
+        self.client.batch_execute("SET application_name = 'tl3-memory-feed'; INSERT INTO tl3_memory_feed (singleton, state) VALUES (true, 'ready') ON CONFLICT (singleton) DO NOTHING")?;
+        Ok(())
+    }
+
+    pub fn pending_memory_count(&mut self) -> Result<i64> {
+        Ok(self
+            .client
+            .query_one(
+                "SELECT count(*) FROM tl3_memory_outbox WHERE parked_reason IS NULL",
+                &[],
+            )?
+            .get(0))
+    }
+
+    pub fn memory_retry_generation(&mut self) -> Result<i64> {
+        Ok(self
+            .client
+            .query_opt("SELECT retry FROM tl3_memory_feed WHERE singleton", &[])?
+            .map_or(0, |row| row.get(0)))
+    }
+
+    /// #773: identify the persisted attempt outcome, so clearance is not a failure.
+    pub fn memory_feed_version(&mut self) -> Result<i64> {
+        Ok(self.memory_feed_outcome()?.version)
+    }
+
+    /// #773 / Q7: sample the outcome's version and attempted lineage together.
+    pub fn memory_feed_outcome(&mut self) -> Result<MemoryFeedOutcome> {
+        read_memory_feed_outcome(&mut self.client.transaction()?)
+    }
+
+    /// #773: only the owning feed records delivery identity; operator flushes
+    /// signal acknowledged recovery through memory_delivery_ack instead.
+    pub fn set_memory_feed_attempt(&mut self, lineage: &str, held: bool) -> Result<()> {
+        let state = if held { "held" } else { "delivering" };
+        let mut tx = self.client.transaction()?;
+        if tx.execute(
+            &format!("UPDATE tl3_memory_feed SET state = $1, lineage = $2, version = version + 1 WHERE singleton AND (state <> $1 OR lineage <> $2) AND EXISTS ({MEMORY_CONSUMER} AND pid = pg_backend_pid())"),
+            &[&state, &lineage],
+        )? > 0 {
+            tx.batch_execute("NOTIFY tl3_ingress")?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// #773: durable retry evidence wakes the controller's existing ingress source.
+    pub fn retry_memory_delivery(&mut self) -> Result<()> {
+        let mut tx = self.client.transaction()?;
+        if !tx
+            .query_one(&format!("SELECT EXISTS ({MEMORY_CONSUMER})"), &[])?
+            .get::<_, bool>(0)
+        {
+            return Err(Error::Invalid("memory retry: no consumer; restart tl3d"));
+        }
+        tx.batch_execute(
+            "UPDATE tl3_memory_feed SET retry = retry + 1 WHERE singleton; NOTIFY tl3_ingress",
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// A separate successful curation/retain is upstream evidence. The feed's
+    /// own acknowledgement must not release a later failure in the same batch.
+    pub fn memory_delivery_ack(&mut self) -> Result<()> {
+        let mut tx = self.client.transaction()?;
+        if tx.execute(&format!("UPDATE tl3_memory_feed SET retry = retry + 1 WHERE singleton AND EXISTS ({MEMORY_CONSUMER} AND pid <> pg_backend_pid())"), &[])? > 0 {
+            tx.batch_execute("NOTIFY tl3_ingress")?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn set_memory_feed_state(&mut self, state: MemoryFeedState) -> Result<()> {
+        let mut tx = self.client.transaction()?;
+        let changed = tx.execute(
+            "UPDATE tl3_memory_feed SET state = $1, version = version + 1 WHERE singleton AND state <> $1",
+            &[&state.as_str()],
+        )?;
+        if changed > 0 {
+            tx.batch_execute("NOTIFY tl3_ingress")?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Open an independent read-only session without transferring this writer's ownership.
     pub fn reader(&self) -> Result<Reader> {
         Reader::open(&self.settings)

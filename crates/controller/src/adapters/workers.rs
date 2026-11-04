@@ -208,7 +208,7 @@ impl Supervisor {
                 config.hindsight.clone(),
                 recall_breaker.clone(),
                 announcer.clone(),
-            ),
+            )?,
             recall_breaker,
             announcer,
         })
@@ -217,13 +217,20 @@ impl Supervisor {
     /// Post memory hides and retirements on the operations issue (#439).
     pub(crate) fn with_operations(self, issue: crate::memory::OperationsIssue) -> Self {
         *self.announcer.lock().unwrap() = Some(Box::new(issue));
-        self.memory.wake();
+        if let Err(error) = self.memory.wake() {
+            eprintln!("{error}");
+        }
         self
     }
 
     pub(crate) fn with_materials(mut self, provider: crate::production::Materials) -> Self {
         self.materials_provider = Some(provider);
         self
+    }
+
+    /// #773: wait until preceding memory events have been processed.
+    pub fn memory_barrier(&self) -> Result<()> {
+        self.memory.barrier()
     }
 
     pub fn source(&self) -> WorkerOutputSource {
@@ -233,6 +240,7 @@ impl Supervisor {
             self.active.clone(),
         )
         .with_flusher(self.settings.launcher.clone(), self.settings.python.clone())
+        .with_memory(self.memory.exits())
     }
 
     fn fence(&self, delivery: &Delivery) -> Result<(Store, Snapshot)> {
@@ -1167,6 +1175,10 @@ impl Supervisor {
 }
 
 impl Executor for Supervisor {
+    fn probe_memory(&mut self) -> Result<()> {
+        self.memory.retry()
+    }
+
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.launch(delivery, false)
     }
@@ -1300,8 +1312,11 @@ impl Executor for Supervisor {
                 }
             }
         }
-        self.memory.wake();
-        self.retire_sessions(store)?;
+        // Independent cleanup must run even when the feed has failed.
+        let memory = self.memory.refresh(store);
+        let sessions = self.retire_sessions(store);
+        memory?;
+        sessions?;
         match failure {
             Some(error) => Err(error),
             None => Ok(()),
