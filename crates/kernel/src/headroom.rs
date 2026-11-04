@@ -3,6 +3,40 @@
 verus! {
 /// #771: public ghost view of the executable world's node-vector length.
 pub closed spec fn world_node_count(world: World) -> nat { world.nodes@.len() }
+
+/// #771: count open nodes without imposing a machine width on the proof sum.
+pub closed spec fn open_prefix(nodes: Seq<Node>, end: nat) -> nat
+    recommends end <= nodes.len(),
+    decreases end,
+{
+    if end == 0 { 0 } else {
+        open_prefix(nodes, (end - 1) as nat)
+            + if nodes[end as int - 1].phase is Closed { 0nat } else { 1nat }
+    }
+}
+
+/// #771: the exact per-node reserve checked at the controller boundary.
+pub open spec fn node_headroom(node: Node) -> bool {
+    node.generation as int + GENERATION_STEP_BUDGET <= u64::MAX as int
+        && node.next_seq as int + EFFECT_STEP_BUDGET <= u64::MAX as int
+        && node.credit.start as int + CREDIT_START_STEP_BUDGET <= u32::MAX as int
+        && node.credit.earned as int + CREDIT_EARNED_STEP_BUDGET <= u32::MAX as int
+        && node.credit.added as int + CREDIT_ADDED_STEP_BUDGET <= u32::MAX as int
+        && node.credit.spent as int + CREDIT_SPENT_STEP_BUDGET <= u32::MAX as int
+}
+
+/// #771: mathematical statement of the executable apply-boundary scope.
+/// This predicate describes reserves only. Step safety also needs the kernel's
+/// consistency invariant for its bounded retry counters and valid questions.
+pub closed spec fn world_headroom(world: World) -> bool {
+    let open = open_prefix(world.nodes@, world.nodes@.len());
+    open + 1 <= u32::MAX as int
+        && 6 * (open + 1) <= u32::MAX as int
+        && world.next_ticket as int + 2 * (world.nodes@.len() + 1) <= u64::MAX as int
+        && world.next_question as int + QUESTION_STEP_BUDGET <= u64::MAX as int
+        && forall|i: int| 0 <= i < world.nodes@.len()
+            ==> node_headroom(world.nodes@[i])
+}
 }
 
 // A step appends at most one node; Closed never becomes open again. Every
@@ -64,6 +98,7 @@ pub const CREDIT_SPENT_STEP_BUDGET: u32 = 1;
 /// and latches `merge_credited`, preventing another increase during the step.
 pub const CREDIT_EARNED_STEP_BUDGET: u32 = 1;
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CounterExhaustion {
     pub node: Option<NodeId>,
@@ -92,12 +127,33 @@ impl World {
     /// settle moves per open node. Closed nodes do not contribute to these
     /// scans in a consistent world. This admits at most 715,827,881 open nodes;
     /// the mathematical progress sum itself has no machine-width bound.
-    pub fn headroom_ok(&self) -> bool {
-        self.counter_exhaustion().is_none()
+    kernel_fn! {
+        pub fn headroom_ok(&self) -> (result: bool) [
+            ensures result == world_headroom(*self),
+        ] {
+            self.counter_exhaustion().is_none()
+        }
     }
 
-    pub fn counter_exhaustion(&self) -> Option<CounterExhaustion> {
-        let open_nodes = self.nodes.iter().filter(|n| !n.phase.is_closed()).count();
+    kernel_fn! {
+    /// #771: returning no incident is exactly the theorem's counter scope.
+    pub fn counter_exhaustion(&self) -> (result: Option<CounterExhaustion>) [
+        ensures result.is_none() == world_headroom(*self),
+    ] proof [reveal(world_headroom); reveal(open_prefix);] {
+        let mut open_nodes = 0usize;
+        let mut index = 0usize;
+        kernel_while! { (index < self.nodes.len()) [
+            invariant
+                index <= self.nodes.len(),
+                open_nodes <= index,
+                open_nodes as int == open_prefix(self.nodes@, index as nat),
+            decreases self.nodes.len() - index,
+        ] {
+            if !self.nodes[index].phase.is_closed() {
+                open_nodes += 1;
+            }
+            index += 1;
+        } }
         if scan_step_budget(open_nodes).is_none() {
             return Some(CounterExhaustion {
                 node: None,
@@ -111,7 +167,11 @@ impl World {
             });
         }
         let tickets = self.ticket_step_budget();
-        if tickets.is_none_or(|budget| self.next_ticket > u64::MAX - budget) {
+        let ticket_exhausted = match tickets {
+            None => true,
+            Some(budget) => self.next_ticket > u64::MAX - budget,
+        };
+        if ticket_exhausted {
             return Some(CounterExhaustion {
                 node: None,
                 counter: "next_ticket",
@@ -123,30 +183,51 @@ impl World {
                 counter: "next_question",
             });
         }
-        for (index, node) in self.nodes.iter().enumerate() {
-            let counter = if node.generation > u64::MAX - GENERATION_STEP_BUDGET {
-                Some("generation")
-            } else if node.next_seq > u64::MAX - EFFECT_STEP_BUDGET {
-                Some("next_seq")
-            } else if node.credit.start > u32::MAX - CREDIT_START_STEP_BUDGET {
-                Some("credit.start")
-            } else if node.credit.earned > u32::MAX - CREDIT_EARNED_STEP_BUDGET {
-                Some("credit.earned")
-            } else if node.credit.added > u32::MAX - CREDIT_ADDED_STEP_BUDGET {
-                Some("credit.added")
-            } else if node.credit.spent > u32::MAX - CREDIT_SPENT_STEP_BUDGET {
-                Some("credit.spent")
-            } else {
-                None
-            };
+        index = 0;
+        kernel_while! { (index < self.nodes.len()) [
+            invariant
+                index <= self.nodes.len(),
+                open_nodes as int == open_prefix(self.nodes@, self.nodes@.len()),
+                6 * (open_nodes as int + 1) <= u32::MAX as int,
+                self.next_ticket as int + 2 * (self.nodes@.len() + 1) <= u64::MAX as int,
+                self.next_question as int + QUESTION_STEP_BUDGET <= u64::MAX as int,
+                forall|j: int| 0 <= j < index ==> node_headroom(self.nodes@[j]),
+            decreases self.nodes.len() - index,
+        ] {
+            let counter = node_counter_exhaustion(&self.nodes[index]);
             if let Some(counter) = counter {
                 return Some(CounterExhaustion {
                     node: Some(NodeId(index as u64)),
                     counter,
                 });
             }
-        }
+            index += 1;
+        } }
         None
+    }
+    }
+}
+
+kernel_fn! {
+    /// #771: identify the first exhausted counter without altering the node.
+    fn node_counter_exhaustion(node: &Node) -> (result: Option<&'static str>) [
+        ensures result.is_none() == node_headroom(*node),
+    ] {
+        if node.generation > u64::MAX - GENERATION_STEP_BUDGET {
+            Some("generation")
+        } else if node.next_seq > u64::MAX - EFFECT_STEP_BUDGET {
+            Some("next_seq")
+        } else if node.credit.start > u32::MAX - CREDIT_START_STEP_BUDGET {
+            Some("credit.start")
+        } else if node.credit.earned > u32::MAX - CREDIT_EARNED_STEP_BUDGET {
+            Some("credit.earned")
+        } else if node.credit.added > u32::MAX - CREDIT_ADDED_STEP_BUDGET {
+            Some("credit.added")
+        } else if node.credit.spent > u32::MAX - CREDIT_SPENT_STEP_BUDGET {
+            Some("credit.spent")
+        } else {
+            None
+        }
     }
 }
 
