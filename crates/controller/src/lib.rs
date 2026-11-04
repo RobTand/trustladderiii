@@ -1379,7 +1379,10 @@ impl Controller {
                             }
                         }
                         Reconciliation::Pending => {
-                            if approval_delivery::is_approval(&delivery) && !cancelling {
+                            if approval_delivery::is_approval(&delivery)
+                                && !cancelling
+                                && !self.is_held(&delivery)
+                            {
                                 progressed |= self.approval_ambiguous(&delivery)?;
                             }
                         }

@@ -943,6 +943,20 @@ fn preflight_failure_never_strands_an_unsent_approval() {
         }
     }
     drop(controller);
+    let mut controller = case.open();
+    drain(&mut controller);
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "incidents"
+                && row.value["open"] == true
+                && row.value["signature"]["class"] == "approval_outcome_unknown"),
+        "restarting while GET still fails cannot invent a dispatched POST"
+    );
+    drop(controller);
     {
         let mut api = case.api.0.lock().unwrap();
         api.fail_check_reads = false;

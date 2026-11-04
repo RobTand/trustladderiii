@@ -622,6 +622,10 @@ impl Executor for Adapter {
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         // The current owner fences mutations while reading the original effect epoch.
         self.records.fence(self.epoch)?;
+        if crate::approval_delivery::is_approval(delivery) {
+            // A failed read proves neither absence nor an outstanding POST.
+            return self.reconcile_publication(delivery);
+        }
         if publishing::handles(delivery) {
             return match self.reconcile_publication(delivery) {
                 Err(Error::Permanent {
