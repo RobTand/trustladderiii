@@ -104,8 +104,8 @@ pub struct Adapter {
     runtime: tokio::runtime::Runtime,
     keys: tokio::sync::broadcast::Sender<NodeId>,
     records_lock: Arc<Mutex<()>>,
-    /// The harness fixed at startup (`checks::Harness::pin`).
-    harness: checks::Harness,
+    /// The harness read at startup (`checks::Harness::load`), published on first staging.
+    harness: Mutex<checks::Harness>,
 }
 
 fn adapter_error(error: tl3_prismabuild::Error) -> crate::Error {
@@ -350,7 +350,7 @@ impl Adapter {
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default()
         ));
-        let harness = checks::Harness::pin(&settings.harness, &copies);
+        let harness = Mutex::new(checks::Harness::load(&settings.harness, &copies));
         Ok(Self {
             harness,
             client,
@@ -494,7 +494,11 @@ impl Adapter {
         staged.checks = Some(run.clone());
         let changed_paths = checks::stage(
             &input,
-            self.harness.path()?,
+            &self
+                .harness
+                .lock()
+                .expect("PrismaBuild harness lock")
+                .path()?,
             &staged,
             image,
             &self.protected_paths(&delivery.repository),

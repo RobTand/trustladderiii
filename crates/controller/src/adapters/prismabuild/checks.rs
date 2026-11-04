@@ -47,8 +47,17 @@ impl Harness {
     /// collect_releases may later delete the release it pointed to. Staging reads only the
     /// copy, so neither changes what a running controller stages (#750 review). Any failure
     /// leaves the harness unavailable for this run; nothing falls back to the configured path.
-    pub(super) fn pin(configured: &Path, copies: &Path) -> Self {
-        match Self::copy(configured, copies) {
+    pub(super) fn load(configured: &Path, copies: &Path) -> Self {
+        Self::load_observed(configured, copies, &mut |_| {})
+    }
+
+    /// Red (#750 round 3): the new API over the round-2 behaviour.
+    pub(super) fn load_observed(
+        configured: &Path,
+        copies: &Path,
+        after_read: &mut dyn FnMut(&Path),
+    ) -> Self {
+        match Self::copy(configured, copies, after_read) {
             Ok(copy) => Self::Copied(copy),
             Err(error) => {
                 let reason = format!("{}: {error}", configured.display());
@@ -58,7 +67,11 @@ impl Harness {
         }
     }
 
-    fn copy(configured: &Path, copies: &Path) -> std::io::Result<PathBuf> {
+    fn copy(
+        configured: &Path,
+        copies: &Path,
+        after_read: &mut dyn FnMut(&Path),
+    ) -> std::io::Result<PathBuf> {
         use sha2::{Digest, Sha256};
         // stage() takes only the harness directory's own *.py files, so they are the copy.
         let mut modules = vec![];
@@ -67,6 +80,7 @@ impl Harness {
             let path = entry.path();
             if path.extension().is_some_and(|v| v == "py") && fs::metadata(&path)?.is_file() {
                 modules.push((entry.file_name(), fs::read(&path)?));
+                after_read(&path);
             }
         }
         if modules.is_empty() {
@@ -108,9 +122,16 @@ impl Harness {
         Ok(copy)
     }
 
-    pub(super) fn path(&self) -> Result<&Path> {
+    pub(super) fn path(&mut self) -> Result<PathBuf> {
+        self.path_with(&mut |_| Ok(()))
+    }
+
+    pub(super) fn path_with(
+        &mut self,
+        _before_rename: &mut dyn FnMut(&Path) -> std::io::Result<()>,
+    ) -> Result<PathBuf> {
         match self {
-            Self::Copied(path) => Ok(path),
+            Self::Copied(path) => Ok(path.clone()),
             Self::Unavailable(_) => Err(Error::Invalid(HARNESS_UNAVAILABLE)),
         }
     }
@@ -332,7 +353,8 @@ mod tests {
         }
     }
 
-    // Two releases laid out as deploy.py's install_release lays them out.
+    // Two releases laid out as deploy.py's install_release lays them out, each with two
+    // harness modules, so a copy that mixes releases shows.
     fn releases(root: &Path) -> PathBuf {
         for release in ["a", "b"] {
             let harness = root
@@ -340,11 +362,9 @@ mod tests {
                 .join(release)
                 .join("harness/src/tl3_harness");
             fs::create_dir_all(&harness).unwrap();
-            fs::write(
-                harness.join("release.py"),
-                format!("RELEASE = {release:?}\n"),
-            )
-            .unwrap();
+            for module in ["first.py", "release.py"] {
+                fs::write(harness.join(module), format!("RELEASE = {release:?}\n")).unwrap();
+            }
         }
         std::os::unix::fs::symlink(root.join("releases/a"), root.join("current")).unwrap();
         root.join("current/harness/src/tl3_harness")
@@ -357,19 +377,45 @@ mod tests {
         fs::rename(&next, root.join("current")).unwrap();
     }
 
-    fn staged_release(f: &crate::git_tests::Repo, harness: &Harness, name: &str) -> Result<String> {
+    // What one staging of `harness` ships: each trusted module's release.
+    fn staged_release(
+        f: &crate::git_tests::Repo,
+        harness: &mut Harness,
+        name: &str,
+    ) -> Result<Vec<String>> {
         let staged = f.root.path().join(name);
         stage(
             &staged,
-            harness.path()?,
+            &harness.path()?,
             &f.delivery(),
             "sha256:fixture",
             &[],
             &Default::default(),
         )?;
-        Ok(fs::read_to_string(
-            staged.join("trusted/tl3_harness/release.py"),
-        )?)
+        ["first.py", "release.py"]
+            .iter()
+            .map(|module| {
+                Ok(fs::read_to_string(
+                    staged.join("trusted/tl3_harness").join(module),
+                )?)
+            })
+            .collect()
+    }
+
+    fn release(name: &str) -> Vec<String> {
+        vec![format!("RELEASE = {name:?}\n"); 2]
+    }
+
+    fn listing(directory: &Path) -> Vec<String> {
+        let mut names: Vec<_> = fs::read_dir(directory)
+            .map(|entries| {
+                entries
+                    .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
     }
 
     /// Encodes: #750 review finding 2 and re-review finding 1. install_release switches
@@ -382,24 +428,28 @@ mod tests {
         let root = f.root.path().join("tl3");
         let configured = releases(&root);
         let copies = f.root.path().join("records-harness");
-        let running = Harness::pin(&configured, &copies);
+        let mut running = Harness::load(&configured, &copies);
+        assert_eq!(
+            staged_release(&f, &mut running, "input-first").unwrap(),
+            release("a")
+        );
         switch_current(&root, "b");
         fs::remove_dir_all(root.join("releases/a")).unwrap();
         assert_eq!(
-            staged_release(&f, &running, "input-running").unwrap(),
-            "RELEASE = \"a\"\n",
+            staged_release(&f, &mut running, "input-running").unwrap(),
+            release("a"),
             "release a was switched away and collected, and the running controller still stages it"
         );
-        let restarted = Harness::pin(&configured, &copies);
+        let mut restarted = Harness::load(&configured, &copies);
         assert_eq!(
-            staged_release(&f, &restarted, "input-restarted").unwrap(),
-            "RELEASE = \"b\"\n",
+            staged_release(&f, &mut restarted, "input-restarted").unwrap(),
+            release("b"),
             "after the restart the controller copies the new release"
         );
         assert_eq!(
-            fs::read_dir(&copies).unwrap().count(),
+            listing(&copies).len(),
             1,
-            "a restart keeps only its own copy"
+            "the owner keeps only its own copy"
         );
     }
 
@@ -411,20 +461,20 @@ mod tests {
         let root = f.root.path().join("tl3");
         let configured = root.join("current/harness/src/tl3_harness");
         let copies = f.root.path().join("records-harness");
-        let started = Harness::pin(&configured, &copies);
+        let mut started = Harness::load(&configured, &copies);
         assert!(matches!(started, Harness::Unavailable(_)), "{started:?}");
         releases(&root);
         assert!(
             matches!(
-                staged_release(&f, &started, "input-late"),
+                staged_release(&f, &mut started, "input-late"),
                 Err(Error::Invalid(HARNESS_UNAVAILABLE))
             ),
             "an installed harness does not reach a controller that started without one"
         );
     }
 
-    /// Encodes: #750 re-review finding 2: a copy that fails at startup is the same unavailable
-    /// state, not a fallback to the configured path.
+    /// Encodes: #750 re-review finding 2: a copy that fails is the same unavailable state,
+    /// not a fallback to the configured path, and it stays so.
     #[test]
     fn a_failed_copy_is_unavailable() {
         let f = crate::git_tests::Repo::new();
@@ -432,12 +482,114 @@ mod tests {
         let configured = releases(&root);
         let copies = f.root.path().join("records-harness");
         fs::write(&copies, "not a directory").unwrap();
-        let started = Harness::pin(&configured, &copies);
+        let mut started = Harness::load(&configured, &copies);
+        for attempt in ["input-failed", "input-again"] {
+            assert!(matches!(
+                staged_release(&f, &mut started, attempt),
+                Err(Error::Invalid(HARNESS_UNAVAILABLE))
+            ));
+        }
         assert!(matches!(started, Harness::Unavailable(_)), "{started:?}");
-        assert!(matches!(
-            staged_release(&f, &started, "input-failed"),
-            Err(Error::Invalid(HARNESS_UNAVAILABLE))
-        ));
+    }
+
+    /// Encodes: #750 round 3 finding 1. Adapters register before Controller::open claims
+    /// ownership. A second controller that starts while the first runs, and never wins
+    /// ownership, must not touch the copies directory: loading only reads the release.
+    #[test]
+    fn a_second_controller_never_touches_the_owners_copies() {
+        let f = crate::git_tests::Repo::new();
+        let root = f.root.path().join("tl3");
+        let configured = releases(&root);
+        let copies = f.root.path().join("records-harness");
+        let mut owner = Harness::load(&configured, &copies);
+        assert_eq!(
+            staged_release(&f, &mut owner, "input-owner").unwrap(),
+            release("a")
+        );
+        let before = listing(&copies);
+        switch_current(&root, "b");
+        let _second = Harness::load(&configured, &copies);
+        assert_eq!(
+            listing(&copies),
+            before,
+            "the second controller wrote to the copies"
+        );
+        assert_eq!(
+            staged_release(&f, &mut owner, "input-owner-again").unwrap(),
+            release("a"),
+            "the owner still stages its own copy"
+        );
+    }
+
+    /// Encodes: #750 round 3 finding 2. The release root is resolved once, before any module
+    /// is read, so a `current` switch between module reads cannot mix two releases.
+    #[test]
+    fn a_current_switch_between_module_reads_never_mixes_releases() {
+        let f = crate::git_tests::Repo::new();
+        let root = f.root.path().join("tl3");
+        let configured = releases(&root);
+        let copies = f.root.path().join("records-harness");
+        let mut switched = false;
+        let mut harness = Harness::load_observed(&configured, &copies, &mut |_| {
+            if !switched {
+                switch_current(&root, "b");
+                switched = true;
+            }
+        });
+        assert!(switched, "the harness was read");
+        assert_eq!(
+            staged_release(&f, &mut harness, "input-mixed").unwrap(),
+            release("a")
+        );
+    }
+
+    /// Encodes: #750 round 3 finding 3. A digest directory left half-written (a crash after
+    /// the rename, or damage) is verified before reuse and never staged as it is.
+    #[test]
+    fn a_truncated_copy_is_never_staged() {
+        let f = crate::git_tests::Repo::new();
+        let root = f.root.path().join("tl3");
+        let configured = releases(&root);
+        let copies = f.root.path().join("records-harness");
+        let copy = Harness::load(&configured, &copies).path().unwrap();
+        fs::write(copy.join("release.py"), "RELEA").unwrap();
+        let mut restarted = Harness::load(&configured, &copies);
+        assert_eq!(
+            staged_release(&f, &mut restarted, "input-truncated").unwrap(),
+            release("a"),
+            "the damaged copy is rebuilt from the release"
+        );
+    }
+
+    /// Encodes: #750 round 3 finding 4. Failed publications, and partial copies abandoned by
+    /// earlier processes, never accumulate: the owner sweeps abandoned partials and removes
+    /// its own on failure, and a success keeps only the current copy.
+    #[test]
+    fn repeated_failed_startups_leave_no_partial_copies() {
+        let f = crate::git_tests::Repo::new();
+        let root = f.root.path().join("tl3");
+        let configured = releases(&root);
+        let copies = f.root.path().join("records-harness");
+        fs::create_dir_all(copies.join(".partial-4242-1")).unwrap();
+        fs::write(copies.join(".partial-4242-1/first.py"), "abandoned").unwrap();
+        for _ in 0..3 {
+            let mut failing = Harness::load(&configured, &copies);
+            let failed = failing.path_with(&mut |_| Err(std::io::Error::other("injected")));
+            assert!(matches!(failed, Err(Error::Invalid(HARNESS_UNAVAILABLE))));
+            assert!(
+                listing(&copies)
+                    .iter()
+                    .all(|name| !name.starts_with(".partial-")),
+                "partial copies left behind: {:?}",
+                listing(&copies)
+            );
+        }
+        let mut working = Harness::load(&configured, &copies);
+        let copy = working.path().unwrap();
+        assert_eq!(
+            listing(&copies),
+            [copy.file_name().unwrap().to_string_lossy().into_owned()]
+        );
     }
 
     #[test]

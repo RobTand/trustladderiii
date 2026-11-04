@@ -144,6 +144,16 @@
   {
    "definition": "SymptomRecord",
    "document": "{\"event\":\"finish\",\"exit_code\":-9223372036854775808}",
+   "valid": true
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"finish\",\"exit_code\":-9223372036854775808.0}",
+   "valid": true
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"finish\",\"exit_code\":-9223372036854775810}",
    "valid": false
   },
   {

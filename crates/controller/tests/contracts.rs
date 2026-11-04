@@ -616,7 +616,7 @@ fn symptom_record() -> BoxedStrategy<Value> {
             vec![(
                 "exit_code",
                 prop_oneof![
-                    (-i64::MAX..=i64::MAX).prop_map(Value::from),
+                    any::<i64>().prop_map(Value::from),
                     (-1000i32..1000).prop_map(|code| json!(f64::from(code))),
                 ]
                 .boxed(),
@@ -1199,7 +1199,7 @@ mod typed {
             });
         let exit_code = wire(
             prop_oneof![
-                (-i64::MAX..=i64::MAX).prop_map(Value::from),
+                any::<i64>().prop_map(Value::from),
                 (-1000i32..1000).prop_map(|code| json!(f64::from(code))),
             ]
             .boxed(),
@@ -1621,7 +1621,7 @@ fn the_newest_released_set_captures_the_current_contract() {
 /// type. workers/tests/test_check_report_vectors.py runs the same cases.
 #[test]
 fn raw_numbers_parse_as_pythons_validator_decides() {
-    use tl3_controller::contracts::report::{CollectionSaturation, SymptomRecord};
+    use tl3_controller::contracts::report::{CollectionSaturation, SymptomRun};
     #[derive(serde::Deserialize)]
     struct Case {
         definition: String,
@@ -1645,7 +1645,14 @@ fn raw_numbers_parse_as_pythons_validator_decides() {
                 serde_json::from_str::<tl3_controller::contracts::DeclaredSymptom>(&case.document)
                     .is_ok()
             }
-            "SymptomRecord" => serde_json::from_str::<SymptomRecord>(&case.document).is_ok(),
+            // Records reach the controller inside a symptom run, which reads each one's raw
+            // text, so an exit code is checked exactly (#750 round 3 finding 5).
+            "SymptomRecord" => serde_json::from_str::<SymptomRun>(&format!(
+                r#"{{"side":"base","run":1,"outcome":"passed","sha256":"{}","records":[{}]}}"#,
+                "0".repeat(64),
+                case.document
+            ))
+            .is_ok(),
             other => panic!("no Rust type for {other}"),
         };
         assert_eq!(parsed, case.valid, "{} {}", case.definition, case.document);
