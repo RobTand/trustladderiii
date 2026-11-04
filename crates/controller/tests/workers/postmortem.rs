@@ -102,9 +102,7 @@ fn real_worker(cases: &[Value]) {
         .args(["-c", include_str!("postmortem/worker.py")])
         .env("TL3_BINARY", env!("CARGO_BIN_EXE_tl3"))
         .env("LANGSMITH_TRACING", "false")
-        .env("LANGCHAIN_TRACING_V2", "false")
-        .env("OPENAI_API_KEY", "placeholder")
-        .env("MLFLOW_JUDGE_MAX_ITERATIONS", "30");
+        .env("LANGCHAIN_TRACING_V2", "false");
     let input = json!({"worktree":root.path(), "reply":cases[0]["reply"]});
     let output = command(worker, input.to_string().as_bytes());
     assert!(

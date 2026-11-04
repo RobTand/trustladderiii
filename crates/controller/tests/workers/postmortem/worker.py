@@ -1,5 +1,6 @@
 """Real postmortem orchestration and Rust checker, with scripted judges only."""
 import json
+import os
 from pathlib import Path
 import socket
 import sys
@@ -45,7 +46,9 @@ def offline(*args, **kwargs):
 
 malformed = dict(reply['postmortem'], went_wrong=['The maker skipped a test.'])
 model = Model()
-with patch.object(postmortem, 'SOURCE', Source), \
+with patch.dict(os.environ, {'MLFLOW_JUDGE_MAX_ITERATIONS': '30',
+                             'MLFLOW_DISABLE_TELEMETRY': 'true', 'DO_NOT_TRACK': 'true'}), \
+     patch.object(postmortem, 'SOURCE', Source), \
      patch.object(judges, 'configure', lambda *args: None), \
      patch.object(judges, 'grade_judges', lambda *args: {}), \
      patch.object(judges, 'postmortem_judge', lambda *args: lambda **kwargs: Feedback(value=malformed)), \
