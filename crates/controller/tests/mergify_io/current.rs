@@ -200,6 +200,7 @@ impl Adapter {
                     read.as_mut().unwrap().issue = Some(lifecycle::IssueRead {
                         queue_label: current.labels.iter().any(|label| label.name == QUEUE_LABEL),
                         recovery: None,
+                        requeue_recovery: None,
                         repaired: None,
                         dequeue_pending: None,
                         applied: None,
@@ -209,6 +210,14 @@ impl Adapter {
                 lifecycle::Need::RecoveryFile => {
                     read.as_mut().unwrap().issue.as_mut().unwrap().recovery =
                         Some(self.has_recovery(delivery)?)
+                }
+                lifecycle::Need::RequeueRecoveryFile => {
+                    read.as_mut()
+                        .unwrap()
+                        .issue
+                        .as_mut()
+                        .unwrap()
+                        .requeue_recovery = Some(self.has_recovery(delivery)?)
                 }
                 lifecycle::Need::RepairedHead => {
                     read.as_mut().unwrap().issue.as_mut().unwrap().repaired =

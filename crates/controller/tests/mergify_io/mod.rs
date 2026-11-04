@@ -4,13 +4,13 @@ use executor::{Completion, Delivery, Observation, Reconciliation};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tl3_controller::executor::Output as Out;
 use tl3_controller::{
     Repository,
     adapters::mergify::{Evidence, Progress, RequiredCheck},
 };
 use tl3_github::{CheckRun, IssueActivity, PullRequest};
 use tl3_kernel::{Ack, EffectKind, NodeId};
-use tl3_controller::executor::Output as Out;
 use tl3_mergify::{
     QUEUE_LABEL, QueueState,
     decide::{enqueue as lifecycle, facts},
@@ -262,9 +262,19 @@ mod properties {
         prelude::*,
         test_runner::{Config, TestRunner},
     };
-    const CASES: u32 = 64;
+    const CASES: u32 = 256;
     fn tape() -> impl Strategy<Value = Vec<Frame>> {
-        prop_oneof![2 => Just(vec![]), 3 => prop::collection::vec((0u16..512, 0u32..300_002).prop_map(|(word, elapsed_ms)| Frame {word,elapsed_ms}), 0..48)]
+        let frame =
+            (0u16..512, 0u32..300_002).prop_map(|(word, elapsed_ms)| Frame { word, elapsed_ms });
+        prop_oneof![
+            2 => Just(vec![]),
+            3 => (0usize..48, frame.clone()).prop_map(|(prefix, frame)| {
+                let mut tape = vec![Frame { word: 0, elapsed_ms: 0 }; prefix];
+                tape.push(frame);
+                tape
+            }),
+            3 => prop::collection::vec(frame, 0..48),
+        ]
     }
     fn check(entry: Entry, profile: Profile) {
         let mut runner = TestRunner::new(Config {
@@ -273,12 +283,15 @@ mod properties {
             failure_persistence: None,
             ..Config::default()
         });
-        let strategy = (any::<u8>(), tape()).prop_map(move |(initial, frames)| Schedule {
-            profile,
-            initial,
-            frames,
-            appears_at: usize::MAX,
-        });
+        let strategy = (any::<u8>(), tape(), prop::collection::vec(0u8..7, 0..8)).prop_map(
+            move |(initial, frames, write_results)| Schedule {
+                profile,
+                initial,
+                frames,
+                appears_at: usize::MAX,
+                write_results,
+            },
+        );
         let runs = ::std::cell::Cell::new(0);
         runner
             .run(&strategy, |s| {
@@ -307,6 +320,7 @@ mod properties {
                     initial: 0,
                     frames: vec![],
                     appears_at,
+                    write_results: vec![],
                 };
                 io::compare(&s, Entry::Completion).map_err(TestCaseError::fail)?;
                 Ok(())
@@ -318,18 +332,22 @@ mod properties {
     fn reconcile_schedules() {
         check(Entry::Reconcile, Profile::Plain)
     }
+    /// #751/#760: enqueue intent, final head check and durable crash inputs.
     #[test]
     fn execute_schedules() {
         check(Entry::Execute, Profile::Label)
     }
+    /// #608: historical command adoption and unknown upstream write outcomes.
     #[test]
     fn command_schedules() {
         check(Entry::Command, Profile::Command)
     }
+    /// #608/#760: recovery clock sampling, grace and durable timer resets.
     #[test]
     fn waiting_schedules() {
         check(Entry::Waiting, Profile::Waiting)
     }
+    /// #447/#751: workflow receipt ordering and write acceptance.
     #[test]
     fn rerun_schedules() {
         check(Entry::Rerun, Profile::Rerun)

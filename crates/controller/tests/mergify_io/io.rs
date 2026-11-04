@@ -39,6 +39,7 @@ pub(super) struct Schedule {
     pub initial: u8,
     pub frames: Vec<Frame>,
     pub appears_at: usize,
+    pub write_results: Vec<u8>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Call {
@@ -52,6 +53,7 @@ pub(super) struct Run {
     effects: Vec<Call>,
     files: BTreeMap<String, Vec<u8>>,
     result: Value,
+    writes: usize,
 }
 #[derive(Clone, Copy, Debug)]
 struct Cut {
@@ -68,6 +70,7 @@ struct Recording {
     reads: usize,
     recovery_reads: usize,
     writes: usize,
+    api_writes: usize,
     now_ms: u64,
     cut: Option<Cut>,
 }
@@ -95,6 +98,9 @@ fn returned<T: Serialize>(value: &T) {
     with(|r| r.calls.last_mut().unwrap().result = serde_json::to_vec(value).unwrap());
 }
 fn write(op: &str, args: &str, bytes: &[u8], change: impl FnOnce(&mut Recording)) {
+    mutation(op, args, bytes, true, change)
+}
+fn mutation(op: &str, args: &str, bytes: &[u8], landed: bool, change: impl FnOnce(&mut Recording)) {
     with(|r| {
         let index = r.writes;
         r.writes += 1;
@@ -107,8 +113,10 @@ fn write(op: &str, args: &str, bytes: &[u8], change: impl FnOnce(&mut Recording)
         if r.cut.is_some_and(|c| c.write == index && !c.after) {
             ::std::panic::panic_any(Crash);
         }
-        change(r);
-        r.effects.push(call);
+        if landed {
+            change(r);
+            r.effects.push(call);
+        }
         if r.cut.is_some_and(|c| c.write == index && c.after) {
             ::std::panic::panic_any(Crash);
         }
@@ -132,7 +140,7 @@ fn recovery_path() -> String {
     )
 }
 fn intent() -> Value {
-    json!({"before":null,"last_event":0,"requeue":if initial() & 2!=0 {"Sending"} else {"Ready"}})
+    json!({"before":null,"last_event":0,"requeue":match (initial() >> 1) % 4 {0=>Some("Ready"),1=>Some("Sending"),2=>Some("Refused"),_=>None}})
 }
 fn recovery() -> Value {
     json!({"eligible_since_ms":if initial() & 4!=0 {None} else {Some(0u64)},"command": match (initial()>>3)%6 {0=>"Ready",1=>"Sending",2=>"Sent",3=>"Refused",4=>"PermissionDenied",_=>"Rejected"},"command_key":"enqueue-1"})
@@ -147,6 +155,7 @@ fn init(schedule: Schedule, cut: Option<Cut>) {
             reads: 0,
             recovery_reads: 0,
             writes: 0,
+            api_writes: 0,
             now_ms: 1_000_000,
             cut,
         })
@@ -200,6 +209,7 @@ fn run(schedule: &Schedule, entry: Entry, new: bool, cut: Option<Cut>) -> Run {
             effects: r.effects,
             files: r.files,
             result,
+            writes: r.writes,
         }
     })
 }
@@ -221,7 +231,7 @@ pub(super) fn compare(schedule: &Schedule, entry: Entry) -> ::std::result::Resul
                 .collect::<Vec<_>>()
         ));
     }
-    let writes = old.effects.len();
+    let writes = old.writes;
     for write in 0..writes {
         for after in [false, true] {
             let cut = Some(Cut { write, after });
@@ -309,6 +319,31 @@ pub(super) mod mock_std {
                 with(|r| {
                     r.files.insert(path.0.clone(), value);
                 });
+            }
+            if f.word & 2 != 0 {
+                let value = if path.0.ends_with(".intent") {
+                    Some(
+                        json!({"before":null,"last_event":f.word>>3,"requeue":match (f.word>>2)%4 {0=>Some("Ready"),1=>Some("Sending"),2=>Some("Refused"),_=>None}}),
+                    )
+                } else if path.0.ends_with(".reruns") {
+                    Some(
+                        json!([{"run":run_value(&f),"accepted":f.word&4!=0,"waiting_for_completion":f.word&8!=0}]),
+                    )
+                } else if path.0.ends_with(".json") {
+                    Some(
+                        json!({"key":"enqueue-1","deliveries":0,"epochs":[],"completion":Completion::confirmed(vec![])}),
+                    )
+                } else if path.0.ends_with(".fence") {
+                    Some(json!(i64::from(f.word >> 2) % 3))
+                } else {
+                    None
+                };
+                if let Some(value) = value {
+                    with(|r| {
+                        r.files
+                            .insert(path.0.clone(), serde_json::to_vec(&value).unwrap());
+                    });
+                }
             }
             let value = with(|r| r.files.get(&path.0).cloned());
             returned(&value);
@@ -659,16 +694,48 @@ fn run_value(f: &Frame) -> WorkflowRun {
     }
 }
 fn api_write(op: &str, args: &str, bytes: &[u8]) -> ::std::result::Result<(), ::tl3_github::Error> {
-    write(op, args, bytes, |_| {});
-    Ok(())
+    let mode = with(|r| {
+        let mode = r
+            .schedule
+            .write_results
+            .get(r.api_writes)
+            .copied()
+            .unwrap_or(0);
+        r.api_writes += 1;
+        mode
+    });
+    mutation(
+        op,
+        args,
+        &serde_json::to_vec(&(bytes, mode)).unwrap(),
+        matches!(mode, 0 | 4),
+        |_| {},
+    );
+    match mode {
+        0 => Ok(()),
+        1 => Err(::tl3_github::Error::Http { status: 403 }),
+        2 => Err(::tl3_github::Error::Http { status: 422 }),
+        3 | 4 => Err(::tl3_github::Error::Transport),
+        5 => Err(::tl3_github::Error::ActionsForbidden(
+            ::tl3_github::ActionsRefusal::RunInProgress,
+        )),
+        _ => Err(::tl3_github::Error::RateLimited {
+            retry_after: Duration::from_secs(1),
+        }),
+    }
 }
 pub(super) fn read_queue(
     github: &GitHub,
     d: &Delivery,
 ) -> Result<(tl3_mergify::Observation, Vec<Observation>)> {
     let repo = full_name(&d.repository);
-    let state = Runtime
-        .block_on(Mergify::new(github.clone()).read(&repo, 100, "head"))
-        .map_err(adapter_error)?;
+    let mergify = Mergify::new(github.clone());
+    let mut retries = 2;
+    let state = loop {
+        match Runtime.block_on(mergify.read(&repo, 100, "head")) {
+            Err(tl3_mergify::Error::ChangedDuringRead) if retries > 0 => retries -= 1,
+            result => break result.map_err(adapter_error)?,
+        }
+    };
     Ok((state, vec![]))
 }

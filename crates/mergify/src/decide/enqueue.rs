@@ -62,6 +62,8 @@ pub struct IssueRead {
     pub queue_label: bool,
     pub repaired: Option<bool>,
     pub recovery: Option<bool>,
+    /// A fresh sample at the later requeue-intent gate.
+    pub requeue_recovery: Option<bool>,
     pub dequeue_pending: Option<bool>,
     pub applied: Option<bool>,
 }
@@ -97,6 +99,7 @@ pub enum Need {
     RerunPull,
     LabelPull,
     RecoveryFile,
+    RequeueRecoveryFile,
     RepairedHead,
     Dequeue,
     Applied,
@@ -297,8 +300,8 @@ fn reconcile_issue(intent: Option<Intent>, queue: QueueState, issue: IssueRead) 
         Some(Intent {
             requeue: Some(requeue),
         }) => {
-            let Some(recovery) = issue.recovery else {
-                return Effect::Read(Need::RecoveryFile);
+            let Some(recovery) = issue.requeue_recovery else {
+                return Effect::Read(Need::RequeueRecoveryFile);
             };
             if recovery || requeue == Requeue::Sending {
                 Some(true)

@@ -35,6 +35,7 @@ PROOF_FILES = [
 # property its harness states, so the harness must fail. Every harness has at
 # least one.
 MUTANTS = [
+    ("enqueue_ack_sound", DECIDE + "enqueue.rs", "let Some(recovery) = issue.requeue_recovery else", "let Some(recovery) = issue.recovery else"),
     ("observe_select", DECIDE + "observe.rs",
      "check.id >= checks[best].id",
      "check.id > checks[best].id"),

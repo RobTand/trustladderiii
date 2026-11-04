@@ -117,8 +117,8 @@ proof!(enqueue_ack_sound, {
                         },
                         Some(Intent {
                             requeue: Some(command),
-                        }) => match issue.recovery {
-                            None => Effect::Read(Need::RecoveryFile),
+                        }) => match issue.requeue_recovery {
+                            None => Effect::Read(Need::RequeueRecoveryFile),
                             Some(true) => Effect::Complete(Complete::Pending),
                             Some(false) if command == Requeue::Sending => {
                                 Effect::Complete(Complete::Pending)
@@ -173,6 +173,14 @@ proof!(enqueue_ack_sound, {
     } else {
         assert_eq!(effects.len(), 1);
     }
+    // #760: absence at the Waiting gate cannot replace the later file sample.
+    kani::cover!(
+        read.issue.is_some_and(|issue| issue.recovery == Some(false)
+            && issue.repaired == Some(false)
+            && issue.requeue_recovery == Some(true))
+            && expected == Effect::Complete(Complete::Pending),
+        "recovery appears between reads"
+    );
     kani::cover!(
         expected == Effect::Complete(Complete::Pending),
         "await acknowledgement"

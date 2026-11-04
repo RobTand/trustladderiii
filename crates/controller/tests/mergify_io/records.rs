@@ -1,5 +1,9 @@
 use super::*;
-use crate::mergify_io::io::mock_std::{fs::{self, File}, io::Write, path::{Path, PathBuf}};
+use crate::mergify_io::io::mock_std::{
+    fs::{self, File},
+    io::Write,
+    path::{Path, PathBuf},
+};
 #[derive(Serialize, Deserialize)]
 struct Record {
     key: String,
