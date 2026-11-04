@@ -8,7 +8,7 @@ import pytest
 from tl3_workers import runtime
 from tl3_workers.contracts import model_facing, schema, validate
 from tl3_workers.roles import ROLES
-from worker_process import run_real_entrypoint, start_worker
+from worker_process import run_real_entrypoint, start_worker, start_worker_in_process
 
 
 @pytest.fixture
@@ -37,7 +37,7 @@ def open_question(request, kind="audit_disagreement", answers=None):
 
 
 def assert_reply(tmp_path, request, reply):
-    result = start_worker(tmp_path, request, [{"content": json.dumps(reply)}])
+    result = start_worker_in_process(tmp_path, request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 0, result.stderr
     assert result.events == [
         {"event": "progress", "unit": "model_turn"},
@@ -103,7 +103,7 @@ def test_restart_through_protocol(tmp_path, request_doc, body, closed, reply):
 ])
 def test_restart_needs_a_restartable_request(tmp_path, request_doc, state, reply):
     request_doc["inputs"]["state"].update(state)
-    result = start_worker(tmp_path, request_doc, [{"content": json.dumps(reply)}])
+    result = start_worker_in_process(tmp_path, request_doc, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
     # The invalid reply gets one repair turn, which the fake answers the same way.
     assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
@@ -154,7 +154,7 @@ def test_offered_answers_through_protocol(tmp_path, request_doc, kind, answers, 
 def test_invalid_classification_never_leaves_worker(tmp_path, request_doc, state, reply):
     request_doc["inputs"]["state"].pop("open_question")
     request_doc["inputs"]["state"].update(state)
-    result = start_worker(tmp_path, request_doc, [{"content": json.dumps(reply)}])
+    result = start_worker_in_process(tmp_path, request_doc, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
     # The invalid reply gets one repair turn, which the fake answers the same way.
     assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
@@ -196,7 +196,7 @@ def test_invalid_classification_never_leaves_worker(tmp_path, request_doc, state
 def test_invalid_payload_rejected_through_protocol(tmp_path, request_doc, reply):
     open_question(request_doc, "unclear_answer", ["continue", "try_again", "add_credit", "change_request"])
     request_doc["inputs"]["state"]["closed"] = reply["kind"] == "complaint"
-    result = start_worker(tmp_path, request_doc, [{"content": json.dumps(reply)}])
+    result = start_worker_in_process(tmp_path, request_doc, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
     # The invalid reply gets one repair turn, which the fake answers the same way.
     assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2

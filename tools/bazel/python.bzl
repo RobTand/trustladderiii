@@ -35,6 +35,40 @@ _PACKAGE_DEPS = {
     "workers/tests": ["//workers/src"],
 }
 
+# Uncached single-shard seconds on main's post-merge Gate at 8403a295e7
+# (BuildBuddy d3eb5c2b), or on #732's own runs for targets it moved in-process.
+# Bazel splits these modules into shards of about _SHARD_SECONDS each;
+# python_runner.py selects each shard's tests. Update a figure when a target's
+# measured time moves, and add any Python target that passes 30 s.
+_MEASURED_SECONDS = {
+    "harness/tests:test_review_fixes": 35,
+    "harness/tests:test_selection_groups": 60,
+    "harness/tests:test_test_tool": 35,
+    "workers/tests:test_large_files": 35,
+    "workers/tests:test_maker": 43,
+    "workers/tests:test_maker_forecast": 36,
+    "workers/tests:test_maker_recovery": 41,
+    "workers/tests:test_pb_machine_records": 37,
+    "workers/tests:test_pb_tests": 38,
+    "workers/tests:test_pb_tests_base": 48,
+    "workers/tests:test_pb_tests_candidates": 41,
+    "workers/tests:test_pb_tests_forcing": 30,
+    "workers/tests:test_pb_tests_rehearsal": 54,
+    "workers/tests:test_pb_tests_runtime": 40,
+    "workers/tests:test_planner_forecast": 60,
+    "workers/tests:test_reviewer": 68,
+    "workers/tests:test_tracing": 66,
+    "workers/tests:test_workers": 85,
+}
+
+_SHARD_SECONDS = 20
+
+def _shard_count(package, name):
+    """Shards for a measured target; 0 keeps Bazel's unsharded default."""
+    seconds = _MEASURED_SECONDS.get(package + ":" + name, 0)
+    shards = (seconds + _SHARD_SECONDS - 1) // _SHARD_SECONDS
+    return shards if shards > 1 else 0
+
 def _unique_labels(labels):
     """Gazelle writes //a/b, the tables //a/b:b; Bazel rejects the duplicate."""
     unique = {}
@@ -65,6 +99,7 @@ def tl3_py_test(name, srcs, main = None, deps = [], data = [], **kwargs):
         ),
         tags = kwargs.pop("tags", []) + tags,
         exec_properties = exec_properties,
+        shard_count = _shard_count(package, name),
         **kwargs
     )
 
