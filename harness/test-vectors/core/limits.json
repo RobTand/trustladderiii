@@ -737,7 +737,7 @@
      "environment": {},
      "patches": [
       {
-       "delay_seconds": 1,
+       "delay_seconds": 1.0,
        "target": "pkg.func"
       }
      ],
