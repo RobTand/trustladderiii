@@ -1029,6 +1029,9 @@ impl Controller {
 
     /// The hook exposes durable boundaries for process-level fault injection.
     pub fn drive_once_with(&mut self, mut hook: impl FnMut(Boundary, &str)) -> Result<bool> {
+        if self.store.migrate_dispatch_evidence()? {
+            return Ok(true);
+        }
         let snapshot = self.store.load()?;
         if self.reconcile_approvals(&snapshot)? {
             return Ok(true);

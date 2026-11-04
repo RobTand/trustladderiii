@@ -729,7 +729,7 @@ impl CatchUp {
                 })
                 .map(|(id, _)| id)
                 .collect();
-            let tracked_heads = snapshot
+            let mut tracked_heads: Vec<String> = snapshot
                 .interned
                 .iter()
                 .filter(|entry| {
@@ -737,6 +737,20 @@ impl CatchUp {
                 })
                 .map(|entry| entry.value.clone())
                 .collect();
+            // A stopped request can still have a timed-out POST at GitHub. Only
+            // unresolved records extend catch-up coverage; never rescan effect history.
+            for row in snapshot
+                .rows
+                .iter()
+                .filter(|r| r.table == crate::approval_delivery::UNRESOLVED)
+            {
+                let delivery: crate::executor::Delivery = crate::decode_stored(row.value.clone())?;
+                if delivery.repository == *repo
+                    && let Some(head) = delivery.head_sha
+                {
+                    tracked_heads.push(head);
+                }
+            }
             let result = runtime
                 .block_on(client.catch_up(
                     &[ServedRepo {

@@ -24,6 +24,10 @@ fn main() {
             mvp_schema_6_upgrades_to_hindsight as fn(&tl3_config::Store),
         ),
         ("dispatch_evidence_index_plan", dispatch_evidence_index_plan),
+        (
+            "dispatch_legacy_migration_is_bounded",
+            dispatch_legacy_migration_is_bounded,
+        ),
         ("worker_completion_facts", worker_completion_facts),
         ("review_fixes_worker_document", review_fixes_worker_document),
         (
@@ -699,7 +703,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .iter()
             .map(|row| row.get::<_, i32>(0))
             .collect::<Vec<_>>(),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17]
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18]
     );
     for table in [
         "tl3_events",
@@ -2867,7 +2871,7 @@ fn dispatch_evidence_index_plan(settings: &tl3_config::Store) {
             'issue',n,'generation',0,'head_sha','head','output',jsonb_build_object('Effect',jsonb_build_object('node',0,'kind','PostApproval'))),
             'Sent',n,n FROM generate_series($1::bigint,$2::bigint) n", &[&first,&size]).unwrap();
         client
-            .batch_execute("ANALYZE tl3_effects; ANALYZE tl3_events")
+            .batch_execute("ANALYZE tl3_effects; ANALYZE tl3_events; ANALYZE tl3_dispatch_evidence")
             .unwrap();
         let explain = format!("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {DISPATCH_EVIDENCE_QUERY}");
         let plan: serde_json::Value = client
@@ -2875,6 +2879,26 @@ fn dispatch_evidence_index_plan(settings: &tl3_config::Store) {
             .unwrap()
             .get(0);
         println!("DISPATCH_PLAN events={size} {plan}");
+        let key_identity = json!({"key":"effect-10000"});
+        let key_plan: serde_json::Value = client
+            .query_one(&explain, &[&key_identity, &""])
+            .unwrap()
+            .get(0);
+        println!("DISPATCH_KEY_PLAN events={size} {key_plan}");
+        assert!(!key_plan.to_string().contains("Seq Scan"));
+        assert!(store.dispatched_effect_matching(&key_identity, "").unwrap());
+        let mut prior = identity.clone();
+        prior["issue"] = json!(10000);
+        assert!(
+            store
+                .dispatched_effect_matching(&prior, "replacement")
+                .unwrap()
+        );
+        assert!(
+            !store
+                .dispatched_effect_matching(&prior, "effect-10000")
+                .unwrap()
+        );
         let started = Instant::now();
         for _ in 0..10 {
             assert!(!store.dispatched_effect_matching(&identity, "").unwrap());
@@ -2893,4 +2917,63 @@ fn dispatch_evidence_index_plan(settings: &tl3_config::Store) {
             "EXPLAIN must show actual index access: {text}"
         );
     }
+}
+
+/// #766/Q27: one-time legacy backfill is bounded, restartable and gates negative admission.
+fn dispatch_legacy_migration_is_bounded(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let mut client = raw(settings);
+    client.batch_execute("ALTER TABLE tl3_effects DISABLE TRIGGER tl3_record_dispatch;
+        INSERT INTO tl3_events(event_key,revision,epoch,payload,result)
+        SELECT 'old-'||n,n,0,CASE WHEN n=600 THEN '{\"effect\":\"legacy-a\",\"to\":\"Sent\"}'::jsonb ELSE 'null'::jsonb END,'null'::jsonb FROM generate_series(1,600) n;
+        UPDATE tl3_meta SET revision=600;
+        UPDATE tl3_dispatch_migration SET through_revision=600").unwrap();
+    let identity = json!({"repository":{"owner":"owner","name":"sandbox","installation":3},"issue":12,
+        "generation":0,"head_sha":"head","output":{"Effect":{"node":0,"kind":"PostApproval"}}});
+    let mut payload = identity.clone();
+    payload["key"] = json!("legacy-a");
+    client.execute("INSERT INTO tl3_effects(effect_key,epoch,kind,payload,state,created_revision,updated_revision)
+        VALUES ('legacy-a',0,'github',$1,'Confirmed',600,600)", &[&payload]).unwrap();
+    client
+        .batch_execute("ALTER TABLE tl3_effects ENABLE TRIGGER tl3_record_dispatch")
+        .unwrap();
+    assert!(
+        store
+            .dispatched_effect_matching(&identity, "legacy-b")
+            .is_err(),
+        "incomplete migration cannot authorize a negative lookup"
+    );
+    assert!(store.migrate_dispatch_evidence().unwrap());
+    assert_eq!(
+        client
+            .query_one("SELECT cursor FROM tl3_dispatch_migration", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        256
+    );
+    drop(store);
+    let mut store = Store::open(settings).unwrap();
+    assert!(
+        store
+            .dispatched_effect_matching(&identity, "legacy-b")
+            .is_err()
+    );
+    assert!(store.migrate_dispatch_evidence().unwrap());
+    assert_eq!(
+        client
+            .query_one("SELECT cursor FROM tl3_dispatch_migration", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        512
+    );
+    assert!(store.migrate_dispatch_evidence().unwrap());
+    assert!(!store.migrate_dispatch_evidence().unwrap());
+    assert!(
+        store
+            .dispatched_effect_matching(&identity, "legacy-b")
+            .unwrap()
+    );
+    assert_eq!(store.approval_dispatch_count("legacy-a").unwrap(), 1);
+    assert!(!store.migrate_dispatch_evidence().unwrap());
+    assert_eq!(store.approval_dispatch_count("legacy-a").unwrap(), 1);
 }

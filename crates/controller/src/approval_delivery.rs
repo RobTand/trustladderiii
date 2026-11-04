@@ -12,6 +12,7 @@ use tl3_store::{Commit, Effect, EffectState, RowChange, Snapshot};
 pub(crate) const AMBIGUOUS: &str = "approval_outcome_unknown";
 pub(crate) const AUTHORIZATIONS: &str = "approval_retry_authorizations";
 pub(crate) const LINEAGE_SAFE: &str = "approval_lineage_admitted";
+pub(crate) const UNRESOLVED: &str = "approval_dispatch_recovery";
 pub(crate) const REPAIRS: &str = "approval_reconciliations";
 
 pub(crate) fn is_approval(delivery: &Delivery) -> bool {
@@ -37,8 +38,8 @@ impl Controller {
             "generation":delivery.generation, "head_sha":delivery.head_sha,
             "output":{"Effect":{"node":delivery.node(),"kind":"PostApproval"}}
         });
-        // A bounded scalar migration query for this pending operation only.
-        // Successful admission is durable; terminal history is never replayed at open.
+        // Dispatch records are indexed by operation and key. The bounded legacy
+        // migration completes before new dispatch is admitted.
         let predecessor = !snapshot
             .rows
             .iter()
@@ -54,12 +55,18 @@ impl Controller {
 
     pub(crate) fn approval_ambiguous(&mut self, delivery: &Delivery) -> Result<bool> {
         let snapshot = self.store.load()?;
-        if snapshot.rows.iter().any(|r| {
+        let incident_open = snapshot.rows.iter().any(|r| {
             r.table == "incidents"
                 && r.value["open"] == true
                 && r.value["effect"] == delivery.key
                 && r.value["signature"]["class"] == AMBIGUOUS
-        }) {
+        });
+        if incident_open
+            && snapshot
+                .rows
+                .iter()
+                .any(|r| r.table == UNRESOLVED && r.id == delivery.key)
+        {
             return Ok(false);
         }
         let mut commit = Commit::new(
@@ -71,8 +78,13 @@ impl Controller {
             json!({"approval_ambiguous":delivery.key}),
             &snapshot,
         );
-        self.maintenance_incident(&snapshot, delivery, &delivery.key, AMBIGUOUS,
+        commit
+            .rows
+            .push(put(UNRESOLVED, delivery.key.clone(), json!(delivery)));
+        if !incident_open {
+            self.maintenance_incident(&snapshot, delivery, &delivery.key, AMBIGUOUS,
             format!("Approval check outcome unknown for {}; clear to retry. Matching GitHub evidence resolves this automatically.", delivery.head_sha.as_deref().unwrap_or("unknown head")), &mut commit)?;
+        }
         self.store.commit(&commit)?;
         Ok(true)
     }
@@ -206,8 +218,8 @@ impl Controller {
             let result = self
                 .adapters
                 .adapter(&delivery)
-                .and_then(|adapter| adapter.reconcile(&delivery));
-            if !matches!(result, Ok(Reconciliation::Found(_))) {
+                .and_then(|adapter| adapter.repair_approval(&delivery));
+            if !matches!(result, Ok((Reconciliation::Found(_), _))) {
                 let error = match result {
                     Err(error) => error,
                     _ => crate::Error::Invalid("approval repair has no matching evidence yet"),
@@ -238,6 +250,16 @@ impl Controller {
                 snapshot,
             );
             self.finish_maintenance(snapshot, &repair_key, &mut commit)?;
+            // Count only identity-checked copies from the adapter's successful repair.
+            // Sent intent overestimates unknown legacy/preflight attempts conservatively.
+            if let Ok((_, Some(copies))) = result
+                && copies as u64 >= self.store.approval_dispatch_count(&row.id)? as u64
+            {
+                commit.rows.push(RowChange::Delete {
+                    table: UNRESOLVED.into(),
+                    id: row.id.clone(),
+                });
+            }
             commit.rows.push(RowChange::Delete {
                 table: REPAIRS.into(),
                 id: row.id.clone(),

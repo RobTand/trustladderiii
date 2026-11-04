@@ -378,17 +378,9 @@ impl Adapter {
                 kind: EffectKind::PostApproval,
                 ..
             } => {
-                let checks = self
-                    .runtime
-                    .block_on(client.check_runs(&repo, head(delivery)?.as_str()))
-                    .map_err(|error| publication_failure::http(error, Endpoint::HeadChecks))?;
-                if self.converge_approvals(&client, &repo, delivery, &checks)? {
-                    Some(Completion::confirmed(vec![]))
-                } else if self.approval_was_refused(delivery)? {
-                    None
-                } else {
-                    return Ok(Reconciliation::Pending);
-                }
+                return self
+                    .repair_approval_copies(delivery)
+                    .map(|(result, _)| result);
             }
             Out::Effect {
                 kind: EffectKind::OpenPr,
@@ -491,6 +483,34 @@ impl Adapter {
             }
         }
         Ok(found)
+    }
+
+    pub(super) fn repair_approval_copies(
+        &self,
+        delivery: &Delivery,
+    ) -> Result<(Reconciliation, Option<usize>)> {
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        let checks = self
+            .runtime
+            .block_on(client.check_runs(&repo, head(delivery)?.as_str()))
+            .map_err(|error| publication_failure::http(error, Endpoint::HeadChecks))?;
+        if self.converge_approvals(&client, &repo, delivery, &checks)? {
+            let mut copies = 0;
+            for check in &checks {
+                if matches_approval(check, &client, delivery)? {
+                    copies += 1;
+                }
+            }
+            Ok((
+                Reconciliation::Found(Box::new(Completion::confirmed(vec![]))),
+                Some(copies),
+            ))
+        } else if self.approval_was_refused(delivery)? {
+            Ok((Reconciliation::Absent, Some(0)))
+        } else {
+            Ok((Reconciliation::Pending, Some(0)))
+        }
     }
 
     fn approval_was_refused(&self, delivery: &Delivery) -> Result<bool> {

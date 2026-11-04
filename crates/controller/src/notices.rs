@@ -278,19 +278,7 @@ impl Controller {
             }),
         ));
         if class == "message_cleanup" || class == "approval_repair" {
-            let mut probe = delivery.clone();
-            probe.key = key.into();
-            // This allowance probes upstream health; it never executes a publication.
-            probe.output = Output::Comment {
-                node: delivery.node(),
-                kind: crate::executor::CommentKind::OperationsNote,
-            };
-            let mut state = crate::looks::AllowanceState::new(probe, self.now_ms(), 30_000);
-            state.maintenance = true;
-            state.incident = Some(id);
-            commit
-                .rows
-                .push(put("allowances", key.into(), json!(state)));
+            self.maintenance_probe(delivery.clone(), key, id, commit);
         }
         commit.rows.push(self.allowance_row(post.clone()));
         commit.effects.push(post.into_effect());
@@ -307,6 +295,21 @@ impl Controller {
         error: crate::Error,
         commit: &mut Commit,
     ) -> Result<()> {
+        if self.maintenance_failure_due(snapshot, key, &error, commit) {
+            self.maintenance_incident(snapshot, delivery, key, class,
+                format!("GitHub {class} failed for {}/{} issue {}. The first incident recovers on an upstream probe; clear later incidents to retry.", delivery.repository.owner, delivery.repository.name, delivery.issue), commit)?;
+        }
+        Ok(())
+    }
+
+    /// State-table:307: identical two-failure accounting even without an old effect.
+    pub(crate) fn maintenance_failure_due(
+        &self,
+        snapshot: &Snapshot,
+        key: &str,
+        error: &crate::Error,
+        commit: &mut Commit,
+    ) -> bool {
         let count = snapshot
             .rows
             .iter()
@@ -317,11 +320,27 @@ impl Controller {
         commit
             .rows
             .push(put("maintenance_failures", key.into(), json!(count % 2)));
-        if count >= 2 || matches!(error, crate::Error::Permanent { .. }) {
-            self.maintenance_incident(snapshot, delivery, key, class,
-                format!("GitHub {class} failed for {}/{} issue {}. The first incident recovers on an upstream probe; clear later incidents to retry.", delivery.repository.owner, delivery.repository.name, delivery.issue), commit)?;
-        }
-        Ok(())
+        count >= 2 || matches!(error, crate::Error::Permanent { .. })
+    }
+
+    pub(crate) fn maintenance_probe(
+        &self,
+        mut probe: Delivery,
+        key: &str,
+        incident: String,
+        commit: &mut Commit,
+    ) {
+        probe.key = key.into();
+        probe.output = Output::Comment {
+            node: probe.node(),
+            kind: crate::executor::CommentKind::OperationsNote,
+        };
+        let mut state = crate::looks::AllowanceState::new(probe, self.now_ms(), 30_000);
+        state.maintenance = true;
+        state.incident = Some(incident);
+        commit
+            .rows
+            .push(put("allowances", key.into(), json!(state)));
     }
 
     pub(crate) fn finish_maintenance(

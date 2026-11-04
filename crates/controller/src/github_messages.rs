@@ -130,8 +130,9 @@ impl Controller {
                         error,
                         &mut commit,
                     )?;
-                } else {
-                    // A marked message can outlive its historical local effect.
+                } else if self.maintenance_failure_due(snapshot, &cleanup_key, &error, &mut commit)
+                {
+                    // The reporting destination comes from queued news, not historical state.
                     self.input_failed(
                         snapshot,
                         &cleanup_key,
@@ -145,12 +146,46 @@ impl Controller {
                         error,
                         &mut commit,
                     )?;
+                    let mut incident_id = None;
                     for change in &mut commit.rows {
-                        if let RowChange::Put { table, value, .. } = change
+                        if let RowChange::Put { table, id, value } = change
                             && table == "incidents"
                         {
                             value["effect"] = json!(cleanup_key);
+                            incident_id = Some(id.clone());
                         }
+                    }
+                    if let Some(id) = incident_id {
+                        // This comment probe never indexes a kernel node or publishes an effect.
+                        let probe = crate::executor::Delivery {
+                            key: cleanup_key.clone(),
+                            epoch: snapshot.epoch.get(),
+                            output: crate::executor::Output::Comment {
+                                node: tl3_kernel::NodeId(0),
+                                kind: crate::executor::CommentKind::OperationsNote,
+                            },
+                            generation: 0,
+                            head_sha: None,
+                            repository,
+                            issue,
+                            pull_request: None,
+                            proposed: None,
+                            paths: vec![],
+                            attempt: 0,
+                            round: 0,
+                            replanned: false,
+                            checks: None,
+                            job_generation: None,
+                            question: None,
+                            note: None,
+                            scope_removals: None,
+                            marker_key: None,
+                            question_context: None,
+                            steering: None,
+                            request_text: None,
+                            evidence: None,
+                        };
+                        self.maintenance_probe(probe, &cleanup_key, id, &mut commit);
                     }
                 }
                 self.store.commit(&commit)?;

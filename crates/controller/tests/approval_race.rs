@@ -238,6 +238,12 @@ impl Executor for TargetGitHub {
     fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
         self.target(delivery).reconcile(delivery)
     }
+    fn repair_approval(
+        &mut self,
+        delivery: &Delivery,
+    ) -> tl3_controller::Result<(Reconciliation, Option<usize>)> {
+        self.target(delivery).repair_approval(delivery)
+    }
     fn reconcile_cancellation(
         &mut self,
         delivery: &Delivery,
@@ -1739,6 +1745,55 @@ fn missing_effect_cleanup_recovers_without_rob() {
         1,
         "orphan cleanup must recover without Rob"
     );
+    // Requeue the same missing-effect marker and prove the first two-failure
+    // incident has the linked probe even though no historical delivery exists.
+    let mut duplicate = case.api.0.lock().unwrap().comments[0].clone();
+    duplicate["id"] = json!(3);
+    case.api.0.lock().unwrap().comments.push(duplicate.clone());
+    controller
+        .observe(
+            "orphan-copy-again",
+            tl3_controller::executor::Observation::GitHubComment {
+                repository: bootstrap().repos[0].clone(),
+                issue: 12,
+                comment: serde_json::from_value(duplicate).unwrap(),
+            },
+        )
+        .unwrap();
+    case.api.0.lock().unwrap().fail_comment_reads = true;
+    controller.drive_once().unwrap();
+    controller.drive_once().unwrap();
+    let incident = controller
+        .snapshot()
+        .unwrap()
+        .rows
+        .iter()
+        .find(|r| r.table == "incidents" && r.value["open"] == true)
+        .unwrap()
+        .id
+        .clone();
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "allowances"
+                && r.value["maintenance"] == true
+                && r.value["incident"] == incident)
+    );
+    case.api.0.lock().unwrap().fail_comment_reads = false;
+    controller.look_now().unwrap();
+    drain(&mut controller);
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents" && r.id == incident && r.value["open"] == true)
+    );
+    assert_eq!(case.api.0.lock().unwrap().comments.len(), 1);
 }
 
 /// #766, Q27: a real gap catch-up must find closed-head late POSTs without a webhook.
@@ -1771,6 +1826,8 @@ fn gap_catchup_repairs_late_approval_after_closure() {
             .any(|r| r.table == "allowances"),
         "closed requests have no active delivery allowances"
     );
+    drop(controller);
+    let mut controller = case.open();
     // The retained legacy request carries its old serialized output. Apply the real
     // outstanding POST, rather than injecting check runs or a catch-up payload.
     {
@@ -1814,6 +1871,15 @@ fn gap_catchup_repairs_late_approval_after_closure() {
     }
     drain(&mut controller);
     case.assert_converged(2);
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "approval_dispatch_recovery"),
+        "identity-checked evidence for both sends retires unresolved recovery"
+    );
     assert_eq!(
         case.api.0.lock().unwrap().posts,
         2,

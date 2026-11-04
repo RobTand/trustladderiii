@@ -457,6 +457,10 @@ impl Executor for Adapter {
         self.runtime.block_on(client.post_comment(&repo, question.number, &question.key(), "Which issue should this pull request complete? Please add its closing keyword to the description and apply the tl3 label again."))?;
         Ok(())
     }
+    fn repair_approval(&mut self, delivery: &Delivery) -> Result<(Reconciliation, Option<usize>)> {
+        self.repair_approval_copies(delivery)
+    }
+
     fn probe(&mut self, delivery: &Delivery) -> Result<bool> {
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
