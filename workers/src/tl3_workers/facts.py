@@ -170,8 +170,9 @@ def observe(request):
         capture.save('running')
         yield capture
     except BaseException as error:
-        from tl3_workers.quota import reset_ms
-        outcome = 'quota' if reset_ms(error, time.time()) is not None else 'failed'
+        from tl3_workers.quota import ending_ms
+        outcome = ('quota' if ending_ms(error, time.time(), request.get('role')) is not None
+                   else 'failed')
         failure = boundary_failure(error, request)
         raise
     finally:
