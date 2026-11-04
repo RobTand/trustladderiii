@@ -84,6 +84,7 @@ class RustDependencyTests(unittest.TestCase):
                                       filegroup=record, glob=lambda patterns, **kwargs: [
                                           path for path in patterns if "*" not in path]),
             "all_crate_deps": lambda **kwargs: [],
+            "verus_proofs": lambda: None,
             "aliases": lambda **kwargs: {},
             "nonhermetic": lambda name: ([], {}),
             "select": lambda choices: choices["//conditions:default"],
@@ -196,6 +197,7 @@ class TestSizingTests(unittest.TestCase):
                                       package_relative_label=lambda label: label),
             "struct": SimpleNamespace,
             "all_crate_deps": lambda **kwargs: [],
+            "verus_proofs": lambda: None,
             "aliases": lambda **kwargs: {},
             "select": lambda choices: choices["//conditions:default"],
             "depset": lambda items: SimpleNamespace(to_list=lambda: list(dict.fromkeys(items))),
