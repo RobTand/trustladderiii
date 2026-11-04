@@ -18,13 +18,29 @@ id!(RepoId);
 id!(NodeId);
 
 impl NodeId {
-    pub fn index(self) -> Option<usize> {
+    kernel_fn! {
+    /// #771: reject node identities that cannot index executable storage.
+    pub fn index(self) -> (result: Option<usize>) [
+        ensures match result {
+            Some(index) => index as int == self.0 as int,
+            None => self.0 as int > usize::MAX as int,
+        },
+    ] {
         usize::try_from(self.0).ok()
+    }
     }
 }
 
 impl RepoId {
-    pub fn index(self) -> Option<usize> {
+    kernel_fn! {
+    /// #771: reject repository identities that cannot index executable storage.
+    pub fn index(self) -> (result: Option<usize>) [
+        ensures match result {
+            Some(index) => index as int == self.0 as int,
+            None => self.0 as int > usize::MAX as int,
+        },
+    ] {
         usize::try_from(self.0).ok()
+    }
     }
 }

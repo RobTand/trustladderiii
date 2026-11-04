@@ -234,6 +234,76 @@ pub(super) proof fn sum_update(nodes: Seq<Node>, index: int, replacement: Node)
         assert(nodes.drop_last()[index] == nodes[index]);
     }
 }
+
+/// #771: sum a local allocation potential over arbitrary finite storage.
+pub(super) open spec fn potential_prefix(nodes: Seq<Node>, end: nat,
+    potential: spec_fn(Node) -> nat) -> nat
+    recommends end <= nodes.len(),
+    decreases end,
+{
+    if end == 0 { 0 } else {
+        potential_prefix(nodes, (end - 1) as nat, potential)
+            + potential(nodes[end as int - 1])
+    }
+}
+
+/// #771: one actual node update changes exactly its allocation potential.
+pub(super) proof fn potential_update(nodes: Seq<Node>, index: int,
+    replacement: Node, end: nat, potential: spec_fn(Node) -> nat)
+    requires 0 <= index < end <= nodes.len(),
+    ensures potential_prefix(nodes.update(index, replacement), end, potential)
+            + potential(nodes[index])
+        == potential_prefix(nodes, end, potential) + potential(replacement),
+    decreases end,
+{
+    if index < end - 1 {
+        potential_update(nodes, index, replacement, (end - 1) as nat, potential);
+    }
+}
+
+/// #771: closed history contributes no scratch or allocation reserve.
+/// The bound depends on open nodes, not the total length of executable storage.
+pub(super) proof fn potential_bound(nodes: Seq<Node>, end: nat,
+    potential: spec_fn(Node) -> nat, per_open: nat)
+    requires end <= nodes.len(),
+        forall|i: int| 0 <= i < end ==> potential(nodes[i]) <= per_open
+            && (nodes[i].phase is Closed ==> potential(nodes[i]) == 0),
+    ensures potential_prefix(nodes, end, potential)
+        <= per_open * open_prefix(nodes, end),
+    decreases end,
+{
+    reveal(open_prefix);
+    if end > 0 {
+        potential_bound(nodes, (end - 1) as nat, potential, per_open);
+        assert(potential(nodes[end as int - 1]) <= per_open);
+    }
+}
+
+/// #771: the real local settle contracts consume these finite-world reserves.
+pub(super) proof fn settle_reserve_totals(nodes: Seq<Node>)
+    ensures
+        potential_prefix(nodes, nodes.len(), internal_height) <= 6 * open_prefix(nodes, nodes.len()),
+        potential_prefix(nodes, nodes.len(), generation_capacity) <= open_prefix(nodes, nodes.len()),
+        potential_prefix(nodes, nodes.len(), effect_capacity) <= open_prefix(nodes, nodes.len()),
+        potential_prefix(nodes, nodes.len(), ticket_capacity) <= 2 * open_prefix(nodes, nodes.len()),
+        potential_prefix(nodes, nodes.len(), merge_capacity) <= open_prefix(nodes, nodes.len()),
+{
+    assert forall|i: int| 0 <= i < nodes.len() implies
+        internal_height(nodes[i]) <= 6
+        && generation_capacity(nodes[i]) <= 1
+        && effect_capacity(nodes[i]) <= 1
+        && ticket_capacity(nodes[i]) <= 2
+        && merge_capacity(nodes[i]) <= 1
+        && (nodes[i].phase is Closed ==> internal_height(nodes[i]) == 0
+            && generation_capacity(nodes[i]) == 0 && effect_capacity(nodes[i]) == 0
+            && ticket_capacity(nodes[i]) == 0 && merge_capacity(nodes[i]) == 0)
+    by { local_capacities(nodes[i]); }
+    potential_bound(nodes, nodes.len(), internal_height, 6);
+    potential_bound(nodes, nodes.len(), generation_capacity, 1);
+    potential_bound(nodes, nodes.len(), effect_capacity, 1);
+    potential_bound(nodes, nodes.len(), ticket_capacity, 2);
+    potential_bound(nodes, nodes.len(), merge_capacity, 1);
+}
 }
 
 impl Node {

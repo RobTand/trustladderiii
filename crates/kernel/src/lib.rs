@@ -84,12 +84,21 @@ pub enum EarlyEnd {
 }
 
 impl EarlyEnd {
-    pub fn outcome(self) -> Outcome {
+    kernel_fn! {
+    /// Ingest early-end rows / #771: preserve the recorded terminal outcome.
+    pub fn outcome(self) -> (result: Outcome) [
+        ensures result == match self {
+            EarlyEnd::Duplicate => Outcome::Duplicate,
+            EarlyEnd::AlreadyDone => Outcome::AlreadyDone,
+            EarlyEnd::NotActionable => Outcome::NotActionable,
+        },
+    ] {
         match self {
             EarlyEnd::Duplicate => Outcome::Duplicate,
             EarlyEnd::AlreadyDone => Outcome::AlreadyDone,
             EarlyEnd::NotActionable => Outcome::NotActionable,
         }
+    }
     }
 }
 
@@ -423,8 +432,15 @@ impl Credit {
         }
     }
 
-    fn can_spend(&self, cost: u32) -> bool {
+    kernel_fn! {
+    /// Q18 / #771: compare spendable credit, including dependency withholding.
+    fn can_spend(&self, cost: u32) -> (result: bool) [
+        ensures result == (!self.withheld && self.start as int + self.earned as int
+            + self.added as int >= self.spent as int + cost as int
+            || self.withheld && cost == 0),
+    ] {
         self.balance() >= cost as i64
+    }
     }
 
     kernel_fn! {
@@ -1170,12 +1186,16 @@ kernel_fn! {
     }
 }
 
-/// Where a retried run starts again in its phase's agenda.
-fn operation_start(phase: Phase) -> u8 {
+kernel_fn! {
+/// #771: a retried run starts at its original operation agenda entry.
+fn operation_start(phase: Phase) -> (result: u8) [
+    ensures result == if phase == Phase::Making { 1u8 } else { 0u8 },
+] {
     match phase {
         Phase::Making => 1,
         _ => 0,
     }
+}
 }
 
 kernel_fn! {
