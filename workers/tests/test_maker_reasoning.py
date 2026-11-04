@@ -50,10 +50,11 @@ def test_reasoning_details_leave_exactly_the_visible_tokens(output_tokens, expec
 
 
 def test_maker_continues_past_a_turn_that_only_reasoned_long(tmp_path, maker_request):
+    maker_request["inputs"]["context_size"] = 100_000
     root = Path(maker_request["worktree"])
     result = start_worker(tmp_path, maker_request, [
-        write_turn(input_tokens=700, output_tokens=400, reasoning=390),
-        turn(DONE, input_tokens=720, output_tokens=300, reasoning=250),
+        write_turn(input_tokens=60_000, output_tokens=40_000, reasoning=39_000),
+        turn(DONE, input_tokens=62_000, output_tokens=30_000, reasoning=25_000),
     ])
     assert result.exit_code == 0, result.stderr
     assert result.events[-1]["reply"] == {**DONE, "head": git(root, "rev-parse", "HEAD")}

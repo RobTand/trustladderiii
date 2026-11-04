@@ -171,6 +171,8 @@ class ExplorationMiddleware(AgentMiddleware):
         self.implementation_files = frozenset()
         self.implementation_started = False
         self.compacted = False
+        self.compaction_count = 0
+        self.context_fraction = 0.0
         # Only a compaction that freed room has a later threshold to approach again.
         self.compacted_below = False
         self.compaction_prefix = []
@@ -263,6 +265,9 @@ class ExplorationMiddleware(AgentMiddleware):
         return response
 
     def wrap_model_call(self, request, handler):
+        # Recovery rechecks limits, including context stops from older workers.
+        if not self.repairing and not self.final:
+            self.exhaustion = None
         source = request.messages
         messages = (self.compaction_prefix + source[self.compaction_offset:]
                     if self.compacted else list(source))
@@ -279,17 +284,20 @@ class ExplorationMiddleware(AgentMiddleware):
         request = request.override(messages=messages)
         bound = input_estimate(request)
         context = self._context(bound)
-        compact_now = (not self.compacted and context >= self.context_size * 0.7
+        compact_now = ((self.role == "maker" or not self.compacted) and context >= self.context_size * 0.7
                        and any(isinstance(message, AIMessage) for message in messages))
         if compact_now:
             messages = retained(messages, self.budget.history_bytes)
             self.compaction_prefix = [m for m in messages if m is not notice]
             self.compaction_offset = len(source)
             self.compacted = True
+            self.compaction_count += 1
             request = request.override(messages=messages)
             bound = input_estimate(request)
             context = self._context(bound)
             self.compacted_below = context < self.context_size * 0.7
+
+        self.context_fraction = context / self.context_size
 
         cold_weight = (max(self.weights.uncached, self.weights.creation)
                        if self.cache_active else self.weights.uncached)
@@ -310,21 +318,22 @@ class ExplorationMiddleware(AgentMiddleware):
             reserve += (self.budget.history_bytes * 2 + len(FINISH) + 1024 + 2) // 3
             # A compaction may invalidate cached evidence. Reserve a cold final call.
             reserve = math.ceil(max(reserve, context) * cold_weight)
-            context_full = (self.compacted_below and not compact_now and len(source) > self.compaction_offset
+            context_full = (self.compacted and context >= self.context_size * 0.7 if self.role == "maker" else
+                            self.compacted_below and not compact_now and len(source) > self.compaction_offset
                             and context >= self.context_size * 0.7)
             stalled = (self.role == "maker" and self.budget.no_progress_window
                        and self.no_progress_turns >= self.budget.no_progress_window)
-            final = (self.exhaustion is not None or self.turns >= self.budget.tool_turns or stalled or context_full
+            final = (self.turns >= self.budget.tool_turns or stalled or context_full
                      or self.spent + predicted + reserve > self.budget.input_tokens)
             self.in_flight_reserve = 0 if final else reserve
             if self.final:
                 raise BudgetUnavailable("The final reply already consumed the remaining execution allowance.")
             if final:
                 self.final = True
-                self.exhaustion = self.exhaustion or (
+                self.exhaustion = (
                     ("backstop" if self.role == "maker" else "tool_turns")
                     if self.turns >= self.budget.tool_turns else "no_progress" if stalled else
-                    "input_tokens" if self.role == "maker" else "context_tokens" if context_full else "input_tokens")
+                    "context_tokens" if context_full else "input_tokens")
                 if notice is not None:
                     notice.content = BUDGET_PREFIX + json.dumps(self.remaining("final"), sort_keys=True)
                 request = request.override(tool_choice="none",
@@ -356,6 +365,7 @@ class ExplorationMiddleware(AgentMiddleware):
         return {"spent": self.spent, "turns": self.turns, "last_input": self.last_input,
                 "last_estimate": self.last_estimate, "cache_active": self.cache_active,
                 "compacted": self.compacted, "compacted_below": self.compacted_below,
+                "compaction_count": self.compaction_count,
                 "compaction_offset": self.compaction_offset,
                 "compaction_prefix": messages_to_dict(self.compaction_prefix), "exhaustion": self.exhaustion,
                 "implementation_started": self.implementation_started,
@@ -372,6 +382,10 @@ class ExplorationMiddleware(AgentMiddleware):
             raise ValueError("invalid allowance state")
         (self.spent, self.turns, self.last_input, self.compaction_offset) = numbers
         (self.cache_active, self.compacted, self.compacted_below) = flags
+        count = state.get("compaction_count", int(self.compacted))
+        if type(count) is not int or count < 0 or bool(count) != self.compacted:
+            raise InvalidAllowanceState("invalid compaction checkpoint")
+        self.compaction_count = count
         self.last_estimate = state["last_estimate"]
         self.compaction_prefix = prefix
         self.exhaustion = state.get("exhaustion")
@@ -390,8 +404,7 @@ class ExplorationMiddleware(AgentMiddleware):
         self.last_progress_kind = last_progress
         self.seen_calls, self.seen_content, self.seen_tests = map(set, fingerprints)
         if self.role == "maker":
-            self.exhaustion = {"tool_turns": "backstop", "context_tokens": "input_tokens"}.get(
-                self.exhaustion, self.exhaustion)
+            self.exhaustion = "backstop" if self.exhaustion == "tool_turns" else self.exhaustion
 
     def _account(self, response, bound):
         usage = [message.usage_metadata for message in response.result if isinstance(message, AIMessage)]

@@ -85,13 +85,13 @@ def finish_requested(messages):
     return any("budget is exhausted" in m.text for m in messages if m.type == "human")
 
 
-def test_context_regrowing_after_compaction_requests_finish(maker_request, monkeypatch):
+def test_context_regrowing_after_compaction_continues(maker_request, monkeypatch):
     seen = []
-    # Call 8 compacts below 70%. Call 9 reports 75%, so call 10 must finish.
+    # Call 8 compacts below 70%. Call 9 reports 75%, so call 10 compacts again.
     model = evidence_explorer(maker_request, seen, {7: 71_000, 9: 75_000})
     monkeypatch.setattr(runtime, "create_model", lambda _: model)
     runtime.run(maker_request, lambda _: None)
-    assert [finish_requested(messages) for messages in seen] == [False] * 9 + [True]
+    assert [finish_requested(messages) for messages in seen] == [False] * 10
 
 
 def scripted_maker(seen, usage):
@@ -103,7 +103,7 @@ def scripted_maker(seen, usage):
             if not is_retro(messages):  # the retro (#648) has its own tests
                 seen.append(deepcopy(messages))
             index = len(seen)
-            if index > len(calls):
+            if index > len(calls) or finish_requested(messages):
                 content, tool_calls = json.dumps(test_maker.DONE), []
             else:
                 name, args = calls[index - 1]
@@ -117,17 +117,17 @@ def scripted_maker(seen, usage):
     return Scripted(responses=[])
 
 
-def test_instructions_above_threshold_leave_room_to_work(maker_request, monkeypatch):
+def test_instructions_above_threshold_stop_if_compaction_cannot_free_room(maker_request, monkeypatch):
     # A fix round's accumulated review feedback alone can exceed 70% of the context.
-    # Compaction cannot shrink instructions, so it must not end the run on the next turn.
+    # Compaction cannot shrink instructions, so the worker reports a context limit.
     maker_request["inputs"]["context_size"] = 100_000
     seen = []
     monkeypatch.setattr(runtime, "create_model", lambda _: scripted_maker(seen, lambda index: 80_000))
     events = []
     runtime.run(maker_request, events.append)
-    assert len(seen) == 5
-    assert not any(finish_requested(messages) for messages in seen)
-    assert events[-1]["reply"]["kind"] == "done"
+    assert len(seen) == 2
+    assert finish_requested(seen[-1])
+    assert events[-1]["reply"]["budget_exhaustion"]["dimension"] == "context_tokens"
 
 
 @pytest.mark.parametrize("details,weights,expected", [

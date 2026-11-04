@@ -135,7 +135,8 @@ def test_maker_final_check_uses_complete_identity(tmp_path, monkeypatch, damage)
                  'no_progress_window': 1, 'no_progress_turns': 0, 'last_progress_kind': 'test'}
     request = {'operation': {'node': 1, 'generation': 0, 'kind': 'make'},
                'inputs': {'goals': [], 'plan': {'checks': [{'name': 'all nodes', 'tests': selected}]}}}
-    reply = maker._budget_reply(request, SimpleNamespace(remaining=lambda: remaining, exhaustion='tool_turns'),
+    reply = maker._budget_reply(request, SimpleNamespace(remaining=lambda: remaining, exhaustion='tool_turns',
+                                                        compaction_count=0, context_fraction=0.0),
                                [], worktree, {'kind': 'done'})
     unfinished = reply['budget_exhaustion']['unfinished_obligations']
     assert ('Unverified final check: all nodes' in unfinished) is (damage != 'matching')

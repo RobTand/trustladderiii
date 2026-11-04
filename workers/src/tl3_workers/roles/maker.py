@@ -279,6 +279,8 @@ def _budget_reply(request, allowance, history, worktree, reply):
         reply = {"kind": "cant_meet", "report": "Mandatory final verification remains unfinished."}
     remaining = allowance.remaining()
     diagnostic = {"kind": "execution_budget_exhausted", "dimension": allowance.exhaustion,
+                  "compaction_count": allowance.compaction_count,
+                  "context_fraction": allowance.context_fraction,
                   "tool_turns": {key: remaining["tool_turns"][key] for key in ("used", "allowed")},
                   "input_tokens": {key: remaining["input_tokens"][key] for key in ("used", "allowed")},
                   "no_progress_window": remaining["no_progress_window"],

@@ -95,7 +95,12 @@ pub(crate) fn budget_text(budget: &Value) -> Option<String> {
     }
     let dimension = budget["dimension"]
         .as_str()
-        .filter(|value| matches!(*value, "no_progress" | "backstop" | "input_tokens"))
+        .filter(|value| {
+            matches!(
+                *value,
+                "no_progress" | "backstop" | "input_tokens" | "context_tokens"
+            )
+        })
         .unwrap_or("unknown");
     let progress = budget["last_progress_kind"]
         .as_str()
@@ -106,7 +111,7 @@ pub(crate) fn budget_text(budget: &Value) -> Option<String> {
             )
         })
         .unwrap_or("none");
-    Some(format!(
+    let mut text = format!(
         "execution_budget_exhausted ({}): tool turns {}/{}, no-progress turns {}/{}, last progress {}; input tokens {}/{}.",
         dimension,
         budget["tool_turns"]["used"].as_u64()?,
@@ -116,7 +121,16 @@ pub(crate) fn budget_text(budget: &Value) -> Option<String> {
         progress,
         budget["input_tokens"]["used"].as_u64()?,
         budget["input_tokens"]["allowed"].as_u64()?,
-    ))
+    );
+    if let (Some(count), Some(fraction)) = (
+        budget["compaction_count"].as_u64(),
+        budget["context_fraction"].as_f64(),
+    ) {
+        text.push_str(&format!(
+            " compactions {count}, context fraction {fraction:.2}."
+        ));
+    }
+    Some(text)
 }
 
 impl Controller {
@@ -284,5 +298,29 @@ impl Controller {
             commit.effects.push(delivery.into_effect());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::budget_text;
+    use serde_json::json;
+
+    #[test]
+    fn context_budget_diagnostic_keeps_its_dimension_and_compaction_facts() {
+        let text = budget_text(&json!({
+            "kind": "execution_budget_exhausted", "dimension": "context_tokens",
+            "tool_turns": {"used": 140, "allowed": 512},
+            "input_tokens": {"used": 1195993, "allowed": 96000000},
+            "no_progress_turns": 9, "no_progress_window": 16,
+            "last_progress_kind": "edit", "compaction_count": 2, "context_fraction": 0.75
+        }))
+        .unwrap();
+        assert!(
+            text.contains("execution_budget_exhausted (context_tokens)"),
+            "{text}"
+        );
+        assert!(text.contains("compactions 2"), "{text}");
+        assert!(text.contains("context fraction 0.75"), "{text}");
     }
 }

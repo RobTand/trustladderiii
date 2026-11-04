@@ -491,7 +491,8 @@ def test_resume_keeps_compaction_and_cache_pricing(maker_request, tmp_path, monk
                                   **cached}
         return message
 
-    first = install(monkeypatch, [usage(10_000), usage(71_000), usage(20_000), dropped(), dropped()])
+    first = install(monkeypatch, [*[usage(10_000) for _ in range(4)], usage(71_000), usage(20_000),
+                                  dropped(), dropped()])
     with pytest.raises(openai.APIConnectionError):
         runtime.run(maker_request, lambda _: None)
     assert budgets[0].compacted
