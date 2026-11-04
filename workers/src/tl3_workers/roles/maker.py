@@ -168,6 +168,9 @@ class _OutOfRoom(Exception):
 VISIT_VERSION = 1
 RESUME_NOTE = ("The worker restarted during your last tool call. That call may have run before "
                "the restart. Check the worktree before repeating it.")
+RETRY_NOTE = ("TL3 retried this visit after your last reply. Environment failures recorded before this "
+              "note no longer count as blocked evidence. If a test run failed in TL3's environment, "
+              "run the affected tests again, and reply blocked only on a failure recorded after this note.")
 
 
 def _pending_calls(history, start):
@@ -177,6 +180,14 @@ def _pending_calls(history, start):
             answered = {m.tool_call_id for m in history[index + 1:] if isinstance(m, ToolMessage)}
             return [call for call in history[index].tool_calls if call["id"] not in answered]
     return []
+
+
+def _replied(history, start):
+    """Whether the visit's last model turn was a final reply rather than tool calls."""
+    for message in reversed(history[start + 1:]):
+        if isinstance(message, AIMessage):
+            return not message.tool_calls and not message.invalid_tool_calls
+    return False
 
 
 def _resumable(history, start):
@@ -394,7 +405,8 @@ def run(model, request, worktree, emit):
         try:
             if allowance is not None:
                 allowance.restore(saved["allowance"])
-            # Environment failures this visit recorded stay citable by a blocked reply (Q50).
+            # Environment failures this visit recorded stay citable by a blocked reply (Q50)
+            # until a delivered reply spends them, below.
             worktree.evidence.restore(saved["worktree"]["evidence"])
         except (ValueError, KeyError, TypeError):
             print("tl3_workers: maker: visit checkpoint unusable; starting the visit afresh", file=sys.stderr)
@@ -415,9 +427,15 @@ def run(model, request, worktree, emit):
             worktree.pb_reattach = {item["base"]: item
                                     for item in inflight[pending[0]["id"]]}
         else:
+            replied = _replied(history, start)
             history, interrupted = _resumable(history, start)
             if interrupted:
                 history.append(HumanMessage(content=RESUME_NOTE))
+            if replied:
+                # PB #2710: a blocked reply raised its run failure, and every retry of the
+                # visit cited the same restored failure again. Only a crash keeps it citable.
+                worktree.evidence.spend()
+                history.append(HumanMessage(content=RETRY_NOTE))
     else:
         history = []
         if session and session.exists() and request.get("resume_session"):
