@@ -7,6 +7,12 @@ use tl3_worktrees::CommitId;
 
 pub const APPROVAL_CHECK: &str = "TL3 approval";
 
+#[derive(serde::Serialize, serde::Deserialize)]
+enum ApprovalAttempt {
+    Uncertain,
+    Refused,
+}
+
 pub(super) fn handles(delivery: &Delivery) -> bool {
     matches!(
         delivery.output,
@@ -136,19 +142,30 @@ impl Adapter {
                 kind: EffectKind::PostApproval,
                 ..
             } => {
-                let check = self
-                    .runtime
-                    .block_on(client.create_check_run(
-                        &repo,
-                        &NewCheckRun {
-                            name: APPROVAL_CHECK.into(),
-                            head_sha: head(delivery)?.as_str().into(),
-                            external_id: external_id(delivery)?,
-                            status: CheckStatus::Completed,
-                            conclusion: Some(CheckConclusion::Success),
-                        },
-                    ))
-                    .map_err(|error| publication_failure::http(error, Endpoint::CheckRuns))?;
+                let attempt = self
+                    .records
+                    .path(&external_id(delivery)?)
+                    .with_extension("approval");
+                // Persist before sending: a crash or timeout cannot prove absence.
+                self.records
+                    .write(&attempt, &serde_json::to_vec(&ApprovalAttempt::Uncertain)?)?;
+                let check = self.runtime.block_on(client.create_check_run(
+                    &repo,
+                    &NewCheckRun {
+                        name: APPROVAL_CHECK.into(),
+                        head_sha: head(delivery)?.as_str().into(),
+                        external_id: external_id(delivery)?,
+                        status: CheckStatus::Completed,
+                        conclusion: Some(CheckConclusion::Success),
+                    },
+                ));
+                if matches!(&check, Err(tl3_github::Error::Http { status: 404 })) {
+                    // A definite refusal retains the existing bounded 404 retry.
+                    self.records
+                        .write(&attempt, &serde_json::to_vec(&ApprovalAttempt::Refused)?)?;
+                }
+                let check =
+                    check.map_err(|error| publication_failure::http(error, Endpoint::CheckRuns))?;
                 if !approved(&check, &client, delivery)? {
                     return Err(Error::Invalid(
                         "GitHub approval evidence differs from the approved head",
@@ -311,6 +328,8 @@ impl Adapter {
                     .any(|check| approved(check, &client, delivery).unwrap_or(false))
                 {
                     Some(Completion::confirmed(vec![]))
+                } else if self.approval_was_refused(delivery)? {
+                    None
                 } else {
                     // Once per head: an empty listing cannot prove that an
                     // earlier timed-out POST has ended. Keep its original key
@@ -362,5 +381,21 @@ impl Adapter {
         Ok(completion
             .map(|completion| Reconciliation::Found(Box::new(completion)))
             .unwrap_or(Reconciliation::Absent))
+    }
+
+    fn approval_was_refused(&self, delivery: &Delivery) -> Result<bool> {
+        let path = self
+            .records
+            .path(&external_id(delivery)?)
+            .with_extension("approval");
+        match std::fs::read(path) {
+            Ok(bytes) => Ok(matches!(
+                serde_json::from_slice::<ApprovalAttempt>(&bytes)?,
+                ApprovalAttempt::Refused
+            )),
+            // Legacy attempts have no record proving they were refused.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.into()),
+        }
     }
 }

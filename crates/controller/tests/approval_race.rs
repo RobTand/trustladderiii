@@ -233,6 +233,8 @@ fn refused_approval_read_can_retry_after_an_empty_look() {
     let mut controller = open(&settings, root.path(), Some(&server.uri()));
     assert!((0..30).any(|_| !controller.drive_once().unwrap()));
     assert_eq!(api.0.lock().unwrap().posts, 0);
+    drop(controller);
+    let mut controller = open(&settings, root.path(), Some(&server.uri()));
     controller.look_key(&key).unwrap();
     assert_eq!(
         controller.world().unwrap().nodes[0].fx_failures,
